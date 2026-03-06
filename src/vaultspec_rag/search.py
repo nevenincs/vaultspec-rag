@@ -150,16 +150,61 @@ class VaultSearcher:
         *,
         graph_ttl_seconds: float | None = None,
     ) -> None:
-        if graph_ttl_seconds is None:
-            from .config import get_config
+        from .config import get_config
 
-            graph_ttl_seconds = get_config().graph_ttl_seconds
+        cfg = get_config()
+        if graph_ttl_seconds is None:
+            graph_ttl_seconds = cfg.graph_ttl_seconds
         self.root_dir = root_dir
         self.model = model
         self.store = store
         self._graph_ttl = graph_ttl_seconds
         self._cached_graph: VaultGraph | None = None
         self._graph_built_at: float = 0.0
+        self._reranker_enabled: bool = cfg.reranker_enabled
+        self._reranker_model_name: str = cfg.reranker_model
+        self._reranker_top_k: int = cfg.reranker_top_k
+        self._reranker = None
+
+    def _get_reranker(self):
+        """Lazily load the CrossEncoder reranker model onto GPU.
+
+        Raises:
+            RuntimeError: If no CUDA GPU is available.
+        """
+        if self._reranker is not None:
+            return self._reranker
+        import torch
+        from sentence_transformers import CrossEncoder
+
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA GPU required for CrossEncoder reranker. No CUDA device found."
+            )
+        self._reranker = CrossEncoder(self._reranker_model_name, device="cuda")
+        logger.info(
+            "CrossEncoder reranker loaded on %s: %s",
+            torch.cuda.get_device_name(0),
+            self._reranker_model_name,
+        )
+        return self._reranker
+
+    def _rerank(
+        self,
+        query: str,
+        results: list[SearchResult],
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Rerank results using CrossEncoder if enabled."""
+        if not self._reranker_enabled or len(results) <= 1:
+            return results[:top_k]
+        reranker = self._get_reranker()
+        pairs = [(query, r.snippet) for r in results]
+        scores = reranker.predict(pairs)
+        for result, score in zip(results, scores, strict=True):
+            result.score = float(score)
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
 
     def _get_graph(self) -> VaultGraph | None:
         from vaultspec.graph import VaultGraph as _VaultGraph
@@ -187,11 +232,13 @@ class VaultSearcher:
             if k in ("doc_type", "feature", "date")
         }
 
+        # Fetch extra candidates when reranker will narrow them down
+        fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
         raw_results = self.store.hybrid_search(
             query_vector=query_vector.tolist(),
             query_text=query_text,
             filters=store_filters or None,
-            limit=top_k * 2,
+            limit=fetch_limit,
             sparse_vector=sparse_vector,
         )
 
@@ -214,7 +261,7 @@ class VaultSearcher:
 
         graph = self._get_graph()
         results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
-        return results[:top_k]
+        return self._rerank(query_text, results, top_k)
 
     def search_codebase(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
         """Search only the source codebase."""
@@ -226,11 +273,12 @@ class VaultSearcher:
             k: v for k, v in parsed.filters.items() if k in ("language", "path")
         }
 
+        fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k
         raw_results = self.store.hybrid_search_codebase(
             query_vector=query_vector.tolist(),
             query_text=query_text,
             filters=store_filters or None,
-            limit=top_k,
+            limit=fetch_limit,
             sparse_vector=sparse_vector,
         )
 
@@ -250,7 +298,7 @@ class VaultSearcher:
                     line_end=r.get("line_end"),
                 )
             )
-        return results
+        return self._rerank(query_text, results, top_k)
 
     def search_all(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
         """Search both vault and codebase and combine results."""

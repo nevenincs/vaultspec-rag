@@ -31,6 +31,9 @@ class VaultSpecConfigWrapper:
             "embedding_dimension": 1024,
             "sparse_model": "naver/splade-v3",
             "rag_enabled": True,
+            "reranker_enabled": True,
+            "reranker_model": "cross-encoder/ms-marco-MiniLM-L6-v2",
+            "reranker_top_k": 5,
         }
 
         if name in rag_defaults:

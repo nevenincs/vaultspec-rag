@@ -97,3 +97,69 @@ class TestParseQuery:
         result = parse_query("unknown:value hello")
         assert result.text == "unknown:value hello"
         assert result.filters == {}
+
+
+class TestRerank:
+    """Unit tests for VaultSearcher._rerank using mocks."""
+
+    def _make_results(self, n: int) -> list[SearchResult]:
+        return [
+            SearchResult(
+                id=f"doc-{i}",
+                path=f"adr/doc-{i}.md",
+                title=f"Doc {i}",
+                score=float(n - i),
+                snippet=f"Content about topic {i} with details.",
+                source="vault",
+            )
+            for i in range(n)
+        ]
+
+    def test_rerank_disabled_returns_top_k(self):
+        """When reranker is disabled, _rerank just slices to top_k."""
+        from unittest.mock import MagicMock
+
+        searcher = MagicMock()
+        searcher._reranker_enabled = False
+        results = self._make_results(10)
+        from vaultspec_rag.search import VaultSearcher
+
+        out = VaultSearcher._rerank(searcher, "query", results, 3)
+        assert len(out) == 3
+        assert out[0].id == "doc-0"
+
+    def test_rerank_enabled_resorts_by_score(self):
+        """When reranker is enabled, results are re-sorted by CE scores."""
+        from unittest.mock import MagicMock
+
+        import numpy as np
+
+        searcher = MagicMock()
+        searcher._reranker_enabled = True
+        mock_reranker = MagicMock()
+        # Reverse the order: last doc gets highest score
+        mock_reranker.predict.return_value = np.array([0.1, 0.2, 0.3, 0.9, 0.5])
+        searcher._get_reranker.return_value = mock_reranker
+
+        results = self._make_results(5)
+        from vaultspec_rag.search import VaultSearcher
+
+        out = VaultSearcher._rerank(searcher, "query", results, 3)
+        assert len(out) == 3
+        # doc-3 had score 0.9, should be first
+        assert out[0].id == "doc-3"
+        assert out[0].score == pytest.approx(0.9)
+
+    def test_rerank_single_result_skipped(self):
+        """Reranking is skipped when there is only 1 result."""
+        from unittest.mock import MagicMock
+
+        searcher = MagicMock()
+        searcher._reranker_enabled = True
+        results = self._make_results(1)
+        from vaultspec_rag.search import VaultSearcher
+
+        out = VaultSearcher._rerank(searcher, "query", results, 5)
+        assert len(out) == 1
+        # _get_reranker should not have been called
+        searcher._get_reranker.assert_not_called()
