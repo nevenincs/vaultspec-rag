@@ -71,7 +71,7 @@ class TestEmbeddingModel:
         assert vectors.shape[1] == model.dimension
 
     def test_encode_documents_sparse(self, rag_components):
-        """Sparse encoding should return SparseEmbedding objects."""
+        """Sparse encoding should return SparseResult objects."""
         model = rag_components["model"]
         texts = ["This is a test document about architecture decisions."]
         sparse_vecs = model.encode_documents_sparse(texts)
@@ -80,7 +80,7 @@ class TestEmbeddingModel:
         assert hasattr(sparse_vecs[0], "values")
 
     def test_encode_query_sparse(self, rag_components):
-        """Sparse query encoding should return a SparseEmbedding."""
+        """Sparse query encoding should return a SparseResult."""
         model = rag_components["model"]
         sparse_vec = model.encode_query_sparse("vector database")
         assert hasattr(sparse_vec, "indices")
