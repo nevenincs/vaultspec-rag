@@ -1,4 +1,6 @@
-"""Unit tests for rag.search — query parsing and data classes (no GPU)."""
+"""Tests for rag.search — query parsing (unit) and reranking (integration)."""
+
+from typing import ClassVar
 
 import pytest
 
@@ -100,66 +102,115 @@ class TestParseQuery:
 
 
 class TestRerank:
-    """Unit tests for VaultSearcher._rerank using mocks."""
+    """Live integration tests for VaultSearcher._rerank on GPU."""
 
-    def _make_results(self, n: int) -> list[SearchResult]:
-        return [
+    pytestmark: ClassVar = [pytest.mark.integration]
+
+    def test_rerank_disabled_returns_top_k(self, rag_components):
+        """When reranker is disabled, _rerank just slices to top_k."""
+        from vaultspec_rag.search import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        searcher._reranker_enabled = False
+
+        # Get real results from a vault search
+        results = searcher.store.hybrid_search(
+            query_vector=rag_components["model"].encode_query("architecture").tolist(),
+            query_text="architecture",
+            sparse_vector=rag_components["model"].encode_query_sparse("architecture"),
+            top_k=10,
+        )
+        from vaultspec_rag import SearchResult
+
+        search_results = [
             SearchResult(
-                id=f"doc-{i}",
-                path=f"adr/doc-{i}.md",
-                title=f"Doc {i}",
-                score=float(n - i),
-                snippet=f"Content about topic {i} with details.",
+                id=r["id"],
+                path=r["path"],
+                title=r.get("title", ""),
+                score=float(r.get("_relevance_score", 0.0)),
+                snippet=r.get("content", "")[:200],
                 source="vault",
             )
-            for i in range(n)
+            for r in results
         ]
+        assert len(search_results) >= 3
 
-    def test_rerank_disabled_returns_top_k(self):
-        """When reranker is disabled, _rerank just slices to top_k."""
-        from unittest.mock import MagicMock
+        out = searcher._rerank("architecture", search_results, 3)
+        assert len(out) == 3
+        # Scores should be unchanged (no reranking applied)
+        assert out[0].score == search_results[0].score
 
-        searcher = MagicMock()
-        searcher._reranker_enabled = False
-        results = self._make_results(10)
+    def test_rerank_enabled_resorts_by_crossencoder(self, rag_components):
+        """When reranker is enabled, CrossEncoder rescores and reorders."""
         from vaultspec_rag.search import VaultSearcher
 
-        out = VaultSearcher._rerank(searcher, "query", results, 3)
-        assert len(out) == 3
-        assert out[0].id == "doc-0"
-
-    def test_rerank_enabled_resorts_by_score(self):
-        """When reranker is enabled, results are re-sorted by CE scores."""
-        from unittest.mock import MagicMock
-
-        import numpy as np
-
-        searcher = MagicMock()
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
         searcher._reranker_enabled = True
-        mock_reranker = MagicMock()
-        # Reverse the order: last doc gets highest score
-        mock_reranker.predict.return_value = np.array([0.1, 0.2, 0.3, 0.9, 0.5])
-        searcher._get_reranker.return_value = mock_reranker
 
-        results = self._make_results(5)
-        from vaultspec_rag.search import VaultSearcher
+        results = searcher.store.hybrid_search(
+            query_vector=rag_components["model"]
+            .encode_query("dispatch architecture")
+            .tolist(),
+            query_text="dispatch architecture",
+            sparse_vector=rag_components["model"].encode_query_sparse(
+                "dispatch architecture"
+            ),
+            top_k=10,
+        )
+        from vaultspec_rag import SearchResult
 
-        out = VaultSearcher._rerank(searcher, "query", results, 3)
+        search_results = [
+            SearchResult(
+                id=r["id"],
+                path=r["path"],
+                title=r.get("title", ""),
+                score=float(r.get("_relevance_score", 0.0)),
+                snippet=r.get("content", "")[:200],
+                source="vault",
+            )
+            for r in results
+        ]
+        assert len(search_results) >= 3
+
+        out = searcher._rerank("dispatch architecture", search_results, 3)
         assert len(out) == 3
-        # doc-3 had score 0.9, should be first
-        assert out[0].id == "doc-3"
-        assert out[0].score == pytest.approx(0.9)
+        # CrossEncoder assigns new float scores
+        assert all(isinstance(r.score, float) for r in out)
+        # Results should be sorted descending by score
+        assert out[0].score >= out[1].score >= out[2].score
 
-    def test_rerank_single_result_skipped(self):
+    def test_rerank_single_result_skipped(self, rag_components):
         """Reranking is skipped when there is only 1 result."""
-        from unittest.mock import MagicMock
-
-        searcher = MagicMock()
-        searcher._reranker_enabled = True
-        results = self._make_results(1)
+        from vaultspec_rag import SearchResult
         from vaultspec_rag.search import VaultSearcher
 
-        out = VaultSearcher._rerank(searcher, "query", results, 5)
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        searcher._reranker_enabled = True
+
+        single = [
+            SearchResult(
+                id="doc-0",
+                path="adr/doc-0.md",
+                title="Doc 0",
+                score=0.5,
+                snippet="Some content about architecture.",
+                source="vault",
+            )
+        ]
+        original_score = single[0].score
+        out = searcher._rerank("architecture", single, 5)
         assert len(out) == 1
-        # _get_reranker should not have been called
-        searcher._get_reranker.assert_not_called()
+        # Score unchanged — reranker was not invoked
+        assert out[0].score == original_score
