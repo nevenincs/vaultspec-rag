@@ -259,9 +259,9 @@ class VaultSearcher:
                 )
             )
 
+        results = self._rerank(query_text, results, top_k)
         graph = self._get_graph()
-        results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
-        return self._rerank(query_text, results, top_k)
+        return rerank_with_graph(results, self.root_dir, parsed, graph=graph)
 
     def search_codebase(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
         """Search only the source codebase."""
