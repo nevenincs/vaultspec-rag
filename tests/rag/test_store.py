@@ -6,16 +6,9 @@ Tests updated for Qdrant-backed store (replacing LanceDB).
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
-HAS_RAG = importlib.util.find_spec("qdrant_client") is not None
-
-pytestmark = [
-    pytest.mark.unit,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
-]
+pytestmark = [pytest.mark.unit]
 
 
 class TestStoreHelpers:

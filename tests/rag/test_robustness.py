@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
-HAS_GPU_RAG = all(
-    importlib.util.find_spec(pkg) is not None
-    for pkg in ("qdrant_client", "sentence_transformers", "torch")
-)
-
-pytestmark = [
-    pytest.mark.search,
-    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
-]
+pytestmark = [pytest.mark.search]
 
 
 # ---- Robustness Tests ----

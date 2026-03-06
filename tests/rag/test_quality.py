@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
-HAS_GPU_RAG = all(
-    importlib.util.find_spec(pkg) is not None
-    for pkg in ("qdrant_client", "sentence_transformers", "torch")
-)
-
-pytestmark = [
-    pytest.mark.quality,
-    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
-]
+pytestmark = [pytest.mark.quality]
 
 
 # ---- Helpfulness / Search Quality Tests ----
@@ -271,8 +261,7 @@ class TestHelpfulness:
         # Broad query to get many results
         results = searcher.search("editor architecture implementation", top_k=15)
 
-        if len(results) < 2:
-            pytest.skip("Need at least 2 results to compare authority")
+        assert len(results) >= 2, "Need at least 2 results to compare authority"
 
         graph = VaultGraph(root)
 

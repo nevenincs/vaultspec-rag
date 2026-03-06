@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
-HAS_GPU_RAG = all(
-    importlib.util.find_spec(pkg) is not None
-    for pkg in ("qdrant_client", "sentence_transformers", "torch")
-)
-
-pytestmark = [
-    pytest.mark.search,
-    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
-]
+pytestmark = [pytest.mark.search]
 
 
 # ---- Performance Tests ----
@@ -126,8 +116,7 @@ class TestPerformance:
     def test_store_disk_footprint(self, rag_components_full):
         """The .qdrant/ directory should be under 50MB for ~213 docs."""
         db_dir = rag_components_full["db_dir"]
-        if not db_dir.exists():
-            pytest.skip("db_dir does not exist")
+        assert db_dir.exists(), f"db_dir does not exist: {db_dir}"
 
         total_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
         total_mb = total_bytes / (1024 * 1024)
