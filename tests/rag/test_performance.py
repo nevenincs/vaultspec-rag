@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = [pytest.mark.search]
+pytestmark = [pytest.mark.performance]
 
 
 # ---- Performance Tests ----
@@ -18,7 +18,7 @@ class TestPerformance:
 
     # -- Timing tests --
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_single_query_latency(self, rag_components):
         """End-to-end search should complete within 2 seconds.
 
@@ -48,7 +48,7 @@ class TestPerformance:
             f"Single query took {elapsed_ms:.0f}ms, expected < 2000ms"
         )
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_batch_query_latency(self, rag_components):
         """5 sequential queries should complete within 5 seconds total."""
         import time
@@ -77,7 +77,7 @@ class TestPerformance:
             f"5 queries took {elapsed_ms:.0f}ms, expected < 5000ms"
         )
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_query_embedding_latency(self, rag_components):
         """Single query embedding should complete within 500ms."""
         import time
@@ -93,7 +93,7 @@ class TestPerformance:
             f"Query embedding took {elapsed_ms:.0f}ms, expected < 500ms"
         )
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_parse_query_latency(self):
         """Query parsing (pure regex) should be sub-millisecond."""
         import time
@@ -112,7 +112,7 @@ class TestPerformance:
 
     # -- Resource tests --
 
-    @pytest.mark.quality
+    @pytest.mark.performance
     def test_store_disk_footprint(self, rag_components_full):
         """The .qdrant/ directory should be under 50MB for ~213 docs."""
         db_dir = rag_components_full["db_dir"]
@@ -123,7 +123,7 @@ class TestPerformance:
 
         assert total_mb < 50, f"Qdrant directory is {total_mb:.1f}MB, expected < 50MB"
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_index_result_has_timing(self, rag_components):
         """IndexResult should report valid timing metadata."""
         result = rag_components["index_result"]
@@ -133,7 +133,7 @@ class TestPerformance:
             f"Indexing took {result.duration_ms}ms (15 min), seems too long"
         )
 
-    @pytest.mark.quality
+    @pytest.mark.performance
     def test_document_count_matches_vault(self, rag_components_full):
         """Indexed count should match scannable docs with valid DocType."""
         from vaultspec.vaultcore import get_doc_type, scan_vault
@@ -150,7 +150,7 @@ class TestPerformance:
             f"Store has {indexed_count} docs, vault has {valid_count} valid docs"
         )
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_graph_cache_reused_across_searches(self, rag_components):
         """VaultSearcher should reuse cached VaultGraph across searches."""
         from vaultspec_rag import VaultSearcher
@@ -171,7 +171,7 @@ class TestPerformance:
 
         assert graph1 is graph2, "Graph should be reused across searches"
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_graph_cache_ttl_expiry(self, rag_components):
         """VaultSearcher with TTL=0 should rebuild graph on every search."""
         from vaultspec_rag import VaultSearcher
@@ -190,7 +190,7 @@ class TestPerformance:
 
         assert graph1 is not graph2, "Graph should be rebuilt with TTL=0"
 
-    @pytest.mark.search
+    @pytest.mark.performance
     def test_graph_rebuild_cost_per_query(self, rag_components):
         """Measure the cost of VaultGraph construction, which is rebuilt on
         every search call by rerank_with_graph(). VaultGraph reads every
@@ -214,7 +214,7 @@ class TestPerformance:
             f"VaultGraph build took {graph_ms:.0f}ms, expected < 2000ms"
         )
 
-    @pytest.mark.quality
+    @pytest.mark.performance
     def test_incremental_noop_latency(self, rag_components_full):
         """Incremental index with no changes should be fast (< 3s).
 

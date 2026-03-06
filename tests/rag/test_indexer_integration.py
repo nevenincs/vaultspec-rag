@@ -6,7 +6,7 @@ import pytest
 
 from tests.constants import TEST_PROJECT
 
-pytestmark = [pytest.mark.index]
+pytestmark = [pytest.mark.integration]
 
 # ---- Indexer Tests ----
 
@@ -14,7 +14,7 @@ pytestmark = [pytest.mark.index]
 class TestVaultIndexer:
     """Tests for the indexing pipeline with real vault data."""
 
-    @pytest.mark.index
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_full_index_counts(self, rag_components):
         result = rag_components["index_result"]
@@ -23,7 +23,7 @@ class TestVaultIndexer:
         assert result.duration_ms >= 0
         assert result.device == "cuda"
 
-    @pytest.mark.index
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_index_matches_store_count(self, rag_components):
         result = rag_components["index_result"]
@@ -53,7 +53,7 @@ class TestVaultIndexer:
 class TestDocumentPreparation:
     """Tests for individual document preparation."""
 
-    @pytest.mark.index
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_prepare_real_document(self):
         # Find a real document in the test-project

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = [pytest.mark.search]
+pytestmark = [pytest.mark.integration]
 
 
 # ---- End-to-End Search Tests ----
