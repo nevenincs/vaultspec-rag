@@ -75,12 +75,9 @@ markers = [
     "performance: benchmarking tests for throughput and latency",
     "quality: precision/recall and document coverage tests",
     "robustness: edge case and error handling tests",
-    "api: API level integration tests",
-    "index: indexing related tests",
-    "search: search related tests",
     "timeout: timeout in seconds for individual tests",
 ]
-testpaths = ["tests", "src"]
+testpaths = ["src/vaultspec_rag/tests"]
 timeout = 300
 timeout_func_only = true
 

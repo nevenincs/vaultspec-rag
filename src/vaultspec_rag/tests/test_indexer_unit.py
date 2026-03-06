@@ -3,12 +3,12 @@
 import pytest
 from vaultspec.config import reset_config
 
-from tests.constants import TEST_PROJECT
 from vaultspec_rag import IndexResult, prepare_document
 from vaultspec_rag.indexer import (
     _extract_feature,
     _extract_title,
 )
+from vaultspec_rag.tests.constants import TEST_PROJECT
 
 pytestmark = [pytest.mark.unit]
 

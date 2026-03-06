@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.constants import TEST_PROJECT
+from vaultspec_rag.tests.constants import TEST_PROJECT
 
 pytestmark = [pytest.mark.integration]
 

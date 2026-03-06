@@ -122,7 +122,7 @@ class TestRerank:
             query_vector=rag_components["model"].encode_query("architecture").tolist(),
             query_text="architecture",
             sparse_vector=rag_components["model"].encode_query_sparse("architecture"),
-            top_k=10,
+            limit=10,
         )
         from vaultspec_rag import SearchResult
 
@@ -163,7 +163,7 @@ class TestRerank:
             sparse_vector=rag_components["model"].encode_query_sparse(
                 "dispatch architecture"
             ),
-            top_k=10,
+            limit=10,
         )
         from vaultspec_rag import SearchResult
 

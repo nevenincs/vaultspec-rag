@@ -20,12 +20,12 @@ import pytest
 if __name__ == "__main__":
     from pathlib import Path as _Path
 
-    _repo = _Path(__file__).resolve().parent.parent.parent
+    _repo = _Path(__file__).resolve().parent.parent.parent.parent.parent
     _src = str(_repo / "src")
     if _src not in sys.path:
         sys.path.insert(0, _src)
 
-from tests.constants import TEST_PROJECT
+from vaultspec_rag.tests.constants import TEST_PROJECT
 
 
 def _hr(char: str = "-", width: int = 72) -> str:

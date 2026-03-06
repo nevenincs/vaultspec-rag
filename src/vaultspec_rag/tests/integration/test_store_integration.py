@@ -70,7 +70,7 @@ class TestVaultStore:
             query_vec = model.encode_query("anything")
 
             results = store.hybrid_search(
-                query_vector=query_vec,
+                query_vector=query_vec.tolist(),
                 query_text="anything",
                 limit=5,
             )

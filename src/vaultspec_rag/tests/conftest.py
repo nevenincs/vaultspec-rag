@@ -11,15 +11,15 @@ if TYPE_CHECKING:
     import pathlib
 from vaultspec.config import reset_config
 
-from tests.constants import (
+from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
+from vaultspec_rag.config import get_config
+from vaultspec_rag.tests.constants import (
     GPU_FAST_CORPUS_STEMS,
     PROJECT_ROOT,
     QDRANT_SUFFIX_FAST,
     QDRANT_SUFFIX_FULL,
     TEST_PROJECT,
 )
-from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
-from vaultspec_rag.config import get_config
 
 # GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
 

@@ -4,8 +4,8 @@ import shutil
 
 import pytest
 
-from tests.conftest import _build_rag_components
-from tests.constants import (
+from vaultspec_rag.tests.conftest import _build_rag_components
+from vaultspec_rag.tests.constants import (
     QDRANT_SUFFIX_UNIT,
     TEST_PROJECT,
 )

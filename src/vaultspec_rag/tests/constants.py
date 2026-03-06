@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import pathlib
 
-#: Repository root (one directory above: tests/ -> repo)
-PROJECT_ROOT: pathlib.Path = pathlib.Path(__file__).resolve().parent.parent
+#: Repository root (src/vaultspec_rag/tests/ -> src/vaultspec_rag/ -> src/ -> repo)
+PROJECT_ROOT: pathlib.Path = (
+    pathlib.Path(__file__).resolve().parent.parent.parent.parent
+)
 
 #: src/vaultspec/ — the library source root
 LIB_SRC: pathlib.Path = PROJECT_ROOT / "src" / "vaultspec_rag"
