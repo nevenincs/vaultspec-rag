@@ -10,14 +10,14 @@ import importlib.util
 
 import pytest
 
-HAS_RAG = all(
+HAS_GPU_RAG = all(
     importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
+    for pkg in ("qdrant_client", "sentence_transformers", "torch")
 )
 
 pytestmark = [
     pytest.mark.search,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
+    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
 ]
 
 
@@ -180,9 +180,8 @@ class TestSearchEdgeCases:
 
     def test_sql_injection_in_filter_value(self, rag_components):
         """Filter values with SQL injection characters should not crash.
-        _build_where uses string interpolation, so test that LanceDB
-        handles malformed predicates gracefully or that they produce
-        empty results rather than exceptions.
+        Qdrant uses typed filters, so injection is not possible, but
+        adversarial inputs should still produce empty results gracefully.
         """
         from vaultspec_rag import VaultSearcher
 

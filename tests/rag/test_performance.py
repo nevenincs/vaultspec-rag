@@ -6,14 +6,14 @@ import importlib.util
 
 import pytest
 
-HAS_RAG = all(
+HAS_GPU_RAG = all(
     importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
+    for pkg in ("qdrant_client", "sentence_transformers", "torch")
 )
 
 pytestmark = [
     pytest.mark.search,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
+    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
 ]
 
 
@@ -124,14 +124,15 @@ class TestPerformance:
 
     @pytest.mark.quality
     def test_store_disk_footprint(self, rag_components_full):
-        """The .lance/ directory should be under 50MB for ~213 docs."""
-        root = rag_components_full["root"]
-        lance_dir = root / ".lance"
+        """The .qdrant/ directory should be under 50MB for ~213 docs."""
+        db_dir = rag_components_full["db_dir"]
+        if not db_dir.exists():
+            pytest.skip("db_dir does not exist")
 
-        total_bytes = sum(f.stat().st_size for f in lance_dir.rglob("*") if f.is_file())
+        total_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
         total_mb = total_bytes / (1024 * 1024)
 
-        assert total_mb < 50, f".lance/ directory is {total_mb:.1f}MB, expected < 50MB"
+        assert total_mb < 50, f"Qdrant directory is {total_mb:.1f}MB, expected < 50MB"
 
     @pytest.mark.search
     def test_index_result_has_timing(self, rag_components):

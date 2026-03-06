@@ -314,11 +314,11 @@ Zed uses multiple layers of caching:
 
 ### Important but Not Blocking Demo
 
-6. **Single cursor shape only.** Need at least Bar and Block for vim mode.
-7. **Hardcoded colors everywhere.** Should derive from `EditorTheme`.
-8. **No line layout caching.** Performance will degrade on large files.
-9. **Monospace char_width approximation.** Works for demo but breaks with proportional fonts or ligatures.
-10. **No scroll overscroll modes.** Missing scroll-beyond-last-line configuration.
+1. **Single cursor shape only.** Need at least Bar and Block for vim mode.
+2. **Hardcoded colors everywhere.** Should derive from `EditorTheme`.
+3. **No line layout caching.** Performance will degrade on large files.
+4. **Monospace char_width approximation.** Works for demo but breaks with proportional fonts or ligatures.
+5. **No scroll overscroll modes.** Missing scroll-beyond-last-line configuration.
 
 ### Architecture Recommendations
 

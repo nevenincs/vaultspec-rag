@@ -6,14 +6,14 @@ import importlib.util
 
 import pytest
 
-HAS_RAG = all(
+HAS_GPU_RAG = all(
     importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
+    for pkg in ("qdrant_client", "sentence_transformers", "torch")
 )
 
 pytestmark = [
     pytest.mark.search,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
+    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
 ]
 
 
@@ -36,6 +36,7 @@ class TestRobustness:
         and prepare_document returns None. Verify they are gracefully skipped.
         """
         from vaultspec.vaultcore import scan_vault
+
         from vaultspec_rag import prepare_document
 
         root = rag_components["root"]
@@ -55,6 +56,7 @@ class TestRobustness:
         returns AUDIT and the doc is indexed despite nonstandard frontmatter.
         """
         from vaultspec.vaultcore import scan_vault
+
         from vaultspec_rag import prepare_document
 
         root = rag_components["root"]

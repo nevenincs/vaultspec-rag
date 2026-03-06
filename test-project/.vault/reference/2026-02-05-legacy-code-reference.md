@@ -162,13 +162,13 @@ crates/pp-editor-core/src/input_handler.rs
 pp-editor-events = { path = "../pp-editor-events" }
 ```
 
-2. **Update EditorModel:**
+1. **Update EditorModel:**
 
 - Replace `focused: bool` with `focus_handle: FocusHandle`
 - Remove `handle_input()` and `dispatch_action()` methods
 - Implement action handlers using pp-editor-events
 
-3. **Update EditorView:**
+1. **Update EditorView:**
 
 ```rust
 div()
@@ -177,7 +177,7 @@ div()
     .on_key_down(cx.listener(Self::handle_key_down))
 ```
 
-4. **Migrate keybindings:**
+1. **Migrate keybindings:**
 
 - Use pp-editor-events Keymap instead of pp-keymapping
 - Add KeyContext for focus-aware bindings

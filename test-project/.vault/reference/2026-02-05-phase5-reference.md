@@ -678,18 +678,18 @@ The state machine is simple but robust:
 
 ### HIGH (Must Fix Before Production)
 
-2. Stub implementation of `replace_text_in_range` (silent failure)
-3. UTF-16 to Position conversion stubs (data corruption risk)
+1. Stub implementation of `replace_text_in_range` (silent failure)
+2. UTF-16 to Position conversion stubs (data corruption risk)
 
 ### MEDIUM (Should Fix Soon)
 
-4. `.unwrap()` in tests (violates project standards)
-5. Insufficient error context on RwLock operations
+1. `.unwrap()` in tests (violates project standards)
+2. Insufficient error context on RwLock operations
 
 ### LOW (Nice to Have)
 
-6. Missing integration tests
-7. No fuzzing tests for UTF-16 boundaries
+1. Missing integration tests
+2. No fuzzing tests for UTF-16 boundaries
 
 ---
 

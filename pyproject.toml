@@ -1,1 +1,118 @@
-[build-system]`nbuild-backend = "hatchling.build"`nrequires = ["hatchling"]`n`n[project]`nname = "vaultspec-rag"`nversion = "0.1.0"`ndescription = "RAG module for vaultspec (ML-heavy extraction)"`nreadme = "README.md"`nrequires-python = ">=3.13"`nlicense = { text = "MIT" }`nauthors = [{ name = "Gergely Wootsch", email = "hello@gergely-wootsch.com" }]`ndependencies = [`n    "torch>=2.9.0",`n    "sentence-transformers>=5.0.0",`n    "lancedb>=0.27.0",`n    "einops>=0.8.0",`n    "pydantic>=2.12.5",`n    "rich>=14.3.2",`n]`n`n[project.optional-dependencies]`ndev = [`n    "pytest>=9.0.2",`n    "pytest-asyncio>=1.3.0",`n    "pytest-timeout>=2.4.0",`n    "ruff>=0.15.2",`n]`n`n[tool.hatch.build.targets.wheel]`npackages = ["src/vaultspec_rag"]`n`n[tool.pytest.ini_options]`nasyncio_mode = "auto"`ntestpaths = ["tests", "src"]
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[project]
+name = "vaultspec-rag"
+version = "0.1.0"
+description = "RAG module for vaultspec (ML-heavy extraction)"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Gergely Wootsch", email = "hello@gergely-wootsch.com" }]
+dependencies = [
+    "sentence-transformers>=5.0",
+    "torch>=2.4",
+    "transformers>=4.51",
+    "qdrant-client>=1.12.0",
+    "pydantic>=2.12.5",
+    "rich>=14.3.2",
+    "vaultspec @ file:///vaultspec-worktrees/main",
+    "mcp>=1.26.0",
+    "typer>=0.12.0",
+    "click>=8.1.7",
+]
+
+[project.scripts]
+vaultspec-rag = "vaultspec_rag.cli:app"
+vaultspec-search-mcp = "vaultspec_rag.mcp_server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-reportlog>=0.4.0",
+    "pytest-durations>=1.0.0",
+    "ruff>=0.15.2",
+    "ty>=0.0.15",
+    "prek>=0.3.2",
+    "identify>=2.0.0",
+    "nodeenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "identify>=2.0.0",
+    "nodeenv>=1.0.0",
+    "prek>=0.3.2",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-durations>=1.0.0",
+    "pytest-reportlog>=0.4.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.15.2",
+    "ty>=0.0.15",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vaultspec_rag"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+log_cli = true
+log_cli_date_format = "%H:%M:%S"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_level = "INFO"
+log_file = "test-debug.log"
+log_file_level = "DEBUG"
+markers = [
+    "unit: fast tests with no external dependencies",
+    "integration: requires CLI tools and network",
+    "performance: benchmarking tests for throughput and latency",
+    "quality: precision/recall and document coverage tests",
+    "robustness: edge case and error handling tests",
+    "api: API level integration tests",
+    "index: indexing related tests",
+    "search: search related tests",
+    "timeout: timeout in seconds for individual tests",
+]
+testpaths = ["tests", "src"]
+timeout = 300
+timeout_func_only = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "RUF", # ruff-specific rules
+    "N",   # pep8-naming
+]
+unfixable = ["B"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["ARG"]
+"**/tests/**/*.py" = ["ARG"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vaultspec_rag"]
+
+[tool.ty.environment]
+python-version = "3.13"
+root = [".", "src"]
+

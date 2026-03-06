@@ -1,12 +1,11 @@
 """Unit tests for rag.indexer — extraction and doc preparation (no GPU)."""
 
 import pytest
+from vaultspec.config import reset_config
 
 from tests.constants import TEST_PROJECT
-
-from vaultspec.config import reset_config
 from vaultspec_rag import IndexResult, prepare_document
-from vaultspec_ragindexer import (
+from vaultspec_rag.indexer import (
     _extract_feature,
     _extract_title,
 )

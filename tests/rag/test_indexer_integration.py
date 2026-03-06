@@ -8,14 +8,14 @@ import pytest
 
 from tests.constants import TEST_PROJECT
 
-HAS_RAG = all(
+HAS_GPU_RAG = all(
     importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
+    for pkg in ("qdrant_client", "sentence_transformers", "torch")
 )
 
 pytestmark = [
     pytest.mark.index,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
+    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
 ]
 
 # ---- Indexer Tests ----
@@ -68,6 +68,7 @@ class TestDocumentPreparation:
     def test_prepare_real_document(self):
         # Find a real document in the test-project
         from vaultspec.vaultcore import scan_vault
+
         from vaultspec_rag import prepare_document
 
         docs = list(scan_vault(TEST_PROJECT))
@@ -84,6 +85,7 @@ class TestDocumentPreparation:
     @pytest.mark.timeout(300)
     def test_prepare_all_documents(self):
         from vaultspec.vaultcore import scan_vault
+
         from vaultspec_rag import prepare_document
 
         prepared = 0

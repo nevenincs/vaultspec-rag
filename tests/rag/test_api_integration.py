@@ -6,14 +6,14 @@ import importlib.util
 
 import pytest
 
-HAS_RAG = all(
+HAS_GPU_RAG = all(
     importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
+    for pkg in ("qdrant_client", "sentence_transformers", "torch")
 )
 
 pytestmark = [
     pytest.mark.api,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
+    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
 ]
 
 
@@ -25,8 +25,7 @@ class TestRAGAPI:
 
     These tests exercise the public API functions end-to-end.  The API
     facade uses its own engine singleton separate from the rag_components
-    fixture.  We use a dedicated temporary copy of the lance data to
-    avoid conflicts with the session-scoped fixture.
+    fixture.
     """
 
     @pytest.mark.api
@@ -35,7 +34,7 @@ class TestRAGAPI:
 
         Uses the session-scoped rag_components to ensure indexed data
         exists, then calls the API facade which opens its own store
-        connection against the same .lance directory.
+        connection.
         """
         from vaultspec_rag import VaultSearcher
 
@@ -92,8 +91,7 @@ class TestRAGAPI:
     def test_get_document_existing(self, rag_components):
         """Store.get_by_id returns dict for known doc.
 
-        Uses the fixture's store directly to avoid opening a competing
-        LanceDB connection (which corrupts lance data files).
+        Uses the fixture's store directly.
         Picks a doc_id from the indexed store (not list_documents, which
         scans the full filesystem and may return unindexed docs).
         """
@@ -157,8 +155,7 @@ class TestRAGAPI:
     def test_get_status(self, rag_components):
         """rag.api.get_status returns vault summary.
 
-        Verifies status using direct store access to avoid opening a
-        conflicting LanceDB connection via the API facade.
+        Verifies status using direct store access.
         """
         root = rag_components["root"]
         store = rag_components["store"]
@@ -184,5 +181,5 @@ class TestRAGAPI:
         e2 = api_mod.get_engine(root)
         assert e1 is e2
 
-        # Clean up the engine to avoid leaving a competing LanceDB connection
+        # Clean up the engine singleton
         api_mod.reset_engine()

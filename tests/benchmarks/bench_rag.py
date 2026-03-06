@@ -55,15 +55,8 @@ def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
 
 @pytest.mark.benchmark
 @pytest.mark.quality
-def test_bench_full_index(root, model, store_class, indexer_class) -> dict:
+def test_bench_full_index(root, model, store, indexer) -> dict:
     """Time full_index() on the entire vault corpus."""
-    lance_dir = root / ".lance"
-    if lance_dir.exists():
-        shutil.rmtree(lance_dir)
-
-    store = store_class(root)
-    indexer = indexer_class(root, model, store)
-
     start = time.perf_counter()
     result = indexer.full_index()
     elapsed = time.perf_counter() - start
@@ -112,7 +105,7 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
         "tree-sitter parser",
         "vault graph re-ranking",
         "semantic search embedding",
-        "LanceDB vector store",
+        "Qdrant vector store",
         "date:2026-02 decisions",
         "caching audit performance",
         "code safety improvements",
@@ -143,7 +136,7 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
 @pytest.mark.benchmark
 @pytest.mark.quality
 def test_bench_memory(root) -> dict:
-    """Measure GPU VRAM and LanceDB disk size. Requires CUDA GPU."""
+    """Measure GPU VRAM and Qdrant disk size. Requires CUDA GPU."""
     import torch
 
     result = {}
@@ -151,19 +144,21 @@ def test_bench_memory(root) -> dict:
     result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
     result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
-    # LanceDB disk size
-    lance_dir = root / ".lance"
-    if lance_dir.exists():
-        total_bytes = sum(f.stat().st_size for f in lance_dir.rglob("*") if f.is_file())
-        result["lance_disk_mb"] = total_bytes / (1024 * 1024)
+    # Qdrant disk size
+    qdrant_dir = root / ".qdrant"
+    if qdrant_dir.exists():
+        total_bytes = sum(
+            f.stat().st_size for f in qdrant_dir.rglob("*") if f.is_file()
+        )
+        result["qdrant_disk_mb"] = total_bytes / (1024 * 1024)
     else:
-        result["lance_disk_mb"] = 0
+        result["qdrant_disk_mb"] = 0
 
     return result
 
 
 def main():
-    from vaultspec.rag import EmbeddingModel, VaultIndexer, VaultSearcher, VaultStore
+    from vaultspec_rag import EmbeddingModel, VaultIndexer, VaultSearcher, VaultStore
 
     print(_hr("="))
     print("  RAG Stack Benchmarks")
@@ -194,16 +189,16 @@ def main():
     print(_hr())
     print("2. Full Index Throughput (all vault docs)")
     print(_hr())
-    idx_result = test_bench_full_index(TEST_PROJECT, model, VaultStore, VaultIndexer)
+    store = VaultStore(TEST_PROJECT)
+    indexer = VaultIndexer(TEST_PROJECT, model, store)
+    idx_result = test_bench_full_index(TEST_PROJECT, model, store, indexer)
     print(
         f"  {idx_result['total_docs']} docs indexed in {idx_result['elapsed_s']:.2f}s "
         f"({idx_result['docs_per_sec']:.1f} docs/sec, device={idx_result['device']})"
     )
     print()
 
-    # Set up components for remaining benchmarks
-    store = VaultStore(TEST_PROJECT)
-    indexer = VaultIndexer(TEST_PROJECT, model, store)
+    # Set up searcher for remaining benchmarks
     searcher = VaultSearcher(TEST_PROJECT, model, store)
 
     # 3. Incremental no-op
@@ -238,13 +233,13 @@ def main():
     print(f"  GPU: {mem['gpu_name']}")
     print(f"  VRAM allocated: {mem['vram_allocated_mb']:.1f}MB")
     print(f"  VRAM reserved:  {mem['vram_reserved_mb']:.1f}MB")
-    print(f"  LanceDB disk:   {mem['lance_disk_mb']:.1f}MB")
+    print(f"  Qdrant disk:    {mem['qdrant_disk_mb']:.1f}MB")
     print()
 
     # Cleanup
-    lance_dir = TEST_PROJECT / ".lance"
-    if lance_dir.exists():
-        shutil.rmtree(lance_dir)
+    qdrant_dir = TEST_PROJECT / ".qdrant"
+    if qdrant_dir.exists():
+        shutil.rmtree(qdrant_dir)
 
     print(_hr("="))
     print("  Benchmark complete")

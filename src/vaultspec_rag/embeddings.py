@@ -1,263 +1,254 @@
-"""Embedding model wrapper for vault semantic search.
+"""GPU-native embedding model wrapper for vault semantic search.
 
-Uses nomic-embed-text-v1.5 via sentence-transformers on CUDA GPU.
-CPU is NOT supported — all operations require a CUDA-enabled GPU.
+Uses sentence-transformers with Qwen3-Embedding-0.6B (1024d) for dense
+embeddings and SPLADE v3 via SparseEncoder for sparse embeddings.
+Requires CUDA GPU -- no CPU fallback.
 """
 
 from __future__ import annotations
 
-import functools
 import logging
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    "CUDA_INDEX_TAG",
-    "CUDA_INDEX_URL",
-    "EmbeddingModel",
-    "GPUNotAvailableError",
-    "get_device_info",
-]
-
-CUDA_INDEX_TAG = "cu130"
-CUDA_INDEX_URL = f"https://download.pytorch.org/whl/{CUDA_INDEX_TAG}"
+__all__ = ["EmbeddingModel", "SparseResult"]
 
 
-class GPUNotAvailableError(RuntimeError):
-    """Raised when CUDA GPU is required but not available."""
+@dataclass
+class SparseResult:
+    """Sparse embedding result compatible with Qdrant SparseVector interface.
 
-    pass
+    Wraps SPLADE COO tensor output into .indices / .values arrays
+    that match the interface expected by VaultStore.hybrid_search.
+    """
+
+    indices: list[int]
+    values: list[float]
 
 
 def _check_rag_deps() -> None:
-    """Verify RAG dependencies are installed."""
+    """Verify GPU RAG dependencies are installed."""
     try:
-        import sentence_transformers
         import torch
 
-        _ = sentence_transformers
-        _ = torch
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA GPU required. No CUDA device found. "
+                "Install torch with CUDA support."
+            )
     except ImportError:
         raise ImportError(
-            "RAG dependencies not installed. Run: uv sync --extra rag"
+            "GPU RAG dependencies not installed. "
+            "Run: uv pip install sentence-transformers torch"
+        ) from None
+
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        raise ImportError(
+            "sentence-transformers not installed. "
+            "Run: uv pip install sentence-transformers>=5.0"
         ) from None
 
 
-def _require_cuda() -> None:
-    """Verify CUDA GPU is available. Fails fast if not.
+def _sparse_tensor_to_results(sparse_tensor) -> list[SparseResult]:
+    """Convert a batch of SPLADE sparse tensors to SparseResult list.
 
-    Raises:
-        GPUNotAvailableError: If no CUDA device is detected. This is a
-            fatal error — CPU fallback is not supported.
+    SparseEncoder.encode() returns a sparse COO-like tensor. Each row
+    is a sparse vector over the vocabulary. We extract non-zero indices
+    and values for each document.
     """
     import torch
 
-    if not torch.cuda.is_available():
-        cuda_version = torch.version.cuda
-        torch_version = torch.__version__
-        raise GPUNotAvailableError(
-            f"CUDA GPU required but not available. "
-            f"Torch version: {torch_version}, CUDA compiled: {cuda_version}. "
-            f"vaultspec requires CUDA 13.0+ with compute capability >= 7.5. "
-            f"Install CUDA-enabled PyTorch: "
-            f"uv pip install torch --extra-index-url {CUDA_INDEX_URL}"
-        )
+    if hasattr(sparse_tensor, "tocsr"):
+        # scipy sparse matrix
+        csr = sparse_tensor.tocsr()
+        results = []
+        for i in range(csr.shape[0]):
+            row = csr.getrow(i)
+            indices = row.indices.tolist()
+            values = row.data.tolist()
+            results.append(SparseResult(indices=indices, values=values))
+        return results
 
+    if isinstance(sparse_tensor, torch.Tensor):
+        if sparse_tensor.is_sparse or sparse_tensor.is_sparse_csr:
+            dense = sparse_tensor.to_dense()
+        else:
+            dense = sparse_tensor
+        results = []
+        for i in range(dense.shape[0]):
+            row = dense[i]
+            nz = row.nonzero(as_tuple=True)[0]
+            indices = nz.tolist()
+            values = row[nz].tolist()
+            results.append(SparseResult(indices=indices, values=values))
+        return results
 
-def get_device_info() -> dict:
-    """Return GPU device information for embedding inference.
+    # numpy array fallback
+    import numpy as _np
 
-    Returns:
-        Dict with keys: device, gpu_name, vram_mb.
-
-    Raises:
-        GPUNotAvailableError: If no CUDA device is detected.
-    """
-    _check_rag_deps()
-    _require_cuda()
-    import torch
-
-    gpu_name = torch.cuda.get_device_name(0)
-    props = torch.cuda.get_device_properties(0)
-    # PyTorch 2.10+ uses total_memory, older versions use total_mem
-    try:
-        total_bytes = props.total_memory
-    except AttributeError:
-        total_bytes = props.total_mem
-    vram_mb = total_bytes // (1024 * 1024)
-    return {
-        "device": "cuda",
-        "gpu_name": gpu_name,
-        "vram_mb": vram_mb,
-    }
-
-
-@functools.lru_cache(maxsize=128)
-def _encode_query_cached(
-    model: Any, query_prefix: str, query: str
-) -> tuple[float, ...]:
-    """Encode and cache a query embedding as a tuple (hashable for LRU cache).
-
-    Module-level function so lru_cache does not capture ``self``.
-
-    Args:
-        model: A ``SentenceTransformer`` instance used for encoding.
-        query_prefix: Prefix string to prepend before the query text
-            (e.g. ``"search_query: "``).
-        query: The raw query string to encode.
-
-    Returns:
-        Normalized embedding as a tuple of floats (hashable for LRU cache).
-    """
-    prefixed = f"{query_prefix}{query}"
-    result = model.encode(prefixed, show_progress_bar=False, normalize_embeddings=True)
-    return tuple(float(x) for x in result)
+    arr = _np.asarray(sparse_tensor)
+    results = []
+    for i in range(arr.shape[0]):
+        row = arr[i]
+        nz = row.nonzero()[0]
+        indices = nz.tolist()
+        values = row[nz].tolist()
+        results.append(SparseResult(indices=indices, values=values))
+    return results
 
 
 class EmbeddingModel:
-    """Wrapper around nomic-embed-text-v1.5 for vault document embeddings.
+    """GPU-native embedding model using sentence-transformers.
 
-    Requires a CUDA-enabled GPU. Will fail fast on initialization if
-    no GPU is available.
+    Dense: Qwen3-Embedding-0.6B (1024 dimensions, fp16, flash_attention_2)
+    Sparse: SPLADE v3 via SparseEncoder (GPU-native learned sparse)
 
     Attributes:
-        MODEL_NAME: HuggingFace model ID used for embeddings.
-        DEFAULT_DIMENSION: Fallback embedding dimension before the model loads.
-        DOCUMENT_PREFIX: Prefix prepended to document text before encoding.
-        QUERY_PREFIX: Prefix prepended to query text before encoding.
-        DEFAULT_BATCH_SIZE: Fallback batch size for encoding (class-level
-            constant kept for backwards compatibility).
-        MAX_EMBED_CHARS: Fallback max characters per document for truncation
-            (class-level constant kept for backwards compatibility).
-        dimension: Actual embedding dimension queried from the loaded model.
+        MODEL_NAME: Default dense embedding model ID.
+        SPARSE_MODEL_NAME: Default sparse embedding model ID.
+        DEFAULT_DIMENSION: Embedding dimension for Qwen3-Embedding-0.6B.
+        DEFAULT_BATCH_SIZE: Default encoding batch size.
+        MAX_EMBED_CHARS: Maximum characters per document to embed.
+        dimension: Actual embedding dimension.
     """
 
-    MODEL_NAME = "nomic-ai/nomic-embed-text-v1.5"
-    DEFAULT_DIMENSION = 768  # Fallback for schema creation before model loads
-    DOCUMENT_PREFIX = "search_document: "
-    QUERY_PREFIX = "search_query: "
+    MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
+    SPARSE_MODEL_NAME = "naver/splade-v3"
+    DEFAULT_DIMENSION = 1024
+    DEFAULT_BATCH_SIZE = 64
+    MAX_EMBED_CHARS = 8000
 
     @staticmethod
     def _default_batch_size() -> int:
-        """Return the configured embedding batch size.
-
-        Returns:
-            Batch size integer from :attr:`~..config.VaultConfig.embedding_batch_size`.
-        """
-        from vaultspec.config import get_config
+        """Return the configured embedding batch size."""
+        from .config import get_config
 
         return get_config().embedding_batch_size
 
     @staticmethod
     def _default_max_embed_chars() -> int:
-        """Return the configured maximum characters per document to embed.
-
-        Returns:
-            Max character count integer from
-            :attr:`~..config.VaultConfig.max_embed_chars`.
-        """
-        from vaultspec.config import get_config
+        """Return the configured maximum characters per document to embed."""
+        from .config import get_config
 
         return get_config().max_embed_chars
 
-    # Class-level constants for backwards compat with direct attribute access
-    DEFAULT_BATCH_SIZE = 64
-    MAX_EMBED_CHARS = 8000
+    def __init__(self, model_name: str | None = None) -> None:
+        """Load dense and sparse models onto GPU.
 
-    def __init__(self) -> None:
-        """Load the embedding model onto the CUDA device.
+        Args:
+            model_name: Override the dense embedding model name.
+                Defaults to the config value or MODEL_NAME.
 
         Raises:
-            ImportError: If ``sentence-transformers`` or ``torch`` are not
-                installed (hint: ``uv sync --extra rag``).
-            GPUNotAvailableError: If no CUDA device is detected.
+            ImportError: If sentence-transformers or torch not installed.
+            RuntimeError: If no CUDA GPU is available.
         """
         _check_rag_deps()
-        _require_cuda()
-        from sentence_transformers import SentenceTransformer
 
-        from vaultspec.config import get_config
+        import torch
+        from sentence_transformers import SentenceTransformer, SparseEncoder
 
-        model_name = get_config().embedding_model
-        self._device = "cuda"
-        self.model = SentenceTransformer(
-            model_name, device="cuda", trust_remote_code=True
+        from .config import get_config
+
+        cfg = get_config()
+        dense_name = model_name or cfg.embedding_model
+        sparse_name = (
+            cfg.sparse_model
+            if hasattr(cfg, "sparse_model") and cfg.sparse_model
+            else self.SPARSE_MODEL_NAME
         )
-        # Query actual dimension from the loaded model
-        dim = self.model.get_sentence_embedding_dimension()
-        self.dimension: int = dim or self.DEFAULT_DIMENSION
-        logger.info("Embedding model loaded on cuda (dimension=%d)", self.dimension)
+
+        # Dense model: Qwen3-Embedding-0.6B with fp16 + flash_attention_2
+        model_kwargs = {
+            "torch_dtype": torch.float16,
+        }
+        # flash_attention_2 may not be available on all systems
+        try:
+            self._dense_model = SentenceTransformer(
+                dense_name,
+                model_kwargs={
+                    **model_kwargs,
+                    "attn_implementation": "flash_attention_2",
+                },
+                tokenizer_kwargs={"padding_side": "left"},
+            )
+        except Exception:
+            logger.info(
+                "flash_attention_2 not available, falling back to default attention"
+            )
+            self._dense_model = SentenceTransformer(
+                dense_name,
+                model_kwargs=model_kwargs,
+                tokenizer_kwargs={"padding_side": "left"},
+            )
+
+        # Sparse model: SPLADE v3 on GPU
+        self._sparse_model = SparseEncoder(
+            sparse_name,
+            device="cuda",
+            model_kwargs={"torch_dtype": "float16"},
+        )
+
+        self._device = "cuda"
+        self.dimension: int = (
+            cfg.embedding_dimension
+            if hasattr(cfg, "embedding_dimension")
+            else self.DEFAULT_DIMENSION
+        )
+
+        gpu_name = torch.cuda.get_device_name(0)
+        logger.info(
+            "Embedding models loaded on %s (dense=%s, sparse=%s, dim=%d)",
+            gpu_name,
+            dense_name,
+            sparse_name,
+            self.dimension,
+        )
 
     @property
     def device(self) -> str:
-        """Return the current device string (always 'cuda').
-
-        Returns:
-            The string ``"cuda"``.
-        """
+        """Return the current device string ('cuda')."""
         return self._device
 
     def encode_documents(
         self, texts: list[str], *, batch_size: int | None = None
     ) -> np.ndarray:
-        """Encode document texts with the document prefix.
-
-        Sorts texts by length before batching to minimize padding waste.
-        Long documents are truncated by the tokenizer at 8192 tokens.
+        """Encode document texts as dense embeddings on GPU.
 
         Args:
             texts: List of document texts (title + body).
-            batch_size: Max texts per encoding batch. Defaults to
-                ``DEFAULT_BATCH_SIZE``.
+            batch_size: Max texts per encoding batch.
 
         Returns:
-            numpy array of shape ``(n, dimension)`` with normalized embeddings,
-            in the same order as the input texts.
+            numpy array of shape ``(n, dimension)`` with normalized embeddings.
         """
         import numpy as np
 
         if batch_size is None:
             batch_size = self._default_batch_size()
 
-        # Truncate long documents to avoid massive padding overhead.
-        # Full text is still in LanceDB for BM25; embedding captures key concepts.
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
-        prefixed = [f"{self.DOCUMENT_PREFIX}{t}" for t in truncated]
 
-        # Sort by length to group similar-sized docs together,
-        # minimizing padding waste in GPU batches.
-        indexed = sorted(enumerate(prefixed), key=lambda x: len(x[1]))
-        sorted_texts = [t for _, t in indexed]
-        original_indices = [i for i, _ in indexed]
-
-        # Encode in length-sorted batches
-        all_embeddings: list[np.ndarray] = []
-        for start in range(0, len(sorted_texts), batch_size):
-            chunk = sorted_texts[start : start + batch_size]
-            batch_result = self.model.encode(
-                chunk, show_progress_bar=True, normalize_embeddings=True
-            )
-            all_embeddings.append(np.asarray(batch_result))
-
-        sorted_result = np.concatenate(all_embeddings, axis=0)
-
-        # Restore original order
-        result = np.empty_like(sorted_result)
-        for sorted_idx, orig_idx in enumerate(original_indices):
-            result[orig_idx] = sorted_result[sorted_idx]
-
-        return result
+        embeddings = self._dense_model.encode(
+            truncated,
+            batch_size=batch_size,
+            show_progress_bar=len(truncated) > 100,
+            normalize_embeddings=True,
+        )
+        return np.asarray(embeddings, dtype=np.float32)
 
     def encode_query(self, query: str) -> np.ndarray:
-        """Encode a search query with the query prefix.
+        """Encode a search query as a dense embedding on GPU.
 
-        Results are cached (LRU, 128 entries) to avoid re-encoding
-        identical queries.
+        Uses prompt_name="query" for Qwen3's instruction-based encoding.
 
         Args:
             query: Natural language query string.
@@ -267,5 +258,43 @@ class EmbeddingModel:
         """
         import numpy as np
 
-        cached_tuple = _encode_query_cached(self.model, self.QUERY_PREFIX, query)
-        return np.asarray(cached_tuple, dtype=np.float32)
+        embeddings = self._dense_model.encode(
+            [query],
+            prompt_name="query",
+            normalize_embeddings=True,
+        )
+        return np.asarray(embeddings[0], dtype=np.float32)
+
+    def encode_documents_sparse(
+        self, texts: list[str], *, batch_size: int = 32
+    ) -> list[SparseResult]:
+        """Encode document texts as SPLADE sparse vectors on GPU.
+
+        Args:
+            texts: List of document texts.
+            batch_size: Max texts per encoding batch.
+
+        Returns:
+            List of SparseResult objects with .indices and .values.
+        """
+        max_chars = self._default_max_embed_chars()
+        truncated = [t[:max_chars] for t in texts]
+
+        sparse_tensor = self._sparse_model.encode(
+            truncated,
+            batch_size=batch_size,
+        )
+        return _sparse_tensor_to_results(sparse_tensor)
+
+    def encode_query_sparse(self, query: str) -> SparseResult:
+        """Encode a search query as a SPLADE sparse vector on GPU.
+
+        Args:
+            query: Natural language query string.
+
+        Returns:
+            SparseResult with .indices and .values.
+        """
+        sparse_tensor = self._sparse_model.encode([query])
+        results = _sparse_tensor_to_results(sparse_tensor)
+        return results[0]

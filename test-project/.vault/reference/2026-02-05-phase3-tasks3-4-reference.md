@@ -679,24 +679,24 @@ for (depth, context) in context_stack.iter().enumerate().rev() {
 
 ### Should Fix (Before Release)
 
-2. **[HP-2]** Add integration tests
+1. **[HP-2]** Add integration tests
    - Priority: High
    - Effort: Medium (4-6 hours)
    - Test full keystroke flow end-to-end
 
-3. **[M-1]** Verify hyphen key parsing
+2. **[M-1]** Verify hyphen key parsing
    - Priority: Medium
    - Effort: Low (30 minutes)
    - Add test case for literal hyphen key
 
 ### Consider (Future Enhancement)
 
-4. **[M-3]** Implement full context predicate evaluation
+1. **[M-3]** Implement full context predicate evaluation
    - Priority: Medium (Phase 4)
    - Effort: High (1-2 days)
    - Support boolean expressions (&&, ||, !)
 
-5. **[M-4]** Document action equality requirements
+2. **[M-4]** Document action equality requirements
    - Priority: Low
    - Effort: Low (15 minutes)
    - Add documentation for custom actions

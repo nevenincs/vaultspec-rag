@@ -13,10 +13,10 @@ from tests.constants import (
 
 @pytest.fixture(scope="session")
 def rag_components():
-    """Set up real RAG components once for the entire test session (GPU only).
+    """Set up real RAG components once for the entire test session.
 
     Indexes a 13-doc subset covering all 5 doc_types and key features.
-    Uses .lance-fast-unit/ to avoid colliding with integration fixtures.
+    Uses .qdrant-fast-unit/ to avoid colliding with integration fixtures.
     """
     components = _build_rag_components(
         TEST_PROJECT, fast=True, lance_suffix=LANCE_SUFFIX_UNIT
@@ -24,6 +24,6 @@ def rag_components():
 
     yield components
 
-    lance_dir = components["lance_dir"]
-    if lance_dir.exists():
-        shutil.rmtree(lance_dir)
+    db_dir = components["db_dir"]
+    if db_dir.exists():
+        shutil.rmtree(db_dir)

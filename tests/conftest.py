@@ -9,6 +9,8 @@ import pytest
 
 if TYPE_CHECKING:
     import pathlib
+from vaultspec.config import reset_config
+
 from tests.constants import (
     GPU_FAST_CORPUS_STEMS,
     LANCE_SUFFIX_FAST,
@@ -16,16 +18,17 @@ from tests.constants import (
     PROJECT_ROOT,
     TEST_PROJECT,
 )
-from vaultspec.config import VaultSpecConfig, get_config, reset_config
+from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
+from vaultspec_rag.config import get_config
 
-# CPU is NOT supported.  All tests require CUDA GPU.
-# If running without GPU, tests that need RAG components will be skipped.
+# GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
 
 
 def _fast_index(indexer, model, store, root, stems):
     """Index only the given subset of document stems."""
-    from vaultspec_rag import IndexResult, prepare_document
     from vaultspec.vaultcore import scan_vault
+
+    from vaultspec_rag import IndexResult, prepare_document
 
     start = time.time()
 
@@ -48,9 +51,12 @@ def _fast_index(indexer, model, store, root, stems):
 
     texts = [f"{d.title}\n\n{d.content}" for d in docs]
     vectors = model.encode_documents(texts)
+    sparse_vecs = model.encode_documents_sparse(texts)
 
-    for doc, vec in zip(docs, vectors, strict=True):
+    for doc, vec, svec in zip(docs, vectors, sparse_vecs, strict=True):
         doc.vector = vec.tolist()
+        doc.sparse_indices = list(svec.indices)
+        doc.sparse_values = list(svec.values)
 
     store.ensure_table()
     store.upsert_documents(docs)
@@ -72,39 +78,34 @@ def _fast_index(indexer, model, store, root, stems):
 def _build_rag_components(
     root: pathlib.Path, *, fast: bool, lance_suffix: str = ""
 ) -> dict:
-    """Build real RAG components on CUDA GPU.
+    """Build RAG components for testing.
 
     When ``fast=True``, indexes a 13-doc subset covering all doc_types
     and key features.  When ``fast=False``, indexes the full corpus.
 
-    ``lance_suffix`` isolates the lance directory so that the fast and
-    full fixtures don't share the same ``.lance/`` path and corrupt each
-    other's data files.
-
-    Raises:
-        GPUNotAvailableError: If no CUDA GPU is available. CPU is not
-            supported — tests will fail fast with a clear error.
+    ``lance_suffix`` isolates the qdrant directory so that the fast and
+    full fixtures don't share the same storage path.
     """
+
     from vaultspec_rag import EmbeddingModel, VaultIndexer, VaultStore
 
-    lance_name = f".lance{lance_suffix}"
-    lance_dir = root / lance_name
+    qdrant_name = f".qdrant{lance_suffix}"
+    qdrant_dir = root / qdrant_name
 
     # Clean up any previous test data
-    if lance_dir.exists():
-        shutil.rmtree(lance_dir)
+    if qdrant_dir.exists():
+        shutil.rmtree(qdrant_dir)
 
-    model = EmbeddingModel()  # Fails fast if no CUDA GPU
-    store = VaultStore.__new__(VaultStore)
-    # Manually init with custom lance path to avoid sharing
-    import lancedb
+    model = EmbeddingModel()
+    store = VaultStore(root)
+    # Override db_path to use the suffixed directory for test isolation
+    if lance_suffix:
+        store._client.close()
+        store.db_path = qdrant_dir
+        store.db_path.mkdir(parents=True, exist_ok=True)
+        from qdrant_client import QdrantClient as _QdrantClient
 
-    store.root_dir = root
-    store.db_path = lance_dir
-    store.db = lancedb.connect(str(lance_dir))
-    store._embedding_dim = model.dimension
-    store._table = None
-    store._fts_dirty = True
+        store._client = _QdrantClient(path=str(qdrant_dir))
 
     indexer = VaultIndexer(root, model, store)
 
@@ -119,17 +120,16 @@ def _build_rag_components(
         "indexer": indexer,
         "index_result": result,
         "root": root,
-        "lance_dir": lance_dir,
+        "db_dir": qdrant_dir,
     }
 
 
 @pytest.fixture(scope="session")
 def rag_components():
-    """Set up real RAG components once for the entire test session (GPU only).
+    """Set up real RAG components once for the entire test session.
 
     Indexes a 13-doc subset covering all 5 doc_types and key features.
-    Requires CUDA GPU — fails fast with GPUNotAvailableError otherwise.
-    Uses .lance-fast/ to avoid colliding with the full-corpus fixture.
+    Uses .qdrant-fast/ to avoid colliding with the full-corpus fixture.
     """
     components = _build_rag_components(
         TEST_PROJECT, fast=True, lance_suffix=LANCE_SUFFIX_FAST
@@ -137,9 +137,9 @@ def rag_components():
 
     yield components
 
-    lance_dir = components["lance_dir"]
-    if lance_dir.exists():
-        shutil.rmtree(lance_dir)
+    db_dir = components["db_dir"]
+    if db_dir.exists():
+        shutil.rmtree(db_dir)
 
 
 @pytest.fixture(scope="session")
@@ -148,7 +148,7 @@ def rag_components_full():
 
     Only used by tests marked @pytest.mark.quality that need full-corpus
     coverage (quality precision tests, document count assertions, etc.).
-    Uses .lance-full/ to avoid colliding with the fast fixture.
+    Uses .qdrant-full/ to avoid colliding with the fast fixture.
     """
     components = _build_rag_components(
         TEST_PROJECT, fast=False, lance_suffix=LANCE_SUFFIX_FULL
@@ -156,19 +156,18 @@ def rag_components_full():
 
     yield components
 
-    lance_dir = components["lance_dir"]
-    if lance_dir.exists():
-        shutil.rmtree(lance_dir)
+    db_dir = components["db_dir"]
+    if db_dir.exists():
+        shutil.rmtree(db_dir)
 
 
 @pytest.fixture
 def require_gpu_corpus(rag_components):
-    """Assert GPU corpus is available (always true with GPU-only policy).
+    """Assert RAG corpus is available.
 
     Kept for backward compatibility with test files that reference it.
-    Since CPU is no longer supported, this is effectively a no-op.
     """
-    assert rag_components["model"].device == "cuda", "GPU required"
+    assert rag_components["model"] is not None
 
 
 def _cleanup_test_project(root: pathlib.Path) -> None:

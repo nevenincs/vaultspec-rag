@@ -1,4 +1,4 @@
-"""Tests for embedding model: EmbeddingModel and DeviceInfo."""
+"""Tests for embedding model: EmbeddingModel."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import importlib.util
 
 import pytest
 
-HAS_RAG = all(
+HAS_GPU_RAG = all(
     importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
+    for pkg in ("qdrant_client", "sentence_transformers", "torch")
 )
 
 pytestmark = [
     pytest.mark.unit,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
+    pytest.mark.skipif(not HAS_GPU_RAG, reason="GPU RAG dependencies not installed"),
 ]
 
 
@@ -21,7 +21,7 @@ pytestmark = [
 
 
 class TestEmbeddingModel:
-    """Tests for the real EmbeddingModel with nomic-embed-text-v1.5."""
+    """Tests for the real EmbeddingModel with Qwen3-Embedding-0.6B on GPU."""
 
     def test_model_loads(self, rag_components):
         model = rag_components["model"]
@@ -70,33 +70,18 @@ class TestEmbeddingModel:
         assert vectors.shape[0] == 3
         assert vectors.shape[1] == model.dimension
 
-    def test_query_embedding_cache_hit(self, rag_components):
-        """Repeated identical queries should hit the LRU cache."""
+    def test_encode_documents_sparse(self, rag_components):
+        """Sparse encoding should return SparseEmbedding objects."""
         model = rag_components["model"]
-        query = "cache test query for embedding"
+        texts = ["This is a test document about architecture decisions."]
+        sparse_vecs = model.encode_documents_sparse(texts)
+        assert len(sparse_vecs) == 1
+        assert hasattr(sparse_vecs[0], "indices")
+        assert hasattr(sparse_vecs[0], "values")
 
-        # Clear any previous cache state
-        model._encode_query_cached.cache_clear()
-
-        model.encode_query(query)
-        info_after_first = model._encode_query_cached.cache_info()
-        assert info_after_first.misses >= 1
-
-        model.encode_query(query)
-        info_after_second = model._encode_query_cached.cache_info()
-        assert info_after_second.hits >= 1
-
-
-# ---- Device Info Tests ----
-
-
-class TestDeviceInfo:
-    """Tests for device detection utility."""
-
-    def test_get_device_info(self):
-        from vaultspec_rag import get_device_info
-
-        info = get_device_info()
-        assert info["device"] == "cuda"
-        assert info["gpu_name"] is not None
-        assert info["vram_mb"] is not None
+    def test_encode_query_sparse(self, rag_components):
+        """Sparse query encoding should return a SparseEmbedding."""
+        model = rag_components["model"]
+        sparse_vec = model.encode_query_sparse("vector database")
+        assert hasattr(sparse_vec, "indices")
+        assert hasattr(sparse_vec, "values")

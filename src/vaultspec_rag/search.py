@@ -9,12 +9,13 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import pathlib
 
     from vaultspec.graph import VaultGraph
+
     from .embeddings import EmbeddingModel
     from .store import VaultStore
 
@@ -28,26 +29,23 @@ __all__ = [
     "rerank_with_graph",
 ]
 
-# Filter token patterns: type:adr, feature:rag, date:2026-02, tag:#research
-_FILTER_PATTERN = re.compile(r"\b(type|feature|date|tag):(\S+)")
+# Filter token patterns: type:adr, feature:rag, date:2026-02,
+# tag:#research, lang:python, path:src/
+_FILTER_PATTERN = re.compile(r"\b(type|feature|date|tag|lang|path):(\S+)")
 
 # Map filter keys to store column names
 _FILTER_KEY_MAP = {
     "type": "doc_type",
     "feature": "feature",
     "date": "date",
+    "lang": "language",
+    "path": "path",
 }
 
 
 @dataclass
 class ParsedQuery:
-    """A parsed search query with extracted metadata filters.
-
-    Attributes:
-        text: Natural language portion of the query after filter tokens are removed.
-        filters: Metadata filters extracted from the query
-            (e.g. ``{"doc_type": "adr"}``).
-    """
+    """A parsed search query with extracted metadata filters."""
 
     text: str  # natural language portion
     filters: dict[str, str]  # extracted metadata filters
@@ -55,52 +53,24 @@ class ParsedQuery:
 
 @dataclass
 class SearchResult:
-    """A single search result from the vault.
-
-    Attributes:
-        id: Document stem identifier (e.g. ``"2026-02-12-rag-plan"``).
-        path: Relative path within the vault docs directory.
-        title: H1 heading extracted from the document body.
-        doc_type: Document type string (e.g. ``"adr"``, ``"plan"``).
-        feature: Feature tag without the leading ``#`` (e.g. ``"rag"``).
-        date: ISO date string from the document frontmatter.
-        score: Relevance score after re-ranking (higher is better).
-        snippet: First 200 characters of the document content.
-    """
+    """A single search result from vault or codebase."""
 
     id: str
     path: str
     title: str
-    doc_type: str
-    feature: str
-    date: str
     score: float
-    snippet: str  # first 200 chars of content
+    snippet: str
+    source: Literal["vault", "codebase"]
+    doc_type: str = ""
+    feature: str = ""
+    date: str = ""
+    language: str = ""
+    line_start: int | None = None
+    line_end: int | None = None
 
 
 def parse_query(raw_query: str) -> ParsedQuery:
-    """Parse a raw query string into text and metadata filters.
-
-    Extracts filter tokens (type:adr, feature:rag, date:2026-02, tag:#research)
-    and returns the remaining text as the natural language query.
-
-    Args:
-        raw_query: Raw search string, optionally containing ``key:value``
-            filter tokens.
-
-    Returns:
-        A ``ParsedQuery`` with ``text`` as the natural language portion and
-        ``filters`` as the extracted metadata constraints.
-
-    Examples::
-
-        "type:adr feature:rag vector database"
-        -> ParsedQuery(text="vector database",
-                       filters={"doc_type": "adr", "feature": "rag"})
-
-        "vector database"
-        -> ParsedQuery(text="vector database", filters={})
-    """
+    """Parse a raw query string into text and metadata filters."""
     filters: dict[str, str] = {}
 
     for match in _FILTER_PATTERN.finditer(raw_query):
@@ -108,8 +78,6 @@ def parse_query(raw_query: str) -> ParsedQuery:
         value = match.group(2)
 
         if key == "tag":
-            # tag: filter is not a direct column filter, handled separately
-            # Store it for potential graph re-ranking use
             filters["tag"] = value.lstrip("#")
         elif key in _FILTER_KEY_MAP:
             filters[_FILTER_KEY_MAP[key]] = value
@@ -128,42 +96,31 @@ def rerank_with_graph(
     query: ParsedQuery,
     graph: VaultGraph | None = None,
 ) -> list[SearchResult]:
-    """Apply graph-aware score boosts to search results.
+    """Apply graph-aware score boosts to vault search results."""
+    # Only re-rank vault results using the graph
+    vault_results = [r for r in results if r.source == "vault"]
+    code_results = [r for r in results if r.source == "codebase"]
 
-    Uses the existing VaultGraph API for:
-    - Authority boost: high in-link count documents get score multiplier
-    - Neighborhood boost: docs sharing feature with query filter get boost
-    - Recency boost: more recent documents get mild boost
+    if not vault_results:
+        return results
 
-    Args:
-        results: Search results to re-rank.
-        root_dir: Path to vault root (used if graph is None).
-        query: Parsed query with filters.
-        graph: Optional pre-built VaultGraph. If None, one is constructed.
-
-    Returns:
-        The same ``results`` list, sorted in descending order by adjusted score.
-    """
     if graph is None:
         from vaultspec.graph import VaultGraph as _VaultGraph
 
         try:
             graph = _VaultGraph(root_dir)
         except Exception as e:
-            logger.error("Search failed: %s", e, exc_info=True)
+            logger.error("Graph build failed: %s", e)
             return results
 
-    for result in results:
+    for result in vault_results:
         node = graph.nodes.get(result.id)
         if node is None:
             continue
 
-        # Authority boost: score *= (1 + 0.1 * min(in_link_count, 10))
         in_link_count = len(node.in_links)
         result.score *= 1 + 0.1 * min(in_link_count, 10)
 
-        # Neighborhood boost: if query has a feature filter, boost docs
-        # whose wiki-link neighbors share that feature tag
         feature_filter = query.filters.get("feature")
         if feature_filter:
             feature_tag = f"#{feature_filter}"
@@ -176,19 +133,14 @@ def rerank_with_graph(
             if neighbor_has_feature:
                 result.score *= 1.15
 
-    # Recency boost: sort by date descending, most recent gets highest rank
-    dated = [(r, r.date) for r in results]
-    dated.sort(key=lambda x: x[1], reverse=True)
-    for rank, (result, _) in enumerate(dated):
-        result.score *= 1 + 0.02 * (len(dated) - rank)
-
-    # Re-sort by adjusted score
-    results.sort(key=lambda r: r.score, reverse=True)
-    return results
+    # Combined and re-sorted
+    all_results = vault_results + code_results
+    all_results.sort(key=lambda r: r.score, reverse=True)
+    return all_results
 
 
 class VaultSearcher:
-    """Orchestrates vault semantic search with hybrid retrieval and re-ranking."""
+    """Orchestrates hybrid search across vault and codebase."""
 
     def __init__(
         self,
@@ -198,17 +150,8 @@ class VaultSearcher:
         *,
         graph_ttl_seconds: float | None = None,
     ) -> None:
-        """Initialize the searcher with a workspace root, embedding model, and store.
-
-        Args:
-            root_dir: Path to the vault workspace root.
-            model: Embedding model used to encode query text.
-            store: Vector store to search against.
-            graph_ttl_seconds: TTL for the cached VaultGraph in seconds.
-                Defaults to the configured value from ``get_config()``.
-        """
         if graph_ttl_seconds is None:
-            from vaultspec.config import get_config
+            from .config import get_config
 
             graph_ttl_seconds = get_config().graph_ttl_seconds
         self.root_dir = root_dir
@@ -219,11 +162,6 @@ class VaultSearcher:
         self._graph_built_at: float = 0.0
 
     def _get_graph(self) -> VaultGraph | None:
-        """Return a cached VaultGraph, rebuilding if TTL expired.
-
-        Returns:
-            A live ``VaultGraph`` instance, or ``None`` if construction fails.
-        """
         from vaultspec.graph import VaultGraph as _VaultGraph
 
         now = time.monotonic()
@@ -232,68 +170,97 @@ class VaultSearcher:
                 self._cached_graph = _VaultGraph(self.root_dir)
                 self._graph_built_at = now
             except Exception as e:
-                logger.error("Search failed: %s", e, exc_info=True)
+                logger.error("Search failed: %s", e)
                 self._graph_built_at = now
                 return None
         return self._cached_graph
 
-    def search(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
-        """Execute a full search pipeline: parse, embed, search, re-rank.
-
-        Args:
-            raw_query: Natural language query with optional filter tokens.
-            top_k: Number of results to return.
-
-        Returns:
-            List of SearchResult sorted by relevance score.
-        """
+    def search_vault(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
+        """Search only the documentation vault."""
         parsed = parse_query(raw_query)
+        query_text = parsed.text or raw_query
+        query_vector = self.model.encode_query(query_text)
+        sparse_vector = self.model.encode_query_sparse(query_text)
+        store_filters = {
+            k: v
+            for k, v in parsed.filters.items()
+            if k in ("doc_type", "feature", "date")
+        }
 
-        # Encode query
-        query_vector = self.model.encode_query(
-            parsed.text if parsed.text else raw_query
-        )
-
-        # Build store-level filters (exclude 'tag' which isn't a column)
-        store_filters = {k: v for k, v in parsed.filters.items() if k != "tag"}
-
-        # Execute hybrid search, requesting more than top_k for re-ranking
-        fetch_limit = min(top_k * 3, 50)
         raw_results = self.store.hybrid_search(
-            query_vector=query_vector,
-            query_text=parsed.text if parsed.text else raw_query,
-            filters=store_filters if store_filters else None,
-            limit=fetch_limit,
+            query_vector=query_vector.tolist(),
+            query_text=query_text,
+            filters=store_filters or None,
+            limit=top_k * 2,
+            sparse_vector=sparse_vector,
         )
 
-        # Build SearchResult list
         results = []
         for r in raw_results:
-            score = r.get("_relevance_score", r.get("_distance", 0.0))
-            # Normalize: _distance is inverse (lower = better), _relevance_score
-            # is direct (higher = better). If using _distance, invert it.
-            if "_relevance_score" not in r and "_distance" in r:
-                dist = r["_distance"]
-                score = 1.0 / (1.0 + dist) if dist >= 0 else 0.0
-
-            content = r.get("content", "")
-            snippet = content[:200].strip() if content else ""
-
+            score = r.get("_relevance_score", 0.0)
             results.append(
                 SearchResult(
                     id=r["id"],
                     path=r["path"],
                     title=r.get("title", ""),
+                    score=float(score),
+                    snippet=r.get("content", "")[:200].strip(),
+                    source="vault",
                     doc_type=r.get("doc_type", ""),
                     feature=r.get("feature", ""),
                     date=r.get("date", ""),
-                    score=float(score),
-                    snippet=snippet,
                 )
             )
 
-        # Apply graph-aware re-ranking with cached graph
         graph = self._get_graph()
         results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
-
         return results[:top_k]
+
+    def search_codebase(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
+        """Search only the source codebase."""
+        parsed = parse_query(raw_query)
+        query_text = parsed.text or raw_query
+        query_vector = self.model.encode_query(query_text)
+        sparse_vector = self.model.encode_query_sparse(query_text)
+        store_filters = {
+            k: v for k, v in parsed.filters.items() if k in ("language", "path")
+        }
+
+        raw_results = self.store.hybrid_search_codebase(
+            query_vector=query_vector.tolist(),
+            query_text=query_text,
+            filters=store_filters or None,
+            limit=top_k,
+            sparse_vector=sparse_vector,
+        )
+
+        results = []
+        for r in raw_results:
+            score = r.get("_relevance_score", 0.0)
+            results.append(
+                SearchResult(
+                    id=r["id"],
+                    path=r["path"],
+                    title=r["path"],
+                    score=float(score),
+                    snippet=r.get("content", "")[:200].strip(),
+                    source="codebase",
+                    language=r.get("language", ""),
+                    line_start=r.get("line_start"),
+                    line_end=r.get("line_end"),
+                )
+            )
+        return results
+
+    def search_all(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
+        """Search both vault and codebase and combine results."""
+        vault_results = self.search_vault(raw_query, top_k=top_k)
+        code_results = self.search_codebase(raw_query, top_k=top_k)
+
+        all_results = vault_results + code_results
+        all_results.sort(key=lambda r: r.score, reverse=True)
+        return all_results[:top_k]
+
+    def search(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
+        """Alias for search_all — searches vault and codebase."""
+        return self.search_all(raw_query, top_k=top_k)

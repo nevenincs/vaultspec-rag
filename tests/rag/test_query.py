@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
-HAS_RAG = all(
-    importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
-)
-
-pytestmark = [
-    pytest.mark.unit,
-    pytest.mark.skipif(not HAS_RAG, reason="RAG dependencies not installed"),
-]
+pytestmark = [pytest.mark.unit]
 
 
 class TestQueryParsing:

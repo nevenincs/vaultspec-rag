@@ -1,30 +1,36 @@
 """RAG (Retrieval-Augmented Generation) for vault documents.
 
-Extracted module providing heavy ML-dependent retrieval logic.
+GPU-native embedding pipeline using sentence-transformers + Qwen3-Embedding-0.6B
+for dense embeddings and SPLADE v3 for sparse. Qdrant local mode for vector storage.
 """
 
 from __future__ import annotations
 
-from .embeddings import CUDA_INDEX_TAG, CUDA_INDEX_URL, EmbeddingModel, GPUNotAvailableError, get_device_info
+from .api import get_related, index, list_documents
+from .embeddings import EmbeddingModel
 from .indexer import IndexResult, VaultIndexer, prepare_document
-from .search import ParsedQuery, SearchResult, VaultSearcher, parse_query, rerank_with_graph
-from .store import EMBEDDING_DIM, VaultDocument, VaultStore
+from .search import (
+    ParsedQuery,
+    SearchResult,
+    VaultSearcher,
+    parse_query,
+    rerank_with_graph,
+)
+from .store import VaultDocument, VaultStore
 
 __all__ = [
-    "CUDA_INDEX_TAG",
-    "CUDA_INDEX_URL",
     "EmbeddingModel",
-    "GPUNotAvailableError",
-    "get_device_info",
     "IndexResult",
-    "VaultIndexer",
-    "prepare_document",
     "ParsedQuery",
     "SearchResult",
-    "VaultSearcher",
-    "parse_query",
-    "rerank_with_graph",
-    "EMBEDDING_DIM",
     "VaultDocument",
+    "VaultIndexer",
+    "VaultSearcher",
     "VaultStore",
+    "get_related",
+    "index",
+    "list_documents",
+    "parse_query",
+    "prepare_document",
+    "rerank_with_graph",
 ]

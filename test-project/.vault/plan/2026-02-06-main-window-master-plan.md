@@ -110,6 +110,7 @@ Phases 1 and 3 are largely sequential, as Phase 1 lays the groundwork for all su
 ## Verification
 
 Mission success will be verified by:
+
 * The main application window launching as a frameless window with custom drag and resize functionality.
 * Successful application of platform-native Acrylic/Vibrancy effects on both Windows and macOS, visually confirmed.
 * The `pp-core-snappoints` snapping grid actively guiding window placement and resizing, with accurate visual feedback (overlay).

@@ -1,22 +1,15 @@
 """Integration tests for VaultStore: CRUD and hybrid search.
 
-Unit tests for store helpers (_parse_json_list, _build_where) have been moved to:
-src/vaultspec/rag/tests/test_store.py
+Tests updated for Qdrant-backed store (replacing LanceDB).
 """
 
 from __future__ import annotations
 
 import importlib.util
-import shutil
 
 import pytest
 
-from tests.constants import TEST_PROJECT
-
-HAS_RAG = all(
-    importlib.util.find_spec(pkg) is not None
-    for pkg in ("lancedb", "sentence_transformers", "torch")
-)
+HAS_RAG = importlib.util.find_spec("qdrant_client") is not None
 
 pytestmark = [
     pytest.mark.search,
@@ -28,7 +21,7 @@ pytestmark = [
 
 
 class TestVaultStore:
-    """Tests for the real LanceDB store with actual data."""
+    """Tests for the Qdrant store with actual data."""
 
     def test_store_has_documents(self, rag_components):
         store = rag_components["store"]
@@ -44,20 +37,15 @@ class TestVaultStore:
             assert isinstance(doc_id, str)
             assert len(doc_id) > 0
 
-    def test_vault_store_context_manager(self):
+    def test_vault_store_context_manager(self, tmp_path):
         """VaultStore should support the context manager protocol."""
         from vaultspec_rag import VaultStore
 
-        lance_dir = TEST_PROJECT / ".lance-test"
-        try:
-            with VaultStore(lance_dir) as store:
-                assert store.db is not None
-                store.ensure_table()
-            # After exiting context, db should be released
-            assert store.db is None
-        finally:
-            if lance_dir.exists():
-                shutil.rmtree(lance_dir, ignore_errors=True)
+        with VaultStore(tmp_path) as store:
+            assert store._client is not None
+            store.ensure_table()
+        # After exiting context, client should be released
+        assert store._client is None
 
     def test_hybrid_search_returns_results(self, rag_components):
         model = rag_components["model"]
@@ -75,16 +63,14 @@ class TestVaultStore:
             assert "id" in r
             assert "path" in r
 
-    def test_search_empty_store(self):
+    def test_search_empty_store(self, tmp_path):
         """Searching a fresh VaultStore with no indexed docs should return
         empty results without crashing.
         """
         from vaultspec_rag import EmbeddingModel, VaultStore
 
-        lance_dir = TEST_PROJECT / ".lance-empty"
+        store = VaultStore(tmp_path)
         try:
-            # Create a minimal vault structure so VaultStore can connect
-            store = VaultStore(lance_dir)
             store.ensure_table()
 
             model = EmbeddingModel()
@@ -97,5 +83,4 @@ class TestVaultStore:
             )
             assert results == []
         finally:
-            if lance_dir.exists():
-                shutil.rmtree(lance_dir, ignore_errors=True)
+            store.close()

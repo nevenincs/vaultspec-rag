@@ -1,7 +1,7 @@
 """Indexing pipeline for vault semantic search.
 
 Scans vault documents, extracts metadata, generates embeddings, and
-stores them in the LanceDB vector store. Supports full and incremental indexing.
+stores them in the Qdrant vector store. Supports full and incremental indexing.
 """
 
 from __future__ import annotations
@@ -21,11 +21,12 @@ if TYPE_CHECKING:
     from .store import VaultStore
 
 from vaultspec.vaultcore import DocType, get_doc_type, parse_vault_metadata, scan_vault
-from .store import VaultDocument
+
+from .store import CodeChunk, VaultDocument
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["IndexResult", "VaultIndexer", "prepare_document"]
+__all__ = ["CodebaseIndexer", "IndexResult", "VaultIndexer", "prepare_document"]
 
 
 @dataclass
@@ -33,20 +34,111 @@ class IndexResult:
     """Result of an indexing operation.
 
     Attributes:
-        total: Total number of docs in the index after the operation.
-        added: Number of newly indexed documents.
-        updated: Number of re-indexed (modified) documents.
-        removed: Number of documents removed from the index.
+        total: Total number of items in the index after the operation.
+        added: Number of newly indexed items.
+        updated: Number of re-indexed (modified) items.
+        removed: Number of items removed from the index.
         duration_ms: Wall-clock time for the operation in milliseconds.
-        device: Compute device used for embeddings (e.g. ``"cuda"``, ``"cpu"``).
+        device: Compute device used for embeddings (e.g. ``"cpu"``).
+        files: Number of files processed (for codebase indexing).
     """
 
-    total: int  # total docs in index after operation
-    added: int  # newly indexed
-    updated: int  # re-indexed (modified)
-    removed: int  # removed from index
-    duration_ms: int  # wall-clock time
-    device: str  # "cuda" (GPU required)
+    total: int
+    added: int
+    updated: int
+    removed: int
+    duration_ms: int
+    device: str
+    files: int = 0
+
+
+class TextSplitter:
+    """Simple structure-aware text splitter for code and markdown."""
+
+    def __init__(
+        self, chunk_size: int = 512, chunk_overlap: int = 50, language: str = "text"
+    ):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.language = language
+
+        # Language-specific separators (order matters: most structural first)
+        self.separators = {
+            "python": ["\nclass ", "\ndef ", "\n\n", "\n", " ", ""],
+            "rust": [
+                "\nfn ",
+                "\nimpl ",
+                "\ntrait ",
+                "\nstruct ",
+                "\nenum ",
+                "\n\n",
+                "\n",
+                " ",
+                "",
+            ],
+            "markdown": [
+                "\n# ",
+                "\n## ",
+                "\n### ",
+                "\n#### ",
+                "\n\n",
+                "\n",
+                " ",
+                "",
+            ],
+            "text": ["\n\n", "\n", " ", ""],
+        }.get(language, ["\n\n", "\n", " ", ""])
+
+    def split_text(self, text: str) -> list[str]:
+        """Split text into chunks based on separators and chunk size."""
+        # This is a simplified version of RecursiveCharacterTextSplitter logic
+        chunks = []
+        if not text:
+            return chunks
+
+        def _recursive_split(remaining_text: str, seps: list[str]) -> list[str]:
+            if len(remaining_text) <= self.chunk_size:
+                return [remaining_text]
+
+            if not seps:
+                # Force split by length if no separators left
+                return [
+                    remaining_text[i : i + self.chunk_size]
+                    for i in range(
+                        0, len(remaining_text), self.chunk_size - self.chunk_overlap
+                    )
+                ]
+
+            separator = seps[0]
+            splits = remaining_text.split(separator)
+
+            final_chunks = []
+            current_chunk = ""
+
+            for s in splits:
+                if not current_chunk:
+                    current_chunk = s
+                elif len(current_chunk) + len(separator) + len(s) <= self.chunk_size:
+                    current_chunk += separator + s
+                else:
+                    final_chunks.append(current_chunk)
+                    # Handle overlap (very basic)
+                    overlap_start = max(0, len(current_chunk) - self.chunk_overlap)
+                    current_chunk = current_chunk[overlap_start:] + separator + s
+
+            if current_chunk:
+                final_chunks.append(current_chunk)
+
+            # If any chunk is still too big, recurse with next separator
+            processed = []
+            for c in final_chunks:
+                if len(c) > self.chunk_size:
+                    processed.extend(_recursive_split(c, seps[1:]))
+                else:
+                    processed.append(c)
+            return processed
+
+        return _recursive_split(text, self.separators)
 
 
 def _extract_title(body: str) -> str:
@@ -99,7 +191,7 @@ def prepare_document(
     try:
         content = path.read_text(encoding="utf-8")
     except Exception as e:
-        logger.warning(f"Cannot read {path}: {e}")
+        logger.warning("Cannot read %s: %s", path, e)
         return None
 
     metadata, body = parse_vault_metadata(content)
@@ -108,7 +200,7 @@ def prepare_document(
     if doc_type_enum is None:
         return None
 
-    from vaultspec.config import get_config
+    from .config import get_config
 
     docs_dir = root_dir / get_config().docs_dir
     try:
@@ -128,8 +220,8 @@ def prepare_document(
         doc_type=doc_type_enum.value,
         feature=feature,
         date=metadata.date or "",
-        tags=VaultDocument.tags_to_json(metadata.tags),
-        related=VaultDocument.related_to_json(metadata.related),
+        tags=metadata.tags,
+        related=metadata.related,
         title=title,
         content=body.strip(),
         vector=[],  # filled during embedding step
@@ -152,14 +244,14 @@ class VaultIndexer:
             model: Embedding model used to encode document text.
             store: Vector store where indexed documents are persisted.
         """
-        from vaultspec.config import get_config
+        from .config import get_config
 
         cfg = get_config()
 
         self.root_dir = root_dir
         self.model = model
         self.store = store
-        self._meta_path = root_dir / cfg.lance_dir / cfg.index_metadata_file
+        self._meta_path = root_dir / cfg.qdrant_dir / cfg.index_metadata_file
 
     def full_index(self) -> IndexResult:
         """Full re-index of all vault documents.
@@ -201,10 +293,13 @@ class VaultIndexer:
         # Batch-embed all document texts
         texts = [f"{d.title}\n\n{d.content}" for d in docs]
         vectors = self.model.encode_documents(texts)
+        sparse_vecs = self.model.encode_documents_sparse(texts)
 
         # Assign vectors to documents
-        for doc, vec in zip(docs, vectors, strict=True):
+        for doc, vec, svec in zip(docs, vectors, sparse_vecs, strict=True):
             doc.vector = vec.tolist()
+            doc.sparse_indices = list(svec.indices)
+            doc.sparse_values = list(svec.values)
 
         # Clear existing table and write all documents
         self.store.ensure_table()
@@ -292,8 +387,11 @@ class VaultIndexer:
         if docs_to_index:
             texts = [f"{d.title}\n\n{d.content}" for d in docs_to_index]
             vectors = self.model.encode_documents(texts)
-            for doc, vec in zip(docs_to_index, vectors, strict=True):
+            sparse_vecs = self.model.encode_documents_sparse(texts)
+            for doc, vec, svec in zip(docs_to_index, vectors, sparse_vecs, strict=True):
                 doc.vector = vec.tolist()
+                doc.sparse_indices = list(svec.indices)
+                doc.sparse_values = list(svec.values)
             self.store.upsert_documents(docs_to_index)
 
         # Delete removed documents
@@ -321,7 +419,7 @@ class VaultIndexer:
             docs: List of indexed documents whose paths are used to read mtimes.
         """
         meta = {}
-        from vaultspec.config import get_config
+        from .config import get_config
 
         docs_dir = self.root_dir / get_config().docs_dir
         for doc in docs:
@@ -360,6 +458,163 @@ class VaultIndexer:
             Mapping of document stem to ``st_mtime`` float, or an empty
             dict if the file does not exist or cannot be parsed.
         """
+        if not self._meta_path.exists():
+            return {}
+        try:
+            return json.loads(self._meta_path.read_text(encoding="utf-8"))
+        except (KeyError, ValueError, OSError):
+            return {}
+
+
+class CodebaseIndexer:
+    """Orchestrates source code indexing into the vector store."""
+
+    def __init__(
+        self,
+        root_dir: pathlib.Path,
+        model: EmbeddingModel,
+        store: VaultStore,
+    ) -> None:
+        self.root_dir = root_dir
+        self.model = model
+        self.store = store
+        from .config import get_config
+
+        cfg = get_config()
+        self._meta_path = root_dir / cfg.qdrant_dir / "code_index_meta.json"
+
+    def _get_language(self, path: pathlib.Path) -> str:
+        ext = path.suffix.lower()
+        mapping = {
+            ".py": "python",
+            ".rs": "rust",
+            ".md": "markdown",
+            ".js": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".jsx": "javascript",
+        }
+        return mapping.get(ext, "text")
+
+    def _scan_codebase(self) -> list[pathlib.Path]:
+        """Scan codebase for supported source files, respecting .gitignore."""
+        import subprocess
+
+        # Use git ls-files if available
+        try:
+            res = subprocess.run(
+                ["git", "ls-files"],
+                cwd=self.root_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            all_paths = [self.root_dir / p for p in res.stdout.splitlines()]
+        except (subprocess.SubprocessError, FileNotFoundError):
+            # Fallback to recursive glob
+            all_paths = list(self.root_dir.rglob("*"))
+
+        supported_exts = {".py", ".rs", ".md", ".js", ".ts", ".tsx", ".jsx"}
+        return [
+            p
+            for p in all_paths
+            if p.is_file()
+            and p.suffix.lower() in supported_exts
+            and ".venv" not in p.parts
+            and ".git" not in p.parts
+            and "node_modules" not in p.parts
+        ]
+
+    def _chunk_file(self, path: pathlib.Path) -> list[CodeChunk]:
+        """Read file and split into CodeChunks."""
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.warning("Cannot read %s: %s", path, e)
+            return []
+
+        language = self._get_language(path)
+        rel_path = str(path.relative_to(self.root_dir)).replace("\\", "/")
+        splitter = TextSplitter(language=language)
+        text_chunks = splitter.split_text(content)
+
+        chunks = []
+        for _i, text in enumerate(text_chunks):
+            # Try to find line range (very approximate)
+            start_idx = content.find(text)
+            line_start = content.count("\n", 0, start_idx) + 1 if start_idx != -1 else 1
+            line_end = line_start + text.count("\n")
+
+            chunks.append(
+                CodeChunk(
+                    id=f"{rel_path}:{line_start}-{line_end}",
+                    path=rel_path,
+                    language=language,
+                    content=text,
+                    line_start=line_start,
+                    line_end=line_end,
+                    vector=[],
+                )
+            )
+        return chunks
+
+    def full_index(self) -> IndexResult:
+        start = time.time()
+        paths = self._scan_codebase()
+        all_chunks = []
+
+        with ThreadPoolExecutor() as pool:
+            results = pool.map(self._chunk_file, paths)
+            for file_chunks in results:
+                all_chunks.extend(file_chunks)
+
+        if not all_chunks:
+            return IndexResult(
+                total=0,
+                added=0,
+                updated=0,
+                removed=0,
+                duration_ms=0,
+                device=self.model.device,
+            )
+
+        # Batch embed
+        texts = [c.content for c in all_chunks]
+        vectors = self.model.encode_documents(texts)
+        sparse_vecs = self.model.encode_documents_sparse(texts)
+        for chunk, vec, svec in zip(all_chunks, vectors, sparse_vecs, strict=True):
+            chunk.vector = vec.tolist()
+            chunk.sparse_indices = list(svec.indices)
+            chunk.sparse_values = list(svec.values)
+
+        self.store.ensure_code_table()
+        # Full clear for full index
+        existing_ids = self.store.get_all_code_ids()
+        if existing_ids:
+            self.store.delete_code_chunks(list(existing_ids))
+
+        self.store.upsert_code_chunks(all_chunks)
+
+        # Save meta
+        meta = {str(p.relative_to(self.root_dir)): p.stat().st_mtime for p in paths}
+        self._write_meta(meta)
+
+        duration_ms = int((time.time() - start) * 1000)
+        return IndexResult(
+            total=len(all_chunks),
+            added=len(all_chunks),
+            updated=0,
+            removed=0,
+            duration_ms=duration_ms,
+            device=self.model.device,
+            files=len(paths),
+        )
+
+    def _write_meta(self, meta: dict[str, float]) -> None:
+        self._meta_path.parent.mkdir(parents=True, exist_ok=True)
+        self._meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    def _load_meta(self) -> dict[str, float]:
         if not self._meta_path.exists():
             return {}
         try:

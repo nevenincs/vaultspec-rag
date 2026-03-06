@@ -20,14 +20,16 @@ class TestSearchResult:
             id="test-doc",
             path="adr/test-doc.md",
             title="Test Doc",
+            score=0.95,
+            snippet="Test content...",
+            source="vault",
             doc_type="adr",
             feature="auth",
             date="2026-02-08",
-            score=0.95,
-            snippet="Test content...",
         )
         assert sr.id == "test-doc"
         assert sr.score == 0.95
+        assert sr.source == "vault"
 
 
 class TestParseQuery:
@@ -56,11 +58,22 @@ class TestParseQuery:
         assert result.text == "my query"
         assert result.filters == {"tag": "research"}
 
+    def test_lang_filter(self):
+        result = parse_query("lang:python search codebase")
+        assert result.text == "search codebase"
+        assert result.filters == {"language": "python"}
+
+    def test_path_filter(self):
+        result = parse_query("path:src/ search code")
+        assert result.text == "search code"
+        assert result.filters == {"path": "src/"}
+
     def test_multiple_filters(self):
-        result = parse_query("type:adr feature:auth authentication")
+        result = parse_query("type:adr feature:auth lang:python authentication")
         assert result.text == "authentication"
         assert result.filters["doc_type"] == "adr"
         assert result.filters["feature"] == "auth"
+        assert result.filters["language"] == "python"
 
     def test_only_filters_no_text(self):
         result = parse_query("type:adr feature:auth")

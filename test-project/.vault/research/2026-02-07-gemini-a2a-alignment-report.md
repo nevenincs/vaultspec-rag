@@ -255,24 +255,24 @@ Findings corroborated by multiple research streams have highest confidence:
 
 ### Phase 5B: Operational (next sprint, ~10 hours total)
 
-4. **Forward MCP servers to sub-agents** -- Highest operational impact. 4 hours.
-5. **Add Gemini CLI version detection** -- Runtime warning/fail. 2 hours.
-6. **Send `session/cancel` on task cancellation** -- Graceful shutdown. 2 hours.
-7. **Inspect InitializeResponse** -- Store and use agent capabilities. 2 hours.
+1. **Forward MCP servers to sub-agents** -- Highest operational impact. 4 hours.
+2. **Add Gemini CLI version detection** -- Runtime warning/fail. 2 hours.
+3. **Send `session/cancel` on task cancellation** -- Graceful shutdown. 2 hours.
+4. **Inspect InitializeResponse** -- Store and use agent capabilities. 2 hours.
 
 ### Phase 5C: Protocol Alignment (following sprint, ~7 hours total)
 
-8. **`GEMINI_SYSTEM_MD` fallback** -- Dual delivery (env var + prompt prepend). 2 hours.
-9. **Restrict terminal in read-only** -- Close mutation escape hatch. 3 hours.
-10. **Extract shared `resolve_includes()`** -- DRY refactor. 1 hour.
-11. **Standardize system prompt ordering** -- Consistency. 1 hour.
+1. **`GEMINI_SYSTEM_MD` fallback** -- Dual delivery (env var + prompt prepend). 2 hours.
+2. **Restrict terminal in read-only** -- Close mutation escape hatch. 3 hours.
+3. **Extract shared `resolve_includes()`** -- DRY refactor. 1 hour.
+4. **Standardize system prompt ordering** -- Consistency. 1 hour.
 
 ### Phase 5D: Strategic (requires ADR, ~20 hours total)
 
-12. **Draft A2A Convergence ADR** -- Document risk and triggers. 4 hours.
-13. **Integration test: Gemini as MCP client** -- Validate team-lead path. 8 hours.
-14. **A2A transport feasibility study** -- Evaluate stdio A2A. 4 hours.
-15. **Explore v0.28 ACP session resume** -- Enable long-running tasks. 4 hours.
+1. **Draft A2A Convergence ADR** -- Document risk and triggers. 4 hours.
+2. **Integration test: Gemini as MCP client** -- Validate team-lead path. 8 hours.
+3. **A2A transport feasibility study** -- Evaluate stdio A2A. 4 hours.
+4. **Explore v0.28 ACP session resume** -- Enable long-running tasks. 4 hours.
 
 ---
 
