@@ -282,5 +282,25 @@ def service_status():
     console.print("[bold]Docker Service:[/] [red]N/A (Missing Dockerfile)[/]")
 
 
+@app.command(
+    "test",
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def handle_test(ctx: typer.Context):
+    """Run the test suite via pytest.
+
+    All extra arguments are forwarded to pytest::
+
+        vaultspec-rag test -m integration -v --timeout=120
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    test_dir = str(Path(__file__).resolve().parent / "tests")
+    cmd = [sys.executable, "-m", "pytest", test_dir, *ctx.args]
+    raise SystemExit(subprocess.call(cmd))
+
+
 if __name__ == "__main__":
     app()
