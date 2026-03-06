@@ -21,7 +21,6 @@ class VaultSpecConfigWrapper:
     def __getattr__(self, name: str) -> Any:
         # RAG defaults defined in ADR 2026-02-16
         rag_defaults = {
-            "lance_dir": ".lance",
             "qdrant_dir": ".qdrant",
             "index_metadata_file": "index_meta.json",
             "graph_ttl_seconds": 300.0,
