@@ -113,7 +113,7 @@ class VaultStore:
         Args:
             root_dir: Workspace root directory.
             embedding_dim: Dimensionality of the dense embedding vectors.
-                Defaults to EMBEDDING_DIM (768).
+                Defaults to EMBEDDING_DIM (1024).
 
         Raises:
             ImportError: If qdrant-client is not installed.
