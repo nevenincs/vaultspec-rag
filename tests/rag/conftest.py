@@ -6,7 +6,7 @@ import pytest
 
 from tests.conftest import _build_rag_components
 from tests.constants import (
-    LANCE_SUFFIX_UNIT,
+    QDRANT_SUFFIX_UNIT,
     TEST_PROJECT,
 )
 
@@ -19,7 +19,7 @@ def rag_components():
     Uses .qdrant-fast-unit/ to avoid colliding with integration fixtures.
     """
     components = _build_rag_components(
-        TEST_PROJECT, fast=True, lance_suffix=LANCE_SUFFIX_UNIT
+        TEST_PROJECT, fast=True, qdrant_suffix=QDRANT_SUFFIX_UNIT
     )
 
     yield components

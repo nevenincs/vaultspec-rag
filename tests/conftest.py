@@ -13,9 +13,9 @@ from vaultspec.config import reset_config
 
 from tests.constants import (
     GPU_FAST_CORPUS_STEMS,
-    LANCE_SUFFIX_FAST,
-    LANCE_SUFFIX_FULL,
     PROJECT_ROOT,
+    QDRANT_SUFFIX_FAST,
+    QDRANT_SUFFIX_FULL,
     TEST_PROJECT,
 )
 from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
@@ -76,20 +76,20 @@ def _fast_index(indexer, model, store, root, stems):
 
 
 def _build_rag_components(
-    root: pathlib.Path, *, fast: bool, lance_suffix: str = ""
+    root: pathlib.Path, *, fast: bool, qdrant_suffix: str = ""
 ) -> dict:
     """Build RAG components for testing.
 
     When ``fast=True``, indexes a 13-doc subset covering all doc_types
     and key features.  When ``fast=False``, indexes the full corpus.
 
-    ``lance_suffix`` isolates the qdrant directory so that the fast and
+    ``qdrant_suffix`` isolates the qdrant directory so that the fast and
     full fixtures don't share the same storage path.
     """
 
     from vaultspec_rag import EmbeddingModel, VaultIndexer, VaultStore
 
-    qdrant_name = f".qdrant{lance_suffix}"
+    qdrant_name = f".qdrant{qdrant_suffix}"
     qdrant_dir = root / qdrant_name
 
     # Clean up any previous test data
@@ -99,7 +99,7 @@ def _build_rag_components(
     model = EmbeddingModel()
     store = VaultStore(root)
     # Override db_path to use the suffixed directory for test isolation
-    if lance_suffix:
+    if qdrant_suffix:
         store._client.close()
         store.db_path = qdrant_dir
         store.db_path.mkdir(parents=True, exist_ok=True)
@@ -132,7 +132,7 @@ def rag_components():
     Uses .qdrant-fast/ to avoid colliding with the full-corpus fixture.
     """
     components = _build_rag_components(
-        TEST_PROJECT, fast=True, lance_suffix=LANCE_SUFFIX_FAST
+        TEST_PROJECT, fast=True, qdrant_suffix=QDRANT_SUFFIX_FAST
     )
 
     yield components
@@ -151,7 +151,7 @@ def rag_components_full():
     Uses .qdrant-full/ to avoid colliding with the fast fixture.
     """
     components = _build_rag_components(
-        TEST_PROJECT, fast=False, lance_suffix=LANCE_SUFFIX_FULL
+        TEST_PROJECT, fast=False, qdrant_suffix=QDRANT_SUFFIX_FULL
     )
 
     yield components

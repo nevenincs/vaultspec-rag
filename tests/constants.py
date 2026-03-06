@@ -50,9 +50,9 @@ GPU_FAST_CORPUS_STEMS: frozenset[str] = frozenset(
     ]
 )
 
-LANCE_SUFFIX_FAST: str = "-fast"
-LANCE_SUFFIX_FULL: str = "-full"
-LANCE_SUFFIX_UNIT: str = "-fast-unit"
+QDRANT_SUFFIX_FAST: str = "-fast"
+QDRANT_SUFFIX_FULL: str = "-full"
+QDRANT_SUFFIX_UNIT: str = "-fast-unit"
 
 TEST_PORT_BASE: int = 10001
 TEST_PORT_A2A_BASE: int = 10020
