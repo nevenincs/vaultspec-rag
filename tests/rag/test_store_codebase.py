@@ -1,4 +1,4 @@
-"""Unit tests for VaultStore codebase functionality."""
+"""Integration tests for VaultStore codebase functionality."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 
 from vaultspec_rag.store import CodeChunk, VaultStore
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def tmp_vault_store(tmp_path):
 
 
 class TestStoreCodebase:
-    """Tests for codebase-specific store operations."""
+    """Tests for codebase-specific store operations using real embeddings."""
 
     def test_ensure_code_table(self, tmp_vault_store):
         """ensure_code_table should create the codebase_docs collection."""
@@ -27,8 +27,10 @@ class TestStoreCodebase:
             tmp_vault_store.CODE_TABLE_NAME
         )
 
-    def test_upsert_code_chunks(self, tmp_vault_store):
+    def test_upsert_code_chunks(self, tmp_vault_store, rag_components):
         """upsert_code_chunks should add and retrieve chunks."""
+        model = rag_components["model"]
+        vector = model.encode_documents(["print('hello')"]).tolist()[0]
         chunks = [
             CodeChunk(
                 id="src/main.py:1-10",
@@ -37,7 +39,7 @@ class TestStoreCodebase:
                 content="print('hello')",
                 line_start=1,
                 line_end=10,
-                vector=[0.1] * 1024,
+                vector=vector,
             )
         ]
         tmp_vault_store.upsert_code_chunks(chunks)
@@ -58,8 +60,10 @@ class TestStoreCodebase:
         keys = {cond.key for cond in result.must}
         assert keys == {"language", "path"}
 
-    def test_delete_code_chunks(self, tmp_vault_store):
+    def test_delete_code_chunks(self, tmp_vault_store, rag_components):
         """delete_code_chunks should remove code chunks by ID."""
+        model = rag_components["model"]
+        vector = model.encode_documents(["test"]).tolist()[0]
         chunks = [
             CodeChunk(
                 id="test.py:1-5",
@@ -68,7 +72,7 @@ class TestStoreCodebase:
                 content="test",
                 line_start=1,
                 line_end=5,
-                vector=[0.1] * 1024,
+                vector=vector,
             )
         ]
         tmp_vault_store.upsert_code_chunks(chunks)
