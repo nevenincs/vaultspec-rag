@@ -175,13 +175,13 @@ def _validate(layout: WorkspaceLayout) -> None:
         raise WorkspaceError(
             f"vaultspec_dir does not exist or is not a directory: "
             f"{layout.vaultspec_dir}\n"
-            f"Ensure your --target directory contains a .vaultspec/ folder."
+            f"Ensure your --target directory contains a .vaultspec/ folder.",
         )
 
     if not layout.target_dir.exists():
         raise WorkspaceError(
             f"target_dir does not exist: {layout.target_dir}\n"
-            f"Provide a valid directory via --target."
+            f"Provide a valid directory via --target.",
         )
 
 

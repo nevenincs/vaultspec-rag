@@ -20,13 +20,11 @@ class TestHelpfulness:
 
     # -- Known-answer precision --
 
-    @pytest.mark.usefixtures("require_gpu_corpus")
-    def test_search_finds_safety_audit(self, rag_components):
-        """'safety audit' should surface the safety audit in reference/.
+    def test_search_finds_security_audit(self, rag_components):
+        """'security audit' should surface the Nexus security audit doc.
 
-        The doc reference/2026-02-07-main-window-safety-audit.md contains
-        'Rust Code Safety Audit' in its H1. With the small fast corpus
-        (13 docs), we search with a broader limit.
+        The doc reference/2026-01-18-nexus-security-audit.md is in the fast
+        corpus and discusses connector payload size and unsafe blocks.
         Requires GPU corpus (multiple docs).
         """
         from vaultspec_rag import VaultSearcher
@@ -36,11 +34,11 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("safety audit main window", top_k=10)
+        results = searcher.search("nexus security audit vulnerability", top_k=10)
 
         result_ids = [r.id for r in results]
-        assert any("safety-audit" in rid for rid in result_ids), (
-            f"Expected a safety-audit doc in top 10, got: {result_ids}"
+        assert any("security-audit" in rid for rid in result_ids), (
+            f"Expected a security-audit doc in top 10, got: {result_ids}"
         )
 
     def test_search_finds_architecture_docs(self, rag_components):
@@ -65,8 +63,8 @@ class TestHelpfulness:
             f"got: {[(r.id, r.title) for r in results]}"
         )
 
-    def test_search_finds_editor_demo(self, rag_components):
-        """'editor demo' should surface editor-demo feature docs."""
+    def test_search_finds_connector_api(self, rag_components):
+        """'connector api' should surface connector-api feature docs."""
         from vaultspec_rag import VaultSearcher
 
         model = rag_components["model"]
@@ -74,24 +72,22 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("editor demo", top_k=10)
+        results = searcher.search("connector api design", top_k=10)
 
-        assert len(results) > 0, "Should find editor demo docs"
-        # Check that some results have editor-demo feature or id
+        assert len(results) > 0, "Should find connector-api docs"
         found = any(
-            r.feature == "editor-demo" or "editor-demo" in r.id for r in results
+            r.feature == "connector-api" or "connector" in r.id for r in results
         )
         assert found, (
-            f"Expected editor-demo docs in results, "
+            f"Expected connector-api docs in results, "
             f"got: {[(r.id, r.feature) for r in results]}"
         )
 
-    @pytest.mark.usefixtures("require_gpu_corpus")
-    def test_search_displaymap_keyword(self, rag_components):
-        """'DisplayMap' exact keyword should surface displaymap docs in top 3.
+    def test_search_exact_identifier_keyword(self, rag_components):
+        """'NexusPipelineExecutor' should surface pipeline-engine docs in top 3.
 
-        adr/2026-02-06-displaymap-architecture-design.md mentions DisplayMap
-        44 times and should rank very high for this query.
+        The reference doc mentions NexusPipelineExecutor multiple times and
+        should rank very high for this exact identifier query.
         Requires GPU corpus (multiple docs).
         """
         from vaultspec_rag import VaultSearcher
@@ -101,12 +97,12 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("DisplayMap", top_k=3)
+        results = searcher.search("NexusPipelineExecutor", top_k=3)
 
-        assert len(results) > 0, "Should find DisplayMap docs"
+        assert len(results) > 0, "Should find NexusPipelineExecutor docs"
         result_ids = [r.id for r in results]
-        found = any("displaymap" in rid.lower() for rid in result_ids)
-        assert found, f"Expected a displaymap doc in top 3, got: {result_ids}"
+        found = any("pipeline" in rid.lower() for rid in result_ids)
+        assert found, f"Expected a pipeline doc in top 3, got: {result_ids}"
 
     def test_search_finds_french_content(self, rag_components_full):
         """'croissant boulangerie' targets French stories which are NOT indexed.
@@ -150,10 +146,10 @@ class TestHelpfulness:
             )
 
     def test_feature_filter_narrows(self, rag_components):
-        """'feature:editor-demo layout' should return ONLY editor-demo docs.
+        """'feature:connector-api protocol' should return ONLY connector-api docs.
 
-        Several docs in reference/, plan/, exec/, and adr/ have
-        tags: ['#<type>', '#editor-demo'] which populates the feature field.
+        The adr, plan, exec, and reference docs tagged '#connector-api' all
+        have feature='connector-api' populated from their second tag.
         """
         from vaultspec_rag import VaultSearcher
 
@@ -162,17 +158,16 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("feature:editor-demo layout", top_k=10)
+        results = searcher.search("feature:connector-api protocol", top_k=10)
 
-        assert len(results) > 0, "Should find editor-demo layout docs"
+        assert len(results) > 0, "Should find connector-api docs"
         for r in results:
-            assert r.feature == "editor-demo", (
-                f"Expected feature 'editor-demo', got '{r.feature}' for {r.id}"
+            assert r.feature == "connector-api", (
+                f"Expected feature 'connector-api', got '{r.feature}' for {r.id}"
             )
 
-    @pytest.mark.usefixtures("require_gpu_corpus")
     def test_date_filter_prefix(self, rag_components):
-        """'date:2026-02-06 architecture' should return docs dated 2026-02-06.
+        """'date:2026-01-12 connector' should return docs dated 2026-01-12.
 
         Requires GPU corpus (multiple docs with varying dates).
         """
@@ -183,19 +178,19 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("date:2026-02-06 architecture", top_k=10)
+        results = searcher.search("date:2026-01-12 connector", top_k=10)
 
-        assert len(results) > 0, "Should find docs from 2026-02-06"
+        assert len(results) > 0, "Should find docs from 2026-01-12"
         for r in results:
-            assert r.date.startswith("2026-02-06"), (
-                f"Expected date starting with '2026-02-06', got '{r.date}' for {r.id}"
+            assert r.date.startswith("2026-01-12"), (
+                f"Expected date starting with '2026-01-12', got '{r.date}' for {r.id}"
             )
 
     def test_combined_filters(self, rag_components):
-        """'type:adr feature:editor-demo' should return the intersection.
+        """'type:adr feature:connector-api' should return the intersection.
 
-        Only adr/2026-02-05-editor-demo-architecture.md has both doc_type=adr
-        AND feature=editor-demo.
+        Only adr/2026-01-12-connector-protocol-design.md has both
+        doc_type=adr AND feature=connector-api.
         """
         from vaultspec_rag import VaultSearcher
 
@@ -204,23 +199,24 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("type:adr feature:editor-demo", top_k=10)
+        results = searcher.search("type:adr feature:connector-api", top_k=10)
 
         assert len(results) > 0, "Should find at least one matching doc"
         for r in results:
             assert r.doc_type == "adr", (
                 f"Expected doc_type 'adr', got '{r.doc_type}' for {r.id}"
             )
-            assert r.feature == "editor-demo", (
-                f"Expected feature 'editor-demo', got '{r.feature}' for {r.id}"
+            assert r.feature == "connector-api", (
+                f"Expected feature 'connector-api', got '{r.feature}' for {r.id}"
             )
 
     # -- Ranking quality --
 
-    @pytest.mark.usefixtures("require_gpu_corpus")
     def test_exact_keyword_ranks_high(self, rag_components):
-        """Search for 'SetWindowCompositionAttribute' should surface the
-        safety audit doc that contains this exact Win32 API identifier.
+        """'NexusPipelineExecutor' should surface the pipeline reference doc.
+
+        The reference doc mentions NexusPipelineExecutor as the central class
+        with code examples; it should rank first for this exact identifier.
         Requires GPU corpus (multiple docs).
         """
         from vaultspec_rag import VaultSearcher
@@ -230,13 +226,12 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("SetWindowCompositionAttribute", top_k=5)
+        results = searcher.search("NexusPipelineExecutor", top_k=5)
 
-        assert len(results) > 0, "Should find results for specific identifier"
-        # The safety audit doc should appear since it discusses this API
-        found = any("safety-audit" in r.id or "main-window" in r.id for r in results)
+        assert len(results) > 0, "Should find results for exact identifier"
+        found = any("pipeline" in r.id for r in results)
         assert found, (
-            f"Expected safety-audit or main-window doc for Win32 API query, "
+            f"Expected a pipeline doc for NexusPipelineExecutor query, "
             f"got: {[r.id for r in results]}"
         )
 
@@ -249,7 +244,7 @@ class TestHelpfulness:
 
         Requires the full corpus for meaningful authority signal.
         """
-        from vaultspec.graph import VaultGraph
+        from vaultspec_core.graph import VaultGraph
 
         from vaultspec_rag import VaultSearcher
 
@@ -259,7 +254,7 @@ class TestHelpfulness:
 
         searcher = VaultSearcher(root, model, store)
         # Broad query to get many results
-        results = searcher.search("editor architecture implementation", top_k=15)
+        results = searcher.search("pipeline architecture implementation", top_k=15)
 
         assert len(results) >= 2, "Need at least 2 results to compare authority"
 
@@ -293,7 +288,7 @@ class TestHelpfulness:
 
         searcher = VaultSearcher(root, model, store)
 
-        queries = ["architecture", "editor", "dispatch", "window positioning"]
+        queries = ["architecture", "pipeline", "scheduler", "connector design"]
         for q in queries:
             results = searcher.search(q, top_k=5)
             for r in results:
@@ -338,7 +333,7 @@ class TestHelpfulness:
             # Scores should be quite low compared to relevant queries
             max_score = max(r.score for r in results)
             # Compare against a relevant query's top score
-            relevant = searcher.search("editor architecture", top_k=1)
+            relevant = searcher.search("pipeline architecture", top_k=1)
             if relevant:
                 assert max_score < relevant[0].score, (
                     f"Irrelevant query max score ({max_score:.4f}) should be "

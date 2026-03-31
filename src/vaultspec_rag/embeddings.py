@@ -32,19 +32,25 @@ class SparseResult:
 
 
 def _check_rag_deps() -> None:
-    """Verify GPU RAG dependencies are installed."""
+    """Verify GPU RAG dependencies are installed.
+
+    Raises:
+        ImportError: If torch or sentence-transformers is not
+            installed.
+        RuntimeError: If no CUDA GPU device is available.
+    """
     try:
         import torch
 
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "CUDA GPU required. No CUDA device found. "
-                "Install torch with CUDA support."
+                "Install torch with CUDA support.",
             )
     except ImportError:
         raise ImportError(
             "GPU RAG dependencies not installed. "
-            "Run: uv pip install sentence-transformers torch"
+            "Run: uv pip install sentence-transformers torch",
         ) from None
 
     try:
@@ -52,16 +58,28 @@ def _check_rag_deps() -> None:
     except ImportError:
         raise ImportError(
             "sentence-transformers not installed. "
-            "Run: uv pip install sentence-transformers>=5.0"
+            "Run: uv pip install sentence-transformers>=5.0",
         ) from None
 
 
-def _sparse_tensor_to_results(sparse_tensor) -> list[SparseResult]:
+def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
     """Convert a batch of SPLADE sparse tensors to SparseResult list.
 
     SparseEncoder.encode() returns a sparse COO-like tensor. Each row
     is a sparse vector over the vocabulary. We extract non-zero indices
     and values for each document.
+
+    Handles scipy sparse matrices, torch Tensors (dense, sparse COO,
+    or sparse CSR), and numpy arrays.
+
+    Args:
+        sparse_tensor: Batch sparse embedding output from
+            SparseEncoder. May be a scipy sparse matrix,
+            torch.Tensor, or numpy ndarray.
+
+    Returns:
+        List of SparseResult, one per input row, with non-zero
+        indices and their corresponding values.
     """
     import torch
 
@@ -127,14 +145,22 @@ class EmbeddingModel:
 
     @staticmethod
     def _default_batch_size() -> int:
-        """Return the configured embedding batch size."""
+        """Return the configured embedding batch size.
+
+        Returns:
+            Batch size from VaultSpecConfigWrapper.
+        """
         from .config import get_config
 
         return get_config().embedding_batch_size
 
     @staticmethod
     def _default_max_embed_chars() -> int:
-        """Return the configured maximum characters per document to embed."""
+        """Return the configured max characters per document.
+
+        Returns:
+            Character limit from VaultSpecConfigWrapper.
+        """
         from .config import get_config
 
         return get_config().max_embed_chars
@@ -165,35 +191,27 @@ class EmbeddingModel:
             else self.SPARSE_MODEL_NAME
         )
 
-        # Dense model: Qwen3-Embedding-0.6B with fp16 + flash_attention_2
         model_kwargs = {
             "torch_dtype": torch.float16,
         }
-        # flash_attention_2 may not be available on all systems
+        # Probe for flash_attention_2 before loading to avoid double model load
         try:
-            self._dense_model = SentenceTransformer(
-                dense_name,
-                model_kwargs={
-                    **model_kwargs,
-                    "attn_implementation": "flash_attention_2",
-                },
-                tokenizer_kwargs={"padding_side": "left"},
-            )
-        except Exception:
-            logger.info(
-                "flash_attention_2 not available, falling back to default attention"
-            )
-            self._dense_model = SentenceTransformer(
-                dense_name,
-                model_kwargs=model_kwargs,
-                tokenizer_kwargs={"padding_side": "left"},
-            )
+            import flash_attn  # noqa: F401
 
-        # Sparse model: SPLADE v3 on GPU
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+        except ImportError:
+            logger.info("flash_attention_2 not available, using default attention")
+
+        self._dense_model = SentenceTransformer(
+            dense_name,
+            model_kwargs=model_kwargs,
+            tokenizer_kwargs={"padding_side": "left"},
+        )
+
         self._sparse_model = SparseEncoder(
             sparse_name,
             device="cuda",
-            model_kwargs={"torch_dtype": "float16"},
+            model_kwargs={"torch_dtype": torch.float16},
         )
 
         self._device = "cuda"
@@ -214,11 +232,18 @@ class EmbeddingModel:
 
     @property
     def device(self) -> str:
-        """Return the current device string ('cuda')."""
+        """Return the current device string ('cuda').
+
+        Returns:
+            Device string, always ``"cuda"``.
+        """
         return self._device
 
     def encode_documents(
-        self, texts: list[str], *, batch_size: int | None = None
+        self,
+        texts: list[str],
+        *,
+        batch_size: int | None = None,
     ) -> np.ndarray:
         """Encode document texts as dense embeddings on GPU.
 
@@ -227,9 +252,15 @@ class EmbeddingModel:
             batch_size: Max texts per encoding batch.
 
         Returns:
-            numpy array of shape ``(n, dimension)`` with normalized embeddings.
+            numpy array of shape ``(n, dimension)`` with normalized
+            embeddings.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If encoding fails even at
+                batch_size=1.
         """
         import numpy as np
+        import torch
 
         if batch_size is None:
             batch_size = self._default_batch_size()
@@ -237,13 +268,24 @@ class EmbeddingModel:
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
 
-        embeddings = self._dense_model.encode(
-            truncated,
-            batch_size=batch_size,
-            show_progress_bar=len(truncated) > 100,
-            normalize_embeddings=True,
-        )
-        return np.asarray(embeddings, dtype=np.float32)
+        while True:
+            try:
+                embeddings = self._dense_model.encode(
+                    truncated,
+                    batch_size=batch_size,
+                    show_progress_bar=len(truncated) > 100,
+                    normalize_embeddings=True,
+                )
+                return np.asarray(embeddings, dtype=np.float32)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                if batch_size <= 1:
+                    raise
+                batch_size = max(1, batch_size // 2)
+                logger.warning(
+                    "CUDA OOM during dense encoding, retrying with batch_size=%d",
+                    batch_size,
+                )
 
     def encode_query(self, query: str) -> np.ndarray:
         """Encode a search query as a dense embedding on GPU.
@@ -266,7 +308,10 @@ class EmbeddingModel:
         return np.asarray(embeddings[0], dtype=np.float32)
 
     def encode_documents_sparse(
-        self, texts: list[str], *, batch_size: int = 32
+        self,
+        texts: list[str],
+        *,
+        batch_size: int = 32,
     ) -> list[SparseResult]:
         """Encode document texts as SPLADE sparse vectors on GPU.
 
@@ -276,15 +321,32 @@ class EmbeddingModel:
 
         Returns:
             List of SparseResult objects with .indices and .values.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If encoding fails even at
+                batch_size=1.
         """
+        import torch
+
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
 
-        sparse_tensor = self._sparse_model.encode(
-            truncated,
-            batch_size=batch_size,
-        )
-        return _sparse_tensor_to_results(sparse_tensor)
+        while True:
+            try:
+                sparse_tensor = self._sparse_model.encode_document(
+                    truncated,
+                    batch_size=batch_size,
+                )
+                return _sparse_tensor_to_results(sparse_tensor)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                if batch_size <= 1:
+                    raise
+                batch_size = max(1, batch_size // 2)
+                logger.warning(
+                    "CUDA OOM during sparse encoding, retrying with batch_size=%d",
+                    batch_size,
+                )
 
     def encode_query_sparse(self, query: str) -> SparseResult:
         """Encode a search query as a SPLADE sparse vector on GPU.
@@ -295,6 +357,7 @@ class EmbeddingModel:
         Returns:
             SparseResult with .indices and .values.
         """
-        sparse_tensor = self._sparse_model.encode([query])
+        max_chars = self._default_max_embed_chars()
+        sparse_tensor = self._sparse_model.encode_query([query[:max_chars]])
         results = _sparse_tensor_to_results(sparse_tensor)
         return results[0]

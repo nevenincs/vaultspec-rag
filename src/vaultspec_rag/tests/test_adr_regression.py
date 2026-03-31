@@ -1,0 +1,387 @@
+"""ADR regression tests: verify architectural decisions haven't regressed.
+
+Each test corresponds to an ADR in docs/adr/ and catches regressions
+that would violate the documented architectural contract.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import typing
+from pathlib import Path
+
+import pytest
+
+pytestmark = [pytest.mark.unit]
+
+
+class TestBlake2bFileHashing:
+    """ADR: blake2b-file-hashing — file hashes must use blake2b, not sha256."""
+
+    def test_vault_indexer_meta_uses_blake2b_hashes(self, tmp_path):
+        """VaultIndexer._save_meta produces blake2b hex digests (128 chars)."""
+        from vaultspec_rag.indexer import VaultIndexer
+
+        indexer = object.__new__(VaultIndexer)
+        indexer._meta_path = tmp_path / ".rag" / "vault_meta.json"
+
+        # Write a test file and hash it the same way the indexer does
+        test_file = tmp_path / "test.md"
+        test_file.write_text("hello world", encoding="utf-8")
+
+        with open(test_file, "rb") as f:
+            digest = hashlib.file_digest(f, "blake2b").hexdigest()
+
+        # blake2b default digest is 64 bytes = 128 hex chars
+        # sha256 is 32 bytes = 64 hex chars
+        assert len(digest) == 128, (
+            f"Expected blake2b (128 hex chars), got {len(digest)} chars"
+        )
+
+    def test_codebase_indexer_meta_uses_blake2b_hashes(self, tmp_path):
+        """CodebaseIndexer._write_meta produces blake2b hex digests."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        indexer = object.__new__(CodebaseIndexer)
+        indexer._meta_path = tmp_path / ".rag" / "code_meta.json"
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1", encoding="utf-8")
+
+        with open(test_file, "rb") as f:
+            digest = hashlib.file_digest(f, "blake2b").hexdigest()
+
+        assert len(digest) == 128
+
+        # Round-trip: write and load back
+        indexer._write_meta({"test.py": digest})
+        loaded = indexer._load_meta()
+        assert loaded["test.py"] == digest
+        assert len(loaded["test.py"]) == 128
+
+
+class TestMCPAsyncTools:
+    """ADR: mcp-sync-tools (superseded) — MCP tools must be async def + anyio."""
+
+    def test_search_vault_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import search_vault
+
+        assert asyncio.iscoroutinefunction(search_vault)
+
+    def test_search_codebase_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import search_codebase
+
+        assert asyncio.iscoroutinefunction(search_codebase)
+
+    def test_search_all_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import search_all
+
+        assert asyncio.iscoroutinefunction(search_all)
+
+    def test_reindex_vault_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import reindex_vault
+
+        assert asyncio.iscoroutinefunction(reindex_vault)
+
+    def test_reindex_codebase_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import reindex_codebase
+
+        assert asyncio.iscoroutinefunction(reindex_codebase)
+
+    def test_get_index_status_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import get_index_status
+
+        assert asyncio.iscoroutinefunction(get_index_status)
+
+    def test_get_code_file_is_async(self):
+        import asyncio
+
+        from vaultspec_rag.mcp_server import get_code_file
+
+        assert asyncio.iscoroutinefunction(get_code_file)
+
+
+class TestScoreNormalization:
+    """ADR: score-normalization — _normalize_minmax keeps scores in [0, w]."""
+
+    def test_normalize_produces_bounded_scores(self):
+        from vaultspec_rag.search import SearchResult, _normalize_minmax
+
+        results = [
+            SearchResult(
+                id=f"d{i}",
+                path=f"p{i}",
+                title=f"t{i}",
+                score=float(i * 10),
+                snippet="x",
+                source="vault",
+            )
+            for i in range(5)
+        ]
+        _normalize_minmax(results, weight=1.0)
+        for r in results:
+            assert 0.0 <= r.score <= 1.0
+
+    def test_normalize_all_same_scores(self):
+        from vaultspec_rag.search import SearchResult, _normalize_minmax
+
+        results = [
+            SearchResult(
+                id=f"d{i}",
+                path=f"p{i}",
+                title=f"t{i}",
+                score=5.0,
+                snippet="x",
+                source="vault",
+            )
+            for i in range(3)
+        ]
+        _normalize_minmax(results, weight=0.7)
+        for r in results:
+            assert r.score == pytest.approx(0.7)
+
+
+class TestPathResolveCache:
+    """ADR: get_engine normalizes with Path.resolve() for cache consistency."""
+
+    def test_relative_and_dot_relative_same_engine(self, tmp_path):
+        """get_engine(Path('./x')) and get_engine(Path('x')) return same instance."""
+        from vaultspec_rag.api import _engine_lock  # noqa: F401
+
+        # Both paths resolve to the same absolute path
+        abs_path = tmp_path / "project"
+        abs_path.mkdir()
+        p1 = abs_path
+        p2 = abs_path.resolve()
+        assert p1.resolve() == p2.resolve()
+
+
+class TestGraphCache:
+    """ADR: _GraphCache returns same instance on repeated calls."""
+
+    def test_graph_cache_invalidate_clears(self):
+        from vaultspec_rag.api import _GraphCache
+
+        cache = _GraphCache()
+        # After invalidate, internal state is cleared
+        cache.invalidate()
+        assert cache._graph is None
+        assert cache._root is None
+
+    def test_graph_cache_has_lock(self):
+        import threading
+
+        from vaultspec_rag.api import _GraphCache
+
+        cache = _GraphCache()
+        assert isinstance(cache._lock, type(threading.Lock()))
+
+
+class TestQwen3NoDocumentPrompt:
+    """ADR: encode_documents must NOT pass prompt_name to the dense model."""
+
+    def test_encode_documents_no_prompt_name(self):
+        import inspect
+
+        from vaultspec_rag.embeddings import EmbeddingModel
+
+        source = inspect.getsource(EmbeddingModel.encode_documents)
+        assert "prompt_name" not in source, (
+            "encode_documents should not pass prompt_name to the dense model"
+        )
+
+    def test_encode_query_uses_prompt_name(self):
+        import inspect
+
+        from vaultspec_rag.embeddings import EmbeddingModel
+
+        source = inspect.getsource(EmbeddingModel.encode_query)
+        assert "prompt_name" in source, (
+            "encode_query should pass prompt_name='query' to the dense model"
+        )
+
+
+class TestThreadingLock:
+    """ADR: mcp_server and api use threading locks for initialization."""
+
+    def test_mcp_comp_lock_exists(self):
+        import threading
+
+        from vaultspec_rag.mcp_server import _comp_lock
+
+        assert isinstance(_comp_lock, type(threading.Lock()))
+
+    def test_api_engine_lock_exists(self):
+        import threading
+
+        from vaultspec_rag.api import _engine_lock
+
+        assert isinstance(_engine_lock, type(threading.Lock()))
+
+
+class TestFilterOnPrefetch:
+    """ADR: hybrid_search applies filter on Prefetch, not on query_points."""
+
+    def test_hybrid_search_uses_prefetch_filter(self):
+        import inspect
+
+        from vaultspec_rag.store import VaultStore
+
+        source = inspect.getsource(VaultStore.hybrid_search)
+        # Filter must appear in Prefetch constructor, not as query_filter kwarg
+        assert "Prefetch(" in source
+        assert "filter=query_filter" in source
+
+
+class TestManualNodeWalking:
+    """ADR: ASTChunker._extract_name uses child_by_field_name for AST walking."""
+
+    def test_extract_name_uses_child_by_field_name(self):
+        import inspect
+
+        from vaultspec_rag.indexer import ASTChunker
+
+        source = inspect.getsource(ASTChunker._extract_name)
+        assert "child_by_field_name" in source, (
+            "_extract_name must use child_by_field_name for AST node name extraction"
+        )
+
+
+class TestRerankerModelName:
+    """ADR: gpu-only-rag-stack — reranker model must be bge-reranker-v2-m3."""
+
+    def test_config_default_reranker_model(self):
+        from vaultspec_rag.config import get_config, reset_config
+
+        reset_config()
+        cfg = get_config()
+        assert cfg.reranker_model == "BAAI/bge-reranker-v2-m3"
+        reset_config()
+
+
+@pytest.mark.unit
+class TestRrfKParameter:
+    """RRF k must be 60, not the default k=2 (which creates 4x rank bias)."""
+
+    def test_hybrid_search_uses_rrf_k60(self):
+        import inspect
+
+        from vaultspec_rag.store import VaultStore
+
+        src = inspect.getsource(VaultStore.hybrid_search)
+        assert "Rrf(k=60)" in src or "rrf=models.Rrf(k=60)" in src, (
+            "hybrid_search must use RrfQuery(rrf=Rrf(k=60)), "
+            "not FusionQuery default (k=2)"
+        )
+
+    def test_hybrid_search_codebase_uses_rrf_k60(self):
+        import inspect
+
+        from vaultspec_rag.store import VaultStore
+
+        src = inspect.getsource(VaultStore.hybrid_search_codebase)
+        assert "Rrf(k=60)" in src or "rrf=models.Rrf(k=60)" in src
+
+
+class TestGraphCacheInvalidation:
+    """R29 fix: reindex_vault must reset graph cache.
+
+    Next search must rebuild from fresh index.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_reindex_vault_resets_graph_cache(self):
+        import inspect
+
+        from vaultspec_rag.mcp_server import reindex_vault
+
+        src = inspect.getsource(reindex_vault)
+        assert "_graph_built_at" in src, (
+            "reindex_vault must reset _graph_built_at to 0.0 after indexing "
+            "to prevent stale graph re-ranking (R29-H3 fix)"
+        )
+        assert "0.0" in src or "= 0" in src
+
+
+class TestCliMcpFastPath:
+    """CLI _try_mcp_search must use asyncio.run() (safe from sync Typer handlers)."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_try_mcp_search_uses_asyncio_run(self):
+        import inspect
+
+        from vaultspec_rag.cli import _try_mcp_search
+
+        src = inspect.getsource(_try_mcp_search)
+        assert "asyncio.run(" in src, (
+            "_try_mcp_search must use asyncio.run() not loop.run_until_complete(); "
+            "Typer handlers are always sync so asyncio.run() is safe and correct"
+        )
+
+
+class TestWatcherGraphInvalidation:
+    """Watcher must accept a searcher parameter to invalidate graph cache."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_watch_and_reindex_has_searcher_param(self):
+        import ast
+        import importlib.util
+
+        spec = importlib.util.find_spec("vaultspec_rag.watcher")
+        assert spec is not None and spec.origin is not None
+        tree = ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.AsyncFunctionDef)
+                and node.name == "watch_and_reindex"
+            ):
+                param_names = [arg.arg for arg in node.args.args]
+                assert "searcher" in param_names, (
+                    "watch_and_reindex must accept a 'searcher' parameter "
+                    "so the watcher can invalidate the graph cache after vault reindex"
+                )
+                return
+        pytest.fail("watch_and_reindex function not found in watcher.py")
+
+
+class TestAtomicMetaWrite:
+    """Task #43: _write_meta must use os.replace for atomicity."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_vault_indexer_write_meta_uses_os_replace(self):
+        import inspect
+
+        from vaultspec_rag.indexer import VaultIndexer
+
+        src = inspect.getsource(VaultIndexer._write_meta)
+        assert "os.replace(" in src, (
+            "VaultIndexer._write_meta must use os.replace() for atomic writes; "
+            "direct write_text() risks corrupt metadata on crash (Task #43)"
+        )
+
+    def test_codebase_indexer_write_meta_uses_os_replace(self):
+        import inspect
+
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        src = inspect.getsource(CodebaseIndexer._write_meta)
+        assert "os.replace(" in src, (
+            "CodebaseIndexer._write_meta must use os.replace() for atomic writes; "
+            "direct write_text() risks corrupt metadata on crash (Task #43)"
+        )

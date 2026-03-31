@@ -51,15 +51,15 @@ class TestStoreHelpers:
         result = VaultStore._build_filter(None)
         assert result is None
 
-    def test_build_filter_date_uses_match_text(self):
-        """_build_filter date key should use MatchText for prefix matching."""
+    def test_build_filter_date_uses_match_value(self):
+        """_build_filter date key should use MatchValue for exact matching."""
         from qdrant_client import models
 
         from vaultspec_rag.store import VaultStore
 
-        result = VaultStore._build_filter({"date": "2026-02"})
+        result = VaultStore._build_filter({"date": "2026-02-07"})
         assert result is not None
-        assert isinstance(result.must[0].match, models.MatchText)
+        assert isinstance(result.must[0].match, models.MatchValue)
 
     def test_build_filter_ignores_unknown_keys(self):
         """_build_filter should ignore keys not in (doc_type, feature, date)."""
@@ -84,3 +84,41 @@ class TestStoreHelpers:
         id1 = VaultStore._stable_id("doc-a")
         id2 = VaultStore._stable_id("doc-b")
         assert id1 != id2
+
+    def test_build_filter_tag_produces_match_any(self):
+        """_build_filter with tag key produces MatchAny on tags field."""
+        from qdrant_client import models
+
+        from vaultspec_rag.store import VaultStore
+
+        result = VaultStore._build_filter({"tag": "auth"})
+        assert result is not None
+        assert len(result.must) == 1
+        cond = result.must[0]
+        assert cond.key == "tags"
+        assert isinstance(cond.match, models.MatchAny)
+        assert cond.match.any == ["auth"]
+
+
+class TestBuildCodeFilter:
+    """Tests for _build_code_filter."""
+
+    def test_path_prefix_uses_match_value(self):
+        """Path ending with / should use MatchValue (KEYWORD index)."""
+        from qdrant_client import models
+
+        from vaultspec_rag.store import VaultStore
+
+        result = VaultStore._build_code_filter({"path": "src/"})
+        assert result is not None
+        assert isinstance(result.must[0].match, models.MatchValue)
+
+    def test_path_exact_uses_match_value(self):
+        """Exact path should use MatchValue."""
+        from qdrant_client import models
+
+        from vaultspec_rag.store import VaultStore
+
+        result = VaultStore._build_code_filter({"path": "src/main.py"})
+        assert result is not None
+        assert isinstance(result.must[0].match, models.MatchValue)

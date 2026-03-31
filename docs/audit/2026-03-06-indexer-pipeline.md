@@ -37,3 +37,54 @@ Full line-by-line audit. All confirmed correct:
 - `TextSplitter` recursive splitting with language-specific separators
 
 No new issues found.
+
+## 2026-03-06 -- Major Overhaul (Tasks #3, #4, #9)
+
+### Critical Bug Fixes (Task #3 -- RESOLVED)
+
+1. **Line tracking**: `content.find(text)` replaced with offset-tracking.
+   Walks forward through chunks from last known offset, preventing
+   duplicate code from mapping to the first occurrence's line number.
+
+2. **Chunk ID collisions**: IDs now include 12-char SHA256 content hash:
+   `{rel_path}:{line_start}-{line_end}:{hash}`. Guarantees uniqueness.
+
+3. **CodebaseIndexer.incremental_index()**: New method using SHA256 file
+   content hashing (not mtime). Detects new/modified/deleted files, only
+   re-embeds changed files. Metadata format: `{rel_path: content_hash}`.
+
+4. **Docstring fix**: device example changed from "cpu" to "cuda" (Task #45 resolved).
+
+### AST Chunking + Pathspec Overhaul (Task #4 -- RESOLVED)
+
+1. **ASTChunker**: New class implementing cAST algorithm (arXiv 2506.15655).
+   Depth-first AST traversal, split oversized nodes, merge small siblings.
+   Uses `tree-sitter-language-pack` (actively maintained). Falls back to
+   `TextSplitter` for data formats (YAML, TOML, JSON, HTML, CSS).
+
+2. **pathspec scanning**: `_scan_codebase()` now uses `pathspec.GitIgnoreSpec`
+   instead of `git ls-files` + `rglob("*")`. Collects patterns from all
+   `.gitignore` files at every directory level. No subprocess dependency.
+
+3. **Language support expanded**: 7 -> 25 extensions. Added Go, Java, C,
+   C++, C#, Ruby, Shell/Bash, YAML, TOML, JSON, HTML, CSS, Kotlin.
+   `LANGUAGE_MAP` dict maps extensions to `(language, grammar)` tuples.
+
+4. **Safety guards**: `_is_binary()` (null byte detection), `_MAX_FILE_SIZE`
+   (10MB limit). Applied during scanning before any file is read.
+
+5. **Dependencies added**: `tree-sitter>=0.23`, `tree-sitter-language-pack>=0.10`,
+   `pathspec>=0.12`.
+
+### Unit Tests (Task #9 -- RESOLVED)
+
+22 new unit tests added in `test_indexer_unit.py`:
+
+- ASTChunker: boundary splitting, content coverage, line numbers, empty input,
+  multi-language (Python, Rust, JS, Go), force-split large nodes
+- LANGUAGE_MAP: extension mapping, count, grammar presence
+- Binary detection: text/binary/empty files
+- File size limit: 10MB constant
+- Chunk ID format: hash presence, uniqueness
+
+All 102 unit tests pass. No open issues.

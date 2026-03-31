@@ -1,4 +1,4 @@
-"""Tests for rag.search — query parsing (unit) and reranking (integration)."""
+"""Unit tests for rag.search — query parsing and metadata extraction."""
 
 from typing import ClassVar
 
@@ -6,10 +6,12 @@ import pytest
 
 from vaultspec_rag import ParsedQuery, SearchResult, parse_query
 
-pytestmark = [pytest.mark.unit]
+# No module-level pytestmark — each class sets its own marker
 
 
 class TestParsedQuery:
+    pytestmark: ClassVar = [pytest.mark.unit]
+
     def test_creation(self):
         pq = ParsedQuery(text="hello", filters={"doc_type": "adr"})
         assert pq.text == "hello"
@@ -17,6 +19,8 @@ class TestParsedQuery:
 
 
 class TestSearchResult:
+    pytestmark: ClassVar = [pytest.mark.unit]
+
     def test_creation(self):
         sr = SearchResult(
             id="test-doc",
@@ -34,7 +38,44 @@ class TestSearchResult:
         assert sr.source == "vault"
 
 
+class TestSearchResultCodeMetadata:
+    """SearchResult carries code metadata fields."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_code_metadata_defaults_none(self):
+        sr = SearchResult(
+            id="chunk-1",
+            path="src/main.py",
+            title="main.py",
+            score=0.8,
+            snippet="def foo(): ...",
+            source="codebase",
+        )
+        assert sr.node_type is None
+        assert sr.function_name is None
+        assert sr.class_name is None
+
+    def test_code_metadata_set(self):
+        sr = SearchResult(
+            id="chunk-2",
+            path="src/bar.py",
+            title="bar.py",
+            score=0.9,
+            snippet="class Bar: ...",
+            source="codebase",
+            node_type="class_definition",
+            function_name=None,
+            class_name="Bar",
+        )
+        assert sr.node_type == "class_definition"
+        assert sr.function_name is None
+        assert sr.class_name == "Bar"
+
+
 class TestParseQuery:
+    pytestmark: ClassVar = [pytest.mark.unit]
+
     def test_plain_text(self):
         result = parse_query("vector database")
         assert result.text == "vector database"
@@ -95,122 +136,104 @@ class TestParseQuery:
         result = parse_query("type:adr  hello   world")
         assert result.text == "hello world"
 
+    def test_func_filter(self):
+        result = parse_query("func:encode_query authentication")
+        assert result.text == "authentication"
+        assert result.filters == {"function_name": "encode_query"}
+
+    def test_class_filter(self):
+        result = parse_query("class:VaultStore storage logic")
+        assert result.text == "storage logic"
+        assert result.filters == {"class_name": "VaultStore"}
+
+    def test_nodetype_filter(self):
+        result = parse_query("nodetype:function_definition helpers")
+        assert result.text == "helpers"
+        assert result.filters == {"node_type": "function_definition"}
+
+    def test_combined_code_filters(self):
+        result = parse_query("lang:python func:search class:Searcher query")
+        assert result.text == "query"
+        assert result.filters["language"] == "python"
+        assert result.filters["function_name"] == "search"
+        assert result.filters["class_name"] == "Searcher"
+
     def test_unknown_prefix_not_extracted(self):
         result = parse_query("unknown:value hello")
         assert result.text == "unknown:value hello"
         assert result.filters == {}
 
 
-class TestRerank:
-    """Live integration tests for VaultSearcher._rerank on GPU."""
+class TestParseVaultMetadataUnit:
+    """Pure unit tests for parse_vault_metadata with hardcoded strings."""
 
-    pytestmark: ClassVar = [pytest.mark.integration]
+    pytestmark: ClassVar = [pytest.mark.unit]
 
-    def test_rerank_disabled_returns_top_k(self, rag_components):
-        """When reranker is disabled, _rerank just slices to top_k."""
-        from vaultspec_rag.search import VaultSearcher
+    def test_unicode_content_in_parser(self):
+        """French accented chars should not crash parse_vault_metadata."""
+        from vaultspec_core.vaultcore import parse_vault_metadata
 
-        searcher = VaultSearcher(
-            rag_components["root"],
-            rag_components["model"],
-            rag_components["store"],
+        french_content = (
+            "# Chapitre 1 : La M\u00e9lancolie de Croustillant\n\n"
+            "Au c\u0153ur d'une boulangerie parisienne, o\u00f9 les "
+            "effluves de beurre et de sucre flottaient."
         )
-        searcher._reranker_enabled = False
+        metadata, body = parse_vault_metadata(french_content)
+        assert metadata.tags == []
+        assert metadata.date is None
+        assert "M\u00e9lancolie" in body
 
-        # Get real results from a vault search
-        results = searcher.store.hybrid_search(
-            query_vector=rag_components["model"].encode_query("architecture").tolist(),
-            query_text="architecture",
-            sparse_vector=rag_components["model"].encode_query_sparse("architecture"),
-            limit=10,
+    def test_feature_key_frontmatter_parsed(self):
+        """Documents using 'feature:' key should not crash the parser."""
+        from vaultspec_core.vaultcore import parse_vault_metadata
+
+        content = (
+            "---\n"
+            "feature: dispatch\n"
+            "date: 2026-02-07\n"
+            "related:\n"
+            '  - "[[some-doc]]"\n'
+            "---\n"
+            "# Test Document\n"
         )
-        from vaultspec_rag import SearchResult
+        metadata, body = parse_vault_metadata(content)
+        assert metadata.date == "2026-02-07"
+        assert len(metadata.related) >= 1
+        assert "# Test Document" in body
 
-        search_results = [
-            SearchResult(
-                id=r["id"],
-                path=r["path"],
-                title=r.get("title", ""),
-                score=float(r.get("_relevance_score", 0.0)),
-                snippet=r.get("content", "")[:200],
-                source="vault",
-            )
-            for r in results
-        ]
-        assert len(search_results) >= 3
+    def test_content_with_embedded_yaml_separators(self):
+        """Internal --- should not be confused with frontmatter."""
+        from vaultspec_core.vaultcore import parse_vault_metadata
 
-        out = searcher._rerank("architecture", search_results, 3)
-        assert len(out) == 3
-        # Scores should be unchanged (no reranking applied)
-        assert out[0].score == search_results[0].score
-
-    def test_rerank_enabled_resorts_by_crossencoder(self, rag_components):
-        """When reranker is enabled, CrossEncoder rescores and reorders."""
-        from vaultspec_rag.search import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components["root"],
-            rag_components["model"],
-            rag_components["store"],
+        content = (
+            "# Some Research Doc\n\n"
+            "Some content here.\n\n"
+            "---\n\n"
+            "## Section after separator\n\n"
+            "More content."
         )
-        searcher._reranker_enabled = True
+        metadata, body = parse_vault_metadata(content)
+        assert metadata.tags == []
+        assert metadata.date is None
+        assert "---" in body
 
-        results = searcher.store.hybrid_search(
-            query_vector=rag_components["model"]
-            .encode_query("dispatch architecture")
-            .tolist(),
-            query_text="dispatch architecture",
-            sparse_vector=rag_components["model"].encode_query_sparse(
-                "dispatch architecture"
-            ),
-            limit=10,
+    def test_content_with_code_block_yaml_separators(self):
+        """--- inside code blocks should not confuse the parser."""
+        from vaultspec_core.vaultcore import parse_vault_metadata
+
+        content = (
+            "---\n"
+            'tags: ["#research", "#dispatch"]\n'
+            "date: 2026-02-07\n"
+            "---\n"
+            "# Title\n\n"
+            "```yaml\n"
+            "---\n"
+            "fake: frontmatter\n"
+            "---\n"
+            "```\n"
         )
-        from vaultspec_rag import SearchResult
-
-        search_results = [
-            SearchResult(
-                id=r["id"],
-                path=r["path"],
-                title=r.get("title", ""),
-                score=float(r.get("_relevance_score", 0.0)),
-                snippet=r.get("content", "")[:200],
-                source="vault",
-            )
-            for r in results
-        ]
-        assert len(search_results) >= 3
-
-        out = searcher._rerank("dispatch architecture", search_results, 3)
-        assert len(out) == 3
-        # CrossEncoder assigns new float scores
-        assert all(isinstance(r.score, float) for r in out)
-        # Results should be sorted descending by score
-        assert out[0].score >= out[1].score >= out[2].score
-
-    def test_rerank_single_result_skipped(self, rag_components):
-        """Reranking is skipped when there is only 1 result."""
-        from vaultspec_rag import SearchResult
-        from vaultspec_rag.search import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components["root"],
-            rag_components["model"],
-            rag_components["store"],
-        )
-        searcher._reranker_enabled = True
-
-        single = [
-            SearchResult(
-                id="doc-0",
-                path="adr/doc-0.md",
-                title="Doc 0",
-                score=0.5,
-                snippet="Some content about architecture.",
-                source="vault",
-            )
-        ]
-        original_score = single[0].score
-        out = searcher._rerank("architecture", single, 5)
-        assert len(out) == 1
-        # Score unchanged — reranker was not invoked
-        assert out[0].score == original_score
+        metadata, body = parse_vault_metadata(content)
+        assert metadata.tags == ["#research", "#dispatch"]
+        assert metadata.date == "2026-02-07"
+        assert "fake: frontmatter" in body

@@ -1,39 +1,19 @@
-#!/usr/bin/env python3
 """RAG stack benchmarks: embedding, indexing, search, and resource usage.
 
-Run with:
-    python tests/benchmarks/bench_rag.py
-
-Outputs a clean table of benchmark results.
+Run via CLI:
+    vaultspec-rag benchmark          # rich latency/resource report
+    vaultspec-rag test -m performance  # full pytest suite
 """
 
 from __future__ import annotations
 
-import shutil
 import statistics
-import sys
 import time
 
 import pytest
 
-# Standalone bootstrap (only needed when running outside pytest)
-if __name__ == "__main__":
-    from pathlib import Path as _Path
 
-    _repo = _Path(__file__).resolve().parent.parent.parent.parent.parent
-    _src = str(_repo / "src")
-    if _src not in sys.path:
-        sys.path.insert(0, _src)
-
-from vaultspec_rag.tests.constants import TEST_PROJECT
-
-
-def _hr(char: str = "-", width: int = 72) -> str:
-    return char * width
-
-
-@pytest.mark.benchmark
-@pytest.mark.quality
+@pytest.mark.performance
 def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
     """Time embedding N synthetic documents."""
     texts = [
@@ -53,8 +33,7 @@ def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
     }
 
 
-@pytest.mark.benchmark
-@pytest.mark.quality
+@pytest.mark.performance
 def test_bench_full_index(root, model, store, indexer) -> dict:
     """Time full_index() on the entire vault corpus."""
     start = time.perf_counter()
@@ -69,8 +48,7 @@ def test_bench_full_index(root, model, store, indexer) -> dict:
     }
 
 
-@pytest.mark.benchmark
-@pytest.mark.quality
+@pytest.mark.performance
 def test_bench_incremental_noop(indexer) -> dict:
     """Time incremental_index() when nothing has changed."""
     start = time.perf_counter()
@@ -84,31 +62,30 @@ def test_bench_incremental_noop(indexer) -> dict:
     }
 
 
-@pytest.mark.benchmark
-@pytest.mark.quality
+@pytest.mark.performance
 def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
     """Measure search latency distribution over N queries."""
     queries = [
         "architecture decision",
-        "editor demo layout",
-        "displaymap coordinate mapping",
-        "safety audit vulnerability",
+        "pipeline execution model",
+        "connector protocol design",
+        "security audit vulnerability",
         "implementation plan phase",
         "type:adr architecture",
-        "feature:editor-demo rendering",
-        "dispatch protocol selection",
-        "incremental layout engine",
-        "window positioning research",
-        "text layout rendering",
-        "event handling keyboard",
+        "feature:pipeline-engine execution",
+        "scheduler algorithm selection",
+        "pipeline executor implementation",
+        "dag execution research",
+        "data transformation pipeline",
+        "worker pool thread",
         "type:plan implementation",
         "tree-sitter parser",
         "vault graph re-ranking",
         "semantic search embedding",
         "Qdrant vector store",
-        "date:2026-02 decisions",
-        "caching audit performance",
-        "code safety improvements",
+        "date:2026-01 decisions",
+        "checkpoint storage performance",
+        "connector grpc streaming",
     ]
 
     # Warmup
@@ -133,8 +110,7 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
     }
 
 
-@pytest.mark.benchmark
-@pytest.mark.quality
+@pytest.mark.performance
 def test_bench_memory(root) -> dict:
     """Measure GPU VRAM and Qdrant disk size. Requires CUDA GPU."""
     import torch
@@ -155,96 +131,3 @@ def test_bench_memory(root) -> dict:
         result["qdrant_disk_mb"] = 0
 
     return result
-
-
-def main():
-    from vaultspec_rag import EmbeddingModel, VaultIndexer, VaultSearcher, VaultStore
-
-    print(_hr("="))
-    print("  RAG Stack Benchmarks")
-    print(_hr("="))
-    print()
-
-    # Load model
-    print("Loading embedding model...")
-    t0 = time.perf_counter()
-    model = EmbeddingModel()
-    model_load_s = time.perf_counter() - t0
-    print(f"  Model loaded in {model_load_s:.1f}s on {model.device}")
-    print()
-
-    # 1. Embedding throughput
-    print(_hr())
-    print("1. Embedding Throughput")
-    print(_hr())
-    for n in [10, 50, 100]:
-        result = test_bench_embedding_throughput(model, n)
-        print(
-            f"  {result['n_docs']:>4d} docs: {result['elapsed_s']:.2f}s "
-            f"({result['docs_per_sec']:.1f} docs/sec)"
-        )
-    print()
-
-    # 2. Full index throughput
-    print(_hr())
-    print("2. Full Index Throughput (all vault docs)")
-    print(_hr())
-    store = VaultStore(TEST_PROJECT)
-    indexer = VaultIndexer(TEST_PROJECT, model, store)
-    idx_result = test_bench_full_index(TEST_PROJECT, model, store, indexer)
-    print(
-        f"  {idx_result['total_docs']} docs indexed in {idx_result['elapsed_s']:.2f}s "
-        f"({idx_result['docs_per_sec']:.1f} docs/sec, device={idx_result['device']})"
-    )
-    print()
-
-    # Set up searcher for remaining benchmarks
-    searcher = VaultSearcher(TEST_PROJECT, model, store)
-
-    # 3. Incremental no-op
-    print(_hr())
-    print("3. Incremental Index (no-op, nothing changed)")
-    print(_hr())
-    inc_result = test_bench_incremental_noop(indexer)
-    print(
-        f"  Elapsed: {inc_result['elapsed_s'] * 1000:.0f}ms "
-        f"(added={inc_result['added']}, removed={inc_result['removed']})"
-    )
-    print()
-
-    # 4. Search latency
-    print(_hr())
-    print("4. Search Latency (20 queries)")
-    print(_hr())
-    search_result = test_bench_search_latency(searcher, 20)
-    print(f"  p50:  {search_result['p50_ms']:.1f}ms")
-    print(f"  p95:  {search_result['p95_ms']:.1f}ms")
-    print(f"  p99:  {search_result['p99_ms']:.1f}ms")
-    mean = search_result["mean_ms"]
-    stdev = search_result["stdev_ms"]
-    print(f"  mean: {mean:.1f}ms (stdev={stdev:.1f}ms)")
-    print()
-
-    # 5. Memory / resources
-    print(_hr())
-    print("5. Resource Usage")
-    print(_hr())
-    mem = test_bench_memory(TEST_PROJECT)
-    print(f"  GPU: {mem['gpu_name']}")
-    print(f"  VRAM allocated: {mem['vram_allocated_mb']:.1f}MB")
-    print(f"  VRAM reserved:  {mem['vram_reserved_mb']:.1f}MB")
-    print(f"  Qdrant disk:    {mem['qdrant_disk_mb']:.1f}MB")
-    print()
-
-    # Cleanup
-    qdrant_dir = TEST_PROJECT / ".qdrant"
-    if qdrant_dir.exists():
-        shutil.rmtree(qdrant_dir)
-
-    print(_hr("="))
-    print("  Benchmark complete")
-    print(_hr("="))
-
-
-if __name__ == "__main__":
-    main()

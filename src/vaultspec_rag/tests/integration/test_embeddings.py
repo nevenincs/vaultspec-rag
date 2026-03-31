@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.integration]
 
 
 # ---- Embedding Model Tests ----
@@ -36,7 +36,7 @@ class TestEmbeddingModel:
         model = rag_components["model"]
 
         doc_vec = model.encode_documents(
-            ["LanceDB is an embedded vector database for semantic search"]
+            ["LanceDB is an embedded vector database for semantic search"],
         )[0]
         related_query = model.encode_query("vector database for search")
         unrelated_query = model.encode_query("chocolate cake recipe")

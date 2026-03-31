@@ -6,9 +6,17 @@ for dense embeddings and SPLADE v3 for sparse. Qdrant local mode for vector stor
 
 from __future__ import annotations
 
-from .api import get_related, index, list_documents
-from .embeddings import EmbeddingModel
-from .indexer import IndexResult, VaultIndexer, prepare_document
+from .api import (
+    get_related,
+    index,
+    index_codebase,
+    list_documents,
+    search_all,
+    search_codebase,
+    search_vault,
+)
+from .embeddings import EmbeddingModel, SparseResult
+from .indexer import CodebaseIndexer, IndexResult, VaultIndexer, prepare_document
 from .search import (
     ParsedQuery,
     SearchResult,
@@ -16,21 +24,28 @@ from .search import (
     parse_query,
     rerank_with_graph,
 )
-from .store import VaultDocument, VaultStore
+from .store import CodeChunk, VaultDocument, VaultStore
 
 __all__ = [
+    "CodeChunk",
+    "CodebaseIndexer",
     "EmbeddingModel",
     "IndexResult",
     "ParsedQuery",
     "SearchResult",
+    "SparseResult",
     "VaultDocument",
     "VaultIndexer",
     "VaultSearcher",
     "VaultStore",
     "get_related",
     "index",
+    "index_codebase",
     "list_documents",
     "parse_query",
     "prepare_document",
     "rerank_with_graph",
+    "search_all",
+    "search_codebase",
+    "search_vault",
 ]

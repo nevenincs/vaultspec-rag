@@ -85,8 +85,149 @@ class TestVaultSearch:
         if results:
             assert isinstance(results[0].snippet, str)
 
+    def test_vault_search_paths_are_markdown(self, rag_components):
+        """All vault search result paths should point to .md files."""
+        from vaultspec_rag import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        results = searcher.search_vault("architecture decision", top_k=5)
+
+        assert len(results) > 0
+        for r in results:
+            assert r.path.endswith(".md"), f"Expected .md path, got {r.path}"
+
+    def test_vault_search_snippets_nonempty(self, rag_components):
+        """Vault search snippets must contain actual document text."""
+        from vaultspec_rag import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        results = searcher.search_vault("connector protocol", top_k=5)
+
+        assert len(results) > 0
+        for r in results:
+            assert len(r.snippet.strip()) > 0, f"Result {r.id} has empty snippet"
+
+    def test_vault_search_scores_bounded(self, rag_components):
+        """All vault search result scores should be positive floats."""
+        from vaultspec_rag import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        results = searcher.search_vault("pipeline executor", top_k=5)
+
+        assert len(results) > 0
+        for r in results:
+            assert isinstance(r.score, float)
+            assert r.score > 0, f"Result {r.id} has non-positive score {r.score}"
+
 
 # ---- Search edge cases ----
+
+
+@pytest.fixture(scope="module")
+def rag_components_mixed(tmp_path_factory, embedding_model):
+    """RAG components with both vault and codebase indexed.
+
+    Uses .qdrant-mixed/ to isolate from other fixtures.
+    Indexes a tiny 2-file Python corpus so search_all() returns code results
+    without running full_index() on the entire test-project codebase.
+    """
+    import shutil
+
+    from vaultspec_rag import CodebaseIndexer
+    from vaultspec_rag.tests.conftest import _build_rag_components
+    from vaultspec_rag.tests.constants import TEST_PROJECT
+
+    components = _build_rag_components(
+        TEST_PROJECT,
+        fast=True,
+        qdrant_suffix="-mixed",
+        model=embedding_model,
+    )
+
+    # Create a tiny 2-file Python corpus in a temp dir and index it.
+    # Using real GPU inference on real code — not synthetic vectors.
+    code_root = tmp_path_factory.mktemp("code_corpus")
+    (code_root / "utils.py").write_text(
+        "def add(a: int, b: int) -> int:\n"
+        "    '''Add two integers and return the result.'''\n"
+        "    return a + b\n\n"
+        "def subtract(a: int, b: int) -> int:\n"
+        "    '''Subtract b from a.'''\n"
+        "    return a - b\n",
+        encoding="utf-8",
+    )
+    (code_root / "search_helpers.py").write_text(
+        "class QueryParser:\n"
+        "    '''Parse a search query string into tokens.'''\n\n"
+        "    def parse(self, query: str) -> list[str]:\n"
+        "        '''Split query on whitespace and return token list.'''\n"
+        "        return query.split()\n\n"
+        "    def normalize(self, token: str) -> str:\n"
+        "        '''Lowercase and strip punctuation from token.'''\n"
+        "        return token.lower().strip('.,!?')\n",
+        encoding="utf-8",
+    )
+    code_indexer = CodebaseIndexer(code_root, components["model"], components["store"])
+    code_indexer.full_index()
+
+    yield components
+
+    components["store"].close()
+    db_dir = components["db_dir"]
+    if db_dir.exists():
+        shutil.rmtree(db_dir)
+
+
+class TestSearchAll:
+    """Tests for VaultSearcher.search_all() combining vault and code results."""
+
+    def test_search_all_returns_vault_results(self, rag_components):
+        """search_all on a vault-only index returns only vault results."""
+        from vaultspec_rag import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        results = searcher.search_all("architecture decision", top_k=5)
+
+        assert len(results) > 0
+        assert all(r.source in ("vault", "codebase") for r in results)
+        scores = [r.score for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_search_all_returns_mixed_results(self, rag_components_mixed):
+        """search_all on a vault+code index returns results from both sources."""
+        from vaultspec_rag import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components_mixed["root"],
+            rag_components_mixed["model"],
+            rag_components_mixed["store"],
+        )
+        results = searcher.search_all("function definition", top_k=10)
+
+        assert len(results) > 0
+        sources = {r.source for r in results}
+        assert "vault" in sources, f"Expected vault results, got sources: {sources}"
+        assert "codebase" in sources, (
+            f"Expected codebase results, got sources: {sources}"
+        )
+        scores = [r.score for r in results]
+        assert scores == sorted(scores, reverse=True)
 
 
 class TestSearchEdgeCases:
@@ -193,3 +334,116 @@ class TestSearchEdgeCases:
         # Verify the store is still functional after adversarial queries
         results = searcher.search("architecture", top_k=3)
         assert len(results) > 0, "Store should still work after adversarial queries"
+
+
+class TestRerank:
+    """Live integration tests for VaultSearcher._rerank on GPU."""
+
+    def test_rerank_disabled_returns_top_k(self, rag_components):
+        """When reranker is disabled, _rerank just slices to top_k."""
+        from vaultspec_rag.search import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        searcher._reranker_enabled = False
+
+        # Get real results from a vault search
+        results = searcher.store.hybrid_search(
+            query_vector=rag_components["model"].encode_query("architecture").tolist(),
+            query_text="architecture",
+            sparse_vector=rag_components["model"].encode_query_sparse("architecture"),
+            limit=10,
+        )
+        from vaultspec_rag import SearchResult
+
+        search_results = [
+            SearchResult(
+                id=r["id"],
+                path=r["path"],
+                title=r.get("title", ""),
+                score=float(r.get("_relevance_score", 0.0)),
+                snippet=r.get("content", "")[:200],
+                source="vault",
+            )
+            for r in results
+        ]
+        assert len(search_results) >= 3
+
+        out = searcher._rerank("architecture", search_results, 3)
+        assert len(out) == 3
+        # Scores should be unchanged (no reranking applied)
+        assert out[0].score == search_results[0].score
+
+    def test_rerank_enabled_resorts_by_crossencoder(self, rag_components):
+        """When reranker is enabled, CrossEncoder rescores and reorders."""
+        from vaultspec_rag.search import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        searcher._reranker_enabled = True
+
+        results = searcher.store.hybrid_search(
+            query_vector=rag_components["model"]
+            .encode_query("dispatch architecture")
+            .tolist(),
+            query_text="dispatch architecture",
+            sparse_vector=rag_components["model"].encode_query_sparse(
+                "dispatch architecture",
+            ),
+            limit=10,
+        )
+        from vaultspec_rag import SearchResult
+
+        search_results = [
+            SearchResult(
+                id=r["id"],
+                path=r["path"],
+                title=r.get("title", ""),
+                score=float(r.get("_relevance_score", 0.0)),
+                snippet=r.get("content", "")[:200],
+                source="vault",
+            )
+            for r in results
+        ]
+        assert len(search_results) >= 3
+
+        out = searcher._rerank("dispatch architecture", search_results, 3)
+        assert len(out) == 3
+        # CrossEncoder assigns new float scores
+        assert all(isinstance(r.score, float) for r in out)
+        # Results should be sorted descending by score
+        assert out[0].score >= out[1].score >= out[2].score
+
+    def test_rerank_single_result_skipped(self, rag_components):
+        """Reranking is skipped when there is only 1 result."""
+        from vaultspec_rag import SearchResult
+        from vaultspec_rag.search import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        searcher._reranker_enabled = True
+
+        single = [
+            SearchResult(
+                id="doc-0",
+                path="adr/doc-0.md",
+                title="Doc 0",
+                score=0.5,
+                snippet="Some content about architecture.",
+                source="vault",
+            ),
+        ]
+        original_score = single[0].score
+        out = searcher._rerank("architecture", single, 5)
+        assert len(out) == 1
+        # Score unchanged — reranker was not invoked
+        assert out[0].score == original_score

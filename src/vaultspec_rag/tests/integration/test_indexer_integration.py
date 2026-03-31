@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.tests.constants import TEST_PROJECT
+from ..constants import TEST_PROJECT
 
 pytestmark = [pytest.mark.integration]
 
@@ -14,7 +14,6 @@ pytestmark = [pytest.mark.integration]
 class TestVaultIndexer:
     """Tests for the indexing pipeline with real vault data."""
 
-    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_full_index_counts(self, rag_components):
         result = rag_components["index_result"]
@@ -23,14 +22,12 @@ class TestVaultIndexer:
         assert result.duration_ms >= 0
         assert result.device == "cuda"
 
-    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_index_matches_store_count(self, rag_components):
         result = rag_components["index_result"]
         store = rag_components["store"]
         assert result.total == store.count()
 
-    @pytest.mark.quality
     @pytest.mark.timeout(300)
     def test_incremental_index_no_changes(self, rag_components_full):
         """Incremental index with no changes should report zero additions.
@@ -53,11 +50,10 @@ class TestVaultIndexer:
 class TestDocumentPreparation:
     """Tests for individual document preparation."""
 
-    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_prepare_real_document(self):
         # Find a real document in the test-project
-        from vaultspec.vaultcore import scan_vault
+        from vaultspec_core.vaultcore import scan_vault
 
         from vaultspec_rag import prepare_document
 
@@ -71,20 +67,25 @@ class TestDocumentPreparation:
         assert doc.doc_type in ("adr", "audit", "exec", "plan", "reference", "research")
         assert doc.content
 
-    @pytest.mark.quality
     @pytest.mark.timeout(300)
     def test_prepare_all_documents(self):
-        from vaultspec.vaultcore import scan_vault
+        from vaultspec_core.vaultcore import scan_vault
 
         from vaultspec_rag import prepare_document
+        from vaultspec_rag.config import get_config
 
+        docs_dir = TEST_PROJECT / get_config().docs_dir
         prepared = 0
         skipped = 0
         for path in scan_vault(TEST_PROJECT):
             doc = prepare_document(path, TEST_PROJECT)
             if doc is not None:
                 prepared += 1
-                assert doc.id == path.stem
+                # doc.id is relative to docs_dir without extension
+                # e.g., "adr/overview" not just "overview"
+                rel = str(path.relative_to(docs_dir)).replace("\\", "/")
+                expected_id = rel.rsplit(".", 1)[0] if "." in rel else rel
+                assert doc.id == expected_id
             else:
                 skipped += 1
 
@@ -97,7 +98,6 @@ class TestDocumentPreparation:
 class TestIndexEdgeCases:
     """Edge cases for indexing operations."""
 
-    @pytest.mark.quality
     @pytest.mark.timeout(300)
     def test_double_full_index_idempotent(self, rag_components_full):
         """Two full_index() calls should yield the same document count."""
@@ -115,7 +115,6 @@ class TestIndexEdgeCases:
         )
         assert result.total == second_count
 
-    @pytest.mark.quality
     @pytest.mark.timeout(300)
     def test_incremental_after_full_stable(self, rag_components_full):
         """Incremental index after full should report zero changes."""
@@ -126,14 +125,13 @@ class TestIndexEdgeCases:
         assert result.removed == 0, f"Expected 0 removed, got {result.removed}"
         assert result.total == rag_components_full["index_result"].total
 
-    @pytest.mark.quality
     @pytest.mark.timeout(300)
     def test_docs_without_frontmatter_counted(self):
         """Verify how many docs in the vault lack frontmatter entirely.
         These should all be in unsupported directories (stories) or have
         no YAML block at all (some research docs).
         """
-        from vaultspec.vaultcore import parse_vault_metadata, scan_vault
+        from vaultspec_core.vaultcore import parse_vault_metadata, scan_vault
 
         no_frontmatter = []
         for path in scan_vault(TEST_PROJECT):
@@ -144,3 +142,61 @@ class TestIndexEdgeCases:
 
         # We expect some docs without frontmatter (stories, some research)
         assert len(no_frontmatter) > 0, "Should find docs without frontmatter"
+
+
+class TestIncrementalModifyAndDelete:
+    """R26-M4: incremental_index detects modified and deleted vault files."""
+
+    @pytest.mark.timeout(300)
+    def test_incremental_detects_modified_file(self, rag_components_full):
+        """Modifying a file's content triggers an update on incremental re-index."""
+        from vaultspec_core.vaultcore import scan_vault
+
+        indexer = rag_components_full["indexer"]
+        root = rag_components_full["root"]
+
+        # Pick the first vault doc
+        paths = list(scan_vault(root))
+        assert len(paths) > 0
+        target = paths[0]
+        original_content = target.read_text(encoding="utf-8")
+
+        try:
+            # Modify the file
+            target.write_text(
+                original_content + "\n<!-- test modification -->\n",
+                encoding="utf-8",
+            )
+            result = indexer.incremental_index()
+            assert result.updated >= 1, f"Expected >= 1 updated, got {result.updated}"
+        finally:
+            # Restore original content
+            target.write_text(original_content, encoding="utf-8")
+            # Re-index to restore metadata
+            indexer.incremental_index()
+
+    @pytest.mark.timeout(300)
+    def test_incremental_detects_deleted_file(self, rag_components_full):
+        """Removing a file from disk triggers a removal on incremental re-index."""
+        from vaultspec_core.vaultcore import scan_vault
+
+        indexer = rag_components_full["indexer"]
+        root = rag_components_full["root"]
+        store = rag_components_full["store"]
+
+        paths = list(scan_vault(root))
+        assert len(paths) > 0
+        target = paths[0]
+        original_content = target.read_text(encoding="utf-8")
+        count_before = store.count()
+
+        try:
+            target.unlink()
+            result = indexer.incremental_index()
+            assert result.removed >= 1, f"Expected >= 1 removed, got {result.removed}"
+            assert store.count() < count_before
+        finally:
+            # Restore the file
+            target.write_text(original_content, encoding="utf-8")
+            # Re-index to restore
+            indexer.incremental_index()

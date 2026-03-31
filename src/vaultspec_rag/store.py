@@ -6,6 +6,7 @@ All heavy imports are guarded so core vault tools work without RAG deps.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -25,7 +26,11 @@ EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
 
 
 def _check_rag_deps() -> None:
-    """Raise ImportError if qdrant-client is not installed."""
+    """Raise ImportError if qdrant-client is not installed.
+
+    Raises:
+        ImportError: If ``qdrant-client`` is not available.
+    """
     try:
         import qdrant_client
 
@@ -78,6 +83,9 @@ class CodeChunk:
         content: The actual source code text of the chunk.
         line_start: Starting line number in the source file.
         line_end: Ending line number in the source file.
+        node_type: AST node type of the primary node (e.g. "function_definition").
+        function_name: Name of the function/method this chunk belongs to, if any.
+        class_name: Name of the enclosing class/struct/impl, if any.
         vector: Dense embedding vector.
         sparse_indices: Sparse vector indices (SPLADE).
         sparse_values: Sparse vector values (SPLADE).
@@ -89,6 +97,9 @@ class CodeChunk:
     content: str
     line_start: int
     line_end: int
+    node_type: str | None = None
+    function_name: str | None = None
+    class_name: str | None = None
     vector: list[float] = field(default_factory=list)
     sparse_indices: list[int] = field(default_factory=list)
     sparse_values: list[float] = field(default_factory=list)
@@ -106,7 +117,9 @@ class VaultStore:
     CODE_TABLE_NAME = "codebase_docs"
 
     def __init__(
-        self, root_dir: pathlib.Path | str, embedding_dim: int | None = None
+        self,
+        root_dir: pathlib.Path | str,
+        embedding_dim: int | None = None,
     ) -> None:
         """Connect to (or create) the Qdrant store at ``{root_dir}/.qdrant/``.
 
@@ -132,15 +145,21 @@ class VaultStore:
         self.db_path.mkdir(parents=True, exist_ok=True)
         self._client: QdrantClient = _QdrantClient(path=str(self.db_path))
         self._embedding_dim = embedding_dim or EMBEDDING_DIM
+        self._vault_ensured = False
+        self._code_ensured = False
 
     def close(self) -> None:
-        """Release the Qdrant client."""
+        """Release the Qdrant client and set it to ``None``."""
         if self._client is not None:
             self._client.close()
             self._client = None  # type: ignore[assignment]
 
     def __enter__(self) -> VaultStore:
-        """Return *self* to support use as a context manager."""
+        """Return *self* to support use as a context manager.
+
+        Returns:
+            This store instance.
+        """
         return self
 
     def __exit__(
@@ -149,12 +168,20 @@ class VaultStore:
         exc_val: BaseException | None,
         exc_tb: object,
     ) -> bool:
-        """Close the store on context-manager exit."""
+        """Close the store on context-manager exit.
+
+        Returns:
+            Always ``False``; exceptions are never suppressed.
+        """
         self.close()
         return False
 
     def _ensure_collection(self, name: str) -> None:
-        """Create a collection with dense + sparse vectors if it doesn't exist."""
+        """Create a collection with dense + sparse vectors if it doesn't exist.
+
+        Args:
+            name: Qdrant collection name to create.
+        """
         from qdrant_client import models
 
         if self._client.collection_exists(name):
@@ -174,13 +201,66 @@ class VaultStore:
         )
         logger.info("Created collection '%s' at %s", name, self.db_path)
 
+    def drop_table(self) -> None:
+        """Drop the vault_docs collection if it exists."""
+        if self._client.collection_exists(self.TABLE_NAME):
+            self._client.delete_collection(self.TABLE_NAME)
+            logger.info("Dropped collection '%s'", self.TABLE_NAME)
+        self._vault_ensured = False
+
+    def drop_code_table(self) -> None:
+        """Drop the codebase_docs collection if it exists."""
+        if self._client.collection_exists(self.CODE_TABLE_NAME):
+            self._client.delete_collection(self.CODE_TABLE_NAME)
+            logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
+        self._code_ensured = False
+
     def ensure_table(self) -> None:
         """Create the vault_docs collection if it doesn't exist."""
+        if self._vault_ensured:
+            return
+
+        from qdrant_client import models
+
+        if self._client.collection_exists(self.TABLE_NAME):
+            self._vault_ensured = True
+            return
+
         self._ensure_collection(self.TABLE_NAME)
+
+        for fname in ("doc_type", "feature", "date", "tags"):
+            self._client.create_payload_index(
+                collection_name=self.TABLE_NAME,
+                field_name=fname,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+        self._vault_ensured = True
 
     def ensure_code_table(self) -> None:
         """Create the codebase_docs collection if it doesn't exist."""
+        if self._code_ensured:
+            return
+
+        from qdrant_client import models
+
+        if self._client.collection_exists(self.CODE_TABLE_NAME):
+            self._code_ensured = True
+            return
+
         self._ensure_collection(self.CODE_TABLE_NAME)
+
+        for fname in ("path", "language", "function_name", "class_name"):
+            self._client.create_payload_index(
+                collection_name=self.CODE_TABLE_NAME,
+                field_name=fname,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+        self._client.create_payload_index(
+            collection_name=self.CODE_TABLE_NAME,
+            field_name="line_start",
+            field_schema=models.PayloadSchemaType.INTEGER,
+        )
+        self._code_ensured = True
 
     def upsert_documents(self, docs: list[VaultDocument]) -> None:
         """Insert or update documents by ``id``.
@@ -220,7 +300,7 @@ class VaultStore:
                         "title": doc.title,
                         "content": doc.content,
                     },
-                )
+                ),
             )
 
         self._client.upsert(
@@ -263,8 +343,11 @@ class VaultStore:
                         "content": chunk.content,
                         "line_start": chunk.line_start,
                         "line_end": chunk.line_end,
+                        "node_type": chunk.node_type,
+                        "function_name": chunk.function_name,
+                        "class_name": chunk.class_name,
                     },
-                )
+                ),
             )
 
         self._client.upsert(
@@ -310,17 +393,33 @@ class VaultStore:
         logger.info("Deleted %d code chunk(s)", len(ids))
 
     def get_all_ids(self) -> set[str]:
-        """Return the set of all document ``id`` values in the store."""
+        """Return the set of all document ``id`` values in the store.
+
+        Returns:
+            Set of document stem IDs from the vault_docs collection.
+        """
         self.ensure_table()
         return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
 
     def get_all_code_ids(self) -> set[str]:
-        """Return the set of all code chunk ``id`` values in the store."""
+        """Return the set of all code chunk ``id`` values in the store.
+
+        Returns:
+            Set of chunk IDs from the codebase_docs collection.
+        """
         self.ensure_code_table()
         return self._scroll_all_ids(self.CODE_TABLE_NAME, "chunk_id")
 
     def _scroll_all_ids(self, collection: str, id_field: str) -> set[str]:
-        """Scroll through all points and collect the id field from payloads."""
+        """Scroll through all points and collect the id field from payloads.
+
+        Args:
+            collection: Qdrant collection name to scroll.
+            id_field: Payload key that holds the string ID.
+
+        Returns:
+            Set of string IDs extracted from point payloads.
+        """
         ids: set[str] = set()
         offset = None
         while True:
@@ -339,24 +438,79 @@ class VaultStore:
             offset = next_offset
         return ids
 
+    def get_code_ids_by_paths(self, rel_paths: set[str]) -> list[str]:
+        """Return chunk IDs for code chunks belonging to the given file paths.
+
+        Uses a Qdrant MatchAny filter on the ``path`` payload field
+        instead of scanning all chunks.
+
+        Args:
+            rel_paths: Set of relative file paths to match against.
+
+        Returns:
+            List of chunk ID strings for matching code chunks.
+        """
+        from qdrant_client import models
+
+        self.ensure_code_table()
+        if not rel_paths:
+            return []
+
+        scroll_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="path",
+                    match=models.MatchAny(any=list(rel_paths)),
+                ),
+            ],
+        )
+
+        ids: list[str] = []
+        offset = None
+        while True:
+            points, next_offset = self._client.scroll(
+                collection_name=self.CODE_TABLE_NAME,
+                scroll_filter=scroll_filter,
+                limit=1000,
+                offset=offset,
+                with_payload=["chunk_id"],
+                with_vectors=False,
+            )
+            for point in points:
+                if point.payload and "chunk_id" in point.payload:
+                    ids.append(str(point.payload["chunk_id"]))
+            if next_offset is None:
+                break
+            offset = next_offset
+        return ids
+
     def count(self) -> int:
-        """Return total number of indexed documents in vault_docs."""
+        """Return total number of indexed documents in vault_docs.
+
+        Returns:
+            Point count in the vault_docs collection.
+        """
         self.ensure_table()
         return self._client.count(collection_name=self.TABLE_NAME).count
 
     def count_code(self) -> int:
-        """Return total number of indexed codebase chunks."""
+        """Return total number of indexed codebase chunks.
+
+        Returns:
+            Point count in the codebase_docs collection.
+        """
         self.ensure_code_table()
         return self._client.count(collection_name=self.CODE_TABLE_NAME).count
 
     def get_by_id(self, doc_id: str) -> dict | None:
-        """Retrieve a single document by ID, or None if not found.
+        """Retrieve a single document by ID, or ``None`` if not found.
 
         Args:
             doc_id: Document stem to look up.
 
         Returns:
-            Document dict with vector stripped, or None if not found.
+            Document payload dict (vectors stripped), or ``None``
+            if no matching point exists.
         """
         self.ensure_table()
         point_id = self._stable_id(doc_id)
@@ -372,6 +526,52 @@ class VaultStore:
         payload["id"] = payload.pop("doc_id", doc_id)
         return payload
 
+    def list_all_documents(
+        self,
+        doc_type: str | None = None,
+    ) -> list[dict]:
+        """Return all vault documents via scroll, optionally filtered.
+
+        Args:
+            doc_type: If provided, only return documents of this type.
+
+        Returns:
+            List of document dicts (id, path, doc_type, title, etc.).
+        """
+        from qdrant_client import models
+
+        self.ensure_table()
+        scroll_filter = None
+        if doc_type:
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="doc_type",
+                        match=models.MatchValue(value=doc_type),
+                    ),
+                ],
+            )
+
+        docs: list[dict] = []
+        offset = None
+        while True:
+            points, next_offset = self._client.scroll(
+                collection_name=self.TABLE_NAME,
+                scroll_filter=scroll_filter,
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = dict(point.payload) if point.payload else {}
+                payload["id"] = payload.pop("doc_id", str(point.id))
+                docs.append(payload)
+            if next_offset is None:
+                break
+            offset = next_offset
+        return docs
+
     def hybrid_search(
         self,
         query_vector: list[float],
@@ -385,19 +585,28 @@ class VaultStore:
 
         Args:
             query_vector: Dense query embedding.
-            query_text: Kept for interface compat (search uses sparse_vector).
+            query_text: Kept for interface compat (search uses
+                sparse_vector).
             filters: Metadata filters (doc_type, feature, date).
             limit: Max results to return.
-            sparse_vector: Optional sparse embedding with .indices and .values.
+            sparse_vector: Pre-computed SPLADE sparse embedding
+                with ``.indices`` and ``.values`` attributes.
 
         Returns:
-            List of result dicts with payload fields and ``_relevance_score``.
+            List of result dicts with payload fields and
+            ``_relevance_score``.
+
+        Raises:
+            UnexpectedResponse: Logged and caught internally;
+                triggers dense-only fallback.
         """
         from qdrant_client import models
+        from qdrant_client.http.exceptions import (
+            ResponseHandlingException,
+            UnexpectedResponse,
+        )
 
         self.ensure_table()
-        if self.count() == 0:
-            return []
 
         query_filter = self._build_filter(filters)
         dense_vec = (
@@ -430,11 +639,15 @@ class VaultStore:
             results = self._client.query_points(
                 collection_name=self.TABLE_NAME,
                 prefetch=prefetch,
-                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                query=models.RrfQuery(rrf=models.Rrf(k=60)),
                 limit=limit,
             )
             scored_points = results.points
-        except Exception as exc:
+        except (
+            UnexpectedResponse,
+            ResponseHandlingException,
+            ValueError,
+        ) as exc:
             logger.warning("Hybrid search failed (%s), falling back to dense-only", exc)
             fallback = self._client.query_points(
                 collection_name=self.TABLE_NAME,
@@ -456,12 +669,32 @@ class VaultStore:
         *,
         sparse_vector: SparseResult | None = None,
     ) -> list[dict]:
-        """Execute hybrid search on codebase_docs."""
+        """Execute hybrid dense + sparse search with RRF on codebase_docs.
+
+        Args:
+            query_vector: Dense query embedding.
+            query_text: Kept for interface compat (search uses
+                sparse_vector).
+            filters: Codebase filters (language, path, etc.).
+            limit: Max results to return.
+            sparse_vector: Pre-computed SPLADE sparse embedding
+                with ``.indices`` and ``.values`` attributes.
+
+        Returns:
+            List of result dicts with payload fields and
+            ``_relevance_score``.
+
+        Raises:
+            UnexpectedResponse: Logged and caught internally;
+                triggers dense-only fallback.
+        """
         from qdrant_client import models
+        from qdrant_client.http.exceptions import (
+            ResponseHandlingException,
+            UnexpectedResponse,
+        )
 
         self.ensure_code_table()
-        if self.count_code() == 0:
-            return []
 
         query_filter = self._build_code_filter(filters)
         dense_vec = (
@@ -494,11 +727,15 @@ class VaultStore:
             results = self._client.query_points(
                 collection_name=self.CODE_TABLE_NAME,
                 prefetch=prefetch,
-                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                query=models.RrfQuery(rrf=models.Rrf(k=60)),
                 limit=limit,
             )
             scored_points = results.points
-        except Exception as exc:
+        except (
+            UnexpectedResponse,
+            ResponseHandlingException,
+            ValueError,
+        ) as exc:
             logger.warning(
                 "Codebase hybrid search failed (%s), falling back to dense-only",
                 exc,
@@ -516,10 +753,26 @@ class VaultStore:
 
     @staticmethod
     def _points_to_dicts(scored_points: list, id_field: str) -> list[dict]:
-        """Convert Qdrant ScoredPoint list to result dicts."""
+        """Convert Qdrant ScoredPoint list to result dicts.
+
+        Args:
+            scored_points: List of Qdrant ``ScoredPoint`` objects.
+            id_field: Payload key that holds the string ID
+                (e.g. ``"doc_id"`` or ``"chunk_id"``).
+
+        Returns:
+            List of dicts with payload fields, ``id``, and
+            ``_relevance_score``.
+        """
         results = []
         for point in scored_points:
             row = dict(point.payload) if point.payload else {}
+            if id_field not in row:
+                logger.warning(
+                    "Point %s missing id field '%s'",
+                    point.id,
+                    id_field,
+                )
             row["id"] = row.pop(id_field, str(point.id))
             row["_relevance_score"] = point.score
             results.append(row)
@@ -528,28 +781,48 @@ class VaultStore:
     @staticmethod
     def _build_filter(
         filters: dict[str, str] | None,
-    ):  # -> models.Filter | None
-        """Convert a filters dict into a Qdrant Filter."""
+    ) -> object | None:
+        """Convert a filters dict into a Qdrant ``Filter``.
+
+        Args:
+            filters: Mapping of filter keys (``doc_type``,
+                ``feature``, ``date``, ``tag``) to values.
+
+        Returns:
+            A ``qdrant_client.models.Filter`` instance, or ``None``
+            if no valid conditions were produced.
+        """
         if not filters:
             return None
         from qdrant_client import models
 
         conditions: list = []
         for key, value in filters.items():
+            if not value:
+                continue
             if key == "date":
                 conditions.append(
                     models.FieldCondition(
                         key="date",
-                        match=models.MatchText(text=value),
-                    )
+                        match=models.MatchValue(value=value),
+                    ),
+                )
+            elif key == "tag":
+                conditions.append(
+                    models.FieldCondition(
+                        key="tags",
+                        match=models.MatchAny(any=[value]),
+                    ),
                 )
             elif key in ("doc_type", "feature"):
                 conditions.append(
                     models.FieldCondition(
                         key=key,
                         match=models.MatchValue(value=value),
-                    )
+                    ),
                 )
+            else:
+                logger.warning("Unknown filter key: %s", key)
         if not conditions:
             return None
         return models.Filter(must=conditions)
@@ -557,21 +830,39 @@ class VaultStore:
     @staticmethod
     def _build_code_filter(
         filters: dict[str, str] | None,
-    ):  # -> models.Filter | None
-        """Convert codebase filters into a Qdrant Filter."""
+    ) -> object | None:
+        """Convert codebase filters into a Qdrant ``Filter``.
+
+        Args:
+            filters: Mapping of codebase filter keys (``language``,
+                ``path``, ``node_type``, ``function_name``,
+                ``class_name``) to values.
+
+        Returns:
+            A ``qdrant_client.models.Filter`` instance, or ``None``
+            if no valid conditions were produced.
+        """
         if not filters:
             return None
         from qdrant_client import models
 
         conditions: list = []
         for key, value in filters.items():
-            if key in ("language", "path"):
+            if key in (
+                "language",
+                "path",
+                "node_type",
+                "function_name",
+                "class_name",
+            ):
                 conditions.append(
                     models.FieldCondition(
                         key=key,
                         match=models.MatchValue(value=value),
-                    )
+                    ),
                 )
+            else:
+                logger.warning("Unknown filter key: %s", key)
         if not conditions:
             return None
         return models.Filter(must=conditions)
@@ -582,8 +873,12 @@ class VaultStore:
 
         Qdrant local mode requires integer or UUID point IDs. We use a
         deterministic hash to map string document stems to integers.
-        """
-        import hashlib
 
+        Args:
+            string_id: The string document or chunk ID to hash.
+
+        Returns:
+            Positive 63-bit integer derived from SHA-256 of the ID.
+        """
         h = hashlib.sha256(string_id.encode("utf-8")).digest()
         return int.from_bytes(h[:8], byteorder="big") & 0x7FFFFFFFFFFFFFFF

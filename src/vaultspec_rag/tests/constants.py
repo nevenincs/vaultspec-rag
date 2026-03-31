@@ -32,24 +32,24 @@ TEST_VAULT: pathlib.Path = TEST_PROJECT / ".vault"
 GPU_FAST_CORPUS_STEMS: frozenset[str] = frozenset(
     [
         # adr (4)
-        "2026-02-05-editor-demo-architecture",
-        "2026-02-06-displaymap-architecture-design",
-        "2026-02-06-main-window-architecture",
-        "2026-02-07-dispatch-architecture",
+        "2026-01-10-pipeline-execution-model",
+        "2026-01-12-connector-protocol-design",
+        "2026-01-15-storage-backend-selection",
+        "2026-01-20-scheduler-algorithm-choice",
         # plan (2)
-        "2026-02-05-editor-demo-phase1-plan",
-        "2026-02-06-main-window-master-plan",
+        "2026-01-10-pipeline-engine-phase1-plan",
+        "2026-01-20-scheduler-phase1-plan",
         # exec (2)
-        "2026-02-05-turn-completion-summary",
-        "2026-02-06-layout-alignment-summary",
+        "2026-01-11-pipeline-parser-complete",
+        "2026-01-22-scheduler-worker-pool-complete",
         # reference (3)
-        "2026-02-07-main-window-safety-audit",
-        "2026-02-05-editor-demo-core-reference",
-        "2026-02-04-displaymap-reference",
+        "2026-01-10-pipeline-engine-reference",
+        "2026-01-12-connector-api-reference",
+        "2026-01-18-nexus-security-audit",
         # research (2)
-        "2026-02-05-editor-demo-research",
-        "2026-02-07-dispatch-protocol-alignment-audit",
-    ]
+        "2026-01-09-dag-execution-research",
+        "2026-01-19-scheduling-algorithms-research",
+    ],
 )
 
 QDRANT_SUFFIX_FAST: str = "-fast"

@@ -9,11 +9,13 @@ import pytest
 
 if TYPE_CHECKING:
     import pathlib
-from vaultspec.config import reset_config
+from vaultspec_core.config import reset_config
 
 from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
 from vaultspec_rag.config import get_config
-from vaultspec_rag.tests.constants import (
+from vaultspec_rag.config import reset_config as reset_rag_config
+
+from .constants import (
     GPU_FAST_CORPUS_STEMS,
     PROJECT_ROOT,
     QDRANT_SUFFIX_FAST,
@@ -26,7 +28,7 @@ from vaultspec_rag.tests.constants import (
 
 def _fast_index(indexer, model, store, root, stems):
     """Index only the given subset of document stems."""
-    from vaultspec.vaultcore import scan_vault
+    from vaultspec_core.vaultcore import scan_vault
 
     from vaultspec_rag import IndexResult, prepare_document
 
@@ -76,7 +78,11 @@ def _fast_index(indexer, model, store, root, stems):
 
 
 def _build_rag_components(
-    root: pathlib.Path, *, fast: bool, qdrant_suffix: str = ""
+    root: pathlib.Path,
+    *,
+    fast: bool,
+    qdrant_suffix: str = "",
+    model: object | None = None,
 ) -> dict:
     """Build RAG components for testing.
 
@@ -85,9 +91,11 @@ def _build_rag_components(
 
     ``qdrant_suffix`` isolates the qdrant directory so that the fast and
     full fixtures don't share the same storage path.
+
+    ``model`` accepts a pre-built EmbeddingModel to share across fixtures.
     """
 
-    from vaultspec_rag import EmbeddingModel, VaultIndexer, VaultStore
+    from vaultspec_rag import CodebaseIndexer, EmbeddingModel, VaultIndexer, VaultStore
 
     qdrant_name = f".qdrant{qdrant_suffix}"
     qdrant_dir = root / qdrant_name
@@ -96,7 +104,8 @@ def _build_rag_components(
     if qdrant_dir.exists():
         shutil.rmtree(qdrant_dir)
 
-    model = EmbeddingModel()
+    if model is None:
+        model = EmbeddingModel()
     store = VaultStore(root)
     # Override db_path to use the suffixed directory for test isolation
     if qdrant_suffix:
@@ -108,6 +117,7 @@ def _build_rag_components(
         store._client = _QdrantClient(path=str(qdrant_dir))
 
     indexer = VaultIndexer(root, model, store)
+    code_indexer = CodebaseIndexer(root, model, store)
 
     if fast:
         result = _fast_index(indexer, model, store, root, GPU_FAST_CORPUS_STEMS)
@@ -118,6 +128,7 @@ def _build_rag_components(
         "model": model,
         "store": store,
         "indexer": indexer,
+        "code_indexer": code_indexer,
         "index_result": result,
         "root": root,
         "db_dir": qdrant_dir,
@@ -125,49 +136,59 @@ def _build_rag_components(
 
 
 @pytest.fixture(scope="session")
-def rag_components():
+def embedding_model():
+    """Shared EmbeddingModel instance for the entire test session.
+
+    Avoids loading ~900MB of GPU models per fixture.
+    """
+    from vaultspec_rag import EmbeddingModel
+
+    return EmbeddingModel()
+
+
+@pytest.fixture(scope="session")
+def rag_components(embedding_model):
     """Set up real RAG components once for the entire test session.
 
     Indexes a 13-doc subset covering all 5 doc_types and key features.
     Uses .qdrant-fast/ to avoid colliding with the full-corpus fixture.
     """
     components = _build_rag_components(
-        TEST_PROJECT, fast=True, qdrant_suffix=QDRANT_SUFFIX_FAST
+        TEST_PROJECT,
+        fast=True,
+        qdrant_suffix=QDRANT_SUFFIX_FAST,
+        model=embedding_model,
     )
 
     yield components
 
+    components["store"].close()
     db_dir = components["db_dir"]
     if db_dir.exists():
         shutil.rmtree(db_dir)
 
 
 @pytest.fixture(scope="session")
-def rag_components_full():
-    """Set up real RAG components with the FULL 213-doc corpus.
+def rag_components_full(embedding_model):
+    """Set up real RAG components with the full corpus.
 
     Only used by tests marked @pytest.mark.quality that need full-corpus
     coverage (quality precision tests, document count assertions, etc.).
     Uses .qdrant-full/ to avoid colliding with the fast fixture.
     """
     components = _build_rag_components(
-        TEST_PROJECT, fast=False, qdrant_suffix=QDRANT_SUFFIX_FULL
+        TEST_PROJECT,
+        fast=False,
+        qdrant_suffix=QDRANT_SUFFIX_FULL,
+        model=embedding_model,
     )
 
     yield components
 
+    components["store"].close()
     db_dir = components["db_dir"]
     if db_dir.exists():
         shutil.rmtree(db_dir)
-
-
-@pytest.fixture
-def require_gpu_corpus(rag_components):
-    """Assert RAG corpus is available.
-
-    Kept for backward compatibility with test files that reference it.
-    """
-    assert rag_components["model"] is not None
 
 
 def _cleanup_test_project(root: pathlib.Path) -> None:
@@ -185,11 +206,20 @@ def _cleanup_test_project(root: pathlib.Path) -> None:
 def _vault_snapshot_reset():
     """Reset test-project/.vault/ to git HEAD after the full test session."""
     yield
-    subprocess.run(
+    import logging
+
+    result = subprocess.run(
         ["git", "checkout", "--", "test-project/.vault/"],
         cwd=PROJECT_ROOT,
         check=False,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        logging.getLogger(__name__).warning(
+            "git checkout failed during teardown: %s",
+            result.stderr,
+        )
 
 
 @pytest.fixture
@@ -199,9 +229,11 @@ def vaultspec_config():
     Resets the singleton before and after to ensure test isolation.
     """
     reset_config()
+    reset_rag_config()
     cfg = get_config()
     yield cfg
     reset_config()
+    reset_rag_config()
 
 
 @pytest.fixture
@@ -223,11 +255,14 @@ def config_override():
 
     yield _make
     reset_config()
+    reset_rag_config()
 
 
 @pytest.fixture
 def clean_config():
     """Reset the config singleton before and after the test."""
     reset_config()
+    reset_rag_config()
     yield
     reset_config()
+    reset_rag_config()

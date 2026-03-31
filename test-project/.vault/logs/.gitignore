@@ -1,0 +1,2 @@
+# Ignore vaultspec agent execution logs — not needed for testing
+*.jsonl

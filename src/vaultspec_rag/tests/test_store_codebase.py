@@ -24,23 +24,27 @@ class TestStoreCodebase:
         """ensure_code_table should create the codebase_docs collection."""
         tmp_vault_store.ensure_code_table()
         assert tmp_vault_store._client.collection_exists(
-            tmp_vault_store.CODE_TABLE_NAME
+            tmp_vault_store.CODE_TABLE_NAME,
         )
 
     def test_upsert_code_chunks(self, tmp_vault_store, rag_components):
         """upsert_code_chunks should add and retrieve chunks."""
         model = rag_components["model"]
-        vector = model.encode_documents(["print('hello')"]).tolist()[0]
+        text = "print('hello')"
+        vector = model.encode_documents([text]).tolist()[0]
+        sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
                 id="src/main.py:1-10",
                 path="src/main.py",
                 language="python",
-                content="print('hello')",
+                content=text,
                 line_start=1,
                 line_end=10,
                 vector=vector,
-            )
+                sparse_indices=list(sparse.indices),
+                sparse_values=list(sparse.values),
+            ),
         ]
         tmp_vault_store.upsert_code_chunks(chunks)
         assert tmp_vault_store.count_code() == 1
@@ -63,17 +67,21 @@ class TestStoreCodebase:
     def test_delete_code_chunks(self, tmp_vault_store, rag_components):
         """delete_code_chunks should remove code chunks by ID."""
         model = rag_components["model"]
-        vector = model.encode_documents(["test"]).tolist()[0]
+        text = "test"
+        vector = model.encode_documents([text]).tolist()[0]
+        sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
                 id="test.py:1-5",
                 path="test.py",
                 language="python",
-                content="test",
+                content=text,
                 line_start=1,
                 line_end=5,
                 vector=vector,
-            )
+                sparse_indices=list(sparse.indices),
+                sparse_values=list(sparse.values),
+            ),
         ]
         tmp_vault_store.upsert_code_chunks(chunks)
         assert tmp_vault_store.count_code() == 1
