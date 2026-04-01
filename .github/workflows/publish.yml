@@ -35,6 +35,8 @@ jobs:
         run: uv python install 3.13
 
       - name: Build package
+        env:
+          UV_NO_SOURCES: "1"
         run: uv build
 
       - name: Upload dist artifacts
