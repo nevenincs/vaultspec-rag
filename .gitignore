@@ -153,3 +153,7 @@ test-project/*
 
 # Temporary reference files
 tmp-ref/
+
+# >>> vaultspec-managed (do not edit this block) >>>
+.vaultspec/_snapshots/
+# <<< vaultspec-managed <<<
