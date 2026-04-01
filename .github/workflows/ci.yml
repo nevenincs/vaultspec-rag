@@ -17,6 +17,7 @@ concurrency:
 env:
   NO_COLOR: "1"
   FORCE_COLOR: "0"
+  UV_NO_SOURCES: "1"
 
 jobs:
   workflow-lint:
