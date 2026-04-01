@@ -1,6 +1,6 @@
 """ADR regression tests: verify architectural decisions haven't regressed.
 
-Each test corresponds to an ADR in docs/adr/ and catches regressions
+Each test corresponds to an ADR in .vault/adr/ and catches regressions
 that would violate the documented architectural contract.
 """
 
