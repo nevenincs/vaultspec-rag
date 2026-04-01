@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import anyio
+from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import Change, awatch
 
 if TYPE_CHECKING:
@@ -181,7 +181,7 @@ async def watch_and_reindex(
                 )
                 try:
                     async with gpu_sem:
-                        result = await anyio.to_thread.run_sync(
+                        result = await _run_in_thread(
                             vault_indexer.incremental_index,
                         )
                     if searcher is not None:
@@ -209,7 +209,7 @@ async def watch_and_reindex(
                 )
                 try:
                     async with gpu_sem:
-                        result = await anyio.to_thread.run_sync(
+                        result = await _run_in_thread(
                             code_indexer.incremental_index,
                         )
                     _last_code_index = time.monotonic()

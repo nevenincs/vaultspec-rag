@@ -23,8 +23,11 @@ class TestStoreHelpers:
         result = VaultStore._build_filter({"doc_type": "adr"})
         assert result is not None
         assert isinstance(result, models.Filter)
+        assert isinstance(result.must, list)
         assert len(result.must) == 1
-        assert result.must[0].key == "doc_type"
+        cond = result.must[0]
+        assert isinstance(cond, models.FieldCondition)
+        assert cond.key == "doc_type"
 
     def test_build_filter_multiple_conditions(self):
         """_build_filter with multiple keys should produce multiple conditions."""
@@ -35,6 +38,7 @@ class TestStoreHelpers:
         result = VaultStore._build_filter({"doc_type": "adr", "feature": "rag"})
         assert result is not None
         assert isinstance(result, models.Filter)
+        assert isinstance(result.must, list)
         assert len(result.must) == 2
 
     def test_build_filter_empty_returns_none(self):
@@ -59,7 +63,10 @@ class TestStoreHelpers:
 
         result = VaultStore._build_filter({"date": "2026-02-07"})
         assert result is not None
-        assert isinstance(result.must[0].match, models.MatchValue)
+        assert isinstance(result.must, list)
+        cond = result.must[0]
+        assert isinstance(cond, models.FieldCondition)
+        assert isinstance(cond.match, models.MatchValue)
 
     def test_build_filter_ignores_unknown_keys(self):
         """_build_filter should ignore keys not in (doc_type, feature, date)."""
@@ -93,8 +100,10 @@ class TestStoreHelpers:
 
         result = VaultStore._build_filter({"tag": "auth"})
         assert result is not None
+        assert isinstance(result.must, list)
         assert len(result.must) == 1
         cond = result.must[0]
+        assert isinstance(cond, models.FieldCondition)
         assert cond.key == "tags"
         assert isinstance(cond.match, models.MatchAny)
         assert cond.match.any == ["auth"]
@@ -111,7 +120,10 @@ class TestBuildCodeFilter:
 
         result = VaultStore._build_code_filter({"path": "src/"})
         assert result is not None
-        assert isinstance(result.must[0].match, models.MatchValue)
+        assert isinstance(result.must, list)
+        cond = result.must[0]
+        assert isinstance(cond, models.FieldCondition)
+        assert isinstance(cond.match, models.MatchValue)
 
     def test_path_exact_uses_match_value(self):
         """Exact path should use MatchValue."""
@@ -121,4 +133,7 @@ class TestBuildCodeFilter:
 
         result = VaultStore._build_code_filter({"path": "src/main.py"})
         assert result is not None
-        assert isinstance(result.must[0].match, models.MatchValue)
+        assert isinstance(result.must, list)
+        cond = result.must[0]
+        assert isinstance(cond, models.FieldCondition)
+        assert isinstance(cond.match, models.MatchValue)

@@ -60,8 +60,11 @@ class TestStoreCodebase:
         result = VaultStore._build_code_filter(filters)
         assert result is not None
         assert isinstance(result, models.Filter)
+        assert isinstance(result.must, list)
         assert len(result.must) == 2
-        keys = {cond.key for cond in result.must}
+        keys = {
+            cond.key for cond in result.must if isinstance(cond, models.FieldCondition)
+        }
         assert keys == {"language", "path"}
 
     def test_delete_code_chunks(self, tmp_vault_store, rag_components):

@@ -762,7 +762,7 @@ class TestMergeSmallCrossType:
 
     def test_same_type_preserved(self):
         chunker = ASTChunker(chunk_size=200)
-        chunks = [
+        chunks: list[tuple[str, int, int, str | None, str | None, str | None]] = [
             ("def a(): pass", 1, 1, "function_definition", "a", None),
             ("def b(): pass", 2, 2, "function_definition", "b", None),
         ]
@@ -772,7 +772,7 @@ class TestMergeSmallCrossType:
 
     def test_different_types_become_none(self):
         chunker = ASTChunker(chunk_size=200)
-        chunks = [
+        chunks: list[tuple[str, int, int, str | None, str | None, str | None]] = [
             ("def a(): pass", 1, 1, "function_definition", "a", None),
             ("class B: pass", 2, 2, "class_definition", None, "B"),
         ]
@@ -783,7 +783,7 @@ class TestMergeSmallCrossType:
 
     def test_none_and_typed_preserves_type(self):
         chunker = ASTChunker(chunk_size=200)
-        chunks = [
+        chunks: list[tuple[str, int, int, str | None, str | None, str | None]] = [
             ("x = 1", 1, 1, None, None, None),
             ("def a(): pass", 2, 2, "function_definition", "a", None),
         ]

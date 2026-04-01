@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NO_COLOR: "1"
+  FORCE_COLOR: "0"
+  UV_NO_SOURCES: "1"
+
+jobs:
+  workflow-lint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint GitHub Actions workflows
+        uses: docker://rhysd/actionlint:1.7.11
+
+  lint-and-type:
+    name: Lint and Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install taplo
+        uses: taiki-e/install-action@v2
+        with:
+          tool: taplo-cli
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Ruff check
+        run: uv run ruff check src/
+
+      - name: Ruff format check
+        run: uv run ruff format --check src/
+
+      - name: Ty type check
+        run: uv run ty check src/vaultspec_rag
+
+      - name: Taplo lint
+        run: taplo lint
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run unit tests
+        run: uv run pytest -m unit --timeout=60
+
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Python dependency vulnerability audit
+        run: uvx pip-audit

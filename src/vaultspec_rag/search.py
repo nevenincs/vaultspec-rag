@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
     from vaultspec_core.graph import VaultGraph
 
-    from .embeddings import EmbeddingModel
+    from .embeddings import EmbeddingModel, SparseResult
     from .store import VaultStore
 
 logger = logging.getLogger(__name__)
@@ -350,7 +350,7 @@ class VaultSearcher:
     def _search_vault_encoded(
         self,
         query_vector: list[float],
-        sparse_vector: object,
+        sparse_vector: SparseResult | None,
         parsed: ParsedQuery,
         query_text: str,
         top_k: int,
@@ -410,7 +410,7 @@ class VaultSearcher:
     def _search_codebase_encoded(
         self,
         query_vector: list[float],
-        sparse_vector: object,
+        sparse_vector: SparseResult | None,
         parsed: ParsedQuery,
         query_text: str,
         top_k: int,
@@ -486,7 +486,7 @@ class VaultSearcher:
     def _encode_query(
         self,
         raw_query: str,
-    ) -> tuple[ParsedQuery, str, list[float], object]:
+    ) -> tuple[ParsedQuery, str, list[float], SparseResult]:
         """Parse and encode a query, returning shared components.
 
         Used by ``search_vault``, ``search_codebase``, and

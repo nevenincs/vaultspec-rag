@@ -15,9 +15,12 @@ import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from tree_sitter import Node as TSNode
+    from tree_sitter_language_pack import SupportedLanguage
+
     from .embeddings import EmbeddingModel
     from .store import VaultStore
 
@@ -388,7 +391,7 @@ class ASTChunker:
         """
         from tree_sitter_language_pack import get_parser
 
-        parser = get_parser(grammar)
+        parser = get_parser(cast("SupportedLanguage", grammar))
         source_bytes = source.encode("utf-8")
         tree = parser.parse(source_bytes)
         root = tree.root_node
@@ -402,7 +405,7 @@ class ASTChunker:
 
     @staticmethod
     def _extract_name(
-        node: object,
+        node: TSNode,
         source_bytes: bytes,
     ) -> str | None:
         """Extract the identifier name from an AST node's ``name`` field.
@@ -420,15 +423,13 @@ class ASTChunker:
             The identifier string, or ``None`` if the node has no
             ``name`` field.
         """
-        name_node = node.child_by_field_name("name")  # type: ignore[attr-defined]
+        name_node = node.child_by_field_name("name")
         if name_node is None:
             return None
-        return source_bytes[
-            name_node.start_byte : name_node.end_byte  # type: ignore[attr-defined]
-        ].decode("utf-8")
+        return source_bytes[name_node.start_byte : name_node.end_byte].decode("utf-8")
 
     @staticmethod
-    def _find_decorated_inner(node: object) -> object | None:
+    def _find_decorated_inner(node: TSNode) -> TSNode | None:
         """Find the actual definition inside a ``decorated_definition``.
 
         Skips ``decorator`` children and returns the first child that is
@@ -441,15 +442,15 @@ class ASTChunker:
             The inner definition node (class or function), or ``None``
             if none is found.
         """
-        for child in node.children:  # type: ignore[attr-defined]
-            child_type: str = child.type  # type: ignore[attr-defined]
+        for child in node.children:
+            child_type: str = child.type
             if child_type != "decorator" and child_type != "comment":
                 return child
         return None
 
     def _collect_chunks(
         self,
-        node: object,
+        node: TSNode,
         source: str,
         source_bytes: bytes,
         top_nodes: set[str],
@@ -476,15 +477,15 @@ class ASTChunker:
             parent_class_name: Class name inherited from an enclosing
                 class node, or ``None`` at the top level.
         """
-        text = source_bytes[node.start_byte : node.end_byte].decode("utf-8")  # type: ignore[attr-defined]
-        node_type: str = node.type  # type: ignore[attr-defined]
+        text = source_bytes[node.start_byte : node.end_byte].decode("utf-8")
+        node_type: str = node.type
 
         # Handle decorated_definition: inspect the wrapped definition
         # to determine whether this is a function or class decoration.
         if node_type == "decorated_definition":
             inner = self._find_decorated_inner(node)
             if inner is not None:
-                inner_type: str = inner.type  # type: ignore[attr-defined]
+                inner_type: str = inner.type
                 is_class = inner_type in _CLASS_LIKE_NODES
                 is_func = inner_type in _FUNCTION_LIKE_NODES
                 node_name = (
@@ -511,16 +512,16 @@ class ASTChunker:
         is_container = node_type in _CONTAINER_NODES
 
         if len(text) <= self.chunk_size and not is_container:
-            line_start = node.start_point[0] + 1  # type: ignore[attr-defined]
-            line_end = node.end_point[0] + 1  # type: ignore[attr-defined]
+            line_start = node.start_point[0] + 1
+            line_end = node.end_point[0] + 1
             label = node_type if node_type in top_nodes else None
             out.append((text, line_start, line_end, label, function_name, class_name))
             return
 
-        children = node.children  # type: ignore[attr-defined]
+        children = node.children
         if not children:
             # Leaf node too large — force-split by character.
-            node_start_line = node.start_point[0] + 1  # type: ignore[attr-defined]
+            node_start_line = node.start_point[0] + 1
             for i in range(0, len(text), self.chunk_size):
                 chunk = text[i : i + self.chunk_size]
                 # Count newlines in text[:i] to get line offset from node start.
@@ -539,8 +540,8 @@ class ASTChunker:
         buffer_len = 0
 
         for child in children:
-            child_text = source_bytes[child.start_byte : child.end_byte].decode("utf-8")  # type: ignore[attr-defined]
-            child_type: str = child.type  # type: ignore[attr-defined]
+            child_text = source_bytes[child.start_byte : child.end_byte].decode("utf-8")
+            child_type: str = child.type
 
             # Structural children (functions, classes, decorators) are
             # emitted via recursion so they carry proper metadata.
@@ -552,17 +553,18 @@ class ASTChunker:
             )
 
             if len(child_text) > self.chunk_size or is_structural:
-                if buffer_parts:
+                if buffer_parts and buffer_start is not None:
                     merged = "\n".join(buffer_parts)
-                    entry = (
-                        merged,
-                        buffer_start,
-                        buffer_end,
-                        None,
-                        function_name,
-                        child_class_name,
+                    out.append(
+                        (
+                            merged,
+                            buffer_start,
+                            buffer_end,
+                            None,
+                            function_name,
+                            child_class_name,
+                        )
                     )
-                    out.append(entry)  # type: ignore[arg-type]
                     buffer_parts = []
                     buffer_start = None
                     buffer_len = 0
@@ -575,39 +577,41 @@ class ASTChunker:
                     child_class_name,
                 )
             elif buffer_len + len(child_text) + 1 > self.chunk_size:
-                if buffer_parts:
+                if buffer_parts and buffer_start is not None:
                     merged = "\n".join(buffer_parts)
-                    entry = (
-                        merged,
-                        buffer_start,
-                        buffer_end,
-                        None,
-                        function_name,
-                        child_class_name,
+                    out.append(
+                        (
+                            merged,
+                            buffer_start,
+                            buffer_end,
+                            None,
+                            function_name,
+                            child_class_name,
+                        )
                     )
-                    out.append(entry)  # type: ignore[arg-type]
                 buffer_parts = [child_text]
-                buffer_start = child.start_point[0] + 1  # type: ignore[attr-defined]
-                buffer_end = child.end_point[0] + 1  # type: ignore[attr-defined]
+                buffer_start = child.start_point[0] + 1
+                buffer_end = child.end_point[0] + 1
                 buffer_len = len(child_text)
             else:
                 buffer_parts.append(child_text)
                 if buffer_start is None:
-                    buffer_start = child.start_point[0] + 1  # type: ignore[attr-defined]
-                buffer_end = child.end_point[0] + 1  # type: ignore[attr-defined]
+                    buffer_start = child.start_point[0] + 1
+                buffer_end = child.end_point[0] + 1
                 buffer_len += len(child_text) + 1
 
-        if buffer_parts:
+        if buffer_parts and buffer_start is not None:
             merged = "\n".join(buffer_parts)
-            entry = (
-                merged,
-                buffer_start,
-                buffer_end,
-                None,
-                function_name,
-                child_class_name,
+            out.append(
+                (
+                    merged,
+                    buffer_start,
+                    buffer_end,
+                    None,
+                    function_name,
+                    child_class_name,
+                )
             )
-            out.append(entry)  # type: ignore[arg-type]
 
     def _merge_small(
         self,

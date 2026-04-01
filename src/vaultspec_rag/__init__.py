@@ -6,6 +6,13 @@ for dense embeddings and SPLADE v3 for sparse. Qdrant local mode for vector stor
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__: str = version("vaultspec-rag")
+except PackageNotFoundError:
+    __version__ = "0.0.0.dev0"
+
 from .api import (
     get_related,
     index,
@@ -38,6 +45,7 @@ __all__ = [
     "VaultIndexer",
     "VaultSearcher",
     "VaultStore",
+    "__version__",
     "get_related",
     "index",
     "index_codebase",

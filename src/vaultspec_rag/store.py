@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pathlib
+    from uuid import UUID
 
     from qdrant_client import QdrantClient
+    from qdrant_client.http.models import Filter
 
     from .embeddings import SparseResult
 
@@ -143,16 +145,28 @@ class VaultStore:
         self.root_dir = _pathlib.Path(root_dir)
         self.db_path = self.root_dir / cfg.qdrant_dir
         self.db_path.mkdir(parents=True, exist_ok=True)
-        self._client: QdrantClient = _QdrantClient(path=str(self.db_path))
+        self._client: QdrantClient | None = _QdrantClient(path=str(self.db_path))
         self._embedding_dim = embedding_dim or EMBEDDING_DIM
         self._vault_ensured = False
         self._code_ensured = False
+
+    @property
+    def client(self) -> QdrantClient:
+        """Return the Qdrant client, raising if the store has been closed.
+
+        Raises:
+            RuntimeError: If the store has already been closed.
+        """
+        if self._client is None:
+            msg = "VaultStore has been closed"
+            raise RuntimeError(msg)
+        return self._client
 
     def close(self) -> None:
         """Release the Qdrant client and set it to ``None``."""
         if self._client is not None:
             self._client.close()
-            self._client = None  # type: ignore[assignment]
+            self._client = None
 
     def __enter__(self) -> VaultStore:
         """Return *self* to support use as a context manager.
@@ -184,10 +198,10 @@ class VaultStore:
         """
         from qdrant_client import models
 
-        if self._client.collection_exists(name):
+        if self.client.collection_exists(name):
             return
 
-        self._client.create_collection(
+        self.client.create_collection(
             collection_name=name,
             vectors_config={
                 "dense": models.VectorParams(
@@ -203,15 +217,15 @@ class VaultStore:
 
     def drop_table(self) -> None:
         """Drop the vault_docs collection if it exists."""
-        if self._client.collection_exists(self.TABLE_NAME):
-            self._client.delete_collection(self.TABLE_NAME)
+        if self.client.collection_exists(self.TABLE_NAME):
+            self.client.delete_collection(self.TABLE_NAME)
             logger.info("Dropped collection '%s'", self.TABLE_NAME)
         self._vault_ensured = False
 
     def drop_code_table(self) -> None:
         """Drop the codebase_docs collection if it exists."""
-        if self._client.collection_exists(self.CODE_TABLE_NAME):
-            self._client.delete_collection(self.CODE_TABLE_NAME)
+        if self.client.collection_exists(self.CODE_TABLE_NAME):
+            self.client.delete_collection(self.CODE_TABLE_NAME)
             logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
         self._code_ensured = False
 
@@ -222,14 +236,14 @@ class VaultStore:
 
         from qdrant_client import models
 
-        if self._client.collection_exists(self.TABLE_NAME):
+        if self.client.collection_exists(self.TABLE_NAME):
             self._vault_ensured = True
             return
 
         self._ensure_collection(self.TABLE_NAME)
 
         for fname in ("doc_type", "feature", "date", "tags"):
-            self._client.create_payload_index(
+            self.client.create_payload_index(
                 collection_name=self.TABLE_NAME,
                 field_name=fname,
                 field_schema=models.PayloadSchemaType.KEYWORD,
@@ -243,19 +257,19 @@ class VaultStore:
 
         from qdrant_client import models
 
-        if self._client.collection_exists(self.CODE_TABLE_NAME):
+        if self.client.collection_exists(self.CODE_TABLE_NAME):
             self._code_ensured = True
             return
 
         self._ensure_collection(self.CODE_TABLE_NAME)
 
         for fname in ("path", "language", "function_name", "class_name"):
-            self._client.create_payload_index(
+            self.client.create_payload_index(
                 collection_name=self.CODE_TABLE_NAME,
                 field_name=fname,
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
-        self._client.create_payload_index(
+        self.client.create_payload_index(
             collection_name=self.CODE_TABLE_NAME,
             field_name="line_start",
             field_schema=models.PayloadSchemaType.INTEGER,
@@ -303,7 +317,7 @@ class VaultStore:
                 ),
             )
 
-        self._client.upsert(
+        self.client.upsert(
             collection_name=self.TABLE_NAME,
             points=points,
         )
@@ -350,7 +364,7 @@ class VaultStore:
                 ),
             )
 
-        self._client.upsert(
+        self.client.upsert(
             collection_name=self.CODE_TABLE_NAME,
             points=points,
         )
@@ -367,8 +381,8 @@ class VaultStore:
         from qdrant_client import models
 
         self.ensure_table()
-        point_ids = [self._stable_id(i) for i in ids]
-        self._client.delete(
+        point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
+        self.client.delete(
             collection_name=self.TABLE_NAME,
             points_selector=models.PointIdsList(points=point_ids),
         )
@@ -385,8 +399,8 @@ class VaultStore:
         from qdrant_client import models
 
         self.ensure_code_table()
-        point_ids = [self._stable_id(i) for i in ids]
-        self._client.delete(
+        point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
+        self.client.delete(
             collection_name=self.CODE_TABLE_NAME,
             points_selector=models.PointIdsList(points=point_ids),
         )
@@ -423,7 +437,7 @@ class VaultStore:
         ids: set[str] = set()
         offset = None
         while True:
-            points, next_offset = self._client.scroll(
+            points, next_offset = self.client.scroll(
                 collection_name=collection,
                 limit=1000,
                 offset=offset,
@@ -468,7 +482,7 @@ class VaultStore:
         ids: list[str] = []
         offset = None
         while True:
-            points, next_offset = self._client.scroll(
+            points, next_offset = self.client.scroll(
                 collection_name=self.CODE_TABLE_NAME,
                 scroll_filter=scroll_filter,
                 limit=1000,
@@ -491,7 +505,7 @@ class VaultStore:
             Point count in the vault_docs collection.
         """
         self.ensure_table()
-        return self._client.count(collection_name=self.TABLE_NAME).count
+        return self.client.count(collection_name=self.TABLE_NAME).count
 
     def count_code(self) -> int:
         """Return total number of indexed codebase chunks.
@@ -500,7 +514,7 @@ class VaultStore:
             Point count in the codebase_docs collection.
         """
         self.ensure_code_table()
-        return self._client.count(collection_name=self.CODE_TABLE_NAME).count
+        return self.client.count(collection_name=self.CODE_TABLE_NAME).count
 
     def get_by_id(self, doc_id: str) -> dict | None:
         """Retrieve a single document by ID, or ``None`` if not found.
@@ -514,7 +528,7 @@ class VaultStore:
         """
         self.ensure_table()
         point_id = self._stable_id(doc_id)
-        points = self._client.retrieve(
+        points = self.client.retrieve(
             collection_name=self.TABLE_NAME,
             ids=[point_id],
             with_payload=True,
@@ -555,7 +569,7 @@ class VaultStore:
         docs: list[dict] = []
         offset = None
         while True:
-            points, next_offset = self._client.scroll(
+            points, next_offset = self.client.scroll(
                 collection_name=self.TABLE_NAME,
                 scroll_filter=scroll_filter,
                 limit=1000,
@@ -636,7 +650,7 @@ class VaultStore:
             )
 
         try:
-            results = self._client.query_points(
+            results = self.client.query_points(
                 collection_name=self.TABLE_NAME,
                 prefetch=prefetch,
                 query=models.RrfQuery(rrf=models.Rrf(k=60)),
@@ -649,7 +663,7 @@ class VaultStore:
             ValueError,
         ) as exc:
             logger.warning("Hybrid search failed (%s), falling back to dense-only", exc)
-            fallback = self._client.query_points(
+            fallback = self.client.query_points(
                 collection_name=self.TABLE_NAME,
                 query=dense_vec,
                 using="dense",
@@ -724,7 +738,7 @@ class VaultStore:
             )
 
         try:
-            results = self._client.query_points(
+            results = self.client.query_points(
                 collection_name=self.CODE_TABLE_NAME,
                 prefetch=prefetch,
                 query=models.RrfQuery(rrf=models.Rrf(k=60)),
@@ -740,7 +754,7 @@ class VaultStore:
                 "Codebase hybrid search failed (%s), falling back to dense-only",
                 exc,
             )
-            fallback = self._client.query_points(
+            fallback = self.client.query_points(
                 collection_name=self.CODE_TABLE_NAME,
                 query=dense_vec,
                 using="dense",
@@ -781,7 +795,7 @@ class VaultStore:
     @staticmethod
     def _build_filter(
         filters: dict[str, str] | None,
-    ) -> object | None:
+    ) -> Filter | None:
         """Convert a filters dict into a Qdrant ``Filter``.
 
         Args:
@@ -830,7 +844,7 @@ class VaultStore:
     @staticmethod
     def _build_code_filter(
         filters: dict[str, str] | None,
-    ) -> object | None:
+    ) -> Filter | None:
         """Convert codebase filters into a Qdrant ``Filter``.
 
         Args:

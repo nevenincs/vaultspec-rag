@@ -1,0 +1,96 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. vaultspec-rag-v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Build package
+        run: uv build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 5
+
+  smoke-test:
+    name: Smoke Test
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Smoke test (wheel)
+        run: uv run --isolated --no-project --with dist/*.whl tests/smoke_check.py
+
+      - name: Smoke test (sdist)
+        run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_check.py
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Publish to PyPI
+        run: uv publish --check-url https://pypi.org/simple/ dist/*

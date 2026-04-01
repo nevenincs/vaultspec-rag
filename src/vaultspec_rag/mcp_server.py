@@ -13,7 +13,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-import anyio
+from anyio.to_thread import run_sync as _run_in_thread
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -342,7 +342,7 @@ async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
         )
 
     async with _gpu_sem:
-        result = await anyio.to_thread.run_sync(_run)
+        result = await _run_in_thread(_run)
     _ensure_watcher()
     return result
 
@@ -399,7 +399,7 @@ async def search_codebase(
         )
 
     async with _gpu_sem:
-        result = await anyio.to_thread.run_sync(_run)
+        result = await _run_in_thread(_run)
     _ensure_watcher()
     return result
 
@@ -436,7 +436,7 @@ async def search_all(query: str, top_k: int = 5) -> SearchResponse:
         )
 
     async with _gpu_sem:
-        result = await anyio.to_thread.run_sync(_run)
+        result = await _run_in_thread(_run)
     _ensure_watcher()
     return result
 
@@ -479,7 +479,7 @@ async def get_index_status() -> IndexStatus:
             vram_gb=round(vram_gb, 2),
         )
 
-    return await anyio.to_thread.run_sync(_run)
+    return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -515,7 +515,7 @@ async def get_code_file(path: str) -> str:
             )
         return full_path.read_text(encoding="utf-8")
 
-    return await anyio.to_thread.run_sync(_run)
+    return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -559,7 +559,7 @@ async def reindex_vault(clean: bool = False) -> IndexResponse:
         )
 
     async with _gpu_sem:
-        result = await anyio.to_thread.run_sync(_run)
+        result = await _run_in_thread(_run)
     _ensure_watcher()
     return result
 
@@ -599,7 +599,7 @@ async def reindex_codebase(clean: bool = False) -> IndexResponse:
         )
 
     async with _gpu_sem:
-        result = await anyio.to_thread.run_sync(_run)
+        result = await _run_in_thread(_run)
     _ensure_watcher()
     return result
 
@@ -628,7 +628,7 @@ async def get_vault_document(doc_id: str) -> str:
             raise FileNotFoundError(f"Document '{doc_id}' not found")
         return doc.get("content", "")
 
-    return await anyio.to_thread.run_sync(_run)
+    return await _run_in_thread(_run)
 
 
 # Prompts
@@ -665,7 +665,9 @@ def main(port: int | None = None) -> None:
             127.0.0.1:<port>. Otherwise use stdio transport.
     """
     if port is not None:
-        mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+        mcp.settings.host = "127.0.0.1"
+        mcp.settings.port = port
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
 
