@@ -131,12 +131,22 @@ cython_debug/
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Gemini CLI
 .gemini/
+GEMINI.md
 
-# Antigravity
-.agent/
+# Antigravity / CODEX
+.agents/
+.codex/
+AGENTS.md
+
+# .vaultspec
+.vaultspec/
+
+# mcp
+.mcp.json
 
 # LanceDB vector store
 .lance/
@@ -153,3 +163,7 @@ test-project/*
 
 # Temporary reference files
 tmp-ref/
+
+# >>> vaultspec-managed (do not edit this block) >>>
+.vaultspec/_snapshots/
+# <<< vaultspec-managed <<<
