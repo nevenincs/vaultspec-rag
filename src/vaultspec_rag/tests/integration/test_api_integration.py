@@ -124,7 +124,7 @@ class TestRAGAPI:
 
         root = rag_components["root"]
         docs = list_documents(root)
-        doc_id = docs[0]["id"]
+        doc_id = str(docs[0]["id"])
         result = get_related(root, doc_id)
         assert result is not None
         assert "doc_id" in result
@@ -142,13 +142,11 @@ class TestRAGAPI:
 
         # Verify status fields that don't need the API facade
         from vaultspec_core.metrics import get_vault_metrics
-        from vaultspec_core.verification import list_features
 
         metrics = get_vault_metrics(root)
-        features = sorted(list_features(root))
 
         assert metrics.total_docs > 0
-        assert len(features) > 0
+        assert metrics.total_features > 0
         assert store.count() > 0
 
     def test_engine_singleton(self, rag_components):

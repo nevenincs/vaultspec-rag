@@ -1818,7 +1818,7 @@ wheels = [
 [[package]]
 name = "vaultspec-core"
 version = "0.1.19"
-source = { directory = "vaultspec-core-worktrees/main" }
+source = { editable = "../../vaultspec-core-worktrees/main" }
 dependencies = [
     { name = "httpx" },
     { name = "mcp" },
@@ -1957,7 +1957,7 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=0.10" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.15" },
     { name = "typer", specifier = ">=0.12.0" },
-    { name = "vaultspec-core", directory = "vaultspec-core-worktrees/main" },
+    { name = "vaultspec-core", editable = "../../vaultspec-core-worktrees/main" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["dev"]

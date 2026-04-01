@@ -9,6 +9,8 @@ import pytest
 
 if TYPE_CHECKING:
     import pathlib
+
+    from vaultspec_rag import EmbeddingModel
 from vaultspec_core.config import reset_config
 
 from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
@@ -82,7 +84,7 @@ def _build_rag_components(
     *,
     fast: bool,
     qdrant_suffix: str = "",
-    model: object | None = None,
+    model: EmbeddingModel | None = None,
 ) -> dict:
     """Build RAG components for testing.
 
@@ -109,7 +111,8 @@ def _build_rag_components(
     store = VaultStore(root)
     # Override db_path to use the suffixed directory for test isolation
     if qdrant_suffix:
-        store._client.close()
+        if store._client is not None:
+            store._client.close()
         store.db_path = qdrant_dir
         store.db_path.mkdir(parents=True, exist_ok=True)
         from qdrant_client import QdrantClient as _QdrantClient

@@ -89,6 +89,7 @@ class TestVaultStore:
             feature=doc.get("feature", ""),
             date=doc.get("date", ""),
             tags=doc.get("tags", ""),
+            related=doc.get("related", []),
             vector=model.encode_query(doc.get("content", "")[:200]).tolist(),
             sparse_indices=list(
                 model.encode_query_sparse(doc.get("content", "")[:200]).indices,

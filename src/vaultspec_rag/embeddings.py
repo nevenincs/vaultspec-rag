@@ -83,9 +83,10 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
     """
     import torch
 
-    if hasattr(sparse_tensor, "tocsr"):
+    tocsr = getattr(sparse_tensor, "tocsr", None)
+    if tocsr is not None:
         # scipy sparse matrix
-        csr = sparse_tensor.tocsr()
+        csr = tocsr()
         results = []
         for i in range(csr.shape[0]):
             row = csr.getrow(i)
@@ -191,14 +192,19 @@ class EmbeddingModel:
             else self.SPARSE_MODEL_NAME
         )
 
-        model_kwargs = {
+        model_kwargs: dict[str, object] = {
             "torch_dtype": torch.float16,
         }
         # Probe for flash_attention_2 before loading to avoid double model load
         try:
-            import flash_attn  # noqa: F401
+            import importlib.util
 
-            model_kwargs["attn_implementation"] = "flash_attention_2"
+            if importlib.util.find_spec("flash_attn") is not None:
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+            else:
+                logger.info(
+                    "flash_attention_2 not available, using default attention",
+                )
         except ImportError:
             logger.info("flash_attention_2 not available, using default attention")
 

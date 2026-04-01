@@ -12,9 +12,13 @@ import typer
 from rich.console import Console
 
 # Force UTF-8 on Windows to handle Unicode progress spinners
-if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+if sys.platform == "win32":
+    from io import TextIOWrapper
+
+    if isinstance(sys.stdout, TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if isinstance(sys.stderr, TextIOWrapper):
+        sys.stderr.reconfigure(encoding="utf-8")
 from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.table import Table
@@ -341,6 +345,7 @@ def handle_index(
 
         # Phase 1: Vault indexing
         if do_vault:
+            assert v_indexer is not None
             vault_task = progress.add_task("Indexing documentation vault...", total=1)
             v_res = (
                 v_indexer.full_index(clean=True)
@@ -357,6 +362,7 @@ def handle_index(
 
         # Phase 2: Codebase indexing
         if do_code:
+            assert c_indexer is not None
             code_task = progress.add_task("Indexing codebase...", total=1)
             c_res = (
                 c_indexer.full_index(clean=True)
@@ -427,6 +433,7 @@ def _try_mcp_reindex(
             from mcp.client.streamable_http import (
                 streamable_http_client,
             )
+            from mcp.types import TextContent
 
             url = f"http://127.0.0.1:{port}/mcp"
             async with (
@@ -443,7 +450,9 @@ def _try_mcp_reindex(
                     {"clean": clean},
                 )
                 if result.content:
-                    return json.loads(result.content[0].text)
+                    first = result.content[0]
+                    if isinstance(first, TextContent):
+                        return json.loads(first.text)
                 return {}
         except Exception:
             return None
@@ -487,6 +496,7 @@ def _try_mcp_search(
 
             from mcp.client.session import ClientSession
             from mcp.client.streamable_http import streamable_http_client
+            from mcp.types import TextContent
 
             url = f"http://127.0.0.1:{port}/mcp"
             async with (
@@ -499,8 +509,10 @@ def _try_mcp_search(
                     {"query": query, "top_k": top_k},
                 )
                 if result.content:
-                    data = json.loads(result.content[0].text)
-                    return data.get("results", [])
+                    first = result.content[0]
+                    if isinstance(first, TextContent):
+                        data = json.loads(first.text)
+                        return data.get("results", [])
                 return []
         except Exception:
             return None
@@ -534,7 +546,8 @@ def _display_search_results(
         line_start = r.get("line_start")
         if line_start:
             location += f":{line_start}"
-        score = float(r.get("score", 0.0))
+        raw_score = r.get("score", 0.0)
+        score = float(raw_score) if isinstance(raw_score, (int, float, str)) else 0.0
         table.add_row(f"{score:.2f}", location, snippet)
 
     console.print(table)
@@ -1000,6 +1013,7 @@ def handle_quality() -> None:
 
         store = VaultStore(test_project)
         # Redirect Qdrant client to the temp dir so we don't pollute test-project
+        assert store._client is not None
         store._client.close()
         store.db_path = qdrant_dir
         from qdrant_client import QdrantClient
