@@ -17,6 +17,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
+from .api import GraphCache
 from .embeddings import EmbeddingModel
 from .indexer import CodebaseIndexer, VaultIndexer
 from .search import VaultSearcher
@@ -57,6 +58,7 @@ class RagComponents:
 _comp: RagComponents | None = None
 _comp_lock = threading.Lock()
 _comp_error: Exception | None = None
+_graph_cache: GraphCache | None = None
 _gpu_sem = asyncio.Semaphore(1)
 _watcher_stop = asyncio.Event()
 _watcher_task: asyncio.Task[None] | None = None
@@ -76,7 +78,7 @@ def get_comp() -> RagComponents:
         RuntimeError: If a previous initialization attempt failed
             (the original exception is chained).
     """
-    global _comp, _comp_error
+    global _comp, _comp_error, _graph_cache
     if _comp is not None:
         return _comp
     with _comp_lock:
@@ -93,11 +95,17 @@ def get_comp() -> RagComponents:
 
             store = VaultStore(root_dir)
             model = EmbeddingModel()
+            _graph_cache = GraphCache()
 
             _comp = RagComponents(
                 store=store,
                 model=model,
-                searcher=VaultSearcher(root_dir, model, store),
+                searcher=VaultSearcher(
+                    root_dir,
+                    model,
+                    store,
+                    graph_provider=lambda: _graph_cache.get(root_dir),
+                ),
                 vault_indexer=VaultIndexer(root_dir, model, store),
                 code_indexer=CodebaseIndexer(root_dir, model, store),
                 root_dir=root_dir,
@@ -131,7 +139,7 @@ def _ensure_watcher() -> None:
             code_indexer=_comp.code_indexer,
             gpu_sem=_gpu_sem,
             stop_event=_watcher_stop,
-            searcher=_comp.searcher,
+            graph_cache=_graph_cache,
         ),
     )
     logger.info("Filesystem watcher started for %s", _comp.root_dir)
@@ -548,7 +556,8 @@ async def reindex_vault(clean: bool = False) -> IndexResponse:
             result = comp.vault_indexer.incremental_index()
         # Invalidate the graph cache so the next search_vault call rebuilds
         # from the fresh index rather than serving stale graph-boost scores.
-        comp.searcher._graph_built_at = 0.0
+        if _graph_cache is not None:
+            _graph_cache.invalidate()
         return IndexResponse(
             total=result.total,
             added=result.added,

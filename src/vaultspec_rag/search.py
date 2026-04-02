@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from sentence_transformers import CrossEncoder
     from vaultspec_core.graph import VaultGraph
@@ -210,6 +212,7 @@ class VaultSearcher:
         store: VaultStore,
         *,
         graph_ttl_seconds: float | None = None,
+        graph_provider: Callable[[], VaultGraph | None] | None = None,
     ) -> None:
         """Initialize the searcher.
 
@@ -219,7 +222,13 @@ class VaultSearcher:
             store: Vector store backend (Qdrant local mode).
             graph_ttl_seconds: TTL for the cached VaultGraph in
                 seconds.  Defaults to the value from project config
-                (``graph_ttl_seconds``).
+                (``graph_ttl_seconds``).  Only used when
+                *graph_provider* is ``None``.
+            graph_provider: Zero-arg callable returning the current
+                ``VaultGraph`` (or ``None``).  When set,
+                ``_get_graph()`` delegates entirely to it and the
+                internal cache fields are unused.  When ``None``,
+                an internal lock+TTL cache is used as fallback.
         """
         from .config import get_config
 
@@ -229,9 +238,11 @@ class VaultSearcher:
         self.root_dir = root_dir
         self.model = model
         self.store = store
+        self._graph_provider = graph_provider
         self._graph_ttl = graph_ttl_seconds
         self._cached_graph: VaultGraph | None = None
         self._graph_built_at: float = 0.0
+        self._graph_lock = threading.Lock()
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
         self._reranker = None
@@ -325,26 +336,34 @@ class VaultSearcher:
     def _get_graph(self) -> VaultGraph | None:
         """Return the cached VaultGraph, rebuilding on TTL expiry.
 
-        The graph is rebuilt when the cache is empty or when
-        ``graph_ttl_seconds`` have elapsed since the last build.
-        Build failures are logged and ``None`` is returned, but
-        ``_graph_built_at`` is still updated to avoid retrying on
-        every subsequent call within the TTL window.
+        When a ``graph_provider`` was supplied at construction time,
+        delegates entirely to it.  Otherwise falls back to an
+        internal lock+TTL cache (fixes R36-C1 for the fallback
+        path).
 
         Returns:
             Cached VaultGraph, or ``None`` if the build fails.
         """
+        if self._graph_provider is not None:
+            return self._graph_provider()
+
         from vaultspec_core.graph import VaultGraph as _VaultGraph
 
         now = time.monotonic()
         if self._cached_graph is None or (now - self._graph_built_at) > self._graph_ttl:
-            try:
-                self._cached_graph = _VaultGraph(self.root_dir)
-                self._graph_built_at = now
-            except Exception as e:
-                logger.error("Graph build failed: %s", e)
-                self._graph_built_at = now
-                return None
+            with self._graph_lock:
+                now = time.monotonic()
+                if (
+                    self._cached_graph is None
+                    or (now - self._graph_built_at) > self._graph_ttl
+                ):
+                    try:
+                        self._cached_graph = _VaultGraph(self.root_dir)
+                        self._graph_built_at = now
+                    except Exception as e:
+                        logger.error("Graph build failed: %s", e)
+                        self._graph_built_at = now
+                        return None
         return self._cached_graph
 
     def _search_vault_encoded(

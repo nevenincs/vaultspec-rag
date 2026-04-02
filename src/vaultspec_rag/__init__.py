@@ -14,6 +14,7 @@ except PackageNotFoundError:
     __version__ = "0.0.0.dev0"
 
 from .api import (
+    GraphCache,
     get_related,
     index,
     index_codebase,
@@ -37,6 +38,7 @@ __all__ = [
     "CodeChunk",
     "CodebaseIndexer",
     "EmbeddingModel",
+    "GraphCache",
     "IndexResult",
     "ParsedQuery",
     "SearchResult",
