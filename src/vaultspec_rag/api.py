@@ -124,12 +124,15 @@ def reset_engine() -> None:
     """Tear down the singleton engine (for testing).
 
     Closes the underlying Qdrant store and sets the module-level
-    singleton to ``None``.  Safe to call when no engine exists.
+    singleton to ``None``.  Thread-safe: acquires ``_engine_lock``
+    so that concurrent ``get_engine`` callers see a consistent state.
+    Safe to call when no engine exists.
     """
     global _engine
-    if _engine is not None:
-        _engine.store.close()
-        _engine = None
+    with _engine_lock:
+        if _engine is not None:
+            _engine.store.close()
+            _engine = None
 
 
 def index(root_dir: pathlib.Path, *, full: bool = False) -> IndexResult:

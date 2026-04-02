@@ -916,6 +916,30 @@ def _is_pid_alive(pid: int) -> bool:
     return True
 
 
+def _is_our_service(pid: int) -> bool:
+    """Check if PID belongs to a vaultspec-rag MCP server process.
+
+    On Unix, inspects ``/proc/{pid}/cmdline`` for the module name.
+    Falls back to basic PID liveness when procfs is unavailable or
+    on Windows (localhost trust boundary is sufficient).
+
+    Args:
+        pid: Process ID to verify.
+
+    Returns:
+        True if the process appears to be a vaultspec-rag service.
+    """
+    if not _is_pid_alive(pid):
+        return False
+    if sys.platform == "win32":
+        return True  # localhost trust boundary — PID alive is sufficient
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
+        return "vaultspec_rag" in cmdline
+    except (OSError, ValueError):
+        return True  # fallback to basic liveness on non-procfs systems
+
+
 def _port_is_available(port: int) -> bool:
     """Check whether a TCP port is available for binding.
 
@@ -1006,6 +1030,7 @@ def _spawn_service(port: int, log_path: Path) -> int:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+    log_fh.close()  # child has the fd now
     return proc.pid
 
 
@@ -1076,8 +1101,8 @@ def service_start(
     status = _read_service_status()
     if status is not None:
         existing_pid = int(status["pid"])
-        existing_port = int(status.get("port", port))
-        if _is_pid_alive(existing_pid):
+        existing_port = int(status["port"])
+        if _is_our_service(existing_pid):
             health = _health_probe(existing_port)
             if health is not None:
                 console.print(
@@ -1167,7 +1192,7 @@ def service_stop() -> None:
         return
 
     pid = int(status["pid"])
-    if not _is_pid_alive(pid):
+    if not _is_our_service(pid):
         _status_file().unlink(missing_ok=True)
         console.print(
             Panel(
@@ -1215,10 +1240,10 @@ def service_status() -> None:
         return
 
     pid = int(status["pid"])
-    port = int(status.get("port", 8766))
+    port = int(status["port"])
     started_at = status.get("started_at", "unknown")
 
-    if not _is_pid_alive(pid):
+    if not _is_our_service(pid):
         _status_file().unlink(missing_ok=True)
         table.add_row("State", "[red]stopped[/] (stale PID cleaned)")
         console.print(table)

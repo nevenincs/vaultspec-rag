@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -39,6 +40,7 @@ _registry = ServiceRegistry()
 _gpu_sem = asyncio.Semaphore(1)
 _watcher_stop = asyncio.Event()
 _watcher_task: asyncio.Task[None] | None = None
+_watcher_lock = threading.Lock()
 _start_time: float = 0.0
 
 
@@ -146,8 +148,12 @@ async def health_handler(_request: Request) -> object:
 def _ensure_watcher(root: Path) -> None:
     """Launch the filesystem watcher as a background asyncio task.
 
-    Safe to call repeatedly — only starts once.  Must be called from
-    the async event loop thread (not from a worker thread).
+    Safe to call repeatedly — only starts once.  Uses a double-check
+    lock pattern to prevent duplicate watcher creation when multiple
+    tool handlers finish near-simultaneously.
+
+    Must be called from the async event loop thread (not from a
+    worker thread).
 
     Args:
         root: Project root directory to watch.
@@ -155,24 +161,27 @@ def _ensure_watcher(root: Path) -> None:
     global _watcher_task
     if _watcher_task is not None:
         return
+    with _watcher_lock:
+        if _watcher_task is not None:
+            return
 
-    slot = _registry.get_project(root)
+        slot = _registry.get_project(root)
 
-    from .watcher import watch_and_reindex
+        from .watcher import watch_and_reindex
 
-    vault_dir = root / ".vault"
-    _watcher_task = asyncio.ensure_future(
-        watch_and_reindex(
-            root_dir=root,
-            vault_dir=vault_dir,
-            vault_indexer=slot.vault_indexer,
-            code_indexer=slot.code_indexer,
-            gpu_sem=_gpu_sem,
-            stop_event=_watcher_stop,
-            graph_cache=slot.graph_cache,
-        ),
-    )
-    logger.info("Filesystem watcher started for %s", root)
+        vault_dir = root / ".vault"
+        _watcher_task = asyncio.ensure_future(
+            watch_and_reindex(
+                root_dir=root,
+                vault_dir=vault_dir,
+                vault_indexer=slot.vault_indexer,
+                code_indexer=slot.code_indexer,
+                gpu_sem=_gpu_sem,
+                stop_event=_watcher_stop,
+                graph_cache=slot.graph_cache,
+            ),
+        )
+        logger.info("Filesystem watcher started for %s", root)
 
 
 # -- Pydantic models --------------------------------------------------------

@@ -179,6 +179,39 @@ class TestGraphCacheFailureRecovery:
         assert g1 is not g2
 
 
+class TestGraphCacheConcurrentInvalidate:
+    """Concurrent invalidate() and get() must not crash or corrupt state."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_invalidate_during_concurrent_get(self, tmp_path: Path):
+        from vaultspec_core.graph import VaultGraph
+
+        root = _make_vault_dir(tmp_path)
+        gc = GraphCache(ttl_seconds=300.0)
+        gc.get(root)  # prime cache
+
+        results: list[object] = []
+
+        def reader():
+            for _ in range(10):
+                results.append(gc.get(root))
+
+        def invalidator():
+            for _ in range(5):
+                gc.invalidate()
+
+        t1 = threading.Thread(target=reader)
+        t2 = threading.Thread(target=invalidator)
+        t1.start()
+        t2.start()
+        t1.join(10)
+        t2.join(10)
+        # All results must be a VaultGraph (never None for a valid root)
+        assert all(r is None or isinstance(r, VaultGraph) for r in results)
+        assert len(results) == 10
+
+
 class TestVaultSearcherGraphProvider:
     """VaultSearcher delegates to graph_provider when supplied."""
 

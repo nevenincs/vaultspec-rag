@@ -359,7 +359,11 @@ class TestHealthHandler:
         assert "uptime_s" in data
 
     def test_health_status_reflects_model_state(self):
-        """Without models loaded, status should not be 'ready'."""
+        """Without models loaded, status should not be 'ready'.
+
+        Uses a fresh ServiceRegistry so we don't mutate the
+        module-level _registry internals.
+        """
         from starlette.testclient import TestClient
 
         async def _lifespan(app):
@@ -369,13 +373,14 @@ class TestHealthHandler:
         from starlette.routing import Route
 
         import vaultspec_rag.mcp_server as mod
+        from vaultspec_rag.service import ServiceRegistry
 
-        # Save original state
-        orig_model = mod._registry._model
+        # Swap in a fresh, model-less registry and zero start_time
+        orig_registry = mod._registry
         orig_start = mod._start_time
 
         try:
-            mod._registry._model = None
+            mod._registry = ServiceRegistry()
             mod._start_time = 0.0
 
             app = Starlette(
@@ -388,5 +393,5 @@ class TestHealthHandler:
             assert data["status"] == "error"
             assert data["models_loaded"] is False
         finally:
-            mod._registry._model = orig_model
+            mod._registry = orig_registry
             mod._start_time = orig_start
