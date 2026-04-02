@@ -463,11 +463,189 @@ Shared model + per-project dict, MCP tools accept `project_root`,
 
 **ADR compliance: 6/6 COMPLIANT.**
 
-**Priority fixes before merge:**
+---
 
-- PHASE4-001 (CRITICAL): Windows _terminate_pid
-- THREAD-003 (HIGH): _gpu_sem bypass
-- ERROR-002 (HIGH): VaultStore leak on partial slot creation
-- ERROR-007 (HIGH): VRAM leak on bind failure
-- PHASE2-001 (HIGH): load_model thread safety
+## Round 3: Resource lifecycle + cleanup
+
+### LIFECYCLE-001 | HIGH | `handle_index` never closes VaultStore
+
+`cli.py:322` creates `VaultStore(target)` but the entire indexing
+path (lines 322-412) has no `try/finally` block. If `EmbeddingModel()`
+raises or indexing throws, the Qdrant client leaks. Contrast with
+`handle_search` (line 645-668) which correctly wraps in `try/finally`.
+The `clean=True` path is worse: closes first store, creates second,
+neither has failure cleanup.
+
+**File:** `cli.py:319-412`
+
+### LIFECYCLE-002 | MEDIUM | Watcher holds stale slot references after close_all()
+
+`service_lifespan` finally block calls `_watcher_stop.set()` then
+`_watcher_task.cancel()` then `_registry.close_all()`. The watcher
+holds direct references to `vault_indexer` and `code_indexer`. If the
+watcher's `awatch` iterator hasn't yielded when `cancel()` fires, a
+pending `incremental_index()` could execute against a closed store.
+
+**File:** `mcp_server.py:106-110`, `watcher.py:154-231`
+
+### LIFECYCLE-003 | MEDIUM | close_all() has no knowledge of watcher task
+
+`ServiceRegistry.close_all()` closes stores and clears `_projects`
+but cannot cancel the watcher (module-level `_watcher_task` in
+`mcp_server.py`). If `close_all()` is called outside `service_lifespan`
+(tests, programmatic use), the watcher keeps running with closed stores.
+
+**File:** `service.py:179-187`
+
+### LIFECYCLE-004 | LOW | No circular reference risk — confirmed safe
+
+All references are unidirectional. `graph_provider` lambda captures by
+value (default args). No GC-preventing cycles.
+
+### LIFECYCLE-005 | LOW | `_Engine.__init__` error path still correct
+
+`api.py:67-72`: store opened, model construction wrapped in
+`try/except` that closes store before re-raise. Intact from
+pre-service-graph.
+
+## Round 3: Security + input validation
+
+### SEC-001 | MEDIUM | `_resolve_root` allows arbitrary filesystem access
+
+`mcp_server.py:389` calls `Path(project_root).resolve()` with no
+validation. Any MCP client can pass `/etc` or `C:\Windows\System32`
+and the registry will index its contents, read files, and expose
+search results. `Path.resolve()` follows symlinks.
+
+**Mitigation:** Allowlist of registered project roots or explicit
+opt-in per root.
+
+### SEC-002 | MEDIUM | `get_code_file` symlink-in-workspace bypass
+
+`mcp_server.py:630-631` resolves both root and path, checks
+`is_relative_to`. A symlink inside the workspace pointing outside
+is correctly rejected. But no guard against reading sensitive files
+(`.env`, `.git/config`) within the workspace boundary.
+
+### SEC-003 | LOW | Health endpoint leaks GPU identity and project paths
+
+`health_handler` returns `cuda`, `projects` (absolute paths),
+`uptime_s` to unauthenticated HTTP clients. `get_index_status`
+additionally returns `gpu_name`, `vram_gb`, `storage_path`. On
+shared machines, discloses hardware fingerprint and workspace layout.
+
+### SEC-004 | MEDIUM | PID poisoning via service.json
+
+`service_stop` at `cli.py:1086` reads PID from
+`~/.vaultspec-rag/service.json` with no integrity check. Any local
+process with write access to the user's home dir can inject a PID.
+`os.kill(pid, SIGTERM)` kills any process owned by the same user.
+
+**Mitigation:** Verify target PID's cmdline matches
+`vaultspec_rag.mcp_server`.
+
+### SEC-005 | LOW | Model repo names from config are untrusted
+
+`snapshot_download(repo_id)` where `repo_id` from config. A tampered
+config could point to a malicious HF repo with pickled weights (RCE
+via deserialization). Only fetches from HuggingFace Hub, not arbitrary
+URLs.
+
+### SEC-006 | LOW | `_health_probe` follows HTTP redirects
+
+`urllib.request.urlopen` follows 3xx redirects by default. A
+compromised service could redirect the probe externally.
+
+## Round 3: API contract + backward compatibility
+
+### API-001 | INFO | VaultSearcher backward compatible
+
+`graph_provider` is optional with `None` default. Existing callers
+work unchanged.
+
+### API-002 | LOW | MCP tools gained `project_root` — additive only
+
+All 7 tools added `project_root: str | None = None`. Existing configs
+omitting it continue to work. Schema discovery surfaces the new param.
+
+### API-003 | LOW | `HealthResponse` Pydantic model defined but unused
+
+`mcp_server.py:329` defines `HealthResponse` but `health_handler`
+returns raw `JSONResponse`. Dead model.
+
+### API-004-009 | INFO | All other public APIs unchanged
+
+`GraphCache` exported (additive). `EmbeddingModel` interface intact.
+Pydantic models field-identical. `vault://` resource and
+`analyze_feature` prompt unchanged. `stateless_http=True` does not
+affect stdio. **Zero backward-incompatible changes.**
+
+## Round 3: Performance + scalability
+
+### PERF-001 | HIGH | `_gpu_sem=1` serializes entire search pipeline
+
+A search request holds `_gpu_sem` for the full pipeline: encode
+(~20-40ms GPU) + Qdrant search (~5-20ms CPU/IO) + reranker
+(~10-30ms GPU) + graph rerank (~1-5ms CPU). Total ~40-100ms per
+request. Multi-agent requests queue serially — second request sees
+2x latency. A narrower lock around only GPU operations would allow
+Qdrant I/O and graph reranking to overlap.
+
+### PERF-002 | MEDIUM | `_create_slot()` holds global lock for ~50-200ms
+
+VaultStore + VaultSearcher + indexer construction all run inside
+`ServiceRegistry._lock`. Concurrent `get_project()` for an
+*existing* project blocks. A per-root lock pattern would isolate
+contention.
+
+### PERF-003 | MEDIUM | GraphCache failure suppresses retries for 300s
+
+Already noted as PHASE1-003 but performance impact is significant:
+300 seconds of degraded search quality (no graph boost) after a
+transient failure.
+
+### PERF-004 | LOW | CrossEncoder loaded per-VaultSearcher, not shared
+
+`_reranker` is per-`VaultSearcher` instance. With N projects, worst
+case is N CrossEncoder loads (~560MB VRAM each). Should share reranker
+via `ServiceRegistry` alongside `EmbeddingModel`.
+
+**File:** `search.py:250-282`
+
+### PERF-005 | LOW | 30s service_start deadline may be tight for cold start
+
+First-ever start with empty HF cache could exceed 30s. `service warmup`
+mitigates this but if skipped, deadline races against model loading.
+
+### PERF-006 | INFO | `_resolve_root()` negligible cost (~1-5 microseconds)
+
+### PERF-007 | INFO | Watcher cooldown and graph TTL do not conflict
+
+Active `graph_cache.invalidate()` after reindex bypasses TTL.
+No bad interaction.
+
+## Cumulative summary (Rounds 1-3)
+
+| Severity | R1 | R2 | R3 | Total |
+|----------|----|----|-----|-------|
+| CRITICAL | 1 | 0 | 0 | **1** |
+| HIGH | 4 | 5 | 3 | **12** |
+| MEDIUM | 9 | 11 | 8 | **28** |
+| LOW | 4 | 5 | 8 | **17** |
+| INFO | 6 | 1 | 8 | **15** |
+
+**ADR compliance: 6/6 COMPLIANT.**
+**API backward compatibility: 0 breaks.**
+
+**Priority fixes before merge (updated):**
+
+- PHASE4-001 (CRITICAL): Windows _terminate_pid SIGTERM behavior
+- THREAD-003 (HIGH): _gpu_sem bypassed by get_index_status et al.
+- ERROR-002 (HIGH): VaultStore leak on partial _create_slot failure
+- ERROR-007 (HIGH): VRAM leak on uvicorn bind failure
+- PERF-001 (HIGH): _gpu_sem serializes entire pipeline (consider narrower lock)
+- LIFECYCLE-001 (HIGH): handle_index never closes VaultStore
+- PHASE2-001 (HIGH): load_model() thread safety
+- PHASE4-002 (HIGH): PID file race on concurrent service start
+- PHASE4-003 (HIGH): Non-atomic status file write
 - TESTGAP-001/002/003 (HIGH): Zero coverage on service lifecycle
