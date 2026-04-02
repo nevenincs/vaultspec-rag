@@ -217,12 +217,12 @@ class TestQwen3NoDocumentPrompt:
 class TestThreadingLock:
     """ADR: mcp_server and api use threading locks for initialization."""
 
-    def test_mcp_comp_lock_exists(self):
+    def test_mcp_registry_lock_exists(self):
         import threading
 
-        from vaultspec_rag.mcp_server import _comp_lock
+        from vaultspec_rag.mcp_server import _registry
 
-        assert isinstance(_comp_lock, type(threading.Lock()))
+        assert isinstance(_registry._lock, type(threading.Lock()))
 
     def test_api_engine_lock_exists(self):
         import threading
@@ -310,8 +310,8 @@ class TestGraphCacheInvalidation:
         from vaultspec_rag.mcp_server import reindex_vault
 
         src = inspect.getsource(reindex_vault)
-        assert "_graph_cache" in src and "invalidate" in src, (
-            "reindex_vault must call _graph_cache.invalidate() after indexing "
+        assert "graph_cache" in src and "invalidate" in src, (
+            "reindex_vault must call slot.graph_cache.invalidate() after indexing "
             "to prevent stale graph re-ranking (R29-H3 fix, unified in D3)"
         )
 

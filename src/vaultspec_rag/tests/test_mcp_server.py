@@ -7,11 +7,16 @@ import asyncio
 import pytest
 
 from vaultspec_rag.mcp_server import (
+    HealthResponse,
     IndexResponse,
     IndexStatus,
     SearchResponse,
     SearchResultItem,
+    _clamp_top_k,
+    _default_root,
+    _resolve_root,
     analyze_feature,
+    health_handler,
     mcp,
 )
 
@@ -48,6 +53,25 @@ class TestToolRegistration:
         tools = _run(mcp.list_tools())
         for tool in tools:
             assert tool.description, f"Tool {tool.name} has no description"
+
+    def test_tools_accept_project_root(self):
+        """All search/index tools should accept a project_root parameter."""
+        tools = _run(mcp.list_tools())
+        tools_with_project_root = {
+            "search_vault",
+            "search_codebase",
+            "search_all",
+            "get_index_status",
+            "get_code_file",
+            "reindex_vault",
+            "reindex_codebase",
+        }
+        for tool in tools:
+            if tool.name in tools_with_project_root:
+                param_names = set(tool.inputSchema.get("properties", {}).keys())
+                assert "project_root" in param_names, (
+                    f"Tool {tool.name} missing project_root parameter"
+                )
 
 
 class TestPromptRegistration:
@@ -180,6 +204,29 @@ class TestPydanticModels:
         item = SearchResultItem.model_validate(data)
         assert item.id == "test"
 
+    def test_health_response(self):
+        resp = HealthResponse(
+            status="ready",
+            cuda=True,
+            models_loaded=True,
+            projects=["/tmp/project-a"],
+            uptime_s=42.5,
+        )
+        assert resp.status == "ready"
+        assert resp.cuda is True
+        assert resp.models_loaded is True
+        assert resp.projects == ["/tmp/project-a"]
+        assert resp.uptime_s == 42.5
+
+    def test_health_response_defaults(self):
+        resp = HealthResponse(
+            status="loading",
+            cuda=False,
+            models_loaded=False,
+        )
+        assert resp.projects == []
+        assert resp.uptime_s == 0.0
+
 
 class TestPathTraversalValidation:
     """Test path validation logic used by get_code_file."""
@@ -204,13 +251,11 @@ class TestPathTraversalValidation:
         import os
 
         root_resolved = tmp_path.resolve()
-        # Create a symlink inside workspace pointing to parent dir
         link_path = tmp_path / "escape_link"
         try:
             os.symlink(tmp_path.parent, link_path)
         except OSError:
             pytest.fail("Cannot create symlink — test requires symlink support")
-        # Resolve follows the symlink — result is outside workspace
         full_path = (root_resolved / "escape_link" / "other_file.txt").resolve()
         assert not full_path.is_relative_to(root_resolved)
 
@@ -219,83 +264,129 @@ class TestClampTopK:
     """Test the _clamp_top_k helper."""
 
     def test_clamp_within_range(self):
-        from vaultspec_rag.mcp_server import _clamp_top_k
-
         assert _clamp_top_k(5) == 5
 
     def test_clamp_below_minimum(self):
-        from vaultspec_rag.mcp_server import _clamp_top_k
-
         assert _clamp_top_k(0) == 1
         assert _clamp_top_k(-10) == 1
 
     def test_clamp_above_maximum(self):
-        from vaultspec_rag.mcp_server import _clamp_top_k
-
         assert _clamp_top_k(200) == 100
         assert _clamp_top_k(101) == 100
 
     def test_clamp_boundary_values(self):
-        from vaultspec_rag.mcp_server import _clamp_top_k
-
         assert _clamp_top_k(1) == 1
         assert _clamp_top_k(100) == 100
 
 
-class TestGetCompFailureCaching:
-    """Test that get_comp() caches initialization failures."""
+class TestResolveRoot:
+    """Test the _resolve_root and _default_root helpers."""
 
-    def test_comp_error_cached(self):
-        """After a failed init, subsequent calls raise immediately."""
+    def test_resolve_root_explicit(self, tmp_path):
+        result = _resolve_root(str(tmp_path))
+        assert result == tmp_path.resolve()
+
+    def test_resolve_root_none_uses_default(self, monkeypatch):
+        """When project_root is None, falls back to env or cwd."""
+        monkeypatch.delenv("VAULTSPEC_ROOT", raising=False)
+        from pathlib import Path
+
+        result = _resolve_root(None)
+        assert result == Path.cwd().resolve()
+
+    def test_resolve_root_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VAULTSPEC_ROOT", str(tmp_path))
+        result = _resolve_root(None)
+        assert result == tmp_path.resolve()
+
+    def test_default_root_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VAULTSPEC_ROOT", str(tmp_path))
+        result = _default_root()
+        assert result == tmp_path.resolve()
+
+    def test_default_root_cwd(self, monkeypatch):
+        monkeypatch.delenv("VAULTSPEC_ROOT", raising=False)
+        from pathlib import Path
+
+        result = _default_root()
+        assert result == Path.cwd().resolve()
+
+
+class TestServiceRegistryIntegration:
+    """Test that the module-level _registry is a ServiceRegistry."""
+
+    def test_registry_exists(self):
+        from vaultspec_rag.mcp_server import _registry
+        from vaultspec_rag.service import ServiceRegistry
+
+        assert isinstance(_registry, ServiceRegistry)
+
+    def test_gpu_sem_is_semaphore(self):
+        from vaultspec_rag.mcp_server import _gpu_sem
+
+        assert isinstance(_gpu_sem, asyncio.Semaphore)
+
+    def test_stateless_http_enabled(self):
+        """FastMCP instance should have stateless_http=True."""
+        assert mcp.settings.stateless_http is True
+
+
+class TestHealthHandler:
+    """Test the health_handler async function."""
+
+    def test_health_handler_returns_json(self):
+        """health_handler returns a JSONResponse with expected keys."""
+        from starlette.testclient import TestClient
+
+        async def _lifespan(app):
+            yield
+
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+
+        app = Starlette(
+            routes=[Route("/health", health_handler)],
+            lifespan=_lifespan,
+        )
+        client = TestClient(app)
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "status" in data
+        assert "cuda" in data
+        assert "models_loaded" in data
+        assert "projects" in data
+        assert "uptime_s" in data
+
+    def test_health_status_reflects_model_state(self):
+        """Without models loaded, status should not be 'ready'."""
+        from starlette.testclient import TestClient
+
+        async def _lifespan(app):
+            yield
+
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+
         import vaultspec_rag.mcp_server as mod
 
         # Save original state
-        orig_comp = mod._comp
-        orig_error = mod._comp_error
+        orig_model = mod._registry._model
+        orig_start = mod._start_time
 
         try:
-            # Simulate a prior failure
-            mod._comp = None
-            mod._comp_error = RuntimeError("GPU not available")
+            mod._registry._model = None
+            mod._start_time = 0.0
 
-            with pytest.raises(RuntimeError, match="previously failed"):
-                mod.get_comp()
+            app = Starlette(
+                routes=[Route("/health", health_handler)],
+                lifespan=_lifespan,
+            )
+            client = TestClient(app)
+            resp = client.get("/health")
+            data = resp.json()
+            assert data["status"] == "error"
+            assert data["models_loaded"] is False
         finally:
-            # Restore original state
-            mod._comp = orig_comp
-            mod._comp_error = orig_error
-
-    def test_comp_lock_exists(self):
-        """get_comp uses a threading.Lock for thread safety."""
-        import threading
-
-        import vaultspec_rag.mcp_server as mod
-
-        assert isinstance(mod._comp_lock, threading.Lock)
-
-
-class TestRagComponentsDataclass:
-    """Test that RagComponents is a proper dataclass."""
-
-    def test_is_dataclass(self):
-        import dataclasses
-
-        from vaultspec_rag.mcp_server import RagComponents
-
-        assert dataclasses.is_dataclass(RagComponents)
-
-    def test_has_expected_fields(self):
-        import dataclasses
-
-        from vaultspec_rag.mcp_server import RagComponents
-
-        field_names = {f.name for f in dataclasses.fields(RagComponents)}
-        expected = {
-            "store",
-            "model",
-            "searcher",
-            "vault_indexer",
-            "code_indexer",
-            "root_dir",
-        }
-        assert expected == field_names
+            mod._registry._model = orig_model
+            mod._start_time = orig_start
