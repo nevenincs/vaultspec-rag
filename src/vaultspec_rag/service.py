@@ -76,8 +76,11 @@ class ServiceRegistry:
 
         if self._model is not None:
             return
-        self._model = EmbeddingModel(model_name=model_name)
-        logger.info("EmbeddingModel loaded")
+        with self._lock:
+            if self._model is not None:
+                return
+            self._model = EmbeddingModel(model_name=model_name)
+            logger.info("EmbeddingModel loaded")
 
     @property
     def model(self) -> EmbeddingModel:
@@ -144,15 +147,19 @@ class ServiceRegistry:
         cfg = get_config()
 
         store = VaultStore(root)
-        graph_cache = GraphCache(ttl_seconds=cfg.graph_ttl_seconds)
-        searcher = VaultSearcher(
-            root,
-            model,
-            store,
-            graph_provider=lambda gc=graph_cache, r=root: gc.get(r),
-        )
-        vault_indexer = VaultIndexer(root, model, store)
-        code_indexer = CodebaseIndexer(root, model, store)
+        try:
+            graph_cache = GraphCache(ttl_seconds=cfg.graph_ttl_seconds)
+            searcher = VaultSearcher(
+                root,
+                model,
+                store,
+                graph_provider=lambda gc=graph_cache, r=root: gc.get(r),
+            )
+            vault_indexer = VaultIndexer(root, model, store)
+            code_indexer = CodebaseIndexer(root, model, store)
+        except Exception:
+            store.close()
+            raise
 
         logger.info("ProjectSlot created for %s", root)
         return ProjectSlot(
@@ -183,7 +190,7 @@ class ServiceRegistry:
                 slot.store.close()
                 logger.info("ProjectSlot closed for %s", root)
             self._projects.clear()
-        self._model = None
+            self._model = None
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------

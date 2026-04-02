@@ -336,52 +336,57 @@ def handle_index(
                     raise typer.Exit(code=1) from None
             store = VaultStore(target)
 
-        progress.advance(init_task)
         try:
-            emb_model = EmbeddingModel(model_name=model)
-        except (ImportError, RuntimeError) as e:
-            _handle_gpu_error(e)
-        progress.advance(init_task)
-        v_indexer = VaultIndexer(target, emb_model, store) if do_vault else None
-        c_indexer = CodebaseIndexer(target, emb_model, store) if do_code else None
-        progress.advance(init_task)
+            progress.advance(init_task)
+            try:
+                emb_model = EmbeddingModel(model_name=model)
+            except (ImportError, RuntimeError) as e:
+                _handle_gpu_error(e)
+            progress.advance(init_task)
+            v_indexer = VaultIndexer(target, emb_model, store) if do_vault else None
+            c_indexer = CodebaseIndexer(target, emb_model, store) if do_code else None
+            progress.advance(init_task)
 
-        v_res = None
-        c_res = None
+            v_res = None
+            c_res = None
 
-        # Phase 1: Vault indexing
-        if do_vault:
-            assert v_indexer is not None
-            vault_task = progress.add_task("Indexing documentation vault...", total=1)
-            v_res = (
-                v_indexer.full_index(clean=True)
-                if clean
-                else v_indexer.incremental_index()
-            )
-            progress.advance(vault_task)
-            console.log(
-                f"Vault: [green]{v_res.added}[/] added, "
-                f"[yellow]{v_res.updated}[/] updated, "
-                f"[red]{v_res.removed}[/] removed "
-                f"({v_res.duration_ms}ms)",
-            )
+            # Phase 1: Vault indexing
+            if do_vault:
+                assert v_indexer is not None
+                vault_task = progress.add_task(
+                    "Indexing documentation vault...", total=1
+                )
+                v_res = (
+                    v_indexer.full_index(clean=True)
+                    if clean
+                    else v_indexer.incremental_index()
+                )
+                progress.advance(vault_task)
+                console.log(
+                    f"Vault: [green]{v_res.added}[/] added, "
+                    f"[yellow]{v_res.updated}[/] updated, "
+                    f"[red]{v_res.removed}[/] removed "
+                    f"({v_res.duration_ms}ms)",
+                )
 
-        # Phase 2: Codebase indexing
-        if do_code:
-            assert c_indexer is not None
-            code_task = progress.add_task("Indexing codebase...", total=1)
-            c_res = (
-                c_indexer.full_index(clean=True)
-                if clean
-                else c_indexer.incremental_index()
-            )
-            progress.advance(code_task)
-            console.log(
-                f"Codebase: [green]{c_res.added}[/] added, "
-                f"[yellow]{c_res.updated}[/] updated, "
-                f"[red]{c_res.removed}[/] removed "
-                f"({c_res.duration_ms}ms)",
-            )
+            # Phase 2: Codebase indexing
+            if do_code:
+                assert c_indexer is not None
+                code_task = progress.add_task("Indexing codebase...", total=1)
+                c_res = (
+                    c_indexer.full_index(clean=True)
+                    if clean
+                    else c_indexer.incremental_index()
+                )
+                progress.advance(code_task)
+                console.log(
+                    f"Codebase: [green]{c_res.added}[/] added, "
+                    f"[yellow]{c_res.updated}[/] updated, "
+                    f"[red]{c_res.removed}[/] removed "
+                    f"({c_res.duration_ms}ms)",
+                )
+        finally:
+            store.close()
 
     # Summary table
     table = Table(title="Indexing Summary", show_header=True)
@@ -846,7 +851,10 @@ def _write_service_status(pid: int, port: int) -> None:
         "port": port,
         "started_at": datetime.now(UTC).isoformat(),
     }
-    _status_file().write_text(json.dumps(data), encoding="utf-8")
+    path = _status_file()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(str(tmp), str(path))
 
 
 def _read_service_status() -> dict[str, Any] | None:
@@ -882,15 +890,21 @@ def _is_pid_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import ctypes
 
-        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[union-attr]
+        kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
+        handle = kernel32.OpenProcess(
             0x1000,  # PROCESS_QUERY_LIMITED_INFORMATION
             False,
             pid,
         )
-        if handle:
-            ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[union-attr]
-            return True
-        return False
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == 259  # STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -898,6 +912,29 @@ def _is_pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _port_is_available(port: int) -> bool:
+    """Check whether a TCP port is available for binding.
+
+    Attempts to bind to ``127.0.0.1:port``. Used as a lightweight
+    lock to prevent concurrent ``service start`` races: the port
+    itself is the mutex.
+
+    Args:
+        port: TCP port to probe.
+
+    Returns:
+        True if the port is free, False if already in use.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
 
 
 def _health_probe(port: int) -> dict[str, Any] | None:
@@ -953,14 +990,27 @@ def _spawn_service(port: int, log_path: Path) -> int:
 def _terminate_pid(pid: int) -> None:
     """Send a termination signal to a process.
 
-    On Windows uses ``os.kill`` with ``SIGTERM``. On Unix sends
-    ``SIGTERM`` via ``os.kill``.
+    On Windows sends ``CTRL_BREAK_EVENT`` for graceful uvicorn
+    shutdown, then force-kills if the process survives. On Unix
+    sends ``SIGTERM``, falling back to ``SIGKILL``.
 
     Args:
         pid: Process ID to terminate.
     """
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-        os.kill(pid, signal.SIGTERM)
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+    else:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+    # Allow graceful drain before force-killing
+    time.sleep(2)
+    if _is_pid_alive(pid):
+        with contextlib.suppress(OSError):
+            if sys.platform == "win32":
+                os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows
+            else:
+                os.kill(pid, signal.SIGKILL)
 
 
 # --- Service Commands ---
@@ -989,6 +1039,17 @@ def service_start(
     Raises:
         typer.Exit: On failure to start or timeout.
     """
+    # Port-level guard: prevents concurrent start races (ADR D1)
+    if not _port_is_available(port):
+        console.print(
+            Panel(
+                f"Port {port} is already in use.",
+                title="Service Start",
+                border_style="yellow",
+            ),
+        )
+        return
+
     # Check for existing service
     status = _read_service_status()
     if status is not None:

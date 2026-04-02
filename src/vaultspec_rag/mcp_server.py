@@ -138,7 +138,7 @@ async def health_handler(_request: Request) -> object:
     if reg_health["model_loaded"]:
         status = "ready"
     elif _start_time > 0:
-        status = "loading"
+        status = "degraded"
     else:
         status = "error"
 
@@ -599,7 +599,8 @@ async def get_index_status(
             vram_gb=round(vram_gb, 2),
         )
 
-    return await _run_in_thread(_run)
+    async with _gpu_sem:
+        return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -639,7 +640,8 @@ async def get_code_file(
             )
         return full_path.read_text(encoding="utf-8")
 
-    return await _run_in_thread(_run)
+    async with _gpu_sem:
+        return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -765,7 +767,8 @@ async def get_vault_document(doc_id: str) -> str:
             raise FileNotFoundError(f"Document '{doc_id}' not found")
         return doc.get("content", "")
 
-    return await _run_in_thread(_run)
+    async with _gpu_sem:
+        return await _run_in_thread(_run)
 
 
 # -- Prompts -----------------------------------------------------------------
@@ -825,13 +828,16 @@ def main(port: int | None = None) -> None:
             ],
             lifespan=service_lifespan,
         )
-        uvicorn.run(
-            app,
-            host="127.0.0.1",
-            port=port,
-            timeout_graceful_shutdown=30,
-            log_level="info",
-        )
+        try:
+            uvicorn.run(
+                app,
+                host="127.0.0.1",
+                port=port,
+                timeout_graceful_shutdown=30,
+                log_level="info",
+            )
+        finally:
+            _registry.close_all()
     else:
         mcp.run(transport="stdio")
 
