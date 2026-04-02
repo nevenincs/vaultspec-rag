@@ -837,4 +837,14 @@ def main(port: int | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    _parser = argparse.ArgumentParser(description="VaultSpec RAG MCP server")
+    _parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="HTTP port (default: stdio transport)",
+    )
+    _args = _parser.parse_args()
+    main(port=_args.port)

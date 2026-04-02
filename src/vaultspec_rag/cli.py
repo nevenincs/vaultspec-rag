@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import shutil
+import signal
+import subprocess
 import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import typer
 from rich.console import Console
@@ -745,8 +751,6 @@ def mcp_start(
         ctx: Typer context for reading root ``--target``.
         port: Run on HTTP port instead of stdio transport.
     """
-    import os
-
     from .mcp_server import main as run_mcp
 
     # Propagate --target from the root callback to the MCP server via env var.
@@ -798,22 +802,262 @@ def mcp_status() -> None:
     console.print(table)
 
 
-# --- Service Commands (Docker/Local) ---
+# --- Service helpers ---
+
+
+def _status_dir() -> Path:
+    """Return the global service status directory, creating it if needed.
+
+    Returns:
+        Path to ``~/.vaultspec-rag/``.
+    """
+    d = Path.home() / ".vaultspec-rag"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _status_file() -> Path:
+    """Return the path to the service status JSON file.
+
+    Returns:
+        Path to ``~/.vaultspec-rag/service.json``.
+    """
+    return _status_dir() / "service.json"
+
+
+def _log_file() -> Path:
+    """Return the path to the service log file.
+
+    Returns:
+        Path to ``~/.vaultspec-rag/service.log``.
+    """
+    return _status_dir() / "service.log"
+
+
+def _write_service_status(pid: int, port: int) -> None:
+    """Write service status to the global status file.
+
+    Args:
+        pid: Process ID of the running service.
+        port: TCP port the service is listening on.
+    """
+    data = {
+        "pid": pid,
+        "port": port,
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    _status_file().write_text(json.dumps(data), encoding="utf-8")
+
+
+def _read_service_status() -> dict[str, Any] | None:
+    """Read and parse the service status file.
+
+    Returns:
+        Parsed status dict, or None if the file is missing,
+        unreadable, or lacks a ``pid`` key.
+    """
+    sf = _status_file()
+    if not sf.exists():
+        return None
+    try:
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "pid" not in data:
+            return None
+        return data
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check whether a process with the given PID is still running.
+
+    Args:
+        pid: Process ID to check.
+
+    Returns:
+        True if the process exists and is running.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[union-attr]
+            0x1000,  # PROCESS_QUERY_LIMITED_INFORMATION
+            False,
+            pid,
+        )
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[union-attr]
+            return True
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _health_probe(port: int) -> dict[str, Any] | None:
+    """Probe the service health endpoint via HTTP GET.
+
+    Args:
+        port: TCP port to connect to on 127.0.0.1.
+
+    Returns:
+        Parsed JSON dict on success, or None on any error.
+    """
+    import urllib.request
+
+    try:
+        url = f"http://127.0.0.1:{port}/health"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _spawn_service(port: int, log_path: Path) -> int:
+    """Spawn the MCP server as a detached background process.
+
+    Args:
+        port: TCP port for the HTTP server.
+        log_path: File path for stdout/stderr redirection.
+
+    Returns:
+        PID of the spawned process.
+    """
+    cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
+    log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+    if sys.platform == "win32":
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            creationflags=0x00000200 | 0x08000000,  # NEW_PROCESS_GROUP | NO_WINDOW
+        )
+    else:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return proc.pid
+
+
+def _terminate_pid(pid: int) -> None:
+    """Send a termination signal to a process.
+
+    On Windows uses ``os.kill`` with ``SIGTERM``. On Unix sends
+    ``SIGTERM`` via ``os.kill``.
+
+    Args:
+        pid: Process ID to terminate.
+    """
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.kill(pid, signal.SIGTERM)
+
+
+# --- Service Commands ---
 
 
 @service_app.command("start")
-def service_start() -> None:
-    """Start the background RAG service (e.g., Docker container).
+def service_start(
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            help="TCP port for the HTTP service.",
+            envvar="VAULTSPEC_RAG_PORT",
+        ),
+    ] = 8766,
+) -> None:
+    """Start the background RAG service as a detached process.
+
+    Spawns the MCP server on the given port, polls ``/health``
+    with exponential backoff until ready, and writes a status
+    file to ``~/.vaultspec-rag/service.json``.
+
+    Args:
+        port: TCP port (default 8766 or ``VAULTSPEC_RAG_PORT``).
 
     Raises:
-        typer.Exit: Always exits with code 1 (not implemented).
+        typer.Exit: On failure to start or timeout.
     """
+    # Check for existing service
+    status = _read_service_status()
+    if status is not None:
+        existing_pid = int(status["pid"])
+        existing_port = int(status.get("port", port))
+        if _is_pid_alive(existing_pid):
+            health = _health_probe(existing_port)
+            if health is not None:
+                console.print(
+                    Panel(
+                        f"Service already running (PID {existing_pid}, "
+                        f"port {existing_port}).",
+                        title="Service Start",
+                        border_style="yellow",
+                    ),
+                )
+                return
+        # Stale PID -- remove status file
+        _status_file().unlink(missing_ok=True)
+
+    log_path = _log_file()
+    t0 = time.perf_counter()
+    pid = _spawn_service(port, log_path)
+    _write_service_status(pid, port)
+
+    # Poll health with exponential backoff
+    delay = 0.1
+    deadline = 30.0
+    elapsed = 0.0
+    with console.status("[bold green]Starting service..."):
+        while elapsed < deadline:
+            time.sleep(delay)
+            elapsed = time.perf_counter() - t0
+
+            # Check if process died (port conflict, etc.)
+            if not _is_pid_alive(pid):
+                _status_file().unlink(missing_ok=True)
+                console.print(
+                    Panel(
+                        f"Service process exited immediately (PID {pid}).\n"
+                        f"Port {port} may be in use. Check {log_path}",
+                        title="Service Start Failed",
+                        border_style="red",
+                    ),
+                )
+                raise typer.Exit(code=1)
+
+            health = _health_probe(port)
+            if health is not None and health.get("status") == "ready":
+                startup_s = time.perf_counter() - t0
+                console.print(
+                    Panel(
+                        f"PID: {pid}\n"
+                        f"Port: {port}\n"
+                        f"Startup: {startup_s:.1f}s\n"
+                        f"Log: {log_path}",
+                        title="Service Started",
+                        border_style="green",
+                    ),
+                )
+                return
+
+            delay = min(delay * 2, 5.0)
+
     console.print(
         Panel(
-            "No Docker configuration found. Service management is disabled.\n"
-            "Use [bold]vaultspec-rag server mcp start[/] "
-            "to run the MCP server directly.",
-            title="Service Start",
+            f"Timed out waiting for service health after {deadline:.0f}s.\n"
+            f"PID {pid} is running but not ready. Check {log_path}",
+            title="Service Start Timeout",
             border_style="red",
         ),
     )
@@ -822,24 +1066,164 @@ def service_start() -> None:
 
 @service_app.command("stop")
 def service_stop() -> None:
-    """Stop the background RAG service."""
+    """Stop the background RAG service.
+
+    Reads the status file, verifies the PID is alive, sends
+    a termination signal, waits briefly, and removes the
+    status file.
+    """
+    status = _read_service_status()
+    if status is None:
+        console.print(
+            Panel(
+                "No service status file found. Service is not running.",
+                title="Service Stop",
+                border_style="yellow",
+            ),
+        )
+        return
+
+    pid = int(status["pid"])
+    if not _is_pid_alive(pid):
+        _status_file().unlink(missing_ok=True)
+        console.print(
+            Panel(
+                f"Service PID {pid} is no longer running. Cleaned up status file.",
+                title="Service Stop",
+                border_style="yellow",
+            ),
+        )
+        return
+
+    _terminate_pid(pid)
+
+    # Wait briefly for process to exit
+    for _ in range(50):
+        if not _is_pid_alive(pid):
+            break
+        time.sleep(0.1)
+
+    _status_file().unlink(missing_ok=True)
     console.print(
         Panel(
-            "No active background services detected.",
+            f"Service stopped (PID {pid}).",
             title="Service Stop",
-            border_style="yellow",
+            border_style="green",
         ),
     )
 
 
 @service_app.command("status")
 def service_status() -> None:
-    """Show the status of background RAG services."""
+    """Show the status of the background RAG service.
+
+    Reads the status file, checks PID liveness, probes the
+    health endpoint, and displays a Rich table with service
+    state.
+    """
+    status = _read_service_status()
     table = Table(title="Service Status", show_header=False, padding=(0, 2))
-    table.add_column("Service", style="bold")
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+
+    if status is None:
+        table.add_row("State", "[red]stopped[/]")
+        console.print(table)
+        return
+
+    pid = int(status["pid"])
+    port = int(status.get("port", 8766))
+    started_at = status.get("started_at", "unknown")
+
+    if not _is_pid_alive(pid):
+        _status_file().unlink(missing_ok=True)
+        table.add_row("State", "[red]stopped[/] (stale PID cleaned)")
+        console.print(table)
+        return
+
+    table.add_row("State", "[green]running[/]")
+    table.add_row("PID", str(pid))
+    table.add_row("Port", str(port))
+    table.add_row("Started", started_at)
+
+    health = _health_probe(port)
+    if health is not None:
+        table.add_row("Health", health.get("status", "unknown"))
+        table.add_row("CUDA", str(health.get("cuda", "unknown")))
+        table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
+        projects = health.get("projects", [])
+        table.add_row("Projects", str(len(projects)))
+        for p in projects:
+            table.add_row("", str(p))
+        uptime = health.get("uptime_s", 0.0)
+        table.add_row("Uptime", f"{uptime:.0f}s")
+    else:
+        table.add_row("Health", "[yellow]unreachable[/]")
+
+    console.print(table)
+
+
+# --- Model prefetch (warmup) ---
+
+
+@service_app.command("warmup")
+def service_warmup() -> None:
+    """Pre-download GPU model files to the HuggingFace cache.
+
+    Checks CUDA availability, then downloads each of the three
+    model repositories (dense, sparse, reranker) if not already
+    cached. Reports per-model status.
+
+    Raises:
+        typer.Exit: If CUDA is not available or huggingface_hub
+            is not installed.
+    """
+    try:
+        import torch
+    except ImportError:
+        console.print("[bold red]Error:[/] torch is not installed.")
+        raise typer.Exit(code=1) from None
+
+    if not torch.cuda.is_available():
+        console.print("[bold red]Error:[/] No CUDA GPU detected.")
+        raise typer.Exit(code=1) from None
+
+    try:
+        from huggingface_hub import snapshot_download, try_to_load_from_cache
+    except ImportError:
+        console.print("[bold red]Error:[/] huggingface_hub is not installed.")
+        raise typer.Exit(code=1) from None
+
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
+    from .config import get_config
+
+    cfg = get_config()
+    models = [
+        ("Dense (Qwen3)", cfg.embedding_model),
+        ("Sparse (SPLADE)", cfg.sparse_model),
+        ("Reranker (CrossEncoder)", cfg.reranker_model),
+    ]
+
+    table = Table(title="Model Warmup", show_header=True)
+    table.add_column("Model", style="bold")
+    table.add_column("Repo", style="cyan")
     table.add_column("Status")
-    table.add_row("Local Environment", "[green]Ready[/]")
-    table.add_row("Docker Service", "[red]N/A (no Dockerfile)[/]")
+
+    for label, repo_id in models:
+        # Check if already cached
+        cached = try_to_load_from_cache(repo_id, "config.json")
+        if cached is not None:
+            table.add_row(label, repo_id, "[green]cached[/]")
+            continue
+
+        try:
+            with console.status(f"[bold green]Downloading {label}..."):
+                snapshot_download(repo_id)
+            table.add_row(label, repo_id, "[green]downloaded[/]")
+        except Exception as exc:
+            table.add_row(label, repo_id, f"[red]failed[/]: {exc}")
+
     console.print(table)
 
 
@@ -1111,9 +1495,6 @@ def handle_test(ctx: typer.Context) -> None:
         vaultspec-rag test -m unit
         vaultspec-rag test -m integration -v --timeout=120
     """
-    import subprocess
-    import sys
-
     test_dir = str(Path(__file__).resolve().parent / "tests")
     cmd = [sys.executable, "-m", "pytest", test_dir, *ctx.args]
     raise SystemExit(subprocess.call(cmd))

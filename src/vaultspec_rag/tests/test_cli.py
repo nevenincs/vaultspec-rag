@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import os
 import typing
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 from typer.testing import CliRunner
 
-from vaultspec_rag.cli import _display_search_results, _try_mcp_search, app
+from vaultspec_rag.cli import (
+    _display_search_results,
+    _health_probe,
+    _is_pid_alive,
+    _read_service_status,
+    _try_mcp_search,
+    _write_service_status,
+    app,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -119,18 +132,15 @@ class TestServerCommands:
         assert "VaultSpec Search" in result.output
         assert "stdio" in result.output
 
-    def test_service_start_fails(self):
-        result = runner.invoke(app, ["server", "service", "start"])
-        assert result.exit_code == 1
-
-    def test_service_stop(self):
+    def test_service_stop_no_status_file(self):
         result = runner.invoke(app, ["server", "service", "stop"])
         assert result.exit_code == 0
+        assert "not running" in result.output.lower() or "No service" in result.output
 
-    def test_service_status(self):
+    def test_service_status_no_status_file(self):
         result = runner.invoke(app, ["server", "service", "status"])
         assert result.exit_code == 0
-        assert "Ready" in result.output
+        assert "stopped" in result.output.lower()
 
 
 class TestMcpFastPath:
@@ -179,3 +189,101 @@ class TestMcpFastPath:
             [{"path": "foo.py", "score": 0.9, "snippet": "test"}],
             "vault",
         )
+
+
+class TestServiceDaemonHelpers:
+    """Tests for the service daemon helper functions."""
+
+    def test_is_pid_alive_current_process(self):
+        """Current process PID should be alive."""
+        assert _is_pid_alive(os.getpid()) is True
+
+    def test_is_pid_alive_impossible_pid(self):
+        """An impossibly large PID should not be alive."""
+        assert _is_pid_alive(99999999) is False
+
+    def test_is_pid_alive_zero(self):
+        """PID 0 should return False."""
+        assert _is_pid_alive(0) is False
+
+    def test_is_pid_alive_negative(self):
+        """Negative PIDs should return False."""
+        assert _is_pid_alive(-1) is False
+
+    def test_write_read_status_roundtrip(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Write and read back should produce the same pid/port."""
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: tmp_path / "service.json",
+        )
+        _write_service_status(pid=12345, port=9999)
+        data = _read_service_status()
+        assert data is not None
+        assert data["pid"] == 12345
+        assert data["port"] == 9999
+        assert "started_at" in data
+
+    def test_write_creates_valid_json(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Status file must be valid JSON with expected keys."""
+        sf = tmp_path / "service.json"
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: sf,
+        )
+        _write_service_status(pid=42, port=8766)
+        import json
+
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        assert set(data.keys()) == {"pid", "port", "started_at"}
+
+    def test_read_status_missing_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Reading a nonexistent file should return None."""
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: tmp_path / "does-not-exist.json",
+        )
+        assert _read_service_status() is None
+
+    def test_read_status_invalid_json(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Invalid JSON in status file should return None."""
+        sf = tmp_path / "service.json"
+        sf.write_text("not json", encoding="utf-8")
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: sf,
+        )
+        assert _read_service_status() is None
+
+    def test_read_status_missing_pid_key(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Status JSON without a pid key should return None."""
+        sf = tmp_path / "service.json"
+        sf.write_text('{"port": 8766}', encoding="utf-8")
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: sf,
+        )
+        assert _read_service_status() is None
+
+    def test_health_probe_nonlistening_port(self):
+        """Health probe on a port with no listener should return None."""
+        assert _health_probe(1) is None
