@@ -357,9 +357,6 @@ class GraphCache:
             self._built_at = 0.0
 
 
-_graph_cache = GraphCache()
-
-
 def get_related(
     root_dir: pathlib.Path,
     doc_id: str,

@@ -202,8 +202,11 @@ class ServiceRegistry:
             A dict with ``model_loaded``, ``project_count``, and
             ``projects`` (list of resolved root path strings).
         """
+        with self._lock:
+            project_list = [str(r) for r in self._projects]
+            count = len(self._projects)
         return {
             "model_loaded": self._model is not None,
-            "project_count": len(self._projects),
-            "projects": [str(r) for r in self._projects],
+            "project_count": count,
+            "projects": project_list,
         }

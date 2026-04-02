@@ -284,6 +284,74 @@ class TestServiceDaemonHelpers:
         )
         assert _read_service_status() is None
 
+    def test_service_stop_stale_pid(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """service_stop with a dead PID cleans up the status file."""
+        sf = tmp_path / "service.json"
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: sf,
+        )
+        # Write a status file with a PID that is certainly dead
+        _write_service_status(pid=99999999, port=8766)
+        assert sf.exists()
+
+        result = runner.invoke(app, ["server", "service", "stop"])
+        assert result.exit_code == 0
+        out = result.output.lower()
+        assert "no longer running" in out or "cleaned" in out
+        # Status file should be removed
+        assert not sf.exists()
+
+    def test_service_status_stale_pid(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """service_status with a dead PID shows stale cleanup message."""
+        sf = tmp_path / "service.json"
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._status_file",
+            lambda: sf,
+        )
+        _write_service_status(pid=99999999, port=8766)
+        assert sf.exists()
+
+        result = runner.invoke(app, ["server", "service", "status"])
+        assert result.exit_code == 0
+        assert "stale" in result.output.lower() or "cleaned" in result.output.lower()
+        # Status file should be removed
+        assert not sf.exists()
+
     def test_health_probe_nonlistening_port(self):
         """Health probe on a port with no listener should return None."""
         assert _health_probe(1) is None
+
+    def test_health_probe_non_json_response(self):
+        """Health probe returns None when server sends non-JSON."""
+        import http.server
+        import threading
+
+        class _GarbageHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"not json at all")
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _GarbageHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.handle_request, daemon=True)
+        t.start()
+        try:
+            result = _health_probe(port)
+            assert result is None
+        finally:
+            server.server_close()
+            t.join(timeout=5)

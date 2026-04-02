@@ -76,24 +76,11 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
 
     t_total = time.perf_counter()
 
-    # CUDA check
-    t0 = time.perf_counter()
-    import torch
-
-    cuda_ok = torch.cuda.is_available()
-    logger.info(
-        "CUDA check: %s (%.2fs)",
-        "available" if cuda_ok else "NOT available",
-        time.perf_counter() - t0,
-    )
-    if not cuda_ok:
-        logger.error("No CUDA device — models will fail to load")
-
     # HF cache status
     hf_home = os.environ.get("HF_HOME", "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
 
-    # Load models
+    # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
     t0 = time.perf_counter()
     await _run_in_thread(_registry.load_model)
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)

@@ -62,12 +62,14 @@ class TestGraphCacheGet:
         g2 = cache.get(root)
         assert g1 is not g2
 
-    def test_get_returns_none_for_missing_vault(self, tmp_path: Path):
+    def test_get_returns_graph_for_missing_vault(self, tmp_path: Path):
         cache = GraphCache(ttl_seconds=300.0)
         result = cache.get(tmp_path)
-        # VaultGraph on empty dir returns graph with no nodes (not an error)
-        # or None if it raises. Either way the cache handles it.
-        assert result is None or result is not None  # does not crash
+        # VaultGraph succeeds on a dir with no .vault/ — returns a graph
+        # with zero nodes rather than raising.
+        from vaultspec_core.graph import VaultGraph
+
+        assert isinstance(result, VaultGraph)
 
 
 class TestGraphCacheInvalidate:
@@ -105,7 +107,10 @@ class TestGraphCacheConcurrency:
 
     def test_concurrent_get_single_construction(self, tmp_path: Path):
         root = _make_vault_dir(tmp_path)
-        cache = GraphCache(ttl_seconds=0.0)  # always stale
+        cache = GraphCache(ttl_seconds=10.0)
+        # Pre-build, then force stale by backdating _built_at
+        cache.get(root)
+        cache._built_at = 0.0
 
         results: list[object] = []
         barrier = threading.Barrier(8)
@@ -121,9 +126,57 @@ class TestGraphCacheConcurrency:
         for t in threads:
             t.join(timeout=30)
 
-        # All threads should have received a graph
         assert len(results) == 8
-        assert all(r is not None for r in results)
+        # All threads got the same graph object — proves single construction
+        first = results[0]
+        assert all(r is first for r in results)
+
+
+class TestGraphCacheFailureRecovery:
+    """GraphCache.get() after a construction failure retries on next call.
+
+    When VaultGraph raises, get() catches the exception, sets _graph=None
+    and _built_at=now. Because _is_stale() returns True whenever _graph
+    is None, the next call will attempt a fresh build — no TTL-based
+    retry suppression.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_get_retries_after_simulated_failure(self, tmp_path: Path):
+        """After a failure state (_graph=None, _built_at=recent), get()
+        still rebuilds because _is_stale returns True when _graph is None."""
+        root = _make_vault_dir(tmp_path)
+        cache = GraphCache(ttl_seconds=300.0)
+
+        # Simulate a prior failure: _graph is None but _built_at is recent
+        cache._graph = None
+        cache._root = root
+        cache._built_at = time.monotonic()
+
+        # get() should retry and succeed despite recent _built_at
+        result = cache.get(root)
+        assert result is not None
+        # Verify it actually built a graph (not just returned stale None)
+        from vaultspec_core.graph import VaultGraph
+
+        assert isinstance(result, VaultGraph)
+
+    def test_get_recovers_after_root_change(self, tmp_path: Path):
+        """Changing root_dir triggers rebuild even within TTL."""
+        root1 = _make_vault_dir(tmp_path / "project1")
+        root2 = _make_vault_dir(tmp_path / "project2")
+        cache = GraphCache(ttl_seconds=300.0)
+
+        g1 = cache.get(root1)
+        assert g1 is not None
+        assert cache._root == root1
+
+        g2 = cache.get(root2)
+        assert g2 is not None
+        assert cache._root == root2
+        # Different root should produce a different graph instance
+        assert g1 is not g2
 
 
 class TestVaultSearcherGraphProvider:

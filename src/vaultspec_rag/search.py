@@ -246,6 +246,7 @@ class VaultSearcher:
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
         self._reranker = None
+        self._reranker_lock = threading.Lock()
 
     def _get_reranker(self) -> CrossEncoder:
         """Lazily load the CrossEncoder reranker model onto GPU.
@@ -262,24 +263,28 @@ class VaultSearcher:
         """
         if self._reranker is not None:
             return self._reranker
-        import torch
-        from sentence_transformers import CrossEncoder
+        with self._reranker_lock:
+            if self._reranker is not None:
+                return self._reranker
+            import torch
+            from sentence_transformers import CrossEncoder
 
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA GPU required for CrossEncoder reranker. No CUDA device found.",
+            if not torch.cuda.is_available():
+                msg = (
+                    "CUDA GPU required for CrossEncoder reranker. No CUDA device found."
+                )
+                raise RuntimeError(msg)
+            self._reranker = CrossEncoder(
+                self._reranker_model_name,
+                device="cuda",
+                activation_fn=torch.nn.Sigmoid(),
             )
-        self._reranker = CrossEncoder(
-            self._reranker_model_name,
-            device="cuda",
-            activation_fn=torch.nn.Sigmoid(),
-        )
-        logger.info(
-            "CrossEncoder reranker loaded on %s: %s",
-            torch.cuda.get_device_name(0),
-            self._reranker_model_name,
-        )
-        return self._reranker
+            logger.info(
+                "CrossEncoder reranker loaded on %s: %s",
+                torch.cuda.get_device_name(0),
+                self._reranker_model_name,
+            )
+            return self._reranker
 
     def _rerank(
         self,

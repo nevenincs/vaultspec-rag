@@ -10,6 +10,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -862,14 +864,14 @@ def _read_service_status() -> dict[str, Any] | None:
 
     Returns:
         Parsed status dict, or None if the file is missing,
-        unreadable, or lacks a ``pid`` key.
+        unreadable, or lacks ``pid``/``port`` keys.
     """
     sf = _status_file()
     if not sf.exists():
         return None
     try:
         data = json.loads(sf.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or "pid" not in data:
+        if not isinstance(data, dict) or "pid" not in data or "port" not in data:
             return None
         return data
     except (json.JSONDecodeError, OSError):
@@ -937,6 +939,22 @@ def _port_is_available(port: int) -> bool:
             return False
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Reject HTTP redirects to prevent SSRF via health endpoint."""
+
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        _ = req, fp, code, msg, headers, newurl
+        return None
+
+
 def _health_probe(port: int) -> dict[str, Any] | None:
     """Probe the service health endpoint via HTTP GET.
 
@@ -944,14 +962,18 @@ def _health_probe(port: int) -> dict[str, Any] | None:
         port: TCP port to connect to on 127.0.0.1.
 
     Returns:
-        Parsed JSON dict on success, or None on any error.
+        Parsed JSON dict on success, a dict with ``status``
+        ``"error"`` and ``http_code`` for HTTP errors (server
+        running but unhealthy), or None for connection errors
+        (server not running).
     """
-    import urllib.request
-
+    url = f"http://127.0.0.1:{port}/health"
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        url = f"http://127.0.0.1:{port}/health"
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        with opener.open(url, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return {"status": "error", "http_code": exc.code}
     except Exception:
         return None
 
@@ -1283,7 +1305,15 @@ def service_warmup() -> None:
                 snapshot_download(repo_id)
             table.add_row(label, repo_id, "[green]downloaded[/]")
         except Exception as exc:
-            table.add_row(label, repo_id, f"[red]failed[/]: {exc}")
+            msg = str(exc)
+            if "401" in msg or "403" in msg or "GatedRepo" in msg:
+                table.add_row(
+                    label,
+                    repo_id,
+                    "[red]auth required[/]: run huggingface-cli login",
+                )
+            else:
+                table.add_row(label, repo_id, f"[red]failed[/]: {exc}")
 
     console.print(table)
 
