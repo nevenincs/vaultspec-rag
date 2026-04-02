@@ -1277,7 +1277,7 @@ def service_warmup() -> None:
         console.print("[bold red]Error:[/] huggingface_hub is not installed.")
         raise typer.Exit(code=1) from None
 
-    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
 
     from .config import get_config
 
@@ -1313,7 +1313,12 @@ def service_warmup() -> None:
                     "[red]auth required[/]: run huggingface-cli login",
                 )
             else:
-                table.add_row(label, repo_id, f"[red]failed[/]: {exc}")
+                table.add_row(
+                    label,
+                    repo_id,
+                    f"[red]failed[/]: {exc}"
+                    " (partial cache may remain in ~/.cache/huggingface)",
+                )
 
     console.print(table)
 

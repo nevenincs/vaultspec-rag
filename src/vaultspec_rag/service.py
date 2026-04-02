@@ -180,6 +180,7 @@ class ServiceRegistry:
         with self._lock:
             slot = self._projects.pop(root, None)
         if slot is not None:
+            slot.graph_cache.invalidate()
             slot.store.close()
             logger.info("ProjectSlot closed for %s", root)
 

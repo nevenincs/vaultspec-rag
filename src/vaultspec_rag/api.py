@@ -341,7 +341,8 @@ class GraphCache:
                 logger.warning("Failed to build vault graph", exc_info=True)
                 self._graph = None
                 self._root = None
-                self._built_at = time.monotonic()
+                # Retry sooner on failure (5s vs normal TTL)
+                self._built_at = time.monotonic() - self._ttl_seconds + 5.0
                 return None
         return self._graph
 
