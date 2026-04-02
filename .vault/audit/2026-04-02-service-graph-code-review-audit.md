@@ -637,6 +637,93 @@ No bad interaction.
 **ADR compliance: 6/6 COMPLIANT.**
 **API backward compatibility: 0 breaks.**
 
+---
+
+## Round 4: Verification audit (audit of the audit)
+
+Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
+
+| Status | CRITICAL | HIGH | MEDIUM | LOW | INFO | Total |
+|--------|----------|------|--------|-----|------|-------|
+| FIXED | 1 | 6 | 9 | 5 | 1 | **22** |
+| ACCEPTED | 0 | 0 | 4 | 5 | 9 | **18** |
+| OPEN | 0 | 4 | 10 | 7 | 0 | **21** |
+
+### FIXED (22 items)
+
+- PHASE4-001 (CRITICAL): Windows CTRL_BREAK_EVENT for graceful shutdown
+- PHASE2-001 (HIGH): load_model double-check lock
+- ERROR-002 (HIGH): _create_slot try/except closes store
+- ERROR-007 (HIGH): uvicorn.run try/finally close_all
+- PHASE4-002 (HIGH): _port_is_available TCP probe
+- PHASE4-003 (HIGH): Atomic status file write
+- LIFECYCLE-001 (HIGH): handle_index try/finally store.close
+- PHASE2-002, THREAD-001, THREAD-006, PHASE4-005, PHASE4-006,
+  PHASE4-007, ERROR-003, ERROR-005, PHASE3-005, SEC-006 (MEDIUM)
+- PHASE1-001, PHASE1-002, PHASE1-003, PHASE1-004, PERF-005 (LOW/INFO)
+- All TESTGAP-004/005/006/011 (test coverage expanded)
+
+### ACCEPTED (18 items — design choices, known limitations)
+
+- PHASE2-003: Registry fixture bypasses load_model (intentional VRAM saving)
+- PHASE2-004: Legacy _graph_built_at fallback preserved
+- PHASE3-006/007/008: Stdio preserved, stateless_http set, get_comp removed
+- PHASE3-009: asyncio.Semaphore at import (safe on 3.13)
+- THREAD-005: Qdrant SQLite contention (inherent to local mode)
+- LIFECYCLE-003: close_all/watcher decoupled (lifespan owns watcher)
+- LIFECYCLE-004/005: No circular refs, _Engine error path correct
+- ERROR-006/008: HF cache self-healing, no .vault/ is by-design
+- SEC-005: Config-sourced model names in same trust boundary
+- API-001/002/004-009: All additive, backward compatible
+- PERF-006/007: Negligible cost, no TTL conflict
+- TESTGAP-012: monkeypatch for env vars is least-harmful form
+
+### OPEN (21 items — deferred to follow-up work)
+
+**HIGH (4):**
+
+- TESTGAP-001/002/003: _terminate_pid, _spawn_service, service_start
+  have zero test coverage. These require spawning real subprocesses with
+  GPU — integration test territory, not unit tests. Defer to a dedicated
+  integration test PR.
+- PERF-001: _gpu_sem serializes entire search pipeline. Design tradeoff
+  — narrowing the lock requires splitting encode/search/rerank into
+  separate semaphore-guarded segments. Defer to performance optimization
+  phase.
+
+**MEDIUM (10):**
+
+- PHASE3-001: Single-project watcher. Known alpha limitation, documented
+  in ADR. Full multi-project watching deferred to beta.
+- THREAD-002: _ensure_watcher TOCTOU. Narrow window, no await between
+  check and assign. Low practical risk.
+- THREAD-003: _gpu_sem now wraps all tools but semantically does double
+  duty (GPU + slot creation). Acceptable for alpha.
+- PHASE3-010: Test mutates _registry._model directly. Fragile but
+  functional.
+- PHASE4-004: Log file handle leak after Popen. GC'd on process exit.
+- LIFECYCLE-002: Watcher/close_all race window. Narrow, mitigated by
+  _watcher_stop event.
+- SEC-001: _resolve_root allows arbitrary filesystem access. Localhost
+  binding (127.0.0.1) limits exposure to local user.
+- SEC-002: No sensitive file guard within workspace. Standard for RAG
+  tools — workspace contents are user-controlled.
+- SEC-004: PID poisoning. Requires local write access to ~/.vaultspec-rag,
+  same trust level as the user. Low practical risk.
+- PERF-002: Global lock on _create_slot. Only contends during first
+  project init, rare in practice.
+
+**LOW (7):**
+
+- PHASE2-005: CrossEncoder not explicitly released on close_project.
+- THREAD-004: reset_engine race (test-only function).
+- PHASE4-008: monkeypatch in test_cli.py (pragmatic for filesystem tests).
+- ERROR-004: Port fallback on missing "port" key.
+- SEC-003: Health endpoint info disclosure (localhost only).
+- API-003: HealthResponse dead model (tested but unused by handler).
+- PERF-004: Per-searcher CrossEncoder (VRAM waste at N>1 projects).
+- PHASE3-011/TESTGAP-007/008/009/010: Various test coverage gaps.
+
 **Priority fixes before merge (updated):**
 
 - PHASE4-001 (CRITICAL): Windows _terminate_pid SIGTERM behavior
