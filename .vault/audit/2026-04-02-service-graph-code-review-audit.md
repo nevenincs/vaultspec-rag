@@ -248,15 +248,226 @@ is correct (doesn't override user env). Consider 300s.
 
 **File:** `cli.py:1197`
 
-## Summary
+---
 
-| Severity | Count | Key issues |
-|----------|-------|-----------|
-| CRITICAL | 1 | Windows SIGTERM behavior in _terminate_pid |
-| HIGH | 4 | load_model thread safety, PID race, non-atomic write, dead "loading" status |
-| MEDIUM | 9 | Various (close_all lock, watcher single-project, handle leak, PID false positive, port detection, warmup auth, test coupling) |
-| LOW | 4 | Tautological test, failure retry suppression, GPU memory, monkeypatch use |
-| INFO | 6 | Dead code, verified correctness, documentation |
+## Round 2: Thread safety deep dive
 
-**Immediate action needed:** PHASE4-001 (CRITICAL) and the 4 HIGH
-findings should be addressed before merging the PR.
+### THREAD-001 | MEDIUM | `_get_reranker()` lacks synchronization
+
+`VaultSearcher._get_reranker()` at `search.py:250-282` uses a bare
+`if self._reranker is not None: return` check with no lock. Two
+concurrent `search_vault` calls dispatched via `anyio.to_thread` can
+both instantiate `CrossEncoder` on GPU (~560MB VRAM each). Same
+pattern as PHASE2-001 but on a different object.
+
+### THREAD-002 | MEDIUM | `_ensure_watcher` TOCTOU race on `_watcher_task`
+
+`mcp_server.py:168-188`: checks `_watcher_task is None` then assigns
+later. Two tool handlers finishing near-simultaneously could both
+enter and spawn duplicate watchers. Narrow window since no `await`
+between check and assignment, but design relies on this implicitly.
+
+### THREAD-003 | HIGH | `_gpu_sem` bypassed by `get_index_status` and other tools
+
+`get_index_status` (`mcp_server.py:558-602`) calls
+`_registry.get_project(root)` which may trigger `_create_slot()` →
+model loading **without** acquiring `_gpu_sem`. Similarly
+`get_vault_document` and `get_code_file` bypass the semaphore. First
+call for a new project root triggers full store creation concurrently
+with a search tool holding `_gpu_sem`.
+
+### THREAD-004 | LOW | `reset_engine()` in api.py writes `_engine = None` outside lock
+
+Could race with `get_engine()`. The store `close()` + reassignment
+is not atomic. Test-only function but still a correctness gap.
+
+### THREAD-005 | MEDIUM | Qdrant local SQLite concurrent write contention
+
+`QdrantClient(path=...)` is backed by SQLite with 5-second busy
+timeout. Concurrent `reindex_vault` + `reindex_codebase` upserts
+to different collections contend on the SQLite WAL lock. Can produce
+`database is locked` errors under heavy concurrent indexing.
+
+### THREAD-006 | LOW | `health()` iterates `_projects` dict without lock
+
+`ServiceRegistry.health()` at `service.py:191-202` reads
+`self._projects` without `_lock`. A concurrent mutation could cause
+`RuntimeError: dictionary changed size during iteration`.
+
+## Round 2: Error handling + edge cases
+
+### ERROR-001 | MEDIUM | `load_model()` failure produces raw traceback
+
+If `EmbeddingModel()` raises during lifespan startup, the exception
+propagates as an unhandled traceback with no user-friendly guidance.
+Contrast with `cli.py`'s `_handle_gpu_error`.
+
+**File:** `service.py:79`, `mcp_server.py:98`
+
+### ERROR-002 | HIGH | `_create_slot()` partial failure leaks VaultStore
+
+`VaultStore(root)` opens Qdrant at `service.py:146`. If any subsequent
+constructor raises, the exception propagates without closing the
+already-opened store. The slot is never inserted into `_projects`,
+so `close_all()` never closes it. Qdrant lock file remains held.
+
+**File:** `service.py:125-164`
+**Fix:** try/except around `_create_slot` body; call `store.close()`
+on failure.
+
+### ERROR-003 | MEDIUM | `_health_probe` treats HTTP 500 same as "not started"
+
+`urllib.request.urlopen` raises `HTTPError` for 5xx. Caught by bare
+`except Exception`, returns `None`. A persistently unhealthy service
+spins the full 30s deadline with misleading "not ready" message.
+
+**File:** `cli.py:914-919`
+
+### ERROR-004 | LOW | `service.json` missing "port" falls back to caller default
+
+`status.get("port", port)` at `cli.py:996` falls back silently.
+If the existing service runs on a different port, health probe hits
+the wrong port. Validator checks "pid" but not "port".
+
+### ERROR-005 | MEDIUM | Explicit CUDA check in lifespan serves no purpose
+
+`mcp_server.py:89-90`: when `cuda_ok is False`, logs error but does
+not raise. Proceeds to `load_model()` which will raise anyway via
+`_check_rag_deps()`. Early check only adds a log line before the
+inevitable crash.
+
+### ERROR-006 | LOW | `snapshot_download` interrupt leaves partial HF cache
+
+Ctrl+C during warmup leaves `.incomplete` marker files. Self-healing
+on next run but user gets no indication.
+
+### ERROR-007 | HIGH | Bind failure in `uvicorn.run()` leaks VRAM
+
+If `uvicorn.run()` at `mcp_server.py:828` raises (bind failure),
+`_registry.close_all()` is NOT called because cleanup only happens
+in the `finally` block of `service_lifespan`, which only runs if
+the lifespan successfully yielded. Models loaded into VRAM are never
+freed until process exit.
+
+**File:** `mcp_server.py:802-834`
+
+### ERROR-008 | LOW | No .vault/ directory produces silent empty results
+
+When `_create_slot` builds components for a root with no `.vault/`,
+no error is raised. Searches return empty results. Confirmed-by-design
+(pre-service-graph behavior was identical).
+
+## Round 2: Test coverage gaps
+
+### TESTGAP-001 | HIGH | `_terminate_pid()` has zero test coverage
+
+`cli.py:953` is never called in any test. No verification of SIGTERM,
+Windows behavior, or error suppression.
+
+### TESTGAP-002 | HIGH | `_spawn_service()` has zero test coverage
+
+`cli.py:922` is never exercised. No verification of subprocess
+creation, log file passing, platform flags, or spawn failure.
+
+### TESTGAP-003 | HIGH | `service_start()` command has zero test coverage
+
+The entire start flow (existing-service detection, spawn, health
+poll loop, timeout, stale-PID cleanup) is untested.
+
+### TESTGAP-004 | MEDIUM | `service_stop()` only tests "not running" path
+
+Happy path (alive PID, termination, status removal) and stale PID
+path are untested.
+
+### TESTGAP-005 | MEDIUM | `service_status()` only tests "not running" path
+
+Running+healthy path (`cli.py:1117`) is untested.
+
+### TESTGAP-006 | MEDIUM | `GraphCache.get()` after construction failure untested
+
+Retry-suppression behavior (None returned for full TTL after failure)
+is not verified.
+
+### TESTGAP-007 | MEDIUM | `GraphCache.invalidate()` concurrent with `get()` untested
+
+Lock should serialize but interaction is unverified.
+
+### TESTGAP-008 | MEDIUM | `ServiceRegistry.health()` after `close_all()` untested
+
+Combined with PHASE2-002 (model set to None outside lock), this
+could expose a race.
+
+### TESTGAP-009 | MEDIUM | MCP tools with `project_root` parameter untested end-to-end
+
+All tests are structural. No test invokes a tool handler with
+`project_root` set, let alone two different roots in one session.
+
+### TESTGAP-010 | LOW | `_ensure_watcher` second-project no-op untested
+
+Single-project limitation (PHASE3-001) has no test verification.
+
+### TESTGAP-011 | LOW | `_health_probe()` timeout/exception paths untested
+
+Only connection-refused path is tested.
+
+### TESTGAP-012 | INFO | `monkeypatch` also used in `test_mcp_server.py`
+
+5 tests in `TestResolveRoot` and `TestHealthHandler` use
+`monkeypatch`. R1 audit only flagged `test_cli.py`.
+
+## Round 2: ADR compliance verification
+
+### ADR-D1 | COMPLIANT | Global resident service with dmypy pattern
+
+All specified elements confirmed: global status file, port 8766
+default, `VAULTSPEC_RAG_PORT` env var, `CREATE_NO_WINDOW`,
+exponential backoff health polling.
+
+### ADR-D2 | COMPLIANT | Raw HTTP GET /health endpoint
+
+Starlette `Route("/health", health_handler)` returns correct JSON
+schema. Not an MCP tool.
+
+### ADR-D3 | COMPLIANT | Unified graph cache with DI
+
+Public `GraphCache` with lock+TTL, `graph_provider` in
+`VaultSearcher`, `_graph_built_at` poke fully removed from
+`mcp_server.py`. Per-project instances in `ProjectSlot`.
+
+### ADR-D4 | COMPLIANT | Model prefetch via `service warmup`
+
+`snapshot_download` for all 3 models, CUDA check first,
+`HF_HUB_DOWNLOAD_TIMEOUT=60`.
+
+### ADR-D5 | COMPLIANT | FastMCP lifespan + Starlette mounting
+
+Eager model loading, `Mount("/mcp") + Route("/health")`,
+`timeout_graceful_shutdown=30`, stdio preserved, `stateless_http=True`.
+
+### ADR-D6 | COMPLIANT | ServiceRegistry in service.py
+
+Shared model + per-project dict, MCP tools accept `project_root`,
+`api.py` facade preserved.
+
+**All six ADR decisions are COMPLIANT. No divergences.**
+
+## Updated summary
+
+| Severity | R1 | R2 | Total | Key issues |
+|----------|----|----|-------|-----------|
+| CRITICAL | 1 | 0 | 1 | Windows SIGTERM |
+| HIGH | 4 | 5 | 9 | GPU sem bypass, VaultStore leak, VRAM leak on bind, test gaps (terminate/spawn/start) |
+| MEDIUM | 9 | 11 | 20 | Thread safety (reranker, watcher, SQLite), error handling, test coverage |
+| LOW | 4 | 5 | 9 | Various edge cases, partial cleanup |
+| INFO | 6 | 1 | 7 | Documentation, monkeypatch scope |
+
+**ADR compliance: 6/6 COMPLIANT.**
+
+**Priority fixes before merge:**
+
+- PHASE4-001 (CRITICAL): Windows _terminate_pid
+- THREAD-003 (HIGH): _gpu_sem bypass
+- ERROR-002 (HIGH): VaultStore leak on partial slot creation
+- ERROR-007 (HIGH): VRAM leak on bind failure
+- PHASE2-001 (HIGH): load_model thread safety
+- TESTGAP-001/002/003 (HIGH): Zero coverage on service lifecycle
