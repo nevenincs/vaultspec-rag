@@ -39,7 +39,7 @@ to a GitHub issue for tracking.
 - Remove `_graph_built_at` poke from `mcp_server.py`
 
 **Dependencies:** none
-**Status:** not started
+**Status:** complete (PR #21)
 
 ### M2: ServiceRegistry module (ADR D6)
 
@@ -55,7 +55,7 @@ to a GitHub issue for tracking.
 - Multi-project isolation tests
 
 **Dependencies:** M1 (graph cache)
-**Status:** not started
+**Status:** complete (PR #21)
 
 ### M3: FastMCP lifespan + health endpoint (ADR D5 + D2)
 
@@ -74,7 +74,7 @@ to a GitHub issue for tracking.
 - Health endpoint tests, multi-project MCP tool tests
 
 **Dependencies:** M2 (ServiceRegistry)
-**Status:** not started
+**Status:** complete (PR #21)
 
 ### M4: Service daemon commands (ADR D1)
 
@@ -91,7 +91,7 @@ to a GitHub issue for tracking.
 - Start/stop lifecycle tests with ephemeral port
 
 **Dependencies:** M3 (health endpoint)
-**Status:** not started
+**Status:** complete (PR #21)
 
 ### M5: Model prefetch (ADR D4)
 
@@ -105,7 +105,37 @@ to a GitHub issue for tracking.
 - Tests
 
 **Dependencies:** none (parallel with M4)
-**Status:** not started
+**Status:** complete (PR #21)
+
+## Post-merge follow-ups (from audit)
+
+### M5.1: Performance — narrow _gpu_sem scope
+
+**GitHub:** #22
+**Scope:** Narrow semaphore to GPU-only operations, share CrossEncoder
+**Dependencies:** M3 (lifespan)
+**Status:** open
+
+### M5.2: Multi-project filesystem watcher
+
+**GitHub:** #23
+**Scope:** dict[Path, asyncio.Task] per-project watcher tracking
+**Dependencies:** M2 (ServiceRegistry)
+**Status:** open
+
+### M5.3: Service lifecycle integration tests
+
+**GitHub:** #24
+**Scope:** Real GPU subprocess start/stop/status tests
+**Dependencies:** M4 (daemon commands)
+**Status:** open
+
+### M5.4: Security hardening
+
+**GitHub:** #25
+**Scope:** project_root allowlist, .ragignore, health auth
+**Dependencies:** M3 (lifespan)
+**Status:** open
 
 ## Beta milestones (future PRs)
 
@@ -160,11 +190,15 @@ M4 and M5 can run in parallel after M3 completes.
 
 | Milestone | GitHub Issue | Status |
 |-----------|-------------|--------|
-| M1 | #14 | open |
-| M2 | #18 | open |
-| M3 | #19 | open |
-| M4 | #16 | open |
-| M5 | #20 | open |
+| M1 | #14 | complete |
+| M2 | #18 | complete |
+| M3 | #19 | complete |
+| M4 | #16 | complete |
+| M5 | #20 | complete |
+| M5.1 | #22 | open (follow-up) |
+| M5.2 | #23 | open (follow-up) |
+| M5.3 | #24 | open (follow-up) |
+| M5.4 | #25 | open (follow-up) |
 | M6 | deferred | — |
 | M7 | deferred | — |
 | M8 | deferred | — |
