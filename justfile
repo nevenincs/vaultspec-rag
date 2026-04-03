@@ -26,7 +26,7 @@ prod *args='':
 #
 #  Verbs:
 #    deps      dependency management (sync, upgrade, lock)
-#    lint      read-only static analysis (ruff, ty, taplo, markdownlint, ...)
+#    lint      read-only static analysis (ruff, ty, taplo, mdformat, lychee, ...)
 #    fix       auto-fix everything fixable (python, toml, vault)
 #    audit     supply-chain / security checks (pip-audit)
 #    test      pytest
@@ -102,6 +102,19 @@ _dev-lint target='all':
       uv run ruff check src ;; \
     type) \
       uv run python -m ty check src/vaultspec_rag ;; \
+    links) \
+      if command -v lychee >/dev/null 2>&1; then \
+        lychee --config lychee.toml \
+          README.md .vault; \
+      elif command -v docker >/dev/null 2>&1; then \
+        docker run --rm -v "$PWD:/repo" -w /repo \
+          lycheeverse/lychee:latest \
+          --config /repo/lychee.toml \
+          README.md .vault; \
+      else \
+        echo "lychee not found and docker is unavailable" >&2; \
+        exit 127; \
+      fi ;; \
     toml) \
       if command -v taplo >/dev/null 2>&1; then \
         taplo lint *.toml; \
@@ -113,22 +126,29 @@ _dev-lint target='all':
         exit 127; \
       fi ;; \
     markdown) \
-      if command -v npx >/dev/null 2>&1; then \
-        npx --yes markdownlint-cli \
-          --config .markdownlint.json \
-          README.md .vault/; \
+      uv run mdformat --check README.md .vault/ && \
+      uv run pymarkdown --config .pymarkdown.json \
+        scan -r README.md .vault/ ;; \
+    workflow) \
+      if command -v actionlint >/dev/null 2>&1; then \
+        actionlint; \
+      elif command -v docker >/dev/null 2>&1; then \
+        docker run --rm -v "$PWD:/repo" -w /repo \
+          rhysd/actionlint:latest; \
       else \
-        echo "npx not found (install Node.js)" >&2; \
+        echo "actionlint not found and docker is unavailable" >&2; \
         exit 127; \
       fi ;; \
     all) \
       just _dev-lint python && \
       just _dev-lint type && \
+      just _dev-lint links && \
       just _dev-lint toml && \
-      just _dev-lint markdown ;; \
+      just _dev-lint markdown && \
+      just _dev-lint workflow ;; \
     *) \
       echo "unknown dev lint target: {{target}}" >&2; \
-      echo "  targets: python type toml markdown all" >&2; \
+      echo "  targets: python type links toml markdown workflow all" >&2; \
       exit 1 ;; \
   esac
 
@@ -147,15 +167,20 @@ _dev-fix target='all':
         echo "taplo not found and docker is unavailable" >&2; \
         exit 127; \
       fi ;; \
+    markdown) \
+      uv run mdformat README.md .vault/ && \
+      uv run pymarkdown --config .pymarkdown.json \
+        fix -r README.md .vault/ ;; \
     vault) \
       uv run vaultspec-core vault check all --fix ;; \
     all) \
       just _dev-fix python && \
       just _dev-fix toml && \
+      just _dev-fix markdown && \
       just _dev-fix vault ;; \
     *) \
       echo "unknown dev fix target: {{target}}" >&2; \
-      echo "  targets: python toml vault all" >&2; \
+      echo "  targets: python toml markdown vault all" >&2; \
       exit 1 ;; \
   esac
 

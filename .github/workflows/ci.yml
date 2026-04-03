@@ -17,6 +17,9 @@ concurrency:
 env:
   NO_COLOR: "1"
   FORCE_COLOR: "0"
+  # TODO: Remove UV_NO_SOURCES once vaultspec-core is published to PyPI.
+  # Currently required because the local editable source path in
+  # [tool.uv.sources] does not exist in CI.
   UV_NO_SOURCES: "1"
 
 jobs:
@@ -52,6 +55,11 @@ jobs:
         with:
           tool: taplo-cli
 
+      - name: Install lychee
+        uses: taiki-e/install-action@v2
+        with:
+          tool: lychee
+
       - name: Install dependencies
         run: uv sync --dev
 
@@ -64,8 +72,17 @@ jobs:
       - name: Ty type check
         run: uv run ty check src/vaultspec_rag
 
+      - name: Link check
+        run: lychee --config lychee.toml README.md .vault
+
       - name: Taplo lint
         run: taplo lint
+
+      - name: Markdown format check
+        run: uv run mdformat --check README.md .vault/
+
+      - name: Markdown lint
+        run: uv run pymarkdown --config .pymarkdown.json scan -r README.md .vault/
 
   tests:
     name: Tests

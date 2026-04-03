@@ -59,9 +59,16 @@ repos:
         types: [markdown]
         pass_filenames: false
 
-      - id: markdownlint
-        name: Lint Markdown style (markdownlint)
-        entry: npx --yes markdownlint-cli
+      - id: mdformat-check
+        name: Check Markdown formatting (mdformat)
+        entry: uv run --no-sync mdformat --check
         language: system
-        args: ["--config", ".markdownlint.json", "README.md", ".vault/"]
+        pass_filenames: true
+        types: [markdown]
+
+      - id: pymarkdown
+        name: Lint Markdown style (pymarkdown)
+        entry: uv run --no-sync pymarkdown --config .pymarkdown.json scan
+        language: system
+        pass_filenames: true
         types: [markdown]
