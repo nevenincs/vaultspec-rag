@@ -90,6 +90,29 @@ jobs:
       - name: Run unit tests
         run: uv run pytest -m unit --timeout=60
 
+  vault-audit:
+    name: Vault Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run vault checks
+        run: uv run vaultspec-core vault check all
+
   dependency-audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
