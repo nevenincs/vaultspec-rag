@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#audit"
-  - "#service-graph"
+  - '#audit'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-adr]]"
-  - "[[2026-04-02-service-graph-phase1-plan]]"
-  - "[[2026-04-02-service-graph-research]]"
+  - '[[2026-04-02-service-graph-adr]]'
+  - '[[2026-04-02-service-graph-phase1-plan]]'
+  - '[[2026-04-02-service-graph-research]]'
 ---
 
 <!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
@@ -45,7 +45,7 @@ only checks "does not crash."
 
 **File:** `test_graph_cache.py:70`
 
-### PHASE1-003 | LOW | GraphCache failure sets _built_at, suppressing retries
+### PHASE1-003 | LOW | GraphCache failure sets \_built_at, suppressing retries
 
 After a failed `VaultGraph` construction, `_built_at` is set to
 `time.monotonic()`. No retry for `ttl_seconds` (300s default). If
@@ -54,7 +54,7 @@ user gets None for 5 minutes.
 
 **File:** `api.py:344`
 
-### PHASE1-004 | INFO | Module-level _graph_cache in api.py is unused
+### PHASE1-004 | INFO | Module-level \_graph_cache in api.py is unused
 
 `_graph_cache = GraphCache()` at line 360 is dead code. Each `_Engine`
 creates its own instance.
@@ -82,7 +82,7 @@ through slot creation.
 **File:** `service.py:187`
 **Fix:** Move `self._model = None` inside the lock.
 
-### PHASE2-003 | MEDIUM | Registry fixture directly sets _model
+### PHASE2-003 | MEDIUM | Registry fixture directly sets \_model
 
 Test fixture bypasses `load_model()` via `reg._model = embedding_model`.
 If `load_model()` ever gains side effects, tests silently skip them.
@@ -90,7 +90,7 @@ If `load_model()` ever gains side effects, tests silently skip them.
 
 **File:** `test_service_registry.py:49`
 
-### PHASE2-004 | INFO | watcher.py still supports legacy _graph_built_at poke
+### PHASE2-004 | INFO | watcher.py still supports legacy \_graph_built_at poke
 
 Fallback to `searcher._graph_built_at = 0.0` when `graph_cache is None`.
 ADR says this should be replaced. Acceptable for backward compat.
@@ -106,7 +106,7 @@ GraphCache references are not explicitly released.
 
 ## Phase 3: FastMCP lifespan + health
 
-### PHASE3-001 | MEDIUM | _ensure_watcher single-project limitation
+### PHASE3-001 | MEDIUM | \_ensure_watcher single-project limitation
 
 Single module-level `_watcher_task` variable. Once started for one
 project, subsequent calls with different roots silently do nothing.
@@ -125,16 +125,16 @@ only triggers if `_model` is set to None after startup (e.g.,
 
 **File:** `mcp_server.py:138-144`
 **Fix:** Rename to "degraded" or "shutdown" for the post-startup
-_model=None scenario.
+\_model=None scenario.
 
-### PHASE3-009 | MEDIUM | _gpu_sem created at module import time
+### PHASE3-009 | MEDIUM | \_gpu_sem created at module import time
 
 `asyncio.Semaphore(1)` at import time. Safe on Python 3.13 (project
 requirement) but worth documenting.
 
 **File:** `mcp_server.py:39`
 
-### PHASE3-010 | MEDIUM | Health test mutates _registry._model directly
+### PHASE3-010 | MEDIUM | Health test mutates \_registry.\_model directly
 
 Test reaches into `mod._registry._model = None` to test error state.
 Couples test to internal ServiceRegistry structure.
@@ -163,7 +163,7 @@ Zero references in source tree. Clean removal confirmed.
 
 ## Phase 4: Service daemon commands
 
-### PHASE4-001 | CRITICAL | _terminate_pid uses SIGTERM on Windows incorrectly
+### PHASE4-001 | CRITICAL | \_terminate_pid uses SIGTERM on Windows incorrectly
 
 On Windows, `os.kill(pid, signal.SIGTERM)` calls `TerminateProcess`
 (hard kill, no graceful drain — uvicorn's
@@ -188,7 +188,7 @@ process runs orphaned.
 **Fix:** Use file lock on `service.json` before the
 read-check-spawn-write sequence.
 
-### PHASE4-003 | HIGH | _write_service_status is not atomic
+### PHASE4-003 | HIGH | \_write_service_status is not atomic
 
 `Path.write_text()` truncates then writes. Crash mid-write leaves
 corrupt status file. Project uses atomic writes (tmp + os.replace)
@@ -197,7 +197,7 @@ elsewhere.
 **File:** `cli.py:849`
 **Fix:** Write to `.tmp` then `os.replace()`.
 
-### PHASE4-004 | MEDIUM | _spawn_service leaks log file handle
+### PHASE4-004 | MEDIUM | \_spawn_service leaks log file handle
 
 `log_fh = open(...)` is never closed by the parent process after
 Popen. The Popen object is immediately discarded, so proc.returncode
@@ -206,7 +206,7 @@ is never reaped on Unix (potential zombie).
 **File:** `cli.py:933, 950`
 **Fix:** Close `log_fh` after Popen returns. Store proc reference.
 
-### PHASE4-005 | MEDIUM | _is_pid_alive false positive on Windows
+### PHASE4-005 | MEDIUM | \_is_pid_alive false positive on Windows
 
 `OpenProcess` returns a handle for terminated-but-not-closed processes.
 Causes `service start` to falsely detect a running service.
@@ -248,7 +248,7 @@ is correct (doesn't override user env). Consider 300s.
 
 **File:** `cli.py:1197`
 
----
+______________________________________________________________________
 
 ## Round 2: Thread safety deep dive
 
@@ -453,17 +453,17 @@ Shared model + per-project dict, MCP tools accept `project_root`,
 
 ## Updated summary
 
-| Severity | R1 | R2 | Total | Key issues |
-|----------|----|----|-------|-----------|
-| CRITICAL | 1 | 0 | 1 | Windows SIGTERM |
-| HIGH | 4 | 5 | 9 | GPU sem bypass, VaultStore leak, VRAM leak on bind, test gaps (terminate/spawn/start) |
-| MEDIUM | 9 | 11 | 20 | Thread safety (reranker, watcher, SQLite), error handling, test coverage |
-| LOW | 4 | 5 | 9 | Various edge cases, partial cleanup |
-| INFO | 6 | 1 | 7 | Documentation, monkeypatch scope |
+| Severity | R1  | R2  | Total | Key issues                                                                            |
+| -------- | --- | --- | ----- | ------------------------------------------------------------------------------------- |
+| CRITICAL | 1   | 0   | 1     | Windows SIGTERM                                                                       |
+| HIGH     | 4   | 5   | 9     | GPU sem bypass, VaultStore leak, VRAM leak on bind, test gaps (terminate/spawn/start) |
+| MEDIUM   | 9   | 11  | 20    | Thread safety (reranker, watcher, SQLite), error handling, test coverage              |
+| LOW      | 4   | 5   | 9     | Various edge cases, partial cleanup                                                   |
+| INFO     | 6   | 1   | 7     | Documentation, monkeypatch scope                                                      |
 
 **ADR compliance: 6/6 COMPLIANT.**
 
----
+______________________________________________________________________
 
 ## Round 3: Resource lifecycle + cleanup
 
@@ -626,36 +626,36 @@ No bad interaction.
 
 ## Cumulative summary (Rounds 1-3)
 
-| Severity | R1 | R2 | R3 | Total |
-|----------|----|----|-----|-------|
-| CRITICAL | 1 | 0 | 0 | **1** |
-| HIGH | 4 | 5 | 3 | **12** |
-| MEDIUM | 9 | 11 | 8 | **28** |
-| LOW | 4 | 5 | 8 | **17** |
-| INFO | 6 | 1 | 8 | **15** |
+| Severity | R1  | R2  | R3  | Total  |
+| -------- | --- | --- | --- | ------ |
+| CRITICAL | 1   | 0   | 0   | **1**  |
+| HIGH     | 4   | 5   | 3   | **12** |
+| MEDIUM   | 9   | 11  | 8   | **28** |
+| LOW      | 4   | 5   | 8   | **17** |
+| INFO     | 6   | 1   | 8   | **15** |
 
 **ADR compliance: 6/6 COMPLIANT.**
 **API backward compatibility: 0 breaks.**
 
----
+______________________________________________________________________
 
 ## Round 4: Verification audit (audit of the audit)
 
 Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
 
-| Status | CRITICAL | HIGH | MEDIUM | LOW | INFO | Total |
-|--------|----------|------|--------|-----|------|-------|
-| FIXED | 1 | 6 | 9 | 5 | 1 | **22** |
-| ACCEPTED | 0 | 0 | 4 | 5 | 9 | **18** |
-| OPEN | 0 | 4 | 10 | 7 | 0 | **21** |
+| Status   | CRITICAL | HIGH | MEDIUM | LOW | INFO | Total  |
+| -------- | -------- | ---- | ------ | --- | ---- | ------ |
+| FIXED    | 1        | 6    | 9      | 5   | 1    | **22** |
+| ACCEPTED | 0        | 0    | 4      | 5   | 9    | **18** |
+| OPEN     | 0        | 4    | 10     | 7   | 0    | **21** |
 
 ### FIXED (22 items)
 
 - PHASE4-001 (CRITICAL): Windows CTRL_BREAK_EVENT for graceful shutdown
 - PHASE2-001 (HIGH): load_model double-check lock
-- ERROR-002 (HIGH): _create_slot try/except closes store
+- ERROR-002 (HIGH): \_create_slot try/except closes store
 - ERROR-007 (HIGH): uvicorn.run try/finally close_all
-- PHASE4-002 (HIGH): _port_is_available TCP probe
+- PHASE4-002 (HIGH): \_port_is_available TCP probe
 - PHASE4-003 (HIGH): Atomic status file write
 - LIFECYCLE-001 (HIGH): handle_index try/finally store.close
 - PHASE2-002, THREAD-001, THREAD-006, PHASE4-005, PHASE4-006,
@@ -666,12 +666,12 @@ Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
 ### ACCEPTED (18 items — design choices, known limitations)
 
 - PHASE2-003: Registry fixture bypasses load_model (intentional VRAM saving)
-- PHASE2-004: Legacy _graph_built_at fallback preserved
+- PHASE2-004: Legacy \_graph_built_at fallback preserved
 - PHASE3-006/007/008: Stdio preserved, stateless_http set, get_comp removed
 - PHASE3-009: asyncio.Semaphore at import (safe on 3.13)
 - THREAD-005: Qdrant SQLite contention (inherent to local mode)
 - LIFECYCLE-003: close_all/watcher decoupled (lifespan owns watcher)
-- LIFECYCLE-004/005: No circular refs, _Engine error path correct
+- LIFECYCLE-004/005: No circular refs, \_Engine error path correct
 - ERROR-006/008: HF cache self-healing, no .vault/ is by-design
 - SEC-005: Config-sourced model names in same trust boundary
 - API-001/002/004-009: All additive, backward compatible
@@ -682,11 +682,11 @@ Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
 
 **HIGH (4):**
 
-- TESTGAP-001/002/003: _terminate_pid, _spawn_service, service_start
+- TESTGAP-001/002/003: \_terminate_pid, \_spawn_service, service_start
   have zero test coverage. These require spawning real subprocesses with
   GPU — integration test territory, not unit tests. Defer to a dedicated
   integration test PR.
-- PERF-001: _gpu_sem serializes entire search pipeline. Design tradeoff
+- PERF-001: \_gpu_sem serializes entire search pipeline. Design tradeoff
   — narrowing the lock requires splitting encode/search/rerank into
   separate semaphore-guarded segments. Defer to performance optimization
   phase.
@@ -695,22 +695,22 @@ Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
 
 - PHASE3-001: Single-project watcher. Known alpha limitation, documented
   in ADR. Full multi-project watching deferred to beta.
-- THREAD-002: _ensure_watcher TOCTOU. Narrow window, no await between
+- THREAD-002: \_ensure_watcher TOCTOU. Narrow window, no await between
   check and assign. Low practical risk.
-- THREAD-003: _gpu_sem now wraps all tools but semantically does double
+- THREAD-003: \_gpu_sem now wraps all tools but semantically does double
   duty (GPU + slot creation). Acceptable for alpha.
-- PHASE3-010: Test mutates _registry._model directly. Fragile but
+- PHASE3-010: Test mutates \_registry.\_model directly. Fragile but
   functional.
 - PHASE4-004: Log file handle leak after Popen. GC'd on process exit.
 - LIFECYCLE-002: Watcher/close_all race window. Narrow, mitigated by
-  _watcher_stop event.
-- SEC-001: _resolve_root allows arbitrary filesystem access. Localhost
+  \_watcher_stop event.
+- SEC-001: \_resolve_root allows arbitrary filesystem access. Localhost
   binding (127.0.0.1) limits exposure to local user.
 - SEC-002: No sensitive file guard within workspace. Standard for RAG
   tools — workspace contents are user-controlled.
 - SEC-004: PID poisoning. Requires local write access to ~/.vaultspec-rag,
   same trust level as the user. Low practical risk.
-- PERF-002: Global lock on _create_slot. Only contends during first
+- PERF-002: Global lock on \_create_slot. Only contends during first
   project init, rare in practice.
 
 **LOW (7):**
@@ -726,11 +726,11 @@ Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
 
 **Priority fixes before merge (updated):**
 
-- PHASE4-001 (CRITICAL): Windows _terminate_pid SIGTERM behavior
-- THREAD-003 (HIGH): _gpu_sem bypassed by get_index_status et al.
-- ERROR-002 (HIGH): VaultStore leak on partial _create_slot failure
+- PHASE4-001 (CRITICAL): Windows \_terminate_pid SIGTERM behavior
+- THREAD-003 (HIGH): \_gpu_sem bypassed by get_index_status et al.
+- ERROR-002 (HIGH): VaultStore leak on partial \_create_slot failure
 - ERROR-007 (HIGH): VRAM leak on uvicorn bind failure
-- PERF-001 (HIGH): _gpu_sem serializes entire pipeline (consider narrower lock)
+- PERF-001 (HIGH): \_gpu_sem serializes entire pipeline (consider narrower lock)
 - LIFECYCLE-001 (HIGH): handle_index never closes VaultStore
 - PHASE2-001 (HIGH): load_model() thread safety
 - PHASE4-002 (HIGH): PID file race on concurrent service start

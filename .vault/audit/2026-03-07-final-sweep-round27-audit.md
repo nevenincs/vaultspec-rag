@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 27 Audit -- Final Sweep (__init__.py, mcp_server.py second pass, root conftest.py)
 
 ## __init__.py
@@ -80,23 +81,23 @@ __File:__ `conftest.py`
 
 ## Previously-Flagged Issues: Status Update
 
-| ID | Issue | Status |
-|----|-------|--------|
-| R21-C1 | get_code_file symlink traversal | __Re-evaluated: NOT a vulnerability.__ Both `root_resolved` and `full_path` use `resolve()`, which follows symlinks. A symlink inside the workspace pointing outside resolves to a path outside `root_resolved`, so `is_relative_to` correctly rejects it. The test in `test_mcp_server.py:200-213` confirms this. |
-| R21-M6 | MCP tools block event loop | __FIXED.__ All tools now use `asyncio.to_thread()`. |
-| R21-M7 | get_comp() not thread-safe | __FIXED.__ Uses `threading.Lock` with double-checked locking. |
-| R21-m11 | reindex_vault clean=True might not clear collection | __NOT AN ISSUE.__ `VaultIndexer.full_index()` explicitly deletes all existing docs before upserting (indexer.py:681-684). |
+| ID      | Issue                                               | Status                                                                                                                                                                                                                                                                                                             |
+| ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R21-C1  | get_code_file symlink traversal                     | __Re-evaluated: NOT a vulnerability.__ Both `root_resolved` and `full_path` use `resolve()`, which follows symlinks. A symlink inside the workspace pointing outside resolves to a path outside `root_resolved`, so `is_relative_to` correctly rejects it. The test in `test_mcp_server.py:200-213` confirms this. |
+| R21-M6  | MCP tools block event loop                          | __FIXED.__ All tools now use `asyncio.to_thread()`.                                                                                                                                                                                                                                                                |
+| R21-M7  | get_comp() not thread-safe                          | __FIXED.__ Uses `threading.Lock` with double-checked locking.                                                                                                                                                                                                                                                      |
+| R21-m11 | reindex_vault clean=True might not clear collection | __NOT AN ISSUE.__ `VaultIndexer.full_index()` explicitly deletes all existing docs before upserting (indexer.py:681-684).                                                                                                                                                                                          |
 
 ## Summary
 
-| Severity | Count | IDs |
-|----------|-------|-----|
+| Severity | Count | IDs                    |
+| -------- | ----- | ---------------------- |
 | Major    | 3     | R27-M1, R27-M2, R27-M3 |
-| Minor    | 6     | R27-m1 through R27-m6 |
+| Minor    | 6     | R27-m1 through R27-m6  |
 
 __Key themes:__
 
 1. __Error handling in MCP tools/resources__ (M1, M2): Errors returned as success strings instead of proper exceptions. MCP clients can't programmatically distinguish errors from content.
-2. __Root conftest coupling__ (M3): Unconditional import of `vaultspec_rag` breaks non-RAG test runs when the package isn't installed.
-3. __Previously-flagged fixes confirmed__ (R21-M6, R21-M7): Both are properly fixed with `asyncio.to_thread` and `threading.Lock`.
-4. __R21-C1 downgraded__: Symlink traversal check is actually correct -- `resolve()` on both sides handles all scenarios. The test suite confirms this.
+1. __Root conftest coupling__ (M3): Unconditional import of `vaultspec_rag` breaks non-RAG test runs when the package isn't installed.
+1. __Previously-flagged fixes confirmed__ (R21-M6, R21-M7): Both are properly fixed with `asyncio.to_thread` and `threading.Lock`.
+1. __R21-C1 downgraded__: Symlink traversal check is actually correct -- `resolve()` on both sides handles all scenarios. The test suite confirms this.

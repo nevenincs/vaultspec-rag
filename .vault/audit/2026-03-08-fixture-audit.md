@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -12,20 +12,20 @@ related: []
 **Auditor:** codebase-researcher-2
 **Scope:** Session/module-scoped fixtures, Qdrant isolation, teardown, corpus coverage, GPU model sharing
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
 The fixture architecture is **LARGELY SOUND** but with **TWO CRITICAL ISSUES**:
 
 1. **CRITICAL:** `rag_components_with_code` fixture (integration conftest, line 35) does NOT accept the shared `embedding_model` parameter, creating a **second GPU EmbeddingModel** instance without synchronization.
-2. **CRITICAL:** `rag_components_mixed` fixture (test_search_integration.py, line 139) also fails to accept `embedding_model`, leading to a **third GPU model instance**.
-3. **HIGH:** Integration conftest docstring incorrectly labels these as "RAG unit test fixtures" when they are integration fixtures.
-4. **MEDIUM:** `rag_components_with_code` is missing explicit session-scope documentation and uses a different suffix pattern than others.
+1. **CRITICAL:** `rag_components_mixed` fixture (test_search_integration.py, line 139) also fails to accept `embedding_model`, leading to a **third GPU model instance**.
+1. **HIGH:** Integration conftest docstring incorrectly labels these as "RAG unit test fixtures" when they are integration fixtures.
+1. **MEDIUM:** `rag_components_with_code` is missing explicit session-scope documentation and uses a different suffix pattern than others.
 
 Otherwise, the fixture design is correct: proper Qdrant isolation via suffixes, correct teardown, full corpus coverage across all 5 doc_types, and proper `_save_meta` usage.
 
----
+______________________________________________________________________
 
 ## Findings
 
@@ -35,18 +35,18 @@ Otherwise, the fixture design is correct: proper Qdrant isolation via suffixes, 
 
 All session-scoped fixtures properly use `yield` for cleanup and have unique Qdrant suffixes:
 
-| Fixture | File | Scope | Qdrant Suffix | Teardown |
-|---------|------|-------|---------------|----------|
-| `embedding_model` | conftest.py | session | N/A (shared) | Implicitly closed with Python exit |
-| `rag_components` | conftest.py | session | `-fast` | ✅ `store.close()` + `shutil.rmtree()` |
-| `rag_components_full` | conftest.py | session | `-full` | ✅ `store.close()` + `shutil.rmtree()` |
-| `rag_components` | integration/conftest.py | session | `-fast-unit` | ✅ `store.close()` + `shutil.rmtree()` |
-| `rag_components_with_code` | integration/conftest.py | session | `-fast-code` | ✅ `store.close()` + `shutil.rmtree()` |
-| `rag_components_mixed` | test_search_integration.py | module | `-mixed` | ✅ `store.close()` + `shutil.rmtree()` |
+| Fixture                    | File                       | Scope   | Qdrant Suffix | Teardown                               |
+| -------------------------- | -------------------------- | ------- | ------------- | -------------------------------------- |
+| `embedding_model`          | conftest.py                | session | N/A (shared)  | Implicitly closed with Python exit     |
+| `rag_components`           | conftest.py                | session | `-fast`       | ✅ `store.close()` + `shutil.rmtree()` |
+| `rag_components_full`      | conftest.py                | session | `-full`       | ✅ `store.close()` + `shutil.rmtree()` |
+| `rag_components`           | integration/conftest.py    | session | `-fast-unit`  | ✅ `store.close()` + `shutil.rmtree()` |
+| `rag_components_with_code` | integration/conftest.py    | session | `-fast-code`  | ✅ `store.close()` + `shutil.rmtree()` |
+| `rag_components_mixed`     | test_search_integration.py | module  | `-mixed`      | ✅ `store.close()` + `shutil.rmtree()` |
 
 **Finding:** No state mutation between tests detected. Each fixture creates isolated Qdrant collections.
 
----
+______________________________________________________________________
 
 ### 2. Qdrant Isolation via Suffix Strategy
 
@@ -79,7 +79,7 @@ if qdrant_suffix:
 
 **Verification:** Each suffix creates a distinct `QdrantClient(path=...)`, so collections never collide.
 
----
+______________________________________________________________________
 
 ### 3. Teardown Correctness
 
@@ -102,7 +102,7 @@ def rag_components(embedding_model):
 
 **All 5 fixtures follow this pattern consistently.** No resource leaks detected.
 
----
+______________________________________________________________________
 
 ### 4. GPU_FAST_CORPUS_STEMS Coverage — All 5 Doc Types Present
 
@@ -110,13 +110,13 @@ def rag_components(embedding_model):
 
 **13-document fast corpus defined in constants.py (line 32-53):**
 
-| Doc Type | Count | Stems (Examples) |
-|----------|-------|------------------|
-| **adr** | 4 | `2026-01-10-pipeline-execution-model`, `2026-01-12-connector-protocol-design`, `2026-01-15-storage-backend-selection`, `2026-01-20-scheduler-algorithm-choice` |
-| **plan** | 2 | `2026-01-10-pipeline-engine-phase1-plan`, `2026-01-20-scheduler-phase1-plan` |
-| **exec** | 2 | `2026-01-11-pipeline-parser-complete`, `2026-01-22-scheduler-worker-pool-complete` |
-| **reference** | 3 | `2026-01-10-pipeline-engine-reference`, `2026-01-12-connector-api-reference`, `2026-01-18-nexus-security-audit` |
-| **research** | 2 | `2026-01-09-dag-execution-research`, `2026-01-19-scheduling-algorithms-research` |
+| Doc Type      | Count | Stems (Examples)                                                                                                                                               |
+| ------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **adr**       | 4     | `2026-01-10-pipeline-execution-model`, `2026-01-12-connector-protocol-design`, `2026-01-15-storage-backend-selection`, `2026-01-20-scheduler-algorithm-choice` |
+| **plan**      | 2     | `2026-01-10-pipeline-engine-phase1-plan`, `2026-01-20-scheduler-phase1-plan`                                                                                   |
+| **exec**      | 2     | `2026-01-11-pipeline-parser-complete`, `2026-01-22-scheduler-worker-pool-complete`                                                                             |
+| **reference** | 3     | `2026-01-10-pipeline-engine-reference`, `2026-01-12-connector-api-reference`, `2026-01-18-nexus-security-audit`                                                |
+| **research**  | 2     | `2026-01-09-dag-execution-research`, `2026-01-19-scheduling-algorithms-research`                                                                               |
 
 **Verification:** All files exist in `test-project/.vault/` and are **git-tracked** (confirmed via `git ls-files`):
 
@@ -127,7 +127,7 @@ test-project/.vault/adr/2026-01-10-pipeline-execution-model.md  ✅ tracked
 
 **Coverage is complete:** All 5 doc_types (adr, plan, exec, reference, research) are represented. The corpus is sufficient for testing type filtering, snippet generation, and mixed-source search.
 
----
+______________________________________________________________________
 
 ### 5. `_vault_snapshot_reset` Correctness
 
@@ -166,7 +166,7 @@ def _vault_snapshot_reset():
 
 **Recommendation:** For tests that must write to `.vault/`, use temporary copies of test-project rather than modifying it in-place.
 
----
+______________________________________________________________________
 
 ### 6. Multiple EmbeddingModel Instances — CRITICAL ISSUE
 
@@ -258,7 +258,7 @@ def rag_components_mixed(tmp_path_factory):  # ❌ NO embedding_model parameter
 
 **Memory waste per test session:** 1800MB extra VRAM (if only 2 of 3 instances run), or 2700MB (if all run).
 
----
+______________________________________________________________________
 
 ### 7. `_fast_index` Correctness — `_save_meta` Check
 
@@ -311,8 +311,8 @@ def _save_meta(self, docs: list[VaultDocument]) -> None:
 **Contract:** `_save_meta` expects:
 
 1. `docs: list[VaultDocument]` — ✅ Provided
-2. Each `doc.path` must be relative to `.vault/` — ✅ Satisfied by `prepare_document()`
-3. Each `doc.id` must be set — ✅ Set by `prepare_document()`
+1. Each `doc.path` must be relative to `.vault/` — ✅ Satisfied by `prepare_document()`
+1. Each `doc.id` must be set — ✅ Set by `prepare_document()`
 
 **Verification:** `prepare_document()` returns `VaultDocument` with:
 
@@ -322,24 +322,24 @@ def _save_meta(self, docs: list[VaultDocument]) -> None:
 
 **Result:** ✅ **CORRECT** — metadata is saved for incremental indexing.
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| Issue | Severity | Status | Details |
-|-------|----------|--------|---------|
-| Fixture scoping | — | ✅ PASS | All fixtures properly isolated with unique suffixes |
-| Qdrant suffix collisions | — | ✅ PASS | 5 unique suffixes, no collisions |
-| Teardown correctness | — | ✅ PASS | All fixtures close store + remove qdrant dir |
-| Corpus coverage (doc_types) | — | ✅ PASS | All 5 types present (adr=4, plan=2, exec=2, reference=3, research=2) |
-| Corpus files tracked | — | ✅ PASS | All 13 stems are git-tracked |
-| `_vault_snapshot_reset` | MEDIUM | ⚠️ CONCERN | Only restores tracked files; new files persist across runs |
-| `rag_components_with_code` missing embedding_model | CRITICAL | 🔴 FAIL | Creates second GPU instance (~900MB VRAM waste) |
-| `rag_components_mixed` missing embedding_model | CRITICAL | 🔴 FAIL | Creates third GPU instance (~900MB VRAM waste) |
-| `_fast_index` → `_save_meta` usage | — | ✅ PASS | Correct contract and arguments |
-| integration/conftest.py docstring | HIGH | 🔴 FAIL | Says "RAG unit test fixtures" but these are integration fixtures |
+| Issue                                              | Severity | Status     | Details                                                              |
+| -------------------------------------------------- | -------- | ---------- | -------------------------------------------------------------------- |
+| Fixture scoping                                    | —        | ✅ PASS    | All fixtures properly isolated with unique suffixes                  |
+| Qdrant suffix collisions                           | —        | ✅ PASS    | 5 unique suffixes, no collisions                                     |
+| Teardown correctness                               | —        | ✅ PASS    | All fixtures close store + remove qdrant dir                         |
+| Corpus coverage (doc_types)                        | —        | ✅ PASS    | All 5 types present (adr=4, plan=2, exec=2, reference=3, research=2) |
+| Corpus files tracked                               | —        | ✅ PASS    | All 13 stems are git-tracked                                         |
+| `_vault_snapshot_reset`                            | MEDIUM   | ⚠️ CONCERN | Only restores tracked files; new files persist across runs           |
+| `rag_components_with_code` missing embedding_model | CRITICAL | 🔴 FAIL    | Creates second GPU instance (~900MB VRAM waste)                      |
+| `rag_components_mixed` missing embedding_model     | CRITICAL | 🔴 FAIL    | Creates third GPU instance (~900MB VRAM waste)                       |
+| `_fast_index` → `_save_meta` usage                 | —        | ✅ PASS    | Correct contract and arguments                                       |
+| integration/conftest.py docstring                  | HIGH     | 🔴 FAIL    | Says "RAG unit test fixtures" but these are integration fixtures     |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
@@ -373,7 +373,7 @@ def rag_components_mixed(embedding_model, tmp_path_factory):  # ADD embedding_mo
 
 **Impact:** Reduces GPU VRAM usage by ~1800MB, avoids OOM on mobile GPUs, improves test speed.
 
----
+______________________________________________________________________
 
 ### 2. HIGH: Fix integration/conftest.py Docstring
 
@@ -394,7 +394,7 @@ against real CUDA GPU inference.
 """
 ```
 
----
+______________________________________________________________________
 
 ### 3. MEDIUM: Document `_vault_snapshot_reset` Limitations
 
@@ -411,7 +411,7 @@ def _vault_snapshot_reset():
     """
 ```
 
----
+______________________________________________________________________
 
 ### 4. MEDIUM: Consider Switching to `tmp_path` for Vault Modifications
 
@@ -425,13 +425,13 @@ def test_something(tmp_path):
     # Automatically cleaned up after test
 ```
 
----
+______________________________________________________________________
 
 ## Conclusion
 
 The fixture architecture is **structurally sound** with proper isolation and teardown. The Qdrant suffix strategy and corpus coverage are correct. However, **two critical GPU resource issues** must be fixed before accepting this fixture design:
 
 1. **rag_components_with_code** should accept shared `embedding_model`
-2. **rag_components_mixed** should accept shared `embedding_model`
+1. **rag_components_mixed** should accept shared `embedding_model`
 
 Once these are fixed, the fixture design is **production-ready** for integration testing.

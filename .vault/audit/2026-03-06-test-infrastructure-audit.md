@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: Test Infrastructure
 
 Feature: conftest.py, constants.py, HAS_RAG guards, test fixtures
@@ -20,17 +21,17 @@ Files with no guard: test_query, test_search_unit, test_indexer_unit (correct --
 
 ### Previous Issues (ALL RESOLVED)
 
-- Task #23 [CRITICAL]: 10 test files checked for `("qdrant_client", "fastembed")`. FIXED.
-- Task #33 [HIGH]: test_embeddings.py asserted device=="cpu", tested removed methods. FIXED.
-- Task #15 [MEDIUM]: conftest.py missing `_code_table` and `_code_fts_dirty`. FIXED.
-- .tolist() in conftest.py _fast_index: FIXED (Task #43).
-- test_store_codebase.py [0.1]*768 vectors: FIXED (now 1024).
-- Task #47 [LOW]: conftest.py:24 stale "fastembed" comment. FIXED (now says GPU-only).
+- Task #23 \[CRITICAL\]: 10 test files checked for `("qdrant_client", "fastembed")`. FIXED.
+- Task #33 \[HIGH\]: test_embeddings.py asserted device=="cpu", tested removed methods. FIXED.
+- Task #15 \[MEDIUM\]: conftest.py missing `_code_table` and `_code_fts_dirty`. FIXED.
+- .tolist() in conftest.py \_fast_index: FIXED (Task #43).
+- test_store_codebase.py [0.1]\*768 vectors: FIXED (now 1024).
+- Task #47 \[LOW\]: conftest.py:24 stale "fastembed" comment. FIXED (now says GPU-only).
 
 ### Open Issues
 
-- Task #48 [LOW]: test_embeddings.py:74,83 "SparseEmbedding" docstrings.
-- Task #49 [LOW]: LANCE_SUFFIX variable names in constants.py.
+- Task #48 \[LOW\]: test_embeddings.py:74,83 "SparseEmbedding" docstrings.
+- Task #49 \[LOW\]: LANCE_SUFFIX variable names in constants.py.
 
 ### bench_rag.py: FIXED (Task #44)
 

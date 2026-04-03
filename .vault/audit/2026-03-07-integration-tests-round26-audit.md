@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 26 Audit -- Integration Tests Coverage
 
 Scope: all 9 test files in `src/vaultspec_rag/tests/integration/` plus `integration/conftest.py` and parent `tests/conftest.py` fixtures.
@@ -13,14 +14,14 @@ Scope: all 9 test files in `src/vaultspec_rag/tests/integration/` plus `integrat
 
 ### 6 Critical Scenarios
 
-| Scenario | Covered? | File(s) | Notes |
-|----------|----------|---------|-------|
-| Index vault (full) | YES | `test_indexer_integration.py:18-29`, conftest `_build_rag_components` | Tested via session fixture + result assertions |
-| Index codebase (full) | YES | `test_codebase_integration.py:75-102` | Full index with real Python source files |
-| Search vault | YES | `test_search_integration.py:17-87`, `test_quality.py` | Multiple queries, filters, edge cases |
-| Search codebase | YES | `test_codebase_integration.py:133-167` | Search with and without language filter |
-| Incremental update | PARTIAL | `test_indexer_integration.py:31-45`, `test_codebase_integration.py:105-130` | Vault incremental tested but only no-change case. Codebase incremental tests add-file case. Neither tests modify-existing-file or delete-file case |
-| Delete documents | NO | (missing) | `store.delete_documents` has ZERO tests anywhere. `delete_code_chunks` tested only in `test_store_codebase.py` (unit-level, outside integration/) |
+| Scenario              | Covered? | File(s)                                                                     | Notes                                                                                                                                              |
+| --------------------- | -------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Index vault (full)    | YES      | `test_indexer_integration.py:18-29`, conftest `_build_rag_components`       | Tested via session fixture + result assertions                                                                                                     |
+| Index codebase (full) | YES      | `test_codebase_integration.py:75-102`                                       | Full index with real Python source files                                                                                                           |
+| Search vault          | YES      | `test_search_integration.py:17-87`, `test_quality.py`                       | Multiple queries, filters, edge cases                                                                                                              |
+| Search codebase       | YES      | `test_codebase_integration.py:133-167`                                      | Search with and without language filter                                                                                                            |
+| Incremental update    | PARTIAL  | `test_indexer_integration.py:31-45`, `test_codebase_integration.py:105-130` | Vault incremental tested but only no-change case. Codebase incremental tests add-file case. Neither tests modify-existing-file or delete-file case |
+| Delete documents      | NO       | (missing)                                                                   | `store.delete_documents` has ZERO tests anywhere. `delete_code_chunks` tested only in `test_store_codebase.py` (unit-level, outside integration/)  |
 
 ## Fixture Issues
 
@@ -37,8 +38,8 @@ Both `rag_components` (conftest.py:131-146) and `rag_components_full` (conftest.
 Lines 102-110: `VaultStore(root)` creates a QdrantClient at `{root}/.qdrant/` (the default path). When `qdrant_suffix` is non-empty, the code immediately closes this client (line 105) and creates a new one at the suffixed path. This means:
 
 1. A `.qdrant/` directory is created as a side effect (line 138 in `__init__`)
-2. The first client is opened and closed for no reason
-3. The `store.db_path` is monkey-patched after construction
+1. The first client is opened and closed for no reason
+1. The `store.db_path` is monkey-patched after construction
 
 This works but is wasteful and leaves an empty `.qdrant/` directory behind. A cleaner approach would pass the suffixed path directly to `VaultStore.__init__` or add a path parameter.
 
@@ -70,8 +71,8 @@ This works but is wasteful and leaves an empty `.qdrant/` directory behind. A cl
 `test_indexer_integration.py:31-45` only tests `incremental_index()` when nothing has changed (expects `added=0, removed=0`). There is no test that:
 
 1. Adds a new vault document after full index, then runs incremental and asserts `added > 0`
-2. Deletes a vault document, then runs incremental and asserts `removed > 0`
-3. Modifies a vault document, then runs incremental and asserts `updated > 0`
+1. Deletes a vault document, then runs incremental and asserts `removed > 0`
+1. Modifies a vault document, then runs incremental and asserts `updated > 0`
 
 By contrast, `test_codebase_integration.py:117-130` does test adding a new file for codebase incremental. The vault side has no equivalent.
 
@@ -143,15 +144,15 @@ No test removes a source file and verifies that `incremental_index()` correctly 
 
 ## Summary
 
-| Severity | Count | IDs |
-|----------|-------|-----|
+| Severity | Count | IDs                   |
+| -------- | ----- | --------------------- |
 | Major    | 6     | R26-M1 through R26-M6 |
 | Minor    | 8     | R26-m1 through R26-m8 |
 
 **Key themes:**
 
 1. **Missing delete coverage** (M3): `store.delete_documents` has zero tests -- this is the most significant gap.
-2. **Incomplete incremental testing** (M4, m3, m4): Only no-change and add-file cases tested. No modify-file or delete-file scenarios for either vault or codebase.
-3. **Fixture teardown** (M1, M6, m5, m6): Session fixtures skip `store.close()`, risking `PermissionError` on Windows. Git checkout runs unchecked.
-4. **Hybrid search undertested** (M5, m2): Store-level hybrid search tested only with dense vector, not true dense+sparse fusion.
-5. **Previously-identified gaps confirmed** (m7, m8): Engine leak test and search_all mixed-source test still missing (cross-ref R25-M6, R25-m8).
+1. **Incomplete incremental testing** (M4, m3, m4): Only no-change and add-file cases tested. No modify-file or delete-file scenarios for either vault or codebase.
+1. **Fixture teardown** (M1, M6, m5, m6): Session fixtures skip `store.close()`, risking `PermissionError` on Windows. Git checkout runs unchecked.
+1. **Hybrid search undertested** (M5, m2): Store-level hybrid search tested only with dense vector, not true dense+sparse fusion.
+1. **Previously-identified gaps confirmed** (m7, m8): Engine leak test and search_all mixed-source test still missing (cross-ref R25-M6, R25-m8).

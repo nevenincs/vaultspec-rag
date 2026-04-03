@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -12,7 +12,7 @@ related: []
 **Status:** COMPLETE
 **Findings:** 100% COMPLIANCE + 5 COVERAGE GAPS (2 CRITICAL)
 
----
+______________________________________________________________________
 
 ## Part 1: Compliance Check — 100% PASS
 
@@ -37,7 +37,7 @@ Audited all test files:
 
 **100% COMPLIANCE** — All test files strictly follow CLAUDE.md standards.
 
----
+______________________________________________________________________
 
 ## Part 2: Coverage Gap Analysis
 
@@ -73,7 +73,7 @@ def full_index(self, clean: bool = False) -> IndexResult:
 - Test `full_index(clean=True)` creates fresh empty collection
 - Test idempotence: `full_index(clean=True)` twice → same document count
 
----
+______________________________________________________________________
 
 #### **GAP 2: CRITICAL** — CodebaseIndexer.full_index(clean=True) NOT TESTED IN INTEGRATION
 
@@ -103,7 +103,7 @@ def full_index(self, clean: bool = False) -> IndexResult:
 - Test `full_index(clean=True)` on codebase
 - Verify idempotence after clean rebuild
 
----
+______________________________________________________________________
 
 #### **GAP 3: HIGH** — reindex_vault MCP Tool NOT TESTED IN INTEGRATION
 
@@ -128,7 +128,7 @@ async def reindex_vault(root: str, full: bool = False, clean: bool = False):
 
 - `test_reindex_vault_resets_graph_cache()` in test_adr_regression.py — reads source code only, doesn't run it
 
----
+______________________________________________________________________
 
 #### **GAP 4: HIGH** — reindex_codebase MCP Tool NOT TESTED IN INTEGRATION
 
@@ -144,7 +144,7 @@ async def reindex_vault(root: str, full: bool = False, clean: bool = False):
 
 - Integration test calling MCP tool
 
----
+______________________________________________________________________
 
 #### **GAP 5: MEDIUM** — get_code_file MCP Tool NOT TESTED IN INTEGRATION
 
@@ -164,7 +164,7 @@ async def get_code_file(root: str, path: str) -> str:
 - Test that retrieves a real source file from test-project/src/
 - Test error handling for nonexistent files
 
----
+______________________________________________________________________
 
 ### Secondary Gaps (NICE-TO-HAVE)
 
@@ -184,7 +184,7 @@ async def get_code_file(root: str, path: str) -> str:
 - Difficult to test in pytest without mocking (which we can't do)
 - Could use manual integration test in docs/
 
----
+______________________________________________________________________
 
 #### **GAP 7: LOW** — VaultSearcher.search_all() MCP TOOL INTEGRATION
 
@@ -204,41 +204,41 @@ searcher.search_all("query", top_k=10)
 # async def search_all(root, query, top_k, ...)
 ```
 
----
+______________________________________________________________________
 
 ## Part 3: Integration Test Structure Summary
 
 ### Test Files and What They Cover
 
-| Test File | Scope | Markers | Key Methods Tested |
-|-----------|-------|---------|-------------------|
-| **test_indexer_integration.py** | Vault indexing | `@pytest.mark.integration` | `full_index()`, `incremental_index()` (both default clean=False) |
-| **test_codebase_integration.py** | Code indexing | `@pytest.mark.integration` | `full_index()` (no clean=True test), `incremental_index()` |
-| **test_search_integration.py** | Search & rerank | `@pytest.mark.integration` | `search()`, `search_vault()`, `search_codebase()`, `search_all()` (API) |
-| **test_store_integration.py** | Qdrant ops | `@pytest.mark.integration` | `hybrid_search()`, `delete_documents()`, `context_manager` |
-| **test_api_integration.py** | Public facade | `@pytest.mark.integration` | `search()`, `index()`, `list_documents()`, `get_related()`, engine singleton |
-| **test_cli_integration.py** | CLI commands | `@pytest.mark.integration` | `status`, `index`, `search` subcommands (subprocess) |
-| **test_quality.py** | Ranking quality | `@pytest.mark.quality` | Known-answer precision, filter correctness, authority boost |
-| **test_performance.py** | Latency/resource | `@pytest.mark.performance` | Query latency, graph cache reuse, FTS rebuild |
-| **test_robustness.py** | Edge cases | `@pytest.mark.robustness` | Stories without frontmatter, nonstandard metadata, orphan docs |
-| **test_embeddings.py** | GPU inference | `@pytest.mark.integration` | Qwen3 dense + SPLADE sparse encoding, document-query similarity |
+| Test File                        | Scope            | Markers                    | Key Methods Tested                                                           |
+| -------------------------------- | ---------------- | -------------------------- | ---------------------------------------------------------------------------- |
+| **test_indexer_integration.py**  | Vault indexing   | `@pytest.mark.integration` | `full_index()`, `incremental_index()` (both default clean=False)             |
+| **test_codebase_integration.py** | Code indexing    | `@pytest.mark.integration` | `full_index()` (no clean=True test), `incremental_index()`                   |
+| **test_search_integration.py**   | Search & rerank  | `@pytest.mark.integration` | `search()`, `search_vault()`, `search_codebase()`, `search_all()` (API)      |
+| **test_store_integration.py**    | Qdrant ops       | `@pytest.mark.integration` | `hybrid_search()`, `delete_documents()`, `context_manager`                   |
+| **test_api_integration.py**      | Public facade    | `@pytest.mark.integration` | `search()`, `index()`, `list_documents()`, `get_related()`, engine singleton |
+| **test_cli_integration.py**      | CLI commands     | `@pytest.mark.integration` | `status`, `index`, `search` subcommands (subprocess)                         |
+| **test_quality.py**              | Ranking quality  | `@pytest.mark.quality`     | Known-answer precision, filter correctness, authority boost                  |
+| **test_performance.py**          | Latency/resource | `@pytest.mark.performance` | Query latency, graph cache reuse, FTS rebuild                                |
+| **test_robustness.py**           | Edge cases       | `@pytest.mark.robustness`  | Stories without frontmatter, nonstandard metadata, orphan docs               |
+| **test_embeddings.py**           | GPU inference    | `@pytest.mark.integration` | Qwen3 dense + SPLADE sparse encoding, document-query similarity              |
 
 ### Code Paths NOT Exercised in Integration
 
-| Code Path | Tested? | Location |
-|-----------|---------|----------|
-| `VaultIndexer.full_index(clean=True)` | ❌ No | indexer.py:87 |
-| `CodebaseIndexer.full_index(clean=True)` | ❌ No | indexer.py:256 |
-| `VaultStore.drop_table()` | ⚠️ Partial | Called in full_index(clean=True), not tested standalone |
-| `VaultStore.drop_code_table()` | ⚠️ Partial | Called in CodebaseIndexer, not tested |
-| MCP `reindex_vault()` endpoint | ❌ No | mcp_server.py:152 |
-| MCP `reindex_codebase()` endpoint | ❌ No | mcp_server.py:173 |
-| MCP `get_code_file()` endpoint | ❌ No | mcp_server.py:192 |
-| MCP `search_all()` endpoint | ❌ No | mcp_server.py:106 (API tested, not MCP) |
-| `watch_and_reindex()` watcher | ❌ No | watcher.py:1 |
-| `VaultSearcher._rerank()` with reranker enabled | ✓ Yes | test_search_integration.py:377-418 |
+| Code Path                                       | Tested?    | Location                                                |
+| ----------------------------------------------- | ---------- | ------------------------------------------------------- |
+| `VaultIndexer.full_index(clean=True)`           | ❌ No      | indexer.py:87                                           |
+| `CodebaseIndexer.full_index(clean=True)`        | ❌ No      | indexer.py:256                                          |
+| `VaultStore.drop_table()`                       | ⚠️ Partial | Called in full_index(clean=True), not tested standalone |
+| `VaultStore.drop_code_table()`                  | ⚠️ Partial | Called in CodebaseIndexer, not tested                   |
+| MCP `reindex_vault()` endpoint                  | ❌ No      | mcp_server.py:152                                       |
+| MCP `reindex_codebase()` endpoint               | ❌ No      | mcp_server.py:173                                       |
+| MCP `get_code_file()` endpoint                  | ❌ No      | mcp_server.py:192                                       |
+| MCP `search_all()` endpoint                     | ❌ No      | mcp_server.py:106 (API tested, not MCP)                 |
+| `watch_and_reindex()` watcher                   | ❌ No      | watcher.py:1                                            |
+| `VaultSearcher._rerank()` with reranker enabled | ✓ Yes      | test_search_integration.py:377-418                      |
 
----
+______________________________________________________________________
 
 ## Fixture Quality Assessment
 
@@ -255,7 +255,7 @@ searcher.search_all("query", top_k=10)
 - ⚠️ No fixtures accept `clean=True` parameter for testing collection drops
 - ⚠️ `rag_components_with_code` hardcoded to index test-project/src/ (not parameterizable)
 
----
+______________________________________________________________________
 
 ## Summary of Findings
 
@@ -267,28 +267,30 @@ searcher.search_all("query", top_k=10)
 
 ### **COVERAGE GAP AUDIT**
 
-| Gap # | Severity | Issue | Location |
-|-------|----------|-------|----------|
-| 1 | CRITICAL | `VaultIndexer.full_index(clean=True)` untested | indexer.py:87 |
-| 2 | CRITICAL | `CodebaseIndexer.full_index(clean=True)` untested | indexer.py:256 |
-| 3 | HIGH | MCP `reindex_vault()` endpoint untested | mcp_server.py:152 |
-| 4 | HIGH | MCP `reindex_codebase()` endpoint untested | mcp_server.py:173 |
-| 5 | HIGH | MCP `get_code_file()` endpoint untested | mcp_server.py:192 |
-| 6 | MEDIUM | MCP `search_all()` endpoint untested (API tested) | mcp_server.py:106 |
-| 7 | LOW | watcher `watch_and_reindex()` untested | watcher.py:1 |
+| Gap # | Severity | Issue                                             | Location          |
+| ----- | -------- | ------------------------------------------------- | ----------------- |
+| 1     | CRITICAL | `VaultIndexer.full_index(clean=True)` untested    | indexer.py:87     |
+| 2     | CRITICAL | `CodebaseIndexer.full_index(clean=True)` untested | indexer.py:256    |
+| 3     | HIGH     | MCP `reindex_vault()` endpoint untested           | mcp_server.py:152 |
+| 4     | HIGH     | MCP `reindex_codebase()` endpoint untested        | mcp_server.py:173 |
+| 5     | HIGH     | MCP `get_code_file()` endpoint untested           | mcp_server.py:192 |
+| 6     | MEDIUM   | MCP `search_all()` endpoint untested (API tested) | mcp_server.py:106 |
+| 7     | LOW      | watcher `watch_and_reindex()` untested            | watcher.py:1      |
 
----
+______________________________________________________________________
 
 ## Recommended Actions
 
 ### Priority 1: CRITICAL — Add clean=True tests
 
 1. **test_indexer_integration.py**: Add `test_full_index_clean_drops_and_rebuilds()`
+
    - Call `full_index(clean=True)`
    - Verify empty → indexed documents flow
    - Verify idempotence: second `full_index(clean=True)` same count
 
-2. **test_codebase_integration.py**: Add `test_full_index_clean_drops_code_and_rebuilds()`
+1. **test_codebase_integration.py**: Add `test_full_index_clean_drops_code_and_rebuilds()`
+
    - Same as above for codebase
 
 ### Priority 2: HIGH — Add MCP endpoint integration tests
@@ -306,7 +308,7 @@ searcher.search_all("query", top_k=10)
    - Manual integration test setup (watchfiles not pytest-mockable)
    - Or isolated test with real file system
 
----
+______________________________________________________________________
 
 ## Audit Quality
 

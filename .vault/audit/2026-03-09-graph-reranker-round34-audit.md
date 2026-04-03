@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -12,7 +12,7 @@ related: []
 **Auditor:** Claude Code (agent-mode)
 **Scope:** watcher.py, search.py, mcp_server.py
 
----
+______________________________________________________________________
 
 ## Investigation 1: Watcher → Graph Cache Invalidation Gap
 
@@ -24,18 +24,18 @@ The watcher.py file (lines 118–142) monitors vault documentation changes and c
 
 However, **the watcher does NOT invalidate the VaultSearcher's graph cache**. Specifically:
 
-- **VaultSearcher._graph_built_at**: Initialized to `0.0` (search.py:190)
+- **VaultSearcher.\_graph_built_at**: Initialized to `0.0` (search.py:190)
 - **Invalidation path exists**: mcp_server.py line 365 sets `comp.searcher._graph_built_at = 0.0` after `reindex_vault()`
 - **Watcher gap**: watcher.py calls `vault_indexer.incremental_index()` with no subsequent cache invalidation
 
 ### Scenario
 
 1. User modifies a vault file (e.g., add/edit an ADR)
-2. Watcher detects change (watcher.py line 111) and calls `vault_indexer.incremental_index()` (line 131)
-3. Vault index is updated in Qdrant
-4. User immediately searches with `search_vault()` (MCP tool, mcp_server.py:184)
-5. VaultSearcher checks `_graph_built_at`: if last graph was built <300s ago, it uses the **stale cached graph** (search.py:243–246)
-6. Graph boost scores ignore the newly indexed ADR until TTL (300s) expires
+1. Watcher detects change (watcher.py line 111) and calls `vault_indexer.incremental_index()` (line 131)
+1. Vault index is updated in Qdrant
+1. User immediately searches with `search_vault()` (MCP tool, mcp_server.py:184)
+1. VaultSearcher checks `_graph_built_at`: if last graph was built \<300s ago, it uses the **stale cached graph** (search.py:243–246)
+1. Graph boost scores ignore the newly indexed ADR until TTL (300s) expires
 
 ### Root Cause
 
@@ -47,7 +47,7 @@ The watcher bypasses the MCP reindex tools, which are the only places that inval
 - **User-visible**: If a user modifies an ADR and immediately searches, the new content may not rank as high as expected due to stale graph linkage
 - **Probability**: High — common workflow is to edit a doc, then search immediately
 
----
+______________________________________________________________________
 
 ## Investigation 2: CrossEncoder Reranker — No OOM Backoff
 
@@ -64,15 +64,18 @@ scores = reranker.predict(pairs, batch_size=32)  # line 233
 **Findings:**
 
 1. **batch_size=32 is hardcoded** (search.py:233)
+
    - Not pulled from config (config.py has no `reranker_batch_size`)
    - Not configurable at runtime
 
-2. **No torch.cuda.OutOfMemoryError catch**
+1. **No torch.cuda.OutOfMemoryError catch**
+
    - No try/except around `predict()` call
    - embeddings.py has exponential backoff for OOM (lines 234–250 in embeddings.py excerpt)
    - search.py reranker has no similar protection
 
-3. **Theoretical safety at current batch_size**
+1. **Theoretical safety at current batch_size**
+
    - `_clamp_top_k()` limits results to 100 (mcp_server.py:167–169)
    - Max pairs: 100 (query, snippet) pairs
    - BGE-reranker-v2-m3 at batch_size=32: processes in 4 batches
@@ -117,7 +120,7 @@ while True:
 
 reranker has no equivalent fallback.
 
----
+______________________________________________________________________
 
 ## Investigation 3: Graph Cache Thread Safety
 
@@ -144,10 +147,12 @@ def _get_graph(self) -> VaultGraph | None:
 ### Thread Context
 
 1. **GPU Semaphore**: `_gpu_sem = asyncio.Semaphore(1)` (mcp_server.py:46) limits concurrent GPU calls to 1
+
    - All search_vault / search_codebase / search_all MCP tools acquire `_gpu_sem` before calling searcher methods (mcp_server.py:207, 255, 280)
    - Watcher also acquires `_gpu_sem` before indexing (watcher.py:129, 155)
 
-2. **Call paths**:
+1. **Call paths**:
+
    - MCP tool threads: acquire `_gpu_sem`, run sync function in thread pool via `anyio.to_thread.run_sync()`, call `VaultSearcher.search_*()` which calls `_get_graph()`
    - Watcher thread: async context, acquires `_gpu_sem` before indexing (not searching)
    - User code: could call `searcher._get_graph()` directly without acquiring `_gpu_sem`
@@ -171,12 +176,12 @@ def _get_graph(self) -> VaultGraph | None:
 No lock is needed for `_cached_graph` assignment because:
 
 1. MCP is the primary interface (all calls go through `_gpu_sem`)
-2. Double initialization is benign (VaultGraph is read-only after init)
-3. Assignment is atomic at Python level (not a C race condition)
+1. Double initialization is benign (VaultGraph is read-only after init)
+1. Assignment is atomic at Python level (not a C race condition)
 
 **BUT** documenting the threading contract would clarify this.
 
----
+______________________________________________________________________
 
 ## Investigation 4: Watcher Does NOT Invalidate Graph Cache (Deeper Check)
 
@@ -214,18 +219,18 @@ def _run() -> IndexResponse:
 
 **Confirmed:** Watcher does NOT reset `_graph_built_at` after calling `incremental_index()`.
 
----
+______________________________________________________________________
 
 ## Summary of Findings
 
-| Investigation | Severity | Status | Issue |
-|---|---|---|---|
-| **I1: Watcher → graph cache gap** | CRITICAL | **CONFIRMED** | Watcher calls incremental_index() but does NOT invalidate_graph_built_at; searches within 300s use stale graph boost scores |
-| **I2: Reranker OOM backoff** | HIGH | **CONFIRMED** | batch_size=32 hardcoded; no torch.cuda.OutOfMemoryError catch; unlike embeddings.py, no exponential backoff |
-| **I3: Graph cache thread safety** | MEDIUM | **NOT AN ISSUE** | GPU semaphore serializes all MCP calls; double initialization is benign; no explicit lock needed |
-| **I4: Watcher invalidation (deeper)** | CRITICAL | **CONFIRMED** | Reindex tools (mcp_server.py) set_graph_built_at=0.0 after index; watcher path does not |
+| Investigation                         | Severity | Status           | Issue                                                                                                                       |
+| ------------------------------------- | -------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **I1: Watcher → graph cache gap**     | CRITICAL | **CONFIRMED**    | Watcher calls incremental_index() but does NOT invalidate_graph_built_at; searches within 300s use stale graph boost scores |
+| **I2: Reranker OOM backoff**          | HIGH     | **CONFIRMED**    | batch_size=32 hardcoded; no torch.cuda.OutOfMemoryError catch; unlike embeddings.py, no exponential backoff                 |
+| **I3: Graph cache thread safety**     | MEDIUM   | **NOT AN ISSUE** | GPU semaphore serializes all MCP calls; double initialization is benign; no explicit lock needed                            |
+| **I4: Watcher invalidation (deeper)** | CRITICAL | **CONFIRMED**    | Reindex tools (mcp_server.py) set_graph_built_at=0.0 after index; watcher path does not                                     |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
@@ -265,16 +270,16 @@ Add docstring to `_get_graph()` and `VaultSearcher.__init__()` clarifying:
 - Double initialization is benign (read-only graph)
 - Direct calls to `_get_graph()` should acquire semaphore if concurrent
 
----
+______________________________________________________________________
 
 ## Affected Code
 
 - **watcher.py**: Lines 118–142 (vault reindex), lines 144–168 (code reindex)
-- **search.py**: Lines 239–251 (_get_graph), lines 222–237 (_rerank)
+- **search.py**: Lines 239–251 (\_get_graph), lines 222–237 (\_rerank)
 - **mcp_server.py**: Lines 365 (explicit invalidation), lines 207/255/280 (gpu_sem usage)
 - **config.py**: Lines 18–29 (no reranker_batch_size config)
 
----
+______________________________________________________________________
 
 ## Verification Notes
 

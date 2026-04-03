@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-07-threading-lock-for-singleton-adr]]"
-  - "[[2026-03-07-continuous-research]]"
+  - '[[2026-03-07-threading-lock-for-singleton-adr]]'
+  - '[[2026-03-07-continuous-research]]'
 ---
 
 # ADR: MCP tools use `async def` + `anyio.to_thread.run_sync`
@@ -53,11 +53,11 @@ async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
 1. `anyio.to_thread.run_sync()` offloads the entire blocking call to a
    worker thread, keeping the event loop responsive for heartbeats,
    concurrent requests, and protocol traffic.
-2. anyio (not asyncio) is correct because FastMCP uses anyio internally.
+1. anyio (not asyncio) is correct because FastMCP uses anyio internally.
    `anyio.to_thread.run_sync()` propagates context via `copy_context()`.
-3. PyTorch GPU inference is thread-safe for reads (`model.eval()` +
+1. PyTorch GPU inference is thread-safe for reads (`model.eval()` +
    `torch.no_grad()`).
-4. Qdrant local mode is thread-safe for reads (SQLite WAL mode).
+1. Qdrant local mode is thread-safe for reads (SQLite WAL mode).
 
 ## Consequences
 

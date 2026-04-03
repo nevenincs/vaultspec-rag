@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-07-continuous-research]]"
+  - '[[2026-03-07-continuous-research]]'
 ---
 
 # ADR: Use blake2b via `file_digest()` for file change detection
@@ -37,26 +37,26 @@ def content_hash(path: Path) -> str:
 
 Three algorithms were evaluated:
 
-| Algorithm | Throughput | Stdlib? | Dependency |
-|-----------|-----------|---------|------------|
-| xxh64 | ~19 GB/s | No | pip `xxhash` (C ext) |
-| blake2b | ~1 GB/s | **Yes** | None |
-| sha256 | ~0.3 GB/s | Yes | None |
+| Algorithm | Throughput | Stdlib? | Dependency           |
+| --------- | ---------- | ------- | -------------------- |
+| xxh64     | ~19 GB/s   | No      | pip `xxhash` (C ext) |
+| blake2b   | ~1 GB/s    | **Yes** | None                 |
+| sha256    | ~0.3 GB/s  | Yes     | None                 |
 
 Key considerations:
 
 1. **No new dependency.** blake2b is in stdlib. xxhash requires pip install
    and is a C extension with no pure-Python fallback.
 
-2. **Fast enough.** Our vault has 213 markdown files (~1-50 KB each). At
-   1 GB/s, hashing the entire corpus takes <10ms. The 5.6x speedup of
+1. **Fast enough.** Our vault has 213 markdown files (~1-50 KB each). At
+   1 GB/s, hashing the entire corpus takes \<10ms. The 5.6x speedup of
    xxhash saves only microseconds.
 
-3. **`file_digest()` is optimal.** Added in Python 3.11, it handles chunked
+1. **`file_digest()` is optimal.** Added in Python 3.11, it handles chunked
    reading with optimal block sizes internally. One-liner, zero configuration.
    We require Python 3.13, so it's always available.
 
-4. **SHA-256 is overkill.** Cryptographic collision resistance is irrelevant
+1. **SHA-256 is overkill.** Cryptographic collision resistance is irrelevant
    for change detection (no adversary). blake2b is 3x faster and equally
    deterministic.
 

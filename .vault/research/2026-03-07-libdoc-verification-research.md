@@ -1,15 +1,16 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Library Documentation Verification Audit
 
 Date: 2026-03-07
 
----
+______________________________________________________________________
 
 ## Library: qdrant-client (Round 1)
 
@@ -56,7 +57,7 @@ None found. All qdrant-client API calls in store.py match the documented signatu
 - `models.FusionQuery` is confirmed correct. Qdrant also offers `models.RrfQuery` with tunable `k` parameter as an alternative, but `FusionQuery(fusion=Fusion.RRF)` is the standard approach.
 - The `_stable_id` hash approach (SHA-256 -> 8 bytes -> int) is a valid strategy for Qdrant local mode which requires integer or UUID point IDs.
 
----
+______________________________________________________________________
 
 ## Library: sentence-transformers (Round 2)
 
@@ -92,7 +93,7 @@ None found. All qdrant-client API calls in store.py match the documented signatu
 - The flash_attn probe pattern (import check before adding to model_kwargs) at embeddings.py:173-177 is a good defensive practice.
 - CrossEncoder is referenced in CLAUDE.md architecture section but not currently implemented in the codebase (no imports or usage found in search.py or elsewhere).
 
----
+______________________________________________________________________
 
 ## Library: FastMCP / MCP SDK (Round 3)
 
@@ -120,7 +121,7 @@ None found. All qdrant-client API calls in store.py match the documented signatu
 - The sync tool pattern is architecturally concerning regardless of SDK version: each tool call involves GPU inference (embedding) and Qdrant I/O. Even with thread-pool wrapping, these are heavyweight operations. Consider whether async wrappers would provide better concurrency for multi-tool MCP sessions.
 - The `get_comp()` lazy initialization with `threading.Lock()` is correctly implemented for thread safety (mcp_server.py:42-82).
 
----
+______________________________________________________________________
 
 ## Library: tree-sitter / tree-sitter-language-pack (Round 4)
 
@@ -170,19 +171,19 @@ None found. All tree-sitter and tree-sitter-language-pack API calls match docume
 - The `child_by_field_name()` usage is correct -- it returns a single `Node | None`, not a list. The plural `children_by_field_name()` method exists for multiple matches but is not needed here.
 - All grammar names in `LANGUAGE_MAP` are confirmed valid against the tree-sitter-language-pack's supported language list (165+ languages). Notably, `"csharp"` is correct (not `"c_sharp"`).
 
----
+______________________________________________________________________
 
 ## Summary of Critical Findings
 
-| # | Library | Severity | Issue |
-|---|---------|----------|-------|
-| 1 | sentence-transformers | LOW | `SparseEncoder.encode()` used for both queries and documents instead of role-specific `encode_query()` / `encode_document()`. Works but may miss SPLADE prompt optimization. |
-| 2 | MCP SDK | MEDIUM | All MCP tools are sync `def`. Older SDK versions block the event loop. Ensure SDK version includes PR #1909 fix, or convert to async. |
-| 3 | CLAUDE.md | INFO | CrossEncoder reranker is specified in architecture but not implemented in codebase. |
+| #   | Library               | Severity | Issue                                                                                                                                                                        |
+| --- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | sentence-transformers | LOW      | `SparseEncoder.encode()` used for both queries and documents instead of role-specific `encode_query()` / `encode_document()`. Works but may miss SPLADE prompt optimization. |
+| 2   | MCP SDK               | MEDIUM   | All MCP tools are sync `def`. Older SDK versions block the event loop. Ensure SDK version includes PR #1909 fix, or convert to async.                                        |
+| 3   | CLAUDE.md             | INFO     | CrossEncoder reranker is specified in architecture but not implemented in codebase.                                                                                          |
 
 No critical API signature mismatches found. All qdrant-client and tree-sitter calls are correct.
 
----
+______________________________________________________________________
 
 ## SparseEncoder Deep Dive
 
@@ -228,7 +229,7 @@ In `embeddings.py`:
 
 Current code works but may produce suboptimal sparse representations if SPLADE v3 defines asymmetric query/document prompts.
 
----
+______________________________________________________________________
 
 ## Round 5: Score Normalization Audit
 
@@ -249,13 +250,14 @@ Current code works but may produce suboptimal sparse representations if SPLADE v
 ### Finding 1 (MEDIUM): Docstring claims sigmoid normalization, but none exists
 
 The `search_all()` docstring (lines 373-374) states:
+
 > "CrossEncoder logits use sigmoid normalization"
 
 **No sigmoid normalization exists anywhere in search.py.** The actual pipeline is:
 
 1. `search_vault()` / `search_codebase()` fetch RRF-fused results from Qdrant
-2. `_rerank()` replaces scores with **raw CrossEncoder logits** via `result.score = float(score)` (line 232) — no sigmoid
-3. `search_all()` applies `_normalize_minmax()` on the already-reranked results
+1. `_rerank()` replaces scores with **raw CrossEncoder logits** via `result.score = float(score)` (line 232) — no sigmoid
+1. `search_all()` applies `_normalize_minmax()` on the already-reranked results
 
 The ms-marco-MiniLM-L6-v2 model outputs **raw logits** (unbounded, can be negative). The official HuggingFace model card recommends using `CrossEncoder(..., activation_fn=torch.nn.Sigmoid())` to normalize outputs to [0,1].
 
@@ -307,8 +309,8 @@ This is a **multiplicative** boost ranging from 1.0x to 2.0x. With CrossEncoder 
 **FIX NEEDED:** The multiplicative boost assumes non-negative scores. Options:
 
 1. Apply sigmoid before graph reranking to ensure [0,1] scores
-2. Switch to additive boost: `result.score += 0.1 * min(in_link_count, 10)`
-3. Move graph reranking after min-max normalization (when scores are guaranteed [0,1])
+1. Switch to additive boost: `result.score += 0.1 * min(in_link_count, 10)`
+1. Move graph reranking after min-max normalization (when scores are guaranteed [0,1])
 
 ### Finding 4: Weight application in `search_all()` is correct
 
@@ -330,15 +332,15 @@ Not a bug — `_relevance_score` is for ranking, not comparison — but callers 
 
 ### Summary
 
-| # | Issue | Severity | Action |
-|---|-------|----------|--------|
-| 1 | Docstring claims sigmoid but none exists | MEDIUM | Add `activation_fn=Sigmoid()` to CrossEncoder or fix docstring |
-| 2 | `_normalize_minmax()` formula and edge cases | — | Correct, no action needed |
-| 3 | Graph multiplicative boost inverts on negative CrossEncoder logits | **HIGH** | Fix: sigmoid before graph, or switch to additive boost |
-| 4 | Weight application in `search_all()` | — | Correct, no action needed |
-| 5 | Inconsistent score scales across search methods | LOW | Informational |
+| #   | Issue                                                              | Severity | Action                                                         |
+| --- | ------------------------------------------------------------------ | -------- | -------------------------------------------------------------- |
+| 1   | Docstring claims sigmoid but none exists                           | MEDIUM   | Add `activation_fn=Sigmoid()` to CrossEncoder or fix docstring |
+| 2   | `_normalize_minmax()` formula and edge cases                       | —        | Correct, no action needed                                      |
+| 3   | Graph multiplicative boost inverts on negative CrossEncoder logits | **HIGH** | Fix: sigmoid before graph, or switch to additive boost         |
+| 4   | Weight application in `search_all()`                               | —        | Correct, no action needed                                      |
+| 5   | Inconsistent score scales across search methods                    | LOW      | Informational                                                  |
 
----
+______________________________________________________________________
 
 ## Round 6: Qdrant Index Types and RRF Tuning
 
@@ -346,13 +348,13 @@ Not a bug — `_relevance_score` is for ranking, not comparison — but callers 
 
 #### Index type semantics
 
-| Index Type | Supported Conditions | Notes |
-|------------|---------------------|-------|
-| KEYWORD | `MatchValue`, `MatchAny`, `MatchExceptValue`, `MatchExceptAny` | Exact match on string tokens. No range, no prefix, no full-text search. |
-| INTEGER | `Match` (exact), `Range` (gte/lte/gt/lt) | For numeric fields. Range filter uses `models.Range(gte=start, lte=end)`. |
-| TEXT | `MatchText` (full-text search with tokenization) | Required for `MatchText` to perform tokenized search. Without a TEXT index, `MatchText` degrades to exact substring match. |
-| FLOAT | `Range` | For floating-point fields. |
-| BOOL | `MatchValue` | For boolean fields. |
+| Index Type | Supported Conditions                                           | Notes                                                                                                                      |
+| ---------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| KEYWORD    | `MatchValue`, `MatchAny`, `MatchExceptValue`, `MatchExceptAny` | Exact match on string tokens. No range, no prefix, no full-text search.                                                    |
+| INTEGER    | `Match` (exact), `Range` (gte/lte/gt/lt)                       | For numeric fields. Range filter uses `models.Range(gte=start, lte=end)`.                                                  |
+| TEXT       | `MatchText` (full-text search with tokenization)               | Required for `MatchText` to perform tokenized search. Without a TEXT index, `MatchText` degrades to exact substring match. |
+| FLOAT      | `Range`                                                        | For floating-point fields.                                                                                                 |
+| BOOL       | `MatchValue`                                                   | For boolean fields.                                                                                                        |
 
 #### Current codebase index configuration (store.py)
 
@@ -405,10 +407,10 @@ This is a separate query type from `FusionQuery`. The `FusionQuery` remains avai
 
 The RRF formula is: `score = sum(1 / (k + rank_i))` across all retrieval methods.
 
-| k value | Top-1 score | Top-10 score | Ratio (top-1 / top-10) | Effect |
-|---------|-------------|--------------|------------------------|--------|
-| k=2 | 1/3 = 0.333 | 1/12 = 0.083 | 4.0x | Heavy top-rank bias |
-| k=60 | 1/61 = 0.016 | 1/70 = 0.014 | 1.14x | Flatter distribution |
+| k value | Top-1 score  | Top-10 score | Ratio (top-1 / top-10) | Effect               |
+| ------- | ------------ | ------------ | ---------------------- | -------------------- |
+| k=2     | 1/3 = 0.333  | 1/12 = 0.083 | 4.0x                   | Heavy top-rank bias  |
+| k=60    | 1/61 = 0.016 | 1/70 = 0.014 | 1.14x                  | Flatter distribution |
 
 With k=2, the rank-1 result from one retriever gets 4x the score of the rank-10 result. With k=60 (standard from Cormack, Grossman & Hazell, 2009), the difference between rank 1 and rank 10 is only ~14%.
 
@@ -426,15 +428,15 @@ Switch from `FusionQuery(fusion=Fusion.RRF)` to `RrfQuery(rrf=Rrf(k=60))` for mo
 
 ### Summary
 
-| # | Issue | Severity | Action |
-|---|-------|----------|--------|
-| 1 | All payload index types match their filter operations | — | No action needed |
-| 2 | KEYWORD index on `date` prevents future range queries | LOW | Informational; redesign if date ranges needed |
-| 3 | KEYWORD index on `path` does exact match, not prefix | LOW | Already noted in R21-m4 |
-| 4 | `FusionQuery` uses RRF k=2 (not k=60) | **MEDIUM** | Switch to `RrfQuery(rrf=Rrf(k=60))` for standard RRF behavior |
-| 5 | `RrfQuery` available since qdrant-client 1.16.0 | — | Verify installed version before switching |
+| #   | Issue                                                 | Severity   | Action                                                        |
+| --- | ----------------------------------------------------- | ---------- | ------------------------------------------------------------- |
+| 1   | All payload index types match their filter operations | —          | No action needed                                              |
+| 2   | KEYWORD index on `date` prevents future range queries | LOW        | Informational; redesign if date ranges needed                 |
+| 3   | KEYWORD index on `path` does exact match, not prefix  | LOW        | Already noted in R21-m4                                       |
+| 4   | `FusionQuery` uses RRF k=2 (not k=60)                 | **MEDIUM** | Switch to `RrfQuery(rrf=Rrf(k=60))` for standard RRF behavior |
+| 5   | `RrfQuery` available since qdrant-client 1.16.0       | —          | Verify installed version before switching                     |
 
----
+______________________________________________________________________
 
 ## Round 7: Code Chunking Strategy Research
 
@@ -486,24 +488,24 @@ Practical AST-aware chunking library. Benchmark results:
 
 ### Comparison with our current implementation
 
-| Aspect | Our approach | cAST / literature best practice |
-|--------|-------------|-------------------------------|
-| Chunk granularity | Each function/class = 1 chunk | Greedy merge small nodes, recursive split large nodes |
-| Small nodes | Each becomes its own chunk (imports, constants, one-liners) | Merged into larger chunks up to size budget |
-| Large nodes | Entire class as one chunk (can be very large) | Recursively decomposed at AST sub-boundaries |
-| Overlap | TextSplitter fallback uses overlap | No overlap (AST boundaries are semantically complete) |
-| Size budget | No explicit max (limited by `max_embed_chars` at embedding time) | Explicit character budget per chunk |
-| Chunk metadata | file path, language, line numbers, function/class names | Similar metadata preserved |
+| Aspect            | Our approach                                                     | cAST / literature best practice                       |
+| ----------------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
+| Chunk granularity | Each function/class = 1 chunk                                    | Greedy merge small nodes, recursive split large nodes |
+| Small nodes       | Each becomes its own chunk (imports, constants, one-liners)      | Merged into larger chunks up to size budget           |
+| Large nodes       | Entire class as one chunk (can be very large)                    | Recursively decomposed at AST sub-boundaries          |
+| Overlap           | TextSplitter fallback uses overlap                               | No overlap (AST boundaries are semantically complete) |
+| Size budget       | No explicit max (limited by `max_embed_chars` at embedding time) | Explicit character budget per chunk                   |
+| Chunk metadata    | file path, language, line numbers, function/class names          | Similar metadata preserved                            |
 
 ### Recommendations
 
 1. **LOW priority — Merge small AST nodes:** Our approach creates separate chunks for every function/constant/import block. Merging consecutive small top-level nodes (e.g., imports + module docstring + small helpers) into a single chunk up to a size budget (~2000-4000 non-whitespace chars) would reduce chunk count and improve embedding quality for small code fragments that lack standalone semantic meaning. The cAST paper shows this improves Precision@5 by 1-3 points.
 
-2. **LOW priority — Recursive decomposition of large nodes:** When a class exceeds the size budget, recursively chunk at method boundaries rather than embedding the entire class as one oversized chunk. Our `max_embed_chars` truncation at embedding time already prevents excessively long inputs, but truncation loses information. Recursive decomposition would preserve all content.
+1. **LOW priority — Recursive decomposition of large nodes:** When a class exceeds the size budget, recursively chunk at method boundaries rather than embedding the entire class as one oversized chunk. Our `max_embed_chars` truncation at embedding time already prevents excessively long inputs, but truncation loses information. Recursive decomposition would preserve all content.
 
-3. **NO ACTION — Overlap for AST chunks:** The literature does not support overlap for AST-aware chunks. Our current AST chunking (no overlap) is correct. The `TextSplitter` overlap in the fallback path is acceptable for non-AST text.
+1. **NO ACTION — Overlap for AST chunks:** The literature does not support overlap for AST-aware chunks. Our current AST chunking (no overlap) is correct. The `TextSplitter` overlap in the fallback path is acceptable for non-AST text.
 
-4. **NO ACTION — Overall strategy:** Function/class-level AST chunking is validated as the correct approach by recent research. The 70.1% vs 42.4% Recall@5 comparison (AST vs fixed-size) confirms that our AST-based approach is fundamentally sound. The potential improvements (items 1-2) are incremental optimizations, not architectural changes.
+1. **NO ACTION — Overall strategy:** Function/class-level AST chunking is validated as the correct approach by recent research. The 70.1% vs 42.4% Recall@5 comparison (AST vs fixed-size) confirms that our AST-based approach is fundamentally sound. The potential improvements (items 1-2) are incremental optimizations, not architectural changes.
 
 ### Sources
 
@@ -515,16 +517,16 @@ Practical AST-aware chunking library. Benchmark results:
 
 ### Summary
 
-| # | Finding | Severity | Action |
-|---|---------|----------|--------|
-| 1 | Function/class-level AST chunking is validated by literature | — | No change needed; our approach is correct |
-| 2 | Small AST nodes (imports, constants) create low-quality chunks | LOW | Consider merging small consecutive nodes up to size budget |
-| 3 | Large classes may exceed embedding context or get truncated | LOW | Consider recursive decomposition at method boundaries |
-| 4 | No overlap needed for AST chunks | — | Current behavior is correct |
-| 5 | Qwen3-Embedding has no code-specific chunking guidance | — | Informational |
-| 6 | `max_embed_chars=8000` is safely within model's 16K-token sweet spot | — | No change needed |
+| #   | Finding                                                              | Severity | Action                                                     |
+| --- | -------------------------------------------------------------------- | -------- | ---------------------------------------------------------- |
+| 1   | Function/class-level AST chunking is validated by literature         | —        | No change needed; our approach is correct                  |
+| 2   | Small AST nodes (imports, constants) create low-quality chunks       | LOW      | Consider merging small consecutive nodes up to size budget |
+| 3   | Large classes may exceed embedding context or get truncated          | LOW      | Consider recursive decomposition at method boundaries      |
+| 4   | No overlap needed for AST chunks                                     | —        | Current behavior is correct                                |
+| 5   | Qwen3-Embedding has no code-specific chunking guidance               | —        | Informational                                              |
+| 6   | `max_embed_chars=8000` is safely within model's 16K-token sweet spot | —        | No change needed                                           |
 
----
+______________________________________________________________________
 
 ## Round 8: VaultGraph Boost Calibration
 
@@ -533,22 +535,22 @@ Practical AST-aware chunking library. Benchmark results:
 After CrossEncoder reranking (which now outputs sigmoid-normalized [0,1] scores), `rerank_with_graph()` in `search.py:102-148` applies two multiplicative boosts:
 
 1. **In-link boost:** `score *= 1 + 0.1 * min(in_link_count, 10)` — ranges from 1.0x (0 links) to 2.0x (10+ links)
-2. **Feature neighbor boost:** `score *= 1.15` — if any neighbor has the queried feature tag
+1. **Feature neighbor boost:** `score *= 1.15` — if any neighbor has the queried feature tag
 
 These boosts apply to the already-truncated `top_k` results (line 292 truncates via `_rerank`, line 294 applies graph boost). The boosted scores are the final scores returned by `search_vault()`.
 
 ### Test-project in-link distribution (391 nodes)
 
-| In-links | Nodes | Percentage | Boost factor |
-|----------|-------|------------|-------------|
-| 0 | 275 | 70.3% | 1.0x |
-| 1 | 17 | 4.3% | 1.1x |
-| 2 | 55 | 14.1% | 1.2x |
-| 3 | 8 | 2.0% | 1.3x |
-| 4 | 13 | 3.3% | 1.4x |
-| 5-9 | 12 | 3.1% | 1.5x-1.9x |
-| 10+ | 11 | 2.8% | 2.0x (capped) |
-| **Mean** | — | — | **1.13x** |
+| In-links | Nodes | Percentage | Boost factor  |
+| -------- | ----- | ---------- | ------------- |
+| 0        | 275   | 70.3%      | 1.0x          |
+| 1        | 17    | 4.3%       | 1.1x          |
+| 2        | 55    | 14.1%      | 1.2x          |
+| 3        | 8     | 2.0%       | 1.3x          |
+| 4        | 13    | 3.3%       | 1.4x          |
+| 5-9      | 12    | 3.1%       | 1.5x-1.9x     |
+| 10+      | 11    | 2.8%       | 2.0x (capped) |
+| **Mean** | —     | —          | **1.13x**     |
 
 Key observations:
 
@@ -561,13 +563,13 @@ Key observations:
 
 #### Scenario analysis with sigmoid [0,1] scores
 
-| Scenario | Base score | Links | Boosted score | Problem? |
-|----------|-----------|-------|---------------|----------|
-| Strong match, no links | 0.90 | 0 | 0.900 | — |
-| Moderate match, 10+ links | 0.50 | 10 | 1.000 | Overtakes strong match |
-| Weak match, 10+ links + feature | 0.50 | 10 | 1.150 | 28% above strong match |
-| Strong match, 2 links | 0.90 | 2 | 1.080 | Acceptable nudge |
-| Two matches, 2 vs 0 links | 0.85 vs 0.80 | 2 vs 0 | 1.020 vs 0.800 | Link-heavy doc jumps ahead |
+| Scenario                        | Base score   | Links  | Boosted score  | Problem?                   |
+| ------------------------------- | ------------ | ------ | -------------- | -------------------------- |
+| Strong match, no links          | 0.90         | 0      | 0.900          | —                          |
+| Moderate match, 10+ links       | 0.50         | 10     | 1.000          | Overtakes strong match     |
+| Weak match, 10+ links + feature | 0.50         | 10     | 1.150          | 28% above strong match     |
+| Strong match, 2 links           | 0.90         | 2      | 1.080          | Acceptable nudge           |
+| Two matches, 2 vs 0 links       | 0.85 vs 0.80 | 2 vs 0 | 1.020 vs 0.800 | Link-heavy doc jumps ahead |
 
 **The 2.0x cap can cause a moderately relevant hub document (score 0.50) to outrank a highly relevant document (score 0.90) with no links.** This is the core calibration concern.
 
@@ -597,19 +599,19 @@ IR literature on combining link-based and content-based scores:
 
 1. **LOW priority — Reduce the coefficient from 0.1 to 0.05:** `score *= 1 + 0.05 * min(in_link_count, 10)` would give a max boost of 1.5x instead of 2.0x. This reduces the overtake risk while preserving the link signal as a meaningful tie-breaker. A 0.50-score doc with 10 links would get 0.75 — still below a 0.80-score doc with 0 links.
 
-2. **LOW priority — Consider log-dampening:** `score *= 1 + 0.1 * log2(1 + min(in_link_count, 10))` would give diminishing returns: 1 link = 1.1x, 2 links = 1.16x, 5 links = 1.26x, 10 links = 1.35x. This matches the intuition that the first few links are more informative than additional ones.
+1. **LOW priority — Consider log-dampening:** `score *= 1 + 0.1 * log2(1 + min(in_link_count, 10))` would give diminishing returns: 1 link = 1.1x, 2 links = 1.16x, 5 links = 1.26x, 10 links = 1.35x. This matches the intuition that the first few links are more informative than additional ones.
 
-3. **NO ACTION — Feature boost magnitude:** The 1.15x feature neighbor boost is a reasonable magnitude for a binary signal. It's within the same range as 1-2 in-links. No change needed.
+1. **NO ACTION — Feature boost magnitude:** The 1.15x feature neighbor boost is a reasonable magnitude for a binary signal. It's within the same range as 1-2 in-links. No change needed.
 
-4. **NO ACTION — Overall approach:** Multiplicative boosting after CrossEncoder reranking is the correct pattern. The graph boost acts as a secondary signal on top of semantic relevance, which is the right hierarchy.
+1. **NO ACTION — Overall approach:** Multiplicative boosting after CrossEncoder reranking is the correct pattern. The graph boost acts as a secondary signal on top of semantic relevance, which is the right hierarchy.
 
 ### Summary
 
-| # | Finding | Severity | Action |
-|---|---------|----------|--------|
-| 1 | 2.0x max boost can cause hub docs (score 0.5) to outrank strong matches (score 0.9) | LOW | Reduce coefficient from 0.1 to 0.05 (max 1.5x) |
-| 2 | Feature boost stacking reaches 2.3x combined maximum | LOW | Acceptable, but depends on item 1 |
-| 3 | 70% of docs get no boost; typical boost is 1.0x-1.2x | — | Well-calibrated for the common case |
-| 4 | Cap at 10 links is reasonable (only 2.8% of docs exceed it) | — | No change needed |
-| 5 | Multiplicative boosting is correct approach per IR literature | — | No change needed |
-| 6 | Log-dampening is an alternative to reducing coefficient | LOW | Optional; diminishing returns matches link semantics |
+| #   | Finding                                                                             | Severity | Action                                               |
+| --- | ----------------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
+| 1   | 2.0x max boost can cause hub docs (score 0.5) to outrank strong matches (score 0.9) | LOW      | Reduce coefficient from 0.1 to 0.05 (max 1.5x)       |
+| 2   | Feature boost stacking reaches 2.3x combined maximum                                | LOW      | Acceptable, but depends on item 1                    |
+| 3   | 70% of docs get no boost; typical boost is 1.0x-1.2x                                | —        | Well-calibrated for the common case                  |
+| 4   | Cap at 10 links is reasonable (only 2.8% of docs exceed it)                         | —        | No change needed                                     |
+| 5   | Multiplicative boosting is correct approach per IR literature                       | —        | No change needed                                     |
+| 6   | Log-dampening is an alternative to reducing coefficient                             | LOW      | Optional; diminishing returns matches link semantics |

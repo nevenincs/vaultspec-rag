@@ -26,8 +26,16 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Whitelist .vaultspec/lib
+!/.vaultspec/lib/
+!/.vaultspec/lib/**
+.vaultspec/lib/**/__pycache__/
+.vaultspec/lib/**/*.pyc
+.vaultspec/providers.json
+
 # Auto-generated temp files
 .vaultspec/.tmp/
+tmp/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -52,7 +60,9 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
-.ruff_cache/
+.pytest*/
+.ruff*/
+.uv*/
 cover/
 test-events.jsonl
 
@@ -138,12 +148,10 @@ CLAUDE.md
 GEMINI.md
 
 # Antigravity / CODEX
+.agent/
 .agents/
 .codex/
 AGENTS.md
-
-# .vaultspec
-.vaultspec/
 
 # mcp
 .mcp.json
@@ -158,11 +166,20 @@ test-project/*
 !test-project/.vault/
 !test-project/README.md
 
+# Obsidian
+.vault/.obsidian/
+
 # VaultSpec Logs
 .vault/logs/
 
 # Temporary reference files
 tmp-ref/
+
+# Framework
+CLAUDE.md
+GEMINI.md
+.claude/
+.gemini/
 
 # >>> vaultspec-managed (do not edit this block) >>>
 .vaultspec/_snapshots/

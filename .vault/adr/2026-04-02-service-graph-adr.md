@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#adr"
-  - "#service-graph"
+  - '#adr'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-research]]"
-  - "[[2026-04-02-release-readiness-audit]]"
-  - "[[2026-03-09-graph-embedding-round36-audit]]"
+  - '[[2026-04-02-service-graph-research]]'
+  - '[[2026-04-02-release-readiness-audit]]'
+  - '[[2026-03-09-graph-embedding-round36-audit]]'
 ---
 
 <!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
@@ -121,10 +121,8 @@ language servers.
 - Default port: **8766** (configurable via `--port` or
   `VAULTSPEC_RAG_PORT` env var).
 - Spawn via `_spawn_service()` helper encapsulating platform differences:
-  - Windows: `subprocess.Popen(cmd, creationflags=CREATE_NEW_PROCESS_GROUP
-    | CREATE_NO_WINDOW, stdin=DEVNULL, stdout=log_file, stderr=STDOUT)`
-  - Unix: `subprocess.Popen(cmd, start_new_session=True, stdin=DEVNULL,
-    stdout=log_file, stderr=STDOUT)`
+  - Windows: `subprocess.Popen(cmd, creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, stdin=DEVNULL, stdout=log_file, stderr=STDOUT)`
+  - Unix: `subprocess.Popen(cmd, start_new_session=True, stdin=DEVNULL, stdout=log_file, stderr=STDOUT)`
 - Write status to `~/.vaultspec-rag/service.json` (global, not
   per-project -- the service is shared across projects).
 - Log file at `~/.vaultspec-rag/service.log` (append mode). Log rotation
@@ -173,8 +171,7 @@ standard than an MCP tool for health polling:
   `GET http://127.0.0.1:{port}/health` directly -- simpler than
   establishing an MCP session just to check liveness.
 - The endpoint returns JSON:
-  `{"status": "ready"|"loading"|"error", "cuda": bool,
-  "models_loaded": bool, "projects": [...], "uptime_s": float}`.
+  `{"status": "ready"|"loading"|"error", "cuda": bool, "models_loaded": bool, "projects": [...], "uptime_s": float}`.
 - Available only after FastMCP lifespan startup completes -- serves as
   the natural readiness signal.
 
@@ -250,8 +247,7 @@ The `service_lifespan` async context manager:
   stop filesystem watchers.
 
 The `/health` endpoint returns JSON:
-`{"status": "ready"|"loading"|"error", "cuda": bool,
-"models_loaded": bool, "projects": [...], "uptime_s": float}`.
+`{"status": "ready"|"loading"|"error", "cuda": bool, "models_loaded": bool, "projects": [...], "uptime_s": float}`.
 
 This endpoint becomes available only after lifespan startup completes --
 the natural readiness signal. The CLI polls `GET /health` with

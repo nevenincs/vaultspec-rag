@@ -1,16 +1,17 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # api.py and ADR Regression Tests Audit
 
 Date: 2026-03-07
 Auditor: docs-researcher-2-2
 
----
+______________________________________________________________________
 
 ## Part A: api.py Audit
 
@@ -54,7 +55,7 @@ This prevents Qdrant client resource leaks when switching root dirs.
 **ISSUE (LOW):** `get_related()` returns `None` in two cases:
 
 1. Graph build fails (line 241): returns `None`
-2. doc_id not found in graph (line 245): returns `None`
+1. doc_id not found in graph (line 245): returns `None`
 
 The return type annotation says `dict | None` (line 228), which is consistent. However, returning `None` when the graph fails silently hides errors. Callers must distinguish "doc not found" from "graph broken" -- both return `None`.
 
@@ -81,15 +82,15 @@ Also: `_Engine.__init__()` does not have cleanup on partial init failure. If `Em
 
 ### Summary: api.py
 
-| # | Issue | Severity |
-|---|-------|----------|
-| 1 | `get_engine()` doesn't `resolve()` root_dir -- duplicate engines for `./x` vs `x` | MEDIUM |
-| 2 | `get_engine()` not thread-safe -- race on `_engine` global | MEDIUM |
-| 3 | `_Engine.__init__` leaks VaultStore on partial init failure | LOW |
-| 4 | `get_related()` returns None for both "not found" and "graph broken" | LOW |
-| 5 | Bare `except Exception` in `_GraphCache.get()` | LOW |
+| #   | Issue                                                                             | Severity |
+| --- | --------------------------------------------------------------------------------- | -------- |
+| 1   | `get_engine()` doesn't `resolve()` root_dir -- duplicate engines for `./x` vs `x` | MEDIUM   |
+| 2   | `get_engine()` not thread-safe -- race on `_engine` global                        | MEDIUM   |
+| 3   | `_Engine.__init__` leaks VaultStore on partial init failure                       | LOW      |
+| 4   | `get_related()` returns None for both "not found" and "graph broken"              | LOW      |
+| 5   | Bare `except Exception` in `_GraphCache.get()`                                    | LOW      |
 
----
+______________________________________________________________________
 
 ## Part B: ADR Regression Tests Audit
 
@@ -99,18 +100,18 @@ File: `src/vaultspec_rag/tests/test_adr_regression.py` (164 lines)
 
 Only 4 of the 10 expected ADR regression test classes exist:
 
-| # | ADR Decision | Test Class | Status |
-|---|-------------|-----------|--------|
-| 1 | blake2b file hashing | `TestBlake2bFileHashing` | Present |
-| 2 | score normalization | `TestScoreNormalization` | Present |
-| 3 | path.resolve engine cache | — | **MISSING** |
-| 4 | VaultGraph cache singleton | — | **MISSING** |
-| 5 | MCP sync tools | `TestMCPSyncTools` | Present |
-| 6 | Qwen3 no document prompt | — | **MISSING** |
-| 7 | threading lock singleton | — | **MISSING** |
-| 8 | model names/dtype | `TestRerankerModelName` | Present (partial) |
-| 9 | filter-on-prefetch | — | **MISSING** |
-| 10 | manual node walking | — | **MISSING** |
+| #   | ADR Decision               | Test Class               | Status            |
+| --- | -------------------------- | ------------------------ | ----------------- |
+| 1   | blake2b file hashing       | `TestBlake2bFileHashing` | Present           |
+| 2   | score normalization        | `TestScoreNormalization` | Present           |
+| 3   | path.resolve engine cache  | —                        | **MISSING**       |
+| 4   | VaultGraph cache singleton | —                        | **MISSING**       |
+| 5   | MCP sync tools             | `TestMCPSyncTools`       | Present           |
+| 6   | Qwen3 no document prompt   | —                        | **MISSING**       |
+| 7   | threading lock singleton   | —                        | **MISSING**       |
+| 8   | model names/dtype          | `TestRerankerModelName`  | Present (partial) |
+| 9   | filter-on-prefetch         | —                        | **MISSING**       |
+| 10  | manual node walking        | —                        | **MISSING**       |
 
 ### Analysis of existing tests
 
@@ -182,14 +183,14 @@ Should test: `ASTChunker` uses `child_by_field_name("name")` not tree-sitter Que
 
 The implementation and test agree with each other but disagree with CLAUDE.md. One of them needs updating.
 
----
+______________________________________________________________________
 
 ## Overall Summary
 
-| Category | Issue | Severity |
-|----------|-------|----------|
-| api.py | `get_engine()` no `resolve()` on root_dir | MEDIUM |
-| api.py | `get_engine()` not thread-safe | MEDIUM |
-| api.py | `_Engine.__init__` leaks store on partial failure | LOW |
-| ADR tests | 6 of 10 ADR regression tests missing | HIGH |
-| ADR tests | Reranker model mismatch: CLAUDE.md vs config.py | MEDIUM |
+| Category  | Issue                                             | Severity |
+| --------- | ------------------------------------------------- | -------- |
+| api.py    | `get_engine()` no `resolve()` on root_dir         | MEDIUM   |
+| api.py    | `get_engine()` not thread-safe                    | MEDIUM   |
+| api.py    | `_Engine.__init__` leaks store on partial failure | LOW      |
+| ADR tests | 6 of 10 ADR regression tests missing              | HIGH     |
+| ADR tests | Reranker model mismatch: CLAUDE.md vs config.py   | MEDIUM   |

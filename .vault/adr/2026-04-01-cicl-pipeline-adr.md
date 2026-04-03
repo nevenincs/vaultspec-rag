@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#adr"
-  - "#cicl"
+  - '#adr'
+  - '#cicl'
 date: 2026-04-01
 related:
-  - "[[2026-04-01-cicl-pipeline-research]]"
+  - '[[2026-04-01-cicl-pipeline-research]]'
 ---
 
 # `cicl` adr: ci/cd pipeline and release automation | (**status:** `accepted`)

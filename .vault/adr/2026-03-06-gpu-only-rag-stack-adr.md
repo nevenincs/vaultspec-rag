@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related:
-  - "[[2026-03-06-gpu-rag-architecture-research]]"
-  - "[[2026-03-06-gpu-vector-search-deep-dive-research]]"
+  - '[[2026-03-06-gpu-rag-architecture-research]]'
+  - '[[2026-03-06-gpu-vector-search-deep-dive-research]]'
 ---
 
 # ADR: GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3
@@ -36,14 +36,14 @@ Replace **fastembed (ONNX Runtime, CPU)** with **sentence-transformers >= 5.0 (P
 
 Replace **nomic-ai/nomic-embed-text-v1.5** (768d) with **Qwen/Qwen3-Embedding-0.6B** (1024d).
 
-| Aspect | Old (nomic) | New (Qwen3) |
-|---|---|---|
-| Dimension | 768 | 1024 (MRL: 32-1024) |
-| Parameters | ~137M | 0.6B |
-| MTEB Score | 62.28 | 64.33 (multilingual) |
-| VRAM (fp16) | ~0.5 GB | ~1.5 GB |
-| MRL Support | Yes | Yes |
-| Prefixing | Manual (search_document:/search_query:) | Automatic via prompt_name |
+| Aspect      | Old (nomic)                             | New (Qwen3)               |
+| ----------- | --------------------------------------- | ------------------------- |
+| Dimension   | 768                                     | 1024 (MRL: 32-1024)       |
+| Parameters  | ~137M                                   | 0.6B                      |
+| MTEB Score  | 62.28                                   | 64.33 (multilingual)      |
+| VRAM (fp16) | ~0.5 GB                                 | ~1.5 GB                   |
+| MRL Support | Yes                                     | Yes                       |
+| Prefixing   | Manual (search_document:/search_query:) | Automatic via prompt_name |
 
 Inference config:
 
@@ -105,13 +105,13 @@ The only schema change: dense vector dimension increases from 768 to 1024.
 
 ### 7. Config Changes
 
-| Key | Old Default | New Default |
-|---|---|---|
-| `embedding_model` | `"nomic-ai/nomic-embed-text-v1.5"` | `"Qwen/Qwen3-Embedding-0.6B"` |
-| `embedding_dimension` | `768` | `1024` |
-| `sparse_model` | `"Qdrant/bm42-all-minilm-l6-v2-attentions"` | `"naver/splade-v3"` |
-| `qdrant_dir` | `".qdrant"` | Unchanged |
-| `lance_dir` | `".lance"` | Removed (LanceDB is gone) |
+| Key                   | Old Default                                 | New Default                   |
+| --------------------- | ------------------------------------------- | ----------------------------- |
+| `embedding_model`     | `"nomic-ai/nomic-embed-text-v1.5"`          | `"Qwen/Qwen3-Embedding-0.6B"` |
+| `embedding_dimension` | `768`                                       | `1024`                        |
+| `sparse_model`        | `"Qdrant/bm42-all-minilm-l6-v2-attentions"` | `"naver/splade-v3"`           |
+| `qdrant_dir`          | `".qdrant"`                                 | Unchanged                     |
+| `lance_dir`           | `".lance"`                                  | Removed (LanceDB is gone)     |
 
 ## Consequences
 
@@ -134,8 +134,8 @@ The only schema change: dense vector dimension increases from 768 to 1024.
 ### Migration Path
 
 1. Rewrite `embeddings.py`: remove fastembed, use SentenceTransformer + SparseEncoder on CUDA.
-2. Update `store.py`: EMBEDDING_DIM 768 -> 1024.
-3. Update `config.py`: new model name/dimension/sparse defaults.
-4. Update `pyproject.toml`: swap dependencies.
-5. Update test files: fix HAS_RAG checks, device assertions, remove obsolete tests.
-6. Delete existing `.qdrant/` data and re-index.
+1. Update `store.py`: EMBEDDING_DIM 768 -> 1024.
+1. Update `config.py`: new model name/dimension/sparse defaults.
+1. Update `pyproject.toml`: swap dependencies.
+1. Update test files: fix HAS_RAG checks, device assertions, remove obsolete tests.
+1. Delete existing `.qdrant/` data and re-index.

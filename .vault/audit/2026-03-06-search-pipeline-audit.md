@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: Search Pipeline
 
 Feature: search.py query parsing, hybrid search, graph re-ranking

@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#plan"
-  - "#cicl"
+  - '#plan'
+  - '#cicl'
 date: 2026-04-01
 related:
-  - "[[2026-04-01-cicl-pipeline-adr]]"
-  - "[[2026-04-01-cicl-pipeline-research]]"
+  - '[[2026-04-01-cicl-pipeline-adr]]'
+  - '[[2026-04-01-cicl-pipeline-research]]'
 ---
 
 # `cicl` phase-1 plan
@@ -22,10 +22,10 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
 ## Tasks
 
 - Phase 1: Source preparation
+
   1. Fix vaultspec-core dependency in `pyproject.toml` — change from
      `file:///` path to `"vaultspec-core>=0.1.0"` in `[project.dependencies]`.
-     Add `vaultspec-core = { path = "../vaultspec-core-worktrees/main",
-     editable = true }` to `[tool.uv.sources]` (alongside existing torch
+     Add `vaultspec-core = { path = "../vaultspec-core-worktrees/main", editable = true }` to `[tool.uv.sources]` (alongside existing torch
      entry). The static `version = "0.1.0"` stays — release-please bumps
      it in `pyproject.toml` directly. Verify `uv lock` succeeds.
   1. Add `__version__` to `src/vaultspec_rag/__init__.py` via
@@ -40,6 +40,7 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
   1. Remove `.github/workflows/.gitkeep` placeholder (if it exists).
 
 - Phase 2: Workflow authoring (mirror vaultspec-core patterns precisely)
+
   1. Create `.github/workflows/ci.yml` — 4 jobs with shared setup pattern
      (actions/checkout@v4, actions/setup-python@v6 3.13,
      astral-sh/setup-uv@v7 with enable-cache). Top-level
@@ -67,6 +68,7 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
      `uv publish --check-url`).
 
 - Phase 3: Smoke test and validation
+
   1. Create `tests/smoke_check.py` — non-pytest script (intentionally in
      `tests/` to match vaultspec-core convention; exempt from the
      "deprecated tests/ dir" rule since it's not a pytest suite). Functions:

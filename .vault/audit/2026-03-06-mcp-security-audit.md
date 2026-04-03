@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: MCP Server Security
 
 Feature: mcp_server.py FastMCP tools, resources, prompts

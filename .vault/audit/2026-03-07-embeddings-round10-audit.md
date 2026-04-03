@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 10 Audit -- embeddings.py (deep dive)
 
 **Auditor:** docs-researcher-2-2
@@ -12,7 +13,7 @@ related: []
 **Cross-reference:** `src/vaultspec_rag/search.py` (CrossEncoder reranker lives here), `src/vaultspec_rag/config.py`
 **Date:** 2026-03-07
 
----
+______________________________________________________________________
 
 ## Check 1: SparseEncoder Methods
 
@@ -37,7 +38,7 @@ Uses `encode_query()` -- the correct SparseEncoder method for queries.
 
 **Verdict: PASS.** Both document and query sparse encoding use the correct role-specific methods (`encode_document` / `encode_query`), enabling SPLADE's asymmetric query/document prompts.
 
----
+______________________________________________________________________
 
 ## Check 2: CrossEncoder Sigmoid
 
@@ -55,7 +56,7 @@ self._reranker = CrossEncoder(
 
 **Verdict: PASS.** `activation_fn=torch.nn.Sigmoid()` is present. This maps CrossEncoder logits from (-inf, +inf) to (0, 1), fixing the negative-score graph boost bug (Task #64 / Round 5 finding).
 
----
+______________________________________________________________________
 
 ## Check 3: Reranker Model
 
@@ -75,7 +76,7 @@ self._reranker_model_name: str = cfg.reranker_model
 
 Note: CLAUDE.md still says `cross-encoder/ms-marco-MiniLM-L6-v2`. This is a documentation mismatch, not a code bug. The CLAUDE.md should be updated to reflect the actual model, or the discrepancy should be explicitly documented as intentional (ADR decision).
 
----
+______________________________________________________________________
 
 ## Check 4: Dense Model Init
 
@@ -106,7 +107,7 @@ The probe at line 174 imports `flash_attn` to check if the package is installed.
 
 **Verdict: PASS (false alarm on initial read).**
 
----
+______________________________________________________________________
 
 ## Check 5: Sparse Model dtype
 
@@ -122,7 +123,7 @@ self._sparse_model = SparseEncoder(
 
 **Verdict: PASS.** Uses `torch.float16` (the actual dtype object), not the string `"float16"`. This was flagged as R22b-m13 and has been fixed.
 
----
+______________________________________________________________________
 
 ## Check 6: OOM Retry Logic
 
@@ -157,7 +158,7 @@ No OOM retry. Single query inference.
 
 **Verdict: PASS.** Document batch methods have OOM retry. Query methods (single inference) do not, which is acceptable -- a single query is unlikely to OOM, and if it does, the error should propagate. This was flagged as R22b-m10 and the current behavior is by-design.
 
----
+______________________________________________________________________
 
 ## Check 7: CUDA Check
 
@@ -185,7 +186,7 @@ def _check_rag_deps() -> None:
 
 **Verdict: PASS.** Raises `RuntimeError` for missing CUDA, `ImportError` for missing packages. Both with clear messages. Called at top of `EmbeddingModel.__init__()` (line 153).
 
----
+______________________________________________________________________
 
 ## Check 8: `_sparse_tensor_to_results`
 
@@ -194,8 +195,8 @@ def _check_rag_deps() -> None:
 Handles three input types:
 
 1. **scipy sparse** (line 68-77): Checks `hasattr(sparse_tensor, "tocsr")`, converts to CSR, iterates rows
-2. **torch.Tensor** (line 79-91): Checks `isinstance(sparse_tensor, torch.Tensor)`, handles both `is_sparse`/`is_sparse_csr` and dense tensors
-3. **numpy array** (line 93-104): Fallback using `np.asarray()`
+1. **torch.Tensor** (line 79-91): Checks `isinstance(sparse_tensor, torch.Tensor)`, handles both `is_sparse`/`is_sparse_csr` and dense tensors
+1. **numpy array** (line 93-104): Fallback using `np.asarray()`
 
 ### R10-m2: `is_sparse_csr` check on line 80 may raise `AttributeError` on very old PyTorch (Minor)
 
@@ -209,7 +210,7 @@ if sparse_tensor.is_sparse or sparse_tensor.is_sparse_csr:
 
 **Verdict: PASS overall.** All three tensor formats are handled correctly. The scipy path is the most likely for SparseEncoder output (SPLADE returns scipy sparse matrices).
 
----
+______________________________________________________________________
 
 ## Check 9: `encode_documents` Truncation
 
@@ -244,23 +245,23 @@ In practice, the SentenceTransformer tokenizer will truncate to `max_seq_length`
 
 **File:** `embeddings.py:267-271`
 
----
+______________________________________________________________________
 
 ## Check 10: Bare `except Exception`
 
 Scanning all exception handlers in `embeddings.py`:
 
-| Line | Handler | Assessment |
-|------|---------|------------|
-| 44 | `except ImportError` | Specific. Correct. |
-| 52 | `except ImportError` | Specific. Correct. |
-| 176 | `except ImportError` | Specific. Correct (flash_attn probe). |
-| 243 | `except torch.cuda.OutOfMemoryError` | Specific. Correct (OOM retry). |
-| 298 | `except torch.cuda.OutOfMemoryError` | Specific. Correct (OOM retry). |
+| Line | Handler                              | Assessment                            |
+| ---- | ------------------------------------ | ------------------------------------- |
+| 44   | `except ImportError`                 | Specific. Correct.                    |
+| 52   | `except ImportError`                 | Specific. Correct.                    |
+| 176  | `except ImportError`                 | Specific. Correct (flash_attn probe). |
+| 243  | `except torch.cuda.OutOfMemoryError` | Specific. Correct (OOM retry).        |
+| 298  | `except torch.cuda.OutOfMemoryError` | Specific. Correct (OOM retry).        |
 
 **Verdict: PASS.** No bare `except Exception` in embeddings.py. All exception handlers are specific.
 
----
+______________________________________________________________________
 
 ## Additional Observations
 
@@ -291,22 +292,22 @@ embeddings = self._dense_model.encode(
 
 No `prompt_name` parameter. This was flagged as R22b-M4 and verified as **correct** (not a bug): Qwen3-Embedding-0.6B documents should be encoded without a prompt prefix. Only queries use `prompt_name="query"`. This is confirmed by the Qwen3 documentation and Research Topic 12.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| R10-m2 | MINOR | `is_sparse_csr` check may fail on PyTorch < 1.10 (practically unreachable) |
-| R10-m3 | MINOR | `encode_query()` does not truncate query text (inconsistent with sparse query path) |
+| ID     | Severity | Finding                                                                             |
+| ------ | -------- | ----------------------------------------------------------------------------------- |
+| R10-m2 | MINOR    | `is_sparse_csr` check may fail on PyTorch < 1.10 (practically unreachable)          |
+| R10-m3 | MINOR    | `encode_query()` does not truncate query text (inconsistent with sparse query path) |
 
 ### Verified Fixes
 
-| Prior Finding | Status |
-|---------------|--------|
-| Round 2: SparseEncoder uses generic `encode()` | **FIXED** -- uses `encode_document()` / `encode_query()` |
-| R22b-m13: sparse model dtype is string `"float16"` | **FIXED** -- uses `torch.float16` |
-| Task #64: CrossEncoder sigmoid activation | **FIXED** -- `activation_fn=torch.nn.Sigmoid()` in search.py |
+| Prior Finding                                      | Status                                                       |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| Round 2: SparseEncoder uses generic `encode()`     | **FIXED** -- uses `encode_document()` / `encode_query()`     |
+| R22b-m13: sparse model dtype is string `"float16"` | **FIXED** -- uses `torch.float16`                            |
+| Task #64: CrossEncoder sigmoid activation          | **FIXED** -- `activation_fn=torch.nn.Sigmoid()` in search.py |
 
 ### Cross-file notes (search.py)
 
