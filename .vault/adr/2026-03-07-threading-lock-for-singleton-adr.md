@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-07-mcp-sync-tools-adr]]"
-  - "[[2026-03-08-fastmcp-lifespan-research]]"
+  - '[[2026-03-07-mcp-sync-tools-adr]]'
+  - '[[2026-03-08-fastmcp-lifespan-research]]'
 ---
 
 # ADR: Use `threading.Lock` for `get_comp()` singleton
@@ -47,11 +47,11 @@ def get_comp() -> RAGComponents:
 
 Three lock types were evaluated:
 
-| Lock type | Thread-safe | Async-safe | Usable from worker thread |
-|-----------|------------|------------|--------------------------|
-| `threading.Lock` | Yes | Deadlock risk | **Yes** |
-| `asyncio.Lock` | No | Yes | No |
-| `anyio.Lock` | No | Yes | No |
+| Lock type        | Thread-safe | Async-safe    | Usable from worker thread |
+| ---------------- | ----------- | ------------- | ------------------------- |
+| `threading.Lock` | Yes         | Deadlock risk | **Yes**                   |
+| `asyncio.Lock`   | No          | Yes           | No                        |
+| `anyio.Lock`     | No          | Yes           | No                        |
 
 - `asyncio.Lock` and `anyio.Lock` are **not thread-safe** and cannot be
   acquired from worker threads.

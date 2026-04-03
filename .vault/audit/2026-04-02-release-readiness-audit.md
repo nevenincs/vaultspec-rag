@@ -1,11 +1,11 @@
 ---
-title: "release-readiness-audit"
+title: release-readiness-audit
 date: 2026-04-02
 tags:
-  - "#audit"
-  - "#release-readiness"
+  - '#audit'
+  - '#release-readiness'
 related:
-  - "[[2026-04-01-cicl-pipeline-adr]]"
+  - '[[2026-04-01-cicl-pipeline-adr]]'
 ---
 
 # release-readiness audit — alpha → beta gap analysis
@@ -17,7 +17,7 @@ Audit scope: CLI conventions, Justfile, MCP discoverability, dependency
 management, documentation, pre-commit hooks, CI/CD, pyproject.toml metadata,
 and framework integration.
 
----
+______________________________________________________________________
 
 ## CRITICAL gaps (must fix before beta)
 
@@ -96,7 +96,7 @@ This actively misleads the AI agent about available commands in this repo.
 commands are also needed (since it's a dependency), add a separate section or
 a second rule file.
 
----
+______________________________________________________________________
 
 ## HIGH gaps (should fix before beta)
 
@@ -199,7 +199,7 @@ constructions. Needs `threading.Lock` with double-check pattern.
 
 **Action:** Fix before beta. This is a correctness issue under load.
 
----
+______________________________________________________________________
 
 ## MEDIUM gaps (should address for beta)
 
@@ -265,7 +265,7 @@ The `performance`, `quality`, `robustness` markers are RAG-specific and
 appropriate. But RAG is missing an `api` marker for testing the public
 facade (`api.py`). Consider adding for consistency.
 
----
+______________________________________________________________________
 
 ## LOW gaps (nice to have)
 
@@ -306,35 +306,35 @@ RAG has the same files (synced from core). No RAG-specific system prompt
 additions. Consider adding a `50-rag.md` that describes RAG search
 capabilities to AI agents.
 
----
+______________________________________________________________________
 
 ## Summary matrix
 
-| Area | Core | RAG | Gap |
-|:-----|:----:|:---:|:---:|
-| Justfile | ✅ Full | ❌ None | CRITICAL |
-| MCP .mcp.json registration | ✅ Auto | ❌ Manual | CRITICAL |
-| Documentation (README) | ✅ Full | ❌ Minimal | CRITICAL |
-| Documentation (CLI.md) | ✅ Complete | ❌ None | CRITICAL |
-| Documentation (MCP.md) | ✅ Complete | ❌ None | CRITICAL |
-| CLI rule accuracy | ✅ Correct | ❌ Wrong CLI | CRITICAL |
-| pyproject.toml metadata | ✅ Complete | ❌ Missing | HIGH |
-| Pre-commit (read-only gates) | ✅ Gates | ⚠️ Auto-fix | HIGH |
-| Pre-commit (vault checks) | ✅ 3 hooks | ❌ None | HIGH |
-| CI vault-audit job | ✅ Present | ❌ Missing | HIGH |
-| Sync/discoverability | ✅ install+sync | ❌ None | HIGH |
-| Graph rebuild race | n/a | ❌ Open | HIGH |
-| Entry point naming | ✅ Consistent | ⚠️ Diverges | MEDIUM |
-| Doctor command | ✅ Present | ❌ Missing | MEDIUM |
-| Uninstall command | ✅ Present | ❌ Missing | MEDIUM |
-| --json output | ✅ All cmds | ❌ None | MEDIUM |
-| **main**.py | ✅ Present | ❌ Missing | MEDIUM |
-| Framework manual | ✅ .vaultspec/README | ❌ None | LOW |
-| Docker support | ✅ Full | ❌ None | LOW |
-| RAG-specific hooks | n/a | ❌ None | LOW |
-| RAG system prompt | n/a | ❌ None | LOW |
+| Area                         |         Core         |     RAG      |   Gap    |
+| :--------------------------- | :------------------: | :----------: | :------: |
+| Justfile                     |       ✅ Full        |   ❌ None    | CRITICAL |
+| MCP .mcp.json registration   |       ✅ Auto        |  ❌ Manual   | CRITICAL |
+| Documentation (README)       |       ✅ Full        |  ❌ Minimal  | CRITICAL |
+| Documentation (CLI.md)       |     ✅ Complete      |   ❌ None    | CRITICAL |
+| Documentation (MCP.md)       |     ✅ Complete      |   ❌ None    | CRITICAL |
+| CLI rule accuracy            |      ✅ Correct      | ❌ Wrong CLI | CRITICAL |
+| pyproject.toml metadata      |     ✅ Complete      |  ❌ Missing  |   HIGH   |
+| Pre-commit (read-only gates) |       ✅ Gates       | ⚠️ Auto-fix  |   HIGH   |
+| Pre-commit (vault checks)    |      ✅ 3 hooks      |   ❌ None    |   HIGH   |
+| CI vault-audit job           |      ✅ Present      |  ❌ Missing  |   HIGH   |
+| Sync/discoverability         |   ✅ install+sync    |   ❌ None    |   HIGH   |
+| Graph rebuild race           |         n/a          |   ❌ Open    |   HIGH   |
+| Entry point naming           |    ✅ Consistent     | ⚠️ Diverges  |  MEDIUM  |
+| Doctor command               |      ✅ Present      |  ❌ Missing  |  MEDIUM  |
+| Uninstall command            |      ✅ Present      |  ❌ Missing  |  MEDIUM  |
+| --json output                |     ✅ All cmds      |   ❌ None    |  MEDIUM  |
+| **main**.py                  |      ✅ Present      |  ❌ Missing  |  MEDIUM  |
+| Framework manual             | ✅ .vaultspec/README |   ❌ None    |   LOW    |
+| Docker support               |       ✅ Full        |   ❌ None    |   LOW    |
+| RAG-specific hooks           |         n/a          |   ❌ None    |   LOW    |
+| RAG system prompt            |         n/a          |   ❌ None    |   LOW    |
 
----
+______________________________________________________________________
 
 ## Recommended work issue order
 

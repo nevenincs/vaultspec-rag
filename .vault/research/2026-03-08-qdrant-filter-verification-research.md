@@ -1,16 +1,17 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
+
 # Qdrant Filter API Correctness Audit
 
 Date: 2026-03-08
 Previous Research: `2026-03-07-libdoc-verification-research` Round 1 (qdrant-client verified OK)
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
@@ -22,7 +23,7 @@ Verified the Qdrant Python client filter API as used in `src/vaultspec_rag/store
 - `Prefetch` filter placement: **CONFIRMED CORRECT** — filter goes on each `Prefetch` individually (not on top-level `query_filter`).
 - `RRF k parameter`: Current code uses **implicit k=None** in `FusionQuery(fusion=Fusion.RRF)`. This delegates to Qdrant server default. For explicit control, should switch to `RrfQuery(rrf=Rrf(k=60))` — library supports this since qdrant-client 1.16.0.
 
----
+______________________________________________________________________
 
 ## Verification Results
 
@@ -48,7 +49,7 @@ Verified the Qdrant Python client filter API as used in `src/vaultspec_rag/store
 
 **Verdict: CORRECT.** `MatchText` is not needed for this codebase's use case.
 
----
+______________________________________________________________________
 
 ### 2. Prefetch Filter Placement: On Each Prefetch, Not Top-Level
 
@@ -82,7 +83,7 @@ client.query_points(
 
 **Verdict: CORRECT.** When using Prefetch with hybrid search (RRF), filters go on each Prefetch individually. The top-level `query_filter` is only used in fallback dense-only search or simple single-vector queries.
 
----
+______________________________________________________________________
 
 ### 3. RRF k Parameter: Implicit vs Explicit
 
@@ -110,7 +111,7 @@ results = self._client.query_points(
 
 **Verdict: CORRECT.** Code uses `RrfQuery` with explicit `k=60`, not `FusionQuery`. This is optimal.
 
----
+______________________________________________________________________
 
 ### 4. Collection Schema: Verified Correct
 
@@ -136,46 +137,46 @@ self._client.create_collection(
 - Dense vector: named `"dense"`, 1024 dimensions, cosine distance
 - Sparse vector: named `"sparse"`, SPLADE format
 
----
+______________________________________________________________________
 
 ## Payload Index Schema Verification
 
 ### Vault collection (ensure_table)
 
-| Field | Index Type | Filter Condition | Usage | Status |
-|-------|-----------|-----------------|-------|--------|
-| `doc_type` | KEYWORD | `MatchValue` | Line 500 | ✓ Correct |
-| `feature` | KEYWORD | `MatchValue` | Line 725 | ✓ Correct |
-| `date` | KEYWORD | `MatchValue` | Line 711 | ✓ Correct |
-| `tags` | KEYWORD | `MatchAny` | Line 718 | ✓ Correct |
+| Field      | Index Type | Filter Condition | Usage    | Status    |
+| ---------- | ---------- | ---------------- | -------- | --------- |
+| `doc_type` | KEYWORD    | `MatchValue`     | Line 500 | ✓ Correct |
+| `feature`  | KEYWORD    | `MatchValue`     | Line 725 | ✓ Correct |
+| `date`     | KEYWORD    | `MatchValue`     | Line 711 | ✓ Correct |
+| `tags`     | KEYWORD    | `MatchAny`       | Line 718 | ✓ Correct |
 
 ### Code collection (ensure_code_table)
 
-| Field | Index Type | Filter Condition | Usage | Status |
-|-------|-----------|-----------------|-------|--------|
-| `language` | KEYWORD | `MatchValue` | Line 751 | ✓ Correct |
-| `path` | KEYWORD | `MatchValue` | Line 751 | ✓ Correct |
-| `node_type` | KEYWORD | `MatchValue` | Line 751 | ✓ Correct |
-| `function_name` | KEYWORD | `MatchValue` | Line 751 | ✓ Correct |
-| `class_name` | KEYWORD | `MatchValue` | Line 751 | ✓ Correct |
-| `line_start` | INTEGER | (none in codebase yet) | Reserved for future range queries | ✓ Correct |
+| Field           | Index Type | Filter Condition       | Usage                             | Status    |
+| --------------- | ---------- | ---------------------- | --------------------------------- | --------- |
+| `language`      | KEYWORD    | `MatchValue`           | Line 751                          | ✓ Correct |
+| `path`          | KEYWORD    | `MatchValue`           | Line 751                          | ✓ Correct |
+| `node_type`     | KEYWORD    | `MatchValue`           | Line 751                          | ✓ Correct |
+| `function_name` | KEYWORD    | `MatchValue`           | Line 751                          | ✓ Correct |
+| `class_name`    | KEYWORD    | `MatchValue`           | Line 751                          | ✓ Correct |
+| `line_start`    | INTEGER    | (none in codebase yet) | Reserved for future range queries | ✓ Correct |
 
 **Verdict: CORRECT.** All payload index types match their filter operations. KEYWORD fields use exact-match conditions; INTEGER field is reserved for future range filtering.
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| Item | Verified | Status | Notes |
-|------|----------|--------|-------|
-| `MatchValue` for KEYWORD exact match | Yes | ✓ CORRECT | Used on all KEYWORD payload fields |
-| `MatchText` usage | Yes | ✓ CORRECT | Not used; correct (no TEXT fields) |
-| `Prefetch` filter placement | Yes | ✓ CORRECT | Filters on each Prefetch, not top-level |
-| `RRF k parameter` | Yes | ✓ CORRECT | Code uses `RrfQuery(rrf=Rrf(k=60))` explicitly |
-| Collection schema (dense + sparse named vectors) | Yes | ✓ CORRECT | Matches API specification |
-| Payload index types | Yes | ✓ CORRECT | All KEYWORD/INTEGER match filter conditions |
+| Item                                             | Verified | Status    | Notes                                          |
+| ------------------------------------------------ | -------- | --------- | ---------------------------------------------- |
+| `MatchValue` for KEYWORD exact match             | Yes      | ✓ CORRECT | Used on all KEYWORD payload fields             |
+| `MatchText` usage                                | Yes      | ✓ CORRECT | Not used; correct (no TEXT fields)             |
+| `Prefetch` filter placement                      | Yes      | ✓ CORRECT | Filters on each Prefetch, not top-level        |
+| `RRF k parameter`                                | Yes      | ✓ CORRECT | Code uses `RrfQuery(rrf=Rrf(k=60))` explicitly |
+| Collection schema (dense + sparse named vectors) | Yes      | ✓ CORRECT | Matches API specification                      |
+| Payload index types                              | Yes      | ✓ CORRECT | All KEYWORD/INTEGER match filter conditions    |
 
----
+______________________________________________________________________
 
 ## Conclusion
 
@@ -188,7 +189,7 @@ self._client.create_collection(
 
 No action required for round 25 audit anchoring.
 
----
+______________________________________________________________________
 
 ## Research Artifacts
 

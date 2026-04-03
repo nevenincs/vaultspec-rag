@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 24 Audit -- api.py, config.py
 
 ## api.py
@@ -58,9 +59,9 @@ Line 53: `_engine.root_dir != root_dir` compares `pathlib.Path` objects directly
 Lines 50-55: The global `_engine` is read and written without any locking. If two threads call `get_engine` concurrently with the same `root_dir`:
 
 1. Thread A sees `_engine is None`, starts creating `_Engine`
-2. Thread B sees `_engine is None`, also starts creating `_Engine`
-3. Both load GPU models, doubling VRAM usage
-4. One assignment overwrites the other, leaking one engine
+1. Thread B sees `_engine is None`, also starts creating `_Engine`
+1. Both load GPU models, doubling VRAM usage
+1. One assignment overwrites the other, leaking one engine
 
 For the CLI this is single-threaded and fine. For MCP server usage (which has its own `get_comp()` singleton), this is also not hit. But the API facade is public and documented, so concurrent use is plausible.
 
@@ -111,7 +112,7 @@ Lines 22-36: The `rag_defaults` dict literal is constructed inside `__getattr__`
 Lines 64-66: When `overrides` is not None, a fresh wrapper is created and returned *without* updating `_cached_config`. This means:
 
 1. Call `get_config({"embedding_batch_size": 128})` -- returns wrapper with batch_size=128
-2. Call `get_config()` -- returns cached singleton with default batch_size=64
+1. Call `get_config()` -- returns cached singleton with default batch_size=64
 
 This is documented behavior ("When called without overrides, returns a cached singleton") but can cause confusion: the overrides from step 1 are silently forgotten by step 2. Any code that calls `get_config()` (without overrides) after an override call gets stale defaults.
 

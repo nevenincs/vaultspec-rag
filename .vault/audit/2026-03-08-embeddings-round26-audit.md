@@ -1,28 +1,29 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
+
 # Round 26 Audit: embeddings.py Deep Dive
 
 **Date:** 2026-03-08
 **Scope:** `src/vaultspec_rag/embeddings.py` with cross-references to `search.py`, `indexer.py`
 **Focus Areas:** Model loading, SPLADE asymmetry, CrossEncoder sigmoid, prompt_name handling, batch sizing, thread safety, GPU memory, error handling
 
----
+______________________________________________________________________
 
 ## Severity Summary
 
-| Severity | Count | Status |
-|----------|-------|--------|
-| **CRITICAL** | 0 | ✅ PASS |
-| **HIGH** | 0 | ✅ PASS |
-| **MEDIUM** | 0 | ✅ PASS |
-| **LOW** | 1 | ⚠️ MINOR OBSERVATION |
+| Severity     | Count | Status               |
+| ------------ | ----- | -------------------- |
+| **CRITICAL** | 0     | ✅ PASS              |
+| **HIGH**     | 0     | ✅ PASS              |
+| **MEDIUM**   | 0     | ✅ PASS              |
+| **LOW**      | 1     | ⚠️ MINOR OBSERVATION |
 
----
+______________________________________________________________________
 
 ## Detailed Findings
 
@@ -47,7 +48,7 @@ The implementation correctly loads the Qwen3-Embedding-0.6B model with:
 
 SparseEncoder also uses `torch.float16` (line 189), consistent with design.
 
----
+______________________________________________________________________
 
 ### 2. SPLADE Asymmetry: encode_document() vs encode_query()
 
@@ -78,7 +79,7 @@ The asymmetry enables Qwen3/SPLADE's instruction-tuned prompt prefixes:
 
 This design is correct per SparseEncoder API.
 
----
+______________________________________________________________________
 
 ### 3. Qwen3 prompt_name Handling
 
@@ -102,7 +103,7 @@ This is correct per Qwen3 model card:
 
 The implementation matches the documented ADR and passes regression tests.
 
----
+______________________________________________________________________
 
 ### 4. CrossEncoder with Sigmoid Activation
 
@@ -119,12 +120,12 @@ The implementation matches the documented ADR and passes regression tests.
 The sigmoid activation function is essential for:
 
 1. Normalizing logits to [0, 1] range
-2. Preventing negative scores on irrelevant results
-3. Fixing the "graph boost on negative logits" issue when reranker_enabled=True
+1. Preventing negative scores on irrelevant results
+1. Fixing the "graph boost on negative logits" issue when reranker_enabled=True
 
 Implementation is correct and matches ADR specifications.
 
----
+______________________________________________________________________
 
 ### 5. Batch Sizing Strategy
 
@@ -132,18 +133,18 @@ Implementation is correct and matches ADR specifications.
 
 **Sizes Used:**
 
-| Component | Batch Size | Location | Configurable |
-|-----------|-----------|----------|--------------|
-| Dense documents | 64 (default) | Line 229, config line 22 | Yes, via `_default_batch_size()` |
-| Sparse documents | 32 (hardcoded) | Line 275 param default, 295 call | No |
-| Sparse queries | 1 (implicit) | Line 319 creates single-element list | No (inline) |
-| CrossEncoder rerank | 32 (hardcoded) | search.py:233 | No |
-| Dense queries | 1 (implicit) | Line 268 creates single-element list | No (inline) |
+| Component           | Batch Size     | Location                             | Configurable                     |
+| ------------------- | -------------- | ------------------------------------ | -------------------------------- |
+| Dense documents     | 64 (default)   | Line 229, config line 22             | Yes, via `_default_batch_size()` |
+| Sparse documents    | 32 (hardcoded) | Line 275 param default, 295 call     | No                               |
+| Sparse queries      | 1 (implicit)   | Line 319 creates single-element list | No (inline)                      |
+| CrossEncoder rerank | 32 (hardcoded) | search.py:233                        | No                               |
+| Dense queries       | 1 (implicit)   | Line 268 creates single-element list | No (inline)                      |
 
 **Evidence:**
 
 - **Line 129-133:** `_default_batch_size()` reads from config (embedding_batch_size=64)
-- **Line 213-252:** Dense encoding retry logic halves batch size on OOM until batch_size <= 1
+- **Line 213-252:** Dense encoding retry logic halves batch size on OOM until batch_size \<= 1
 - **Line 274-307:** Sparse encoding has identical retry logic
 
 **Analysis:**
@@ -157,12 +158,12 @@ Batch sizing is reasonable:
 **Potential OOM scenarios:**
 
 1. Very large documents (>8000 chars after truncation) with batch_size=64 → Handled via fallback retry
-2. CrossEncoder with batch_size=32 + large snippets (200 chars × 32 = 6400 tokens) → Acceptable
-3. Simultaneous dense + sparse encoding → No protection (sequential, not parallel)
+1. CrossEncoder with batch_size=32 + large snippets (200 chars × 32 = 6400 tokens) → Acceptable
+1. Simultaneous dense + sparse encoding → No protection (sequential, not parallel)
 
 No critical issues; batch sizing is sound.
 
----
+______________________________________________________________________
 
 ### 6. Thread Safety
 
@@ -179,8 +180,8 @@ No critical issues; batch sizing is sound.
 Thread safety is achieved by:
 
 1. Single model instance per thread (via `anyio.to_thread.run_sync()` in async context)
-2. No shared mutable state within EmbeddingModel
-3. PyTorch models are thread-safe for inference on GPU
+1. No shared mutable state within EmbeddingModel
+1. PyTorch models are thread-safe for inference on GPU
 
 **Caveats:**
 
@@ -190,7 +191,7 @@ Thread safety is achieved by:
 
 Current design is safe.
 
----
+______________________________________________________________________
 
 ### 7. GPU Memory Management
 
@@ -217,7 +218,7 @@ Memory management strategy:
 
 Current approach is production-appropriate.
 
----
+______________________________________________________________________
 
 ### 8. Error Handling
 
@@ -227,7 +228,7 @@ Current approach is production-appropriate.
 
 - **Lines 234-252 (dense):** Catches `torch.cuda.OutOfMemoryError` explicitly, retries with halved batch
 - **Lines 291-307 (sparse):** Same retry logic as dense
-- **Line 246:** Re-raises if batch_size drops to <=1 (gives up gracefully after exponential backoff)
+- **Line 246:** Re-raises if batch_size drops to \<=1 (gives up gracefully after exponential backoff)
 - **Lines 39-48 (dependency check):** Clear ImportError/RuntimeError with recovery instructions
 - **search.py:207-209:** CrossEncoder raises RuntimeError if CUDA unavailable
 
@@ -235,9 +236,9 @@ Current approach is production-appropriate.
 Error handling is production-ready:
 
 1. GPU OOM → Exponential retry (not infinite loop)
-2. Missing dependencies → Clear instructions to install
-3. No CUDA → Fails fast with actionable message
-4. No try-except swallowing (all exceptions are specific)
+1. Missing dependencies → Clear instructions to install
+1. No CUDA → Fails fast with actionable message
+1. No try-except swallowing (all exceptions are specific)
 
 **Unhandled edge cases (low risk):**
 
@@ -245,7 +246,7 @@ Error handling is production-ready:
 - Invalid text input (numpy/torch handles gracefully)
 - GPU power loss mid-inference (rare; would propagate as RuntimeError)
 
----
+______________________________________________________________________
 
 ### 9. CrossEncoder batch_size=32 Match to ADR
 
@@ -264,11 +265,11 @@ Batch size=32 is appropriate:
 - Matches sparse encoding batch size (consistency)
 - Safe for most consumer GPUs (A100 80GB, RTX 4090, etc.)
 - Reranking happens on already-filtered results (20-80 items typical)
-- Each pair = [query, snippet[:200]] ≈ 200 tokens
+- Each pair = \[query, snippet[:200]\] ≈ 200 tokens
 
 No issues found.
 
----
+______________________________________________________________________
 
 ## Config Integration
 
@@ -288,7 +289,7 @@ No issues found.
 
 No issues.
 
----
+______________________________________________________________________
 
 ## Minor Observation
 
@@ -308,22 +309,22 @@ sparse_tensor = self._sparse_model.encode_query(query[:max_chars])  # if API sup
 
 **Assessment:** This is not a bug; it's a defensive pattern that ensures consistent return type handling. SparseEncoder.encode_query() likely expects a list. No change needed.
 
----
+______________________________________________________________________
 
 ## Cross-Codebase Consistency
 
-| Aspect | File | Status |
-|--------|------|--------|
-| Dense documents | indexer.py (4 sites) | ✅ All call `encode_documents()` |
-| Dense queries | search.py (2 sites) | ✅ All call `encode_query()` |
-| Sparse documents | indexer.py (4 sites) | ✅ All call `encode_documents_sparse()` |
-| Sparse queries | search.py (2 sites) | ✅ All call `encode_query_sparse()` |
-| prompt_name usage | embeddings.py | ✅ Documents no prompt, queries use "query" |
-| CrossEncoder | search.py | ✅ With sigmoid activation |
-| Batch size config | config.py | ✅ Default 64, used in dense encoding |
-| Test coverage | test_adr_regression.py | ✅ prompt_name regression tests pass |
+| Aspect            | File                   | Status                                      |
+| ----------------- | ---------------------- | ------------------------------------------- |
+| Dense documents   | indexer.py (4 sites)   | ✅ All call `encode_documents()`            |
+| Dense queries     | search.py (2 sites)    | ✅ All call `encode_query()`                |
+| Sparse documents  | indexer.py (4 sites)   | ✅ All call `encode_documents_sparse()`     |
+| Sparse queries    | search.py (2 sites)    | ✅ All call `encode_query_sparse()`         |
+| prompt_name usage | embeddings.py          | ✅ Documents no prompt, queries use "query" |
+| CrossEncoder      | search.py              | ✅ With sigmoid activation                  |
+| Batch size config | config.py              | ✅ Default 64, used in dense encoding       |
+| Test coverage     | test_adr_regression.py | ✅ prompt_name regression tests pass        |
 
----
+______________________________________________________________________
 
 ## Conclusion
 
@@ -332,20 +333,20 @@ sparse_tensor = self._sparse_model.encode_query(query[:max_chars])  # if API sup
 The `embeddings.py` module is **production-ready and correct**:
 
 1. ✅ Dense model (Qwen3) loaded with fp16 + flash_attention_2
-2. ✅ Sparse model (SPLADE v3) uses asymmetric encode_document/encode_query
-3. ✅ CrossEncoder reranker uses sigmoid activation
-4. ✅ Qwen3 prompt_name handling matches ADR (no prompt for docs, "query" for queries)
-5. ✅ Batch sizing is reasonable with OOM retry logic
-6. ✅ Thread-safe under current architecture (worker thread isolation)
-7. ✅ GPU memory management uses strategic `empty_cache()` on OOM only
-8. ✅ Error handling is robust with clear failure modes
-9. ✅ All callers use correct encode methods consistently
+1. ✅ Sparse model (SPLADE v3) uses asymmetric encode_document/encode_query
+1. ✅ CrossEncoder reranker uses sigmoid activation
+1. ✅ Qwen3 prompt_name handling matches ADR (no prompt for docs, "query" for queries)
+1. ✅ Batch sizing is reasonable with OOM retry logic
+1. ✅ Thread-safe under current architecture (worker thread isolation)
+1. ✅ GPU memory management uses strategic `empty_cache()` on OOM only
+1. ✅ Error handling is robust with clear failure modes
+1. ✅ All callers use correct encode methods consistently
 
 **Configuration:** All RAG defaults are correctly wired via `VaultSpecConfigWrapper`.
 
 **Test Coverage:** ADR regression tests verify critical prompt_name behavior.
 
----
+______________________________________________________________________
 
 ## Audit Metadata
 

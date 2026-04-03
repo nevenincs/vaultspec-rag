@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -13,10 +13,10 @@ related: []
 **Investigated:**
 
 1. ParsedQuery → embedding encoding flow
-2. Graph TTL rebuild serialization and correctness
-3. Query vs document encoding method dispatch
+1. Graph TTL rebuild serialization and correctness
+1. Query vs document encoding method dispatch
 
----
+______________________________________________________________________
 
 ## Investigation 1: ParsedQuery → embedding pipeline
 
@@ -43,7 +43,7 @@ related: []
 
 ### Finding 1.2: ✅ PASS — Filter token removal prevents leakage
 
-**search.py:32-49 (_FILTER_PATTERN):**
+**search.py:32-49 (\_FILTER_PATTERN):**
 
 - Regex pattern correctly matches `type:adr`, `feature:rag`, `date:2026-02`, `tag:#research`, `lang:python`, `path:src/`, `func:encode`, `class:Foo`, `nodetype:function_definition`
 - Line 95: `text = _FILTER_PATTERN.sub("", raw_query).strip()` removes all matched tokens
@@ -67,7 +67,7 @@ related: []
 
 **Verdict:** ✅ PASS — Query encoding pipeline is correct.
 
----
+______________________________________________________________________
 
 ## Investigation 2: Graph boost correctness after TTL rebuild
 
@@ -87,9 +87,9 @@ related: []
 **Evidence:**
 
 1. **No lock on graph rebuild:** `_get_graph()` reads `self._graph_built_at` (line 260), rebuilds (line 262), then updates `self._graph_built_at` (line 263).
-2. **Not atomic:** Between line 260 and line 262, multiple threads can see `TTL expired` and all call `_VaultGraph(self.root_dir)` simultaneously.
-3. **Concurrent VaultGraph constructions are expensive:** Each scans all vault files twice (read + link extraction).
-4. **Watcher already invalidates correctly:** mcp_server.py:366 sets `_graph_built_at = 0.0` to force rebuild on next search.
+1. **Not atomic:** Between line 260 and line 262, multiple threads can see `TTL expired` and all call `_VaultGraph(self.root_dir)` simultaneously.
+1. **Concurrent VaultGraph constructions are expensive:** Each scans all vault files twice (read + link extraction).
+1. **Watcher already invalidates correctly:** mcp_server.py:366 sets `_graph_built_at = 0.0` to force rebuild on next search.
 
 **Scenario:**
 
@@ -137,11 +137,11 @@ comp.searcher._graph_built_at = 0.0
 **Scenario:**
 
 1. Watcher detects vault file change
-2. `vault_indexer.incremental_index()` runs in thread, reading new file
-3. Meanwhile, another thread calls `search_vault()` at line 310
-4. `_get_graph()` rebuilds VaultGraph from disk (reading all vault files)
-5. **Race:** If incremental_index() is mid-write to a .md file, graph might read partially-written file content
-6. Result: Graph has stale/inconsistent link structure
+1. `vault_indexer.incremental_index()` runs in thread, reading new file
+1. Meanwhile, another thread calls `search_vault()` at line 310
+1. `_get_graph()` rebuilds VaultGraph from disk (reading all vault files)
+1. **Race:** If incremental_index() is mid-write to a .md file, graph might read partially-written file content
+1. Result: Graph has stale/inconsistent link structure
 
 **Mitigating factors:**
 
@@ -151,7 +151,7 @@ comp.searcher._graph_built_at = 0.0
 
 **Severity:** MEDIUM — **Unlikely but possible inconsistency** (requires file write race with graph read). Recommend atomic file writes in indexer.
 
----
+______________________________________________________________________
 
 ## Investigation 3: encode_query vs encode_documents method dispatch
 
@@ -199,29 +199,29 @@ self._sparse_model = SparseEncoder(
 
 **Verdict:** ✅ PASS — Asymmetric SPLADE dispatch is correct.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| Finding | Category | Severity | Status |
-|---------|----------|----------|--------|
-| Query embedding uses correct prompt_name="query" | Correctness | ✅ PASS | Verified |
-| Filter tokens removed before embedding | Correctness | ✅ PASS | Verified |
-| Codebase search follows same pattern | Correctness | ✅ PASS | Verified |
-| Graph rebuild is blocking (safe in worker thread) | Safety | ✅ PASS | Verified |
-| **Multiple concurrent rebuilds on TTL expiry** | **Performance** | **🔴 CRITICAL** | **Race condition** |
-| Graph cache invalidation after reindex | Correctness | ✅ PASS | Verified |
-| Graph inconsistency during incremental indexing | Edge case | ⚠️ MEDIUM | Unlikely but possible |
-| All query encoding uses encode_query() | Correctness | ✅ PASS | Verified |
-| All document encoding uses encode_documents() | Correctness | ✅ PASS | Verified |
-| Asymmetric SPLADE prompting | Correctness | ✅ PASS | Verified |
+| Finding                                           | Category        | Severity        | Status                |
+| ------------------------------------------------- | --------------- | --------------- | --------------------- |
+| Query embedding uses correct prompt_name="query"  | Correctness     | ✅ PASS         | Verified              |
+| Filter tokens removed before embedding            | Correctness     | ✅ PASS         | Verified              |
+| Codebase search follows same pattern              | Correctness     | ✅ PASS         | Verified              |
+| Graph rebuild is blocking (safe in worker thread) | Safety          | ✅ PASS         | Verified              |
+| **Multiple concurrent rebuilds on TTL expiry**    | **Performance** | **🔴 CRITICAL** | **Race condition**    |
+| Graph cache invalidation after reindex            | Correctness     | ✅ PASS         | Verified              |
+| Graph inconsistency during incremental indexing   | Edge case       | ⚠️ MEDIUM       | Unlikely but possible |
+| All query encoding uses encode_query()            | Correctness     | ✅ PASS         | Verified              |
+| All document encoding uses encode_documents()     | Correctness     | ✅ PASS         | Verified              |
+| Asymmetric SPLADE prompting                       | Correctness     | ✅ PASS         | Verified              |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
 1. **CRITICAL (2026-03-09):** Add `threading.Lock` around graph rebuild in `_get_graph()` to prevent concurrent VaultGraph constructions on TTL expiry. Double-check pattern inside the lock.
 
-2. **MEDIUM (future):** Verify indexer uses atomic file writes for metadata. If not, consider atomic write-then-rename pattern to guarantee graph consistency.
+1. **MEDIUM (future):** Verify indexer uses atomic file writes for metadata. If not, consider atomic write-then-rename pattern to guarantee graph consistency.
 
-3. **LOW (documentation):** Add comment to `_get_graph()` explaining that the method is called from worker threads (safe to block).
+1. **LOW (documentation):** Add comment to `_get_graph()` explaining that the method is called from worker threads (safe to block).

@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-08-qdrant-hybrid-search-patterns-research]]"
-  - "[[2026-03-07-libdoc-verification-research]]"
+  - '[[2026-03-08-qdrant-hybrid-search-patterns-research]]'
+  - '[[2026-03-07-libdoc-verification-research]]'
 ---
 
 # ADR: Payload indexes are no-ops in local mode; add for forward compatibility
@@ -30,20 +30,22 @@ though it is a no-op in local mode.
 
 1. **Verified no-op in local mode.** Runtime testing confirmed that
    `create_payload_index()` in local mode:
+
    - Does not create actual indexes (`payload_schema` remains `{}`)
    - Does not error or affect data
    - Is fully idempotent (safe to call multiple times)
    - Is non-destructive on existing points and payloads
 
-2. **Forward compatibility.** When/if we migrate to Qdrant server mode
+1. **Forward compatibility.** When/if we migrate to Qdrant server mode
    (Docker), the index creation calls will automatically take effect without
    code changes. This is the recommended practice from Qdrant docs.
 
-3. **No existence check needed.** Since the call is idempotent, there is no
+1. **No existence check needed.** Since the call is idempotent, there is no
    reason to guard with `if field not in payload_schema`. In local mode
    `payload_schema` is always `{}`, making such checks meaningless anyway.
 
-4. **Recommended indexes for code chunks:**
+1. **Recommended indexes for code chunks:**
+
    - `path`: KEYWORD (high cardinality, used in `MatchAny` filters)
    - `language`: KEYWORD (used in language-specific filtering)
    - `function_name`, `class_name`: KEYWORD (metadata filtering)

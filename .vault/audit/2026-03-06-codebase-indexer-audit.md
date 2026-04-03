@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
@@ -89,7 +89,7 @@ This import runs on every call. Since `prepare_document()` is called in a `Threa
 **m8. `VaultStore.__exit__` return type annotation says `bool` but should be `bool | None`** (store.py:146-154)
 The `__exit__` method returns `False` (don't suppress exceptions). The type annotation `-> bool` is technically correct but conventionally `-> bool | None` or `-> None` since the return value is only meaningful when `True`.
 
----
+______________________________________________________________________
 
 ## Round 2: Test Coverage
 
@@ -107,14 +107,14 @@ Audited files:
 
 ### Test Inventory
 
-| Test File | Marker | Tests | Covers |
-|-----------|--------|-------|--------|
-| test_indexer_unit.py | unit | 11 | `_extract_title`, `_extract_feature`, `IndexResult`, `prepare_document` |
-| test_search_unit.py | unit+integration | 19 | `ParsedQuery`, `SearchResult`, `parse_query`, `_rerank` |
-| test_query.py | unit | 6 | `parse_query` (duplicate of test_search_unit.py) |
-| test_store.py | unit | 8 | `_build_filter`, `_stable_id` |
-| test_store_codebase.py | integration | 4 | `ensure_code_table`, `upsert_code_chunks`, `_build_code_filter`, `delete_code_chunks` |
-| integration/test_indexer_integration.py | integration+quality | 7 | `VaultIndexer.full_index`, `incremental_index`, `prepare_document` |
+| Test File                               | Marker              | Tests | Covers                                                                                |
+| --------------------------------------- | ------------------- | ----- | ------------------------------------------------------------------------------------- |
+| test_indexer_unit.py                    | unit                | 11    | `_extract_title`, `_extract_feature`, `IndexResult`, `prepare_document`               |
+| test_search_unit.py                     | unit+integration    | 19    | `ParsedQuery`, `SearchResult`, `parse_query`, `_rerank`                               |
+| test_query.py                           | unit                | 6     | `parse_query` (duplicate of test_search_unit.py)                                      |
+| test_store.py                           | unit                | 8     | `_build_filter`, `_stable_id`                                                         |
+| test_store_codebase.py                  | integration         | 4     | `ensure_code_table`, `upsert_code_chunks`, `_build_code_filter`, `delete_code_chunks` |
+| integration/test_indexer_integration.py | integration+quality | 7     | `VaultIndexer.full_index`, `incremental_index`, `prepare_document`                    |
 
 ### CRITICAL Test Gaps
 
@@ -167,7 +167,7 @@ Both `src/vaultspec_rag/tests/conftest.py` (line 127-142) and `src/vaultspec_rag
 **T-m5. `TestRerank.test_rerank_single_result_skipped` uses synthetic SearchResult**
 This test creates a `SearchResult` with `score=0.5` and `snippet="Some content about architecture."` — a synthetic fixture. Per CLAUDE.md, tests should use real data. The other two rerank tests correctly use real search results from the store.
 
----
+______________________________________________________________________
 
 ## Round 3: Gap Analysis vs Research & Prior Audit
 
@@ -181,37 +181,37 @@ This test creates a `SearchResult` with `score=0.5` and `snippet="Some content a
 
 ### Gap Analysis: Current Implementation vs Industry Best Practices
 
-| Area | Current State | Industry Standard (2025-2026) | Gap Severity |
-|------|--------------|-------------------------------|-------------|
-| **Code chunking** | `TextSplitter` — regex-based, character-level splits at `\nclass`, `\ndef` etc. | **tree-sitter AST chunking** — parse code into AST, split at function/class boundaries, depth-first walk merging siblings to token limit. Used by Cursor, Cody, CocoIndex. cAST paper: +4.2 pts on StarCoder2-7B vs character chunking. | CRITICAL |
-| **Gitignore compliance** | `git ls-files` (works in git repos) with `rglob("*")` fallback that ignores gitignore | **`pathspec` library** — loads `.gitignore` patterns, handles nested gitignores, works outside git repos. Used by black, ruff, pre-commit. | MAJOR |
-| **Incremental indexing** | VaultIndexer: mtime-based. CodebaseIndexer: none (full re-embed every time). | **SHA256 content hash** per file — more reliable than mtime (mtime can change without content change, and vice versa on some filesystems). Cursor uses Merkle tree hashing every 10 min. | MAJOR |
-| **Language support** | 7 extensions: .py, .rs, .md, .js, .ts, .tsx, .jsx | **100+ languages** via `tree-sitter-languages` — pre-built grammars for all major languages. | MAJOR |
-| **Code metadata** | None — chunks have only `path`, `language`, `line_start`, `line_end` | **Structural metadata**: `function_name`, `class_name`, `module_name`, `docstring`, `signature`. Enables filtering like `class:MyClass lang:python`. | MAJOR |
-| **Binary detection** | None — relies on `read_text()` exception handling | **Null byte check** in first 8KB, or `python-magic` for MIME type detection. | MINOR |
-| **File size limits** | None | **Configurable max (10MB default)**, skip or warn on oversized files. | MINOR |
-| **Embedding model for code** | Qwen3-Embedding-0.6B (general-purpose) | **Code-specific models**: voyage-code-3, CodeSage, StarEncoder. Qwen3-Embedding-0.6B is adequate but not optimized for code search. | LOW (investigate) |
-| **Overlap strategy** | Character-level tail overlap (broken) | **AST-aware overlap** — include parent node context (e.g., class signature) in child chunks. Or no overlap when AST boundaries are clean. | MAJOR (with AST fix) |
-| **Score normalization** | None — vault (graph-boosted) and codebase (CrossEncoder logits) scores mixed | **Score normalization** before fusion — min-max or z-score normalization per source. Or separate result lists with source labels. | MAJOR |
+| Area                         | Current State                                                                         | Industry Standard (2025-2026)                                                                                                                                                                                                           | Gap Severity         |
+| ---------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| **Code chunking**            | `TextSplitter` — regex-based, character-level splits at `\nclass`, `\ndef` etc.       | **tree-sitter AST chunking** — parse code into AST, split at function/class boundaries, depth-first walk merging siblings to token limit. Used by Cursor, Cody, CocoIndex. cAST paper: +4.2 pts on StarCoder2-7B vs character chunking. | CRITICAL             |
+| **Gitignore compliance**     | `git ls-files` (works in git repos) with `rglob("*")` fallback that ignores gitignore | **`pathspec` library** — loads `.gitignore` patterns, handles nested gitignores, works outside git repos. Used by black, ruff, pre-commit.                                                                                              | MAJOR                |
+| **Incremental indexing**     | VaultIndexer: mtime-based. CodebaseIndexer: none (full re-embed every time).          | **SHA256 content hash** per file — more reliable than mtime (mtime can change without content change, and vice versa on some filesystems). Cursor uses Merkle tree hashing every 10 min.                                                | MAJOR                |
+| **Language support**         | 7 extensions: .py, .rs, .md, .js, .ts, .tsx, .jsx                                     | **100+ languages** via `tree-sitter-languages` — pre-built grammars for all major languages.                                                                                                                                            | MAJOR                |
+| **Code metadata**            | None — chunks have only `path`, `language`, `line_start`, `line_end`                  | **Structural metadata**: `function_name`, `class_name`, `module_name`, `docstring`, `signature`. Enables filtering like `class:MyClass lang:python`.                                                                                    | MAJOR                |
+| **Binary detection**         | None — relies on `read_text()` exception handling                                     | **Null byte check** in first 8KB, or `python-magic` for MIME type detection.                                                                                                                                                            | MINOR                |
+| **File size limits**         | None                                                                                  | **Configurable max (10MB default)**, skip or warn on oversized files.                                                                                                                                                                   | MINOR                |
+| **Embedding model for code** | Qwen3-Embedding-0.6B (general-purpose)                                                | **Code-specific models**: voyage-code-3, CodeSage, StarEncoder. Qwen3-Embedding-0.6B is adequate but not optimized for code search.                                                                                                     | LOW (investigate)    |
+| **Overlap strategy**         | Character-level tail overlap (broken)                                                 | **AST-aware overlap** — include parent node context (e.g., class signature) in child chunks. Or no overlap when AST boundaries are clean.                                                                                               | MAJOR (with AST fix) |
+| **Score normalization**      | None — vault (graph-boosted) and codebase (CrossEncoder logits) scores mixed          | **Score normalization** before fusion — min-max or z-score normalization per source. Or separate result lists with source labels.                                                                                                       | MAJOR                |
 
 ### Priority Recommendations
 
 1. **Replace TextSplitter with tree-sitter AST chunking** — This is the single highest-impact change. It fixes C1 (line tracking), C2 (chunk ID collisions), M5 (broken overlap), M6 (JS/TS generic separators), and m4 (missing structural metadata) all at once.
 
-2. **Add `incremental_index()` to CodebaseIndexer** — Use SHA256 content hash instead of mtime for reliability. This fixes C3 and makes codebase indexing practical for large repos.
+1. **Add `incremental_index()` to CodebaseIndexer** — Use SHA256 content hash instead of mtime for reliability. This fixes C3 and makes codebase indexing practical for large repos.
 
-3. **Replace `rglob("*")` fallback with `pathspec`** — Fixes M2 and works everywhere (not just git repos).
+1. **Replace `rglob("*")` fallback with `pathspec`** — Fixes M2 and works everywhere (not just git repos).
 
-4. **Add score normalization in `search_all()`** — Fixes M8 (incompatible score scales).
+1. **Add score normalization in `search_all()`** — Fixes M8 (incompatible score scales).
 
-5. **Fix `tag` filter passthrough** — Fixes M7 (silent correctness bug). Quick fix: add `"tag"` handling to `_build_filter()` and `search_vault()`.
+1. **Fix `tag` filter passthrough** — Fixes M7 (silent correctness bug). Quick fix: add `"tag"` handling to `_build_filter()` and `search_vault()`.
 
 ### Awaiting
 
 - `docs/research/2026-03-06-codebase-indexer-tech-stack.md` from docs-researcher — will contain specific API examples for tree-sitter-languages, pathspec, and content hashing.
 - Will extend this gap analysis when research arrives.
 
----
+______________________________________________________________________
 
 ## Round 4: MCP Server, CLI, and Cross-Cutting Issues
 
@@ -261,7 +261,7 @@ The constructor mutates the process environment. This means importing and creati
 **R4-m6. `handle_status` imports `torch` unconditionally** (cli.py:299)
 The `status` command imports `torch` even if the user just wants to see the storage path. If torch isn't installed, the status command fails entirely instead of showing partial info.
 
----
+______________________________________________________________________
 
 ## Round 5: Public API, Workspace, and Cross-Module Analysis
 
@@ -301,7 +301,7 @@ The `discover_git()` function checks for `.gt/` as a "container" directory. This
 **R5-m4. `get_related()` returns empty dict on graph build failure** (api.py:115-117)
 When `VaultGraph(root_dir)` raises an exception, `get_related()` returns `{"doc_id": doc_id, "outgoing": [], "incoming": []}` — an empty result that looks like the doc has no links. The caller can't distinguish "no links" from "graph failed to build." Should either raise or include an error field.
 
----
+______________________________________________________________________
 
 ## Round 6: pyproject.toml, Dependencies, and Configuration Audit
 
@@ -340,7 +340,7 @@ Once `configure_logging()` runs, it can't be called again with different setting
 **R6-m5. No `py.typed` marker file** (src/vaultspec_rag/)
 PEP 561 requires a `py.typed` marker file for type-checker support. The package uses strict typing (per CLAUDE.md) but doesn't include the marker, so external consumers won't get type checking benefits.
 
----
+______________________________________________________________________
 
 ## Round 7: Integration Test Quality and Remaining Test Files
 
@@ -389,7 +389,7 @@ Tests labeled "rag.api.search" actually create a `VaultSearcher` directly from `
 **R7-m4. `test_nonsense_query` uses absolute threshold that may break with reranker** (test_quality.py:349-370)
 The test asserts `max_score < 0.10` for nonsense queries. But when the CrossEncoder reranker is enabled, it produces logit-scale scores (can be negative or >>1). The threshold only works for RRF fusion scores. If the default reranker config changes, this test will break.
 
----
+______________________________________________________________________
 
 ## Round 8: ADR Consistency and Documentation Cross-Reference
 
@@ -415,7 +415,7 @@ The "Public Interface" section lists `CodebaseIndexer` but never mentions the Cr
 **R8-m5. ADR "Consequences" mentions CI needing GPU runners or mocking** (adr gpu-only-rag-stack.md:131)
 Quote: "CI/CD must have GPU runners or mock the embedding layer for tests." But CLAUDE.md explicitly forbids mocking: "No mocks, patches, fakes, stubs, monkeypatches." The ADR consequence contradicts the project's testing mandate. CI must have GPU runners, period.
 
----
+______________________________________________________________________
 
 ## Round 9: New Code Audit — ASTChunker, pathspec scan, incremental_index
 
@@ -436,7 +436,7 @@ Audited files (new/rewritten code):
 
 ### CRITICAL Issues (New)
 
-**R9-C1. `_get_chunk_ids_for_files()` is O(n*m) — fetches ALL IDs and filters in Python** (indexer.py:1014-1022)
+**R9-C1. `_get_chunk_ids_for_files()` is O(n\*m) — fetches ALL IDs and filters in Python** (indexer.py:1014-1022)
 
 ```python
 def _get_chunk_ids_for_files(self, rel_paths: set[str]) -> list[str]:
@@ -447,9 +447,9 @@ def _get_chunk_ids_for_files(self, rel_paths: set[str]) -> list[str]:
     ]
 ```
 
-This method calls `self.store.get_all_code_ids()` which must scroll the entire Qdrant `codebase_docs` collection to retrieve every chunk ID. Then it does an O(n*m) list comprehension where n = total chunk count and m = number of files to remove. For a codebase with 50K chunks and 100 modified files, this is 5 million `str.startswith()` calls per incremental index.
+This method calls `self.store.get_all_code_ids()` which must scroll the entire Qdrant `codebase_docs` collection to retrieve every chunk ID. Then it does an O(n\*m) list comprehension where n = total chunk count and m = number of files to remove. For a codebase with 50K chunks and 100 modified files, this is 5 million `str.startswith()` calls per incremental index.
 
-**CORRECTION:** `get_all_code_ids()` (store.py:326) and `delete_code_chunks()` (store.py:303) both exist on VaultStore. The earlier grep hit a stale read. incremental_index() will NOT crash. The O(n*m) performance concern remains valid — downgraded to MAJOR.
+**CORRECTION:** `get_all_code_ids()` (store.py:326) and `delete_code_chunks()` (store.py:303) both exist on VaultStore. The earlier grep hit a stale read. incremental_index() will NOT crash. The O(n\*m) performance concern remains valid — downgraded to MAJOR.
 
 **Fix:** Add a `get_code_ids_by_path_prefix()` method to VaultStore that uses Qdrant's scroll with a payload filter (`path` field match). This pushes the filtering to Qdrant and avoids loading all IDs into Python. Alternatively, use a `Filter` with `FieldCondition(key="path", match=MatchAny(any=[...]))`.
 
@@ -528,7 +528,7 @@ When merging sibling nodes into a buffer, the code joins them with `"\n"`. But t
 **R9-m6. ~~`delete_code_chunks()` method does not exist on `VaultStore`~~** **-- RETRACTED**
 Both `delete_code_chunks()` (store.py:303) and `get_all_code_ids()` (store.py:326) exist. Earlier grep hit a stale read. See R9-C1 correction.
 
----
+______________________________________________________________________
 
 ## Round 10: Post-Fix Verification and Metadata Propagation Audit
 
@@ -565,13 +565,13 @@ Files that fail hashing are now skipped with a warning. However, this introduces
 **R9-M1 (CodeChunk node_type): VERIFIED FIXED**
 `CodeChunk` has `node_type`, `function_name`, `class_name` fields. `upsert_code_chunks()` stores them in Qdrant payload (store.py:272-274). `_build_code_filter()` supports filtering by all three (store.py:577).
 
-**R9-m3 (_chunk_with_ast discards node_type): VERIFIED FIXED**
+**R9-m3 (\_chunk_with_ast discards node_type): VERIFIED FIXED**
 All 6-tuple fields now unpacked and passed to CodeChunk (indexer.py:873).
 
 **R9-M2 (byte vs char offset in force-split): NOT YET FIXED** (indexer.py:359-364)
 Still uses `source[:abs_byte]` with byte offset as character index.
 
-**R9-m1 (_merge_small first-non-None logic): NOT YET FIXED** (indexer.py:444-446)
+**R9-m1 (\_merge_small first-non-None logic): NOT YET FIXED** (indexer.py:444-446)
 Still uses `prev[3] or chunk[3]` for node_type, function_name, class_name.
 
 ### MAJOR Issues (New)
@@ -637,13 +637,13 @@ All buffer flush entries have `function_name=None`. If a small function fits ent
 **R10-m6. `full_index()` hashes files after indexing — hash failure doesn't prevent indexing** (indexer.py:994-1000)
 `full_index()` hashes files for metadata AFTER chunking and embedding. If a file can be read as text (`_chunk_file()`) but fails `read_bytes()` for hashing, it's indexed but not tracked in metadata. On the next incremental run, it appears as "new" and gets re-indexed. Inconsistent with `incremental_index()` which hashes first.
 
----
+______________________________________________________________________
 
 ## Round 11: Task #13 Fix Verification and Test Quality Audit
 
 Audited files (current versions):
 
-- `src/vaultspec_rag/indexer.py` — force-split fix (359-366), _merge_small fix (450-463), incremental_index (1038-1113)
+- `src/vaultspec_rag/indexer.py` — force-split fix (359-366), \_merge_small fix (450-463), incremental_index (1038-1113)
 - `src/vaultspec_rag/tests/test_indexer_unit.py` — 833 lines, 20+ test classes
 - `src/vaultspec_rag/cli.py` — handle_index (125-211)
 
@@ -652,7 +652,7 @@ Audited files (current versions):
 **R9-M2 (byte vs char offset in force-split): VERIFIED FIXED** (indexer.py:359-366)
 Force-split now uses `node.start_point[0] + 1` for the base line number and `text[:i].count("\n")` for offset — both operate on the Python str, not byte offsets. No more `source[:abs_byte]`.
 
-**R9-m1 (_merge_small cross-type logic): VERIFIED FIXED** (indexer.py:450-463)
+**R9-m1 (\_merge_small cross-type logic): VERIFIED FIXED** (indexer.py:450-463)
 `_merge_small` now checks if both chunks have non-None node_type and they differ — if so, merged node_type is None. The `None or X` case still preserves X (correct). `function_name` and `class_name` still use `or` logic (first non-None wins) — see R11-m1.
 
 **R9-M4 (negation patterns): Previously verified FIXED in Round 10.**
@@ -719,7 +719,7 @@ The test doesn't assert which path was taken. If `_chunk_with_ast` happens to su
 **R11-m1. `_merge_small` function_name `or` logic merges names from different functions** (indexer.py:461)
 When two chunks from different functions are merged, `prev[4] or chunk[4]` keeps the first function_name. E.g., merging a chunk from `foo()` with one from `bar()` labels the merged chunk as `function_name="foo"`. The class_name `or` logic (line 462) is less problematic since class_name propagates from parent scope and is usually the same for siblings.
 
----
+______________________________________________________________________
 
 ## Round 12: Task #19 Fix Verification and Remaining Byte-Offset Audit
 
@@ -739,7 +739,7 @@ for rel in set(current_files) - set(current_hashes):
 
 Line 1151 uses `self._write_meta(current_hashes)` directly instead of the old dict comprehension over `current_files`. Both the KeyError crash and the "unhashed files reappear as new" problem (R10-M2) are fixed.
 
-**R10-M3 (_extract_name byte offset): VERIFIED FIXED** (indexer.py:314-327)
+**R10-M3 (\_extract_name byte offset): VERIFIED FIXED** (indexer.py:314-327)
 `_extract_name` now takes `source_bytes: bytes` parameter and uses `source_bytes[start:end].decode("utf-8")` — correctly using byte offsets on the byte string, then decoding to Python str.
 
 **R10-M4 (decorated_definition ambiguity): VERIFIED FIXED** (indexer.py:329-340, 357-377)
@@ -790,7 +790,7 @@ This assumes the first non-decorator, non-comment child is the definition. This 
 **R12-m3. `_containers` set still defined inline** (indexer.py:384-387)
 Previously flagged as R10-m4. Still created inside `_collect_chunks()` on every recursive call. Should be a module-level `frozenset` constant.
 
----
+______________________________________________________________________
 
 ## Round 13: Search Pipeline, MCP Server, and Metadata Filter Gaps
 
@@ -880,19 +880,19 @@ Previously flagged as R7-M1, T-C1. There are zero integration tests that:
 - Index code files and verify chunks have correct `node_type`/`function_name`/`class_name`
 - Search for code and verify results contain structural metadata
 - Filter codebase search by `function_name` or `class_name`
-This is the single largest test coverage gap for the new metadata feature.
+  This is the single largest test coverage gap for the new metadata feature.
 
----
+______________________________________________________________________
 
 ## Summary
 
 ### Issue Totals (19 Rounds)
 
-| Severity | Count |
-|----------|-------|
-| CRITICAL | 3 |
-| MAJOR | 63 |
-| MINOR | 90 |
+| Severity  | Count   |
+| --------- | ------- |
+| CRITICAL  | 3       |
+| MAJOR     | 63      |
+| MINOR     | 90      |
 | **Total** | **156** |
 
 ### Issue Registry (Quick Reference)
@@ -912,20 +912,20 @@ This is the single largest test coverage gap for the new metadata feature.
 - R5-M1-R5-M4: Public API (R5)
 - R6-M1-R6-M3: Dependencies (R6)
 - R7-M1-R7-M3: Codebase test gaps (R7)
-- R9-C1 (downgraded): O(n*m) _get_chunk_ids_for_files perf
+- R9-C1 (downgraded): O(n\*m) \_get_chunk_ids_for_files perf
 - R9-M1-R9-M6: R9 issues — R9-M1, R9-M2, R9-M4, R9-M6, R9-m1 FIXED
 - R10-M1-R10-M4: Post-fix issues — R10-M1, R10-M2, R10-M3, R10-M4 ALL FIXED
 - R11-M1: Byte offset text extraction (lines 352, 420) — STILL OPEN
 - R11-M2: CLI still uses full_index for code
 - R13-M1: search_codebase() ignores node_type/function_name/class_name filters
-- R13-M2: _FILTER_PATTERN/_FILTER_KEY_MAP missing code metadata tokens
+- R13-M2: \_FILTER_PATTERN/\_FILTER_KEY_MAP missing code metadata tokens
 - R13-M3: SearchResult dataclass missing code metadata fields
 - R13-M4: MCP SearchResultItem missing code metadata fields
 - R13-M5: reindex_codebase MCP tool always calls full_index() (=R4-M1)
 - R13-M6: tag filter parsed but never reaches Qdrant (=M7 from R1)
 - R14-M1: **init**.py missing CodebaseIndexer and CodeChunk exports
 - R14-M2: api.py has no codebase API facade (no index_codebase/search_codebase)
-- R14-M3: api.py _Engine lacks VaultSearcher — no search() in public API
+- R14-M3: api.py \_Engine lacks VaultSearcher — no search() in public API
 - R14-M4: api.py list_documents() O(n) individual Qdrant retrievals
 - R15-M1: Duplicate test files test_query.py and test_search_unit.py
 - R15-M2: No integration tests for search_codebase() (=R7-M1/R13-m4)
@@ -937,13 +937,13 @@ This is the single largest test coverage gap for the new metadata feature.
 - R19-M1: search_codebase MCP injects language via query mutation (fragile)
 - R20-M1: Zero integration tests for CodebaseIndexer (CRITICAL GAP)
 - R20-M2: Zero integration tests for search_codebase() (CRITICAL GAP)
-- R20-M3: _build_rag_components creates only VaultIndexer, no CodebaseIndexer
+- R20-M3: \_build_rag_components creates only VaultIndexer, no CodebaseIndexer
 - R20-M4: test_store_codebase tests upsert without sparse vectors
 - R20-M5: test_query.py entirely redundant with test_search_unit.py (=R15-M1)
 - R20-M6: test_robustness.py has 4 unit tests disguised as robustness tests
 - R20-M7: test_embeddings.py in unit dir but marked integration
 
----
+______________________________________________________________________
 
 ## Round 14 — Cross-Module Audit: api.py, config.py, embeddings.py, cli.py, workspace.py, **init**.py
 
@@ -1022,10 +1022,10 @@ the allowed set is broader.
 In `search_vault()`, CrossEncoder reranking happens first (line 262), then graph reranking
 (line 264). The graph boost multiplies CrossEncoder scores, which means graph influence
 depends on the CrossEncoder score scale. If the CrossEncoder returns small scores, the
-1.0 + 0.1*links multiplier has outsized relative effect. This ordering is likely intentional
+1.0 + 0.1\*links multiplier has outsized relative effect. This ordering is likely intentional
 but the interaction between two reranking stages is non-obvious.
 
----
+______________________________________________________________________
 
 ## Round 15 — Test Coverage Audit + Task #18 Verification
 
@@ -1057,13 +1057,13 @@ Both files test `parse_query()` with overlapping test cases:
 - `test_query.py::TestQueryParsing` — 6 tests (plain, type, multiple, date, tag, filter-only)
 - `test_search_unit.py::TestParseQuery` — 13 tests (superset: adds lang, path, empty, hash
   strip, space collapse, unknown prefix)
-`test_query.py` is entirely redundant — every case it tests is covered by
-`test_search_unit.py`. Should be deleted to reduce noise and confusion.
+  `test_query.py` is entirely redundant — every case it tests is covered by
+  `test_search_unit.py`. Should be deleted to reduce noise and confusion.
 
 **R15-M2. No integration tests for `search_codebase()`** (all test files)
 `test_search_integration.py::TestVaultSearch` has 5 tests — all call `searcher.search()`
 or `searcher.search_vault()`. Zero tests call `searcher.search_codebase()`.
-The codebase search pipeline (encode -> hybrid_search_codebase -> _rerank) has no
+The codebase search pipeline (encode -> hybrid_search_codebase -> \_rerank) has no
 end-to-end test with real indexed code. Previously flagged as R7-M1/R13-m4.
 
 **R15-M3. `test_store_codebase.py` `test_upsert_code_chunks` doesn't test sparse vectors**
@@ -1101,7 +1101,7 @@ There are no tests for the workspace resolution logic — `discover_git()`, `_wa
 `_parse_git_pointer()`, `_strip_unc()`. These are complex path-manipulation functions with
 multiple branches (worktree detection, `.gt` container, UNC path stripping) and no test coverage.
 
----
+______________________________________________________________________
 
 ## Round 16 — Re-audit indexer.py after coder changes (+666 lines diff)
 
@@ -1128,7 +1128,7 @@ fixes and identify any new issues or regressions.
 `source[node.start_byte : node.end_byte]` where `source` is `str` but offsets are byte
 positions. Diverges for non-ASCII source.
 
-**R9-C1 (downgraded). O(n*m) `_get_chunk_ids_for_files`** (indexer.py:1173-1181) — STILL OPEN
+**R9-C1 (downgraded). O(n\*m) `_get_chunk_ids_for_files`** (indexer.py:1173-1181) — STILL OPEN
 Task #24 pending.
 
 ### New Findings
@@ -1155,26 +1155,26 @@ Issues confirmed fixed across all rounds:
 - M1-M4: Core implementation (Task #3)
 - R9-M1, R9-M2, R9-M4, R9-M6, R9-m1: Round 9 bugs (Task #13)
 - R10-M1, R10-M2, R10-M3, R10-M4: Post-fix regressions (Task #19)
-- R10-m4: _containers inline set →_CONTAINER_NODES module constant
+- R10-m4: \_containers inline set →\_CONTAINER_NODES module constant
 - R11-M2: CLI full_index for code (Task #18)
 - R13-M5: MCP reindex_codebase full_index only (Task #18)
 - R4-M1: No incremental option in MCP (Task #18)
-- c_sharp grammar name: both LANGUAGE_MAP and _TOP_LEVEL_NODES
+- c_sharp grammar name: both LANGUAGE_MAP and \_TOP_LEVEL_NODES
 
 ### Open themes (unresolved)
 
 1. R11-M1: Byte offset as character index (indexer.py:363, 425) — still open
-2. R13-M1-M4: Search pipeline metadata gap — Task #22 in progress
-3. R13-M6/M7/R14-m7: Tag filter parsed but silently dropped
-4. R14-M1-M3: Public API facade vault-only — Task #25 pending
-5. R14-M4: list_documents O(n) retrieval — Task #26 pending
-6. R15-M2: No codebase search integration tests
-7. C4: _stable_id() 63-bit hash collision risk
-8. R9-C1: O(n*m) _get_chunk_ids_for_files — Task #24 pending
+1. R13-M1-M4: Search pipeline metadata gap — Task #22 in progress
+1. R13-M6/M7/R14-m7: Tag filter parsed but silently dropped
+1. R14-M1-M3: Public API facade vault-only — Task #25 pending
+1. R14-M4: list_documents O(n) retrieval — Task #26 pending
+1. R15-M2: No codebase search integration tests
+1. C4: \_stable_id() 63-bit hash collision risk
+1. R9-C1: O(n\*m) \_get_chunk_ids_for_files — Task #24 pending
 
----
+______________________________________________________________________
 
-## Round 17 — Deep Audit: embeddings.py, config.py, _stable_id(), byte offsets
+## Round 17 — Deep Audit: embeddings.py, config.py, \_stable_id(), byte offsets
 
 **Focus:** Deep-dive into embedding pipeline, config validation, `_stable_id()` collision
 math, and exhaustive byte/char offset analysis.
@@ -1183,11 +1183,11 @@ math, and exhaustive byte/char offset analysis.
 
 All uses of `start_byte`/`end_byte` in the codebase:
 
-| Line | Expression | Object sliced | Status |
-|------|-----------|---------------|--------|
-| 337 | `source_bytes[name_node.start_byte:name_node.end_byte]` | `bytes` | CORRECT |
-| 363 | `source[node.start_byte:node.end_byte]` | `str` | **BUG (R11-M1)** |
-| 425 | `source[child.start_byte:child.end_byte]` | `str` | **BUG (R11-M1)** |
+| Line | Expression                                              | Object sliced | Status           |
+| ---- | ------------------------------------------------------- | ------------- | ---------------- |
+| 337  | `source_bytes[name_node.start_byte:name_node.end_byte]` | `bytes`       | CORRECT          |
+| 363  | `source[node.start_byte:node.end_byte]`                 | `str`         | **BUG (R11-M1)** |
+| 425  | `source[child.start_byte:child.end_byte]`               | `str`         | **BUG (R11-M1)** |
 
 The fix for lines 363 and 425 should be:
 
@@ -1210,14 +1210,14 @@ This produces a 63-bit integer (max 9.2 × 10^18).
 
 **Birthday paradox collision probability:**
 
-| Scale | P(collision) | Verdict |
-|-------|-------------|---------|
-| 1K docs | 5.4 × 10^-14 | Negligible |
-| 10K docs | 5.4 × 10^-12 | Negligible |
-| 100K docs + chunks | 5.4 × 10^-10 | Safe |
-| 1M total points | 5.4 × 10^-8 | Safe |
-| 10M total points | 5.4 × 10^-6 | Low risk |
-| 4.3B total points | ~50% | Dangerous |
+| Scale              | P(collision) | Verdict    |
+| ------------------ | ------------ | ---------- |
+| 1K docs            | 5.4 × 10^-14 | Negligible |
+| 10K docs           | 5.4 × 10^-12 | Negligible |
+| 100K docs + chunks | 5.4 × 10^-10 | Safe       |
+| 1M total points    | 5.4 × 10^-8  | Safe       |
+| 10M total points   | 5.4 × 10^-6  | Low risk   |
+| 4.3B total points  | ~50%         | Dangerous  |
 
 **Verdict:** C4 severity was originally CRITICAL. Downgrading to MINOR. At any realistic
 scale for a vault workspace (< 1M total points combining docs + code chunks), the collision
@@ -1262,9 +1262,9 @@ default prompt is for documents/passages. Noted for documentation, not a bug.
 recreated on every attribute access. This means every config lookup does:
 
 1. Call `get_base_config()` (may or may not cache internally)
-2. Create new `VaultSpecConfigWrapper`
-3. On attribute access, create new `rag_defaults` dict
-4. Try `getattr(self._base, name)`, catch `AttributeError`, return default
+1. Create new `VaultSpecConfigWrapper`
+1. On attribute access, create new `rag_defaults` dict
+1. Try `getattr(self._base, name)`, catch `AttributeError`, return default
 
 For hot paths like `_default_batch_size()` called per batch, this is wasteful. The wrapper
 should be a singleton or the defaults dict should be a class variable.
@@ -1290,7 +1290,7 @@ The wrapper provides defaults but never validates types or ranges. If the base c
 which will fail with an obscure error. Minimum validation (type checks for numeric configs,
 non-empty string for model names) would catch misconfigurations early.
 
----
+______________________________________________________________________
 
 ## Round 18 — Tag Filter Root Cause Trace, Task #21 Verification, workspace.py, CLI errors
 
@@ -1356,11 +1356,11 @@ and may not realize their `tag:#research` constraint was dropped.
 1. **search.py:229-233** — `search_vault()` whitelist only passes `doc_type`, `feature`,
    `date`. It does not pass `tag`. This is the PRIMARY drop point.
 
-2. **store.py:538-564** — Even if `tag` reached `_build_filter()`, it would be silently
+1. **store.py:538-564** — Even if `tag` reached `_build_filter()`, it would be silently
    dropped because the method only handles `doc_type`, `feature`, `date`. This is the
    SECONDARY drop point.
 
-3. **store.py payload** — The vault document payload (line 218-228) stores `tags` as a
+1. **store.py payload** — The vault document payload (line 218-228) stores `tags` as a
    list field. To filter by a single tag, the filter would need to use
    `models.MatchAny(any=[tag])` on the `tags` list field, not `MatchValue`. The filter
    type is wrong even if the key were passed through.
@@ -1368,8 +1368,8 @@ and may not realize their `tag:#research` constraint was dropped.
 **Fix requires three changes:**
 
 1. `search_vault()` line 232: add `"tag"` to the whitelist
-2. `_build_filter()`: add a `tag` handler that uses `MatchAny` on the `tags` list field
-3. Verify the Qdrant `tags` payload field stores list values (confirmed at line 224)
+1. `_build_filter()`: add a `tag` handler that uses `MatchAny` on the `tags` list field
+1. Verify the Qdrant `tags` payload field stores list values (confirmed at line 224)
 
 ### workspace.py `.gt` Convention — Deep Audit
 
@@ -1381,8 +1381,8 @@ filesystem root. Only if no `.gt/` is found does it fall through to the `.git` c
 1. If any ancestor directory happens to have a `.gt/` folder (e.g. a Go test directory,
    a temp folder, a user-created directory), it will be detected as a "container root"
    and the function returns `is_bare=True` with that directory as `repo_root`.
-2. The actual `.git` directory is never checked.
-3. This could cause `resolve_workspace()` to use the wrong directory as `target_dir`,
+1. The actual `.git` directory is never checked.
+1. This could cause `resolve_workspace()` to use the wrong directory as `target_dir`,
    leading to indexing the wrong files, missing the vault, or other workspace errors.
 
 The `.gt` convention is not part of standard git. It's not documented in any ADR or doc
@@ -1412,7 +1412,7 @@ traceback instead of a user-friendly error.
 `import torch` at line 299 is inside the command function, not guarded. If torch is not
 installed, the user gets a raw `ModuleNotFoundError` traceback instead of a helpful message.
 
----
+______________________________________________________________________
 
 ## Round 19 — MCP Server Tool Schema Audit
 
@@ -1420,15 +1420,15 @@ installed, the user gets a raw `ModuleNotFoundError` traceback instead of a help
 
 ### Tool Schema Summary
 
-| Tool | Sync/Async | Input Types | Return Type | Schema OK? |
-|------|-----------|-------------|-------------|------------|
-| `search_vault` | async | `query: str, top_k: int=5` | `SearchResponse` | OK |
-| `search_codebase` | async | `query: str, top_k: int=5, language: str\|None=None` | `SearchResponse` | Issues |
-| `search_all` | async | `query: str, top_k: int=5` | `SearchResponse` | OK |
-| `get_index_status` | sync | (none) | `IndexStatus` | OK |
-| `get_code_file` | sync | `path: str` | `str` | Issues |
-| `reindex_vault` | async | `clean: bool=False` | `IndexResponse` | Minor |
-| `reindex_codebase` | async | `clean: bool=False` | `IndexResponse` | OK |
+| Tool               | Sync/Async | Input Types                                          | Return Type      | Schema OK? |
+| ------------------ | ---------- | ---------------------------------------------------- | ---------------- | ---------- |
+| `search_vault`     | async      | `query: str, top_k: int=5`                           | `SearchResponse` | OK         |
+| `search_codebase`  | async      | `query: str, top_k: int=5, language: str\|None=None` | `SearchResponse` | Issues     |
+| `search_all`       | async      | `query: str, top_k: int=5`                           | `SearchResponse` | OK         |
+| `get_index_status` | sync       | (none)                                               | `IndexStatus`    | OK         |
+| `get_code_file`    | sync       | `path: str`                                          | `str`            | Issues     |
+| `reindex_vault`    | async      | `clean: bool=False`                                  | `IndexResponse`  | Minor      |
+| `reindex_codebase` | async      | `clean: bool=False`                                  | `IndexResponse`  | OK         |
 
 ### Findings
 
@@ -1483,7 +1483,7 @@ On Windows, `resolve()` can produce UNC paths (`\\?\...`) depending on path leng
 `is_relative_to()` may fail to match if one path has UNC prefix and the other doesn't.
 The workspace module has `_strip_unc()` but it's not used here.
 
----
+______________________________________________________________________
 
 ## Round 20: Integration Test Suite Deep Audit
 
@@ -1492,23 +1492,23 @@ Goal: identify coverage gaps, disguised unit tests, fixture issues, and missing 
 
 ### Test Inventory
 
-| File | Marker | Tests | Real GPU/Qdrant? |
-|------|--------|-------|------------------|
-| `integration/test_indexer_integration.py` | integration + quality | 7 | Yes |
-| `integration/test_search_integration.py` | integration | 11 | Yes |
-| `integration/test_api_integration.py` | integration + quality | 11 | Yes |
-| `integration/test_store_integration.py` | integration | 5 | Yes (4 of 5) |
-| `integration/test_quality.py` | quality | 13 | Yes |
-| `integration/test_performance.py` | performance | 10 | Yes |
-| `integration/test_robustness.py` | robustness | 7 | Partial |
-| `test_embeddings.py` | integration | 7 | Yes |
-| `test_store_codebase.py` | integration | 4 | Yes (3 of 4) |
-| `test_search_unit.py` | unit + integration | ~16 | 3 integration |
-| `test_indexer_unit.py` | unit | ~40 | No |
-| `test_store.py` | unit | 7 | No |
-| `test_query.py` | unit | 6 | No |
-| `test_cli.py` | unit | 13 | No |
-| `test_mcp_server.py` | unit | 14 | No |
+| File                                      | Marker                | Tests | Real GPU/Qdrant? |
+| ----------------------------------------- | --------------------- | ----- | ---------------- |
+| `integration/test_indexer_integration.py` | integration + quality | 7     | Yes              |
+| `integration/test_search_integration.py`  | integration           | 11    | Yes              |
+| `integration/test_api_integration.py`     | integration + quality | 11    | Yes              |
+| `integration/test_store_integration.py`   | integration           | 5     | Yes (4 of 5)     |
+| `integration/test_quality.py`             | quality               | 13    | Yes              |
+| `integration/test_performance.py`         | performance           | 10    | Yes              |
+| `integration/test_robustness.py`          | robustness            | 7     | Partial          |
+| `test_embeddings.py`                      | integration           | 7     | Yes              |
+| `test_store_codebase.py`                  | integration           | 4     | Yes (3 of 4)     |
+| `test_search_unit.py`                     | unit + integration    | ~16   | 3 integration    |
+| `test_indexer_unit.py`                    | unit                  | ~40   | No               |
+| `test_store.py`                           | unit                  | 7     | No               |
+| `test_query.py`                           | unit                  | 6     | No               |
+| `test_cli.py`                             | unit                  | 13    | No               |
+| `test_mcp_server.py`                      | unit                  | 14    | No               |
 
 Total: ~171 tests across 15 files.
 
@@ -1597,30 +1597,30 @@ combined results are correctly ranked (known issue R1-M8: different score scales
 
 1. **Codebase full pipeline**: Scan files → AST chunk → embed on GPU → upsert to Qdrant →
    search_codebase → verify relevant code chunks returned
-2. **Codebase incremental index**: Index code → modify a file → incremental_index →
+1. **Codebase incremental index**: Index code → modify a file → incremental_index →
    verify only changed file re-embedded
-3. **search_all()**: Index vault + code → search_all → verify mixed results from both sources
-4. **Tag filter end-to-end**: Index docs with tags → search with `tag:X` → verify filtering
-5. **Code metadata filters**: Index code → search with `func:X` or `class:Y` → verify
+1. **search_all()**: Index vault + code → search_all → verify mixed results from both sources
+1. **Tag filter end-to-end**: Index docs with tags → search with `tag:X` → verify filtering
+1. **Code metadata filters**: Index code → search with `func:X` or `class:Y` → verify
    filtering by function_name/class_name
-6. **MCP tools end-to-end**: Call `search_codebase`, `reindex_codebase` via MCP → verify
+1. **MCP tools end-to-end**: Call `search_codebase`, `reindex_codebase` via MCP → verify
    correct responses
 
 ### Fixture Issues That Could Cause Silent Failures
 
 1. **No CodebaseIndexer in session fixture** (R20-M3): Any test attempting to test codebase
    search would need its own fixture, making it appear like a test gap rather than a fixture gap
-2. **`test_search_empty_store` loads duplicate model** (R20-m3): Could OOM on smaller GPUs
-3. **Session fixture cleanup is best-effort** (conftest.py:140-142): `shutil.rmtree` in
+1. **`test_search_empty_store` loads duplicate model** (R20-m3): Could OOM on smaller GPUs
+1. **Session fixture cleanup is best-effort** (conftest.py:140-142): `shutil.rmtree` in
    teardown — if Qdrant has the directory locked, cleanup fails silently
-4. **`_vault_snapshot_reset` runs `git checkout`** (conftest.py:184-192): If tests modify
+1. **`_vault_snapshot_reset` runs `git checkout`** (conftest.py:184-192): If tests modify
    vault files, this resets them. But it's `check=False` — silent failure if git isn't available
 
 ### Summary — Round 20
 
-| Severity | Count | Key Items |
-|----------|-------|-----------|
-| MAJOR | 7 | R20-M1 to R20-M7 |
-| MINOR | 8 | R20-m1 to R20-m8 |
+| Severity | Count | Key Items        |
+| -------- | ----- | ---------------- |
+| MAJOR    | 7     | R20-M1 to R20-M7 |
+| MINOR    | 8     | R20-m1 to R20-m8 |
 
 **Running totals: 3C, 70M, 98m = 171 issues across 20 rounds**

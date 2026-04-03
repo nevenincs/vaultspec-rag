@@ -34,7 +34,7 @@ jobs:
         uses: docker://rhysd/actionlint:1.7.11
 
   lint-and-type:
-    name: Lint and Type Check
+    name: Lint, Type, Config, Link, and Markdown Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,39 +50,36 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install taplo
-        uses: taiki-e/install-action@v2
-        with:
-          tool: taplo-cli
-
       - name: Install lychee
         uses: taiki-e/install-action@v2
         with:
           tool: lychee
 
+      - name: Install taplo
+        uses: taiki-e/install-action@v2
+        with:
+          tool: taplo-cli
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
       - name: Install dependencies
-        run: uv sync --dev
+        run: just dev deps sync
 
-      - name: Ruff check
-        run: uv run ruff check src/
+      - name: Ruff
+        run: just dev lint python
 
-      - name: Ruff format check
-        run: uv run ruff format --check src/
+      - name: Ty
+        run: just dev lint type
 
-      - name: Ty type check
-        run: uv run ty check src/vaultspec_rag
+      - name: Taplo
+        run: just dev lint toml
 
-      - name: Link check
-        run: lychee --config lychee.toml README.md .vault .vaultspec
+      - name: Lychee
+        run: just dev lint links
 
-      - name: Taplo lint
-        run: taplo lint
-
-      - name: Markdown format check
-        run: uv run mdformat --check README.md .vaultspec/ .vault/
-
-      - name: Markdown lint
-        run: uv run pymarkdown --config .pymarkdown.json scan -r README.md .vaultspec/ .vault/
+      - name: Markdown
+        run: just dev lint markdown
 
   tests:
     name: Tests
@@ -101,11 +98,14 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies
-        run: uv sync --dev
+      - name: Install just
+        uses: taiki-e/install-action@just
 
-      - name: Run unit tests
-        run: uv run pytest -m unit --timeout=60
+      - name: Install dependencies
+        run: just dev deps sync
+
+      - name: Run tests
+        run: just dev test python
 
   vault-audit:
     name: Vault Audit
@@ -124,14 +124,17 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies
-        run: uv sync --dev
+      - name: Install just
+        uses: taiki-e/install-action@just
 
-      - name: Run vault checks
-        run: uv run vaultspec-core vault check all
+      - name: Install dependencies
+        run: just dev deps sync
+
+      - name: Verify vault structure and links
+        run: just prod vault check all
 
   dependency-audit:
-    name: Dependency Audit
+    name: Dependency Audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -147,8 +150,11 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install just
+        uses: taiki-e/install-action@just
+
       - name: Install dependencies
-        run: uv sync --dev
+        run: just dev deps sync
 
       - name: Python dependency vulnerability audit
-        run: uvx pip-audit
+        run: just dev audit deps

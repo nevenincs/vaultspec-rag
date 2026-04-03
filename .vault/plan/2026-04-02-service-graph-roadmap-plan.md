@@ -1,13 +1,13 @@
 ---
 tags:
-  - "#plan"
-  - "#service-graph"
+  - '#plan'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-adr]]"
-  - "[[2026-04-02-service-graph-research]]"
-  - "[[2026-04-02-service-graph-phase1-plan]]"
-  - "[[2026-04-02-release-readiness-audit]]"
+  - '[[2026-04-02-service-graph-adr]]'
+  - '[[2026-04-02-service-graph-research]]'
+  - '[[2026-04-02-service-graph-phase1-plan]]'
+  - '[[2026-04-02-release-readiness-audit]]'
 ---
 
 <!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
@@ -109,7 +109,7 @@ to a GitHub issue for tracking.
 
 ## Post-merge follow-ups (from audit)
 
-### M5.1: Performance — narrow _gpu_sem scope
+### M5.1: Performance — narrow \_gpu_sem scope
 
 **GitHub:** #22
 **Scope:** Narrow semaphore to GPU-only operations, share CrossEncoder
@@ -188,17 +188,17 @@ M4 and M5 can run in parallel after M3 completes.
 
 ## Issue mapping
 
-| Milestone | GitHub Issue | Status |
-|-----------|-------------|--------|
-| M1 | #14 | complete |
-| M2 | #18 | complete |
-| M3 | #19 | complete |
-| M4 | #16 | complete |
-| M5 | #20 | complete |
-| M5.1 | #22 | open (follow-up) |
-| M5.2 | #23 | open (follow-up) |
-| M5.3 | #24 | open (follow-up) |
-| M5.4 | #25 | open (follow-up) |
-| M6 | deferred | — |
-| M7 | deferred | — |
-| M8 | deferred | — |
+| Milestone | GitHub Issue | Status           |
+| --------- | ------------ | ---------------- |
+| M1        | #14          | complete         |
+| M2        | #18          | complete         |
+| M3        | #19          | complete         |
+| M4        | #16          | complete         |
+| M5        | #20          | complete         |
+| M5.1      | #22          | open (follow-up) |
+| M5.2      | #23          | open (follow-up) |
+| M5.3      | #24          | open (follow-up) |
+| M5.4      | #25          | open (follow-up) |
+| M6        | deferred     | —                |
+| M7        | deferred     | —                |
+| M8        | deferred     | —                |

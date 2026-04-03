@@ -1,17 +1,18 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 9 Audit -- store.py (deep dive, post-fix verification)
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/store.py` (746 lines)
 **Date:** 2026-03-07
 
----
+______________________________________________________________________
 
 ## Check 1: Boolean Cache on `ensure_table` / `ensure_code_table`
 
@@ -38,7 +39,7 @@ Same pattern with `self._code_ensured` (initialized `False` at line 142). Set `T
 
 **Verdict: PASS.** Identical correct pattern.
 
----
+______________________________________________________________________
 
 ## Check 2: Payload Indexes
 
@@ -78,7 +79,7 @@ self._client.create_payload_index(
 
 **Verdict: PASS.** Four KEYWORD indexes + one INTEGER index for `line_start`. Schema types are correct for each field's data type.
 
----
+______________________________________________________________________
 
 ## Check 3: Date Filter -- `MatchValue` not `MatchText`
 
@@ -96,7 +97,7 @@ if key == "date":
 
 **Verdict: PASS.** Uses `MatchValue` (exact match) as intended. The earlier `MatchText` bug (R22b-M1) has been fixed.
 
----
+______________________________________________________________________
 
 ## Check 4: Tag Filter
 
@@ -116,7 +117,7 @@ elif key == "tag":
 
 Note: `MatchAny(any=[value])` with a single-element list is functionally equivalent to `MatchValue(value=value)` for array payloads, but `MatchAny` is semantically clearer for array fields. If multi-tag filtering is needed (e.g., `tag:research tag:adr`), the caller would need to add multiple `tag` entries to the filters dict or the code would need a list-valued filter. Currently `search.py` only extracts the last `tag:` from the query string, so single-tag is the only supported mode.
 
----
+______________________________________________________________________
 
 ## Check 5: `hybrid_search` / `hybrid_search_codebase` -- Count Guard and Prefetch Filter
 
@@ -137,7 +138,7 @@ Dense-only fallback (lines 580-586, 653-658) uses `query_filter=query_filter` on
 
 **Verdict: PASS.** `filter=` on Prefetch, `query_filter=` on fallback top-level query. Both correct per qdrant-client API.
 
----
+______________________________________________________________________
 
 ## Check 6: Sparse=None Guard
 
@@ -160,7 +161,7 @@ Same pattern.
 
 **Verdict: PASS.** When `sparse_vector is None`, only the dense Prefetch is created. The RRF fusion still works with a single prefetch (it just returns dense-only results). No crash risk from `None` sparse vectors.
 
----
+______________________________________________________________________
 
 ## Check 7: `_stable_id` hashlib Import
 
@@ -185,7 +186,7 @@ This was flagged as R22b-m2 and the recommendation was to move it to module leve
 **File:** `store.py:742`
 **Severity:** MEDIUM (performance on bulk operations, trivial fix)
 
----
+______________________________________________________________________
 
 ## Check 8: `_build_filter` Unknown Keys
 
@@ -217,7 +218,7 @@ Same pattern -- unknown keys silently dropped.
 
 **File:** `store.py:721-733`
 
----
+______________________________________________________________________
 
 ## Check 9: `_build_filter` Empty String Values
 
@@ -236,7 +237,7 @@ This was flagged as R22b-m5 and has not been addressed.
 
 **File:** `store.py:700-706`
 
----
+______________________________________________________________________
 
 ## Check 10: `upsert_documents` / `upsert_code_chunks` Batching
 
@@ -265,7 +266,7 @@ This was flagged as R22b-m3 and has not been addressed.
 
 **File:** `store.py:273-276, 320-323`
 
----
+______________________________________________________________________
 
 ## Check 11: `_points_to_dicts` Fallback ID
 
@@ -293,7 +294,7 @@ This was flagged as R22b-m8 and has not been addressed.
 
 **File:** `store.py:670`
 
----
+______________________________________________________________________
 
 ## Additional Observations
 
@@ -321,26 +322,26 @@ Same `str(point.id)` fallback pattern as `_points_to_dicts`. Same minor concern 
 
 **File:** `store.py:503`
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding | Status |
-|----|----------|---------|--------|
-| R9-M1 | MEDIUM | `_stable_id` still imports `hashlib` inside method body (not moved to module level) | Unfixed (from R22b-m2) |
-| R9-m1 | MINOR | `date` payload index uses KEYWORD schema -- limits future range queries | Design note |
-| R9-m2 | MINOR | `_build_filter` silently drops unknown filter keys (no warning logged) | Unfixed (from R22b-m4) |
-| R9-m3 | MINOR | `_build_filter` does not skip empty string values | Unfixed (from R22b-m5) |
-| R9-m4 | MINOR | No batching on `upsert_documents` / `upsert_code_chunks` | Unfixed (from R22b-m3) |
-| R9-m5 | MINOR | `_points_to_dicts` and `list_all_documents` use `str(point.id)` as silent fallback | Unfixed (from R22b-m8) |
+| ID    | Severity | Finding                                                                             | Status                 |
+| ----- | -------- | ----------------------------------------------------------------------------------- | ---------------------- |
+| R9-M1 | MEDIUM   | `_stable_id` still imports `hashlib` inside method body (not moved to module level) | Unfixed (from R22b-m2) |
+| R9-m1 | MINOR    | `date` payload index uses KEYWORD schema -- limits future range queries             | Design note            |
+| R9-m2 | MINOR    | `_build_filter` silently drops unknown filter keys (no warning logged)              | Unfixed (from R22b-m4) |
+| R9-m3 | MINOR    | `_build_filter` does not skip empty string values                                   | Unfixed (from R22b-m5) |
+| R9-m4 | MINOR    | No batching on `upsert_documents` / `upsert_code_chunks`                            | Unfixed (from R22b-m3) |
+| R9-m5 | MINOR    | `_points_to_dicts` and `list_all_documents` use `str(point.id)` as silent fallback  | Unfixed (from R22b-m8) |
 
 ### Verified Fixes (from prior rounds)
 
-| Prior Finding | Status |
-|---------------|--------|
-| R22b-M1: `_build_filter` date uses `MatchText` | **FIXED** -- now uses `MatchValue` |
-| R22b-M2: `hybrid_search` count() guard | **FIXED** -- removed |
-| R22b-m1: `ensure_table` repeated `collection_exists` | **FIXED** -- boolean cache added |
-| R22b-m6: `except Exception` swallows all errors | **FIXED** -- narrowed to 3 specific types |
+| Prior Finding                                        | Status                                    |
+| ---------------------------------------------------- | ----------------------------------------- |
+| R22b-M1: `_build_filter` date uses `MatchText`       | **FIXED** -- now uses `MatchValue`        |
+| R22b-M2: `hybrid_search` count() guard               | **FIXED** -- removed                      |
+| R22b-m1: `ensure_table` repeated `collection_exists` | **FIXED** -- boolean cache added          |
+| R22b-m6: `except Exception` swallows all errors      | **FIXED** -- narrowed to 3 specific types |
 
 **1 MEDIUM finding (R9-M1). 5 MINOR findings (all unfixed carryovers from R22b).**

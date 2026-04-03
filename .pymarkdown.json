@@ -1,6 +1,12 @@
 {
   "plugins": {
+    "md011": {
+      "enabled": false
+    },
     "md012": {
+      "enabled": false
+    },
+    "md025": {
       "enabled": false
     },
     "md013": {
@@ -10,7 +16,7 @@
       "enabled": false
     },
     "md024": {
-      "siblings_only": true
+      "enabled": false
     },
     "md033": {
       "allowed_elements": "p,img,br,!--,![CDATA[,!DOCTYPE,tag,key,value,path,feature,yyyy-mm-dd,title,type"

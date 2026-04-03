@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 25 Audit -- Full Test Suite
 
 Scope: all 14 test files in `src/vaultspec_rag/tests/` plus 2 conftest files and 1 constants file.
@@ -131,14 +132,14 @@ All 14 test files were checked for:
 
 ## Summary
 
-| Severity | Count | IDs |
-|----------|-------|-----|
+| Severity | Count | IDs                   |
+| -------- | ----- | --------------------- |
 | Major    | 6     | R25-M1 through R25-M6 |
 | Minor    | 8     | R25-m1 through R25-m8 |
 
 **Key themes:**
 
 1. **Marker discipline** (M1, M2, M3, M4, m1): Multiple tests have dual markers violating the "exactly one marker" rule. Integration tests in wrong directory.
-2. **Fragile/tautological tests** (M5, m3, m4): Tests that verify source code strings or test hashlib instead of production behavior.
-3. **Missing coverage** (M6, m5-m8): Known bugs from prior audits have no regression tests.
-4. **Banned patterns**: Clean -- no mocks, skips, or synthetic data remain.
+1. **Fragile/tautological tests** (M5, m3, m4): Tests that verify source code strings or test hashlib instead of production behavior.
+1. **Missing coverage** (M6, m5-m8): Known bugs from prior audits have no regression tests.
+1. **Banned patterns**: Clean -- no mocks, skips, or synthetic data remain.

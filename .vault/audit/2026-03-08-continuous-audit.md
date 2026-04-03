@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
+
 # Continuous Audit Log — 2026-03-08
 
 ## [08:37] Audit: --target flag propagation
@@ -50,13 +51,16 @@ The `.jsonl` log files (75 files) are NOT scanned by `scan_vault()` because it o
 ### MAJOR findings
 
 - **GPU_FAST_CORPUS_STEMS files are untracked** — The 13 stems used by the fast test fixture (`conftest.py:32-53`) are all untracked files (e.g., `2026-01-10-pipeline-execution-model.md`, `2026-01-18-nexus-security-audit.md`). They exist in the working tree but are NOT committed. This means:
+
   1. A fresh clone would NOT have these files
-  2. The fast test fixture (`rag_components`) would index 0 documents on a clean checkout
-  3. `_vault_snapshot_reset` runs `git checkout -- test-project/.vault/` which would DELETE these files, breaking subsequent test runs in the same worktree
+  1. The fast test fixture (`rag_components`) would index 0 documents on a clean checkout
+  1. `_vault_snapshot_reset` runs `git checkout -- test-project/.vault/` which would DELETE these files, breaking subsequent test runs in the same worktree
+
   - **File**: `tests/constants.py:32-53`, `tests/conftest.py:181-197`
   - **Impact**: Tests fail on clean clone. CI would fail.
 
 - **`_vault_snapshot_reset` is destructive to untracked files** — The session-scoped autouse fixture runs `git checkout -- test-project/.vault/` on teardown (`conftest.py:187-188`). This restores tracked files but also removes any untracked additions. Since the 21 test-critical files are untracked, running the test suite once would delete them from the working tree.
+
   - **File**: `tests/conftest.py:181-197`
   - **Impact**: After one test run, the GPU_FAST_CORPUS_STEMS files may be deleted. However, `git checkout -- <path>` does NOT delete untracked files — it only restores tracked files. So this specific concern is mitigated. The real risk is that these files simply don't exist on a clean clone.
 
@@ -78,24 +82,26 @@ The `.jsonl` log files (75 files) are NOT scanned by `scan_vault()` because it o
 
 ### Where EmbeddingModel is instantiated
 
-| Location | Scope | Caching | Notes |
-|----------|-------|---------|-------|
-| `cli.py:198` (index cmd) | Per CLI invocation | None | Fresh model every `vaultspec-rag index` |
-| `cli.py:294` (search cmd) | Per CLI invocation | None | Fresh model every `vaultspec-rag search` |
-| `cli.py:486` (benchmark cmd) | Per CLI invocation | None | Fresh model every `vaultspec-rag benchmark` |
-| `cli.py:608` (quality cmd) | Per CLI invocation | None | Fresh model every `vaultspec-rag quality` |
-| `api.py:46` (_Engine.**init**) | Singleton via get_engine() | Yes — `_engine` global + `threading.Lock` | Reused across calls with same root_dir |
-| `mcp_server.py:74` (get_comp) | Singleton via `_comp` global | Yes — `threading.Lock`, cached forever | Created once on first MCP tool call |
-| `tests/conftest.py:101` | session-scoped fixture | Yes — pytest session scope | One model per test session |
+| Location                        | Scope                        | Caching                                   | Notes                                       |
+| ------------------------------- | ---------------------------- | ----------------------------------------- | ------------------------------------------- |
+| `cli.py:198` (index cmd)        | Per CLI invocation           | None                                      | Fresh model every `vaultspec-rag index`     |
+| `cli.py:294` (search cmd)       | Per CLI invocation           | None                                      | Fresh model every `vaultspec-rag search`    |
+| `cli.py:486` (benchmark cmd)    | Per CLI invocation           | None                                      | Fresh model every `vaultspec-rag benchmark` |
+| `cli.py:608` (quality cmd)      | Per CLI invocation           | None                                      | Fresh model every `vaultspec-rag quality`   |
+| `api.py:46` (\_Engine.**init**) | Singleton via get_engine()   | Yes — `_engine` global + `threading.Lock` | Reused across calls with same root_dir      |
+| `mcp_server.py:74` (get_comp)   | Singleton via `_comp` global | Yes — `threading.Lock`, cached forever    | Created once on first MCP tool call         |
+| `tests/conftest.py:101`         | session-scoped fixture       | Yes — pytest session scope                | One model per test session                  |
 
 ### MAJOR findings
 
-- **CLI model loading is a 5-15s overhead per invocation** — Every CLI command (index, search, benchmark, quality) creates a fresh `EmbeddingModel()`, loading Qwen3-Embedding-0.6B (~1.2GB) + SPLADE v3 into GPU VRAM from scratch. For a `search` command that should feel interactive, 5-15 seconds of model loading before the actual search executes is a severe UX problem. The search itself takes <100ms, but the total wall time is dominated by model init.
+- **CLI model loading is a 5-15s overhead per invocation** — Every CLI command (index, search, benchmark, quality) creates a fresh `EmbeddingModel()`, loading Qwen3-Embedding-0.6B (~1.2GB) + SPLADE v3 into GPU VRAM from scratch. For a `search` command that should feel interactive, 5-15 seconds of model loading before the actual search executes is a severe UX problem. The search itself takes \<100ms, but the total wall time is dominated by model init.
+
   - **File**: `cli.py:198,294,486,608`
   - **Impact**: Unusable latency for interactive CLI usage. Users will avoid CLI search.
   - **Fix options**: (1) Resident model server/daemon that keeps models loaded; (2) CLI connects to MCP server for search instead of loading models itself; (3) Model memory-mapping or faster loading strategies.
 
 - **Multiple EmbeddingModel instances in test session** — The `rag_components` (fast) and `rag_components_full` fixtures each create a separate `EmbeddingModel()` instance (`conftest.py:101`). If both fixtures are used in the same session, two copies of the models are loaded onto GPU, consuming ~2-3GB VRAM unnecessarily.
+
   - **File**: `tests/conftest.py:80-128`, lines 131-167
   - **Impact**: Wasted GPU memory. Could cause OOM on smaller GPUs.
   - **Fix**: Extract a session-scoped `embedding_model` fixture shared by both.
@@ -139,13 +145,13 @@ The `.jsonl` log files (75 files) are NOT scanned by `scan_vault()` because it o
 
 5 separate `rag_components*` fixture definitions, each calling `_build_rag_components()` which creates a new `EmbeddingModel()`:
 
-| Fixture | File | Scope | Qdrant suffix | Model instance |
-|---------|------|-------|---------------|---------------|
-| `rag_components` | `tests/conftest.py:132` | session | `-fast` | Own |
-| `rag_components_full` | `tests/conftest.py:151` | session | `-full` | Own |
-| `rag_components` | `tests/integration/conftest.py:17` | session | `-fast-unit` | Own |
-| `rag_components_with_code` | `tests/integration/conftest.py:36` | session | `-fast-code` | Own |
-| `rag_components_mixed` | `tests/integration/test_search_integration.py:139` | session | `-mixed` | Own |
+| Fixture                    | File                                               | Scope   | Qdrant suffix | Model instance |
+| -------------------------- | -------------------------------------------------- | ------- | ------------- | -------------- |
+| `rag_components`           | `tests/conftest.py:132`                            | session | `-fast`       | Own            |
+| `rag_components_full`      | `tests/conftest.py:151`                            | session | `-full`       | Own            |
+| `rag_components`           | `tests/integration/conftest.py:17`                 | session | `-fast-unit`  | Own            |
+| `rag_components_with_code` | `tests/integration/conftest.py:36`                 | session | `-fast-code`  | Own            |
+| `rag_components_mixed`     | `tests/integration/test_search_integration.py:139` | session | `-mixed`      | Own            |
 
 **Key observation**: The `rag_components` fixture is defined TWICE — once in `tests/conftest.py` and once in `tests/integration/conftest.py`. The integration one overrides the parent for integration tests (using suffix `-fast-unit` instead of `-fast`). This is intentional pytest fixture scoping.
 
@@ -153,10 +159,12 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 
 ### MEDIUM findings
 
-- **Up to 5 EmbeddingModel instances in one test session** — Each `_build_rag_components()` call creates its own model. With Qwen3 (~600MB) + SPLADE (~300MB) per instance, 5 instances = ~4.5GB GPU memory for models alone, plus Qdrant storage. Could OOM on GPUs with <8GB VRAM.
+- **Up to 5 EmbeddingModel instances in one test session** — Each `_build_rag_components()` call creates its own model. With Qwen3 (~600MB) + SPLADE (~300MB) per instance, 5 instances = ~4.5GB GPU memory for models alone, plus Qdrant storage. Could OOM on GPUs with \<8GB VRAM.
+
   - **Fix**: Create a single session-scoped `embedding_model` fixture and pass it to `_build_rag_components()` instead of instantiating inside.
 
 - **No guard against future xdist adoption** — If someone adds `pytest-xdist` later, GPU tests would run in parallel workers that each try to load models and access Qdrant simultaneously. No `xdist_group` markers or `pytest_collection_modifyitems` hook exists to prevent this.
+
   - **Fix**: Add a `pytest_collection_modifyitems` hook or `xdist_group` markers preemptively, or document the no-xdist constraint.
 
 ### PASS
@@ -167,25 +175,25 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 - `timeout = 300` is generous enough for GPU tests — correct
 - `timeout_func_only = true` avoids timing out during fixture setup (model loading) — correct and important
 
-## [09:25] Audit: CLI <-> MCP shape consistency
+## [09:25] Audit: CLI \<-> MCP shape consistency
 
 **Status**: PASS with 3 MINOR mismatches
 
 ### Feature matrix
 
-| Feature | CLI Command | MCP Tool | Match? |
-|---------|-------------|----------|--------|
-| Search vault | `search --type vault` | `search_vault()` | Partial |
-| Search code | `search --type code` | `search_codebase()` | Partial |
-| Search all | N/A | `search_all()` | **CLI missing** |
-| Index vault | `index --type vault` | `reindex_vault()` | Partial |
-| Index code | `index --type code` | `reindex_codebase()` | Partial |
-| Index all | `index --type all` | N/A | **MCP missing** |
-| Status | `status` | `get_index_status()` | Partial |
-| Get file | N/A | `get_code_file()` | **CLI missing** |
-| Benchmark | `benchmark` | N/A | CLI only |
-| Quality | `quality` | N/A | CLI only |
-| Test | `test` | N/A | CLI only |
+| Feature      | CLI Command           | MCP Tool             | Match?          |
+| ------------ | --------------------- | -------------------- | --------------- |
+| Search vault | `search --type vault` | `search_vault()`     | Partial         |
+| Search code  | `search --type code`  | `search_codebase()`  | Partial         |
+| Search all   | N/A                   | `search_all()`       | **CLI missing** |
+| Index vault  | `index --type vault`  | `reindex_vault()`    | Partial         |
+| Index code   | `index --type code`   | `reindex_codebase()` | Partial         |
+| Index all    | `index --type all`    | N/A                  | **MCP missing** |
+| Status       | `status`              | `get_index_status()` | Partial         |
+| Get file     | N/A                   | `get_code_file()`    | **CLI missing** |
+| Benchmark    | `benchmark`           | N/A                  | CLI only        |
+| Quality      | `quality`             | N/A                  | CLI only        |
+| Test         | `test`                | N/A                  | CLI only        |
 
 ### Parameter comparison
 
@@ -219,12 +227,15 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 ### MINOR findings
 
 - **CLI has no `search_all` equivalent** — MCP provides `search_all()` for combined vault+code search, but CLI `search` only supports `--type vault` or `--type code`, not both. Users must run two commands.
+
   - **File**: `cli.py:270-324` vs `mcp_server.py:205-223`
 
 - **CLI search missing code filters** — MCP `search_codebase` accepts `language`, `node_type`, `function_name`, `class_name` filters, but CLI `search --type code` has no equivalents.
+
   - **File**: `cli.py:270-324` vs `mcp_server.py:161-202`
 
 - **MCP status is a subset of CLI status** — CLI `status` shows GPU name, VRAM, target dir; MCP `get_index_status` returns only counts and storage path.
+
   - **File**: `cli.py:327-363` vs `mcp_server.py:226-238`
 
 ### PASS
@@ -244,18 +255,18 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 
 **Scenario**: Fresh workspace with no `.qdrant/` directory and no indexed data.
 
-| Component | Cold start behavior | Creates on demand? | Error on empty? |
-|-----------|--------------------|--------------------|-----------------|
-| `VaultStore.__init__` | Creates `.qdrant/` dir via `mkdir(parents=True)` | Yes | No |
-| `ensure_table()` | Creates `vault_docs` collection if missing | Yes | No |
-| `ensure_code_table()` | Creates `codebase_docs` collection if missing | Yes | No |
-| `hybrid_search()` on empty collection | Calls `ensure_table()`, then `query_points` returns `[]` | N/A | No — returns empty list |
-| `count()` on empty collection | Calls `ensure_table()`, returns 0 | N/A | No |
-| MCP `search_vault` on empty | Returns `SearchResponse(results=[], summary="Found 0 ...")` | N/A | No |
-| MCP `get_index_status` on empty | Returns `IndexStatus(vault_count=0, code_count=0, ...)` | N/A | No |
-| MCP `reindex_vault` on empty `.vault/` | `scan_vault()` returns 0 paths, `full_index()` returns `IndexResult(total=0)` | N/A | No |
-| CLI `search` on empty | Prints "No results found" message | N/A | No |
-| CLI `index` on empty `.vault/` | Indexes 0 docs, shows summary table with all zeros | N/A | No |
+| Component                              | Cold start behavior                                                           | Creates on demand? | Error on empty?         |
+| -------------------------------------- | ----------------------------------------------------------------------------- | ------------------ | ----------------------- |
+| `VaultStore.__init__`                  | Creates `.qdrant/` dir via `mkdir(parents=True)`                              | Yes                | No                      |
+| `ensure_table()`                       | Creates `vault_docs` collection if missing                                    | Yes                | No                      |
+| `ensure_code_table()`                  | Creates `codebase_docs` collection if missing                                 | Yes                | No                      |
+| `hybrid_search()` on empty collection  | Calls `ensure_table()`, then `query_points` returns `[]`                      | N/A                | No — returns empty list |
+| `count()` on empty collection          | Calls `ensure_table()`, returns 0                                             | N/A                | No                      |
+| MCP `search_vault` on empty            | Returns `SearchResponse(results=[], summary="Found 0 ...")`                   | N/A                | No                      |
+| MCP `get_index_status` on empty        | Returns `IndexStatus(vault_count=0, code_count=0, ...)`                       | N/A                | No                      |
+| MCP `reindex_vault` on empty `.vault/` | `scan_vault()` returns 0 paths, `full_index()` returns `IndexResult(total=0)` | N/A                | No                      |
+| CLI `search` on empty                  | Prints "No results found" message                                             | N/A                | No                      |
+| CLI `index` on empty `.vault/`         | Indexes 0 docs, shows summary table with all zeros                            | N/A                | No                      |
 
 **GPU initialization failure**:
 

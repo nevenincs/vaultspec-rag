@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-08-qdrant-filter-verification-research]]"
-  - "[[2026-03-07-libdoc-verification-research]]"
+  - '[[2026-03-08-qdrant-filter-verification-research]]'
+  - '[[2026-03-07-libdoc-verification-research]]'
 ---
 
 # ADR: Filters must go on each Prefetch, not top-level `query_filter`
@@ -32,11 +32,11 @@ For dense-only queries (no prefetch), use top-level `query_filter` normally.
 
 Runtime testing in Qdrant local mode confirmed:
 
-| Scenario | Result |
-|----------|--------|
+| Scenario                                      | Result             |
+| --------------------------------------------- | ------------------ |
 | Top-level `query_filter` only (with prefetch) | **FILTER IGNORED** |
-| Per-Prefetch `filter` on each branch | **WORKS** |
-| Top-level `query_filter` (no prefetch) | **WORKS** |
+| Per-Prefetch `filter` on each branch          | **WORKS**          |
+| Top-level `query_filter` (no prefetch)        | **WORKS**          |
 
 The top-level `query_filter` is silently ignored when `prefetch` is used with
 `FusionQuery`. This is undocumented behavior specific to local mode. The

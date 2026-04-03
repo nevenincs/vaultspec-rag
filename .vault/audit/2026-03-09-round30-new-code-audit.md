@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -12,7 +12,7 @@ related: []
 **Auditor:** Claude Code
 **Scope:** New code added in session (mcp_server graph invalidation, CLI MCP fast paths, atomic writes)
 
----
+______________________________________________________________________
 
 ## Part A: New Code Correctness Audit
 
@@ -46,7 +46,7 @@ def _run() -> IndexResponse:
 
 **Architectural note:** The VaultGraph is populated during `search_vault` from the vault collection only. CodebaseIndexer writes to the separate `code` collection, so reindexing codebase never invalidates the vault graph. This is sound.
 
----
+______________________________________________________________________
 
 ### 2. CLI Fast-Path Tool Map Fallback ✅ SAFE (DEAD CODE)
 
@@ -65,7 +65,7 @@ tool_name = tool_map.get(search_type, "search_vault")
 - ✅ **CORRECT:** The `.get()` fallback is dead code but harmless defensive programming
 - **Recommendation:** The fallback is safe to keep (belt-and-suspenders defensive coding)
 
----
+______________________________________________________________________
 
 ### 3. TestMcpFastPath Tests — Network Behavior ✅ GENUINE
 
@@ -94,14 +94,14 @@ def test_tool_map_vault(self):
 
 **Verdict:** No false tests. All tests exercise real code paths and validate actual behavior.
 
----
+______________________________________________________________________
 
 ### 4. Atomic Write Correctness ✅ CORRECT
 
 **Locations:**
 
-- `src/vaultspec_rag/indexer.py:835-847` (VaultIndexer._write_meta)
-- `src/vaultspec_rag/indexer.py:1243-1252` (CodebaseIndexer._write_meta)
+- `src/vaultspec_rag/indexer.py:835-847` (VaultIndexer.\_write_meta)
+- `src/vaultspec_rag/indexer.py:1243-1252` (CodebaseIndexer.\_write_meta)
 
 ```python
 def _write_meta(self, meta: dict[str, str]) -> None:
@@ -114,16 +114,16 @@ def _write_meta(self, meta: dict[str, str]) -> None:
 
 **Findings:**
 
-| Question | Answer |
-|----------|--------|
-| `.with_suffix(".tmp")` safe? | ✅ Yes. `index_meta.json` → `index_meta.tmp`; `code_index_meta.json` → `code_index_meta.tmp`. Both safe. |
-| Race if two threads write simultaneously? | ✅ No. Indexers are **single-threaded** (called once per reindex operation). `_write_meta` is called once at the end of `full_index` or `incremental_index`. |
-| .tmp file already exists from crashed write? | ✅ Correct. `write_text()` overwrites silently. `os.replace()` then atomically replaces the real file. |
-| `os.replace()` atomicity? | ✅ Yes. POSIX `rename()` is atomic; Windows `ReplaceFile()` is atomic. No crash-in-middle corruption. |
+| Question                                     | Answer                                                                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.with_suffix(".tmp")` safe?                 | ✅ Yes. `index_meta.json` → `index_meta.tmp`; `code_index_meta.json` → `code_index_meta.tmp`. Both safe.                                                     |
+| Race if two threads write simultaneously?    | ✅ No. Indexers are **single-threaded** (called once per reindex operation). `_write_meta` is called once at the end of `full_index` or `incremental_index`. |
+| .tmp file already exists from crashed write? | ✅ Correct. `write_text()` overwrites silently. `os.replace()` then atomically replaces the real file.                                                       |
+| `os.replace()` atomicity?                    | ✅ Yes. POSIX `rename()` is atomic; Windows `ReplaceFile()` is atomic. No crash-in-middle corruption.                                                        |
 
 **Verdict:** Atomic write pattern is **architecturally sound** and **crash-safe**. ✅
 
----
+______________________________________________________________________
 
 ## Part B: ADR Regression Test Coverage
 
@@ -131,19 +131,19 @@ def _write_meta(self, meta: dict[str, str]) -> None:
 
 Examined `src/vaultspec_rag/tests/test_adr_regression.py`:
 
-| Feature | Covered? | Test |
-|---------|----------|------|
-| Graph invalidation after `reindex_vault` | ❌ NO | — |
-| `_try_mcp_search` asyncio.run() safety | ❌ NO | — |
-| Atomic write (`os.replace` + `.tmp`) | ✅ YES | `TestBlake2bFileHashing.test_codebase_indexer_meta_uses_blake2b_hashes` (round-trip write/load) |
-| MCP tools are async | ✅ YES | `TestMCPAsyncTools` (6 tests) |
-| Score normalization | ✅ YES | `TestScoreNormalization` (2 tests) |
-| Path.resolve() cache consistency | ✅ YES | `TestPathResolveCache.test_relative_and_dot_relative_same_engine` |
-| VaultGraph cache invalidation | ✅ PARTIAL | `TestGraphCache.test_graph_cache_invalidate_clears` (checks internal state, not integration) |
-| Filter on Prefetch | ✅ YES | `TestFilterOnPrefetch.test_hybrid_search_uses_prefetch_filter` |
-| Blake2b hashing | ✅ YES | `TestBlake2bFileHashing` (2 tests) |
-| RRF k=60 | ✅ YES | `TestRrfKParameter` (2 tests) |
-| Manual node walking | ✅ YES | `TestManualNodeWalking.test_extract_name_uses_child_by_field_name` |
+| Feature                                  | Covered?   | Test                                                                                            |
+| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| Graph invalidation after `reindex_vault` | ❌ NO      | —                                                                                               |
+| `_try_mcp_search` asyncio.run() safety   | ❌ NO      | —                                                                                               |
+| Atomic write (`os.replace` + `.tmp`)     | ✅ YES     | `TestBlake2bFileHashing.test_codebase_indexer_meta_uses_blake2b_hashes` (round-trip write/load) |
+| MCP tools are async                      | ✅ YES     | `TestMCPAsyncTools` (6 tests)                                                                   |
+| Score normalization                      | ✅ YES     | `TestScoreNormalization` (2 tests)                                                              |
+| Path.resolve() cache consistency         | ✅ YES     | `TestPathResolveCache.test_relative_and_dot_relative_same_engine`                               |
+| VaultGraph cache invalidation            | ✅ PARTIAL | `TestGraphCache.test_graph_cache_invalidate_clears` (checks internal state, not integration)    |
+| Filter on Prefetch                       | ✅ YES     | `TestFilterOnPrefetch.test_hybrid_search_uses_prefetch_filter`                                  |
+| Blake2b hashing                          | ✅ YES     | `TestBlake2bFileHashing` (2 tests)                                                              |
+| RRF k=60                                 | ✅ YES     | `TestRrfKParameter` (2 tests)                                                                   |
+| Manual node walking                      | ✅ YES     | `TestManualNodeWalking.test_extract_name_uses_child_by_field_name`                              |
 
 ### Gaps Identified
 
@@ -221,35 +221,35 @@ class TestAtomicMetaWrite:
         assert "os.replace" in source
 ```
 
----
+______________________________________________________________________
 
 ## Summary of New Architectural Invariants NOT Covered by ADR Tests
 
-| Invariant | Location | Priority | Test Status | Note |
-|-----------|----------|----------|-------------|------|
-| Graph cache invalidation on reindex | mcp_server.py:349 | CRITICAL | ❌ MISSING | New architectural decision |
-| asyncio.run() safe in CLI sync context | cli.py:371,413 | HIGH | ❌ MISSING | Defensive test |
-| Atomic write crashes are safe | indexer.py:835-847 | MEDIUM | ⚠️ PARTIAL | Round-trip tested, not crash-safety |
-| Codebase reindex ≠ vault graph invalidation | mcp_server.py:366 | HIGH | ❌ NOT EXPLICIT | Design assumption needs verification |
+| Invariant                                   | Location           | Priority | Test Status     | Note                                 |
+| ------------------------------------------- | ------------------ | -------- | --------------- | ------------------------------------ |
+| Graph cache invalidation on reindex         | mcp_server.py:349  | CRITICAL | ❌ MISSING      | New architectural decision           |
+| asyncio.run() safe in CLI sync context      | cli.py:371,413     | HIGH     | ❌ MISSING      | Defensive test                       |
+| Atomic write crashes are safe               | indexer.py:835-847 | MEDIUM   | ⚠️ PARTIAL      | Round-trip tested, not crash-safety  |
+| Codebase reindex ≠ vault graph invalidation | mcp_server.py:366  | HIGH     | ❌ NOT EXPLICIT | Design assumption needs verification |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
 1. **Add `TestGraphCacheInvalidation`** to `test_adr_regression.py` (inspect-based source check)
-2. **Add `TestAsyncioRunSafety`** to `test_cli.py` (verify asyncio.run in sync context)
-3. **Add `TestAtomicMetaWrite`** to `test_adr_regression.py` (explicit atomic write pattern verification)
-4. **Add integration test** for graph cache invalidation during concurrent search (advanced; can defer)
+1. **Add `TestAsyncioRunSafety`** to `test_cli.py` (verify asyncio.run in sync context)
+1. **Add `TestAtomicMetaWrite`** to `test_adr_regression.py` (explicit atomic write pattern verification)
+1. **Add integration test** for graph cache invalidation during concurrent search (advanced; can defer)
 
----
+______________________________________________________________________
 
 ## Audit Verdict
 
-| Category | Result | Details |
-|----------|--------|---------|
-| **New Code Correctness** | ✅ PASS | All 4 components correct; no logic errors |
-| **Thread Safety** | ✅ PASS | GPU semaphore + threading.Lock pattern sound |
-| **Crash Safety** | ✅ PASS | Atomic writes prevent mid-operation corruption |
-| **Test Coverage** | ⚠️ PARTIAL | 3 architectural invariants missing regression tests |
+| Category                 | Result     | Details                                             |
+| ------------------------ | ---------- | --------------------------------------------------- |
+| **New Code Correctness** | ✅ PASS    | All 4 components correct; no logic errors           |
+| **Thread Safety**        | ✅ PASS    | GPU semaphore + threading.Lock pattern sound        |
+| **Crash Safety**         | ✅ PASS    | Atomic writes prevent mid-operation corruption      |
+| **Test Coverage**        | ⚠️ PARTIAL | 3 architectural invariants missing regression tests |
 
 **Overall:** Code is **production-ready**. Test coverage gaps are **informational** (not blocking); 3 new unit tests recommended to prevent future regressions.

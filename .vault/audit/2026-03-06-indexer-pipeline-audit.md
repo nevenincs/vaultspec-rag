@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: Indexer Pipeline
 
 Feature: indexer.py document preparation, text splitting, batch indexing
@@ -53,14 +54,14 @@ No new issues found.
    Walks forward through chunks from last known offset, preventing
    duplicate code from mapping to the first occurrence's line number.
 
-2. **Chunk ID collisions**: IDs now include 12-char SHA256 content hash:
+1. **Chunk ID collisions**: IDs now include 12-char SHA256 content hash:
    `{rel_path}:{line_start}-{line_end}:{hash}`. Guarantees uniqueness.
 
-3. **CodebaseIndexer.incremental_index()**: New method using SHA256 file
+1. **CodebaseIndexer.incremental_index()**: New method using SHA256 file
    content hashing (not mtime). Detects new/modified/deleted files, only
    re-embeds changed files. Metadata format: `{rel_path: content_hash}`.
 
-4. **Docstring fix**: device example changed from "cpu" to "cuda" (Task #45 resolved).
+1. **Docstring fix**: device example changed from "cpu" to "cuda" (Task #45 resolved).
 
 ### AST Chunking + Pathspec Overhaul (Task #4 -- RESOLVED)
 
@@ -69,18 +70,18 @@ No new issues found.
    Uses `tree-sitter-language-pack` (actively maintained). Falls back to
    `TextSplitter` for data formats (YAML, TOML, JSON, HTML, CSS).
 
-2. **pathspec scanning**: `_scan_codebase()` now uses `pathspec.GitIgnoreSpec`
+1. **pathspec scanning**: `_scan_codebase()` now uses `pathspec.GitIgnoreSpec`
    instead of `git ls-files` + `rglob("*")`. Collects patterns from all
    `.gitignore` files at every directory level. No subprocess dependency.
 
-3. **Language support expanded**: 7 -> 25 extensions. Added Go, Java, C,
+1. **Language support expanded**: 7 -> 25 extensions. Added Go, Java, C,
    C++, C#, Ruby, Shell/Bash, YAML, TOML, JSON, HTML, CSS, Kotlin.
    `LANGUAGE_MAP` dict maps extensions to `(language, grammar)` tuples.
 
-4. **Safety guards**: `_is_binary()` (null byte detection), `_MAX_FILE_SIZE`
+1. **Safety guards**: `_is_binary()` (null byte detection), `_MAX_FILE_SIZE`
    (10MB limit). Applied during scanning before any file is read.
 
-5. **Dependencies added**: `tree-sitter>=0.23`, `tree-sitter-language-pack>=0.10`,
+1. **Dependencies added**: `tree-sitter>=0.23`, `tree-sitter-language-pack>=0.10`,
    `pathspec>=0.12`.
 
 ### Unit Tests (Task #9 -- RESOLVED)

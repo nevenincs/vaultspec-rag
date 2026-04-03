@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
@@ -10,7 +10,7 @@ related: []
 
 Initial audit: 2026-03-06
 
----
+______________________________________________________________________
 
 ## CLI Gaps
 
@@ -48,7 +48,7 @@ pyproject.toml line 27: `vaultspec-rag = "vaultspec_rag.cli:app"` — this relie
 auto-detecting the Typer app object. This works but is non-standard; the typical pattern
 is a callable. Currently functional, no action needed.
 
----
+______________________________________________________________________
 
 ## MCP Server Gaps
 
@@ -78,7 +78,7 @@ The MCP server exposes search tools but no indexing tools. Users cannot trigger 
 from an MCP client. The indexers are initialized (`vault_indexer`, `code_indexer`) but never
 exposed as tools.
 
----
+______________________________________________________________________
 
 ## Test Coverage Gaps
 
@@ -124,7 +124,7 @@ Current test files:
 
 No tests for: cli.py, mcp_server.py, config.py, workspace.py, logging_config.py
 
----
+______________________________________________________________________
 
 ## CLAUDE.md Violations
 
@@ -144,22 +144,22 @@ pyproject.toml does not include any banned test dependencies. This is correct.
 
 All test files are in `src/vaultspec_rag/tests/` as required.
 
----
+______________________________________________________________________
 
 ## Priority Summary
 
-| Priority | Issue | Task |
-|----------|-------|------|
-| P0 | `test` command ignores pytest args | GAP-CLI-1, VIOLATION-1 |
-| P0 | No CLI tests | GAP-TEST-1 |
-| P0 | No MCP server tests | GAP-TEST-2 |
-| P1 | MCP defensive hasattr/suppress | GAP-MCP-2 |
-| P1 | MCP missing index tools | GAP-MCP-4 |
-| P2 | MCP RagComponents fragile init | GAP-MCP-1 |
-| P2 | logging.basicConfig conflict | GAP-MCP-3 |
-| P3 | CLI stubs (mcp stop/status, service *) | GAP-CLI-2, GAP-CLI-3 |
+| Priority | Issue                                   | Task                   |
+| -------- | --------------------------------------- | ---------------------- |
+| P0       | `test` command ignores pytest args      | GAP-CLI-1, VIOLATION-1 |
+| P0       | No CLI tests                            | GAP-TEST-1             |
+| P0       | No MCP server tests                     | GAP-TEST-2             |
+| P1       | MCP defensive hasattr/suppress          | GAP-MCP-2              |
+| P1       | MCP missing index tools                 | GAP-MCP-4              |
+| P2       | MCP RagComponents fragile init          | GAP-MCP-1              |
+| P2       | logging.basicConfig conflict            | GAP-MCP-3              |
+| P3       | CLI stubs (mcp stop/status, service \*) | GAP-CLI-2, GAP-CLI-3   |
 
----
+______________________________________________________________________
 
 ## Audit Round 1 — 2026-03-06T16:45
 
@@ -180,7 +180,7 @@ All test files are in `src/vaultspec_rag/tests/` as required.
 - **GAP-MCP-1 through GAP-MCP-4**: All MCP gaps unchanged (P1-P2)
 - **GAP-CLI-2, GAP-CLI-3**: CLI stubs unchanged (P3)
 
----
+______________________________________________________________________
 
 ## Audit Round 2 — 2026-03-06T16:48
 
@@ -226,7 +226,7 @@ All test files are in `src/vaultspec_rag/tests/` as required.
 - **GAP-MCP-4**: No indexing tools exposed in MCP server (P1) — `IndexResponse` model added but unused
 - **NEW-2**: Possible attribute errors in `index` command summary table (needs verification)
 
----
+______________________________________________________________________
 
 ## Audit Round 3 — 2026-03-06T16:50
 
@@ -256,7 +256,7 @@ All test files are in `src/vaultspec_rag/tests/` as required.
 - **NEW-3**: `mcp status` tool list is stale (P2)
 - **NEW-2**: Possible attribute errors in CLI `index` summary table (P2)
 
----
+______________________________________________________________________
 
 ## Audit Round 4 — 2026-03-06T16:52
 
@@ -279,7 +279,7 @@ All test files are in `src/vaultspec_rag/tests/` as required.
 
 All original gaps (GAP-CLI-1 through GAP-CLI-4, GAP-MCP-1 through GAP-MCP-4) are now resolved. The only P0 issues remaining are the missing test files (Tasks 4 and 6).
 
----
+______________________________________________________________________
 
 ## Audit Round 5 — 2026-03-06T16:53
 
@@ -309,7 +309,7 @@ All original gaps (GAP-CLI-1 through GAP-CLI-4, GAP-MCP-1 through GAP-MCP-4) are
 - **GAP-TEST-2**: No test_mcp_server.py (P0) — Task 6 still pending
 - **NEW-2**: CLI `index` table references `c_res.added/updated/removed/duration_ms` — unverified (P2)
 
----
+______________________________________________________________________
 
 ## Audit Round 6 — 2026-03-06T16:55
 
@@ -325,7 +325,7 @@ All original gaps (GAP-CLI-1 through GAP-CLI-4, GAP-MCP-1 through GAP-MCP-4) are
 
 - **GAP-TEST-2**: No test_mcp_server.py (P0) — Task 6 pending
 
----
+______________________________________________________________________
 
 ## Audit Round 7 — 2026-03-06T16:57
 
@@ -337,7 +337,7 @@ All original gaps (GAP-CLI-1 through GAP-CLI-4, GAP-MCP-1 through GAP-MCP-4) are
 
 - **GAP-TEST-2**: No test_mcp_server.py (P0) — Task 6 in progress, waiting on coder
 
----
+______________________________________________________________________
 
 ## Audit Round 8 — 2026-03-06T16:59
 

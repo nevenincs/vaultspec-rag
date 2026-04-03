@@ -1,17 +1,18 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 12 Audit -- config.py and __init__.py
 
 __Auditor:__ docs-researcher-2-2
 __Files:__ `src/vaultspec_rag/config.py` (78 lines), `src/vaultspec_rag/__init__.py` (52 lines), cross-ref `src/vaultspec_rag/api.py` (264 lines)
 __Date:__ 2026-03-07
 
----
+______________________________________________________________________
 
 ## config.py Audit
 
@@ -19,20 +20,20 @@ __Date:__ 2026-03-07
 
 `_RAG_DEFAULTS` (lines 18-31) provides defaults for 12 keys:
 
-| Key | Default | Used by |
-|-----|---------|---------|
-| `qdrant_dir` | `".qdrant"` | store.py:138, indexer.py:632, indexer.py:874 |
-| `index_metadata_file` | `"index_meta.json"` | indexer.py:632 (VaultIndexer only) |
-| `graph_ttl_seconds` | `300.0` | search.py:184 |
-| `embedding_batch_size` | `64` | embeddings.py:133 |
-| `max_embed_chars` | `8000` | embeddings.py:140 |
-| `embedding_model` | `"Qwen/Qwen3-Embedding-0.6B"` | embeddings.py:161 |
-| `embedding_dimension` | `1024` | embeddings.py:194 |
-| `sparse_model` | `"naver/splade-v3"` | embeddings.py:163 |
-| `rag_enabled` | `True` | (not found in source -- dead key) |
-| `reranker_enabled` | `True` | search.py:191 |
-| `reranker_model` | `"BAAI/bge-reranker-v2-m3"` | search.py:192 |
-| `reranker_top_k` | `5` | (not found in source -- dead key) |
+| Key                    | Default                       | Used by                                      |
+| ---------------------- | ----------------------------- | -------------------------------------------- |
+| `qdrant_dir`           | `".qdrant"`                   | store.py:138, indexer.py:632, indexer.py:874 |
+| `index_metadata_file`  | `"index_meta.json"`           | indexer.py:632 (VaultIndexer only)           |
+| `graph_ttl_seconds`    | `300.0`                       | search.py:184                                |
+| `embedding_batch_size` | `64`                          | embeddings.py:133                            |
+| `max_embed_chars`      | `8000`                        | embeddings.py:140                            |
+| `embedding_model`      | `"Qwen/Qwen3-Embedding-0.6B"` | embeddings.py:161                            |
+| `embedding_dimension`  | `1024`                        | embeddings.py:194                            |
+| `sparse_model`         | `"naver/splade-v3"`           | embeddings.py:163                            |
+| `rag_enabled`          | `True`                        | (not found in source -- dead key)            |
+| `reranker_enabled`     | `True`                        | search.py:191                                |
+| `reranker_model`       | `"BAAI/bge-reranker-v2-m3"`   | search.py:192                                |
+| `reranker_top_k`       | `5`                           | (not found in source -- dead key)            |
 
 __Verdict: PASS__ on coverage. All active RAG config keys have defaults.
 
@@ -48,7 +49,7 @@ Defined at config.py:30 but never referenced. The reranker in `search.py:_rerank
 
 __File:__ `config.py:30`
 
----
+______________________________________________________________________
 
 ### Check 2: `get_config()` Caching
 
@@ -77,19 +78,19 @@ No lock protects `_cached_config`. If two threads call `get_config()` simultaneo
 
 __File:__ `config.py:57-71`
 
----
+______________________________________________________________________
 
 ### Check 3: Hardcoded Config Values in Other Modules
 
-| Module | Value | Config key | Assessment |
-|--------|-------|------------|------------|
-| `embeddings.py:124` | `DEFAULT_DIMENSION = 1024` | `embedding_dimension` | __OK__ -- class-level fallback, overridden by config at line 194 |
-| `embeddings.py:125` | `DEFAULT_BATCH_SIZE = 64` | `embedding_batch_size` | __OK__ -- class-level fallback, `_default_batch_size()` reads config |
-| `embeddings.py:126` | `MAX_EMBED_CHARS = 8000` | `max_embed_chars` | __OK__ -- class-level fallback, `_default_max_embed_chars()` reads config |
-| `store.py:25` | `EMBEDDING_DIM = 1024` | `embedding_dimension` | __OK__ -- module-level fallback, overridden by `__init__` param |
-| `search.py:233` | `batch_size=32` | (none) | __Hardcoded__ -- reranker predict batch size not in config |
-| `embeddings.py:275` | `batch_size: int = 32` | (none) | __Hardcoded__ -- sparse encoder batch size not in config |
-| `indexer.py:874` | `"code_index_meta.json"` | (none) | __Hardcoded__ -- see R12-M1 below |
+| Module              | Value                      | Config key             | Assessment                                                                |
+| ------------------- | -------------------------- | ---------------------- | ------------------------------------------------------------------------- |
+| `embeddings.py:124` | `DEFAULT_DIMENSION = 1024` | `embedding_dimension`  | __OK__ -- class-level fallback, overridden by config at line 194          |
+| `embeddings.py:125` | `DEFAULT_BATCH_SIZE = 64`  | `embedding_batch_size` | __OK__ -- class-level fallback, `_default_batch_size()` reads config      |
+| `embeddings.py:126` | `MAX_EMBED_CHARS = 8000`   | `max_embed_chars`      | __OK__ -- class-level fallback, `_default_max_embed_chars()` reads config |
+| `store.py:25`       | `EMBEDDING_DIM = 1024`     | `embedding_dimension`  | __OK__ -- module-level fallback, overridden by `__init__` param           |
+| `search.py:233`     | `batch_size=32`            | (none)                 | __Hardcoded__ -- reranker predict batch size not in config                |
+| `embeddings.py:275` | `batch_size: int = 32`     | (none)                 | __Hardcoded__ -- sparse encoder batch size not in config                  |
+| `indexer.py:874`    | `"code_index_meta.json"`   | (none)                 | __Hardcoded__ -- see R12-M1 below                                         |
 
 #### R12-M1: CodebaseIndexer hardcodes `"code_index_meta.json"` instead of using config (MEDIUM)
 
@@ -119,7 +120,7 @@ __File:__ `indexer.py:874`
 
 __File:__ `embeddings.py:275`, `search.py:233`
 
----
+______________________________________________________________________
 
 ### Check 4: `reranker_enabled` Config
 
@@ -142,7 +143,7 @@ if not self._reranker_enabled or len(results) <= 1:
 
 __Verdict: PASS.__ `reranker_enabled` is a config key, defaults to `True`, and correctly gates the CrossEncoder reranker.
 
----
+______________________________________________________________________
 
 ### Check 5: Circular Import Risks
 
@@ -157,7 +158,7 @@ All 10 `from .config import get_config` calls across the codebase are __deferred
 
 __Verdict: PASS.__ Clean import graph with deferred imports.
 
----
+______________________________________________________________________
 
 ## __init__.py Audit
 
@@ -165,40 +166,40 @@ __Verdict: PASS.__ Clean import graph with deferred imports.
 
 `__init__.py` exports 19 names from 4 modules:
 
-| Module | Exports |
-|--------|---------|
-| `.api` | `get_related`, `index`, `index_codebase`, `list_documents`, `search_all`, `search_codebase`, `search_vault` |
-| `.embeddings` | `EmbeddingModel`, `SparseResult` |
-| `.indexer` | `CodebaseIndexer`, `IndexResult`, `VaultIndexer`, `prepare_document` |
-| `.search` | `ParsedQuery`, `SearchResult`, `VaultSearcher`, `parse_query`, `rerank_with_graph` |
-| `.store` | `CodeChunk`, `VaultDocument`, `VaultStore` |
+| Module        | Exports                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `.api`        | `get_related`, `index`, `index_codebase`, `list_documents`, `search_all`, `search_codebase`, `search_vault` |
+| `.embeddings` | `EmbeddingModel`, `SparseResult`                                                                            |
+| `.indexer`    | `CodebaseIndexer`, `IndexResult`, `VaultIndexer`, `prepare_document`                                        |
+| `.search`     | `ParsedQuery`, `SearchResult`, `VaultSearcher`, `parse_query`, `rerank_with_graph`                          |
+| `.store`      | `CodeChunk`, `VaultDocument`, `VaultStore`                                                                  |
 
----
+______________________________________________________________________
 
 ### Check 2: Public API Type Coverage
 
 Expected public types and their export status:
 
-| Type | Exported? |
-|------|-----------|
-| `VaultStore` | Yes |
-| `VaultIndexer` | Yes |
-| `CodebaseIndexer` | Yes |
-| `EmbeddingModel` | Yes |
-| `VaultSearcher` | Yes |
-| `SparseResult` | Yes |
-| `SearchResult` | Yes |
-| `ParsedQuery` | Yes |
-| `CodeChunk` | Yes |
-| `VaultDocument` | Yes |
-| `IndexResult` | Yes |
-| `prepare_document` | Yes |
-| `parse_query` | Yes |
-| `rerank_with_graph` | Yes |
+| Type                | Exported? |
+| ------------------- | --------- |
+| `VaultStore`        | Yes       |
+| `VaultIndexer`      | Yes       |
+| `CodebaseIndexer`   | Yes       |
+| `EmbeddingModel`    | Yes       |
+| `VaultSearcher`     | Yes       |
+| `SparseResult`      | Yes       |
+| `SearchResult`      | Yes       |
+| `ParsedQuery`       | Yes       |
+| `CodeChunk`         | Yes       |
+| `VaultDocument`     | Yes       |
+| `IndexResult`       | Yes       |
+| `prepare_document`  | Yes       |
+| `parse_query`       | Yes       |
+| `rerank_with_graph` | Yes       |
 
 __Verdict: PASS.__ All public types are exported.
 
----
+______________________________________________________________________
 
 ### Check 3: Missing Exports for `api.py` Facade Users
 
@@ -215,7 +216,7 @@ The `__init__.py` re-exports 7 of 9 from `api.py`:
 
 __File:__ `__init__.py:9-17`, `api.py:26-36`
 
----
+______________________________________________________________________
 
 ### Check 4: Consistency with `api.py` Internal Usage
 
@@ -241,7 +242,7 @@ The return types of `api.py` functions:
 
 __Verdict: PASS.__ All return types are available to consumers of the public API.
 
----
+______________________________________________________________________
 
 ## Additional Observations
 
@@ -255,17 +256,17 @@ However, `__init__.py` also imports from `.api` (line 9-17), which imports `Embe
 
 Line 36: `def __getattr__(self, name: str) -> Any:` -- the return type is `Any`, which means all config access is untyped. This is a trade-off of the wrapper pattern: type checkers cannot verify config attribute access. Not a bug, but a typing limitation.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| R12-m1 | MINOR | `rag_enabled` config key is dead -- never read |
-| R12-m2 | MINOR | `reranker_top_k` config key is dead -- never read |
-| R12-m3 | MINOR | `get_config()` has benign race on first init (no lock) |
-| R12-m4 | MINOR | Sparse encoder and reranker batch sizes hardcoded (not configurable) |
-| R12-m5 | MINOR | `get_engine` and `reset_engine` not re-exported from `__init__.py` (intentional) |
+| ID     | Severity | Finding                                                                          |
+| ------ | -------- | -------------------------------------------------------------------------------- |
+| R12-m1 | MINOR    | `rag_enabled` config key is dead -- never read                                   |
+| R12-m2 | MINOR    | `reranker_top_k` config key is dead -- never read                                |
+| R12-m3 | MINOR    | `get_config()` has benign race on first init (no lock)                           |
+| R12-m4 | MINOR    | Sparse encoder and reranker batch sizes hardcoded (not configurable)             |
+| R12-m5 | MINOR    | `get_engine` and `reset_engine` not re-exported from `__init__.py` (intentional) |
 
 Note: The `CodebaseIndexer` hardcoded `"code_index_meta.json"` (indexer.py:874) was initially flagged as MEDIUM but downgraded to MINOR on analysis -- vault and codebase intentionally use separate metadata files.
 

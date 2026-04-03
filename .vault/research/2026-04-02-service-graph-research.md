@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#research"
-  - "#service-graph"
+  - '#research'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-release-readiness-audit]]"
-  - "[[2026-03-09-graph-embedding-round36-audit]]"
-  - "[[2026-03-08-fastmcp-lifespan-research]]"
+  - '[[2026-04-02-release-readiness-audit]]'
+  - '[[2026-03-09-graph-embedding-round36-audit]]'
+  - '[[2026-03-08-fastmcp-lifespan-research]]'
 ---
 
 <!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
@@ -94,8 +94,7 @@ The infrastructure already exists:
 - **`service status`**: read status JSON, check PID liveness + HTTP health
   probe.
 - **Health endpoint**: FastMCP runs on Starlette/uvicorn, so a `/health`
-  route or an MCP tool returning `{"status": "ready", "cuda": true,
-  "models_loaded": true, "qdrant": true, "uptime_s": 42.3}`.
+  route or an MCP tool returning `{"status": "ready", "cuda": true, "models_loaded": true, "qdrant": true, "uptime_s": 42.3}`.
 - **Model prefetch**: a `service warmup` command that calls
   `huggingface_hub.snapshot_download()` for all 3 model repos with progress
   bars, before attempting GPU load.
@@ -114,13 +113,13 @@ download, not model loading. Once cached, loading 3 models to GPU takes
 **Optimal startup sequence:**
 
 1. Check CUDA availability -- fail fast
-2. Verify model cache (warn if download needed)
-3. Load dense model (Qwen3, ~1.2GB VRAM)
-4. Load sparse model (SPLADE, ~0.13GB)
-5. Load reranker (CrossEncoder, ~0.56GB) -- if enabled
-6. Open Qdrant store
-7. Warmup query (encode short string, run dummy search)
-8. Signal ready (write status file, log timing)
+1. Verify model cache (warn if download needed)
+1. Load dense model (Qwen3, ~1.2GB VRAM)
+1. Load sparse model (SPLADE, ~0.13GB)
+1. Load reranker (CrossEncoder, ~0.56GB) -- if enabled
+1. Open Qdrant store
+1. Warmup query (encode short string, run dummy search)
+1. Signal ready (write status file, log timing)
 
 **Path to production:** Replace subprocess spawn with systemd user unit
 (Linux) or Windows Service (pywin32) behind the same
@@ -161,26 +160,26 @@ own cache. This:
 
 ## Evaluated approaches summary
 
-| Approach | Verdict | Rationale |
-|---|---|---|
-| Docker GPU services | Defer to post-1.0 | Complexity unjustified for alpha; worsens cold start |
-| Rust bollard/cargo | Reject | Cross-language tax, over-engineering for 2-3 services |
-| Python subprocess daemon | **Adopt for alpha** | ~100 LOC, zero dependencies, cross-platform |
-| MCP HTTP server as service | **Adopt (already exists)** | Infrastructure in place, just needs service wrappers |
-| systemd / Windows Service | Defer to beta | Correct for production, too heavy for alpha |
-| Process managers (supervisor) | Skip | External dependency for single-process service |
-| Unified graph cache | **Adopt immediately** | Fixes R36-C1, eliminates duplicate cache, clean DI |
+| Approach                      | Verdict                    | Rationale                                             |
+| ----------------------------- | -------------------------- | ----------------------------------------------------- |
+| Docker GPU services           | Defer to post-1.0          | Complexity unjustified for alpha; worsens cold start  |
+| Rust bollard/cargo            | Reject                     | Cross-language tax, over-engineering for 2-3 services |
+| Python subprocess daemon      | **Adopt for alpha**        | ~100 LOC, zero dependencies, cross-platform           |
+| MCP HTTP server as service    | **Adopt (already exists)** | Infrastructure in place, just needs service wrappers  |
+| systemd / Windows Service     | Defer to beta              | Correct for production, too heavy for alpha           |
+| Process managers (supervisor) | Skip                       | External dependency for single-process service        |
+| Unified graph cache           | **Adopt immediately**      | Fixes R36-C1, eliminates duplicate cache, clean DI    |
 
 ## Open questions for ADR
 
 1. **Default port**: should `service start` use a well-known port (e.g.,
-   8766) or require explicit `--port`?
-2. **Auto-start**: should CLI commands auto-start the service if not running,
+   8766\) or require explicit `--port`?
+1. **Auto-start**: should CLI commands auto-start the service if not running,
    or require explicit `service start`?
-3. **Status file location**: `~/.vaultspec-rag/service.json` (global) or
+1. **Status file location**: `~/.vaultspec-rag/service.json` (global) or
    `{project}/.qdrant/service.json` (per-project)?
-4. **Health endpoint**: MCP tool (`get_health`) vs raw HTTP route (`/health`)?
-5. **Model prefetch**: separate `service warmup` command or integrated into
+1. **Health endpoint**: MCP tool (`get_health`) vs raw HTTP route (`/health`)?
+1. **Model prefetch**: separate `service warmup` command or integrated into
    `service start`?
 
 ## Addendum: Multi-consumer and state management (2026-04-02)
@@ -280,17 +279,17 @@ modification.
 
 ### Updated evaluated approaches summary
 
-| Approach | Verdict | Rationale |
-|---|---|---|
-| TorchServe / Ray Serve / BentoML | Reject | Overkill for single-GPU local tool |
-| HF TEI (Rust embedding server) | Learn from, don't use | Architecture insights, wrong dependency |
-| gRPC transport | Skip | HTTP overhead negligible at this scale |
-| Per-project service instances | Reject | GPU models are shared; only Qdrant varies |
-| Global service + multi-project routing | **Adopt** | Shared compute, isolated storage |
-| dmypy-style service discovery | **Adopt** | Proven by mypy/ruff/LSP, cross-platform |
-| TCP port binding as singleton | **Adopt** | Self-cleaning, no stale file races |
-| `stateless_http=True` | **Adopt** | No session affinity for multi-agent |
-| `CREATE_NO_WINDOW` on Windows | **Adopt** | Preferred over DETACHED_PROCESS |
+| Approach                               | Verdict               | Rationale                                 |
+| -------------------------------------- | --------------------- | ----------------------------------------- |
+| TorchServe / Ray Serve / BentoML       | Reject                | Overkill for single-GPU local tool        |
+| HF TEI (Rust embedding server)         | Learn from, don't use | Architecture insights, wrong dependency   |
+| gRPC transport                         | Skip                  | HTTP overhead negligible at this scale    |
+| Per-project service instances          | Reject                | GPU models are shared; only Qdrant varies |
+| Global service + multi-project routing | **Adopt**             | Shared compute, isolated storage          |
+| dmypy-style service discovery          | **Adopt**             | Proven by mypy/ruff/LSP, cross-platform   |
+| TCP port binding as singleton          | **Adopt**             | Self-cleaning, no stale file races        |
+| `stateless_http=True`                  | **Adopt**             | No session affinity for multi-agent       |
+| `CREATE_NO_WINDOW` on Windows          | **Adopt**             | Preferred over DETACHED_PROCESS           |
 
 ## Addendum: Implementation layer research (2026-04-02)
 
@@ -391,10 +390,10 @@ uvicorn replacement at beta if real lifecycle management gaps emerge.
 
 ### Final architecture layers
 
-| Layer | Technology | Status |
-|---|---|---|
-| 1. ASGI server | uvicorn + FastMCP lifespan + Starlette mount | Alpha |
-| 2. State management | `ServiceRegistry` in new `service.py` | Alpha |
-| 3. CLI service commands | dmypy pattern (subprocess + status file + health poll) | Alpha |
-| 4. Windows Service | Rust binary via `windows-service` crate + maturin | Beta |
-| 5. ASGI server upgrade | Granian (Rust ASGI with supervisor) | Evaluate at beta |
+| Layer                   | Technology                                             | Status           |
+| ----------------------- | ------------------------------------------------------ | ---------------- |
+| 1. ASGI server          | uvicorn + FastMCP lifespan + Starlette mount           | Alpha            |
+| 2. State management     | `ServiceRegistry` in new `service.py`                  | Alpha            |
+| 3. CLI service commands | dmypy pattern (subprocess + status file + health poll) | Alpha            |
+| 4. Windows Service      | Rust binary via `windows-service` crate + maturin      | Beta             |
+| 5. ASGI server upgrade  | Granian (Rust ASGI with supervisor)                    | Evaluate at beta |

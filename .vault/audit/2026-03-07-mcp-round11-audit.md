@@ -1,17 +1,18 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 11 Audit -- mcp_server.py (deep dive, post-fix verification)
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/mcp_server.py` (356 lines)
 **Date:** 2026-03-07
 
----
+______________________________________________________________________
 
 ## Check 1: `get_comp()` Thread Safety
 
@@ -45,25 +46,25 @@ def get_comp() -> RagComponents:
 **Verdict: PASS.** All three required elements are present:
 
 1. **Double-checked locking**: Fast path at line 55 (no lock), double-check at line 59 (inside lock)
-2. **Thread-safe lock**: `threading.Lock()` at module level (line 44)
-3. **Failure caching**: `_comp_error` stores the exception (line 82), re-raised on subsequent calls (line 62-64) with `from _comp_error` chain
+1. **Thread-safe lock**: `threading.Lock()` at module level (line 44)
+1. **Failure caching**: `_comp_error` stores the exception (line 82), re-raised on subsequent calls (line 62-64) with `from _comp_error` chain
 
 The `_comp` assignment at line 73-80 is inside the lock, so only one thread can create the `RagComponents` bundle. The fast path outside the lock is safe because Python's GIL guarantees atomic reference reads, and `_comp` transitions from `None` to a fully-initialized object (no partial initialization visible).
 
----
+______________________________________________________________________
 
 ## Check 2: Async Tools with `anyio.to_thread.run_sync()`
 
-| Tool | Line | Declaration | Uses `anyio.to_thread.run_sync()`? |
-|------|------|-------------|-------------------------------------|
-| `search_vault` | 137 | `async def` | Yes (line 159) |
-| `search_codebase` | 163 | `async def` | Yes (line 203) |
-| `search_all` | 207 | `async def` | Yes (line 224) |
-| `get_index_status` | 228 | `async def` | Yes (line 239) |
-| `get_code_file` | 243 | `async def` | Yes (line 260) |
-| `reindex_vault` | 264 | `async def` | Yes (line 287) |
-| `reindex_codebase` | 291 | `async def` | Yes (line 315) |
-| `get_vault_document` | 320 | plain `def` (resource, not tool) | No |
+| Tool                 | Line | Declaration                      | Uses `anyio.to_thread.run_sync()`? |
+| -------------------- | ---- | -------------------------------- | ---------------------------------- |
+| `search_vault`       | 137  | `async def`                      | Yes (line 159)                     |
+| `search_codebase`    | 163  | `async def`                      | Yes (line 203)                     |
+| `search_all`         | 207  | `async def`                      | Yes (line 224)                     |
+| `get_index_status`   | 228  | `async def`                      | Yes (line 239)                     |
+| `get_code_file`      | 243  | `async def`                      | Yes (line 260)                     |
+| `reindex_vault`      | 264  | `async def`                      | Yes (line 287)                     |
+| `reindex_codebase`   | 291  | `async def`                      | Yes (line 315)                     |
+| `get_vault_document` | 320  | plain `def` (resource, not tool) | No                                 |
 
 **Verdict: PASS.** All 7 MCP tools are `async def` and use `anyio.to_thread.run_sync()` to offload blocking work. The blocking work (GPU inference, Qdrant I/O, file reads) runs in a thread, keeping the event loop responsive.
 
@@ -75,7 +76,7 @@ The `get_vault_document` resource at line 320 is a plain `def` that calls `get_c
 
 **File:** `mcp_server.py:320-330`
 
----
+______________________________________________________________________
 
 ## Check 3: Path Traversal Fix
 
@@ -99,23 +100,23 @@ Symlink scenario: If `comp.root_dir` is itself a symlink, `resolve()` follows it
 
 Raises `ValueError` (not returning error string) on traversal attempt. Raises `FileNotFoundError` on missing file. Both are exceptions, not return values.
 
----
+______________________________________________________________________
 
 ## Check 4: Error Responses as Exceptions
 
 All tools raise exceptions on error:
 
-| Tool | Error Type | Line |
-|------|-----------|------|
-| `get_code_file` | `ValueError` (traversal), `FileNotFoundError` (missing) | 255, 257 |
-| `get_vault_document` | `FileNotFoundError` (not found) | 329 |
-| All tools via `get_comp()` | `RuntimeError` (init failed), `ImportError` (no deps) | 62-64 |
+| Tool                       | Error Type                                              | Line     |
+| -------------------------- | ------------------------------------------------------- | -------- |
+| `get_code_file`            | `ValueError` (traversal), `FileNotFoundError` (missing) | 255, 257 |
+| `get_vault_document`       | `FileNotFoundError` (not found)                         | 329      |
+| All tools via `get_comp()` | `RuntimeError` (init failed), `ImportError` (no deps)   | 62-64    |
 
 No tool returns error strings. All errors propagate as exceptions, which FastMCP converts to MCP error responses.
 
 **Verdict: PASS.**
 
----
+______________________________________________________________________
 
 ## Check 5: `top_k` Bounds
 
@@ -141,7 +142,7 @@ Not called in:
 
 **Verdict: PASS.** `top_k` is clamped to `[1, 100]` for all three search tools. R21-m12 is fixed.
 
----
+______________________________________________________________________
 
 ## Check 6: `SearchResultItem` Schema Sync
 
@@ -161,7 +162,7 @@ If fields are added to `SearchResult`, `SearchResultItem` must be manually updat
 
 **File:** `mcp_server.py:88-107`, `search.py:61-78`
 
----
+______________________________________________________________________
 
 ## Check 7: `IndexResponse.files` Default
 
@@ -199,7 +200,7 @@ In reality, vault indexing processes documents (not "files" in the codebase sens
 
 **File:** `mcp_server.py:279-285`
 
----
+______________________________________________________________________
 
 ## Check 8: `anyio` Import
 
@@ -211,7 +212,7 @@ import anyio
 
 **Verdict: PASS.** `anyio` is imported at module level, not inside each tool function.
 
----
+______________________________________________________________________
 
 ## Check 9: `reindex_vault clean=True` Behavior
 
@@ -241,9 +242,9 @@ self.store.upsert_documents(docs)
 `full_index()` does NOT drop and recreate the collection. It:
 
 1. Scans all documents
-2. Gets all existing IDs via `get_all_ids()` (scroll)
-3. Deletes them via `delete_documents()` (by ID)
-4. Upserts new documents
+1. Gets all existing IDs via `get_all_ids()` (scroll)
+1. Deletes them via `delete_documents()` (by ID)
+1. Upserts new documents
 
 This means:
 
@@ -255,7 +256,7 @@ For a "clean" re-index, `store.recreate_collection()` or `_client.delete_collect
 
 **File:** `mcp_server.py:275-276`, `indexer.py:680-694`
 
----
+______________________________________________________________________
 
 ## Check 10: Unguarded `comp` Field Access
 
@@ -268,25 +269,25 @@ There is no code path where `get_comp()` returns a partially-initialized `RagCom
 
 **Verdict: PASS.** No unguarded access. All fields are guaranteed non-None after `get_comp()` succeeds.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| R11-M1 | MEDIUM | `reindex_vault clean=True` deletes by ID then upserts -- does not drop collection. Orphaned points and stale indexes can survive. |
-| R11-m1 | MINOR | `get_vault_document` resource is synchronous `def` -- blocks event loop on Qdrant RPC |
-| R11-m2 | MINOR | `SearchResultItem` is manual mirror of `SearchResult` -- maintenance risk |
-| R11-m3 | MINOR | `reindex_vault` does not populate `files` in IndexResponse (shows 0) |
+| ID     | Severity | Finding                                                                                                                           |
+| ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| R11-M1 | MEDIUM   | `reindex_vault clean=True` deletes by ID then upserts -- does not drop collection. Orphaned points and stale indexes can survive. |
+| R11-m1 | MINOR    | `get_vault_document` resource is synchronous `def` -- blocks event loop on Qdrant RPC                                             |
+| R11-m2 | MINOR    | `SearchResultItem` is manual mirror of `SearchResult` -- maintenance risk                                                         |
+| R11-m3 | MINOR    | `reindex_vault` does not populate `files` in IndexResponse (shows 0)                                                              |
 
 ### Verified Fixes
 
-| Prior Finding | Status |
-|---------------|--------|
-| R21-C1: `get_code_file` path traversal | **FIXED** -- resolves both root and path before comparison |
-| R21-M6: Async tools block event loop | **FIXED** -- all 7 tools use `anyio.to_thread.run_sync()` |
-| R21-M7: `get_comp()` not thread-safe | **FIXED** -- `threading.Lock` + double-checked locking + failure caching |
-| R21-m10: `get_index_status`/`get_code_file` sync vs async inconsistency | **FIXED** -- all tools now `async def` |
-| R21-m12: No `top_k` bounds checking | **FIXED** -- `_clamp_top_k()` limits to [1, 100] |
+| Prior Finding                                                           | Status                                                                   |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| R21-C1: `get_code_file` path traversal                                  | **FIXED** -- resolves both root and path before comparison               |
+| R21-M6: Async tools block event loop                                    | **FIXED** -- all 7 tools use `anyio.to_thread.run_sync()`                |
+| R21-M7: `get_comp()` not thread-safe                                    | **FIXED** -- `threading.Lock` + double-checked locking + failure caching |
+| R21-m10: `get_index_status`/`get_code_file` sync vs async inconsistency | **FIXED** -- all tools now `async def`                                   |
+| R21-m12: No `top_k` bounds checking                                     | **FIXED** -- `_clamp_top_k()` limits to [1, 100]                         |
 
 **1 MEDIUM finding (R11-M1). 3 MINOR findings.**

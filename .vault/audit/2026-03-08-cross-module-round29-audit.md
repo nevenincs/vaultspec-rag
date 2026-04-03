@@ -1,29 +1,30 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
+
 # Round 29: Cross-Module Integration Audit
 
 **Date:** 2026-03-08
 **Scope:** Boundary conditions between indexer ↔ store, search ↔ store, api.py ↔ store/searcher, watcher ↔ indexer ↔ gpu_sem, CLI ↔ MCP server
 **Finding Level:** 2 CRITICAL, 1 HIGH (see summary)
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
 Found **2 CRITICAL race conditions** and **1 HIGH data corruption risk**:
 
 1. **CRITICAL: Collection drop → search race window** — When `full_index(clean=True)` calls `drop_table()` then `ensure_table()`, the collection is deleted before it's recreated. If a concurrent search (via watcher → MCP tool) tries to access the collection while it's missing, Qdrant returns an error. No fallback exists.
-2. **CRITICAL: Metadata loss on incremental_index exception** — `CodebaseIndexer._write_meta(current_hashes)` is called *after* upserting chunks. If `upsert_code_chunks()` succeeds but `_write_meta()` fails/throws, the next incremental run will lose change history for all unchanged files, causing them to appear brand-new on next run (duplicates + stale hashes).
-3. **HIGH: VaultGraph cache not invalidated after full_index** — `api.py` calls `_graph_cache.invalidate()` only in `index()` (vault) and `index_codebase()` functions. However, if code calls `VaultIndexer.full_index()` or `CodebaseIndexer.full_index()` *directly* (not via api.py), the graph cache is never invalidated, causing stale re-ranking in subsequent `search_vault()` calls.
+1. **CRITICAL: Metadata loss on incremental_index exception** — `CodebaseIndexer._write_meta(current_hashes)` is called *after* upserting chunks. If `upsert_code_chunks()` succeeds but `_write_meta()` fails/throws, the next incremental run will lose change history for all unchanged files, causing them to appear brand-new on next run (duplicates + stale hashes).
+1. **HIGH: VaultGraph cache not invalidated after full_index** — `api.py` calls `_graph_cache.invalidate()` only in `index()` (vault) and `index_codebase()` functions. However, if code calls `VaultIndexer.full_index()` or `CodebaseIndexer.full_index()` *directly* (not via api.py), the graph cache is never invalidated, causing stale re-ranking in subsequent `search_vault()` calls.
 
 All other boundaries checked are correct.
 
----
+______________________________________________________________________
 
 ## Detailed Findings
 
@@ -52,7 +53,7 @@ else:
 
 **Mitigation:** Wrap the drop+create in a synchronous section protected by a module-level `threading.Lock`, or use `TRUNCATE` semantics (scroll + delete all points) instead of drop+create.
 
----
+______________________________________________________________________
 
 ### 2. indexer → store boundary: Metadata loss on exception
 
@@ -93,7 +94,7 @@ If the file was never written due to a prior exception, it stays missing, and ea
 
 **Mitigation:** Use try-except to ensure metadata is written atomically *before* returning. Or write metadata to a temp file first, then rename (which is done via `os.replace` on line 1252, but the outer exception can still prevent the write attempt).
 
----
+______________________________________________________________________
 
 ### 3. api.py → store/searcher boundary: Graph cache not invalidated after direct full_index calls
 
@@ -118,9 +119,9 @@ else:
 **Risk:** If code calls `VaultIndexer.full_index()` or `CodebaseIndexer.full_index()` **directly** (not via `api.py`):
 
 1. Indexer rewrites all documents in the store
-2. But the cached `VaultGraph` in `VaultSearcher._cached_graph` or `_graph_cache` is **not invalidated**
-3. Next `search_vault()` call uses the stale graph for re-ranking
-4. Graph relationships no longer match the indexed documents → **incorrect boosting** (docs may be missing or changed)
+1. But the cached `VaultGraph` in `VaultSearcher._cached_graph` or `_graph_cache` is **not invalidated**
+1. Next `search_vault()` call uses the stale graph for re-ranking
+1. Graph relationships no longer match the indexed documents → **incorrect boosting** (docs may be missing or changed)
 
 **Paths affected:**
 
@@ -132,7 +133,7 @@ else:
 
 **Mitigation:** Add `_graph_cache.invalidate()` call after `full_index(clean=True)` in mcp_server.py reindex tools. Or make VaultSearcher clear its own `_cached_graph` after detecting an index change (TTL-based approach already exists at line 243, but TTL is 3600s — too long for a test).
 
----
+______________________________________________________________________
 
 ### 4. watcher → indexer → gpu_sem: Semaphore release on exception ✓ CORRECT
 
@@ -152,7 +153,7 @@ except Exception:
 
 **Status:** ✓ **CORRECT** — The `async with gpu_sem:` block ensures the semaphore is released even if `anyio.to_thread.run_sync()` raises an exception. The exception is caught and logged, and the watcher continues.
 
----
+______________________________________________________________________
 
 ### 5. search → store boundary: Qdrant errors on missing collection during rebuild ✓ PROPAGATES CORRECTLY
 
@@ -162,7 +163,7 @@ The `hybrid_search()` method calls `ensure_table()` before searching. If the col
 
 **Status:** This is folded into Finding #1 above.
 
----
+______________________________________________________________________
 
 ### 6. api.py → store/searcher boundary: Engine cache thread-safety ✓ CORRECT
 
@@ -187,11 +188,11 @@ def get_engine(root_dir: pathlib.Path) -> _Engine:
 
 Note: There is **no explicit `close()`** method on `_Engine`, but it's not needed since the singleton lives for the process lifetime. For testing, `reset_engine()` (line 76) properly calls `store.close()`.
 
----
+______________________________________________________________________
 
 ### 7. CLI fast-path → MCP server boundary: Initialization state ✓ CORRECT
 
-**Location:** `src/vaultspec_rag/cli.py:376-415` (_try_mcp_search) and mcp_server.py:51-87 (get_comp)
+**Location:** `src/vaultspec_rag/cli.py:376-415` (\_try_mcp_search) and mcp_server.py:51-87 (get_comp)
 
 **CLI fast-path behavior:**
 
@@ -205,7 +206,7 @@ Note: There is **no explicit `close()`** method on `_Engine`, but it's not neede
 
 However, there is a subtle edge case: if `search_vault` tool is called **before** `_ensure_watcher()` is invoked (line 195 in mcp_server.py), the watcher won't be started. But this is intentional — watcher is started lazily on first search.
 
----
+______________________________________________________________________
 
 ## Test Coverage
 
@@ -221,18 +222,18 @@ However, there is a subtle edge case: if `search_vault` tool is called **before*
 - ✗ upsert → metadata write exception (no test for write failure scenarios)
 - ✗ direct full_index → graph cache invalidation (MCP calls are not tested)
 
----
+______________________________________________________________________
 
 ## Recommendations
 
-| Priority | Issue | Action | Effort |
-|----------|-------|--------|--------|
-| CRITICAL | Drop → search race | Add threading.Lock around drop+ensure; or use TRUNCATE instead | Medium |
-| CRITICAL | Metadata write exception | Wrap upsert+write in try-except; ensure metadata is always written | Low |
-| HIGH | Graph cache invalidation (MCP) | Add `_graph_cache.invalidate()` after full_index in mcp_server tools | Low |
-| MEDIUM | Test coverage | Add integration tests for concurrent drop+search, write failures, direct full_index calls | Medium |
+| Priority | Issue                          | Action                                                                                    | Effort |
+| -------- | ------------------------------ | ----------------------------------------------------------------------------------------- | ------ |
+| CRITICAL | Drop → search race             | Add threading.Lock around drop+ensure; or use TRUNCATE instead                            | Medium |
+| CRITICAL | Metadata write exception       | Wrap upsert+write in try-except; ensure metadata is always written                        | Low    |
+| HIGH     | Graph cache invalidation (MCP) | Add `_graph_cache.invalidate()` after full_index in mcp_server tools                      | Low    |
+| MEDIUM   | Test coverage                  | Add integration tests for concurrent drop+search, write failures, direct full_index calls | Medium |
 
----
+______________________________________________________________________
 
 ## Files Affected
 
@@ -241,7 +242,7 @@ However, there is a subtle edge case: if `search_vault` tool is called **before*
 - `src/vaultspec_rag/mcp_server.py` (lines 343-354, 374-385)
 - `src/vaultspec_rag/api.py` (lines 95-97)
 
----
+______________________________________________________________________
 
 ## Conclusion
 

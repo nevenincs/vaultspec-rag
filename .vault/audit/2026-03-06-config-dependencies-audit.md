@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: Config and Dependencies
 
 Feature: config.py, pyproject.toml, __init__.py
@@ -32,4 +33,4 @@ Line 1-5: Now says "GPU-native embedding pipeline using sentence-transformers + 
 
 ### Open Issues
 
-- Task #46 [LOW]: config.py:24 still has `lance_dir: ".lance"` dead default.
+- Task #46 \[LOW\]: config.py:24 still has `lance_dir: ".lance"` dead default.

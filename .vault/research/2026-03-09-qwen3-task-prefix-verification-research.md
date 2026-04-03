@@ -1,30 +1,31 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
+
 # Research Topic 21: Qwen3 Embedding Task Prefixes — Deep Verification
 
 **Date:** 2026-03-09
 **Status:** COMPLETE — NO BUGS FOUND
 **Severity:** All correct ✓
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
 The codebase implements custom `encode_documents()` and `encode_query()` wrapper methods in `EmbeddingModel`, correctly routing them to `SentenceTransformer.encode()` with/without `prompt_name` parameter:
 
-| Method | Dense Call | Sparse Call | Status |
-|--------|-----------|------------|--------|
+| Method               | Dense Call                               | Sparse Call                                       | Status      |
+| -------------------- | ---------------------------------------- | ------------------------------------------------- | ----------- |
 | `encode_documents()` | `encode(texts)` — **NO `prompt_name`** ✓ | `encode_document(texts)` — uses document prompt ✓ | **Correct** |
-| `encode_query()` | `encode([query], prompt_name="query")` ✓ | `encode_query(query)` — uses query prompt ✓ | **Correct** |
+| `encode_query()`     | `encode([query], prompt_name="query")` ✓ | `encode_query(query)` — uses query prompt ✓       | **Correct** |
 
 The dense embedding call **NEVER applies `prompt_name` to documents**, which is correct by design (empty document prompt in model card).
 
----
+______________________________________________________________________
 
 ## Key Findings
 
@@ -124,7 +125,7 @@ The codebase's wrapper is **correctly named and designed**.
 
 Some Qwen3 examples use manual prefixes like `"Represent this document: " + text`. The model card confirms this is **not the recommended approach** for this specific model version. The model defines explicit prompts for documents (empty) and queries (instruction prefix), and `prompt_name` routing is the proper way to leverage them.
 
----
+______________________________________________________________________
 
 ## Conclusion
 
@@ -137,17 +138,17 @@ Some Qwen3 examples use manual prefixes like `"Represent this document: " + text
 
 **No code changes required.**
 
----
+______________________________________________________________________
 
 ## Verification Method
 
 1. ✓ Loaded `Qwen/Qwen3-Embedding-0.6B` and inspected `.prompts` dict
-2. ✓ Reviewed `encode()` signature in SentenceTransformer.encode source
-3. ✓ Traced indexer and search calls to `encode_documents()` and `encode_query()`
-4. ✓ Verified batch encoding applies prompt uniformly across all items
-5. ✓ Confirmed SparseEncoder has both `encode_query()` and `encode_document()`
+1. ✓ Reviewed `encode()` signature in SentenceTransformer.encode source
+1. ✓ Traced indexer and search calls to `encode_documents()` and `encode_query()`
+1. ✓ Verified batch encoding applies prompt uniformly across all items
+1. ✓ Confirmed SparseEncoder has both `encode_query()` and `encode_document()`
 
----
+______________________________________________________________________
 
 ## Sources
 

@@ -1,15 +1,16 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Pending Task Verification — 2026-03-07
 
 Verified each pending task description against current source code.
 
----
+______________________________________________________________________
 
 ## Task #82: [CRITICAL] get_code_file symlink traversal bypass (R21-C1)
 
@@ -35,12 +36,12 @@ def get_code_file(path: str) -> str:
 **Changes since task was written:**
 
 1. **Line numbers shifted** — code is now at lines 224-239, not 202-203.
-2. **Error handling fixed** — function now raises `ValueError` and `FileNotFoundError` instead of returning error strings. The R27-M1 finding about error strings has been addressed.
-3. **Symlink concern still valid** — the `resolve()` approach still follows symlinks. If `root_dir` itself is a symlink, or if a symlink inside the workspace points outside, the check `is_relative_to(root_resolved)` may pass for paths that traverse symlinks. However, as noted in R21-C1 downgrade (Round 27), this is actually **correct behavior**: `resolve()` on both sides means both are fully canonical. A symlink `workspace/link -> /etc` resolves to `/etc/passwd` which is NOT relative to the resolved root. The traversal check works.
+1. **Error handling fixed** — function now raises `ValueError` and `FileNotFoundError` instead of returning error strings. The R27-M1 finding about error strings has been addressed.
+1. **Symlink concern still valid** — the `resolve()` approach still follows symlinks. If `root_dir` itself is a symlink, or if a symlink inside the workspace points outside, the check `is_relative_to(root_resolved)` may pass for paths that traverse symlinks. However, as noted in R21-C1 downgrade (Round 27), this is actually **correct behavior**: `resolve()` on both sides means both are fully canonical. A symlink `workspace/link -> /etc` resolves to `/etc/passwd` which is NOT relative to the resolved root. The traversal check works.
 
 **Verdict:** Task #82 should be **CLOSED or downgraded**. The current implementation correctly handles symlink traversal via `resolve()` on both paths. The only remaining edge case is if `root_dir` itself is a symlink to a parent directory of the attacker-controlled path, which is a misconfiguration, not a code bug.
 
----
+______________________________________________________________________
 
 ## Task #83: [MEDIUM] get_comp() not thread-safe (R21-M7)
 
@@ -76,7 +77,7 @@ This is **exactly** the fix described in the task. `threading.Lock`, double-chec
 
 **Verdict:** Task #83 should be marked **COMPLETED**. The fix is already in place.
 
----
+______________________________________________________________________
 
 ## Task #84: [MEDIUM] MCP async tools block event loop (R21-M6)
 
@@ -98,28 +99,28 @@ The blocking calls are wrapped in `asyncio.to_thread()` exactly as the task desc
 
 **Verdict:** Task #84 should be marked **COMPLETED** (the event-loop-blocking is fixed). A separate task could be created to align with the mcp-sync-tools ADR if desired.
 
----
+______________________________________________________________________
 
 ## Reranker model references (team-lead asked specifically)
 
 The reranker model `cross-encoder/ms-marco-MiniLM-L6-v2` appears in:
 
-| Location | Line | Context |
-|----------|------|---------|
-| `config.py` | 29 | `"reranker_model": "cross-encoder/ms-marco-MiniLM-L6-v2"` (default) |
-| `search.py` | 192 | `self._reranker_model_name: str = cfg.reranker_model` (reads from config) |
-| `search.py` | 211 | `CrossEncoder(self._reranker_model_name, device="cuda")` (loads model) |
+| Location    | Line     | Context                                                                     |
+| ----------- | -------- | --------------------------------------------------------------------------- |
+| `config.py` | 29       | `"reranker_model": "cross-encoder/ms-marco-MiniLM-L6-v2"` (default)         |
+| `search.py` | 192      | `self._reranker_model_name: str = cfg.reranker_model` (reads from config)   |
+| `search.py` | 211      | `CrossEncoder(self._reranker_model_name, device="cuda")` (loads model)      |
 | `CLAUDE.md` | ~line 42 | `CrossEncoder("cross-encoder/ms-marco-MiniLM-L6-v2", device="cuda")` (docs) |
 
 **If upgrading to bge-reranker-v2-m3:**
 
 1. `config.py:29` — change default model name
-2. `CLAUDE.md` — update the reference
-3. `search.py` — no code change needed (reads model name from config)
-4. **Batch size concern:** `search.py:228-241` `_rerank()` creates `(query, text)` pairs and calls `reranker.predict(pairs)` in one batch. ms-marco-MiniLM-L6-v2 is 22M params; bge-reranker-v2-m3 is 568M params (~25x larger). With `top_k * 4 = 20` pairs per rerank call, this should fit in VRAM, but the larger model will be slower. No batch_size parameter is currently passed to `predict()` — sentence-transformers defaults to reasonable batching internally.
-5. **VRAM impact:** Current stack uses ~3GB (Qwen3 + SPLADE). Adding 568M-param reranker in fp16 adds ~1.1GB. Total ~4.1GB. Should fit on 8GB+ GPUs but tight on 6GB.
+1. `CLAUDE.md` — update the reference
+1. `search.py` — no code change needed (reads model name from config)
+1. **Batch size concern:** `search.py:228-241` `_rerank()` creates `(query, text)` pairs and calls `reranker.predict(pairs)` in one batch. ms-marco-MiniLM-L6-v2 is 22M params; bge-reranker-v2-m3 is 568M params (~25x larger). With `top_k * 4 = 20` pairs per rerank call, this should fit in VRAM, but the larger model will be slower. No batch_size parameter is currently passed to `predict()` — sentence-transformers defaults to reasonable batching internally.
+1. **VRAM impact:** Current stack uses ~3GB (Qwen3 + SPLADE). Adding 568M-param reranker in fp16 adds ~1.1GB. Total ~4.1GB. Should fit on 8GB+ GPUs but tight on 6GB.
 
----
+______________________________________________________________________
 
 ## hybrid_search sparse=None handling (team-lead asked specifically)
 
@@ -130,12 +131,12 @@ The reranker model `cross-encoder/ms-marco-MiniLM-L6-v2` appears in:
 
 **No changes needed.** The conditional logic is already in place. If this task was about a bug where sparse=None caused an error, it has been fixed.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| Task | Status in TaskList | Actual Status | Action Needed |
-|------|-------------------|---------------|---------------|
-| #82 | pending | Edge case only, core check correct | CLOSE or DOWNGRADE to low |
-| #83 | pending | **ALREADY FIXED** in source | Mark COMPLETED |
-| #84 | pending | **ALREADY FIXED** in source (contradicts ADR) | Mark COMPLETED |
+| Task | Status in TaskList | Actual Status                                 | Action Needed             |
+| ---- | ------------------ | --------------------------------------------- | ------------------------- |
+| #82  | pending            | Edge case only, core check correct            | CLOSE or DOWNGRADE to low |
+| #83  | pending            | **ALREADY FIXED** in source                   | Mark COMPLETED            |
+| #84  | pending            | **ALREADY FIXED** in source (contradicts ADR) | Mark COMPLETED            |

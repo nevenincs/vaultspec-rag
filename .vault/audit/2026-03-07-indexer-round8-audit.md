@@ -1,34 +1,35 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 8 Audit -- indexer.py (deep dive)
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/indexer.py` (1219 lines)
 **Date:** 2026-03-07
 
----
+______________________________________________________________________
 
 ## Check 1: blake2b Consistency
 
 All 6 hash sites use `hashlib.blake2b` or `hashlib.file_digest(f, "blake2b")` consistently:
 
-| Site | Line | Usage | Mode |
-|------|------|-------|------|
-| VaultIndexer.incremental_index | 752-755 | `hashlib.file_digest(f, "blake2b").hexdigest()` | `open(path, "rb")` |
-| VaultIndexer._save_meta | 822-825 | `hashlib.file_digest(f, "blake2b").hexdigest()` | `open(path, "rb")` |
-| _chunk_with_ast chunk ID | 992-994 | `hashlib.blake2b(text.encode("utf-8"), digest_size=6).hexdigest()` | N/A (string) |
-| _chunk_with_splitter chunk ID | 1032-1034 | `hashlib.blake2b(text.encode("utf-8"), digest_size=6).hexdigest()` | N/A (string) |
-| CodebaseIndexer.full_index | 1058-1059 | `hashlib.file_digest(f, "blake2b").hexdigest()` | `open(p, "rb")` |
-| CodebaseIndexer.incremental_index | 1132-1135 | `hashlib.file_digest(f, "blake2b").hexdigest()` | `open(path, "rb")` |
+| Site                              | Line      | Usage                                                              | Mode               |
+| --------------------------------- | --------- | ------------------------------------------------------------------ | ------------------ |
+| VaultIndexer.incremental_index    | 752-755   | `hashlib.file_digest(f, "blake2b").hexdigest()`                    | `open(path, "rb")` |
+| VaultIndexer.\_save_meta          | 822-825   | `hashlib.file_digest(f, "blake2b").hexdigest()`                    | `open(path, "rb")` |
+| \_chunk_with_ast chunk ID         | 992-994   | `hashlib.blake2b(text.encode("utf-8"), digest_size=6).hexdigest()` | N/A (string)       |
+| \_chunk_with_splitter chunk ID    | 1032-1034 | `hashlib.blake2b(text.encode("utf-8"), digest_size=6).hexdigest()` | N/A (string)       |
+| CodebaseIndexer.full_index        | 1058-1059 | `hashlib.file_digest(f, "blake2b").hexdigest()`                    | `open(p, "rb")`    |
+| CodebaseIndexer.incremental_index | 1132-1135 | `hashlib.file_digest(f, "blake2b").hexdigest()`                    | `open(path, "rb")` |
 
 **Verdict: PASS.** All file hashing uses binary mode (`"rb"`) and `file_digest`. All chunk ID hashing uses `digest_size=6` for compact IDs. Consistent across both VaultIndexer and CodebaseIndexer.
 
----
+______________________________________________________________________
 
 ## Check 2: os.walk Directory Pruning
 
@@ -51,7 +52,7 @@ Line 888: `self.root_dir.rglob(".gitignore")` will traverse into `.venv/`, `node
 
 **File:** `indexer.py:888`
 
----
+______________________________________________________________________
 
 ## Check 3: Incremental Hash Comparison (Deleted File Handling)
 
@@ -74,7 +75,7 @@ Line 888: `self.root_dir.rglob(".gitignore")` will traverse into `.venv/`, `node
 
 **Verdict: PASS.** Same correct pattern. Files that failed hashing are also excluded from `current_files` (lines 1139-1142), preventing them from being treated as "new" every run.
 
----
+______________________________________________________________________
 
 ## Check 4: Path-Based Document IDs
 
@@ -102,7 +103,7 @@ Uses `str(p.relative_to(self.root_dir)).replace("\\", "/")` for rel paths. Chunk
 
 **Verdict: PASS.** All path-based IDs use forward slashes and relative paths.
 
----
+______________________________________________________________________
 
 ## Check 5: `_chunk_with_splitter()` Line Tracking
 
@@ -128,7 +129,7 @@ When `find()` returns -1, `search_offset` is NOT advanced. All subsequent chunks
 
 **File:** `indexer.py:1024-1029`
 
----
+______________________________________________________________________
 
 ## Check 6: `_chunk_with_ast()` Error Handling
 
@@ -148,7 +149,7 @@ except Exception:
 
 **Verdict: PASS.** Catches all exceptions from tree-sitter parsing and falls back to `_chunk_with_splitter()`. The `exc_info=True` ensures the full traceback is logged for debugging. The fallback is appropriate — better to have text-split chunks than no chunks. The broad `except Exception` is justified here because tree-sitter can raise various error types depending on the grammar and input.
 
----
+______________________________________________________________________
 
 ## Check 7: `_scan_codebase()` Symlink Handling
 
@@ -166,7 +167,7 @@ for dirpath, dirs, files in os.walk(self.root_dir, topdown=True):
 
 **Verdict: PASS.** The default `followlinks=False` is safe. Symlinked directories are silently skipped, which is acceptable behavior — following symlinks could lead to infinite loops or traversal outside the project boundary.
 
----
+______________________________________________________________________
 
 ## Check 8: File Hashing (No Dedicated Method)
 
@@ -179,7 +180,7 @@ with open(path, "rb") as f:
 
 **Verdict: PASS.** All 4 file-hashing sites (lines 752, 822, 1058, 1132) use identical `open(..., "rb")` + `file_digest("blake2b")` pattern. The inline approach is consistent. While a helper method could reduce duplication, the 4 sites are split across VaultIndexer (2) and CodebaseIndexer (2), so the duplication is reasonable.
 
----
+______________________________________________________________________
 
 ## Check 9: Thread Safety
 
@@ -225,29 +226,29 @@ Line 577: `prepare_document()` calls `from .config import get_config` and `get_c
 
 **Verdict: PASS overall.** No thread safety issues in the ThreadPoolExecutor usage patterns.
 
----
+______________________________________________________________________
 
 ## Check 10: `except Exception` Catches
 
-| Line | Context | Caught | Assessment |
-|------|---------|--------|------------|
-| 567 | `prepare_document` file read | `Exception` | **Acceptable.** File I/O can raise various OS/encoding errors. Returns `None` (doc skipped). Logged with warning. |
-| 653 | `full_index` worker future | `Exception` | **Acceptable.** Catches worker thread exceptions to prevent one bad file from aborting the entire index. Logged with `exc_info=True`. |
-| 848 | `_load_meta` JSON parse | `(KeyError, ValueError, OSError)` | **Good.** Narrowly scoped to expected failure modes. |
-| 891 | `.gitignore` read in `_scan_codebase` | `OSError` | **Good.** Narrowly scoped. |
-| 952 | `_chunk_file` file read | `Exception` | **Acceptable.** Same pattern as line 567 — file I/O. Returns `[]`. |
-| 977 | `_chunk_with_ast` tree-sitter parse | `Exception` | **Acceptable.** Tree-sitter can raise various errors. Falls back to text splitter. Logged with `exc_info=True`. |
+| Line | Context                               | Caught                            | Assessment                                                                                                                            |
+| ---- | ------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 567  | `prepare_document` file read          | `Exception`                       | **Acceptable.** File I/O can raise various OS/encoding errors. Returns `None` (doc skipped). Logged with warning.                     |
+| 653  | `full_index` worker future            | `Exception`                       | **Acceptable.** Catches worker thread exceptions to prevent one bad file from aborting the entire index. Logged with `exc_info=True`. |
+| 848  | `_load_meta` JSON parse               | `(KeyError, ValueError, OSError)` | **Good.** Narrowly scoped to expected failure modes.                                                                                  |
+| 891  | `.gitignore` read in `_scan_codebase` | `OSError`                         | **Good.** Narrowly scoped.                                                                                                            |
+| 952  | `_chunk_file` file read               | `Exception`                       | **Acceptable.** Same pattern as line 567 — file I/O. Returns `[]`.                                                                    |
+| 977  | `_chunk_with_ast` tree-sitter parse   | `Exception`                       | **Acceptable.** Tree-sitter can raise various errors. Falls back to text splitter. Logged with `exc_info=True`.                       |
 
 **Verdict: PASS.** All broad `except Exception` catches are at I/O or parser boundaries where the set of possible exceptions is open-ended. Each one logs the error and has a reasonable fallback (skip file, return empty, fall back to simpler approach). No cases where errors are silently swallowed.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| R8-m1 | MINOR | `rglob(".gitignore")` traverses ignored dirs (wasted I/O, no correctness impact) |
-| R8-m2 | MINOR | `_chunk_with_splitter` line tracking degrades when `find()` returns -1 (frozen `search_offset`) |
-| R8-m3 | MINOR | `prepare_document` calls `get_config()` inside ThreadPoolExecutor (low-risk race on first init) |
+| ID    | Severity | Finding                                                                                         |
+| ----- | -------- | ----------------------------------------------------------------------------------------------- |
+| R8-m1 | MINOR    | `rglob(".gitignore")` traverses ignored dirs (wasted I/O, no correctness impact)                |
+| R8-m2 | MINOR    | `_chunk_with_splitter` line tracking degrades when `find()` returns -1 (frozen `search_offset`) |
+| R8-m3 | MINOR    | `prepare_document` calls `get_config()` inside ThreadPoolExecutor (low-risk race on first init) |
 
 **No HIGH or MEDIUM findings.** All 10 check items pass. The code is well-structured with consistent hashing, correct directory pruning, proper fallback chains, and safe threading patterns.
