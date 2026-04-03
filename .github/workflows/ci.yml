@@ -131,7 +131,7 @@ jobs:
         run: just dev deps sync
 
       - name: Verify vault structure and links
-        run: just prod vault check all
+        run: uv run vaultspec-core vault check all
 
   dependency-audit:
     name: Dependency Audit (pip-audit)

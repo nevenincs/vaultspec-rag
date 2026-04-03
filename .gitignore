@@ -148,7 +148,6 @@ CLAUDE.md
 GEMINI.md
 
 # Antigravity / CODEX
-.agent/
 .agents/
 .codex/
 AGENTS.md
@@ -174,12 +173,6 @@ test-project/*
 
 # Temporary reference files
 tmp-ref/
-
-# Framework
-CLAUDE.md
-GEMINI.md
-.claude/
-.gemini/
 
 # >>> vaultspec-managed (do not edit this block) >>>
 .vaultspec/_snapshots/

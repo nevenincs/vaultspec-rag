@@ -73,7 +73,7 @@ dev target *args='':
 ci:
   just dev lint all && \
   just dev audit deps && \
-  just prod vault check all && \
+  uv run vaultspec-core vault check all && \
   just dev test all
 
 # ---------------------------------------------------------------------------
