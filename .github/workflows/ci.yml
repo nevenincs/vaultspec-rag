@@ -73,16 +73,16 @@ jobs:
         run: uv run ty check src/vaultspec_rag
 
       - name: Link check
-        run: lychee --config lychee.toml README.md .vault
+        run: lychee --config lychee.toml README.md .vault .vaultspec
 
       - name: Taplo lint
         run: taplo lint
 
       - name: Markdown format check
-        run: uv run mdformat --check README.md .vault/
+        run: uv run mdformat --check README.md .vaultspec/ .vault/
 
       - name: Markdown lint
-        run: uv run pymarkdown --config .pymarkdown.json scan -r README.md .vault/
+        run: uv run pymarkdown --config .pymarkdown.json scan -r README.md .vaultspec/ .vault/
 
   tests:
     name: Tests

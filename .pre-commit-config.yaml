@@ -65,6 +65,7 @@ repos:
         language: system
         pass_filenames: true
         types: [markdown]
+        exclude: ^test-project/
 
       - id: pymarkdown
         name: Lint Markdown style (pymarkdown)
@@ -72,3 +73,4 @@ repos:
         language: system
         pass_filenames: true
         types: [markdown]
+        exclude: ^test-project/

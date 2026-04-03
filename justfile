@@ -105,12 +105,12 @@ _dev-lint target='all':
     links) \
       if command -v lychee >/dev/null 2>&1; then \
         lychee --config lychee.toml \
-          README.md .vault; \
+          README.md .vault .vaultspec; \
       elif command -v docker >/dev/null 2>&1; then \
         docker run --rm -v "$PWD:/repo" -w /repo \
           lycheeverse/lychee:latest \
           --config /repo/lychee.toml \
-          README.md .vault; \
+          README.md .vault .vaultspec; \
       else \
         echo "lychee not found and docker is unavailable" >&2; \
         exit 127; \
@@ -126,9 +126,9 @@ _dev-lint target='all':
         exit 127; \
       fi ;; \
     markdown) \
-      uv run mdformat --check README.md .vault/ && \
+      uv run mdformat --check README.md .vaultspec/ .vault/ && \
       uv run pymarkdown --config .pymarkdown.json \
-        scan -r README.md .vault/ ;; \
+        scan -r README.md .vaultspec/ .vault/ ;; \
     workflow) \
       if command -v actionlint >/dev/null 2>&1; then \
         actionlint; \
@@ -168,9 +168,9 @@ _dev-fix target='all':
         exit 127; \
       fi ;; \
     markdown) \
-      uv run mdformat README.md .vault/ && \
+      uv run mdformat README.md .vaultspec/ .vault/ && \
       uv run pymarkdown --config .pymarkdown.json \
-        fix -r README.md .vault/ ;; \
+        fix -r README.md .vaultspec/ .vault/ ;; \
     vault) \
       uv run vaultspec-core vault check all --fix ;; \
     all) \
