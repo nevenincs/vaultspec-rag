@@ -40,21 +40,21 @@ repos:
 
       - id: check-naming
         name: Verify vault document naming and integrity
-        entry: uv run --no-sync vaultspec-core vault check structure
+        entry: uv run --no-sync python -c "from vaultspec_core.cli import app; app()" vault check structure
         language: system
         types: [markdown]
         pass_filenames: false
 
       - id: check-dangling
         name: Check for dangling wiki-links in vault
-        entry: uv run --no-sync vaultspec-core vault check dangling
+        entry: uv run --no-sync python -c "from vaultspec_core.cli import app; app()" vault check dangling
         language: system
         types: [markdown]
         pass_filenames: false
 
       - id: check-body-links
         name: Check for links in vault document body text
-        entry: uv run --no-sync vaultspec-core vault check body-links
+        entry: uv run --no-sync python -c "from vaultspec_core.cli import app; app()" vault check body-links
         language: system
         types: [markdown]
         pass_filenames: false

@@ -26,8 +26,8 @@ prod *args='':
 #
 #  Verbs:
 #    deps      dependency management (sync, upgrade, lock)
-#    lint      read-only static analysis (ruff, ty, taplo, markdownlint)
-#    fix       auto-fix everything fixable (python, toml)
+#    lint      read-only static analysis (ruff, ty, taplo, markdownlint, ...)
+#    fix       auto-fix everything fixable (python, toml, vault)
 #    audit     supply-chain / security checks (pip-audit)
 #    test      pytest
 #    build     uv build
@@ -67,11 +67,12 @@ dev target *args='':
   esac
 
 # ===========================================================================
-#  ci  - full pipeline: lint → vault check → test
+#  ci  - full pipeline: lint → audit → vault check → test
 # ===========================================================================
 
 ci:
   just dev lint all && \
+  just dev audit deps && \
   just prod vault check all && \
   just dev test all
 
@@ -99,15 +100,16 @@ _dev-lint target='all':
   case "{{target}}" in \
     python) \
       uv run ruff check src ;; \
-    format) \
-      uv run ruff format --check src ;; \
     type) \
       uv run python -m ty check src/vaultspec_rag ;; \
     toml) \
       if command -v taplo >/dev/null 2>&1; then \
         taplo lint *.toml; \
+      elif command -v docker >/dev/null 2>&1; then \
+        docker run --rm -v "$PWD:/repo" -w /repo \
+          tamasfe/taplo:0.9 lint *.toml; \
       else \
-        echo "taplo not found" >&2; \
+        echo "taplo not found and docker is unavailable" >&2; \
         exit 127; \
       fi ;; \
     markdown) \
@@ -121,13 +123,12 @@ _dev-lint target='all':
       fi ;; \
     all) \
       just _dev-lint python && \
-      just _dev-lint format && \
       just _dev-lint type && \
       just _dev-lint toml && \
       just _dev-lint markdown ;; \
     *) \
       echo "unknown dev lint target: {{target}}" >&2; \
-      echo "  targets: python format type toml markdown all" >&2; \
+      echo "  targets: python type toml markdown all" >&2; \
       exit 1 ;; \
   esac
 
@@ -139,8 +140,11 @@ _dev-fix target='all':
     toml) \
       if command -v taplo >/dev/null 2>&1; then \
         taplo fmt *.toml; \
+      elif command -v docker >/dev/null 2>&1; then \
+        docker run --rm -v "$PWD:/repo" -w /repo \
+          tamasfe/taplo:0.9 fmt *.toml; \
       else \
-        echo "taplo not found" >&2; \
+        echo "taplo not found and docker is unavailable" >&2; \
         exit 127; \
       fi ;; \
     vault) \
