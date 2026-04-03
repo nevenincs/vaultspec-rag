@@ -2,6 +2,11 @@
 
 Exposes tools for searching vault and codebase, resources for
 retrieving full contents, and prompts for common RAG tasks.
+
+In HTTP mode the server runs inside a Starlette application with
+a ``service_lifespan`` that eagerly loads GPU models before
+accepting connections.  A raw ``/health`` endpoint is mounted
+alongside the MCP transport at ``/mcp``.
 """
 
 from __future__ import annotations
@@ -10,134 +15,178 @@ import asyncio
 import logging
 import os
 import threading
-from dataclasses import dataclass
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from anyio.to_thread import run_sync as _run_in_thread
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
-from .embeddings import EmbeddingModel
-from .indexer import CodebaseIndexer, VaultIndexer
-from .search import VaultSearcher
-from .store import VaultStore
+from .service import ServiceRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from starlette.applications import Starlette
+    from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("VaultSpec Search")
+mcp = FastMCP("VaultSpec Search", stateless_http=True)
 
-
-@dataclass
-class RagComponents:
-    """Lazily-initialized RAG component bundle.
-
-    Attributes:
-        store: Qdrant-backed vector store for vault and
-            codebase collections.
-        model: GPU-accelerated embedding model (Qwen3 dense +
-            SPLADE sparse + optional CrossEncoder reranker).
-        searcher: Hybrid search engine over vault and codebase
-            collections.
-        vault_indexer: Incremental indexer for .vault/
-            documentation files.
-        code_indexer: Incremental indexer for source code files
-            using tree-sitter AST chunking.
-        root_dir: Workspace root directory containing .vault/
-            and source code.
-    """
-
-    store: VaultStore
-    model: EmbeddingModel
-    searcher: VaultSearcher
-    vault_indexer: VaultIndexer
-    code_indexer: CodebaseIndexer
-    root_dir: Path
-
-
-_comp: RagComponents | None = None
-_comp_lock = threading.Lock()
-_comp_error: Exception | None = None
+_registry = ServiceRegistry()
 _gpu_sem = asyncio.Semaphore(1)
 _watcher_stop = asyncio.Event()
 _watcher_task: asyncio.Task[None] | None = None
+_watcher_lock = threading.Lock()
+_start_time: float = 0.0
 
 
-def get_comp() -> RagComponents:
-    """Return the initialized RAG components, creating them on first call.
-
-    Thread-safe: uses a threading.Lock with double-check pattern to
-    prevent concurrent initialization. Caches initialization failures
-    to avoid retrying expensive GPU setup.
+def _default_root() -> Path:
+    """Resolve the default project root from env or cwd.
 
     Returns:
-        The singleton RagComponents instance.
-
-    Raises:
-        RuntimeError: If a previous initialization attempt failed
-            (the original exception is chained).
+        Resolved ``Path`` from ``VAULTSPEC_ROOT`` env var, falling
+        back to the current working directory.
     """
-    global _comp, _comp_error
-    if _comp is not None:
-        return _comp
-    with _comp_lock:
-        if _comp is not None:
-            return _comp
-        if _comp_error is not None:
-            raise RuntimeError(
-                f"RAG initialization previously failed: {_comp_error}",
-            ) from _comp_error
-        try:
-            logger.info("Initializing VaultSpec RAG components...")
-            root_env = os.environ.get("VAULTSPEC_ROOT")
-            root_dir = Path(root_env) if root_env else Path.cwd()
-
-            store = VaultStore(root_dir)
-            model = EmbeddingModel()
-
-            _comp = RagComponents(
-                store=store,
-                model=model,
-                searcher=VaultSearcher(root_dir, model, store),
-                vault_indexer=VaultIndexer(root_dir, model, store),
-                code_indexer=CodebaseIndexer(root_dir, model, store),
-                root_dir=root_dir,
-            )
-        except Exception as exc:
-            _comp_error = exc
-            raise
-    return _comp
+    root_env = os.environ.get("VAULTSPEC_ROOT")
+    return Path(root_env).resolve() if root_env else Path.cwd().resolve()
 
 
-def _ensure_watcher() -> None:
+# -- lifespan ---------------------------------------------------------------
+
+
+@asynccontextmanager
+async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
+    """Eagerly load GPU models before accepting connections.
+
+    Startup loads the shared ``EmbeddingModel`` with per-stage
+    timing logs.  Shutdown closes all project stores and releases
+    GPU memory.
+
+    Args:
+        _app: The Starlette application instance (unused but
+            required by the lifespan protocol).
+
+    Yields:
+        Control to the running application.
+    """
+    global _start_time
+    _start_time = time.monotonic()
+
+    t_total = time.perf_counter()
+
+    # HF cache status
+    hf_home = os.environ.get("HF_HOME", "~/.cache/huggingface")
+    logger.info("HF cache: %s", hf_home)
+
+    # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
+    t0 = time.perf_counter()
+    await _run_in_thread(_registry.load_model)
+    logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
+
+    logger.info("Service startup complete in %.2fs", time.perf_counter() - t_total)
+
+    try:
+        yield
+    finally:
+        _watcher_stop.set()
+        if _watcher_task is not None and not _watcher_task.done():
+            _watcher_task.cancel()
+        _registry.close_all()
+        logger.info("Service shutdown complete")
+
+
+# -- health endpoint --------------------------------------------------------
+
+
+async def health_handler(_request: Request) -> object:
+    """Return service health as JSON.
+
+    Args:
+        _request: The incoming Starlette request.
+
+    Returns:
+        A ``JSONResponse`` with status, CUDA availability,
+        model state, connected projects, and uptime.
+    """
+    from starlette.responses import JSONResponse
+
+    try:
+        import torch
+
+        cuda = torch.cuda.is_available()
+    except ImportError:
+        cuda = False
+
+    reg_health = _registry.health()
+    uptime = time.monotonic() - _start_time if _start_time > 0 else 0.0
+
+    if reg_health["model_loaded"]:
+        status = "ready"
+    elif _start_time > 0:
+        status = "degraded"
+    else:
+        status = "error"
+
+    return JSONResponse(
+        {
+            "status": status,
+            "cuda": cuda,
+            "models_loaded": reg_health["model_loaded"],
+            "projects": reg_health["projects"],
+            "uptime_s": round(uptime, 2),
+        },
+    )
+
+
+# -- watcher -----------------------------------------------------------------
+
+
+def _ensure_watcher(root: Path) -> None:
     """Launch the filesystem watcher as a background asyncio task.
 
-    Safe to call repeatedly — only starts once. Must be called from the
-    async event loop thread (not from a worker thread).
+    Safe to call repeatedly — only starts once.  Uses a double-check
+    lock pattern to prevent duplicate watcher creation when multiple
+    tool handlers finish near-simultaneously.
+
+    Must be called from the async event loop thread (not from a
+    worker thread).
+
+    Args:
+        root: Project root directory to watch.
     """
     global _watcher_task
     if _watcher_task is not None:
         return
-    if _comp is None:
-        return
+    with _watcher_lock:
+        if _watcher_task is not None:
+            return
 
-    from .watcher import watch_and_reindex
+        slot = _registry.get_project(root)
 
-    vault_dir = _comp.root_dir / ".vault"
-    _watcher_task = asyncio.ensure_future(
-        watch_and_reindex(
-            root_dir=_comp.root_dir,
-            vault_dir=vault_dir,
-            vault_indexer=_comp.vault_indexer,
-            code_indexer=_comp.code_indexer,
-            gpu_sem=_gpu_sem,
-            stop_event=_watcher_stop,
-            searcher=_comp.searcher,
-        ),
-    )
-    logger.info("Filesystem watcher started for %s", _comp.root_dir)
+        from .watcher import watch_and_reindex
+
+        vault_dir = root / ".vault"
+        _watcher_task = asyncio.ensure_future(
+            watch_and_reindex(
+                root_dir=root,
+                vault_dir=vault_dir,
+                vault_indexer=slot.vault_indexer,
+                code_indexer=slot.code_indexer,
+                gpu_sem=_gpu_sem,
+                stop_event=_watcher_stop,
+                graph_cache=slot.graph_cache,
+            ),
+        )
+        logger.info("Filesystem watcher started for %s", root)
 
 
-# Structured Output Models
+# -- Pydantic models --------------------------------------------------------
+
+
 class SearchResultItem(BaseModel):
     """Pydantic mirror of SearchResult for MCP serialization.
 
@@ -273,6 +322,31 @@ class IndexResponse(BaseModel):
     )
 
 
+class HealthResponse(BaseModel):
+    """Health check response for the service.
+
+    Attributes:
+        status: Service state — ``"ready"``, ``"loading"``,
+            or ``"error"``.
+        cuda: Whether a CUDA GPU is available.
+        models_loaded: Whether GPU models have been loaded.
+        projects: List of connected project root paths.
+        uptime_s: Seconds since service startup.
+    """
+
+    status: str = Field(description="Service state")
+    cuda: bool = Field(description="CUDA GPU available")
+    models_loaded: bool = Field(description="GPU models loaded")
+    projects: list[str] = Field(
+        default_factory=list,
+        description="Connected project roots",
+    )
+    uptime_s: float = Field(
+        default=0.0,
+        description="Seconds since startup",
+    )
+
+
 _MAX_QUERY_LEN = 10_000  # characters; prevents accidental OOM on huge queries
 
 
@@ -308,15 +382,38 @@ def _validate_query(query: str) -> str:
     return query
 
 
-# Tools
+def _resolve_root(project_root: str | None) -> Path:
+    """Resolve a project root path from an optional string.
+
+    Args:
+        project_root: Explicit project root path, or ``None``
+            to use the default.
+
+    Returns:
+        Resolved ``Path`` for the project root.
+    """
+    if project_root:
+        return Path(project_root).resolve()
+    return _default_root()
+
+
+# -- Tools -------------------------------------------------------------------
+
+
 @mcp.tool()
-async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
+async def search_vault(
+    query: str,
+    top_k: int = 5,
+    project_root: str | None = None,
+) -> SearchResponse:
     """Search the documentation vault for relevant ADRs, plans, and research.
 
     Args:
         query: Natural language search string (supports
             type:adr, feature:name, etc.).
         top_k: Number of results to return.
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         SearchResponse with ranked vault results and a
@@ -328,11 +425,12 @@ async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
     """
     top_k = _clamp_top_k(top_k)
     query = _validate_query(query)
+    root = _resolve_root(project_root)
 
     def _run() -> SearchResponse:
-        comp = get_comp()
+        slot = _registry.get_project(root)
         logger.info("Searching vault for: %s", query)
-        results = comp.searcher.search_vault(query, top_k=top_k)
+        results = slot.searcher.search_vault(query, top_k=top_k)
         items = [
             SearchResultItem.model_validate(r, from_attributes=True) for r in results
         ]
@@ -343,7 +441,7 @@ async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
 
     async with _gpu_sem:
         result = await _run_in_thread(_run)
-    _ensure_watcher()
+    _ensure_watcher(root)
     return result
 
 
@@ -355,6 +453,7 @@ async def search_codebase(
     node_type: str | None = None,
     function_name: str | None = None,
     class_name: str | None = None,
+    project_root: str | None = None,
 ) -> SearchResponse:
     """Search the source codebase for relevant functions, classes, or logic.
 
@@ -367,6 +466,8 @@ async def search_codebase(
             ``"function_definition"``).
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         SearchResponse with ranked codebase results and a
@@ -378,11 +479,12 @@ async def search_codebase(
     """
     top_k = _clamp_top_k(top_k)
     query = _validate_query(query)
+    root = _resolve_root(project_root)
 
     def _run() -> SearchResponse:
-        comp = get_comp()
+        slot = _registry.get_project(root)
         logger.info("Searching codebase for: %s (lang=%s)", query, language)
-        results = comp.searcher.search_codebase(
+        results = slot.searcher.search_codebase(
             query,
             top_k=top_k,
             language=language,
@@ -400,17 +502,23 @@ async def search_codebase(
 
     async with _gpu_sem:
         result = await _run_in_thread(_run)
-    _ensure_watcher()
+    _ensure_watcher(root)
     return result
 
 
 @mcp.tool()
-async def search_all(query: str, top_k: int = 5) -> SearchResponse:
+async def search_all(
+    query: str,
+    top_k: int = 5,
+    project_root: str | None = None,
+) -> SearchResponse:
     """Search both documentation and codebase for comprehensive context.
 
     Args:
         query: Natural language search string.
         top_k: Number of results to return from each source.
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         SearchResponse with merged vault and codebase results,
@@ -422,11 +530,12 @@ async def search_all(query: str, top_k: int = 5) -> SearchResponse:
     """
     top_k = _clamp_top_k(top_k)
     query = _validate_query(query)
+    root = _resolve_root(project_root)
 
     def _run() -> SearchResponse:
-        comp = get_comp()
+        slot = _registry.get_project(root)
         logger.info("Unified search for: %s", query)
-        results = comp.searcher.search_all(query, top_k=top_k)
+        results = slot.searcher.search_all(query, top_k=top_k)
         items = [
             SearchResultItem.model_validate(r, from_attributes=True) for r in results
         ]
@@ -437,13 +546,19 @@ async def search_all(query: str, top_k: int = 5) -> SearchResponse:
 
     async with _gpu_sem:
         result = await _run_in_thread(_run)
-    _ensure_watcher()
+    _ensure_watcher(root)
     return result
 
 
 @mcp.tool()
-async def get_index_status() -> IndexStatus:
+async def get_index_status(
+    project_root: str | None = None,
+) -> IndexStatus:
     """Return the current status of the RAG index and GPU hardware.
+
+    Args:
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         IndexStatus with document counts, storage path, and
@@ -453,9 +568,10 @@ async def get_index_status() -> IndexStatus:
         RuntimeError: If RAG components fail to initialize
             (e.g., no CUDA GPU available).
     """
+    root = _resolve_root(project_root)
 
     def _run() -> IndexStatus:
-        comp = get_comp()
+        slot = _registry.get_project(root)
         try:
             import torch
 
@@ -471,23 +587,29 @@ async def get_index_status() -> IndexStatus:
             gpu_name = "unknown"
             vram_gb = 0.0
         return IndexStatus(
-            vault_count=comp.store.count(),
-            code_count=comp.store.count_code(),
-            storage_path=str(comp.store.db_path),
-            target_dir=str(comp.root_dir),
+            vault_count=slot.store.count(),
+            code_count=slot.store.count_code(),
+            storage_path=str(slot.store.db_path),
+            target_dir=str(root),
             gpu_name=gpu_name,
             vram_gb=round(vram_gb, 2),
         )
 
-    return await _run_in_thread(_run)
+    async with _gpu_sem:
+        return await _run_in_thread(_run)
 
 
 @mcp.tool()
-async def get_code_file(path: str) -> str:
+async def get_code_file(
+    path: str,
+    project_root: str | None = None,
+) -> str:
     """Retrieve the full content of a source file by path.
 
     Args:
         path: Path to the file relative to codebase root.
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         The UTF-8 text content of the file.
@@ -498,12 +620,11 @@ async def get_code_file(path: str) -> str:
         FileNotFoundError: If the file does not exist.
         RuntimeError: If RAG components fail to initialize.
     """
-
+    root = _resolve_root(project_root)
     max_read_size = 10 * 1024 * 1024  # 10 MB
 
     def _run() -> str:
-        comp = get_comp()
-        root_resolved = comp.root_dir.resolve()
+        root_resolved = root.resolve()
         full_path = (root_resolved / path).resolve()
         if not full_path.is_relative_to(root_resolved):
             raise ValueError(f"path '{path}' is outside the workspace")
@@ -515,11 +636,15 @@ async def get_code_file(path: str) -> str:
             )
         return full_path.read_text(encoding="utf-8")
 
-    return await _run_in_thread(_run)
+    async with _gpu_sem:
+        return await _run_in_thread(_run)
 
 
 @mcp.tool()
-async def reindex_vault(clean: bool = False) -> IndexResponse:
+async def reindex_vault(
+    clean: bool = False,
+    project_root: str | None = None,
+) -> IndexResponse:
     """Re-index vault documentation (incremental by default).
 
     Invalidates the VaultGraph cache after indexing so the next
@@ -528,6 +653,8 @@ async def reindex_vault(clean: bool = False) -> IndexResponse:
     Args:
         clean: If True, drop and recreate the vault collection
             before a full re-index.
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -537,18 +664,17 @@ async def reindex_vault(clean: bool = False) -> IndexResponse:
         RuntimeError: If RAG components fail to initialize
             (e.g., no CUDA GPU available).
     """
+    root = _resolve_root(project_root)
 
     def _run() -> IndexResponse:
-        comp = get_comp()
+        slot = _registry.get_project(root)
         mode = "full" if clean else "incremental"
         logger.info("Starting %s vault re-index...", mode)
         if clean:
-            result = comp.vault_indexer.full_index(clean=True)
+            result = slot.vault_indexer.full_index(clean=True)
         else:
-            result = comp.vault_indexer.incremental_index()
-        # Invalidate the graph cache so the next search_vault call rebuilds
-        # from the fresh index rather than serving stale graph-boost scores.
-        comp.searcher._graph_built_at = 0.0
+            result = slot.vault_indexer.incremental_index()
+        slot.graph_cache.invalidate()
         return IndexResponse(
             total=result.total,
             added=result.added,
@@ -560,17 +686,22 @@ async def reindex_vault(clean: bool = False) -> IndexResponse:
 
     async with _gpu_sem:
         result = await _run_in_thread(_run)
-    _ensure_watcher()
+    _ensure_watcher(root)
     return result
 
 
 @mcp.tool()
-async def reindex_codebase(clean: bool = False) -> IndexResponse:
+async def reindex_codebase(
+    clean: bool = False,
+    project_root: str | None = None,
+) -> IndexResponse:
     """Re-index the source codebase (incremental by default).
 
     Args:
         clean: If True, drop and recreate the codebase
             collection before a full re-index.
+        project_root: Optional project root path. Defaults to
+            ``VAULTSPEC_ROOT`` env var or cwd.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -580,15 +711,16 @@ async def reindex_codebase(clean: bool = False) -> IndexResponse:
         RuntimeError: If RAG components fail to initialize
             (e.g., no CUDA GPU available).
     """
+    root = _resolve_root(project_root)
 
     def _run() -> IndexResponse:
-        comp = get_comp()
+        slot = _registry.get_project(root)
         mode = "full" if clean else "incremental"
         logger.info("Starting %s codebase re-index...", mode)
         if clean:
-            result = comp.code_indexer.full_index(clean=True)
+            result = slot.code_indexer.full_index(clean=True)
         else:
-            result = comp.code_indexer.incremental_index()
+            result = slot.code_indexer.incremental_index()
         return IndexResponse(
             total=result.total,
             added=result.added,
@@ -600,11 +732,13 @@ async def reindex_codebase(clean: bool = False) -> IndexResponse:
 
     async with _gpu_sem:
         result = await _run_in_thread(_run)
-    _ensure_watcher()
+    _ensure_watcher(root)
     return result
 
 
-# Resources
+# -- Resources ---------------------------------------------------------------
+
+
 @mcp.resource("vault://{doc_id}")
 async def get_vault_document(doc_id: str) -> str:
     """Retrieve the full content of a vault document by its stem ID.
@@ -620,18 +754,22 @@ async def get_vault_document(doc_id: str) -> str:
         FileNotFoundError: If no document matches the given ID.
         RuntimeError: If RAG components fail to initialize.
     """
+    root = _default_root()
 
     def _run() -> str:
-        comp = get_comp()
-        doc = comp.store.get_by_id(doc_id)
+        slot = _registry.get_project(root)
+        doc = slot.store.get_by_id(doc_id)
         if not doc:
             raise FileNotFoundError(f"Document '{doc_id}' not found")
         return doc.get("content", "")
 
-    return await _run_in_thread(_run)
+    async with _gpu_sem:
+        return await _run_in_thread(_run)
 
 
-# Prompts
+# -- Prompts -----------------------------------------------------------------
+
+
 @mcp.prompt()
 def analyze_feature(feature_name: str) -> str:
     """Create a prompt to analyze a feature across docs and code.
@@ -657,20 +795,58 @@ def analyze_feature(feature_name: str) -> str:
     )
 
 
+# -- entry point -------------------------------------------------------------
+
+
 def main(port: int | None = None) -> None:
     """Start the MCP server on stdio or HTTP transport.
+
+    In HTTP mode, builds a Starlette app that mounts the MCP
+    streamable-HTTP transport at ``/mcp`` and a raw ``/health``
+    endpoint, with ``service_lifespan`` for eager model loading.
+
+    In stdio mode, delegates to ``mcp.run(transport="stdio")``
+    for Claude Desktop compatibility (no lifespan).
 
     Args:
         port: If provided, run on streamable-http at
             127.0.0.1:<port>. Otherwise use stdio transport.
     """
     if port is not None:
-        mcp.settings.host = "127.0.0.1"
-        mcp.settings.port = port
-        mcp.run(transport="streamable-http")
+        import uvicorn
+        from starlette.applications import Starlette
+        from starlette.routing import Mount, Route
+
+        app = Starlette(
+            routes=[
+                Mount("/mcp", app=mcp.streamable_http_app()),
+                Route("/health", health_handler),
+            ],
+            lifespan=service_lifespan,
+        )
+        try:
+            uvicorn.run(
+                app,
+                host="127.0.0.1",
+                port=port,
+                timeout_graceful_shutdown=30,
+                log_level="info",
+            )
+        finally:
+            _registry.close_all()
     else:
         mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    _parser = argparse.ArgumentParser(description="VaultSpec RAG MCP server")
+    _parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="HTTP port (default: stdio transport)",
+    )
+    _args = _parser.parse_args()
+    main(port=_args.port)

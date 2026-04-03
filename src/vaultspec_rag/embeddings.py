@@ -8,6 +8,8 @@ Requires CUDA GPU -- no CPU fallback.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -192,6 +194,11 @@ class EmbeddingModel:
             else self.SPARSE_MODEL_NAME
         )
 
+        logger.info(
+            "HF cache: %s",
+            os.environ.get("HF_HOME", "~/.cache/huggingface"),
+        )
+
         model_kwargs: dict[str, object] = {
             "torch_dtype": torch.float16,
         }
@@ -208,17 +215,21 @@ class EmbeddingModel:
         except ImportError:
             logger.info("flash_attention_2 not available, using default attention")
 
+        t0 = time.perf_counter()
         self._dense_model = SentenceTransformer(
             dense_name,
             model_kwargs=model_kwargs,
             tokenizer_kwargs={"padding_side": "left"},
         )
+        logger.info("Dense model loaded in %.2fs", time.perf_counter() - t0)
 
+        t0 = time.perf_counter()
         self._sparse_model = SparseEncoder(
             sparse_name,
             device="cuda",
             model_kwargs={"torch_dtype": torch.float16},
         )
+        logger.info("Sparse model loaded in %.2fs", time.perf_counter() - t0)
 
         self._device = "cuda"
         self.dimension: int = (

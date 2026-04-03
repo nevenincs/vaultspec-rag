@@ -169,23 +169,24 @@ class TestPathResolveCache:
 
 
 class TestGraphCache:
-    """ADR: _GraphCache returns same instance on repeated calls."""
+    """ADR: GraphCache returns same instance on repeated calls."""
 
     def test_graph_cache_invalidate_clears(self):
-        from vaultspec_rag.api import _GraphCache
+        from vaultspec_rag.api import GraphCache
 
-        cache = _GraphCache()
+        cache = GraphCache(ttl_seconds=300.0)
         # After invalidate, internal state is cleared
         cache.invalidate()
         assert cache._graph is None
         assert cache._root is None
+        assert cache._built_at == 0.0
 
     def test_graph_cache_has_lock(self):
         import threading
 
-        from vaultspec_rag.api import _GraphCache
+        from vaultspec_rag.api import GraphCache
 
-        cache = _GraphCache()
+        cache = GraphCache(ttl_seconds=300.0)
         assert isinstance(cache._lock, type(threading.Lock()))
 
 
@@ -216,12 +217,12 @@ class TestQwen3NoDocumentPrompt:
 class TestThreadingLock:
     """ADR: mcp_server and api use threading locks for initialization."""
 
-    def test_mcp_comp_lock_exists(self):
+    def test_mcp_registry_lock_exists(self):
         import threading
 
-        from vaultspec_rag.mcp_server import _comp_lock
+        from vaultspec_rag.mcp_server import _registry
 
-        assert isinstance(_comp_lock, type(threading.Lock()))
+        assert isinstance(_registry._lock, type(threading.Lock()))
 
     def test_api_engine_lock_exists(self):
         import threading
@@ -309,11 +310,10 @@ class TestGraphCacheInvalidation:
         from vaultspec_rag.mcp_server import reindex_vault
 
         src = inspect.getsource(reindex_vault)
-        assert "_graph_built_at" in src, (
-            "reindex_vault must reset _graph_built_at to 0.0 after indexing "
-            "to prevent stale graph re-ranking (R29-H3 fix)"
+        assert "graph_cache" in src and "invalidate" in src, (
+            "reindex_vault must call slot.graph_cache.invalidate() after indexing "
+            "to prevent stale graph re-ranking (R29-H3 fix, unified in D3)"
         )
-        assert "0.0" in src or "= 0" in src
 
 
 class TestCliMcpFastPath:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ from .store import VaultStore
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "GraphCache",
     "get_engine",
     "get_related",
     "index",
@@ -58,6 +60,9 @@ class _Engine:
             RuntimeError: If no CUDA GPU is available (from
                 ``EmbeddingModel``).
         """
+        from .config import get_config
+
+        cfg = get_config()
         self.root_dir = root_dir
         self.store = VaultStore(root_dir)
         try:
@@ -65,9 +70,15 @@ class _Engine:
         except Exception:
             self.store.close()
             raise
+        self.graph_cache = GraphCache(ttl_seconds=cfg.graph_ttl_seconds)
         self.indexer = VaultIndexer(root_dir, self.model, self.store)
         self.code_indexer = CodebaseIndexer(root_dir, self.model, self.store)
-        self.searcher = VaultSearcher(root_dir, self.model, self.store)
+        self.searcher = VaultSearcher(
+            root_dir,
+            self.model,
+            self.store,
+            graph_provider=lambda: self.graph_cache.get(root_dir),
+        )
 
 
 _engine: _Engine | None = None
@@ -113,12 +124,15 @@ def reset_engine() -> None:
     """Tear down the singleton engine (for testing).
 
     Closes the underlying Qdrant store and sets the module-level
-    singleton to ``None``.  Safe to call when no engine exists.
+    singleton to ``None``.  Thread-safe: acquires ``_engine_lock``
+    so that concurrent ``get_engine`` callers see a consistent state.
+    Safe to call when no engine exists.
     """
     global _engine
-    if _engine is not None:
-        _engine.store.close()
-        _engine = None
+    with _engine_lock:
+        if _engine is not None:
+            _engine.store.close()
+            _engine = None
 
 
 def index(root_dir: pathlib.Path, *, full: bool = False) -> IndexResult:
@@ -138,7 +152,7 @@ def index(root_dir: pathlib.Path, *, full: bool = False) -> IndexResult:
     """
     engine = get_engine(root_dir)
     result = engine.indexer.full_index() if full else engine.indexer.incremental_index()
-    _graph_cache.invalidate()
+    engine.graph_cache.invalidate()
     return result
 
 
@@ -272,20 +286,41 @@ def list_documents(
     return engine.store.list_all_documents(doc_type=doc_type)
 
 
-class _GraphCache:
-    """Thread-safe cached VaultGraph singleton with explicit invalidation.
+class GraphCache:
+    """Thread-safe cached VaultGraph with lock, TTL, and explicit invalidation.
 
     Uses a ``threading.Lock`` with a double-check pattern so that
-    concurrent callers never build duplicate graphs.
+    concurrent callers never build duplicate graphs.  The TTL ensures
+    the graph is periodically refreshed without requiring explicit
+    invalidation after every change.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, ttl_seconds: float | None = None) -> None:
+        """Initialise the graph cache.
+
+        Args:
+            ttl_seconds: Seconds before a cached graph expires.
+                Defaults to ``graph_ttl_seconds`` from project
+                config (300s).
+        """
+        if ttl_seconds is None:
+            from .config import get_config
+
+            ttl_seconds = get_config().graph_ttl_seconds
+        self._ttl_seconds = ttl_seconds
         self._graph: VaultGraph | None = None
         self._root: pathlib.Path | None = None
+        self._built_at: float = 0.0
         self._lock = threading.Lock()
 
+    def _is_stale(self, root_dir: pathlib.Path) -> bool:
+        """Return ``True`` when the cache needs a rebuild."""
+        if self._graph is None or self._root != root_dir:
+            return True
+        return (time.monotonic() - self._built_at) >= self._ttl_seconds
+
     def get(self, root_dir: pathlib.Path) -> VaultGraph | None:
-        """Return cached graph, building it if necessary.
+        """Return cached graph, building it if necessary or stale.
 
         Args:
             root_dir: Workspace root directory.
@@ -294,20 +329,23 @@ class _GraphCache:
             The ``VaultGraph`` for *root_dir*, or ``None`` if the
             graph could not be built (e.g. missing vault directory).
         """
-        if self._graph is not None and self._root == root_dir:
+        if not self._is_stale(root_dir):
             return self._graph
         with self._lock:
-            if self._graph is not None and self._root == root_dir:
+            if not self._is_stale(root_dir):
                 return self._graph
             from vaultspec_core.graph import VaultGraph
 
             try:
                 self._graph = VaultGraph(root_dir)
                 self._root = root_dir
+                self._built_at = time.monotonic()
             except Exception:
                 logger.warning("Failed to build vault graph", exc_info=True)
                 self._graph = None
                 self._root = None
+                # Retry sooner on failure (5s vs normal TTL)
+                self._built_at = time.monotonic() - self._ttl_seconds + 5.0
                 return None
         return self._graph
 
@@ -320,9 +358,7 @@ class _GraphCache:
         with self._lock:
             self._graph = None
             self._root = None
-
-
-_graph_cache = _GraphCache()
+            self._built_at = 0.0
 
 
 def get_related(
@@ -343,7 +379,8 @@ def get_related(
         ``None`` if the vault graph could not be built or
         if *doc_id* is not present in the graph.
     """
-    graph = _graph_cache.get(root_dir)
+    engine = get_engine(root_dir)
+    graph = engine.graph_cache.get(root_dir)
     if graph is None:
         return None
 
