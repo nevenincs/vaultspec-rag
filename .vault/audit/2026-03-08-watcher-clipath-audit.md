@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -13,19 +13,19 @@ related: []
 **Auditor:** codebase-auditor-24
 **Verdict:** MEDIUM and LOW severity issues identified; no CRITICAL/HIGH issues.
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| Severity | Finding ID | Description | File:Line | Status |
-|----------|-----------|-------------|-----------|--------|
-| MEDIUM | M1 | `asyncio.run()` called from sync CLI context without event loop cleanup | cli.py:303, 343 | Identified |
-| MEDIUM | M2 | JSON response shape for MCP tools not strictly validated before `.get()` | cli.py:336–337 | Identified |
-| LOW | L1 | Cooldown timestamps use `time.monotonic()` but no validation of parameter semantics | watcher.py:69 | Verified OK |
-| LOW | L2 | MCP search does not validate `search_type` → falls back to `"search_vault"` silently | cli.py:316–317 | Verified OK |
-| LOW | L3 | `_display_search_results()` converts `score` via `float()` without error handling | cli.py:323 | Identified |
+| Severity | Finding ID | Description                                                                          | File:Line       | Status      |
+| -------- | ---------- | ------------------------------------------------------------------------------------ | --------------- | ----------- |
+| MEDIUM   | M1         | `asyncio.run()` called from sync CLI context without event loop cleanup              | cli.py:303, 343 | Identified  |
+| MEDIUM   | M2         | JSON response shape for MCP tools not strictly validated before `.get()`             | cli.py:336–337  | Identified  |
+| LOW      | L1         | Cooldown timestamps use `time.monotonic()` but no validation of parameter semantics  | watcher.py:69   | Verified OK |
+| LOW      | L2         | MCP search does not validate `search_type` → falls back to `"search_vault"` silently | cli.py:316–317  | Verified OK |
+| LOW      | L3         | `_display_search_results()` converts `score` via `float()` without error handling    | cli.py:323      | Identified  |
 
----
+______________________________________________________________________
 
 ## Detailed Findings
 
@@ -57,7 +57,7 @@ except Exception:
 
 **Recommendation:** Add a comment explaining why `asyncio.run()` is safe here (CLI is sync-only).
 
----
+______________________________________________________________________
 
 ### M2: MCP Response Shape Not Strictly Validated
 
@@ -80,7 +80,7 @@ return data.get("results", [])
 
 **Recommendation:** The implementation is acceptable for a "fast path" that gracefully degrades. The fallback to in-process search (line 384) provides recovery.
 
----
+______________________________________________________________________
 
 ### L1: Cooldown Logic Uses `time.monotonic()` Correctly
 
@@ -106,7 +106,7 @@ else:
 
 **Status:** Verified OK. No issues.
 
----
+______________________________________________________________________
 
 ### L2: MCP Search Type Fallback to `"search_vault"`
 
@@ -127,7 +127,7 @@ tool_name = tool_map.get(search_type, "search_vault")
 
 **Status:** Verified OK. No issues.
 
----
+______________________________________________________________________
 
 ### L3: Score Conversion Without Error Handling
 
@@ -151,7 +151,7 @@ table.add_row(f"{score:.2f}", location, snippet)
 
 **Recommendation:** Add defensive `.get("score", 0.0)` with numeric default (already done) to avoid exceptions; `float()` conversion is then safe.
 
----
+______________________________________________________________________
 
 ## NOT TASKED — Verification Summary
 
@@ -165,12 +165,12 @@ table.add_row(f"{score:.2f}", location, snippet)
 ✓ **Graceful fallback:** All MCP failures result in fallback to in-process search; no data loss.
 ✓ **VAULTSPEC_ROOT propagation:** `--port` option on `handle_search` correctly skips workspace resolution (lines 411–419); no ctx.obj accessed in fast path.
 
----
+______________________________________________________________________
 
 ## Top 3 Findings for Orchestrator
 
 1. **M1: asyncio.run() Event Loop Assumption** — Safe today but brittle if CLI becomes async. Add documentation explaining sync-only constraint.
-2. **M2: MCP Response Shape Flexibility** — Server returns `{"results": [...]}` shape; no strict validation but graceful degradation works.
-3. **L1–L3: Remaining Issues Minor** — Cooldown logic correct, type safety enforced, score conversion safe for trusted server responses.
+1. **M2: MCP Response Shape Flexibility** — Server returns `{"results": [...]}` shape; no strict validation but graceful degradation works.
+1. **L1–L3: Remaining Issues Minor** — Cooldown logic correct, type safety enforced, score conversion safe for trusted server responses.
 
 **Triage recommendation:** Deploy as-is. Consider documenting the async constraint in cli.py as a follow-up.

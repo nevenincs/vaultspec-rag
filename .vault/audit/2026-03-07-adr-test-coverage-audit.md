@@ -1,15 +1,16 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # ADR Test Coverage Audit — 2026-03-07
 
 For each ADR: does a test exist that would **fail** if the decision were violated?
 
----
+______________________________________________________________________
 
 ## 1. gpu-only-rag-stack (2026-03-06)
 
@@ -23,7 +24,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - **GAP:** No test asserts the sparse model is `naver/splade-v3`. Swapping sparse models would not be caught.
 - **GAP:** No test asserts `torch_dtype=float16` or `flash_attention_2`. Inference precision could silently change.
 
----
+______________________________________________________________________
 
 ## 2. rag-stack-migration (2026-03-06)
 
@@ -31,7 +32,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 
 **Verdict: N/A (SUPERSEDED)**
 
----
+______________________________________________________________________
 
 ## 3. blake2b-file-hashing (2026-03-07)
 
@@ -43,7 +44,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - No test asserts the hashing algorithm is blake2b. If someone changed sha256 to md5, the unit tests would still pass (they recompute with whichever algorithm the code uses).
 - The ADR itself is NOT IMPLEMENTED (code uses sha256), so there is nothing to regress against. This is an implementation gap, not a test gap.
 
----
+______________________________________________________________________
 
 ## 4. manual-node-walking (2026-03-07)
 
@@ -56,7 +57,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - `test_indexer_unit.py:870-889` — Tests non-ASCII identifier extraction via ASTChunker.
 - If `child_by_field_name` were replaced with Query API, these tests would still pass (they test behavior, not implementation). But if metadata extraction **broke**, these would catch it. This is the correct kind of coverage.
 
----
+______________________________________________________________________
 
 ## 5. mcp-sync-tools (2026-03-07)
 
@@ -68,7 +69,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - No test verifies the event loop stays responsive during tool execution.
 - Per the ADR compliance audit, this ADR is **CONTRADICTED** -- tools are still `async def` with manual `asyncio.to_thread()`. A test asserting sync would catch this.
 
----
+______________________________________________________________________
 
 ## 6. path-resolve-engine-cache (2026-03-07)
 
@@ -80,7 +81,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - No test passes two lexically-different-but-equivalent paths and asserts they return the same engine.
 - Per the ADR compliance audit, this ADR is **NOT IMPLEMENTED** (api.py:53 uses lexical comparison).
 
----
+______________________________________________________________________
 
 ## 7. qdrant-filter-on-prefetch (2026-03-07)
 
@@ -94,7 +95,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - **These tests cover the behavior** (filters work correctly). If someone moved filters from Prefetch to top-level `query_filter`, these tests would fail because Qdrant ignores top-level filters with Prefetch.
 - **GAP:** No unit test inspects the Qdrant API call structure to verify filters are on Prefetch objects specifically. Only behavioral integration tests cover this.
 
----
+______________________________________________________________________
 
 ## 8. qdrant-payload-indexes-local (2026-03-07)
 
@@ -107,7 +108,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - Since indexes are no-ops in local mode, removing the calls would have zero observable behavioral effect -- no test could catch this without inspecting the API calls.
 - Per ADR compliance audit: PARTIALLY IMPLEMENTED (missing `line_start`, `date`, `tags` indexes).
 
----
+______________________________________________________________________
 
 ## 9. qwen3-no-document-prompt (2026-03-07)
 
@@ -119,7 +120,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - No test asserts that `encode_query()` passes `prompt_name="query"`.
 - If someone added `prompt_name="document"` to `encode_documents`, no test would fail (the document prompt is empty string, so it's functionally identical). But if they removed `prompt_name="query"` from `encode_query`, retrieval quality would degrade 1-5% -- no test has tight enough precision thresholds to catch this.
 
----
+______________________________________________________________________
 
 ## 10. score-normalization (2026-03-07)
 
@@ -132,7 +133,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - No test verifies `_sigmoid()` or `_min_max()` helpers exist or produce correct output.
 - Per ADR compliance audit: NOT IMPLEMENTED (raw concatenation, no normalization).
 
----
+______________________________________________________________________
 
 ## 11. threading-lock-for-singleton (2026-03-07)
 
@@ -144,7 +145,7 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - `test_mcp_server.py:246-264` tests that cached errors raise immediately on retry.
 - **GAP:** No test exercises **concurrent** access to `get_comp()` (e.g., two threads racing). The lock is verified to exist but never stressed.
 
----
+______________________________________________________________________
 
 ## 12. vaultgraph-cache (2026-03-07)
 
@@ -156,24 +157,24 @@ For each ADR: does a test exist that would **fail** if the decision were violate
 - **GAP:** No test verifies `_graph_cache` in `api.py` exists or caches correctly. Per ADR compliance audit, this is NOT IMPLEMENTED -- `api.py` rebuilds VaultGraph on every `get_related()` call.
 - No test verifies `invalidate()` is called after reindex.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| # | ADR | Verdict | Key Gap |
-|---|-----|---------|---------|
-| 1 | gpu-only-rag-stack | PARTIAL | No assertion on model names, dtype, or attention impl |
-| 2 | rag-stack-migration | N/A | Superseded |
-| 3 | blake2b-file-hashing | GAP | ADR not implemented (sha256 used). Tests use sha256 too. No algorithm assertion. |
-| 4 | manual-node-walking | COVERED | Behavioral tests verify metadata extraction works |
-| 5 | mcp-sync-tools | GAP | No test checks sync vs async. ADR contradicted (still async). |
-| 6 | path-resolve-engine-cache | GAP | No test with equivalent-but-different paths. ADR not implemented. |
-| 7 | qdrant-filter-on-prefetch | PARTIAL | Behavioral tests would catch breakage. No structural test of Prefetch filter placement. |
-| 8 | qdrant-payload-indexes-local | GAP | No-op in local mode, untestable without API inspection. Partial impl. |
-| 9 | qwen3-no-document-prompt | GAP | No assertion on prompt_name presence/absence |
-| 10 | score-normalization | GAP | ADR not implemented. No normalization tests. |
-| 11 | threading-lock-for-singleton | PARTIAL | Lock exists but no concurrency stress test |
-| 12 | vaultgraph-cache | GAP | ADR not implemented. No cache tests in api.py. |
+| #   | ADR                          | Verdict | Key Gap                                                                                 |
+| --- | ---------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| 1   | gpu-only-rag-stack           | PARTIAL | No assertion on model names, dtype, or attention impl                                   |
+| 2   | rag-stack-migration          | N/A     | Superseded                                                                              |
+| 3   | blake2b-file-hashing         | GAP     | ADR not implemented (sha256 used). Tests use sha256 too. No algorithm assertion.        |
+| 4   | manual-node-walking          | COVERED | Behavioral tests verify metadata extraction works                                       |
+| 5   | mcp-sync-tools               | GAP     | No test checks sync vs async. ADR contradicted (still async).                           |
+| 6   | path-resolve-engine-cache    | GAP     | No test with equivalent-but-different paths. ADR not implemented.                       |
+| 7   | qdrant-filter-on-prefetch    | PARTIAL | Behavioral tests would catch breakage. No structural test of Prefetch filter placement. |
+| 8   | qdrant-payload-indexes-local | GAP     | No-op in local mode, untestable without API inspection. Partial impl.                   |
+| 9   | qwen3-no-document-prompt     | GAP     | No assertion on prompt_name presence/absence                                            |
+| 10  | score-normalization          | GAP     | ADR not implemented. No normalization tests.                                            |
+| 11  | threading-lock-for-singleton | PARTIAL | Lock exists but no concurrency stress test                                              |
+| 12  | vaultgraph-cache             | GAP     | ADR not implemented. No cache tests in api.py.                                          |
 
 **Result: 1 COVERED, 3 PARTIAL, 7 GAP, 1 N/A.**
 

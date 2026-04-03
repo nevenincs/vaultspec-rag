@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#exec"
-  - "#service-graph"
+  - '#exec'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-phase1-plan]]"
+  - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-5 step-1: model prefetch (warmup command)

@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # GPU-Only RAG Architecture: Grounding Report
 
 Date: 2026-03-06
@@ -23,7 +24,7 @@ Sources:
 - <https://www.daft.ai/blog/embedding-millions-of-text-documents-with-qwen3> (GPU pipeline architecture)
 - <https://github.com/UKPLab/sentence-transformers/releases/tag/v5.0.0> (SparseEncoder v5)
 
----
+______________________________________________________________________
 
 ## 1. GPU-Native Embedding Inference
 
@@ -87,20 +88,20 @@ model = AutoModel.from_pretrained("Qwen/Qwen3-Embedding-0.6B",
 
 **Use sentence-transformers for both dense and sparse GPU inference.** It wraps torch, supports flash_attention_2, fp16/bf16, multi-GPU, and has the cleanest API. Only fall back to raw transformers if you need BGE-M3's multi-output mode.
 
----
+______________________________________________________________________
 
 ## 2. Embedding Model Comparison
 
 ### VRAM Footprint & Key Metrics
 
-| Model | Params | Dim | VRAM (fp16) | MTEB Score | MRL | Hybrid (dense+sparse) |
-|---|---|---|---|---|---|---|
-| **Qwen3-Embedding-0.6B** | 0.6B | 1024 (MRL: 32-1024) | ~1.5 GB | 64.33 (multi) | YES | NO (dense only) |
-| **Qwen3-Embedding-4B** | 4B | 1024 (MRL: 32-1024) | ~8 GB | -- | YES | NO |
-| **Qwen3-Embedding-8B** | 8B | 1024 (MRL: 32-1024) | ~16 GB | 70.58 (multi, #1) | YES | NO |
-| **BGE-M3** | 568M | 1024 | ~3.4 GB | ~62 | NO | YES (dense+sparse+ColBERT) |
-| **NV-Embed-v2** | 7.8B | 4096 | ~24 GB | 72.31 (eng) | NO | NO |
-| **nomic-embed-text-v1.5** | ~137M | 768 (MRL: 64-768) | ~0.5 GB | 62.28 | YES | NO |
+| Model                     | Params | Dim                 | VRAM (fp16) | MTEB Score        | MRL | Hybrid (dense+sparse)      |
+| ------------------------- | ------ | ------------------- | ----------- | ----------------- | --- | -------------------------- |
+| **Qwen3-Embedding-0.6B**  | 0.6B   | 1024 (MRL: 32-1024) | ~1.5 GB     | 64.33 (multi)     | YES | NO (dense only)            |
+| **Qwen3-Embedding-4B**    | 4B     | 1024 (MRL: 32-1024) | ~8 GB       | --                | YES | NO                         |
+| **Qwen3-Embedding-8B**    | 8B     | 1024 (MRL: 32-1024) | ~16 GB      | 70.58 (multi, #1) | YES | NO                         |
+| **BGE-M3**                | 568M   | 1024                | ~3.4 GB     | ~62               | NO  | YES (dense+sparse+ColBERT) |
+| **NV-Embed-v2**           | 7.8B   | 4096                | ~24 GB      | 72.31 (eng)       | NO  | NO                         |
+| **nomic-embed-text-v1.5** | ~137M  | 768 (MRL: 64-768)   | ~0.5 GB     | 62.28             | YES | NO                         |
 
 ### VRAM Estimates (approx)
 
@@ -114,12 +115,12 @@ Rule of thumb: fp16 VRAM ~= 2 bytes x params + overhead
 
 ### Recommendations by GPU Tier
 
-| GPU | VRAM | Recommended Model |
-|---|---|---|
-| RTX 3060/4060 (8 GB) | 8 GB | Qwen3-Embedding-0.6B or nomic-embed-text-v1.5 |
-| RTX 3080/4070 Ti (12 GB) | 12 GB | Qwen3-Embedding-0.6B or BGE-M3 |
-| RTX 3090/4080/4090 (16-24 GB) | 16-24 GB | Qwen3-Embedding-4B or 8B |
-| A100/H100 (40-80 GB) | 40-80 GB | Qwen3-Embedding-8B |
+| GPU                           | VRAM     | Recommended Model                             |
+| ----------------------------- | -------- | --------------------------------------------- |
+| RTX 3060/4060 (8 GB)          | 8 GB     | Qwen3-Embedding-0.6B or nomic-embed-text-v1.5 |
+| RTX 3080/4070 Ti (12 GB)      | 12 GB    | Qwen3-Embedding-0.6B or BGE-M3                |
+| RTX 3090/4080/4090 (16-24 GB) | 16-24 GB | Qwen3-Embedding-4B or 8B                      |
+| A100/H100 (40-80 GB)          | 40-80 GB | Qwen3-Embedding-8B                            |
 
 ### Model Recommendation
 
@@ -136,7 +137,7 @@ Rule of thumb: fp16 VRAM ~= 2 bytes x params + overhead
 - Requires `FlagEmbedding` library (not sentence-transformers for sparse output)
 - ~3.4 GB VRAM
 
----
+______________________________________________________________________
 
 ## 3. Sparse/Hybrid Search on GPU (Without BM42/fastembed)
 
@@ -210,7 +211,7 @@ bm25_scores = bm25.get_scores(query.split())
 
 If single-model simplicity is preferred and you accept the FlagEmbedding dependency, **Option B (BGE-M3)** is also viable.
 
----
+______________________________________________________________________
 
 ## 4. Vector Database for GPU-Only Stack
 
@@ -250,7 +251,7 @@ Qdrant remains the best choice even with GPU embeddings:
 
 **Keep Qdrant with local mode.** The vector DB is not the GPU bottleneck -- embedding inference is. GPU acceleration belongs in the embedding pipeline, not the vector search.
 
----
+______________________________________________________________________
 
 ## 5. GPU Indexing Pipeline Architecture
 
@@ -296,11 +297,11 @@ sparse_embeddings = sparse_model.encode(
 ### Key Optimization Techniques
 
 1. **fp16 / bf16**: Use `torch_dtype="float16"` or `"bfloat16"` -- ~1.5x speedup, halves VRAM
-2. **flash_attention_2**: `attn_implementation="flash_attention_2"` -- significant speedup for long sequences (Qwen3 supports this)
-3. **Batch size tuning**: Start with 64, increase until VRAM OOM, then back off. Larger batches = higher throughput.
-4. **Pinned memory for data loading**: Use `torch.cuda.Stream` for async data transfer
-5. **Sort by length**: Group similar-length documents to minimize padding waste (sentence-transformers does this internally)
-6. **Multi-GPU**: `model.encode(docs, device=["cuda:0", "cuda:1"])` for multi-GPU parallel encoding
+1. **flash_attention_2**: `attn_implementation="flash_attention_2"` -- significant speedup for long sequences (Qwen3 supports this)
+1. **Batch size tuning**: Start with 64, increase until VRAM OOM, then back off. Larger batches = higher throughput.
+1. **Pinned memory for data loading**: Use `torch.cuda.Stream` for async data transfer
+1. **Sort by length**: Group similar-length documents to minimize padding waste (sentence-transformers does this internally)
+1. **Multi-GPU**: `model.encode(docs, device=["cuda:0", "cuda:1"])` for multi-GPU parallel encoding
 
 ### Pipeline Architecture (from Daft.ai's Qwen3 case study)
 
@@ -313,17 +314,17 @@ sparse_embeddings = sparse_model.encode(
 - **Multi-level batch sizing**: Pipeline batch (512 records) > GPU batch (16-64 sequences)
 - **Near-100% GPU utilization** achievable with proper pipelining
 
----
+______________________________________________________________________
 
 ## 6. Recommended GPU-Only Stack
 
-| Component | Choice | Rationale |
-|---|---|---|
-| **Dense embedding** | `sentence-transformers` + `Qwen/Qwen3-Embedding-0.6B` | Best quality/VRAM ratio, MRL, flash_attn2, native ST support |
-| **Sparse embedding** | `sentence-transformers.SparseEncoder` + `naver/splade-v3` | GPU-native SPLADE, same library as dense |
-| **Vector DB** | `qdrant-client` (local mode) | Named vectors, RRF fusion, persistence, filtering, proven |
-| **Inference dtype** | `float16` with `flash_attention_2` | ~1.5x speedup, halves VRAM |
-| **Hybrid search** | Qdrant `query_points` with `Prefetch` + `FusionQuery(RRF)` | Server-side fusion, no manual RRF |
+| Component            | Choice                                                     | Rationale                                                    |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| **Dense embedding**  | `sentence-transformers` + `Qwen/Qwen3-Embedding-0.6B`      | Best quality/VRAM ratio, MRL, flash_attn2, native ST support |
+| **Sparse embedding** | `sentence-transformers.SparseEncoder` + `naver/splade-v3`  | GPU-native SPLADE, same library as dense                     |
+| **Vector DB**        | `qdrant-client` (local mode)                               | Named vectors, RRF fusion, persistence, filtering, proven    |
+| **Inference dtype**  | `float16` with `flash_attention_2`                         | ~1.5x speedup, halves VRAM                                   |
+| **Hybrid search**    | Qdrant `query_points` with `Prefetch` + `FusionQuery(RRF)` | Server-side fusion, no manual RRF                            |
 
 ### pyproject.toml Dependencies
 
@@ -340,27 +341,27 @@ rag = [
 
 ### Key Differences from Previous (fastembed/ONNX/CPU) Stack
 
-| Aspect | Old (CPU/ONNX) | New (GPU/torch) |
-|---|---|---|
-| Dense embedding lib | fastembed (ONNX) | sentence-transformers (torch+CUDA) |
-| Dense model | nomic-embed-text-v1.5 (768d) | Qwen3-Embedding-0.6B (1024d, MRL) |
-| Sparse embedding lib | fastembed SparseTextEmbedding | sentence-transformers SparseEncoder |
-| Sparse model | BM42 or SPLADE (ONNX) | SPLADE v3 (torch+CUDA) |
-| Inference device | CPU | CUDA GPU |
-| VRAM required | 0 | ~3 GB (dense + sparse models in fp16) |
-| Dependencies | fastembed, onnxruntime | torch, sentence-transformers, transformers |
-| Vector DB | Qdrant (local) | Qdrant (local) -- UNCHANGED |
-| Hybrid search | Qdrant query_points + RRF | Qdrant query_points + RRF -- UNCHANGED |
+| Aspect               | Old (CPU/ONNX)                | New (GPU/torch)                            |
+| -------------------- | ----------------------------- | ------------------------------------------ |
+| Dense embedding lib  | fastembed (ONNX)              | sentence-transformers (torch+CUDA)         |
+| Dense model          | nomic-embed-text-v1.5 (768d)  | Qwen3-Embedding-0.6B (1024d, MRL)          |
+| Sparse embedding lib | fastembed SparseTextEmbedding | sentence-transformers SparseEncoder        |
+| Sparse model         | BM42 or SPLADE (ONNX)         | SPLADE v3 (torch+CUDA)                     |
+| Inference device     | CPU                           | CUDA GPU                                   |
+| VRAM required        | 0                             | ~3 GB (dense + sparse models in fp16)      |
+| Dependencies         | fastembed, onnxruntime        | torch, sentence-transformers, transformers |
+| Vector DB            | Qdrant (local)                | Qdrant (local) -- UNCHANGED                |
+| Hybrid search        | Qdrant query_points + RRF     | Qdrant query_points + RRF -- UNCHANGED     |
 
----
+______________________________________________________________________
 
 ## 7. Risks & Open Questions
 
-| Risk | Severity | Mitigation |
-|---|---|---|
-| flash-attn installation complexity (CUDA version sensitivity) | Medium | Make it optional; bf16 still gives good speedup without it |
-| torch CUDA version mismatch | Medium | Pin torch version to match target CUDA |
-| SPLADE sparse tensor -> Qdrant SparseVector conversion | Low | Convert COO tensor to indices/values lists |
-| Qwen3 0.6B quality vs nomic 768d tradeoff | Low | Qwen3 scores higher on MTEB multilingual (64.33 vs 62.28) |
-| BGE-M3 alternative needs FlagEmbedding dependency | Low | Only if single-model hybrid is desired |
-| SparseEncoder v5 maturity (released 2025) | Low | Well-documented, backed by Hugging Face/UKP Lab |
+| Risk                                                          | Severity | Mitigation                                                 |
+| ------------------------------------------------------------- | -------- | ---------------------------------------------------------- |
+| flash-attn installation complexity (CUDA version sensitivity) | Medium   | Make it optional; bf16 still gives good speedup without it |
+| torch CUDA version mismatch                                   | Medium   | Pin torch version to match target CUDA                     |
+| SPLADE sparse tensor -> Qdrant SparseVector conversion        | Low      | Convert COO tensor to indices/values lists                 |
+| Qwen3 0.6B quality vs nomic 768d tradeoff                     | Low      | Qwen3 scores higher on MTEB multilingual (64.33 vs 62.28)  |
+| BGE-M3 alternative needs FlagEmbedding dependency             | Low      | Only if single-model hybrid is desired                     |
+| SparseEncoder v5 maturity (released 2025)                     | Low      | Well-documented, backed by Hugging Face/UKP Lab            |

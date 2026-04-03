@@ -1,0 +1,55 @@
+# Handle line endings automatically for files detected as text
+# and leave binary files untouched.
+* text=auto
+
+# Python files
+*.py      text eol=lf
+*.pyi     text eol=lf
+*.pyw     text eol=lf
+
+# Web files
+*.html    text diff=html
+*.css     text
+*.js      text
+*.ts      text
+*.tsx     text
+*.json    text
+
+# Documentation
+*.md      text
+*.txt     text
+
+# Data/Config
+*.yml     text
+*.yaml    text
+*.toml    text
+*.xml     text
+
+# Shell scripts
+*.sh      text eol=lf
+
+# Batch files
+*.bat     text eol=crlf
+
+# Binary files
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.mov     binary
+*.mp4     binary
+*.mp3     binary
+*.flv     binary
+*.fla     binary
+*.swf     binary
+*.gz      binary
+*.zip     binary
+*.7z      binary
+*.ttf     binary
+*.pyc     binary
+*.pyo     binary
+*.pyd     binary
+*.so      binary
+*.dll     binary
+*.exe     binary

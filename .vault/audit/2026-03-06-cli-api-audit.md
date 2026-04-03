@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: CLI and API Facade
 
 Feature: cli.py Typer CLI, api.py engine singleton
@@ -17,12 +18,12 @@ Lines 194-201: Status command now uses `torch.cuda` to detect GPU and display de
 
 ### cli.py Previous Issues (ALL RESOLVED)
 
-- Task #22 [CRITICAL]: Imported removed `get_device_info()` -- CLI crashed on import. FIXED.
-- Task #14 [MEDIUM]: Passed unsupported `model_name` kwarg to `EmbeddingModel()`. FIXED.
+- Task #22 \[CRITICAL\]: Imported removed `get_device_info()` -- CLI crashed on import. FIXED.
+- Task #14 \[MEDIUM\]: Passed unsupported `model_name` kwarg to `EmbeddingModel()`. FIXED.
 
 ### cli.py Open Issues
 
-- Task #50 [LOW]: cli.py:126-128 `overrides` dict built but never used in `handle_index`. Dead code.
+- Task #50 \[LOW\]: cli.py:126-128 `overrides` dict built but never used in `handle_index`. Dead code.
 
 ### api.py: CLEAN
 

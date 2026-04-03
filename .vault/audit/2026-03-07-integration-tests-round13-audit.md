@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 13 Audit -- Integration Tests and Benchmarks
 
 **Auditor:** docs-researcher-2-2
@@ -15,9 +16,9 @@ related: []
 - `src/vaultspec_rag/tests/integration/conftest.py` (31 lines)
 - `src/vaultspec_rag/tests/conftest.py` (245 lines) -- shared fixtures
 - `src/vaultspec_rag/tests/constants.py` (78 lines) -- test constants
-**Date:** 2026-03-07
+  **Date:** 2026-03-07
 
----
+______________________________________________________________________
 
 ## Check 1: Test Correctness -- Full Pipeline Exercise
 
@@ -25,22 +26,22 @@ related: []
 
 Tests exercise real pipeline stages:
 
-| Test | Pipeline Stage | Meaningful? |
-|------|---------------|-------------|
-| `test_full_index_counts` | index -> verify counts | Yes -- checks total > 0, added > 0, device == "cuda" |
-| `test_index_matches_store_count` | index -> store.count() | Yes -- verifies result.total == store.count() |
-| `test_incremental_index_no_changes` | full_index -> incremental_index | Yes -- verifies 0 added/removed after no changes |
-| `test_prepare_real_document` | scan_vault -> prepare_document | Yes -- checks id, path, doc_type enum, content |
-| `test_prepare_all_documents` | scan all -> prepare all | Partial -- see R13-M1 |
-| `test_double_full_index_idempotent` | full_index x2 -> count match | Yes -- idempotency check |
-| `test_incremental_after_full_stable` | full -> incremental -> 0 changes | Yes |
-| `test_docs_without_frontmatter_counted` | scan -> parse metadata | Yes -- validates corpus characteristics |
-| `test_incremental_detects_modified_file` | modify file -> incremental | Yes -- mutates file, checks updated >= 1, restores |
-| `test_incremental_detects_deleted_file` | delete file -> incremental | Yes -- deletes file, checks removed >= 1, restores |
+| Test                                     | Pipeline Stage                   | Meaningful?                                          |
+| ---------------------------------------- | -------------------------------- | ---------------------------------------------------- |
+| `test_full_index_counts`                 | index -> verify counts           | Yes -- checks total > 0, added > 0, device == "cuda" |
+| `test_index_matches_store_count`         | index -> store.count()           | Yes -- verifies result.total == store.count()        |
+| `test_incremental_index_no_changes`      | full_index -> incremental_index  | Yes -- verifies 0 added/removed after no changes     |
+| `test_prepare_real_document`             | scan_vault -> prepare_document   | Yes -- checks id, path, doc_type enum, content       |
+| `test_prepare_all_documents`             | scan all -> prepare all          | Partial -- see R13-M1                                |
+| `test_double_full_index_idempotent`      | full_index x2 -> count match     | Yes -- idempotency check                             |
+| `test_incremental_after_full_stable`     | full -> incremental -> 0 changes | Yes                                                  |
+| `test_docs_without_frontmatter_counted`  | scan -> parse metadata           | Yes -- validates corpus characteristics              |
+| `test_incremental_detects_modified_file` | modify file -> incremental       | Yes -- mutates file, checks updated >= 1, restores   |
+| `test_incremental_detects_deleted_file`  | delete file -> incremental       | Yes -- deletes file, checks removed >= 1, restores   |
 
 **Verdict: PASS overall.** Tests exercise real indexing with real GPU models on real vault data. Modify/delete tests use try/finally for cleanup.
 
----
+______________________________________________________________________
 
 ## Check 2: Fixture Teardown -- `store.close()` Before `rmtree`
 
@@ -60,7 +61,7 @@ Same pattern: `store.close()` then `shutil.rmtree(db_dir)`.
 
 **Verdict: PASS.** All three fixture teardowns call `store.close()` before `shutil.rmtree()`. This releases Qdrant's file locks before deleting the directory (critical on Windows).
 
----
+______________________________________________________________________
 
 ## Check 3: Git Reset Safety
 
@@ -83,7 +84,7 @@ If `git checkout` fails (e.g., detached HEAD, missing `.vault/`, git not in PATH
 
 **File:** `conftest.py:194-198`
 
----
+______________________________________________________________________
 
 ## Check 4: Real Data Assertions
 
@@ -124,7 +125,7 @@ Most other tests use meaningful assertions:
 
 **Verdict: Mostly PASS.** Assertions are meaningful except for the `doc.id == path.stem` issue.
 
----
+______________________________________________________________________
 
 ## Check 5: Marker Compliance
 
@@ -154,24 +155,24 @@ Note: Each benchmark already has `@pytest.mark.quality` which IS approved. But `
 
 **File:** `bench_rag.py:35-36, 56-57, 72-73, 87-88, 136-137`
 
----
+______________________________________________________________________
 
 ## Check 6: Timeout Markers
 
 ### `test_indexer_integration.py`
 
-| Test | Timeout |
-|------|---------|
-| `test_full_index_counts` | `@pytest.mark.timeout(60)` |
-| `test_index_matches_store_count` | `@pytest.mark.timeout(60)` |
-| `test_incremental_index_no_changes` | `@pytest.mark.timeout(300)` |
-| `test_prepare_real_document` | `@pytest.mark.timeout(60)` |
-| `test_prepare_all_documents` | `@pytest.mark.timeout(300)` |
-| `test_double_full_index_idempotent` | `@pytest.mark.timeout(300)` |
-| `test_incremental_after_full_stable` | `@pytest.mark.timeout(300)` |
-| `test_docs_without_frontmatter_counted` | `@pytest.mark.timeout(300)` |
+| Test                                     | Timeout                     |
+| ---------------------------------------- | --------------------------- |
+| `test_full_index_counts`                 | `@pytest.mark.timeout(60)`  |
+| `test_index_matches_store_count`         | `@pytest.mark.timeout(60)`  |
+| `test_incremental_index_no_changes`      | `@pytest.mark.timeout(300)` |
+| `test_prepare_real_document`             | `@pytest.mark.timeout(60)`  |
+| `test_prepare_all_documents`             | `@pytest.mark.timeout(300)` |
+| `test_double_full_index_idempotent`      | `@pytest.mark.timeout(300)` |
+| `test_incremental_after_full_stable`     | `@pytest.mark.timeout(300)` |
+| `test_docs_without_frontmatter_counted`  | `@pytest.mark.timeout(300)` |
 | `test_incremental_detects_modified_file` | `@pytest.mark.timeout(300)` |
-| `test_incremental_detects_deleted_file` | `@pytest.mark.timeout(300)` |
+| `test_incremental_detects_deleted_file`  | `@pytest.mark.timeout(300)` |
 
 **Verdict: PASS.** All 10 tests have explicit timeout markers. Fast tests get 60s, full-corpus tests get 300s.
 
@@ -179,7 +180,7 @@ Note: Each benchmark already has `@pytest.mark.quality` which IS approved. But `
 
 No timeout markers on any benchmark. Since benchmarks are long-running by nature, this is acceptable -- they have `@pytest.mark.quality` which implies longer runtimes.
 
----
+______________________________________________________________________
 
 ## Check 7: Benchmark Structure
 
@@ -188,10 +189,10 @@ No timeout markers on any benchmark. Since benchmarks are long-running by nature
 5 benchmark test functions:
 
 1. `test_bench_embedding_throughput` -- times `encode_documents()` on synthetic texts
-2. `test_bench_full_index` -- times `full_index()` on real corpus
-3. `test_bench_incremental_noop` -- times `incremental_index()` with no changes
-4. `test_bench_search_latency` -- measures p50/p95/p99 over 20 real queries
-5. `test_bench_memory` -- reports GPU VRAM and Qdrant disk size
+1. `test_bench_full_index` -- times `full_index()` on real corpus
+1. `test_bench_incremental_noop` -- times `incremental_index()` with no changes
+1. `test_bench_search_latency` -- measures p50/p95/p99 over 20 real queries
+1. `test_bench_memory` -- reports GPU VRAM and Qdrant disk size
 
 ### R13-m1: Benchmark test functions take non-fixture parameters (Minor)
 
@@ -211,7 +212,7 @@ These benchmarks can only work when called from the `main()` function (lines 160
 
 **File:** `bench_rag.py:37, 58, 74, 89, 138`
 
----
+______________________________________________________________________
 
 ## Check 8: Banned Imports (unittest, mocks, skips)
 
@@ -233,20 +234,20 @@ Imports: `shutil`, `subprocess`, `time`, `pytest`, `vaultspec.config`, `vaultspe
 
 **Verdict: PASS.** Zero violations across all 5 files.
 
----
+______________________________________________________________________
 
 ## Check 9: Conftest Fixture Scoping
 
-| Fixture | Scope | File | Assessment |
-|---------|-------|------|------------|
-| `rag_components` (integration) | `session` | integration/conftest.py | **Correct** -- GPU model load is expensive, share across session |
-| `rag_components` (shared) | `session` | tests/conftest.py | **Correct** -- same reasoning |
-| `rag_components_full` | `session` | tests/conftest.py | **Correct** -- full corpus index is very expensive |
-| `require_gpu_corpus` | `function` (default) | tests/conftest.py | **Correct** -- just an assertion wrapper |
-| `_vault_snapshot_reset` | `session`, `autouse=True` | tests/conftest.py | **Correct** -- reset once after all tests |
-| `vaultspec_config` | `function` (default) | tests/conftest.py | **Correct** -- resets singleton per test |
-| `config_override` | `function` (default) | tests/conftest.py | **Correct** -- factory fixture, resets per test |
-| `clean_config` | `function` (default) | tests/conftest.py | **Correct** -- resets singleton per test |
+| Fixture                        | Scope                     | File                    | Assessment                                                       |
+| ------------------------------ | ------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `rag_components` (integration) | `session`                 | integration/conftest.py | **Correct** -- GPU model load is expensive, share across session |
+| `rag_components` (shared)      | `session`                 | tests/conftest.py       | **Correct** -- same reasoning                                    |
+| `rag_components_full`          | `session`                 | tests/conftest.py       | **Correct** -- full corpus index is very expensive               |
+| `require_gpu_corpus`           | `function` (default)      | tests/conftest.py       | **Correct** -- just an assertion wrapper                         |
+| `_vault_snapshot_reset`        | `session`, `autouse=True` | tests/conftest.py       | **Correct** -- reset once after all tests                        |
+| `vaultspec_config`             | `function` (default)      | tests/conftest.py       | **Correct** -- resets singleton per test                         |
+| `config_override`              | `function` (default)      | tests/conftest.py       | **Correct** -- factory fixture, resets per test                  |
+| `clean_config`                 | `function` (default)      | tests/conftest.py       | **Correct** -- resets singleton per test                         |
 
 ### R13-m2: Two `rag_components` fixtures with `session` scope in different conftest files (Minor)
 
@@ -256,7 +257,7 @@ Imports: `shutil`, `subprocess`, `time`, `pytest`, `vaultspec.config`, `vaultspe
 
 **Verdict: PASS overall.** Scoping is correct across all fixtures.
 
----
+______________________________________________________________________
 
 ## Check 10: Hardcoded Paths
 
@@ -291,7 +292,7 @@ Uses `PROJECT_ROOT` (derived from `__file__`) as cwd. The `"test-project/.vault/
 
 **Verdict: PASS.** No hardcoded absolute paths. All paths are relative to `__file__` or `PROJECT_ROOT`.
 
----
+______________________________________________________________________
 
 ## Additional Observations
 
@@ -309,18 +310,18 @@ The `store` created at line 192 is never closed before `shutil.rmtree()`. On Win
 
 **File:** `bench_rag.py:240-242` (should call `store.close()` at line 239)
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| R13-M1 | MEDIUM | `_vault_snapshot_reset` uses `check=True` on git checkout -- teardown failure masks test results |
-| R13-M2 | HIGH | `test_prepare_all_documents` asserts `doc.id == path.stem` -- wrong after path-based ID change |
-| R13-M3 | MEDIUM | Benchmarks use `@pytest.mark.benchmark` (unregistered) instead of `@pytest.mark.performance` |
-| R13-M4 | MEDIUM | Benchmark test functions reference undefined fixtures -- cannot run via pytest |
-| R13-m1 | MINOR | Benchmark functions have non-fixture parameters with defaults (only work from `main()`) |
-| R13-m2 | MINOR | Two `rag_components` fixtures with same name in different conftest files |
-| R13-m3 | MINOR | `bench_rag.py` main() does not close store before rmtree (Windows PermissionError) |
+| ID     | Severity | Finding                                                                                          |
+| ------ | -------- | ------------------------------------------------------------------------------------------------ |
+| R13-M1 | MEDIUM   | `_vault_snapshot_reset` uses `check=True` on git checkout -- teardown failure masks test results |
+| R13-M2 | HIGH     | `test_prepare_all_documents` asserts `doc.id == path.stem` -- wrong after path-based ID change   |
+| R13-M3 | MEDIUM   | Benchmarks use `@pytest.mark.benchmark` (unregistered) instead of `@pytest.mark.performance`     |
+| R13-M4 | MEDIUM   | Benchmark test functions reference undefined fixtures -- cannot run via pytest                   |
+| R13-m1 | MINOR    | Benchmark functions have non-fixture parameters with defaults (only work from `main()`)          |
+| R13-m2 | MINOR    | Two `rag_components` fixtures with same name in different conftest files                         |
+| R13-m3 | MINOR    | `bench_rag.py` main() does not close store before rmtree (Windows PermissionError)               |
 
 **1 HIGH, 3 MEDIUM, 3 MINOR findings.**

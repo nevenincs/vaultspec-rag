@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -12,13 +12,13 @@ related: []
 **Scope:** Remaining unaudited modules: MCP server, config wrapper, filesystem watcher
 **Status:** CLEAN — no blocking issues found
 
----
+______________________________________________________________________
 
 ## Summary
 
 All three modules are correctly implemented and follow established architectural patterns verified in prior audits. No CRITICAL or HIGH findings. Module-level asyncio primitives are safe in Python 3.10+. Watcher cooldown uses correct time.monotonic() semantics. Resource cleanup is sound.
 
----
+______________________________________________________________________
 
 ## mcp_server.py Findings
 
@@ -35,7 +35,7 @@ Lines 46–48 define module-level `_gpu_sem = asyncio.Semaphore(1)` and `_watche
 - Creation vs. usage are temporally separated; no race condition.
 - **Ref:** Python 3.10 release notes confirm this change.
 
----
+______________________________________________________________________
 
 ### 2. `_ensure_watcher()` safety ✓
 
@@ -57,7 +57,7 @@ _watcher_task = asyncio.ensure_future(...)
 - **Task crash handling:** If `watch_and_reindex()` raises an exception, the task completes with an exception state but `_watcher_task` remains non-None. Subsequent calls to `_ensure_watcher()` will return early and not restart. This is correct behavior—a crashed watcher should not be automatically restarted mid-session.
 - **Caller responsibility:** Tools like `search_vault` call `_ensure_watcher()` after every operation, ensuring the watcher stays alive _if no prior error occurred_.
 
----
+______________________________________________________________________
 
 ### 3. `get_vault_document` resource — return type safety ✓
 
@@ -78,7 +78,7 @@ return doc.get("content", "")
 - **Content key safety:** The check `if not doc:` ensures doc is a dict before calling `.get()`. The fallback `.get("content", "")` is safe—empty string is a sensible default for missing content.
 - **No payload loss:** Store retrieves `with_payload=True` (store.py line 471), so the payload dict is always populated if the point exists.
 
----
+______________________________________________________________________
 
 ### 4. `analyze_feature` prompt — function signature ✓
 
@@ -98,7 +98,7 @@ def analyze_feature(feature_name: str) -> str:
 - **No async required:** This is a static text generator; no I/O, no blocking calls. Sync is the right choice.
 - **Return type:** Correct `-> str`.
 
----
+______________________________________________________________________
 
 ### 5. `reindex_vault` / `reindex_codebase` GPU semaphore ✓
 
@@ -119,9 +119,9 @@ return result
   - `anyio.to_thread.run_sync()` hands off to a thread pool, which is CPU-bound from the async perspective.
   - Only one GPU indexing operation can run concurrently with MCP search tools—guaranteed by the semaphore.
   - Watcher also acquires the same semaphore (watcher.py lines 129, 155) before indexing.
-- **No double-acquisition:** The worker thread (_run) does not try to re-acquire_gpu_sem; it runs synchronously inside the thread context.
+- **No double-acquisition:** The worker thread (\_run) does not try to re-acquire_gpu_sem; it runs synchronously inside the thread context.
 
----
+______________________________________________________________________
 
 ### 6. Error propagation from `get_comp()` ✓
 
@@ -143,7 +143,7 @@ except Exception as exc:
 - **Caching failures:** On retry, `_comp_error is not None` check (line 64) re-raises the cached error, avoiding re-initialization attempts.
 - **No silent crashes:** The server does not crash; the error is returned to the client as a structured RPC error.
 
----
+______________________________________________________________________
 
 ## config.py Findings
 
@@ -174,7 +174,7 @@ def get_config(overrides: dict[str, Any] | None = None) -> VaultSpecConfigWrappe
 - **With overrides:** Mutates the singleton. This is correct for test teardown (`reset_config()` clears it).
 - **Lazy initialization:** Correct—config is not created until first call.
 
----
+______________________________________________________________________
 
 ### 2. RAG defaults sensibility ✓
 
@@ -206,7 +206,7 @@ _RAG_DEFAULTS: ClassVar[dict[str, Any]] = {
 - **`reranker_enabled`: True** — opt-in for CrossEncoder reranking via search.py check.
 - **No `chunk_overlap` in defaults:** Correct—chunk_overlap (0) is hardcoded in CodebaseIndexer.split_code() and does not belong here.
 
----
+______________________________________________________________________
 
 ### 3. Path consistency ✓
 
@@ -215,7 +215,7 @@ _RAG_DEFAULTS: ClassVar[dict[str, Any]] = {
 - `qdrant_dir` maps to store.py line 138: `self.db_path = self.root_dir / cfg.qdrant_dir`
 - `index_metadata_file` maps to indexer.py (metadata tracking during full_index).
 
----
+______________________________________________________________________
 
 ## watcher.py Findings
 
@@ -244,7 +244,7 @@ async for changes in awatch(...):
 - **time.monotonic():** Correct. Returns seconds since an arbitrary epoch (never goes backwards), immune to clock adjustments. Perfect for cooldown timing.
 - **Per-source isolation:** Vault and code indexing are tracked separately, allowing independent cooldown windows. If vault changes every 5 seconds and code changes every 60 seconds, vault can reindex multiple times while code reindex is suppressed.
 
----
+______________________________________________________________________
 
 ### 2. watchfiles.awatch() debounce parameter ✓
 
@@ -258,7 +258,7 @@ Line 98 uses `debounce=debounce`.
 - **Value:** Default 2000 ms (line 68). Reasonable to batch changes before processing.
 - **Signature:** `awatch(root_dir, debounce=..., stop_event=..., watch_filter=...)`—all parameters are correct.
 
----
+______________________________________________________________________
 
 ### 3. Stop event checking ✓
 
@@ -281,7 +281,7 @@ async for changes in awatch(
 - **No inner loop check needed:** The file-change loop (lines 108–114) does not need to manually check `stop_event.is_set()` because awatch() handles it at the outer level.
 - **Correct behavior:** Watcher exits cleanly when `_watcher_stop` is set (mcp_server.py would set this on shutdown).
 
----
+______________________________________________________________________
 
 ### 4. GPU semaphore acquisition ✓
 
@@ -303,7 +303,7 @@ _last_vault_index = time.monotonic()
 - **Serial GPU access:** Only one GPU operation (MCP search or watcher reindex) runs at a time.
 - **Timestamp after release:** `_last_vault_index = time.monotonic()` is outside the `async with gpu_sem:` block, so cooldown timing starts from when the indexing task completes, not from when the semaphore is released. This is correct.
 
----
+______________________________________________________________________
 
 ## Conclusion
 

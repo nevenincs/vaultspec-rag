@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#exec"
-  - "#service-graph"
+  - '#exec'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-phase1-plan]]"
+  - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-3 step-1: fastmcp lifespan + health endpoint
@@ -19,6 +19,7 @@ parameter on all MCP tools.
 ## Changes
 
 - `src/vaultspec_rag/mcp_server.py` — major refactor:
+
   - Removed `RagComponents` dataclass, `get_comp()`, `_comp`,
     `_comp_lock`, `_comp_error`, and module-level `_graph_cache`
   - Added module-level `_registry = ServiceRegistry()` and
@@ -37,9 +38,7 @@ parameter on all MCP tools.
     of direct `_graph_cache.invalidate()`
   - `_ensure_watcher()` takes a `root: Path` argument and gets
     the slot from the registry
-  - `main()` in HTTP mode builds `Starlette(routes=[Mount("/mcp",
-    mcp.streamable_http_app()), Route("/health", health_handler)],
-    lifespan=service_lifespan)` and runs `uvicorn.run()`
+  - `main()` in HTTP mode builds `Starlette(routes=[Mount("/mcp", mcp.streamable_http_app()), Route("/health", health_handler)], lifespan=service_lifespan)` and runs `uvicorn.run()`
   - `main()` in stdio mode keeps `mcp.run(transport="stdio")`
   - `FastMCP("VaultSpec Search", stateless_http=True)` for
     multi-agent access
@@ -47,12 +46,14 @@ parameter on all MCP tools.
     preserved unchanged
 
 - `src/vaultspec_rag/embeddings.py` — timing logs:
+
   - Added `import os, time` at module level
   - Added HF cache directory log at start of `__init__`
   - Added `time.perf_counter()` timing around dense model load
     and sparse model load with per-model log messages
 
 - `src/vaultspec_rag/tests/test_mcp_server.py` — updated tests:
+
   - Removed `TestGetCompFailureCaching` and
     `TestRagComponentsDataclass` classes (old API removed)
   - Added `TestResolveRoot` (5 tests): explicit path, None
@@ -67,6 +68,7 @@ parameter on all MCP tools.
     for the new HealthResponse Pydantic model
 
 - `src/vaultspec_rag/tests/test_adr_regression.py` — updated:
+
   - `test_mcp_comp_lock_exists` renamed to
     `test_mcp_registry_lock_exists`, checks `_registry._lock`
   - `test_reindex_vault_resets_graph_cache` assertion updated to

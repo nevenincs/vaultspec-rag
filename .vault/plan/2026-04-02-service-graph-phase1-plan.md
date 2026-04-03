@@ -1,13 +1,13 @@
 ---
 tags:
-  - "#plan"
-  - "#service-graph"
+  - '#plan'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-adr]]"
-  - "[[2026-04-02-service-graph-research]]"
-  - "[[2026-04-02-release-readiness-audit]]"
-  - "[[2026-03-09-graph-embedding-round36-audit]]"
+  - '[[2026-04-02-service-graph-adr]]'
+  - '[[2026-04-02-service-graph-research]]'
+  - '[[2026-04-02-release-readiness-audit]]'
+  - '[[2026-03-09-graph-embedding-round36-audit]]'
 ---
 
 <!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
@@ -46,6 +46,7 @@ modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
 ## Tasks
 
 - Phase 1: Graph cache unification (D3 -- fixes R36-C1)
+
   1. Extend `_GraphCache` in `api.py` with TTL support: add
      `_built_at: float` field, accept `ttl_seconds` in constructor,
      check `time.monotonic()` inside the existing lock. Rename class
@@ -61,6 +62,7 @@ modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
      and without `graph_provider`, invalidation after reindex.
 
 - Phase 2: ServiceRegistry module (D6)
+
   1. Create `service.py` with `ServiceRegistry` class: shared
      `EmbeddingModel` (loaded via `load_model()`), per-project
      `ProjectSlot` (VaultStore + VaultSearcher + indexers +
@@ -79,6 +81,7 @@ modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
      independent graph caches, concurrent `get_project()` calls.
 
 - Phase 3: FastMCP lifespan + health endpoint (D5 + D2)
+
   1. Implement `service_lifespan` async context manager in
      `mcp_server.py`: startup calls `registry.load_model()` with
      per-stage timing logs (CUDA check, cache status, dense load,
@@ -88,8 +91,7 @@ modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
      `status`, `cuda`, `models_loaded`, `projects` list,
      `uptime_s`. Available only after lifespan completes.
   1. Replace `mcp.run()` with explicit Starlette app:
-     `Starlette(routes=[Mount("/mcp", mcp.streamable_http_app()),
-     Route("/health", health_handler)], lifespan=...)`. Call
+     `Starlette(routes=[Mount("/mcp", mcp.streamable_http_app()), Route("/health", health_handler)], lifespan=...)`. Call
      `uvicorn.run()` with `timeout_graceful_shutdown=30`.
   1. Enable `stateless_http=True` on FastMCP for multi-agent.
   1. Refactor all MCP tools to accept optional `project_root`
@@ -102,6 +104,7 @@ modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
      connected projects. MCP tools with explicit `project_root`.
 
 - Phase 4: Service daemon commands (D1 -- dmypy pattern)
+
   1. Add `_spawn_service()` helper in `cli.py` encapsulating
      platform-specific subprocess creation (Windows
      `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` vs Unix
@@ -124,6 +127,7 @@ modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
      `_spawn_service()`, 5s health-poll timeouts.
 
 - Phase 5: Model prefetch (D4)
+
   1. Add `service warmup` command in `cli.py`: CUDA check,
      `huggingface_hub.snapshot_download()` for all 3 model repos
      with Rich progress bars, cache status reporting per model,

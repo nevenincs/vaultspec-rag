@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 21 Audit -- search.py, cli.py, mcp_server.py
 
 ## search.py
@@ -110,7 +111,7 @@ if not full_path.is_relative_to(comp.root_dir.resolve()):
 On Windows, `Path.resolve()` normalizes `..` segments, so the `is_relative_to` check works for `../../../etc/passwd`. However, there are edge cases:
 
 1. If `comp.root_dir` is a symlink, `resolve()` follows it, which could make the check pass for paths outside the logical workspace.
-2. On Windows, UNC paths (`\\server\share`) or drive-letter switches (`D:\secret`) passed as `path` will be joined incorrectly by `/` (Python's `PurePosixPath.__truediv__` handles absolute segments by replacing the base), but `pathlib.Path` on Windows will keep the absolute path, causing `is_relative_to` to correctly reject it.
+1. On Windows, UNC paths (`\\server\share`) or drive-letter switches (`D:\secret`) passed as `path` will be joined incorrectly by `/` (Python's `PurePosixPath.__truediv__` handles absolute segments by replacing the base), but `pathlib.Path` on Windows will keep the absolute path, causing `is_relative_to` to correctly reject it.
 
 The symlink scenario is the real risk: if `root_dir` contains a symlink pointing outside the workspace, `resolve()` follows it, and a path like `symlink/../../../etc/passwd` resolves to something outside. **Mitigation:** Also check `full_path.is_relative_to(comp.root_dir)` (without resolve) to catch symlink escapes, or use `os.path.realpath` on both and compare.
 

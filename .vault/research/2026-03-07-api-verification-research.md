@@ -1,16 +1,17 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # API Verification Report — 2026-03-07
 
 Verified against live library docs + runtime tests on the actual installed
 packages in this project's venv.
 
----
+______________________________________________________________________
 
 ## 1. tree-sitter-language-pack
 
@@ -43,16 +44,16 @@ The indexer correctly uses `source.encode("utf-8")`.
 
 All verified via runtime test:
 
-| Attribute       | Type           | Status      |
-|-----------------|----------------|-------------|
-| `node.type`     | `str`          | OK          |
-| `node.text`     | `bytes`        | OK (note: bytes, not str) |
-| `node.start_byte` | `int`       | OK          |
-| `node.end_byte`   | `int`       | OK          |
-| `node.start_point` | `Point(row, column)` | OK (namedtuple, supports `[0]` indexing) |
-| `node.end_point`   | `Point(row, column)` | OK (namedtuple, supports `[0]` indexing) |
-| `node.children`    | `list[Node]` | OK          |
-| `child_by_field_name("name")` | `Node \| None` | OK |
+| Attribute                     | Type                 | Status                                   |
+| ----------------------------- | -------------------- | ---------------------------------------- |
+| `node.type`                   | `str`                | OK                                       |
+| `node.text`                   | `bytes`              | OK (note: bytes, not str)                |
+| `node.start_byte`             | `int`                | OK                                       |
+| `node.end_byte`               | `int`                | OK                                       |
+| `node.start_point`            | `Point(row, column)` | OK (namedtuple, supports `[0]` indexing) |
+| `node.end_point`              | `Point(row, column)` | OK (namedtuple, supports `[0]` indexing) |
+| `node.children`               | `list[Node]`         | OK                                       |
+| `child_by_field_name("name")` | `Node \| None`       | OK                                       |
 
 The indexer uses `node.start_point[0]` (line 295-296) — this works because
 `Point` is a namedtuple supporting index access. `.row` also works.
@@ -72,22 +73,22 @@ source code is ASCII, but worth noting for future hardening.
 
 Runtime test results:
 
-| Grammar name | Status |
-|-------------|--------|
-| `python`    | OK     |
-| `rust`      | OK     |
-| `javascript`| OK     |
-| `typescript`| OK     |
-| `tsx`       | OK     |
-| `go`        | OK     |
-| `java`      | OK     |
-| `c`         | OK     |
-| `cpp`       | OK     |
-| `c_sharp`   | **FAILED** — `Could not find language library for c_sharp` |
-| `csharp`    | OK     |
-| `ruby`      | OK     |
-| `bash`      | OK     |
-| `kotlin`    | OK     |
+| Grammar name | Status                                                     |
+| ------------ | ---------------------------------------------------------- |
+| `python`     | OK                                                         |
+| `rust`       | OK                                                         |
+| `javascript` | OK                                                         |
+| `typescript` | OK                                                         |
+| `tsx`        | OK                                                         |
+| `go`         | OK                                                         |
+| `java`       | OK                                                         |
+| `c`          | OK                                                         |
+| `cpp`        | OK                                                         |
+| `c_sharp`    | **FAILED** — `Could not find language library for c_sharp` |
+| `csharp`     | OK                                                         |
+| `ruby`       | OK                                                         |
+| `bash`       | OK                                                         |
+| `kotlin`     | OK                                                         |
 
 **The correct grammar name is `csharp`, not `c_sharp`.**
 
@@ -95,14 +96,14 @@ This bug exists in two places in `src/vaultspec_rag/indexer.py`:
 
 1. **Line 172:** `".cs": ("csharp", "c_sharp")` — the second element (grammar
    name) must be `"csharp"`, not `"c_sharp"`.
-2. **Line 218:** `_TOP_LEVEL_NODES` dict uses `"c_sharp"` as the key. This key
+1. **Line 218:** `_TOP_LEVEL_NODES` dict uses `"c_sharp"` as the key. This key
    must also be `"csharp"` to match the corrected grammar name.
 
 **Impact:** Any `.cs` file will trigger a `get_parser("c_sharp")` call which
 raises an exception. The `_chunk_with_ast` method catches this and falls back
 to `TextSplitter`, so it doesn't crash — but C# files get no AST chunking.
 
----
+______________________________________________________________________
 
 ## 2. pathspec
 
@@ -151,27 +152,27 @@ Runtime test confirmed:
 (`match_files()`, `match_tree_files()`) support `negate`. The indexer doesn't
 use `negate` — correct.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| API Call | Status | Notes |
-|----------|--------|-------|
-| `from tree_sitter_language_pack import get_parser` | OK | |
-| `get_parser(grammar)` | OK | Returns `tree_sitter.Parser` |
-| `parser.parse(bytes)` | OK | Returns `Tree` |
-| `tree.root_node` | OK | Returns `Node` |
-| `node.start_byte`, `end_byte` | OK | |
-| `node.start_point`, `end_point` | OK | Point namedtuple, `[0]` works |
-| `node.children`, `node.type` | OK | |
-| Grammar: `"c_sharp"` | **CRITICAL BUG** | Must be `"csharp"` |
-| `pathspec.GitIgnoreSpec.from_lines(lines)` | OK | |
-| `spec.match_file(path)` -> True=ignored | OK | Indexer usage correct |
-| `source[node.start_byte:node.end_byte]` on `str` | **MINOR** | Byte vs char offset mismatch on non-ASCII |
+| API Call                                           | Status           | Notes                                     |
+| -------------------------------------------------- | ---------------- | ----------------------------------------- |
+| `from tree_sitter_language_pack import get_parser` | OK               |                                           |
+| `get_parser(grammar)`                              | OK               | Returns `tree_sitter.Parser`              |
+| `parser.parse(bytes)`                              | OK               | Returns `Tree`                            |
+| `tree.root_node`                                   | OK               | Returns `Node`                            |
+| `node.start_byte`, `end_byte`                      | OK               |                                           |
+| `node.start_point`, `end_point`                    | OK               | Point namedtuple, `[0]` works             |
+| `node.children`, `node.type`                       | OK               |                                           |
+| Grammar: `"c_sharp"`                               | **CRITICAL BUG** | Must be `"csharp"`                        |
+| `pathspec.GitIgnoreSpec.from_lines(lines)`         | OK               |                                           |
+| `spec.match_file(path)` -> True=ignored            | OK               | Indexer usage correct                     |
+| `source[node.start_byte:node.end_byte]` on `str`   | **MINOR**        | Byte vs char offset mismatch on non-ASCII |
 
 ### Required fixes
 
 1. **CRITICAL:** `indexer.py` line 172: change `"c_sharp"` to `"csharp"`
-2. **CRITICAL:** `indexer.py` line 218: change `"c_sharp"` key to `"csharp"`
-3. **MINOR:** `_collect_chunks` slices `str` by byte offset — works for ASCII
+1. **CRITICAL:** `indexer.py` line 218: change `"c_sharp"` key to `"csharp"`
+1. **MINOR:** `_collect_chunks` slices `str` by byte offset — works for ASCII
    source but technically incorrect for multi-byte UTF-8. Low priority.

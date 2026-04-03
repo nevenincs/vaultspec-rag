@@ -1,13 +1,14 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Continuous Research Loop Findings — 2026-03-07
 
----
+______________________________________________________________________
 
 ## Topic 1: Tree-sitter byte offset vs Python str character offset
 
@@ -77,8 +78,8 @@ def _collect_chunks(self, node, source_bytes: bytes, ...):
 Key changes:
 
 1. Pass `source_bytes: bytes` instead of `source: str`
-2. Slice `source_bytes[start_byte:end_byte]` then `.decode("utf-8")`
-3. `node.start_point[0]` for line numbers is unaffected (row/col, not byte)
+1. Slice `source_bytes[start_byte:end_byte]` then `.decode("utf-8")`
+1. `node.start_point[0]` for line numbers is unaffected (row/col, not byte)
 
 ### Impact assessment
 
@@ -87,7 +88,7 @@ comments in CJK/Cyrillic/Arabic, string literals with emoji, or identifiers
 in non-Latin scripts will produce silently wrong chunk boundaries. Worth fixing
 proactively.
 
----
+______________________________________________________________________
 
 ## Topic 2: pathspec GitIgnoreSpec negation patterns in subdirectory .gitignore files
 
@@ -139,7 +140,7 @@ for line in lines:
 (not indexed). Common in monorepos where subdirectories un-ignore specific
 build artifacts or config files.
 
----
+______________________________________________________________________
 
 ## Topic 3: Qdrant MatchAny filter for bulk path-based scroll queries
 
@@ -154,7 +155,7 @@ all_ids = self.store.get_all_code_ids()
 return [cid for cid in all_ids if any(cid.startswith(f"{rp}:") for rp in rel_paths)]
 ```
 
-This is O(n*m) and requires loading all IDs into memory. For large codebases
+This is O(n\*m) and requires loading all IDs into memory. For large codebases
 this is slow and wasteful.
 
 ### Better approach: Qdrant scroll with MatchAny payload filter
@@ -222,19 +223,19 @@ there are no more results.
 **LOW priority** — the current approach works correctly, just inefficiently.
 Worth refactoring when the codebase grows beyond ~10K chunks.
 
----
+______________________________________________________________________
 
 ## Topic 4: tree-sitter-language-pack 0.13+ API additions
 
 ### Release history (from GitHub)
 
-| Version | Date       | Changes                                |
-|---------|------------|----------------------------------------|
-| 0.13.0  | 2025-11-26 | Added COBOL grammar                    |
-| 0.12.0  | 2025-11-20 | Alpine Linux CI support                |
-| 0.11.0  | 2025-11-12 | Added BSL grammar                      |
+| Version | Date       | Changes                                           |
+| ------- | ---------- | ------------------------------------------------- |
+| 0.13.0  | 2025-11-26 | Added COBOL grammar                               |
+| 0.12.0  | 2025-11-20 | Alpine Linux CI support                           |
+| 0.11.0  | 2025-11-12 | Added BSL grammar                                 |
 | 0.10.0  | 2025-10-10 | Drop Python 3.9, require 3.10+, tree-sitter 0.25+ |
-| 0.9.1   | 2025-09-23 | Added F#, WASM WAT/WAST               |
+| 0.9.1   | 2025-09-23 | Added F#, WASM WAT/WAST                           |
 
 ### Key findings
 
@@ -249,7 +250,7 @@ Worth refactoring when the codebase grows beyond ~10K chunks.
 
 The API is stable. No new features to adopt.
 
----
+______________________________________________________________________
 
 ## Topic 5: decorated_definition handling across languages (tree-sitter)
 
@@ -300,7 +301,7 @@ if node.type == "decorated_definition":
         node = inner  # now a function_definition or class_definition
 ```
 
----
+______________________________________________________________________
 
 ## Topic 6: Qdrant payload index types — reference for code metadata
 
@@ -364,14 +365,14 @@ client.create_payload_index(
 
 1. **Create indexes immediately after collection creation** — allows HNSW
    graphs to benefit from index-aware optimization.
-2. **Only index fields used in filters** — indexes consume RAM.
-3. **High-cardinality fields benefit most** — `path` and `function_name`
+1. **Only index fields used in filters** — indexes consume RAM.
+1. **High-cardinality fields benefit most** — `path` and `function_name`
    have high cardinality, making them good index candidates.
-4. **Use `on_disk=True`** for large collections to reduce RAM at cost of latency.
-5. **Use `is_tenant=True`** for multi-project setups where `project_id`
+1. **Use `on_disk=True`** for large collections to reduce RAM at cost of latency.
+1. **Use `is_tenant=True`** for multi-project setups where `project_id`
    partitions the data (keyword/uuid types only).
 
----
+______________________________________________________________________
 
 ## Topic 7: tree-sitter Query API — pattern matching for metadata extraction
 
@@ -399,18 +400,18 @@ matches = query.matches(tree.root_node)
 
 ### Supported predicates
 
-| Predicate       | Description                                |
-|-----------------|--------------------------------------------|
-| `#eq?`          | Exact string equality                      |
-| `#not-eq?`      | String inequality                          |
-| `#match?`       | Regex pattern match                        |
-| `#not-match?`   | Regex pattern non-match                    |
-| `#any-of?`      | Match any of listed strings                |
-| `#not-any-of?`  | Match none of listed strings               |
-| `#any-eq?`      | Any captured node equals value             |
-| `#any-match?`   | Any captured node matches pattern          |
-| `#is?`          | Property assertion                         |
-| `#set!`         | Property setting                           |
+| Predicate      | Description                       |
+| -------------- | --------------------------------- |
+| `#eq?`         | Exact string equality             |
+| `#not-eq?`     | String inequality                 |
+| `#match?`      | Regex pattern match               |
+| `#not-match?`  | Regex pattern non-match           |
+| `#any-of?`     | Match any of listed strings       |
+| `#not-any-of?` | Match none of listed strings      |
+| `#any-eq?`     | Any captured node equals value    |
+| `#any-match?`  | Any captured node matches pattern |
+| `#is?`         | Property assertion                |
+| `#set!`        | Property setting                  |
 
 ### Useful queries for code metadata extraction
 
@@ -444,7 +445,7 @@ Queries are compiled once and can be reused across multiple trees. For
 metadata extraction on every chunk, compile the query once per language
 at `ASTChunker.__init__` time, not per-file.
 
----
+______________________________________________________________________
 
 ## Topic 8: Qdrant create_payload_index() on existing data — idempotency
 
@@ -454,15 +455,15 @@ at `ASTChunker.__init__` time, not per-file.
    collection that already has points does NOT delete or modify any data. The
    existing points and payloads remain intact.
 
-2. **Idempotent.** Calling `create_payload_index()` multiple times for the same
+1. **Idempotent.** Calling `create_payload_index()` multiple times for the same
    field is safe — no error, no duplicate indexes. The API silently succeeds.
 
-3. **No-op in local mode.** `QdrantClient(path=...)` (our setup) does NOT
+1. **No-op in local mode.** `QdrantClient(path=...)` (our setup) does NOT
    actually create payload indexes. The `payload_schema` in collection info is
    always empty `{}`. Payload indexes only take effect with Qdrant server/Docker
    mode.
 
-4. **No need to check existence first.** Since the call is idempotent, there's
+1. **No need to check existence first.** Since the call is idempotent, there's
    no reason to guard it with an existence check. Just call it unconditionally.
 
 ### Checking index existence (for reference)
@@ -482,7 +483,7 @@ Keep calling `create_payload_index()` unconditionally at collection setup time.
 When/if we migrate to Qdrant server mode, the indexes will automatically start
 taking effect without code changes.
 
----
+______________________________________________________________________
 
 ## Topic 9: CrossEncoder ms-marco-MiniLM-L6-v2 batch size on RTX 4080 SUPER
 
@@ -495,21 +496,21 @@ taking effect without code changes.
 ### Results (500 pairs)
 
 | batch_size | avg time (s) | throughput (pairs/s) | peak VRAM (MB) |
-|------------|-------------|---------------------|----------------|
-| 16         | 0.3370      | 1,484               | 104            |
-| 32         | 0.2012      | 2,485               | 112            |
-| 64         | 0.1344      | 3,720               | 128            |
-| 128        | 0.0873      | 5,726               | 159            |
-| 256        | 0.0772      | 6,478               | 215            |
-| 512        | 0.0754      | 6,635               | 338            |
+| ---------- | ------------ | -------------------- | -------------- |
+| 16         | 0.3370       | 1,484                | 104            |
+| 32         | 0.2012       | 2,485                | 112            |
+| 64         | 0.1344       | 3,720                | 128            |
+| 128        | 0.0873       | 5,726                | 159            |
+| 256        | 0.0772       | 6,478                | 215            |
+| 512        | 0.0754       | 6,635                | 338            |
 
 ### Results (1000 pairs, confirming plateau)
 
 | batch_size | avg time (s) | throughput (pairs/s) | peak VRAM (MB) |
-|------------|-------------|---------------------|----------------|
-| 256        | 0.1041      | 9,611               | 224            |
-| 512        | 0.0956      | 10,465              | 345            |
-| 1000       | 0.1022      | 9,783               | 581            |
+| ---------- | ------------ | -------------------- | -------------- |
+| 256        | 0.1041       | 9,611                | 224            |
+| 512        | 0.0956       | 10,465               | 345            |
+| 1000       | 0.1022       | 9,783                | 581            |
 
 ### Analysis
 
@@ -532,7 +533,7 @@ for concurrent embedding operations.
 scores = self._reranker.predict(pairs, batch_size=256)
 ```
 
----
+______________________________________________________________________
 
 ## Topic 10: Qdrant query_points filter + prefetch interaction
 
@@ -544,12 +545,12 @@ to each `Prefetch` individually?
 
 ### Runtime test results (Qdrant local mode)
 
-| Scenario | Filter placement | Result |
-|----------|-----------------|--------|
-| Top-level `query_filter` only | `query_points(query_filter=...)` | **FILTER IGNORED** — unfiltered results returned |
-| Per-Prefetch `filter` | `Prefetch(filter=...)` on each branch | **WORKS** — only matching points returned |
-| No filter | baseline | All points returned |
-| Top-level `query_filter` + no per-Prefetch filter | `query_points(query_filter=...)` | **FILTER IGNORED** — same as no filter |
+| Scenario                                          | Filter placement                      | Result                                           |
+| ------------------------------------------------- | ------------------------------------- | ------------------------------------------------ |
+| Top-level `query_filter` only                     | `query_points(query_filter=...)`      | **FILTER IGNORED** — unfiltered results returned |
+| Per-Prefetch `filter`                             | `Prefetch(filter=...)` on each branch | **WORKS** — only matching points returned        |
+| No filter                                         | baseline                              | All points returned                              |
+| Top-level `query_filter` + no per-Prefetch filter | `query_points(query_filter=...)`      | **FILTER IGNORED** — same as no filter           |
 
 ### Critical finding
 
@@ -610,7 +611,7 @@ individually (lines 506, 519 for vault; lines 570, 583 for codebase). The
 fallback single-vector queries also pass `query_filter` at the top level (lines
 538, 605), which works because those don't use prefetch.
 
----
+______________________________________________________________________
 
 ## Topic 11: SparseEncoder encode_query() truncation behavior
 
@@ -650,8 +651,8 @@ self.tokenizer(
 This means:
 
 1. **Automatic truncation** to `model.max_seq_length` tokens
-2. **No error raised** for inputs exceeding the limit
-3. **Silent truncation** — the input is simply cut to the first N tokens
+1. **No error raised** for inputs exceeding the limit
+1. **Silent truncation** — the input is simply cut to the first N tokens
 
 For SPLADE models (BERT-based), `max_seq_length` is typically **256 tokens**
 (from the model config). This is documented in sbert.net for
@@ -663,11 +664,11 @@ the same BERT base architecture, so 256 tokens is expected.
 sentence-transformers v5.0 introduced `encode_query()` and `encode_document()`
 as specialized alternatives to `encode()`:
 
-| Method | Purpose | Prompt handling |
-|--------|---------|-----------------|
-| `encode_query()` | Query-side encoding | Uses "query" prompt if model has one |
+| Method              | Purpose                | Prompt handling                         |
+| ------------------- | ---------------------- | --------------------------------------- |
+| `encode_query()`    | Query-side encoding    | Uses "query" prompt if model has one    |
 | `encode_document()` | Document-side encoding | Uses "document" prompt if model has one |
-| `encode()` | General purpose | No automatic prompt selection |
+| `encode()`          | General purpose        | No automatic prompt selection           |
 
 For SPLADE-v3 specifically, the model card does not define separate query/document
 prompts, so `encode()`, `encode_query()`, and `encode_document()` produce
@@ -686,7 +687,7 @@ provides a safety net before tokenization, but the tokenizer's own truncation
 at `max_seq_length` is the real limit (256 tokens ~ roughly 800-1000 chars
 for code).
 
----
+______________________________________________________________________
 
 ## Topic 12: Qwen3-Embedding-0.6B query prompting
 
@@ -718,6 +719,7 @@ doc_embeddings = model.encode(["document text"])
 ### Performance impact
 
 From the Qwen3 model card:
+
 > "not using an instruct on the query side can lead to a drop in retrieval
 > performance by approximately 1% to 5%"
 
@@ -767,7 +769,7 @@ Documents correctly omit `prompt_name`, so no instruction is prepended.
 which is suboptimal for code retrieval. This would require adding a new method
 or parameter to `encode_query()` in embeddings.py.
 
----
+______________________________________________________________________
 
 ## Topic 13: Qdrant scroll() API for batch list_documents
 
@@ -794,14 +796,14 @@ client.scroll(
 1. **`with_payload` accepts a list of field names:** `with_payload=["path", "title"]`
    returns only those fields. Other fields (e.g., `content`) are excluded.
 
-2. **Pagination uses `offset` from return value:**
+1. **Pagination uses `offset` from return value:**
 
    ```python
    records, next_offset = client.scroll(collection_name="docs", limit=10)
    # next_offset is None when no more pages
    ```
 
-3. **`scroll_filter` works for payload filtering:**
+1. **`scroll_filter` works for payload filtering:**
 
    ```python
    adr_filter = models.Filter(must=[
@@ -848,7 +850,7 @@ docs = store.list_documents(fields=["path", "title", "doc_type"])
 - Excluding `content` from payload saves memory when only listing metadata
 - scroll() is O(n) — fine for collections up to ~100K points
 
----
+______________________________________________________________________
 
 ## Topic 14: MCP tool argument schema with field descriptions
 
@@ -933,7 +935,7 @@ async def search_codebase(
     ...
 ```
 
----
+______________________________________________________________________
 
 ## References
 
@@ -957,7 +959,7 @@ async def search_codebase(
 - MCP Python SDK tool system: <https://deepwiki.com/modelcontextprotocol/python-sdk/2.2-tool-system>
 - Qdrant points/scroll docs: <https://qdrant.tech/documentation/concepts/points/>
 
----
+______________________________________________________________________
 
 ## Topic 15: Score normalization for multi-source fusion (RRF + CrossEncoder)
 
@@ -1069,9 +1071,9 @@ vault + codebase searches in `search_all()`.
 For combining vault (RRF) and codebase (CrossEncoder) results:
 
 1. **Normalize CrossEncoder logits with sigmoid** — maps to [0, 1]
-2. **Normalize RRF scores with min-max** — maps to [0, 1]
-3. **Weighted linear combination**: `final = w_vault * vault_norm + w_code * code_norm`
-4. Default weights: `w_vault = 0.5, w_code = 0.5` (tunable)
+1. **Normalize RRF scores with min-max** — maps to [0, 1]
+1. **Weighted linear combination**: `final = w_vault * vault_norm + w_code * code_norm`
+1. Default weights: `w_vault = 0.5, w_code = 0.5` (tunable)
 
 Alternative: Convert both to rank-based fusion (apply RRF to both result
 lists). This avoids score normalization entirely but loses score magnitude
@@ -1084,7 +1086,7 @@ without score normalization. The graph-boosted RRF scores ([0.05, 0.7]) and
 CrossEncoder logits ([-12, 12]) are directly compared, making the combined
 ranking unreliable. Needs the normalization step described above.
 
----
+______________________________________________________________________
 
 ## Topic 16: asyncio.to_thread() for MCP server GPU inference
 
@@ -1148,22 +1150,23 @@ internally, so context variables propagate correctly.
    thread-safe for read-only operations. `model.eval()` + `torch.no_grad()`
    inference from multiple threads sharing one model instance works in practice.
 
-2. **GIL limits parallelism:** Python's GIL serializes the Python-level code.
+1. **GIL limits parallelism:** Python's GIL serializes the Python-level code.
    GPU kernel launches happen outside the GIL, so CUDA operations can overlap
    with Python code in other threads. But two threads cannot launch GPU kernels
    truly simultaneously from Python.
 
-3. **Practical implication:** For MCP, concurrent requests will queue on the
+1. **Practical implication:** For MCP, concurrent requests will queue on the
    GPU. This is fine — the event loop stays unblocked (responds to heartbeats,
    accepts new connections) while GPU work proceeds serially on the device.
 
-4. **What to avoid:**
+1. **What to avoid:**
+
    - Do NOT modify model weights from any thread during inference
    - Do NOT call `model.train()` while another thread is in `model.eval()`
    - Do NOT share CUDA tensors between threads without synchronization
    - CUDA streams are thread-local by default — each thread gets its own stream
 
-5. **sentence-transformers specifically:** The `SentenceTransformer.encode()`
+1. **sentence-transformers specifically:** The `SentenceTransformer.encode()`
    method is self-contained (creates tensors, runs forward pass, returns numpy).
    It does not mutate model state. Safe to call from multiple threads.
 
@@ -1208,7 +1211,7 @@ def get_comp() -> RAGComponents:
 Double-checked locking pattern — the outer check avoids lock contention on
 the hot path after initialization.
 
----
+______________________________________________________________________
 
 ## References (continued)
 
@@ -1225,7 +1228,7 @@ the hot path after initialization.
 - FastMCP tools docs: <https://fastmcp.wiki/en/servers/tools>
 - PyTorch CUDA threading: <https://discuss.pytorch.org/t/is-is-thread-safe-to-do-tensor-to-device-from-multiple-threads-to-the-same-gpu-device/157783>
 
----
+______________________________________________________________________
 
 ## Topic 17: asyncio.Lock vs threading.Lock in FastMCP context
 
@@ -1238,11 +1241,11 @@ from MCP tool handlers that may run in worker threads (via
 
 ### Lock type comparison
 
-| Lock type | Thread-safe | Async-safe | Can use from worker thread | Can use from coroutine |
-|-----------|------------|------------|---------------------------|----------------------|
-| `threading.Lock` | Yes | **DEADLOCK RISK** | Yes | **NO** — blocks event loop |
-| `asyncio.Lock` | **No** | Yes | **No** — not thread-safe | Yes |
-| `anyio.Lock` | **No** | Yes | **No** — not thread-safe | Yes |
+| Lock type        | Thread-safe | Async-safe        | Can use from worker thread | Can use from coroutine     |
+| ---------------- | ----------- | ----------------- | -------------------------- | -------------------------- |
+| `threading.Lock` | Yes         | **DEADLOCK RISK** | Yes                        | **NO** — blocks event loop |
+| `asyncio.Lock`   | **No**      | Yes               | **No** — not thread-safe   | Yes                        |
+| `anyio.Lock`     | **No**      | Yes               | **No** — not thread-safe   | Yes                        |
 
 ### Why threading.Lock deadlocks in async context
 
@@ -1300,9 +1303,9 @@ def get_comp() -> RAGComponents:
 This is safe because:
 
 1. `get_comp()` runs in worker threads, not the event loop thread
-2. `threading.Lock` correctly serializes concurrent worker threads
-3. Double-checked locking avoids lock contention on the hot path
-4. Model loading (the expensive operation) happens at most once
+1. `threading.Lock` correctly serializes concurrent worker threads
+1. Double-checked locking avoids lock contention on the hot path
+1. Model loading (the expensive operation) happens at most once
 
 **If tools were `async def`** (calling `get_comp()` from the event loop
 thread), we would need a different approach:
@@ -1335,7 +1338,7 @@ Is get_comp() called from...
   └─ both contexts → need two-layer approach (rare, avoid)
 ```
 
----
+______________________________________________________________________
 
 ## Topic 18: Qdrant collection_exists caching — staleness and invalidation
 
@@ -1352,16 +1355,16 @@ Qdrant local mode (`QdrantClient(path=...)`) uses **file locking** via
 `portalocker` to ensure exclusive access to the storage directory. Key facts:
 
 1. **Single-process only.** If a second `QdrantClient` tries to open the
-   same path, it raises `RuntimeError("... use Qdrant server instead if
-   you require concurrent access")`.
+   same path, it raises `RuntimeError("... use Qdrant server instead if you require concurrent access")`.
 
-2. **No external modification detection.** There is no file watcher, inotify
+1. **No external modification detection.** There is no file watcher, inotify
    hook, or event system. If the `.qdrant/` directory is deleted while the
    client is running, the next operation will either:
+
    - Crash with an I/O error (file not found)
    - Silently create a new empty storage (depending on timing)
 
-3. **No cache invalidation API.** `collection_exists()` is a direct filesystem
+1. **No cache invalidation API.** `collection_exists()` is a direct filesystem
    check — there is no caching layer in the Qdrant client itself.
 
 ### Is caching safe?
@@ -1370,8 +1373,8 @@ Qdrant local mode (`QdrantClient(path=...)`) uses **file locking** via
 exclusive access, the only way a collection can disappear is:
 
 1. **Our code explicitly deletes it** — `client.delete_collection()`
-2. **External filesystem modification** — user deletes `.qdrant/` directory
-3. **Process crash** — partial writes may corrupt storage
+1. **External filesystem modification** — user deletes `.qdrant/` directory
+1. **Process crash** — partial writes may corrupt storage
 
 For case 1: We control this — invalidate cache when we delete.
 For case 2: This is a catastrophic user action. No cache can protect against
@@ -1418,11 +1421,11 @@ class VaultStore:
 1. **No Qdrant hooks exist.** There is no event, callback, or subscription
    for collection lifecycle events in local mode.
 
-2. **File watchers are overkill.** Adding `watchdog` or `inotify` to detect
+1. **File watchers are overkill.** Adding `watchdog` or `inotify` to detect
    `.qdrant/` deletion is complex, platform-specific, and solves a problem
    that indicates a user error (deleting storage while app is running).
 
-3. **collection_exists() is cheap.** In local mode, it's a dict lookup in
+1. **collection_exists() is cheap.** In local mode, it's a dict lookup in
    memory (the `QdrantLocal` instance holds collections in a dict). The
    cache saves microseconds, not milliseconds. The real value is avoiding
    redundant `create_collection()` calls.
@@ -1454,7 +1457,7 @@ local mode. Add error handling to reset the flag on failure. Do NOT add
 file watchers or periodic re-checks — they add complexity for an edge case
 that already causes catastrophic failures regardless of caching.
 
----
+______________________________________________________________________
 
 ## References (continued)
 
@@ -1468,7 +1471,7 @@ that already causes catastrophic failures regardless of caching.
 - Qdrant collection_exists issue: <https://github.com/qdrant/qdrant-client/issues/928>
 - Qdrant create-if-not-exists issue: <https://github.com/qdrant/qdrant-client/issues/1022>
 
----
+______________________________________________________________________
 
 ## Topic 19: search_all() score normalization — exact implementation
 
@@ -1481,7 +1484,7 @@ produces meaningless rankings.
 
 ### Sigmoid normalization for CrossEncoder logits
 
-The standard sigmoid function maps unbounded logits to [0, 1]:
+The standard sigmoid function maps unbounded logits to \[0, 1\]:
 
 ```python
 import math
@@ -1619,19 +1622,19 @@ def normalize_and_combine(
 
 ### Is there a better alternative?
 
-| Method | Pros | Cons | Use when |
-|--------|------|------|----------|
-| **Sigmoid + min-max** | Simple, handles scale differences, tunable weights | Min-max sensitive to outliers | Default choice |
-| **Rank-based RRF on both** | No score normalization needed, robust to outliers | Loses CrossEncoder score magnitude | Score magnitudes unreliable |
-| **DBSF** | Statistically principled (mean +/- 3*stddev) | Only works within single Qdrant query_points() call | Intra-Qdrant fusion only |
-| **Z-score normalization** | Handles outliers better than min-max | Requires computing mean/stddev per query | Large result sets (>50) |
+| Method                     | Pros                                               | Cons                                                | Use when                    |
+| -------------------------- | -------------------------------------------------- | --------------------------------------------------- | --------------------------- |
+| **Sigmoid + min-max**      | Simple, handles scale differences, tunable weights | Min-max sensitive to outliers                       | Default choice              |
+| **Rank-based RRF on both** | No score normalization needed, robust to outliers  | Loses CrossEncoder score magnitude                  | Score magnitudes unreliable |
+| **DBSF**                   | Statistically principled (mean +/- 3\*stddev)      | Only works within single Qdrant query_points() call | Intra-Qdrant fusion only    |
+| **Z-score normalization**  | Handles outliers better than min-max               | Requires computing mean/stddev per query            | Large result sets (>50)     |
 
 **Recommendation:** Sigmoid + min-max with configurable weights. It's simple,
 handles the specific scale mismatch (unbounded logits vs bounded RRF), and
 follows the OpenSearch best practice pattern (min-max + weighted arithmetic
 mean). Start with equal weights (0.5/0.5) and tune based on quality tests.
 
----
+______________________________________________________________________
 
 ## Topic 20: VaultGraph caching — safe singleton pattern
 
@@ -1642,8 +1645,8 @@ means re-reading the graph data from disk on every request. We need a caching
 pattern that:
 
 1. Avoids redundant disk I/O
-2. Invalidates after reindex (graph data changes)
-3. Is thread-safe (MCP tools may call from multiple worker threads)
+1. Invalidates after reindex (graph data changes)
+1. Is thread-safe (MCP tools may call from multiple worker threads)
 
 ### Pattern: Version-stamped lazy singleton
 
@@ -1741,8 +1744,8 @@ initialized once at import time. Since MCP tools run in worker threads
 The singleton pattern above (`_graph_cache = _GraphCache()`) is safe because:
 
 1. Module-level instantiation is atomic (GIL protects import)
-2. All mutations go through `threading.Lock`
-3. `VaultGraph` is read-only after construction (no mutation during search)
+1. All mutations go through `threading.Lock`
+1. `VaultGraph` is read-only after construction (no mutation during search)
 
 ### Thread safety of VaultGraph access
 
@@ -1752,15 +1755,15 @@ without additional locking. Only construction and invalidation need the lock.
 
 ### Summary
 
-| Approach | Safe? | Invalidation | Overhead | Recommended? |
-|----------|-------|-------------|----------|-------------|
-| No cache (rebuild every call) | Yes | N/A | High disk I/O | No |
-| Module singleton + explicit invalidate | Yes | After reindex | Zero per-access | **Yes (same process)** |
-| Module singleton + mtime check | Yes | Automatic | ~1-10us stat() | Yes (cross-process) |
-| weakref cache | Unreliable | GC-driven | Re-loads often | No |
-| functools.lru_cache | Not invalidatable | None | Stale forever | No |
+| Approach                               | Safe?             | Invalidation  | Overhead        | Recommended?           |
+| -------------------------------------- | ----------------- | ------------- | --------------- | ---------------------- |
+| No cache (rebuild every call)          | Yes               | N/A           | High disk I/O   | No                     |
+| Module singleton + explicit invalidate | Yes               | After reindex | Zero per-access | **Yes (same process)** |
+| Module singleton + mtime check         | Yes               | Automatic     | ~1-10us stat()  | Yes (cross-process)    |
+| weakref cache                          | Unreliable        | GC-driven     | Re-loads often  | No                     |
+| functools.lru_cache                    | Not invalidatable | None          | Stale forever   | No                     |
 
----
+______________________________________________________________________
 
 ## References (continued)
 
@@ -1771,7 +1774,7 @@ without additional locking. Only construction and invalidation need the lock.
 - ms-marco-MiniLM-L6-v2 model card: <https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2>
 - Python weakref docs: <https://docs.python.org/3/library/weakref.html>
 
----
+______________________________________________________________________
 
 ## Topic 21: Python pathlib path normalization pitfalls
 
@@ -1815,13 +1818,14 @@ Path("a/../b").resolve() == Path("b").resolve()           # True
    are symlinks to different targets will compare as different even if
    the symlinks have the same name.
 
-2. **Requires filesystem access.** `resolve()` calls `os.path.realpath()`
+1. **Requires filesystem access.** `resolve()` calls `os.path.realpath()`
    which stats the filesystem. If the path doesn't exist, behavior varies:
+
    - Python 3.6+: resolves as far as possible, returns lexically cleaned
      remainder (no error)
    - This is fine for our use case (vault path should exist)
 
-3. **Changes path identity through symlinks.** Given:
+1. **Changes path identity through symlinks.** Given:
 
    ```
    /projects/my-vault -> /data/vaults/my-vault  (symlink)
@@ -1830,7 +1834,7 @@ Path("a/../b").resolve() == Path("b").resolve()           # True
    `Path("/projects/my-vault").resolve()` returns `/data/vaults/my-vault`.
    This is **correct behavior** for us — we want the canonical location.
 
-4. **Performance.** `resolve()` does a stat() syscall per component. For a
+1. **Performance.** `resolve()` does a stat() syscall per component. For a
    typical 3-5 component path, this is ~5-15us. Negligible for engine
    creation (which loads GPU models taking seconds).
 
@@ -1883,7 +1887,7 @@ Why `resolve()` over `normpath`:
 `Path("c:/foo")` and `Path("C:/foo")` resolve to the same canonical form.
 This is relevant for our Windows development environment.
 
----
+______________________________________________________________________
 
 ## Topic 22: SHA-256 vs xxHash for file change detection
 
@@ -1894,12 +1898,12 @@ Is xxHash meaningfully faster? What are the tradeoffs?
 
 ### Performance comparison
 
-| Algorithm | Throughput (GB/s) | Relative | Stdlib? | Collision risk |
-|-----------|------------------|----------|---------|---------------|
-| xxh64     | ~19.4            | **65x**  | No (pip `xxhash`) | 2^-64 per pair |
-| xxh128    | ~18.0            | 60x      | No (pip `xxhash`) | 2^-128 per pair |
-| blake2b   | ~1.0             | 3.3x     | **Yes** (`hashlib`) | Cryptographic |
-| sha256    | ~0.3             | 1x       | **Yes** (`hashlib`) | Cryptographic |
+| Algorithm | Throughput (GB/s) | Relative | Stdlib?             | Collision risk  |
+| --------- | ----------------- | -------- | ------------------- | --------------- |
+| xxh64     | ~19.4             | **65x**  | No (pip `xxhash`)   | 2^-64 per pair  |
+| xxh128    | ~18.0             | 60x      | No (pip `xxhash`)   | 2^-128 per pair |
+| blake2b   | ~1.0              | 3.3x     | **Yes** (`hashlib`) | Cryptographic   |
+| sha256    | ~0.3              | 1x       | **Yes** (`hashlib`) | Cryptographic   |
 
 Python benchmark (1 GiB data, Python 3.11):
 
@@ -1950,12 +1954,12 @@ with optimal block sizes. No need to manually loop with `read(8192)`.
 **Use `hashlib.blake2b` via `file_digest()`.** Reasoning:
 
 1. **No new dependency.** blake2b is in stdlib. xxhash requires pip install.
-2. **Fast enough.** At ~1 GB/s, hashing 213 markdown files (typical vault,
-   ~1-10 KB each) takes <1ms total. The 5.6x speedup of xxhash saves
+1. **Fast enough.** At ~1 GB/s, hashing 213 markdown files (typical vault,
+   ~1-10 KB each) takes \<1ms total. The 5.6x speedup of xxhash saves
    microseconds — irrelevant.
-3. **file_digest() is clean.** One-liner, optimal block size, Python 3.11+
+1. **file_digest() is clean.** One-liner, optimal block size, Python 3.11+
    (we require 3.13).
-4. **Future-proof.** If we later need xxhash for multi-GB codebases, it's a
+1. **Future-proof.** If we later need xxhash for multi-GB codebases, it's a
    drop-in replacement (same API pattern).
 
 ```python
@@ -1988,7 +1992,7 @@ def directory_hash(paths: list[Path]) -> str:
 For our vault of 213 markdown docs (~1-50 KB each), blake2b finishes in
 well under 10ms. Not worth adding a dependency.
 
----
+______________________________________________________________________
 
 ## References (continued)
 
@@ -2003,7 +2007,7 @@ well under 10ms. Not worth adding a dependency.
 - hashlib file_digest docs: <https://docs.python.org/3/library/hashlib.html>
 - BLAKE2 performance claims: <https://docs.python.org/3/library/hashlib.html#blake2>
 
----
+______________________________________________________________________
 
 ## Topic 23: FastMCP sync tool return type handling
 
@@ -2025,17 +2029,17 @@ run in a threadpool to avoid blocking the event loop."
 
 All of these work identically for sync and async tools:
 
-| Return type | Behavior |
-|------------|----------|
-| `str` | Text content |
-| `int`, `float`, `bool` | Primitive content |
-| `dict` | Structured content (JSON) -- **always**, even without output schema |
-| Pydantic `BaseModel` | Structured content (JSON) -- **always** |
-| `dataclass` | Structured content (JSON) -- **always** |
-| `list[T]`, `set[T]` | Collection content |
-| `None` | Empty response |
-| `datetime`, `date`, `UUID`, `Path` | Serialized appropriately |
-| `Image`, `Audio`, `File` | Media content |
+| Return type                        | Behavior                                                            |
+| ---------------------------------- | ------------------------------------------------------------------- |
+| `str`                              | Text content                                                        |
+| `int`, `float`, `bool`             | Primitive content                                                   |
+| `dict`                             | Structured content (JSON) -- **always**, even without output schema |
+| Pydantic `BaseModel`               | Structured content (JSON) -- **always**                             |
+| `dataclass`                        | Structured content (JSON) -- **always**                             |
+| `list[T]`, `set[T]`                | Collection content                                                  |
+| `None`                             | Empty response                                                      |
+| `datetime`, `date`, `UUID`, `Path` | Serialized appropriately                                            |
+| `Image`, `Audio`, `File`           | Media content                                                       |
 
 **Key finding:** Object-like returns (dict, Pydantic models, dataclasses)
 **always** become structured content with machine-readable JSON, even without
@@ -2052,7 +2056,7 @@ to MCP error responses:
 1. **Regular exceptions** -- caught, logged, converted to error response.
    If `mask_error_details=True`, internal details are hidden from clients.
 
-2. **`ToolError`** -- special exception whose message is ALWAYS sent to the
+1. **`ToolError`** -- special exception whose message is ALWAYS sent to the
    client, regardless of `mask_error_details`. Use this for user-facing errors:
 
    ```python
@@ -2065,7 +2069,7 @@ to MCP error responses:
        # ... search logic
    ```
 
-3. **Pydantic ValidationError** -- currently mapped to Internal error (-32603)
+1. **Pydantic ValidationError** -- currently mapped to Internal error (-32603)
    instead of Invalid params (-32602). Known issue in FastMCP.
 
 ### Recommendation for our conversion
@@ -2092,7 +2096,7 @@ def search_codebase(query: str, top_k: int = 5) -> SearchResponse:
     return SearchResponse(results=results)
 ```
 
----
+______________________________________________________________________
 
 ## Topic 24: Qdrant hybrid search with optional sparse vector
 
@@ -2207,15 +2211,15 @@ def hybrid_search(
 1. **Dense-only uses direct query, not single-prefetch + fusion.** Simpler,
    faster, identical results.
 
-2. **Sparse-only is not a supported path.** Dense embeddings are always
+1. **Sparse-only is not a supported path.** Dense embeddings are always
    available (our `EmbeddingModel` always produces them). Sparse may be
    unavailable if SPLADE fails or is disabled.
 
-3. **The `if/else` is in the store layer, not the caller.** The search API
+1. **The `if/else` is in the store layer, not the caller.** The search API
    accepts `sparse_vector: SparseVector | None` and handles the branching
    internally. Callers don't need to know about prefetch mechanics.
 
-4. **Filter placement differs.** With prefetch, filters go on each `Prefetch`
+1. **Filter placement differs.** With prefetch, filters go on each `Prefetch`
    (per Topic 10). Without prefetch, filter goes on `query_filter` at top level.
 
 ### Our codebase status
@@ -2224,7 +2228,7 @@ def hybrid_search(
 and if so, fall back to dense-only `query_points` without prefetch/fusion.
 This handles the R26-M5 edge case where sparse encoding fails or is disabled.
 
----
+______________________________________________________________________
 
 ## References (continued)
 
@@ -2235,7 +2239,7 @@ This handles the R26-M5 edge case where sparse encoding fails or is disabled.
 - Qdrant hybrid queries docs: <https://qdrant.tech/documentation/concepts/hybrid-queries/>
 - Qdrant local mode prefetch issue: <https://github.com/qdrant/qdrant-client/issues/713>
 
----
+______________________________________________________________________
 
 ## Topic 25: Late interaction / ColBERT vs our CrossEncoder reranker
 
@@ -2246,13 +2250,13 @@ in 2025/2026? Are there better alternatives for code search?
 
 ### Current reranker landscape (2025-2026)
 
-| Model | Params | BEIR nDCG@10 | CoIR (code) | Latency | License |
-|-------|--------|-------------|-------------|---------|---------|
-| ms-marco-MiniLM-L6-v2 | 22M | ~49-51 | N/A | ~1ms/pair CPU | Apache 2.0 |
-| bge-reranker-v2-m3 | 568M | ~60 (+11 over retriever) | N/A | ~50-100ms GPU | Apache 2.0 |
-| jina-reranker-v2-base | 278M | ~57 | ~63 | ~30ms GPU | Apache 2.0 |
-| jina-reranker-v3 | 600M | **61.94** | **70.64** | ~50ms GPU | Apache 2.0 |
-| NV-RerankQA-Mistral-4B | 4B | **~74** (best) | N/A | ~200ms GPU | Custom |
+| Model                  | Params | BEIR nDCG@10             | CoIR (code) | Latency       | License    |
+| ---------------------- | ------ | ------------------------ | ----------- | ------------- | ---------- |
+| ms-marco-MiniLM-L6-v2  | 22M    | ~49-51                   | N/A         | ~1ms/pair CPU | Apache 2.0 |
+| bge-reranker-v2-m3     | 568M   | ~60 (+11 over retriever) | N/A         | ~50-100ms GPU | Apache 2.0 |
+| jina-reranker-v2-base  | 278M   | ~57                      | ~63         | ~30ms GPU     | Apache 2.0 |
+| jina-reranker-v3       | 600M   | **61.94**                | **70.64**   | ~50ms GPU     | Apache 2.0 |
+| NV-RerankQA-Mistral-4B | 4B     | **~74** (best)           | N/A         | ~200ms GPU    | Custom     |
 
 ### Key findings
 
@@ -2260,22 +2264,22 @@ in 2025/2026? Are there better alternatives for code search?
    outperform it by 10-25 NDCG points on BEIR. It's a 22M param, 6-layer
    model trained only on MS MARCO passage ranking. No code-specific training.
 
-2. **bge-reranker-v2-m3 is the current open-source sweet spot.** 568M params,
+1. **bge-reranker-v2-m3 is the current open-source sweet spot.** 568M params,
    +11 NDCG points over retriever baseline on BEIR, multilingual, Apache 2.0.
    Runs efficiently on consumer GPUs (~50-100ms per query batch).
 
-3. **jina-reranker-v3 leads on code retrieval.** 70.64 on CoIR (Code
+1. **jina-reranker-v3 leads on code retrieval.** 70.64 on CoIR (Code
    Information Retrieval benchmark), 61.94 BEIR nDCG@10. Uses a novel "last
    but not late interaction" architecture (hybrid of cross-encoder and
    ColBERT). 0.6B params, Apache 2.0.
 
-4. **ColBERT architecture.** Late interaction models compute token-level
+1. **ColBERT architecture.** Late interaction models compute token-level
    similarities, achieving 180x fewer FLOPs than full cross-encoders at k=10.
    Jina-ColBERT-v2 supports 8192 tokens (vs 512 for standard cross-encoders).
    Better for long code chunks. However, requires precomputing document token
    embeddings, adding storage overhead.
 
-5. **LLM-based reranking (GPT-4, etc.)** provides 5-8% higher accuracy on
+1. **LLM-based reranking (GPT-4, etc.)** provides 5-8% higher accuracy on
    listwise tasks but adds 4-6 seconds latency. Impractical for real-time
    search (users abandon after 3s).
 
@@ -2311,7 +2315,7 @@ reasonable choice for prototyping, but:
 Upgrading from MiniLM-L6-v2 to bge-reranker-v2-m3 is the single highest-ROI
 change for retrieval quality. It's a model swap, not an architecture change.
 
----
+______________________________________________________________________
 
 ## Topic 26: Hybrid retrieval quality -- sparse model choices
 
@@ -2322,13 +2326,13 @@ for code search specifically?
 
 ### Sparse encoder landscape (2025-2026)
 
-| Model | Architecture | Strengths | Weaknesses |
-|-------|-------------|-----------|-----------|
-| BM25 | Statistical (TF-IDF) | Zero-cost, interpretable | No semantic expansion, exact match only |
-| SPLADE-v3 | Neural (BERT-based) | Learned term expansion, semantic matching | 256 token limit, GPU required |
-| SPLADE-v3-distil | Distilled SPLADE | Faster inference, similar quality | Slightly lower accuracy |
-| UniCOIL | Single-weight per token | Efficient | Less expansion than SPLADE |
-| BM42 (Qdrant) | Modified BM25 | Qdrant-native, no GPU | Lower quality than SPLADE |
+| Model            | Architecture            | Strengths                                 | Weaknesses                              |
+| ---------------- | ----------------------- | ----------------------------------------- | --------------------------------------- |
+| BM25             | Statistical (TF-IDF)    | Zero-cost, interpretable                  | No semantic expansion, exact match only |
+| SPLADE-v3        | Neural (BERT-based)     | Learned term expansion, semantic matching | 256 token limit, GPU required           |
+| SPLADE-v3-distil | Distilled SPLADE        | Faster inference, similar quality         | Slightly lower accuracy                 |
+| UniCOIL          | Single-weight per token | Efficient                                 | Less expansion than SPLADE              |
+| BM42 (Qdrant)    | Modified BM25           | Qdrant-native, no GPU                     | Lower quality than SPLADE               |
 
 ### SPLADE-v3 vs BM25 for code
 
@@ -2337,18 +2341,18 @@ for code search specifically?
 1. **Term expansion.** A query for "binary search" expands to include
    "bisect", "sorted", "find", "algorithm". BM25 requires exact keyword
    match.
-2. **Term weighting.** SPLADE downweights common tokens ("def", "return",
+1. **Term weighting.** SPLADE downweights common tokens ("def", "return",
    "self") and upweights distinctive identifiers. BM25's IDF does this
    partially but less effectively.
-3. **Handling abbreviations.** Code uses abbreviations heavily (cfg, ctx,
+1. **Handling abbreviations.** Code uses abbreviations heavily (cfg, ctx,
    fmt, iter). SPLADE's BERT backbone can relate these to their full forms.
 
 **BM25 advantages for code search:**
 
 1. **Exact identifier matching.** When searching for `_collect_chunks`, BM25
    matches it exactly. SPLADE may dilute this with expanded terms.
-2. **No GPU required.** BM25 runs anywhere.
-3. **No 256-token limit.** BM25 processes arbitrarily long documents.
+1. **No GPU required.** BM25 runs anywhere.
+1. **No 256-token limit.** BM25 processes arbitrarily long documents.
 
 ### Does sparse add value in our hybrid pipeline?
 
@@ -2357,10 +2361,10 @@ best practice in 2025-2026 retrieval. Key evidence:
 
 1. Dense embeddings alone miss exact keyword matches (function names, class
    names, error messages, config keys).
-2. Sparse alone misses semantic similarity (different words, same concept).
-3. RRF fusion of both consistently outperforms either alone on BEIR and
+1. Sparse alone misses semantic similarity (different words, same concept).
+1. RRF fusion of both consistently outperforms either alone on BEIR and
    MS MARCO benchmarks.
-4. For code specifically, exact identifier matching is critical -- users
+1. For code specifically, exact identifier matching is critical -- users
    often search for specific function/variable names.
 
 ### SPLADE-v3 assessment for our stack
@@ -2389,7 +2393,7 @@ payload text fields, consider adding BM25 as a third retrieval branch
 alongside dense + SPLADE. This would catch long-tail exact matches that
 SPLADE truncates.
 
----
+______________________________________________________________________
 
 ## Topic 27: Chunking strategy quality for code RAG
 
@@ -2407,24 +2411,24 @@ RAG chunking quality.
 **Algorithm:**
 
 1. Parse source code to AST via tree-sitter
-2. Top-down traversal: fit large AST nodes into single chunks when possible
-3. If a node exceeds size budget, recursively split into child nodes
-4. Greedily merge adjacent small sibling nodes to maximize density
-5. Concatenating all chunks reproduces the original file verbatim
+1. Top-down traversal: fit large AST nodes into single chunks when possible
+1. If a node exceeds size budget, recursively split into child nodes
+1. Greedily merge adjacent small sibling nodes to maximize density
+1. Concatenating all chunks reproduces the original file verbatim
 
 **Results vs baselines:**
 
-| Strategy | Recall@5 (RepoEval) | Pass@1 (SWE-bench) | EM (CrossCodeEval) |
-|----------|--------------------|--------------------|-------------------|
-| Fixed-size (line-based) | 82.1 | 13.7 | 36.3 |
-| cAST (AST-aware) | **83.9 (+1.8)** | **16.3 (+2.6)** | **39.9 (+3.6)** |
+| Strategy                | Recall@5 (RepoEval) | Pass@1 (SWE-bench) | EM (CrossCodeEval) |
+| ----------------------- | ------------------- | ------------------ | ------------------ |
+| Fixed-size (line-based) | 82.1                | 13.7               | 36.3               |
+| cAST (AST-aware)        | **83.9 (+1.8)**     | **16.3 (+2.6)**    | **39.9 (+3.6)**    |
 
 **Design goals (all four apply to our chunker):**
 
 1. Syntactic integrity -- chunk boundaries align with complete syntactic units
-2. High information density -- pack chunks up to a size budget
-3. Language invariance -- no language-specific heuristics
-4. Plug-and-play -- concatenating chunks reproduces original
+1. High information density -- pack chunks up to a size budget
+1. Language invariance -- no language-specific heuristics
+1. Plug-and-play -- concatenating chunks reproduces original
 
 **Languages tested:** Python, Java, C#, TypeScript.
 
@@ -2449,11 +2453,11 @@ Our `ASTChunker` in indexer.py already implements the core cAST pattern:
    1000-line class) into child-level chunks. Our chunker may keep large
    top-level nodes as single chunks, exceeding the size budget.
 
-2. **Size budget enforcement.** cAST strictly enforces a maximum chunk size
+1. **Size budget enforcement.** cAST strictly enforces a maximum chunk size
    (measured in non-whitespace characters). Our `_merge_small()` has a
    minimum threshold but may not have a maximum.
 
-3. **Completeness guarantee.** cAST guarantees that concatenating all chunks
+1. **Completeness guarantee.** cAST guarantees that concatenating all chunks
    reproduces the original file. Our chunker may skip non-top-level nodes
    (comments between functions, module-level assignments) that aren't in
    `_TOP_LEVEL_NODES`.
@@ -2463,14 +2467,14 @@ Our `ASTChunker` in indexer.py already implements the core cAST pattern:
 1. **Sliding window over AST.** Overlapping chunks at function boundaries.
    Increases recall at cost of storage. Not well-studied for code.
 
-2. **Repo-level context.** Including import context, class hierarchy, or
+1. **Repo-level context.** Including import context, class hierarchy, or
    call graph information in each chunk's metadata. Improves generation
    quality but not directly retrieval quality.
 
-3. **Semantic chunking.** Using embeddings to find natural "topic breaks"
+1. **Semantic chunking.** Using embeddings to find natural "topic breaks"
    in code. Works for prose, poorly studied for code.
 
-4. **Call-graph augmentation.** Adding edges between chunks that call each
+1. **Call-graph augmentation.** Adding edges between chunks that call each
    other. Our `VaultGraph` link boosting partially does this for vault
    documents (backlinks), but not for code.
 
@@ -2480,18 +2484,18 @@ Our `ASTChunker` in indexer.py already implements the core cAST pattern:
    the 2025 SOTA (cAST). The +1.8 Recall@5 improvement from cAST over
    fixed-size chunking is already captured by our approach.
 
-2. **Consider adding recursive splitting.** If large classes/modules produce
+1. **Consider adding recursive splitting.** If large classes/modules produce
    oversized chunks, add cAST-style recursive descent into child nodes.
    Check if `_merge_small()` has a maximum size enforcement.
 
-3. **Consider completeness guarantee.** If module-level code (assignments,
+1. **Consider completeness guarantee.** If module-level code (assignments,
    imports, top-level expressions) is skipped by our chunker, it won't be
    searchable. cAST guarantees full file coverage.
 
-4. **Low priority.** The chunking gains (+1.8 Recall@5) are modest compared
+1. **Low priority.** The chunking gains (+1.8 Recall@5) are modest compared
    to reranker upgrades (+10-20 NDCG points). Focus on the reranker first.
 
----
+______________________________________________________________________
 
 ## References (continued)
 
@@ -2511,7 +2515,7 @@ Our `ASTChunker` in indexer.py already implements the core cAST pattern:
 - Jina ColBERT v2: <https://arxiv.org/html/2408.16672v2>
 - CoIR code retrieval benchmark: <https://jina.ai/models/jina-reranker-v3/>
 
----
+______________________________________________________________________
 
 ## Topic 28 — qdrant-client API Grounding (Round 1)
 
@@ -2655,7 +2659,7 @@ The following are all verified CORRECT against the installed qdrant-client 1.17.
 - Qdrant filtering docs: <https://qdrant.tech/documentation/concepts/filtering/>
 - Qdrant payload docs: <https://qdrant.tech/documentation/concepts/payload/>
 
----
+______________________________________________________________________
 
 ## Topic 29 — sentence-transformers API Grounding (Round 2)
 
@@ -2761,7 +2765,7 @@ Our code uses `predict()` directly instead of `rank()`. Both are valid — `rank
 - Installed package introspection: sentence-transformers 5.2.3
 - SPLADE-v3 cached config: `config_sentence_transformers.json` prompts field
 
----
+______________________________________________________________________
 
 ## Topic 30 — MCP SDK API Grounding (Round 3)
 
@@ -2818,7 +2822,7 @@ The ADR states: "MCP SDK (v1.26+) auto-wraps sync `def` tools in `anyio.to_threa
 - Source file: `.venv/Lib/site-packages/mcp/server/fastmcp/utilities/func_metadata.py`
 - Source file: `.venv/Lib/site-packages/mcp/server/fastmcp/tools/tool.py`
 
----
+______________________________________________________________________
 
 ## Topic 31 — tree-sitter API Grounding (Round 4)
 
@@ -2828,22 +2832,22 @@ The ADR states: "MCP SDK (v1.26+) auto-wraps sync `def` tools in `anyio.to_threa
 
 All verified by executing actual tree-sitter parsing on this machine:
 
-| API | Type/Return | Status |
-|-----|-------------|--------|
-| `get_parser(grammar_name)` | `tree_sitter.Parser` | OK |
-| `parser.parse(bytes)` | `tree_sitter.Tree` | OK |
-| `tree.root_node` | `tree_sitter.Node` | OK |
-| `node.type` | `str` | OK |
-| `node.text` | **`bytes`** (not `str`) | OK |
-| `node.start_byte` | `int` | OK |
-| `node.end_byte` | `int` | OK |
-| `node.start_point` | `Point(row, column)` namedtuple | OK |
-| `node.end_point` | `Point(row, column)` namedtuple | OK |
-| `node.start_point[0]` | `int` (row via index) | OK |
-| `node.start_point.row` | `int` (row via name) | OK |
-| `node.children` | `list[Node]` | OK |
-| `child_by_field_name("name")` | `Node` (if exists) | OK |
-| `child_by_field_name("nonexistent")` | `None` | OK |
+| API                                  | Type/Return                     | Status |
+| ------------------------------------ | ------------------------------- | ------ |
+| `get_parser(grammar_name)`           | `tree_sitter.Parser`            | OK     |
+| `parser.parse(bytes)`                | `tree_sitter.Tree`              | OK     |
+| `tree.root_node`                     | `tree_sitter.Node`              | OK     |
+| `node.type`                          | `str`                           | OK     |
+| `node.text`                          | **`bytes`** (not `str`)         | OK     |
+| `node.start_byte`                    | `int`                           | OK     |
+| `node.end_byte`                      | `int`                           | OK     |
+| `node.start_point`                   | `Point(row, column)` namedtuple | OK     |
+| `node.end_point`                     | `Point(row, column)` namedtuple | OK     |
+| `node.start_point[0]`                | `int` (row via index)           | OK     |
+| `node.start_point.row`               | `int` (row via name)            | OK     |
+| `node.children`                      | `list[Node]`                    | OK     |
+| `child_by_field_name("name")`        | `Node` (if exists)              | OK     |
+| `child_by_field_name("nonexistent")` | `None`                          | OK     |
 
 ### Grammar name verification
 

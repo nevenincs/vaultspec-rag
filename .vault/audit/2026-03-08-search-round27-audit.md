@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -10,10 +10,10 @@ related: []
 
 **Date:** 2026-03-08
 **Auditor:** docs-researcher-2
-**Files Examined:** src/vaultspec_rag/search.py, config.py, store.py, test_search_*.py
+**Files Examined:** src/vaultspec_rag/search.py, config.py, store.py, test_search\_\*.py
 **Architecture Context:** VaultSearcher hybrid search + graph rerank + CrossEncoder (opt-in)
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
@@ -31,18 +31,18 @@ related: []
 
 **One LOW-severity finding:** Potential edge case in snippet generation if content is extremely short (< 200 chars).
 
----
+______________________________________________________________________
 
 ## Severity Table
 
-| Severity | Count | Issues |
-|----------|-------|--------|
-| CRITICAL | 0     | —      |
-| HIGH     | 0     | —      |
-| MEDIUM   | 0     | —      |
+| Severity | Count | Issues                                   |
+| -------- | ----- | ---------------------------------------- |
+| CRITICAL | 0     | —                                        |
+| HIGH     | 0     | —                                        |
+| MEDIUM   | 0     | —                                        |
 | LOW      | 1     | Snippet truncation on very short content |
 
----
+______________________________________________________________________
 
 ## Detailed Findings
 
@@ -53,12 +53,12 @@ related: []
 **Flow:**
 
 1. Parse raw query → extract filters
-2. Encode query (dense + sparse)
-3. Hybrid search with fetch_limit (4× top_k if reranker enabled, else 2× top_k)
-4. Build SearchResult objects from store response
-5. _rerank() with CrossEncoder (if enabled)
-6. rerank_with_graph() to apply graph boosts
-7. Return final sorted results
+1. Encode query (dense + sparse)
+1. Hybrid search with fetch_limit (4× top_k if reranker enabled, else 2× top_k)
+1. Build SearchResult objects from store response
+1. \_rerank() with CrossEncoder (if enabled)
+1. rerank_with_graph() to apply graph boosts
+1. Return final sorted results
 
 **Correctness Checks:**
 
@@ -78,7 +78,7 @@ related: []
 
 **Result: SAFE**
 
----
+______________________________________________________________________
 
 ### 2. Graph Reranking Analysis
 
@@ -98,7 +98,7 @@ related: []
 
 **Result: SAFE**
 
----
+______________________________________________________________________
 
 ### 3. CrossEncoder Reranking Analysis
 
@@ -126,7 +126,7 @@ related: []
 
 **Result: SAFE**
 
----
+______________________________________________________________________
 
 ### 4. Score Normalization (`_normalize_minmax`)
 
@@ -144,7 +144,7 @@ related: []
 
 **Result: SAFE**
 
----
+______________________________________________________________________
 
 ### 5. `search_all()` Normalization Design
 
@@ -164,7 +164,7 @@ related: []
 
 **Result: SAFE — by design**
 
----
+______________________________________________________________________
 
 ### 6. Query Parsing (`parse_query`)
 
@@ -186,7 +186,7 @@ related: []
 
 **Result: SAFE**
 
----
+______________________________________________________________________
 
 ### 7. `reranker_enabled` Flag Thread Safety
 
@@ -200,7 +200,7 @@ related: []
 
 **Result: SAFE in expected usage pattern**
 
----
+______________________________________________________________________
 
 ### 8. Empty Query Handling
 
@@ -216,7 +216,7 @@ related: []
 
 **Result: SAFE**
 
----
+______________________________________________________________________
 
 ### 9. Snippet Generation Edge Cases
 
@@ -234,7 +234,7 @@ related: []
 
 **Result: ACCEPTABLE — snippet is informative but not critical for search results**
 
----
+______________________________________________________________________
 
 ### 10. Score Ordering Invariants
 
@@ -252,23 +252,23 @@ related: []
 
 **Result: SAFE — scores always monotonic descending**
 
----
+______________________________________________________________________
 
 ## Summary of Audit Questions
 
-| Question | Answer | Status |
-|----------|--------|--------|
-| `search_vault` flow safe? | Yes, all steps validated. Fetch → Rerank → Graph → Return. | ✅ SAFE |
-| Graph rerank boost correct? | Yes, 1.0–2.0× multiplier, feature filter respected, handles empty graph. | ✅ SAFE |
-| CrossEncoder setup correct? | Yes, `activation_fn=torch.nn.Sigmoid()` in constructor, batch_size=32, empty handling OK. | ✅ SAFE |
-| `search_all` normalization? | Yes, min-max per list, all-equal-scores → weight, correct merging. | ✅ SAFE |
-| `ParsedQuery` robust? | Yes, filter extraction correct, unknown prefixes skipped, multi-word filters split. | ✅ SAFE |
-| Score ordering? | Yes, always sorted descending after each rerank step. | ✅ SAFE |
-| `reranker_enabled` thread-safe? | Yes in expected usage (sequential per VaultSearcher). GPU serialized. | ✅ SAFE |
-| Empty query handling? | Yes, no crash, encoding proceeds, results returned or empty list. | ✅ SAFE |
-| Snippet generation safe? | Yes, truncation + strip safe; very short content is acceptable. | ✅ SAFE |
+| Question                        | Answer                                                                                    | Status  |
+| ------------------------------- | ----------------------------------------------------------------------------------------- | ------- |
+| `search_vault` flow safe?       | Yes, all steps validated. Fetch → Rerank → Graph → Return.                                | ✅ SAFE |
+| Graph rerank boost correct?     | Yes, 1.0–2.0× multiplier, feature filter respected, handles empty graph.                  | ✅ SAFE |
+| CrossEncoder setup correct?     | Yes, `activation_fn=torch.nn.Sigmoid()` in constructor, batch_size=32, empty handling OK. | ✅ SAFE |
+| `search_all` normalization?     | Yes, min-max per list, all-equal-scores → weight, correct merging.                        | ✅ SAFE |
+| `ParsedQuery` robust?           | Yes, filter extraction correct, unknown prefixes skipped, multi-word filters split.       | ✅ SAFE |
+| Score ordering?                 | Yes, always sorted descending after each rerank step.                                     | ✅ SAFE |
+| `reranker_enabled` thread-safe? | Yes in expected usage (sequential per VaultSearcher). GPU serialized.                     | ✅ SAFE |
+| Empty query handling?           | Yes, no crash, encoding proceeds, results returned or empty list.                         | ✅ SAFE |
+| Snippet generation safe?        | Yes, truncation + strip safe; very short content is acceptable.                           | ✅ SAFE |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
@@ -283,9 +283,9 @@ None required. Docstrings are clear and design rationale is well-explained (e.g.
 ### Future Monitoring
 
 - Monitor CrossEncoder batch size if GPU memory becomes constrained. Currently 32 is reasonable.
-- If multi-threaded concurrent search is needed, add threading.Lock around VaultSearcher._rerank() and_get_graph().
+- If multi-threaded concurrent search is needed, add threading.Lock around VaultSearcher.\_rerank() and_get_graph().
 
----
+______________________________________________________________________
 
 ## Conclusion
 

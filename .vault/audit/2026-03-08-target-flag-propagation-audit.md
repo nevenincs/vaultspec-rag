@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -72,12 +72,12 @@ The `--target` flag propagation is **correct and consistent** across the entire 
 
 All commands consistently extract `state.target` from `CLIState` and pass it to constructors:
 
-| Command | Store | Indexer | Searcher |
-|---------|-------|---------|----------|
-| `index` (line 179) | `VaultStore(target)` | `VaultIndexer(target, ...)` | N/A |
-| `search` (line 290) | `VaultStore(target)` | N/A | `VaultSearcher(target, ...)` |
-| `status` (line 348) | `VaultStore(target)` | N/A | N/A |
-| `benchmark` (line 475) | `VaultStore(target)` | N/A | `VaultSearcher(target, ...)` |
+| Command                | Store                | Indexer                     | Searcher                     |
+| ---------------------- | -------------------- | --------------------------- | ---------------------------- |
+| `index` (line 179)     | `VaultStore(target)` | `VaultIndexer(target, ...)` | N/A                          |
+| `search` (line 290)    | `VaultStore(target)` | N/A                         | `VaultSearcher(target, ...)` |
+| `status` (line 348)    | `VaultStore(target)` | N/A                         | N/A                          |
+| `benchmark` (line 475) | `VaultStore(target)` | N/A                         | `VaultSearcher(target, ...)` |
 
 **Verdict**: CORRECT. All commands use the same `target` value.
 
@@ -90,7 +90,7 @@ All commands consistently extract `state.target` from `CLIState` and pass it to 
 **Observation**: The MCP server bypasses `resolve_workspace()` entirely — it reads the raw env var without workspace validation. This is acceptable because:
 
 1. The CLI callback sets `VAULTSPEC_ROOT` after workspace validation.
-2. BUT: the `main()` callback has an early return for `server` subcommand (line 129-130), meaning workspace resolution is SKIPPED for `server` commands.
+1. BUT: the `main()` callback has an early return for `server` subcommand (line 129-130), meaning workspace resolution is SKIPPED for `server` commands.
 
 **ISSUE FOUND**: When `vaultspec-rag --target /some/path server mcp start` is invoked:
 
@@ -130,7 +130,7 @@ The early return for `"server"` skips workspace resolution, so `--target` has no
 **Fix options**:
 
 1. Remove `"server"` from the early-return list and let workspace resolution run for server commands.
-2. OR: Have the `mcp_start` command accept its own `--target` option.
+1. OR: Have the `mcp_start` command accept its own `--target` option.
 
 ## Conclusion
 

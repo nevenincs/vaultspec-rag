@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -20,7 +20,7 @@ related: []
 - **LOW:** 3 minor issues remain from previous round
 - **FIXED:** Issues R23-M2 (mtime → blake2b) and R23-m7 (stem → relative path) are now RESOLVED
 
----
+______________________________________________________________________
 
 ## Critical Issues
 
@@ -42,11 +42,11 @@ self._write_meta(current_hashes)  # Line 804
 This means:
 
 1. File `A` is indexed. Metadata: `{"A": "hash_A"}`
-2. File `A` is deleted from disk.
-3. Next run: `_load_meta()` returns `{"A": "hash_A"}` (from persistent file), but `current_hashes = {}` (A doesn't exist).
-4. `_write_meta(current_hashes)` writes `{}`, clearing the metadata entirely.
-5. If file `A` reappears in a future run, it will be treated as "new" again, triggering full re-embedding.
-6. **More dangerously:** Orphaned entries accumulate in the metadata file. If metadata is ever used for cache validation, it will contain stale entries.
+1. File `A` is deleted from disk.
+1. Next run: `_load_meta()` returns `{"A": "hash_A"}` (from persistent file), but `current_hashes = {}` (A doesn't exist).
+1. `_write_meta(current_hashes)` writes `{}`, clearing the metadata entirely.
+1. If file `A` reappears in a future run, it will be treated as "new" again, triggering full re-embedding.
+1. **More dangerously:** Orphaned entries accumulate in the metadata file. If metadata is ever used for cache validation, it will contain stale entries.
 
 **Impact:**
 
@@ -58,7 +58,7 @@ This means:
 
 The metadata should record the *union* of current files and previous files (with deleted entries removed), not just current files. The current approach discards the historical record.
 
----
+______________________________________________________________________
 
 ## High Issues (Previously Reported, Status Update)
 
@@ -79,7 +79,7 @@ The metadata should record the *union* of current files and previous files (with
 - Lines 757-772: Implementation uses `hashlib.file_digest(f, "blake2b").hexdigest()`
 - No mtime usage in either incremental path.
 
----
+______________________________________________________________________
 
 ### H2: R23-m7 — prepare_document doc ID not unique (FIXED)
 
@@ -97,9 +97,9 @@ The metadata should record the *union* of current files and previous files (with
 - Relative path is computed at lines 580-583
 - Doc ID derivation at line 593 correctly strips only the final extension
 
----
+______________________________________________________________________
 
-### H3: R23-M1 — _scan_codebase traverses ignored directories before filtering (FIXED)
+### H3: R23-M1 — \_scan_codebase traverses ignored directories before filtering (FIXED)
 
 **Status:** ✅ RESOLVED
 **Previous Report:** Used `rglob("*")` which walks all directories, then filters with pathspec
@@ -125,9 +125,9 @@ The metadata should record the *union* of current files and previous files (with
 - Line 895: `rglob` is used only to **collect .gitignore files** (not for main scan), which is efficient
 - Lines 920-930: Main scan uses `os.walk` with pruning
 
----
+______________________________________________________________________
 
-### H4: R23-M3 — _chunk_with_splitter line tracking wrong when find() fails (ACTIVE)
+### H4: R23-M3 — \_chunk_with_splitter line tracking wrong when find() fails (ACTIVE)
 
 **Severity:** HIGH
 **File:** `indexer.py:1018-1053`
@@ -166,7 +166,7 @@ When find() fails (idx == -1), the fallback at line 1036 computes `line_start` a
 
 - No test explicitly covers the find() == -1 case with overlap-modified chunks
 
----
+______________________________________________________________________
 
 ### H5: R23-M4 — TextSplitter overlap creates duplicate content in chunks (ACTIVE)
 
@@ -198,7 +198,7 @@ The tail of the current chunk (up to `chunk_overlap` bytes) is prepended to the 
 
 - If chunk_overlap is ever increased (e.g., for context preservation), line tracking breaks entirely
 
----
+______________________________________________________________________
 
 ## Medium Issues (Previously Reported, Still Active)
 
@@ -221,9 +221,9 @@ For a `.gitignore` in `src/` containing `*.pyc`, the code produces `src/*.pyc` (
 - Not affecting VaultIndexer (uses `vaultspec.vaultcore.scan_vault` for document discovery)
 - Affects CodebaseIndexer for source code scanning
 
----
+______________________________________________________________________
 
-### M2: R23-m2 — _is_binary treats unreadable files as binary (ACTIVE)
+### M2: R23-m2 — \_is_binary treats unreadable files as binary (ACTIVE)
 
 **Severity:** MEDIUM
 **File:** `indexer.py:272-278`
@@ -246,7 +246,7 @@ Files that cannot be read (permissions, locks) are treated as binary and silentl
 - Valid source files may be silently excluded from indexing if temporarily locked
 - No visibility into why files were skipped
 
----
+______________________________________________________________________
 
 ### M3: R23-m3 — VaultIndexer counts overstate actual documents when prepare_document fails (ACTIVE)
 
@@ -288,7 +288,7 @@ If `prepare_document()` returns `None` (file unreadable, no recognized doc type)
 - Caller sees "added=5 documents" but only 3 were actually indexed
 - Complicates monitoring and debugging
 
----
+______________________________________________________________________
 
 ### M4: R23-m4 — CodebaseIndexer delete-then-upsert ordering (ACTIVE, LOW PRIORITY)
 
@@ -329,7 +329,7 @@ if all_new_chunks:
 - Crash during modified file re-indexing loses chunks
 - Low probability in practice (crash window is small, embedding typically fast)
 
----
+______________________________________________________________________
 
 ## Low Issues (Previously Reported, Still Active)
 
@@ -347,7 +347,7 @@ if all_new_chunks:
 - Python 3.13 `os.walk()` has symlink loop detection
 - Network filesystems and FUSE mounts may behave differently
 
----
+______________________________________________________________________
 
 ### L2: R23-m6 — TextSplitter force-split with empty separator (ACTIVE)
 
@@ -358,7 +358,7 @@ When separators are exhausted, force-split step size is `chunk_size - chunk_over
 
 **Status:** Not a bug, but resource-wasteful. Mitigated by `chunk_overlap=0` in CodebaseIndexer.
 
----
+______________________________________________________________________
 
 ### L3: R23-m8 — ThreadPoolExecutor default workers may overwhelm filesystem (ACTIVE)
 
@@ -369,27 +369,27 @@ Default `ThreadPoolExecutor()` without `max_workers` creates up to 20 threads on
 
 **Status:** Not critical; affects indexing throughput, not correctness. Rarely observed on modern systems with SSDs.
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| Issue ID | Category | Severity | Status | File | Lines |
-|----------|----------|----------|--------|------|-------|
-| C1 | Metadata | CRITICAL | ACTIVE | indexer.py | 730-804 |
-| H1 | Hashing | HIGH | FIXED | — | — |
-| H2 | Doc ID | HIGH | FIXED | — | — |
-| H3 | Scanning | HIGH | FIXED | — | — |
-| H4 | Line tracking | HIGH | ACTIVE | indexer.py | 1031-1036 |
-| H5 | Overlap | HIGH | ACTIVE | indexer.py | 133-134, 1025 |
-| M1 | Gitignore | MEDIUM | ACTIVE | indexer.py | 900-914 |
-| M2 | Binary detect | MEDIUM | ACTIVE | indexer.py | 272-278 |
-| M3 | Result counts | MEDIUM | ACTIVE | indexer.py | 810-811 |
-| M4 | Crash safety | MEDIUM | ACTIVE | indexer.py | 1172-1199 |
-| L1 | Symlinks | LOW | ACTIVE | indexer.py | 920 |
-| L2 | Force-split | LOW | ACTIVE | indexer.py | 110-117 |
-| L3 | ThreadPool | LOW | ACTIVE | indexer.py | 652, 779, 1176 |
+| Issue ID | Category      | Severity | Status | File       | Lines          |
+| -------- | ------------- | -------- | ------ | ---------- | -------------- |
+| C1       | Metadata      | CRITICAL | ACTIVE | indexer.py | 730-804        |
+| H1       | Hashing       | HIGH     | FIXED  | —          | —              |
+| H2       | Doc ID        | HIGH     | FIXED  | —          | —              |
+| H3       | Scanning      | HIGH     | FIXED  | —          | —              |
+| H4       | Line tracking | HIGH     | ACTIVE | indexer.py | 1031-1036      |
+| H5       | Overlap       | HIGH     | ACTIVE | indexer.py | 133-134, 1025  |
+| M1       | Gitignore     | MEDIUM   | ACTIVE | indexer.py | 900-914        |
+| M2       | Binary detect | MEDIUM   | ACTIVE | indexer.py | 272-278        |
+| M3       | Result counts | MEDIUM   | ACTIVE | indexer.py | 810-811        |
+| M4       | Crash safety  | MEDIUM   | ACTIVE | indexer.py | 1172-1199      |
+| L1       | Symlinks      | LOW      | ACTIVE | indexer.py | 920            |
+| L2       | Force-split   | LOW      | ACTIVE | indexer.py | 110-117        |
+| L3       | ThreadPool    | LOW      | ACTIVE | indexer.py | 652, 779, 1176 |
 
----
+______________________________________________________________________
 
 ## Actionable Fixes (Priority Order)
 
@@ -407,7 +407,7 @@ for doc_id in deleted_ids:
 self._write_meta(updated_meta)
 ```
 
-### 2. HIGH: Fix line tracking in _chunk_with_splitter (H4)
+### 2. HIGH: Fix line tracking in \_chunk_with_splitter (H4)
 
 **Change:**
 When `find()` fails, estimate line number from the text content itself, not from search position:
@@ -424,7 +424,7 @@ else:
 
 Or: disable overlap in TextSplitter to ensure find() succeeds.
 
-### 3. MEDIUM: Fix _is_binary error handling (M2)
+### 3. MEDIUM: Fix \_is_binary error handling (M2)
 
 **Change:**
 Log permission errors instead of silently treating as binary:
@@ -469,7 +469,7 @@ if files_to_remove:
         self.store.delete_code_chunks(old_chunk_ids)
 ```
 
----
+______________________________________________________________________
 
 ## Conclusion
 

@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Audit: Embeddings GPU Pivot
 
 Feature: embeddings.py GPU rewrite (sentence-transformers + Qwen3 + SPLADE v3)

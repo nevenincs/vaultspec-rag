@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Comprehensive Test Suite Audit
 
 **Date:** 2026-03-07
@@ -13,34 +14,34 @@ related: []
 
 ## Files Audited
 
-| # | File | Lines | Tests | Marker |
-|---|------|-------|-------|--------|
-| 1 | `test_indexer_unit.py` | 1078 | ~55 | `unit` |
-| 2 | `test_search_unit.py` | 239 | ~20 | `unit` (per-class) |
-| 3 | `test_store.py` | 146 | ~12 | `unit` |
-| 4 | `test_adr_regression.py` | 291 | ~20 | `unit` |
-| 5 | `test_mcp_server.py` | 300 | ~22 | `unit` |
-| 6 | `test_cli.py` | 128 | ~17 | `unit` |
-| 7 | `test_store_codebase.py` | 91 | ~5 | `integration` |
-| 8 | `integration/test_indexer_integration.py` | 203 | ~9 | `integration` |
-| 9 | `integration/test_search_integration.py` | 375 | ~14 | `integration` |
-| 10 | `integration/test_store_integration.py` | 143 | ~7 | `integration` |
-| 11 | `integration/test_embeddings.py` | 78 | ~7 | `integration` |
-| 12 | `integration/test_codebase_integration.py` | 264 | ~11 | `integration` |
-| 13 | `integration/test_api_integration.py` | 165 | ~11 | `integration` |
-| 14 | `integration/test_cli_integration.py` | 106 | ~6 | `integration` |
-| 15 | `integration/test_quality.py` | 371 | ~13 | `quality` |
-| 16 | `integration/test_robustness.py` | 85 | ~3 | `robustness` |
-| 17 | `integration/test_performance.py` | 225 | ~10 | `performance` |
-| 18 | `benchmarks/bench_rag.py` | 246 | ~5 | `performance` |
-| 19 | `conftest.py` | 253 | — | fixtures |
-| 20 | `integration/conftest.py` | 31 | — | fixtures |
-| 21 | `benchmarks/conftest.py` | 57 | — | fixtures |
-| 22 | `constants.py` | 78 | — | constants |
-| 23 | `__init__.py` | — | — | — |
-| 24 | `integration/__init__.py` | — | — | — |
+| #   | File                                       | Lines | Tests | Marker             |
+| --- | ------------------------------------------ | ----- | ----- | ------------------ |
+| 1   | `test_indexer_unit.py`                     | 1078  | ~55   | `unit`             |
+| 2   | `test_search_unit.py`                      | 239   | ~20   | `unit` (per-class) |
+| 3   | `test_store.py`                            | 146   | ~12   | `unit`             |
+| 4   | `test_adr_regression.py`                   | 291   | ~20   | `unit`             |
+| 5   | `test_mcp_server.py`                       | 300   | ~22   | `unit`             |
+| 6   | `test_cli.py`                              | 128   | ~17   | `unit`             |
+| 7   | `test_store_codebase.py`                   | 91    | ~5    | `integration`      |
+| 8   | `integration/test_indexer_integration.py`  | 203   | ~9    | `integration`      |
+| 9   | `integration/test_search_integration.py`   | 375   | ~14   | `integration`      |
+| 10  | `integration/test_store_integration.py`    | 143   | ~7    | `integration`      |
+| 11  | `integration/test_embeddings.py`           | 78    | ~7    | `integration`      |
+| 12  | `integration/test_codebase_integration.py` | 264   | ~11   | `integration`      |
+| 13  | `integration/test_api_integration.py`      | 165   | ~11   | `integration`      |
+| 14  | `integration/test_cli_integration.py`      | 106   | ~6    | `integration`      |
+| 15  | `integration/test_quality.py`              | 371   | ~13   | `quality`          |
+| 16  | `integration/test_robustness.py`           | 85    | ~3    | `robustness`       |
+| 17  | `integration/test_performance.py`          | 225   | ~10   | `performance`      |
+| 18  | `benchmarks/bench_rag.py`                  | 246   | ~5    | `performance`      |
+| 19  | `conftest.py`                              | 253   | —     | fixtures           |
+| 20  | `integration/conftest.py`                  | 31    | —     | fixtures           |
+| 21  | `benchmarks/conftest.py`                   | 57    | —     | fixtures           |
+| 22  | `constants.py`                             | 78    | —     | constants          |
+| 23  | `__init__.py`                              | —     | —     | —                  |
+| 24  | `integration/__init__.py`                  | —     | —     | —                  |
 
----
+______________________________________________________________________
 
 ## 1. Tautological Tests
 
@@ -87,7 +88,7 @@ def test_is_dataclass(self):
 **File:** `test_mcp_server.py:278-283`
 **Violation:** Tests Python's `@dataclass` decorator, not application behavior.
 
----
+______________________________________________________________________
 
 ## 2. Mocks / Patches / Stubs / Fakes
 
@@ -97,7 +98,7 @@ No files contain `unittest.mock`, `MagicMock`, `@patch`, `monkeypatch`, `mocker`
 
 **Exception noted:** `test_mcp_server.py:246-264` — `TestGetCompFailureCaching.test_comp_error_cached` directly manipulates module-level globals (`mod._comp`, `mod._comp_error`) to simulate a prior failure. This is NOT a mock/patch — it modifies real module state and restores it in a `try/finally`. This is acceptable for testing the failure caching path without triggering actual GPU initialization.
 
----
+______________________________________________________________________
 
 ## 3. Skips
 
@@ -105,7 +106,7 @@ No files contain `unittest.mock`, `MagicMock`, `@patch`, `monkeypatch`, `mocker`
 
 No files contain `pytest.skip`, `@pytest.mark.skip`, `skipif`, `skipUnless`, or any skip mechanism.
 
----
+______________________________________________________________________
 
 ## 4. Marker Violations
 
@@ -122,7 +123,7 @@ No files contain `pytest.skip`, `@pytest.mark.skip`, `skipif`, `skipUnless`, or 
 **File:** `test_search_unit.py:9,13,21,42,75,167`
 **Comment:** Line 9 says `# No module-level pytestmark — each class sets its own marker`. All 5 classes use `pytestmark: ClassVar = [pytest.mark.unit]`. This works but is inconsistent with every other test file which uses module-level `pytestmark`. Should be normalized to module-level.
 
----
+______________________________________________________________________
 
 ## 5. Missing Integration Coverage
 
@@ -161,7 +162,7 @@ No files contain `pytest.skip`, `@pytest.mark.skip`, `skipif`, `skipUnless`, or 
 **File:** `integration/test_indexer_integration.py`
 **Gap:** The vault incremental indexer uses `st_mtime` float comparison (R23-M2). Tests verify the end result (added/removed counts) but don't test the edge case of sub-second modifications that might have identical mtimes.
 
----
+______________________________________________________________________
 
 ## 6. Missing CLI Coverage
 
@@ -188,7 +189,7 @@ No files contain `pytest.skip`, `@pytest.mark.skip`, `skipif`, `skipUnless`, or 
 - `vaultspec-rag index --type all` — **no test** (LOW)
 - `vaultspec-rag server mcp start` (blocked — would start a real server) — acceptable gap
 
----
+______________________________________________________________________
 
 ## 7. Other Issues
 
@@ -222,26 +223,26 @@ def require_gpu_corpus(rag_components):
 **File:** `integration/conftest.py:14-30`
 **Issue:** This defines a `rag_components` fixture with `QDRANT_SUFFIX_UNIT`, but the parent `conftest.py:131-147` defines `rag_components` with `QDRANT_SUFFIX_FAST`. Both are session-scoped. Tests in `integration/` get the unit conftest's version. The naming collision is confusing — both are "fast" 13-doc indexes but with different qdrant suffixes.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| Category | HIGH | MEDIUM | LOW | CLEAR |
-|----------|------|--------|-----|-------|
-| Tautological tests | 0 | 1 | 3 | — |
-| Mocks/patches/stubs | — | — | — | CLEAR |
-| Skips | — | — | — | CLEAR |
-| Marker violations | 0 | 1 | 1 | — |
-| Missing integration coverage | 2 | 3 | 2 | — |
-| Missing CLI coverage | 2 | 1 | 2 | — |
-| Other issues | 0 | 2 | 2 | — |
-| **TOTAL** | **4** | **8** | **10** | **2 CLEAR** |
+| Category                     | HIGH  | MEDIUM | LOW    | CLEAR       |
+| ---------------------------- | ----- | ------ | ------ | ----------- |
+| Tautological tests           | 0     | 1      | 3      | —           |
+| Mocks/patches/stubs          | —     | —      | —      | CLEAR       |
+| Skips                        | —     | —      | —      | CLEAR       |
+| Marker violations            | 0     | 1      | 1      | —           |
+| Missing integration coverage | 2     | 3      | 2      | —           |
+| Missing CLI coverage         | 2     | 1      | 2      | —           |
+| Other issues                 | 0     | 2      | 2      | —           |
+| **TOTAL**                    | **4** | **8**  | **10** | **2 CLEAR** |
 
 ### Priority actions
 
 1. **HIGH:** Add CLI integration tests for `--type code` (index and search)
-2. **HIGH:** Add integration test for `search_all()` with mixed vault+code results
-3. **MEDIUM:** Add CLI test for `--clean` flag
-4. **MEDIUM:** Fix `bench_rag.py` `main()` to call `store.close()` before cleanup
-5. **MEDIUM:** Delete or replace tautological `TestPackageExports` tests
-6. **MEDIUM:** Fix benchmark dual-use design (return values, non-fixture params)
+1. **HIGH:** Add integration test for `search_all()` with mixed vault+code results
+1. **MEDIUM:** Add CLI test for `--clean` flag
+1. **MEDIUM:** Fix `bench_rag.py` `main()` to call `store.close()` before cleanup
+1. **MEDIUM:** Delete or replace tautological `TestPackageExports` tests
+1. **MEDIUM:** Fix benchmark dual-use design (return values, non-fixture params)

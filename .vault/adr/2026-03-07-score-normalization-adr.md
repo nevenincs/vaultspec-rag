@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-07-continuous-research]]"
+  - '[[2026-03-07-continuous-research]]'
 ---
 
 # ADR: Sigmoid + min-max per-source normalization in `search_all()`
@@ -30,8 +30,8 @@ Normalize each source's scores independently before combining:
 
 1. **CrossEncoder logits**: sigmoid normalization (`1/(1+exp(-x))`), maps
    unbounded logits to [0, 1].
-2. **RRF scores**: min-max normalization (`(s-lo)/(hi-lo)`), maps to [0, 1].
-3. **Weighted combination**: `final = w_vault * vault_norm + w_code * code_norm`,
+1. **RRF scores**: min-max normalization (`(s-lo)/(hi-lo)`), maps to [0, 1].
+1. **Weighted combination**: `final = w_vault * vault_norm + w_code * code_norm`,
    default weights 0.5/0.5.
 
 Normalization is **per-result-set** (each source independently), not global.
@@ -42,16 +42,17 @@ Normalization is **per-result-set** (each source independently), not global.
    normalizes each sub-query independently using min-max before combining with
    weighted arithmetic mean (verified via their documentation and benchmarks).
 
-2. **Sigmoid for CrossEncoder** is the natural transform: logits are the
+1. **Sigmoid for CrossEncoder** is the natural transform: logits are the
    model's pre-activation output, sigmoid is the inverse logit. It preserves
    ranking order (monotonic) and has no parameters to tune.
 
-3. **Min-max for RRF** works because RRF scores are bounded and have a
+1. **Min-max for RRF** works because RRF scores are bounded and have a
    meaningful distribution within each query. Edge cases are handled:
    empty list returns `[]`, single element returns `[1.0]`, all-same returns
    `[1.0, ...]`.
 
-4. **Alternatives rejected:**
+1. **Alternatives rejected:**
+
    - DBSF: only works within a single `query_points()` call, not cross-source
    - Rank-based RRF on both: loses CrossEncoder score magnitude information
    - Global normalization: one source's scale dominates the other
