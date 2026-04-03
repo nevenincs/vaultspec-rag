@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.2](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.1...vaultspec-rag-v0.1.2) (2026-04-03)
+
+
+### Features
+
+* add service orchestration ADR, research, plan, and roadmap ([f1378dd](https://github.com/wgergely/vaultspec-rag/commit/f1378dd3e90f8146e243b37fd601fb44a5bc6a66))
+* add ServiceRegistry for multi-project state management ([#18](https://github.com/wgergely/vaultspec-rag/issues/18)) ([ad151b4](https://github.com/wgergely/vaultspec-rag/commit/ad151b40d9cb7d1c4faccbe52816553906381f7f))
+* FastMCP lifespan, Starlette /health, ServiceRegistry integration ([#19](https://github.com/wgergely/vaultspec-rag/issues/19)) ([d3d0905](https://github.com/wgergely/vaultspec-rag/commit/d3d09054d6baeeddd391bab4d7c2faa5d42a8a50))
+* migrate legacy docs/ to .vault/ and remove docs/ ([af1ed87](https://github.com/wgergely/vaultspec-rag/commit/af1ed87fe36d07c46617da2dc9081adb5633ccfb))
+* service daemon commands and model prefetch ([#16](https://github.com/wgergely/vaultspec-rag/issues/16), [#20](https://github.com/wgergely/vaultspec-rag/issues/20)) ([a052433](https://github.com/wgergely/vaultspec-rag/commit/a052433565b5fc130bf5863d45c9b5a7ccb80d8c))
+* unify graph cache with lock+TTL and dependency injection ([#14](https://github.com/wgergely/vaultspec-rag/issues/14)) ([22db751](https://github.com/wgergely/vaultspec-rag/commit/22db751f9ade8b71468d6959c53b4b0fdfb33501))
+
+
+### Bug Fixes
+
+* resolve 1 CRITICAL + 10 HIGH audit findings ([4c16af5](https://github.com/wgergely/vaultspec-rag/commit/4c16af5b4ed085fd117f00ef1e15d6b6c6bce1f8))
+* resolve MEDIUM audit findings — thread safety, error handling, tests ([a171637](https://github.com/wgergely/vaultspec-rag/commit/a171637b22207f2f3c18fb7f541d478ea574f9aa))
+* resolve remaining LOW audit findings ([599b8fa](https://github.com/wgergely/vaultspec-rag/commit/599b8fad845d15c02e4a57dfe524383e84bf75ef))
+* resolve remaining OPEN audit findings (batch 2) ([27dc976](https://github.com/wgergely/vaultspec-rag/commit/27dc9766b9496c5cf7fc7b66dfb14ce58ccbd035))
+
 ## [0.1.1](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.0...vaultspec-rag-v0.1.1) (2026-04-01)
 
 
