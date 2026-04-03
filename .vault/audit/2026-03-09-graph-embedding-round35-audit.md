@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -12,7 +12,7 @@ related: []
 **Auditor:** coder (Claude)
 **Scope:** VaultSearcher graph caching, query encoding pipeline, api.py reindex flow
 
----
+______________________________________________________________________
 
 ## Investigation 1: api.py Reindex → Graph Cache Invalidation
 
@@ -66,9 +66,9 @@ related: []
 #### Invalidation Locations (Verified)
 
 1. **api.py:96** — `_graph_cache.invalidate()` called after vault reindex ✅
-2. **watcher.py:136** — `searcher._graph_built_at = 0.0` called after vault reindex ✅ (confirmed in memory)
-3. **mcp_server.py:366** — `comp.searcher._graph_built_at = 0.0` in `reindex_vault()` ✅ (confirmed in memory)
-4. **api.py:114-115** — `index_codebase()` does NOT reset searcher graph ⚠️
+1. **watcher.py:136** — `searcher._graph_built_at = 0.0` called after vault reindex ✅ (confirmed in memory)
+1. **mcp_server.py:366** — `comp.searcher._graph_built_at = 0.0` in `reindex_vault()` ✅ (confirmed in memory)
+1. **api.py:114-115** — `index_codebase()` does NOT reset searcher graph ⚠️
 
 #### Design Gap: Two Different Caches
 
@@ -101,7 +101,7 @@ related: []
 - Consider consolidating to single graph cache in VaultSearcher
 - If keeping both caches: document that `index_codebase()` does NOT reset graph (by design — code changes don't invalidate vault relationships)
 
----
+______________________________________________________________________
 
 ## Investigation 2: search_all() Double Query Encoding
 
@@ -155,12 +155,12 @@ def search_codebase(
 
 #### Exact Code Path (File:Line)
 
-| Operation | File | Line | Method |
-|-----------|------|------|--------|
-| Dense embedding | embeddings.py | 254–272 | `EmbeddingModel.encode_query()` |
-| Sparse embedding | embeddings.py | 309–321 | `EmbeddingModel.encode_query_sparse()` |
-| Called in `search_vault()` | search.py | 274, 275 | Both via `self.model.encode_*()` |
-| Called in `search_codebase()` | search.py | 335, 336 | Both via `self.model.encode_*()` |
+| Operation                     | File          | Line     | Method                                 |
+| ----------------------------- | ------------- | -------- | -------------------------------------- |
+| Dense embedding               | embeddings.py | 254–272  | `EmbeddingModel.encode_query()`        |
+| Sparse embedding              | embeddings.py | 309–321  | `EmbeddingModel.encode_query_sparse()` |
+| Called in `search_vault()`    | search.py     | 274, 275 | Both via `self.model.encode_*()`       |
+| Called in `search_codebase()` | search.py     | 335, 336 | Both via `self.model.encode_*()`       |
 
 #### Encoding Parameters: Same or Different?
 
@@ -229,7 +229,7 @@ search_all(raw_query) [search.py:381]
 - CLI `search --type all` pays this penalty
 - Affects user-facing latency (p50/p95/p99 percentiles)
 
----
+______________________________________________________________________
 
 ## Root Cause Analysis
 
@@ -243,7 +243,7 @@ search_all(raw_query) [search.py:381]
 - `search_codebase(raw_query)` accepts only `raw_query: str`
 - No overload that accepts pre-computed vectors
 
----
+______________________________________________________________________
 
 ## Recommendations
 
@@ -263,7 +263,7 @@ search_all(raw_query) [search.py:381]
        """
    ```
 
-2. Consider optional parameter to explicitly reset graph if needed:
+1. Consider optional parameter to explicitly reset graph if needed:
 
    ```python
    def index_codebase(root_dir, *, full=False, invalidate_graph=False) -> IndexResult:
@@ -296,13 +296,13 @@ def search_all(self, raw_query: str, ...) -> list[SearchResult]:
 
 **Option B (Future):** Add vector caching with cache key = blake2b(query_text)
 
----
+______________________________________________________________________
 
 ## Summary
 
-| Investigation | Finding | Severity | Status |
-|---------------|---------|----------|--------|
-| api.py → searcher graph invalidation | Incomplete (index_codebase missing reset) | MEDIUM | Documented design choice needed |
-| search_all() double encoding | Confirmed 13-20ms waste per call | CRITICAL | Refactor `_search_vault_internal()` + `_search_codebase_internal()` |
+| Investigation                        | Finding                                   | Severity | Status                                                              |
+| ------------------------------------ | ----------------------------------------- | -------- | ------------------------------------------------------------------- |
+| api.py → searcher graph invalidation | Incomplete (index_codebase missing reset) | MEDIUM   | Documented design choice needed                                     |
+| search_all() double encoding         | Confirmed 13-20ms waste per call          | CRITICAL | Refactor `_search_vault_internal()` + `_search_codebase_internal()` |
 
 **Total potential impact:** 40% search latency improvement for `search_all()` calls (8-10ms per call on average).

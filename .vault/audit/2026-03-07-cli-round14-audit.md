@@ -1,17 +1,18 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 14 Audit -- cli.py (full audit)
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/cli.py` (469 lines)
 **Date:** 2026-03-07
 
----
+______________________________________________________________________
 
 ## Check 1: `test` Command
 
@@ -43,7 +44,7 @@ def handle_test(ctx: typer.Context):
 
 **File:** `cli.py:464`
 
----
+______________________________________________________________________
 
 ## Check 2: GPU Error Handling
 
@@ -74,7 +75,7 @@ Line 41: `"CUDA" in str(exc) or "cuda" in str(exc)` could match RuntimeError mes
 
 **File:** `cli.py:41`
 
----
+______________________________________________________________________
 
 ## Check 3: `--target` Ignored for `test` and `server`
 
@@ -93,7 +94,7 @@ If a user runs `vaultspec-rag --target /foo test`, the `--target` flag has no ef
 
 **File:** `cli.py:129-130`
 
----
+______________________________________________________________________
 
 ## Check 4: `configure_logging(debug, verbose)` Precedence
 
@@ -116,7 +117,7 @@ The CLI does not enforce mutual exclusivity or document precedence. R21-m9 noted
 
 **File:** `cli.py:123`
 
----
+______________________________________________________________________
 
 ## Check 5: UTF-8 Reconfiguration
 
@@ -133,7 +134,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 
 **Verdict: PASS.** Safe, platform-guarded, does not affect subprocess output.
 
----
+______________________________________________________________________
 
 ## Check 6: `handle_index` -- Full vs Incremental
 
@@ -170,7 +171,7 @@ Since the store was just created fresh (empty), `incremental_index()` will work 
 
 **File:** `cli.py:212`
 
----
+______________________________________________________________________
 
 ## Check 7: `handle_search` -- Store/Model Creation and Cleanup
 
@@ -200,7 +201,7 @@ If `EmbeddingModel()` raises an exception that is NOT `ImportError` or `RuntimeE
 
 **File:** `cli.py:287-297`
 
----
+______________________________________________________________________
 
 ## Check 8: `--clean` Flag -- Delete `.qdrant/` Before Reindexing
 
@@ -224,12 +225,12 @@ if clean:
 **Verdict: PASS.** Correctly:
 
 1. Closes the store before deleting (line 183)
-2. Handles `PermissionError` on Windows (lines 187-193)
-3. Creates a fresh store after deletion (line 194)
+1. Handles `PermissionError` on Windows (lines 187-193)
+1. Creates a fresh store after deletion (line 194)
 
 The `PermissionError` handler gives a clear error message and exits cleanly.
 
----
+______________________________________________________________________
 
 ## Check 9: `handle_server` / MCP Start
 
@@ -247,20 +248,20 @@ def mcp_start(_ctx: typer.Context):
 
 Note: The `_ctx` parameter is unused (accepted to satisfy Typer's callback signature).
 
----
+______________________________________________________________________
 
 ## Check 10: Unhandled Exceptions
 
 ### Exception handling coverage
 
-| Command | Exception Handler | Coverage |
-|---------|------------------|----------|
-| `main()` | `WorkspaceError` -> user-friendly exit | PASS |
-| `handle_index` | `(ImportError, RuntimeError)` -> `_handle_gpu_error` | PASS for GPU errors |
-| `handle_search` | `(ImportError, RuntimeError)` -> `_handle_gpu_error` | PASS for GPU errors |
-| `handle_status` | `ImportError` -> `_handle_gpu_error` | Missing `RuntimeError` |
-| `handle_test` | None | PASS -- subprocess isolates errors |
-| `mcp_start` | None | OK -- `mcp.run()` has its own error handling |
+| Command         | Exception Handler                                    | Coverage                                     |
+| --------------- | ---------------------------------------------------- | -------------------------------------------- |
+| `main()`        | `WorkspaceError` -> user-friendly exit               | PASS                                         |
+| `handle_index`  | `(ImportError, RuntimeError)` -> `_handle_gpu_error` | PASS for GPU errors                          |
+| `handle_search` | `(ImportError, RuntimeError)` -> `_handle_gpu_error` | PASS for GPU errors                          |
+| `handle_status` | `ImportError` -> `_handle_gpu_error`                 | Missing `RuntimeError`                       |
+| `handle_test`   | None                                                 | PASS -- subprocess isolates errors           |
+| `mcp_start`     | None                                                 | OK -- `mcp.run()` has its own error handling |
 
 ### R14-m6: `handle_status` does not catch `RuntimeError` from torch CUDA check (Minor)
 
@@ -287,20 +288,20 @@ Same issue as `handle_search` -- `VaultStore(target)` created at line 341 but ne
 
 **File:** `cli.py:341`
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| R14-M1 | MEDIUM | `handle_index` vault always uses `incremental_index()` even with `--clean` -- should use `full_index()` |
-| R14-M2 | MEDIUM | `handle_search` does not close VaultStore after use (Windows file lock risk) |
-| R14-m1 | MINOR | `raise SystemExit` instead of `raise typer.Exit` in `handle_test` |
-| R14-m2 | MINOR | `_handle_gpu_error` CUDA string matching is a heuristic |
-| R14-m3 | MINOR | `--target` silently ignored for `test` and `server` commands |
-| R14-m4 | MINOR | `--debug` and `--verbose` interaction undocumented |
-| R14-m5 | MINOR | `handle_search` doesn't close store on non-GPU exceptions |
-| R14-m6 | MINOR | `handle_status` doesn't catch `RuntimeError` from torch |
-| R14-m7 | MINOR | `handle_status` does not close VaultStore |
+| ID     | Severity | Finding                                                                                                 |
+| ------ | -------- | ------------------------------------------------------------------------------------------------------- |
+| R14-M1 | MEDIUM   | `handle_index` vault always uses `incremental_index()` even with `--clean` -- should use `full_index()` |
+| R14-M2 | MEDIUM   | `handle_search` does not close VaultStore after use (Windows file lock risk)                            |
+| R14-m1 | MINOR    | `raise SystemExit` instead of `raise typer.Exit` in `handle_test`                                       |
+| R14-m2 | MINOR    | `_handle_gpu_error` CUDA string matching is a heuristic                                                 |
+| R14-m3 | MINOR    | `--target` silently ignored for `test` and `server` commands                                            |
+| R14-m4 | MINOR    | `--debug` and `--verbose` interaction undocumented                                                      |
+| R14-m5 | MINOR    | `handle_search` doesn't close store on non-GPU exceptions                                               |
+| R14-m6 | MINOR    | `handle_status` doesn't catch `RuntimeError` from torch                                                 |
+| R14-m7 | MINOR    | `handle_status` does not close VaultStore                                                               |
 
 **2 MEDIUM findings. 7 MINOR findings.**

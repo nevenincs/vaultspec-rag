@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Test Compliance Audit Round 2
 
 Date: 2026-03-07
@@ -15,12 +16,12 @@ Auditor: docs-researcher-2-2
 For each file: scanned for all CLAUDE.md prohibited patterns:
 
 1. Mocks, patches, fakes, stubs, MagicMock, @patch, monkeypatch
-2. `import unittest` or `from unittest import ...`
-3. Tautological tests (assert True, assert 1, etc.)
-4. `pytest.skip()`, `@pytest.mark.skip`, `skipIf`, `skipUnless`
-5. Every test has exactly one marker (unit, integration, quality, performance, robustness)
+1. `import unittest` or `from unittest import ...`
+1. Tautological tests (assert True, assert 1, etc.)
+1. `pytest.skip()`, `@pytest.mark.skip`, `skipIf`, `skipUnless`
+1. Every test has exactly one marker (unit, integration, quality, performance, robustness)
 
----
+______________________________________________________________________
 
 ## File: `src/vaultspec_rag/tests/test_indexer_unit.py`
 
@@ -31,7 +32,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## File: `src/vaultspec_rag/tests/integration/test_embeddings.py`
 
@@ -44,7 +45,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## File: `src/vaultspec_rag/tests/test_search_unit.py`
 
@@ -55,7 +56,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## File: `src/vaultspec_rag/tests/conftest.py`
 
@@ -66,7 +67,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## File: `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
 
@@ -77,7 +78,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## File: `src/vaultspec_rag/tests/integration/conftest.py`
 
@@ -88,7 +89,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## File: `conftest.py` (repo root)
 
@@ -98,19 +99,19 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 **Verdict: PASS**
 
----
+______________________________________________________________________
 
 ## Summary
 
-| File | Mocks | unittest | Tautological | skip | Markers | Verdict |
-|------|-------|----------|-------------|------|---------|---------|
-| test_indexer_unit.py | None | None | None | None | unit | PASS |
-| integration/test_embeddings.py | None | None | None | None | integration | PASS |
-| test_search_unit.py | None | None | None | None | unit (per-class) | PASS |
-| tests/conftest.py | None | None | N/A | None | N/A | PASS |
-| integration/test_indexer_integration.py | None | None | None | None | integration | PASS |
-| integration/conftest.py | None | None | N/A | None | N/A | PASS |
-| conftest.py (root) | None | None | N/A | None | N/A | PASS |
+| File                                    | Mocks | unittest | Tautological | skip | Markers          | Verdict |
+| --------------------------------------- | ----- | -------- | ------------ | ---- | ---------------- | ------- |
+| test_indexer_unit.py                    | None  | None     | None         | None | unit             | PASS    |
+| integration/test_embeddings.py          | None  | None     | None         | None | integration      | PASS    |
+| test_search_unit.py                     | None  | None     | None         | None | unit (per-class) | PASS    |
+| tests/conftest.py                       | None  | None     | N/A          | None | N/A              | PASS    |
+| integration/test_indexer_integration.py | None  | None     | None         | None | integration      | PASS    |
+| integration/conftest.py                 | None  | None     | N/A          | None | N/A              | PASS    |
+| conftest.py (root)                      | None  | None     | N/A          | None | N/A              | PASS    |
 
 **Total violations: 0**
 

@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -12,7 +12,7 @@ related: []
 **Auditor:** docs-researcher
 **Scope:** Core retrieval pipeline — query parsing, hybrid search, reranking, sparse embeddings
 
----
+______________________________________________________________________
 
 ## search.py Audit
 
@@ -31,7 +31,7 @@ related: []
 
 **Severity:** LOW (regex design is sound; no crashes on malformed input)
 
----
+______________________________________________________________________
 
 ### 2. Score Normalization — `_normalize_minmax()`
 
@@ -53,7 +53,7 @@ related: []
 
 **Severity:** MEDIUM (design intention unclear; behavior is correct but may surprise users)
 
----
+______________________________________________________________________
 
 ### 3. CrossEncoder Reranking — `_rerank()`
 
@@ -74,7 +74,7 @@ related: []
 
 **Severity:** NONE (implementation is correct)
 
----
+______________________________________________________________________
 
 ### 4. Hybrid Search Score Merging — `search_all()`
 
@@ -84,16 +84,16 @@ related: []
 
 - **Flow (lines 364–392):**
   1. Call `search_vault()` → returns already-reranked results with new CrossEncoder scores (if enabled).
-  2. Call `search_codebase()` → returns already-reranked results with new CrossEncoder scores (if enabled).
-  3. Normalize vault results separately (min-max scaling with vault_weight).
-  4. Normalize code results separately (min-max scaling with code_weight).
-  5. Concatenate and re-sort.
+  1. Call `search_codebase()` → returns already-reranked results with new CrossEncoder scores (if enabled).
+  1. Normalize vault results separately (min-max scaling with vault_weight).
+  1. Normalize code results separately (min-max scaling with code_weight).
+  1. Concatenate and re-sort.
 - **Issue (MEDIUM):** If vault returns 5 results and code returns 0 (or vice versa), the normalization still scales the non-empty list. The empty list is untouched. After merge, only one source appears. **This is correct**, but combining with graph reranking (below) can be confusing.
 - **Graph reranking not applied:** Line 294 applies `rerank_with_graph()` only in `search_vault()`, not in `search_all()`. The `search_all()` results are **never graph-reranked**. This is intentional (graph only applies to vault docs), but the docstring for `search_all()` does not mention this.
 
 **Severity:** MEDIUM (graph reranking is not applied; docstring should clarify)
 
----
+______________________________________________________________________
 
 ### 5. Graph Reranking — `rerank_with_graph()`
 
@@ -112,7 +112,7 @@ related: []
 
 **Severity:** NONE (implementation is correct)
 
----
+______________________________________________________________________
 
 ### 6. Thread Safety — `VaultSearcher`
 
@@ -131,7 +131,7 @@ related: []
 
 **Severity:** NONE (thread-safe design)
 
----
+______________________________________________________________________
 
 ## embeddings.py Audit
 
@@ -142,17 +142,19 @@ related: []
 **Findings:**
 
 - **`encode_documents()` (lines 234–252):**
+
   - Retry loop with batch_size halving on `torch.cuda.OutOfMemoryError` (lines 243–252).
   - Minimum batch_size check (line 245): `if batch_size <= 1: raise` — **raises** instead of infinite loop. ✓
   - Batch_size is halved with `batch_size = max(1, batch_size // 2)` (line 247). This ensures batch_size stays >= 1.
   - Will eventually raise on OOM with batch_size=1 if truly OOM (correct — user gets clear error).
 
 - **`encode_documents_sparse()` (lines 291–307):**
+
   - Identical retry logic with same safety check. ✓
 
 **Severity:** NONE (OOM handling is correct)
 
----
+______________________________________________________________________
 
 ### 2. Sparse Embedding Return Type — `encode_documents_sparse()`
 
@@ -161,7 +163,9 @@ related: []
 **Findings:**
 
 - **Return type (line 276):** `list[SparseResult]` (dataclass with `.indices` and `.values`).
+
 - **Conversion (line 297):** Calls `_sparse_tensor_to_results(sparse_tensor)` which converts SPLADE output to `list[SparseResult]`.
+
 - **Caller usage in indexer.py (line 676, 792, 1096, 1192):**
 
   ```python
@@ -175,7 +179,7 @@ related: []
 
 **Severity:** NONE (correct usage)
 
----
+______________________________________________________________________
 
 ### 3. CrossEncoder Initialization — `activation_fn`
 
@@ -199,7 +203,7 @@ related: []
 
 **Severity:** NONE (correct)
 
----
+______________________________________________________________________
 
 ### 4. CUDA Device Check
 
@@ -214,7 +218,7 @@ related: []
 
 **Severity:** NONE (GPU check is correct)
 
----
+______________________________________________________________________
 
 ### 5. Query Sparse Encoding Return Type — `encode_query_sparse()`
 
@@ -223,6 +227,7 @@ related: []
 **Findings:**
 
 - **Return type (line 309):** `SparseResult` (single result, not list).
+
 - **Implementation (lines 318–321):**
 
   ```python
@@ -255,7 +260,7 @@ related: []
 
 **Severity:** NONE (correct usage)
 
----
+______________________________________________________________________
 
 ## Integration Correctness
 
@@ -275,41 +280,44 @@ related: []
 
 **Severity:** NONE (integration is correct)
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| Component | Status | Severity | Issue |
-|-----------|--------|----------|-------|
-| `parse_query()` | ✓ PASS | LOW | No tests for empty filter values (e.g., `type:`), but behavior is safe |
-| `_normalize_minmax()` | ✓ PASS | MEDIUM | Separate normalization creates parity between sources; docstring could clarify intent |
-| `_rerank()` | ✓ PASS | NONE | — |
-| `search_all()` | ✓ PASS | MEDIUM | Graph reranking not applied; docstring should clarify |
-| `rerank_with_graph()` | ✓ PASS | NONE | — |
-| Thread safety | ✓ PASS | NONE | — |
-| OOM retry | ✓ PASS | NONE | — |
-| `encode_documents_sparse()` | ✓ PASS | NONE | — |
-| `encode_query_sparse()` | ✓ PASS | NONE | — |
-| CrossEncoder setup | ✓ PASS | NONE | — |
-| CUDA check | ✓ PASS | NONE | — |
-| Integration | ✓ PASS | NONE | — |
+| Component                   | Status | Severity | Issue                                                                                 |
+| --------------------------- | ------ | -------- | ------------------------------------------------------------------------------------- |
+| `parse_query()`             | ✓ PASS | LOW      | No tests for empty filter values (e.g., `type:`), but behavior is safe                |
+| `_normalize_minmax()`       | ✓ PASS | MEDIUM   | Separate normalization creates parity between sources; docstring could clarify intent |
+| `_rerank()`                 | ✓ PASS | NONE     | —                                                                                     |
+| `search_all()`              | ✓ PASS | MEDIUM   | Graph reranking not applied; docstring should clarify                                 |
+| `rerank_with_graph()`       | ✓ PASS | NONE     | —                                                                                     |
+| Thread safety               | ✓ PASS | NONE     | —                                                                                     |
+| OOM retry                   | ✓ PASS | NONE     | —                                                                                     |
+| `encode_documents_sparse()` | ✓ PASS | NONE     | —                                                                                     |
+| `encode_query_sparse()`     | ✓ PASS | NONE     | —                                                                                     |
+| CrossEncoder setup          | ✓ PASS | NONE     | —                                                                                     |
+| CUDA check                  | ✓ PASS | NONE     | —                                                                                     |
+| Integration                 | ✓ PASS | NONE     | —                                                                                     |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
 ### MEDIUM-Priority Actions (address soon)
 
 1. **Add edge-case tests for `parse_query()`:**
+
    - Test `type:` (no value) → should remain in text
    - Test `type:` (space) → should remain in text
    - Test `type:adr extra:unknown` → `extra` should not extract
 
-2. **Clarify `search_all()` docstring:**
+1. **Clarify `search_all()` docstring:**
+
    - Document that graph reranking is **not** applied (graph only applies to `search_vault()`).
    - Explain the separate normalization strategy and its implication for source parity.
 
-3. **Document `_normalize_minmax()` intent:**
+1. **Document `_normalize_minmax()` intent:**
+
    - Add comment explaining that separate normalization before merge creates equal weighting between sources (despite quality differences).
 
 ### LOW-Priority (nice-to-have)
@@ -317,7 +325,7 @@ related: []
 1. **Test coverage for `_rerank()` with empty snippets:**
    - Verify CrossEncoder behavior when snippet is `""`.
 
----
+______________________________________________________________________
 
 ## Audit Completion
 

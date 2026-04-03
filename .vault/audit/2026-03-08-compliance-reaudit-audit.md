@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
+
 # Test Mandate Compliance Re-audit — 2026-03-08 (Post-Task #19, #41, #42)
 
 **Audit Scope:** All test files under `src/vaultspec_rag/tests/` after recent feature additions
@@ -12,7 +13,7 @@ related: []
 **Previous Status:** ✅ Full Compliance (2026-03-08 audit — 0 violations)
 **Current Status:** ✅ **FULL COMPLIANCE MAINTAINED**
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
@@ -32,7 +33,7 @@ After the addition of three tasks:
 - ✅ All tests properly marked with exactly one marker (unit/integration/quality/performance/robustness)
 - ✅ No mocks, patches, fakes, stubs, monkeypatches in any form
 
----
+______________________________________________________________________
 
 ## 1. New Code Coverage Assessment
 
@@ -41,11 +42,13 @@ After the addition of three tasks:
 **New Functions in cli.py:**
 
 - `_try_mcp_search(query, search_type, top_k, port)` — lines 270-305
+
   - Attempts async HTTP connection to MCP server on given port
   - Returns `None` on any exception (graceful fallback)
   - Uses `asyncio.run()` and `mcp.client` imports
 
 - `_display_search_results(results, search_type)` — lines 308-326
+
   - Formats search results in table format (same as in-process results)
   - Pure display logic, no side effects
 
@@ -82,7 +85,7 @@ After the addition of three tasks:
 
 - Not a functional change, no test impact
 
----
+______________________________________________________________________
 
 ## 2. Full Compliance Scan (All 27 Test Files)
 
@@ -106,24 +109,24 @@ Result: No matches across all 27 test files
 
 ✅ **ZERO VIOLATIONS** — All CLAUDE.md absolute prohibitions remain unviolated.
 
----
+______________________________________________________________________
 
 ## 3. Test Markers Verification
 
 All 27 test files are properly marked with exactly one marker:
 
-| Marker | Count | File Examples |
-|--------|-------|---|
-| `@pytest.mark.unit` | 8 | test_cli.py, test_store.py, test_indexer_unit.py, test_search_unit.py, test_store_codebase.py, test_metrics.py, test_adr_regression.py, test_mcp_server.py |
-| `@pytest.mark.integration` | 11 | test_cli_integration.py, test_api_integration.py, test_embeddings.py, test_indexer_integration.py, test_search_integration.py, test_store_integration.py, test_codebase_integration.py, + 4 more |
-| `@pytest.mark.quality` | 1 | test_quality.py |
-| `@pytest.mark.performance` | 1 | bench_rag.py |
-| `@pytest.mark.robustness` | 1 | test_robustness.py |
-| Non-test (config) | 5 | conftest.py, constants.py, metrics.py, integration/conftest.py, benchmarks/conftest.py |
+| Marker                     | Count | File Examples                                                                                                                                                                                    |
+| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@pytest.mark.unit`        | 8     | test_cli.py, test_store.py, test_indexer_unit.py, test_search_unit.py, test_store_codebase.py, test_metrics.py, test_adr_regression.py, test_mcp_server.py                                       |
+| `@pytest.mark.integration` | 11    | test_cli_integration.py, test_api_integration.py, test_embeddings.py, test_indexer_integration.py, test_search_integration.py, test_store_integration.py, test_codebase_integration.py, + 4 more |
+| `@pytest.mark.quality`     | 1     | test_quality.py                                                                                                                                                                                  |
+| `@pytest.mark.performance` | 1     | bench_rag.py                                                                                                                                                                                     |
+| `@pytest.mark.robustness`  | 1     | test_robustness.py                                                                                                                                                                               |
+| Non-test (config)          | 5     | conftest.py, constants.py, metrics.py, integration/conftest.py, benchmarks/conftest.py                                                                                                           |
 
 ✅ **Every test function has exactly one pytest marker.** Compliance maintained.
 
----
+______________________________________________________________________
 
 ## 4. Test Gaps Identified
 
@@ -181,7 +184,7 @@ def test_chunk_with_splitter_handles_missing_marker():
     # Verify line_start = len(chunk)
 ```
 
----
+______________________________________________________________________
 
 ## 5. Live Integration Tests — Verification
 
@@ -195,29 +198,32 @@ All integration tests use real hardware and models:
 
 No fakes, in-memory stores, or synthetic data anywhere.
 
----
+______________________________________________________________________
 
 ## 6. Audit Methodology
 
 1. **Banned pattern scan:** Grep for all CLAUDE.md prohibited patterns across 27 test files
+
    - `import unittest`, `from unittest`
    - `MagicMock`, `unittest.mock`, `responses`, `httpretty`, `respx`, `pytest_mock`
    - `@patch`, `patch(`, `monkeypatch`
    - `pytest.skip`, `@pytest.mark.skip`, `skipIf`, `skipUnless`
 
-2. **Marker verification:** Confirmed all test files have exactly one marker
+1. **Marker verification:** Confirmed all test files have exactly one marker
 
-3. **New code analysis:**
+1. **New code analysis:**
+
    - Read `cli.py` lines 270-326 (new fast-path functions)
    - Read `indexer.py` changes (line tracking fix, overlap comment)
    - Checked if test files cover these additions
 
-4. **Coverage assessment:** Searched test files for calls to new functions
+1. **Coverage assessment:** Searched test files for calls to new functions
+
    - `_try_mcp_search()` — not found in test files
    - `_display_search_results()` — not found in test files
    - `_chunk_with_splitter()` with pathological input — not found in test files
 
----
+______________________________________________________________________
 
 ## 7. Compliance Checklist
 
@@ -231,7 +237,7 @@ No fakes, in-memory stores, or synthetic data anywhere.
 - [x] All test files follow CLAUDE.md standards
 - [x] No new banned patterns introduced by Tasks #19, #41, #42
 
----
+______________________________________________________________________
 
 ## 8. Summary for Orchestrator
 
@@ -240,11 +246,11 @@ No fakes, in-memory stores, or synthetic data anywhere.
 ⚠️ **TWO TEST GAPS IDENTIFIED** (not mandate violations, but coverage opportunities):
 
 1. **MODERATE:** CLI `--port` fast-path not unit-tested (task #19 code)
-2. **LOW:** `_chunk_with_splitter()` edge case fix not isolated-tested (task #41)
+1. **LOW:** `_chunk_with_splitter()` edge case fix not isolated-tested (task #41)
 
 Recommendation: Create follow-up task to add test coverage for CLI fast-path function, but NOT urgent since no mandate violations exist.
 
----
+______________________________________________________________________
 
 **Audit Date:** 2026-03-08 (re-audit post Tasks #19, #41, #42)
 **Auditor:** Compliance Researcher (coder-cq-agent)

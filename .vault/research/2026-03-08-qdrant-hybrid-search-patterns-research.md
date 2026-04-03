@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
+
 # Qdrant Hybrid Search Patterns (Verified)
 
 **Date**: 2026-03-08

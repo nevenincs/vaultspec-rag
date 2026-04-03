@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Test Mandate Compliance Audit — 2026-03-07
 
 ## Scope
@@ -12,11 +13,11 @@ related: []
 Exhaustive review of all test files against CLAUDE.md testing mandates:
 
 1. No mocks, patches, fakes, stubs, monkeypatches
-2. No unittest imports
-3. No pytest.skip / @pytest.mark.skip
-4. No tautological tests
-5. No synthetic embeddings
-6. Every test must have exactly one marker
+1. No unittest imports
+1. No pytest.skip / @pytest.mark.skip
+1. No tautological tests
+1. No synthetic embeddings
+1. Every test must have exactly one marker
 
 ## Banned Pattern Scan
 
@@ -24,7 +25,7 @@ Grep for: `unittest`, `MagicMock`, `@patch`, `monkeypatch`, `pytest.skip`, `Mock
 
 **Result: ZERO matches across all 22 test files.** All previously-reported mock/skip violations (Tasks #54, #55, #60, #61) have been fixed.
 
----
+______________________________________________________________________
 
 ## Violations Found
 
@@ -60,7 +61,7 @@ def test_unhashed_files_removed_from_current_files(self):
 **Violation:** Tautological. Tests string content of source code, not behavior.
 **Verdict:** DELETE — replace with behavioral integration test that verifies unhashed files don't reappear.
 
----
+______________________________________________________________________
 
 ### V2: DUAL MARKERS — tests with more than one marker
 
@@ -84,7 +85,7 @@ def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
 
 Per R25-M1/M2/M4, there are 10+ tests across integration test files with dual markers (`integration` + `quality`, `performance` + `unit`, etc.). These were already reported in `docs/audit/2026-03-07-tests-round25.md` with full line numbers. Not re-listed here to avoid duplication — see R25 report.
 
----
+______________________________________________________________________
 
 ### V3: UNDEFINED MARKER — `@pytest.mark.benchmark`
 
@@ -95,7 +96,7 @@ Per R25-M1/M2/M4, there are 10+ tests across integration test files with dual ma
 
 **Verdict:** REWRITE — either register `benchmark` in pyproject.toml or replace with `@pytest.mark.performance`.
 
----
+______________________________________________________________________
 
 ## Clean Files (no violations)
 
@@ -122,12 +123,12 @@ All other test files pass the mandate audit:
 
 ## Summary
 
-| Category | Count | Severity |
-|----------|-------|----------|
-| Banned patterns (mocks/skip/unittest) | 0 | -- |
-| Synthetic embeddings | 0 | -- |
-| Tautological tests (inspect.getsource) | 2 | HIGH — delete |
-| Dual markers | 5 in bench_rag.py + ~10 in integration (see R25) | MEDIUM — fix |
-| Undefined marker (`benchmark`) | 5 | LOW — register or replace |
+| Category                               | Count                                            | Severity                  |
+| -------------------------------------- | ------------------------------------------------ | ------------------------- |
+| Banned patterns (mocks/skip/unittest)  | 0                                                | --                        |
+| Synthetic embeddings                   | 0                                                | --                        |
+| Tautological tests (inspect.getsource) | 2                                                | HIGH — delete             |
+| Dual markers                           | 5 in bench_rag.py + ~10 in integration (see R25) | MEDIUM — fix              |
+| Undefined marker (`benchmark`)         | 5                                                | LOW — register or replace |
 
 **Overall:** The test suite is largely compliant. The mock/skip/unittest purge (Tasks #54, #55, #60, #61) and synthetic vector fix (Task #64) were effective. Remaining violations are 2 tautological `inspect.getsource` tests and marker hygiene issues.

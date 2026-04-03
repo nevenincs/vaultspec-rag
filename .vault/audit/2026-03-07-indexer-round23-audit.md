@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # Round 23 Audit -- indexer.py (deep dive)
 
 Focused on: `_scan_codebase` performance, binary file detection, `TextSplitter` overlap logic, incremental hashing edge cases, remaining bugs. Excludes issues already reported in Round 22 (`docs/audit/2026-03-07-indexer-store-api.md`).

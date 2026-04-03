@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # ADR Compliance Audit -- 2026-03-07
 
 ## mcp-sync-tools
@@ -84,21 +85,21 @@ Status: **PARTIAL**
 Evidence: `store.py:198-203` vault collection creates KEYWORD indexes on `doc_type` and `feature`. `:219-224` code collection creates KEYWORD indexes on `path`, `language`, `function_name`, `class_name`. Both use `create_payload_index()` unconditionally after `create_collection()`, which is the ADR's recommendation.
 Gap: ADR recommends `line_start` INTEGER index with `range=True` for range queries. This is not created (`:219-224` only lists 4 KEYWORD fields). Also, ADR recommends vault indexes on `date` and `tags` fields (used in `_build_filter` at `:657-669`), but only `doc_type` and `feature` are indexed (`:198-203`). While these are no-ops in local mode, the forward-compatibility argument applies equally to the missing fields.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| ADR | Status | Action Required |
-|-----|--------|-----------------|
-| mcp-sync-tools | **CONTRADICTED** | Convert 5 async tools to sync def, remove asyncio.to_thread |
-| threading-lock-for-singleton | IMPLEMENTED | None |
-| qdrant-filter-on-prefetch | IMPLEMENTED | None |
-| blake2b-file-hashing | **NOT IMPLEMENTED** | Replace sha256 with blake2b, use file_digest() |
-| score-normalization | **NOT IMPLEMENTED** | Add sigmoid/min-max normalization to search_all() |
-| path-resolve-engine-cache | **NOT IMPLEMENTED** | Add .resolve() to get_engine() path comparison |
-| vaultgraph-cache | **NOT IMPLEMENTED** | Add _GraphCache class with threading.Lock to api.py |
-| qwen3-no-document-prompt | IMPLEMENTED | None |
-| manual-node-walking | IMPLEMENTED | None |
-| qdrant-payload-indexes-local | **PARTIAL** | Add line_start INTEGER, date KEYWORD, tags KEYWORD indexes |
+| ADR                          | Status              | Action Required                                             |
+| ---------------------------- | ------------------- | ----------------------------------------------------------- |
+| mcp-sync-tools               | **CONTRADICTED**    | Convert 5 async tools to sync def, remove asyncio.to_thread |
+| threading-lock-for-singleton | IMPLEMENTED         | None                                                        |
+| qdrant-filter-on-prefetch    | IMPLEMENTED         | None                                                        |
+| blake2b-file-hashing         | **NOT IMPLEMENTED** | Replace sha256 with blake2b, use file_digest()              |
+| score-normalization          | **NOT IMPLEMENTED** | Add sigmoid/min-max normalization to search_all()           |
+| path-resolve-engine-cache    | **NOT IMPLEMENTED** | Add .resolve() to get_engine() path comparison              |
+| vaultgraph-cache             | **NOT IMPLEMENTED** | Add \_GraphCache class with threading.Lock to api.py        |
+| qwen3-no-document-prompt     | IMPLEMENTED         | None                                                        |
+| manual-node-walking          | IMPLEMENTED         | None                                                        |
+| qdrant-payload-indexes-local | **PARTIAL**         | Add line_start INTEGER, date KEYWORD, tags KEYWORD indexes  |
 
 **Compliance: 4/10 fully implemented, 1/10 partial, 4/10 not implemented, 1/10 contradicted.**

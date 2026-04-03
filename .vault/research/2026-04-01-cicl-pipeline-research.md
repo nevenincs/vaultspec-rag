@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#research"
-  - "#cicl"
+  - '#research'
+  - '#cicl'
 date: 2026-04-01
 related: []
 ---
@@ -77,8 +77,7 @@ This is uv's recommended approach for local development with published deps.
 #### Tag format and release-please configuration
 
 Follow the same convention as vaultspec-core: `vaultspec-rag-vX.Y.Z` tags.
-Configure release-please with `release-type: python`, `package-name:
-vaultspec-rag`. The config uses conventional commits to determine version
+Configure release-please with `release-type: python`, `package-name: vaultspec-rag`. The config uses conventional commits to determine version
 bumps: `feat:` → minor, `fix:` → patch, `perf:` → patch. Pre-1.0 versions
 use `bump-minor-pre-major` and `bump-patch-for-minor-pre-major` to keep
 bumps conservative.

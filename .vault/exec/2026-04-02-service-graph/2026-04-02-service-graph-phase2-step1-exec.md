@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#exec"
-  - "#service-graph"
+  - '#exec'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-phase1-plan]]"
+  - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-2 step-1: ServiceRegistry module
@@ -17,6 +17,7 @@ Created `src/vaultspec_rag/service.py` with `ServiceRegistry` class and
 ## Changes
 
 - **Created** `src/vaultspec_rag/service.py`:
+
   - `ProjectSlot` dataclass: `store`, `searcher`, `vault_indexer`,
     `code_indexer`, `graph_cache`
   - `ServiceRegistry` class with `threading.Lock` guarding `_projects`
@@ -31,6 +32,7 @@ Created `src/vaultspec_rag/service.py` with `ServiceRegistry` class and
   - `health()` — returns `model_loaded`, `project_count`, `projects`
 
 - **Created** `src/vaultspec_rag/tests/test_service_registry.py`:
+
   - 13 tests across 7 test classes
   - `TestLoadModel` (2): idempotent load, raises before load
   - `TestGetProject` (3): creates components, returns same slot,

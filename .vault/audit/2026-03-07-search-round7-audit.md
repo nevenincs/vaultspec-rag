@@ -1,17 +1,18 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related: []
 ---
+
 # search.py Deep Audit (Round 7)
 
 Date: 2026-03-07
 Auditor: docs-researcher-2-2
 File: `src/vaultspec_rag/search.py` (398 lines)
 
----
+______________________________________________________________________
 
 ## 1. `_normalize_minmax()` min==max edge case (lines 151-166)
 
@@ -35,7 +36,7 @@ else:
 
 No issues.
 
----
+______________________________________________________________________
 
 ## 2. `search_all()` score combination (lines 365-393)
 
@@ -44,10 +45,10 @@ No issues.
 Flow:
 
 1. `search_vault()` returns `top_k` results (already reranked + graph boosted, scores in [0,1] via sigmoid)
-2. `search_codebase()` returns `top_k` results (already reranked, scores in [0,1] via sigmoid)
-3. `_normalize_minmax(vault_results, 0.5)` maps vault scores to [0, 0.5]
-4. `_normalize_minmax(code_results, 0.5)` maps code scores to [0, 0.5]
-5. Combine, sort descending, take top_k
+1. `search_codebase()` returns `top_k` results (already reranked, scores in [0,1] via sigmoid)
+1. `_normalize_minmax(vault_results, 0.5)` maps vault scores to [0, 0.5]
+1. `_normalize_minmax(code_results, 0.5)` maps code scores to [0, 0.5]
+1. Combine, sort descending, take top_k
 
 The weighting is correct. No off-by-one. Both sources get equal weight (0.5) so neither dominates.
 
@@ -55,7 +56,7 @@ The weighting is correct. No off-by-one. Both sources get equal weight (0.5) so 
 
 **ISSUE (MEDIUM): Graph boost inflates vault scores above 1.0 before `_normalize_minmax`.** The pipeline for `search_vault()` is: RRF -> sigmoid rerank -> graph boost. After sigmoid, scores are in [0,1]. After graph boost (`*= 1 + 0.1 * min(in_link_count, 10)`), scores can reach up to 2.0. Then `_normalize_minmax` maps them back to [0, 0.5]. This is mathematically correct (min-max handles any range), but the graph boost's effect is diminished by the subsequent re-normalization: a document with score 0.8 boosted to 1.2 has the same relative position as one with score 0.3 boosted to 0.45. The boost only matters for reordering within vault results, not for the absolute weight against codebase results. This is acceptable behavior but worth noting.
 
----
+______________________________________________________________________
 
 ## 3. `rerank_with_graph()` boost formula (lines 102-148)
 
@@ -76,11 +77,11 @@ Scores can now reach up to 2.0 (for a score of 1.0 with 10+ in-links). With the 
 **Is this acceptable?** Yes, for two reasons:
 
 1. When called from `search_vault()` directly, scores > 1 are fine for ranking -- only relative order matters
-2. When called from `search_all()`, `_normalize_minmax()` maps the range back to [0, weight], so scores > 1 are handled correctly
+1. When called from `search_all()`, `_normalize_minmax()` maps the range back to [0, weight], so scores > 1 are handled correctly
 
 **The negative-score bug from Round 5 is FIXED** -- sigmoid ensures scores are always positive, so multiplicative boost always goes in the right direction.
 
----
+______________________________________________________________________
 
 ## 4. `_rerank()` method (lines 223-238)
 
@@ -108,7 +109,7 @@ for result, score in zip(results, scores, strict=True):
 
 **Edge case note:** If `results` has items but all snippets are empty strings (e.g., `snippet=""`), the CrossEncoder will still produce scores. These scores may be meaningless, but no crash occurs. The snippet is truncated to 200 chars at line 285/353, so very long documents get only their prefix reranked.
 
----
+______________________________________________________________________
 
 ## 5. `parse_query()` and `_FILTER_PATTERN` (lines 35-99)
 
@@ -142,7 +143,7 @@ Pattern: `r"\b(type|feature|date|tag|lang|path|func|class|nodetype):(\S+)"`
 
 **Edge case: `class:` prefix conflicts with Python keyword:** The `\b` boundary correctly matches `class:Foo` because `:` is not a word character.
 
----
+______________________________________________________________________
 
 ## 6. Filter propagation in `search_vault()` and `search_codebase()` (lines 254-363)
 
@@ -176,7 +177,7 @@ Then overlays explicit keyword args (lines 326-333). Keyword args take precedenc
 
 **Both pass `filters=store_filters or None`** to the store. When `store_filters` is empty dict `{}`, `or None` evaluates to `None` (empty dict is falsy). This correctly tells the store "no filters" rather than passing an empty dict. Store methods handle `None` correctly.
 
----
+______________________________________________________________________
 
 ## 7. Unguarded `None` access
 
@@ -188,7 +189,7 @@ Then overlays explicit keyword args (lines 326-333). Keyword args take precedenc
 - `r.get("_relevance_score", 0.0)` provides a default for missing scores. Correct.
 - `r["id"]` and `r["path"]` at lines 281-282 / 349-350: no `.get()` default. If store returns a result without `id` or `path`, this raises `KeyError`. This is acceptable -- store always includes these fields in results (they're part of the point payload).
 
----
+______________________________________________________________________
 
 ## 8. Additional findings
 
@@ -208,21 +209,21 @@ This is correct behavior: each source returns its top `top_k` results, then the 
 
 **ISSUE (LOW):** `self._reranker_top_k` is read from config at line 193 but never used anywhere in the class. The `_rerank()` method receives `top_k` as a parameter from the caller. This field is dead code.
 
----
+______________________________________________________________________
 
 ## Summary
 
-| # | Issue | Severity | Action |
-|---|-------|----------|--------|
-| 1 | `_normalize_minmax()` div-by-zero | — | Correctly guarded |
-| 2 | `search_all()` docstring still says "sigmoid normalization" | LOW | Fix docstring |
-| 3 | Graph boost produces scores > 1.0, handled by subsequent min-max | — | Acceptable |
-| 4 | `_rerank()` handling of empty/single results | — | Correct |
-| 5 | `parse_query()` filter patterns | — | Correct |
-| 6 | Filter propagation vault vs codebase | — | Correct |
-| 7 | Unguarded None access | — | None found |
-| 8 | `_get_reranker()` not thread-safe | LOW | Same pattern as api.py |
-| 9 | `search_codebase()` fetch_limit `top_k` vs vault's `top_k * 2` | LOW | Inconsistency |
-| 10 | `_reranker_top_k` unused dead code | LOW | Delete field |
+| #   | Issue                                                            | Severity | Action                 |
+| --- | ---------------------------------------------------------------- | -------- | ---------------------- |
+| 1   | `_normalize_minmax()` div-by-zero                                | —        | Correctly guarded      |
+| 2   | `search_all()` docstring still says "sigmoid normalization"      | LOW      | Fix docstring          |
+| 3   | Graph boost produces scores > 1.0, handled by subsequent min-max | —        | Acceptable             |
+| 4   | `_rerank()` handling of empty/single results                     | —        | Correct                |
+| 5   | `parse_query()` filter patterns                                  | —        | Correct                |
+| 6   | Filter propagation vault vs codebase                             | —        | Correct                |
+| 7   | Unguarded None access                                            | —        | None found             |
+| 8   | `_get_reranker()` not thread-safe                                | LOW      | Same pattern as api.py |
+| 9   | `search_codebase()` fetch_limit `top_k` vs vault's `top_k * 2`   | LOW      | Inconsistency          |
+| 10  | `_reranker_top_k` unused dead code                               | LOW      | Delete field           |
 
 **No HIGH or MEDIUM issues found.** The sigmoid fix (Task #64) has resolved the negative-score graph boost bug identified in Round 5.

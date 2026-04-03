@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -12,7 +12,7 @@ related: []
 **Auditor:** codebase-auditor
 **Status:** PASSED (with recommendations for future test coverage)
 
----
+______________________________________________________________________
 
 ## Part A: Test Fixture Correctness Audit
 
@@ -47,10 +47,10 @@ related: []
 **Qdrant collection suffixes (5 unique):**
 
 1. `-fast` (root rag_components)
-2. `-full` (root rag_components_full)
-3. `-fast-unit` (integration rag_components)
-4. `-fast-code` (integration rag_components_with_code)
-5. `-mixed` (integration rag_components_mixed, module-scoped)
+1. `-full` (root rag_components_full)
+1. `-fast-unit` (integration rag_components)
+1. `-fast-code` (integration rag_components_with_code)
+1. `-mixed` (integration rag_components_mixed, module-scoped)
 
 All verified unique in `src/vaultspec_rag/tests/constants.py:55-57`.
 
@@ -69,14 +69,14 @@ All verified unique in `src/vaultspec_rag/tests/constants.py:55-57`.
 
 **Pattern:** All fixtures follow `store.close()` → `shutil.rmtree(db_dir)` correctly.
 
-### 3. _vault_snapshot_reset Safety ✅
+### 3. \_vault_snapshot_reset Safety ✅
 
 **Finding:** PASS. Proper session teardown with error resilience.
 
 **Location:** `conftest.py:202-218`
 
 - **Scope:** `session` with `autouse=True` (automatic invocation)
-- **Behavior:** After all tests complete, runs `git checkout --`, test-project/.vault/`
+- **Behavior:** After all tests complete, runs `git checkout --`, test-project/.vault/\`
 - **Safety:**
   - Only reverts `.vault/` subdirectory, not entire project
   - Preserves `.vault/README.md` and `.vault/.gitignore` (git tracked)
@@ -117,32 +117,34 @@ gpu_fast_corpus_stems = frozenset([
 **Location:** `src/vaultspec_rag/tests/benchmarks/conftest.py`
 
 - **Root fixture:** `_bench_components` (lines 13-23)
+
   - Calls `_build_rag_components(..., model=None)` → **creates new EmbeddingModel()**
   - **Issue:** Does NOT accept embedding_model parameter; creates duplicate instance (~900MB VRAM)
 
 - **Derived fixtures:** `model`, `store`, `indexer`, `searcher` (lines 26-56)
+
   - All depend on `_bench_components`, share same model instance
   - Model is cached across all benchmark tests ✅
 
 **Benchmark isolation:** Uses `.qdrant-full-bench` suffix (unique, no collision)
 
----
+______________________________________________________________________
 
 ## Part B: Integration Test Gap Analysis
 
 ### Test Coverage Summary
 
-| Test File | Tests | Full Index | Incremental | clean=True | Hybrid+Filter | search_all | Graph Rerank | Cache Inv | MCP Fallback |
-|-----------|-------|-----------|-------------|-----------|---|-----------|---|---|---|
-| test_indexer_integration.py | 8 | ✅ | ✅ | ❌ | N/A | N/A | N/A | N/A | N/A |
-| test_store_integration.py | 6 | N/A | N/A | N/A | ✅ | N/A | N/A | N/A | N/A |
-| test_search_integration.py | 18 | N/A | N/A | N/A | ✅ | ✅ | ✅ | ❌ | N/A |
-| test_api_integration.py | 7 | ✅ | ✅ | ✅ | N/A | N/A | N/A | ❌ | N/A |
-| test_robustness.py | 5 | N/A | N/A | N/A | N/A | N/A | ✅ | N/A | ❌ |
-| test_codebase_integration.py | 4 | ✅ | ❌ | N/A | N/A | N/A | N/A | N/A | N/A |
-| test_quality.py | 4 | N/A | N/A | N/A | N/A | ✅ | ✅ | N/A | N/A |
-| Unit test_cli.py | 10 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | ✅ |
-| test_adr_regression.py | 10 | N/A | N/A | N/A | N/A | N/A | N/A | ✅ | N/A |
+| Test File                    | Tests | Full Index | Incremental | clean=True | Hybrid+Filter | search_all | Graph Rerank | Cache Inv | MCP Fallback |
+| ---------------------------- | ----- | ---------- | ----------- | ---------- | ------------- | ---------- | ------------ | --------- | ------------ |
+| test_indexer_integration.py  | 8     | ✅         | ✅          | ❌         | N/A           | N/A        | N/A          | N/A       | N/A          |
+| test_store_integration.py    | 6     | N/A        | N/A         | N/A        | ✅            | N/A        | N/A          | N/A       | N/A          |
+| test_search_integration.py   | 18    | N/A        | N/A         | N/A        | ✅            | ✅         | ✅           | ❌        | N/A          |
+| test_api_integration.py      | 7     | ✅         | ✅          | ✅         | N/A           | N/A        | N/A          | ❌        | N/A          |
+| test_robustness.py           | 5     | N/A        | N/A         | N/A        | N/A           | N/A        | ✅           | N/A       | ❌           |
+| test_codebase_integration.py | 4     | ✅         | ❌          | N/A        | N/A           | N/A        | N/A          | N/A       | N/A          |
+| test_quality.py              | 4     | N/A        | N/A         | N/A        | N/A           | ✅         | ✅           | N/A       | N/A          |
+| Unit test_cli.py             | 10    | N/A        | N/A         | N/A        | N/A           | N/A        | N/A          | N/A       | ✅           |
+| test_adr_regression.py       | 10    | N/A        | N/A         | N/A        | N/A           | N/A        | N/A          | ✅        | N/A          |
 
 ### 1. test_indexer_integration.py ✅ (with gap noted)
 
@@ -212,11 +214,11 @@ gpu_fast_corpus_stems = frozenset([
 
 **Coverage:** 10 architectural decision regressions
 
-- `test_graph_cache_invalidate_clears()` → _GraphCache.invalidate() clears state ✅
+- `test_graph_cache_invalidate_clears()` → \_GraphCache.invalidate() clears state ✅
 - `test_reindex_vault_resets_graph_cache()` → reindex_vault() resets cache ✅
 - Graph cache thread-safety, blake2b hashing, async MCP tools all verified ✅
 
----
+______________________________________________________________________
 
 ## Part C: Compliance Spot-Check
 
@@ -238,7 +240,7 @@ grep -r "import unittest|from unittest|MagicMock|@patch|monkeypatch|assert True|
 - ✅ No `assert True` / `assert False` tautologies
 - ✅ No `pytest.skip()` or `@pytest.mark.skip`
 
----
+______________________________________________________________________
 
 ## Part D: Additional Findings
 
@@ -329,42 +331,42 @@ def test_graph_cache_invalidated_after_reindex(rag_components):
 - Fixable in future by passing `embedding_model` parameter if benchmarks grow
 - Current state: acceptable because benchmarks are infrequently run
 
----
+______________________________________________________________________
 
 ## Summary
 
 **Overall Status:** ✅ PASS — Test infrastructure is well-designed with proper isolation.
 
-| Category | Status | Notes |
-|----------|--------|-------|
-| Session-scoped embedding_model | ✅ | Shared across all 5 variants, 1 instance total |
-| Qdrant isolation (5 unique suffixes) | ✅ | Proper teardown, zero collisions |
-| Teardown (store.close + rmtree) | ✅ | All fixtures follow correct pattern |
-| _vault_snapshot_reset safety | ✅ | Graceful error handling, git checkout isolated to .vault/ |
-| GPU_FAST_CORPUS_STEMS coverage | ✅ | 13 docs covering all 5 doc_types |
-| Benchmark fixtures | ✅ | Share embedding_model, unique suffix, could optimize |
-| Banned patterns (unittest, mock, skip) | ✅ | Zero violations |
+| Category                               | Status | Notes                                                     |
+| -------------------------------------- | ------ | --------------------------------------------------------- |
+| Session-scoped embedding_model         | ✅     | Shared across all 5 variants, 1 instance total            |
+| Qdrant isolation (5 unique suffixes)   | ✅     | Proper teardown, zero collisions                          |
+| Teardown (store.close + rmtree)        | ✅     | All fixtures follow correct pattern                       |
+| \_vault_snapshot_reset safety          | ✅     | Graceful error handling, git checkout isolated to .vault/ |
+| GPU_FAST_CORPUS_STEMS coverage         | ✅     | 13 docs covering all 5 doc_types                          |
+| Benchmark fixtures                     | ✅     | Share embedding_model, unique suffix, could optimize      |
+| Banned patterns (unittest, mock, skip) | ✅     | Zero violations                                           |
 
-| Integration Test | Coverage | Gaps |
-|---|---|---|
-| test_indexer_integration.py | Full + incremental | clean=True not explicit |
-| test_store_integration.py | CRUD + hybrid search | ✅ complete |
-| test_search_integration.py | search_vault/all + graph rerank | Cache invalidation not tested |
-| test_api_integration.py | index() incremental + full | Engine cache isolation not tested |
-| test_robustness.py | Edge cases + orphans | MCP fallback not in integration |
-| test_cli.py (unit) | MCP fallback paths | ✅ complete |
-| test_adr_regression.py | Cache invalidation + ADRs | ✅ complete |
+| Integration Test            | Coverage                        | Gaps                              |
+| --------------------------- | ------------------------------- | --------------------------------- |
+| test_indexer_integration.py | Full + incremental              | clean=True not explicit           |
+| test_store_integration.py   | CRUD + hybrid search            | ✅ complete                       |
+| test_search_integration.py  | search_vault/all + graph rerank | Cache invalidation not tested     |
+| test_api_integration.py     | index() incremental + full      | Engine cache isolation not tested |
+| test_robustness.py          | Edge cases + orphans            | MCP fallback not in integration   |
+| test_cli.py (unit)          | MCP fallback paths              | ✅ complete                       |
+| test_adr_regression.py      | Cache invalidation + ADRs       | ✅ complete                       |
 
----
+______________________________________________________________________
 
 ## Recommendations for Future Work
 
 1. **Add integration test for `full_index(clean=True)` path** — tests drop→recreate→search race
-2. **Add integration test for engine cache isolation** — verify different roots get different engines
-3. **Add integration test for graph cache invalidation after reindex** — catch stale re-ranking bugs
-4. **Benchmark fixtures: accept embedding_model parameter** — save 900MB VRAM if benchmarks expand
+1. **Add integration test for engine cache isolation** — verify different roots get different engines
+1. **Add integration test for graph cache invalidation after reindex** — catch stale re-ranking bugs
+1. **Benchmark fixtures: accept embedding_model parameter** — save 900MB VRAM if benchmarks expand
 
----
+______________________________________________________________________
 
 ## Next Round
 

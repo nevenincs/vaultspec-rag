@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-08
 related: []
 ---
@@ -13,7 +13,7 @@ related: []
 **Scope**: `src/vaultspec_rag/store.py` and `src/vaultspec_rag/api.py`
 **Status**: ✅ PASSED (all known fixes verified, no new critical issues)
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
@@ -28,18 +28,18 @@ This audit verifies correctness of the vector store layer (`store.py`) and publi
 
 **No critical issues discovered**. Several improvements identified for clarity and robustness.
 
----
+______________________________________________________________________
 
 ## Findings by Severity
 
-| Severity | Count | Details |
-|----------|-------|---------|
-| CRITICAL | 0 | None found |
-| HIGH | 0 | None found |
-| MEDIUM | 1 | Inconsistent payload field naming (doc_id vs chunk_id) |
-| LOW | 4 | Resource cleanup edge cases, docstring clarity |
+| Severity | Count | Details                                                |
+| -------- | ----- | ------------------------------------------------------ |
+| CRITICAL | 0     | None found                                             |
+| HIGH     | 0     | None found                                             |
+| MEDIUM   | 1     | Inconsistent payload field naming (doc_id vs chunk_id) |
+| LOW      | 4     | Resource cleanup edge cases, docstring clarity         |
 
----
+______________________________________________________________________
 
 ## store.py Detailed Findings
 
@@ -62,7 +62,7 @@ if key == "date":
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 2. `_build_filter` and `_build_code_filter` — Filter field types ✅ VERIFIED
 
@@ -78,7 +78,7 @@ if key == "date":
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 3. `hybrid_search` — Filter application per-Prefetch ✅ VERIFIED
 
@@ -118,7 +118,7 @@ results = self._client.query_points(
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 4. `count()` and `count_code()` — O(n) concern ✅ VERIFIED
 
@@ -145,7 +145,7 @@ def count_code(self) -> int:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 5. `delete_documents` / `delete_code_chunks` — ID handling ✅ VERIFIED
 
@@ -174,7 +174,7 @@ def delete_documents(self, ids: list[str]) -> None:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 6. `upsert_documents` / `upsert_code_chunks` — Vector names & payload ✅ VERIFIED
 
@@ -225,7 +225,7 @@ This asymmetry is **intentional** (vault vs codebase distinction) but **confusin
 
 **Verdict**: ⚠️ MEDIUM (design clarity issue, not a bug).
 
----
+______________________________________________________________________
 
 ### 7. `get_by_id` — Retrieval correctness ✅ VERIFIED
 
@@ -255,7 +255,7 @@ def get_by_id(self, doc_id: str) -> dict | None:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 8. `list_all_documents` — N+1 query check ✅ VERIFIED
 
@@ -294,7 +294,7 @@ def list_all_documents(self, doc_type: str | None = None) -> list[dict]:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 9. `close()` — Proper resource cleanup ✅ VERIFIED
 
@@ -320,7 +320,7 @@ def close(self) -> None:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ## api.py Detailed Findings
 
@@ -353,7 +353,7 @@ def get_engine(root_dir: pathlib.Path) -> _Engine:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 11. `VaultRAGEngine` aliased as `_Engine` — Cleanup contract ✅ VERIFIED
 
@@ -381,7 +381,7 @@ class _Engine:
 
 **Verdict**: ✅ No issue (LOW complexity constructor, acceptable risk).
 
----
+______________________________________________________________________
 
 ### 12. Public API functions — N+1 queries ✅ VERIFIED
 
@@ -399,7 +399,7 @@ def search_vault(root_dir: pathlib.Path, query: str, *, top_k: int = 5) -> list[
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ### 13. `_GraphCache` — Thread safety ✅ VERIFIED
 
@@ -432,27 +432,27 @@ class _GraphCache:
 
 **Verdict**: ✅ No issue.
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| Component | Finding | Severity | Status |
-|-----------|---------|----------|--------|
-| store.py:_build_filter | Date filter uses MatchValue | ✅ Fixed | Verified |
-| store.py:hybrid_search | Filters on Prefetch, k=60 | ✅ Fixed | Verified |
-| store.py:count() | No N+1 queries | ✅ Fixed | Verified |
-| store.py:delete_* | Correct point ID hashing | ✅ Fixed | Verified |
-| store.py:upsert_* | Vector names match schema | ✅ Correct | No issue |
-| store.py:(payload naming) | doc_id vs chunk_id inconsistency | ⚠️ Design | MEDIUM |
-| store.py:get_by_id | Fresh retrieval, no staleness | ✅ Correct | No issue |
-| store.py:list_all_documents | Scroll with pagination (no N+1) | ✅ Correct | No issue |
-| store.py:close() | CLI properly closes store | ✅ Fixed | Verified |
-| api.py:get_engine | Path.resolve() + threading.Lock | ✅ Fixed | Verified |
-| api.py:_Engine.**init**() | Store cleanup on EmbeddingModel fail | ✅ Correct | No issue |
-| api.py:public functions | No N+1 queries | ✅ Correct | No issue |
-| api.py:_GraphCache | Thread-safe with invalidation | ✅ Correct | No issue |
+| Component                   | Finding                              | Severity   | Status   |
+| --------------------------- | ------------------------------------ | ---------- | -------- |
+| store.py:\_build_filter     | Date filter uses MatchValue          | ✅ Fixed   | Verified |
+| store.py:hybrid_search      | Filters on Prefetch, k=60            | ✅ Fixed   | Verified |
+| store.py:count()            | No N+1 queries                       | ✅ Fixed   | Verified |
+| store.py:delete\_\*         | Correct point ID hashing             | ✅ Fixed   | Verified |
+| store.py:upsert\_\*         | Vector names match schema            | ✅ Correct | No issue |
+| store.py:(payload naming)   | doc_id vs chunk_id inconsistency     | ⚠️ Design  | MEDIUM   |
+| store.py:get_by_id          | Fresh retrieval, no staleness        | ✅ Correct | No issue |
+| store.py:list_all_documents | Scroll with pagination (no N+1)      | ✅ Correct | No issue |
+| store.py:close()            | CLI properly closes store            | ✅ Fixed   | Verified |
+| api.py:get_engine           | Path.resolve() + threading.Lock      | ✅ Fixed   | Verified |
+| api.py:\_Engine.**init**()  | Store cleanup on EmbeddingModel fail | ✅ Correct | No issue |
+| api.py:public functions     | No N+1 queries                       | ✅ Correct | No issue |
+| api.py:\_GraphCache         | Thread-safe with invalidation        | ✅ Correct | No issue |
 
----
+______________________________________________________________________
 
 ## Recommendations
 
@@ -479,7 +479,7 @@ to abstract this difference.
 
 This is **not a bug** (working as designed) but **reduces confusion** for future maintainers.
 
----
+______________________________________________________________________
 
 ## Conclusion
 
@@ -488,7 +488,7 @@ This is **not a bug** (working as designed) but **reduces confusion** for future
 ⚠️ **One MEDIUM design clarity issue** (payload field naming — suggest docstring clarification, not code change).
 ✅ **Store and API layer are production-ready.**
 
----
+______________________________________________________________________
 
 **Next audit targets**:
 

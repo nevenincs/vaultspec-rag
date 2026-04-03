@@ -1,7 +1,7 @@
 ---
 tags:
-  - "#audit"
-  - "#gpu-rag-stack"
+  - '#audit'
+  - '#gpu-rag-stack'
 date: 2026-03-09
 related: []
 ---
@@ -12,13 +12,13 @@ related: []
 **Auditor:** Claude Code (Haiku 4.5)
 **Status:** COMPLETE — 2 CRITICAL, 2 HIGH, 3 MEDIUM
 
----
+______________________________________________________________________
 
 ## Executive Summary
 
 Round 32 audits security (path traversal, command injection, input validation, info disclosure) and error-handling (Qdrant unavailability, CUDA OOM, disk full, partial indexing). Found **2 CRITICAL** path validation gaps, **2 HIGH** error propagation issues, and **3 MEDIUM** concerns about incomplete cleanup. No command injection or direct subprocess risks detected.
 
----
+______________________________________________________________________
 
 ## Security Audit Results
 
@@ -37,7 +37,7 @@ if not full_path.is_relative_to(root_resolved):
 
 Both `.resolve()` calls normalize symlinks and `..` traversals. The `is_relative_to()` check prevents escape attempts. File existence and size (10 MB max) also validated.
 
----
+______________________________________________________________________
 
 ### 2. CLI --target Path Validation — CRITICAL
 
@@ -58,7 +58,9 @@ store = VaultStore(target)  # Line 245
 **Recommendation:**
 
 - Add workspace validation in `main()` after `resolve_workspace()` returns (lines 133–135).
+
 - Verify `layout.target_dir` contains `.vault/` AND `.vaultspec/` before proceeding.
+
 - Example (pseudocode):
 
   ```python
@@ -67,7 +69,7 @@ store = VaultStore(target)  # Line 245
       raise typer.Exit(code=1)
   ```
 
----
+______________________________________________________________________
 
 ### 3. API Path Validation — CRITICAL
 
@@ -97,7 +99,7 @@ def get_engine(root_dir: pathlib.Path) -> _Engine:
 - Validate `root_dir / ".vaultspec"` exists before creating engine.
 - Raise `ValueError` with clear message if workspace structure is invalid.
 
----
+______________________________________________________________________
 
 ### 4. Command Injection — OK
 
@@ -112,7 +114,7 @@ raise SystemExit(subprocess.call(cmd))
 
 No string interpolation; args passed as list elements. Safe from shell injection.
 
----
+______________________________________________________________________
 
 ### 5. Query Length Validation — MEDIUM
 
@@ -135,7 +137,7 @@ def search_vault(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
 - Truncate or reject oversized queries in `search_vault()`, `search_codebase()`, `search_all()`.
 - Log warning if query is truncated.
 
----
+______________________________________________________________________
 
 ### 6. MCP Parameter Validation — MEDIUM
 
@@ -153,7 +155,7 @@ def search_vault(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
 - Add max length for filter parameters (e.g., 256 chars each).
 - Validate in `search_codebase()` before calling searcher.
 
----
+______________________________________________________________________
 
 ### 7. Error Message Information Disclosure — MEDIUM
 
@@ -175,7 +177,9 @@ If the exception contains environment variable names (e.g., `VAULTSPEC_ROOT=/sec
 **Recommendation:**
 
 - Sanitize exception message before caching: extract only error type + brief description.
+
 - Log full traceback to logger instead.
+
 - Example:
 
   ```python
@@ -183,7 +187,7 @@ If the exception contains environment variable names (e.g., `VAULTSPEC_ROOT=/sec
   raise RuntimeError(f"RAG initialization failed: {error_msg}") from None
   ```
 
----
+______________________________________________________________________
 
 ## Error-Handling Audit Results
 
@@ -207,10 +211,10 @@ def __init__(self, root_dir: pathlib.Path | str, embedding_dim: int | None = Non
 **Scenario:**
 
 1. Process A: `vaultspec-rag index` starts, acquires Qdrant lock.
-2. Process B: `vaultspec-rag search` tries to initialize, gets `LockError`.
-3. `_comp_error` is set permanently.
-4. Process A finishes and releases lock.
-5. Process B: Next search still fails — `_comp_error` is cached forever.
+1. Process B: `vaultspec-rag search` tries to initialize, gets `LockError`.
+1. `_comp_error` is set permanently.
+1. Process A finishes and releases lock.
+1. Process B: Next search still fails — `_comp_error` is cached forever.
 
 **Severity:** **HIGH** — Persistent failure even after the lock is released.
 
@@ -220,7 +224,7 @@ def __init__(self, root_dir: pathlib.Path | str, embedding_dim: int | None = Non
 - Implement exponential backoff retry (with max retries) instead of permanent caching.
 - Clear `_comp_error` after successful recovery.
 
----
+______________________________________________________________________
 
 ### 9. CUDA OOM During Indexing — OK (Handled with Retry)
 
@@ -243,7 +247,7 @@ while True:
 
 GPU semaphore is held during retry, ensuring no race. If OOM persists at batch_size=1, exception propagates cleanly.
 
----
+______________________________________________________________________
 
 ### 10. Disk Full During Metadata Write — OK (Atomic with Temp File)
 
@@ -255,7 +259,7 @@ GPU semaphore is held during retry, ensuring no race. If OOM persists at batch_s
 
 ✅ **PASS** (already audited in Round 29 / CRITICAL C2). Atomic writes are correct; metadata loss is a data-integrity issue, not error-handling per se.
 
----
+______________________________________________________________________
 
 ### 11. Partial Indexing — CRITICAL (Race Window)
 
@@ -280,16 +284,16 @@ v_indexer.full_index(clean=True)
 **Scenario:**
 
 1. CLI: `vaultspec-rag index --clean` starts.
-2. CLI: Deletes `.qdrant/` directory.
-3. MCP: Concurrent search request arrives.
-4. MCP: Tries to open Qdrant collection → `collection_not_found` error.
-5. No fallback; search returns error to client.
+1. CLI: Deletes `.qdrant/` directory.
+1. MCP: Concurrent search request arrives.
+1. MCP: Tries to open Qdrant collection → `collection_not_found` error.
+1. No fallback; search returns error to client.
 
 **Severity:** **CRITICAL** — Already identified in Round 29, but error handling was not addressed. See Round 29 C1 audit for full context.
 
 **Status:** Unresolved from Round 29.
 
----
+______________________________________________________________________
 
 ### 12. Symlink Following in Codebase Scan — OK
 
@@ -297,7 +301,7 @@ v_indexer.full_index(clean=True)
 
 ✅ **PASS**: Uses `os.walk(..., followlinks=False)` by default, preventing symlink escapes. Verified in prior audits.
 
----
+______________________________________________________________________
 
 ### 13. Language / Node-Type Filter Injection — OK
 
@@ -314,51 +318,57 @@ else:
 
 Unknown keys are logged, not injected. Safe.
 
----
+______________________________________________________________________
 
 ## Summary Table
 
-| ID | Category | Finding | Severity | Status |
-|----|----------|---------|----------|--------|
-| C1 | Path Traversal | CLI `--target` not validated as workspace | CRITICAL | New |
-| C2 | Path Traversal | API `get_engine()` accepts any directory | CRITICAL | New |
-| H1 | Error Handling | Qdrant lock cached permanently | HIGH | New |
-| H2 | Race Condition | Full reindex drops collection (race window) | CRITICAL* | Round 29 C1 |
-| M1 | Input Validation | Query length unbounded | MEDIUM | New |
-| M2 | Input Validation | MCP filter param lengths unchecked | MEDIUM | New |
-| M3 | Information Disclosure | Error messages leak paths | MEDIUM | New |
+| ID  | Category               | Finding                                     | Severity   | Status      |
+| --- | ---------------------- | ------------------------------------------- | ---------- | ----------- |
+| C1  | Path Traversal         | CLI `--target` not validated as workspace   | CRITICAL   | New         |
+| C2  | Path Traversal         | API `get_engine()` accepts any directory    | CRITICAL   | New         |
+| H1  | Error Handling         | Qdrant lock cached permanently              | HIGH       | New         |
+| H2  | Race Condition         | Full reindex drops collection (race window) | CRITICAL\* | Round 29 C1 |
+| M1  | Input Validation       | Query length unbounded                      | MEDIUM     | New         |
+| M2  | Input Validation       | MCP filter param lengths unchecked          | MEDIUM     | New         |
+| M3  | Information Disclosure | Error messages leak paths                   | MEDIUM     | New         |
 
-*H2 labeled CRITICAL in Round 29, still unresolved.
+\*H2 labeled CRITICAL in Round 29, still unresolved.
 
----
+______________________________________________________________________
 
 ## Recommendations
 
 ### Priority 1 (Immediate)
 
 1. **C1 — CLI --target validation:**
+
    - After `resolve_workspace()`, verify `layout.vaultspec_dir.is_dir()`.
    - Reject invalid workspaces with clear error message.
 
-2. **C2 — API workspace validation:**
+1. **C2 — API workspace validation:**
+
    - Add check in `get_engine()`: verify `(root_dir / ".vaultspec").is_dir()`.
    - Raise `ValueError` if missing.
 
-3. **H1 — Qdrant lock handling:**
+1. **H1 — Qdrant lock handling:**
+
    - Remove permanent error caching OR implement exponential backoff retry.
    - Clear `_comp_error` after successful recovery.
 
 ### Priority 2 (Important)
 
 1. **H2 — Race window during full reindex (Round 29 C1):**
+
    - Implement collection lock or atomic rename.
    - See Round 29 for full analysis.
 
-2. **M1 — Query length validation:**
+1. **M1 — Query length validation:**
+
    - Add `MAX_QUERY_LEN = 10000` constant.
    - Truncate in `search_vault()` / `search_all()`.
 
-3. **M3 — Error message sanitization:**
+1. **M3 — Error message sanitization:**
+
    - Extract only first line of exception.
    - Log full traceback separately.
 
@@ -367,7 +377,7 @@ Unknown keys are logged, not injected. Safe.
 1. **M2 — MCP filter validation:**
    - Clamp `language`, `node_type`, etc. to 256 chars.
 
----
+______________________________________________________________________
 
 ## Files Affected
 
@@ -376,7 +386,7 @@ Unknown keys are logged, not injected. Safe.
 - `src/vaultspec_rag/mcp_server.py` (H1, M3, M2)
 - `src/vaultspec_rag/search.py` (M1)
 
----
+______________________________________________________________________
 
 ## Verification Checklist
 

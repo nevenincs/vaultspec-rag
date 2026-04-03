@@ -1,16 +1,17 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # Research: CodebaseIndexer Tech Stack — 2026 GPU-First
 
 Date: 2026-03-06
 Sources: PyPI, GitHub, arXiv, library docs, web research.
 
----
+______________________________________________________________________
 
 ## 1. AST-Based Code Chunking (replacing TextSplitter)
 
@@ -26,11 +27,11 @@ AST-aware chunking outperforms character/line-based splitting for code RAG:
 ### Algorithm: split-then-merge (cAST)
 
 1. Parse source file into AST via tree-sitter.
-2. Depth-first traversal from root. Attempt to place each top-level node
+1. Depth-first traversal from root. Attempt to place each top-level node
    (function, class, impl block) into a single chunk.
-3. If a node exceeds the token/char budget, recurse into its children.
-4. Greedily merge adjacent sibling nodes until the budget is reached.
-5. Concatenating all chunks reproduces the original file verbatim
+1. If a node exceeds the token/char budget, recurse into its children.
+1. Greedily merge adjacent sibling nodes until the budget is reached.
+1. Concatenating all chunks reproduces the original file verbatim
    (no information loss, no overlap artifacts).
 
 Design goals: syntactic integrity, high information density, language
@@ -61,20 +62,20 @@ for child in root.children:
 
 **Key node types per language:**
 
-| Language   | Top-level chunk nodes                          |
-|------------|------------------------------------------------|
-| Python     | function_definition, class_definition, decorated_definition |
-| Rust       | function_item, impl_item, struct_item, enum_item, trait_item |
-| TypeScript | function_declaration, class_declaration, lexical_declaration, export_statement |
-| JavaScript | function_declaration, class_declaration, variable_declaration, export_statement |
-| Go         | function_declaration, method_declaration, type_declaration |
-| Java       | class_declaration, method_declaration, interface_declaration |
-| C/C++      | function_definition, struct_specifier, class_specifier |
-| C#         | class_declaration, method_declaration, namespace_declaration |
-| Ruby       | method, class, module                          |
-| Shell      | function_definition, command                   |
-| YAML/TOML/JSON/HTML/CSS | Use character-based fallback (no semantic nodes) |
-| Markdown   | section, atx_heading (tree-sitter-markdown)    |
+| Language                | Top-level chunk nodes                                                           |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| Python                  | function_definition, class_definition, decorated_definition                     |
+| Rust                    | function_item, impl_item, struct_item, enum_item, trait_item                    |
+| TypeScript              | function_declaration, class_declaration, lexical_declaration, export_statement  |
+| JavaScript              | function_declaration, class_declaration, variable_declaration, export_statement |
+| Go                      | function_declaration, method_declaration, type_declaration                      |
+| Java                    | class_declaration, method_declaration, interface_declaration                    |
+| C/C++                   | function_definition, struct_specifier, class_specifier                          |
+| C#                      | class_declaration, method_declaration, namespace_declaration                    |
+| Ruby                    | method, class, module                                                           |
+| Shell                   | function_definition, command                                                    |
+| YAML/TOML/JSON/HTML/CSS | Use character-based fallback (no semantic nodes)                                |
+| Markdown                | section, atx_heading (tree-sitter-markdown)                                     |
 
 **Supported languages:** 100+ pre-built grammars in binary wheels (no
 compilation step needed).
@@ -91,7 +92,7 @@ Third-party AST chunking libraries exist (yilinjz/astchunk,
 supermemoryai/code-chunk) but add unnecessary dependencies. The cAST algorithm
 is simple enough to implement directly (~100 lines) with tree-sitter.
 
----
+______________________________________________________________________
 
 ## 2. Gitignore-Compliant File Scanning (replacing git ls-files fallback)
 
@@ -150,7 +151,7 @@ def _load_gitignore_specs(root: Path) -> list[pathspec.GitIgnoreSpec]:
     return specs
 ```
 
----
+______________________________________________________________________
 
 ## 3. Incremental Indexing via Content Hashing
 
@@ -173,22 +174,22 @@ Store `{rel_path: content_hash}` in `.qdrant/code_index_meta.json`.
 On incremental run:
 
 1. Scan all files (via pathspec-filtered rglob).
-2. Hash each file.
-3. Compare against stored hashes:
+1. Hash each file.
+1. Compare against stored hashes:
    - New file (path not in meta) -> index
    - Changed file (hash differs) -> re-index
    - Deleted file (in meta but not on disk) -> delete from Qdrant
    - Unchanged (hash matches) -> skip
-4. Update meta with new hashes.
+1. Update meta with new hashes.
 
 **Why SHA256 over mtime:**
 
 - Deterministic: same content = same hash regardless of filesystem metadata
 - Git-proof: `git checkout` changes mtime but not content
 - Copy-proof: copying a file changes mtime but not content
-- SHA256 of a 10MB file takes <10ms — negligible vs embedding cost
+- SHA256 of a 10MB file takes \<10ms — negligible vs embedding cost
 
----
+______________________________________________________________________
 
 ## 4. Chunk ID Strategy
 
@@ -210,7 +211,7 @@ With AST chunking, line_start/line_end come directly from tree-sitter node
 The content hash suffix guarantees uniqueness even if line ranges somehow
 overlap.
 
----
+______________________________________________________________________
 
 ## 5. File Safety Guards
 
@@ -234,7 +235,7 @@ def _is_too_large(path: Path) -> bool:
     return path.stat().st_size > MAX_FILE_SIZE
 ```
 
----
+______________________________________________________________________
 
 ## 6. Extended Language Support
 
@@ -244,31 +245,31 @@ def _is_too_large(path: Path) -> bool:
 
 ### Proposed (24 extensions)
 
-| Extension(s)          | Language     | tree-sitter grammar |
-|-----------------------|-------------|---------------------|
-| `.py`                 | Python       | python              |
-| `.rs`                 | Rust         | rust                |
-| `.md`                 | Markdown     | markdown            |
-| `.js`, `.jsx`         | JavaScript   | javascript          |
-| `.ts`, `.tsx`         | TypeScript   | typescript          |
-| `.go`                 | Go           | go                  |
-| `.java`               | Java         | java                |
-| `.c`, `.h`            | C            | c                   |
-| `.cpp`, `.hpp`, `.cc` | C++          | cpp                 |
-| `.cs`                 | C#           | c_sharp             |
-| `.rb`                 | Ruby         | ruby                |
-| `.sh`, `.bash`        | Shell        | bash                |
-| `.yaml`, `.yml`       | YAML         | yaml                |
-| `.toml`               | TOML         | toml                |
-| `.json`               | JSON         | json                |
-| `.html`               | HTML         | html                |
-| `.css`                | CSS          | css                 |
-| `.kt`                 | Kotlin       | kotlin              |
+| Extension(s)          | Language   | tree-sitter grammar |
+| --------------------- | ---------- | ------------------- |
+| `.py`                 | Python     | python              |
+| `.rs`                 | Rust       | rust                |
+| `.md`                 | Markdown   | markdown            |
+| `.js`, `.jsx`         | JavaScript | javascript          |
+| `.ts`, `.tsx`         | TypeScript | typescript          |
+| `.go`                 | Go         | go                  |
+| `.java`               | Java       | java                |
+| `.c`, `.h`            | C          | c                   |
+| `.cpp`, `.hpp`, `.cc` | C++        | cpp                 |
+| `.cs`                 | C#         | c_sharp             |
+| `.rb`                 | Ruby       | ruby                |
+| `.sh`, `.bash`        | Shell      | bash                |
+| `.yaml`, `.yml`       | YAML       | yaml                |
+| `.toml`               | TOML       | toml                |
+| `.json`               | JSON       | json                |
+| `.html`               | HTML       | html                |
+| `.css`                | CSS        | css                 |
+| `.kt`                 | Kotlin     | kotlin              |
 
 For config/data formats (YAML, TOML, JSON, HTML, CSS), AST chunking adds
 minimal value — use character-based splitting as fallback.
 
----
+______________________________________________________________________
 
 ## 7. Dependency Changes for pyproject.toml
 
@@ -284,27 +285,27 @@ dependencies = [
 Both are pure-Python or have pre-built wheels. No CUDA dependency. No
 compilation step on Windows/Linux/macOS.
 
----
+______________________________________________________________________
 
 ## 8. Implementation Plan
 
 ### Task #3: Critical bug fixes (no new deps)
 
 1. Replace `content.find(text)` line tracking with offset-tracking during split
-2. Add SHA256 content hash to chunk IDs
-3. Implement `CodebaseIndexer.incremental_index()` using SHA256 file hashing
+1. Add SHA256 content hash to chunk IDs
+1. Implement `CodebaseIndexer.incremental_index()` using SHA256 file hashing
 
 ### Task #4: AST chunking + pathspec (new deps)
 
 1. Add `tree-sitter-language-pack` and `pathspec` to pyproject.toml
-2. Replace `TextSplitter` with `ASTChunker` implementing cAST algorithm
-3. Replace `_scan_codebase()` with pathspec-based scanning
-4. Expand supported extensions to 24
-5. Add binary detection and file size limit
-6. Add per-chunk metadata: `function_name`, `class_name` from AST node type
-7. Keep `TextSplitter` as fallback for non-AST languages (YAML, TOML, etc.)
+1. Replace `TextSplitter` with `ASTChunker` implementing cAST algorithm
+1. Replace `_scan_codebase()` with pathspec-based scanning
+1. Expand supported extensions to 24
+1. Add binary detection and file size limit
+1. Add per-chunk metadata: `function_name`, `class_name` from AST node type
+1. Keep `TextSplitter` as fallback for non-AST languages (YAML, TOML, etc.)
 
----
+______________________________________________________________________
 
 ## 9. Tree-Sitter API Deep Dive
 
@@ -328,19 +329,19 @@ tree = parser.parse(source_bytes)
 
 Every `Node` exposes:
 
-| Property          | Type              | Description                              |
-|-------------------|-------------------|------------------------------------------|
-| `type`            | `str`             | Grammar node type (`function_definition`) |
-| `text`            | `bytes`           | Source bytes for this node                |
-| `start_point`     | `(row, col)`      | 0-indexed start position                 |
-| `end_point`       | `(row, col)`      | 0-indexed end position                   |
-| `start_byte`      | `int`             | Byte offset start                        |
-| `end_byte`        | `int`             | Byte offset end                          |
-| `children`        | `list[Node]`      | Direct child nodes                       |
-| `named_children`  | `list[Node]`      | Non-anonymous children only              |
-| `parent`          | `Node \| None`    | Parent node                              |
-| `child_count`     | `int`             | Number of children                       |
-| `is_named`        | `bool`            | True for grammar-defined nodes           |
+| Property         | Type           | Description                               |
+| ---------------- | -------------- | ----------------------------------------- |
+| `type`           | `str`          | Grammar node type (`function_definition`) |
+| `text`           | `bytes`        | Source bytes for this node                |
+| `start_point`    | `(row, col)`   | 0-indexed start position                  |
+| `end_point`      | `(row, col)`   | 0-indexed end position                    |
+| `start_byte`     | `int`          | Byte offset start                         |
+| `end_byte`       | `int`          | Byte offset end                           |
+| `children`       | `list[Node]`   | Direct child nodes                        |
+| `named_children` | `list[Node]`   | Non-anonymous children only               |
+| `parent`         | `Node \| None` | Parent node                               |
+| `child_count`    | `int`          | Number of children                        |
+| `is_named`       | `bool`         | True for grammar-defined nodes            |
 
 Key methods:
 
@@ -444,23 +445,23 @@ def extract_chunk_metadata(node) -> dict[str, str | None]:
     return meta
 ```
 
----
+______________________________________________________________________
 
 ## 10. Code Embedding Models — 2026 Landscape
 
 ### Qwen3-Embedding-0.6B (current stack)
 
-| Spec               | Value                                          |
-|---------------------|-------------------------------------------------|
-| Parameters          | 0.6B                                            |
-| Dimensions          | Up to 1024 (MRL: user-selectable 32-1024)       |
-| Context length      | 32K tokens                                      |
-| License             | Apache 2.0 (fully open)                         |
-| MTEB Multilingual   | 64.33 mean                                      |
-| MTEB English v2     | 70.70 mean (Retrieval: 61.83)                   |
-| Code support        | 100+ languages including programming languages  |
-| Code benchmarks     | Not separately reported for 0.6B                |
-| Inference           | Local GPU, sentence-transformers, fp16           |
+| Spec              | Value                                          |
+| ----------------- | ---------------------------------------------- |
+| Parameters        | 0.6B                                           |
+| Dimensions        | Up to 1024 (MRL: user-selectable 32-1024)      |
+| Context length    | 32K tokens                                     |
+| License           | Apache 2.0 (fully open)                        |
+| MTEB Multilingual | 64.33 mean                                     |
+| MTEB English v2   | 70.70 mean (Retrieval: 61.83)                  |
+| Code support      | 100+ languages including programming languages |
+| Code benchmarks   | Not separately reported for 0.6B               |
+| Inference         | Local GPU, sentence-transformers, fp16         |
 
 The 0.6B model does not have explicit code-specific benchmark scores published.
 The larger Qwen3-Embedding-8B leads MTEB-Code leaderboard, but 8B is too large
@@ -472,16 +473,16 @@ The hybrid search pipeline compensates for any single-model weakness.
 
 ### voyage-code-3 (API-only alternative)
 
-| Spec               | Value                                          |
-|---------------------|-------------------------------------------------|
-| Parameters          | Unknown (proprietary)                           |
-| Dimensions          | 2048, 1024, 512, 256 (Matryoshka)               |
-| Context length      | 32K tokens                                      |
-| License             | Proprietary API (Voyage AI / Anthropic)         |
-| Code benchmarks     | +13.8% over OpenAI-v3-large on 238 datasets     |
-| Language coverage   | 300+ programming languages                      |
-| Pricing             | First 200M tokens free, then paid               |
-| Inference           | API-only (not local)                             |
+| Spec              | Value                                       |
+| ----------------- | ------------------------------------------- |
+| Parameters        | Unknown (proprietary)                       |
+| Dimensions        | 2048, 1024, 512, 256 (Matryoshka)           |
+| Context length    | 32K tokens                                  |
+| License           | Proprietary API (Voyage AI / Anthropic)     |
+| Code benchmarks   | +13.8% over OpenAI-v3-large on 238 datasets |
+| Language coverage | 300+ programming languages                  |
+| Pricing           | First 200M tokens free, then paid           |
+| Inference         | API-only (not local)                        |
 
 **Verdict:** Superior code retrieval quality, but API-only. Violates our
 GPU-first local-inference mandate. Not recommended unless we add an optional
@@ -492,14 +493,14 @@ API fallback path in the future.
 **Keep Qwen3-Embedding-0.6B.** Reasons:
 
 1. Already integrated and working
-2. Local GPU inference (no API dependency, no latency, no cost)
-3. Hybrid search (dense + SPLADE + reranker) compensates for model size
-4. Apache 2.0 license — no vendor lock-in
-5. 32K context handles large code files
-6. If code retrieval quality is insufficient, upgrade path is Qwen3-Embedding-4B
+1. Local GPU inference (no API dependency, no latency, no cost)
+1. Hybrid search (dense + SPLADE + reranker) compensates for model size
+1. Apache 2.0 license — no vendor lock-in
+1. 32K context handles large code files
+1. If code retrieval quality is insufficient, upgrade path is Qwen3-Embedding-4B
    (same API, still fits on RTX 4080 SUPER 16GB)
 
----
+______________________________________________________________________
 
 ## 11. Qdrant Payload Filtering for Code Metadata
 
@@ -611,21 +612,21 @@ results = client.query_points(
 
 ### Filter conditions reference
 
-| Condition      | Use case                                    | Example                                      |
-|----------------|---------------------------------------------|----------------------------------------------|
-| `MatchValue`   | Exact match (keyword, int, bool)            | `language == "python"`                       |
-| `MatchAny`     | IN operator                                 | `language IN ("python", "go", "rust")`       |
-| `MatchExcept`  | NOT IN operator                             | `language NOT IN ("yaml", "json")`           |
-| `Range`        | Numeric comparison (gt, gte, lt, lte)       | `line_start >= 100`                          |
-| `IsNull`       | Field is null                               | `class_name IS NULL`                         |
-| `IsEmpty`      | Field is empty array                        | `tags IS EMPTY`                              |
-| `HasVector`    | Point has a specific named vector           | `HAS "dense"`                                |
+| Condition     | Use case                              | Example                                |
+| ------------- | ------------------------------------- | -------------------------------------- |
+| `MatchValue`  | Exact match (keyword, int, bool)      | `language == "python"`                 |
+| `MatchAny`    | IN operator                           | `language IN ("python", "go", "rust")` |
+| `MatchExcept` | NOT IN operator                       | `language NOT IN ("yaml", "json")`     |
+| `Range`       | Numeric comparison (gt, gte, lt, lte) | `line_start >= 100`                    |
+| `IsNull`      | Field is null                         | `class_name IS NULL`                   |
+| `IsEmpty`     | Field is empty array                  | `tags IS EMPTY`                        |
+| `HasVector`   | Point has a specific named vector     | `HAS "dense"`                          |
 
 Clauses: `must` (AND), `should` (OR), `must_not` (NOT). Nestable.
 
 Nested key access via dot notation: `metadata.author.name`.
 
----
+______________________________________________________________________
 
 ## References
 

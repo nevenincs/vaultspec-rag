@@ -1,10 +1,11 @@
 ---
 tags:
-  - "#research"
-  - "#gpu-rag-stack"
+  - '#research'
+  - '#gpu-rag-stack'
 date: 2026-03-06
 related: []
 ---
+
 # GPU Vector Search Deep Dive
 
 Date: 2026-03-06
@@ -21,7 +22,7 @@ Sources:
 - <https://sbert.net/docs/cross_encoder/pretrained_models.html> (CrossEncoder models)
 - <https://sbert.net/docs/cross_encoder/usage/usage.html> (CrossEncoder usage)
 
----
+______________________________________________________________________
 
 ## Primary Question: Are we leaving performance on the table?
 
@@ -29,7 +30,7 @@ Sources:
 
 GPU vector search becomes relevant at 10M+ vectors. GPU reranking is the one area worth considering -- it adds ~5ms per query for meaningful quality improvement.
 
----
+______________________________________________________________________
 
 ## 1. Qdrant GPU Support (v1.13+)
 
@@ -41,11 +42,11 @@ GPU vector search becomes relevant at 10M+ vectors. GPU reranking is the one are
 
 Benchmarks for 1M vectors at 1536 dimensions:
 
-| GPU | Index Build Time | vs CPU (8 cores, 97.5s) |
-|---|---|---|
-| AMD Radeon Pro V520 | 33.1s | 2.9x faster |
-| NVIDIA T4 | 19.1s | 5.1x faster |
-| NVIDIA L4 | 12.4s | 7.9x faster |
+| GPU                 | Index Build Time | vs CPU (8 cores, 97.5s) |
+| ------------------- | ---------------- | ----------------------- |
+| AMD Radeon Pro V520 | 33.1s            | 2.9x faster             |
+| NVIDIA T4           | 19.1s            | 5.1x faster             |
+| NVIDIA L4           | 12.4s            | 7.9x faster             |
 
 Up to **8.7x faster** index builds claimed across configurations. Up to 10x for equivalent hardware cost.
 
@@ -95,7 +96,7 @@ docker run --rm --device /dev/kfd --device /dev/dri \
 
 **If we ever move to server mode**, GPU indexing would reduce index rebuild time from ~10s to ~1-2s for 100K vectors -- nice but not a bottleneck.
 
----
+______________________________________________________________________
 
 ## 2. FAISS-GPU with cuVS (CAGRA)
 
@@ -103,37 +104,37 @@ docker run --rm --device /dev/kfd --device /dev/dri \
 
 **Index Build Times (95% recall@10):**
 
-| Index Type | Dataset | GPU (cuVS) | CPU | Speedup |
-|---|---|---|---|---|
-| CAGRA vs HNSW | 5M x 1536d | 89.7s | 1106.1s | **12.3x** |
-| CAGRA vs HNSW | 100M x 96d | 518.5s | 3322.1s | **6.4x** |
-| IVF-PQ | 5M x 1536d | 9.0s | 42.0s | **4.7x** |
-| IVF-Flat | 5M x 1536d | 15.2s | 24.4s | 1.6x |
+| Index Type    | Dataset    | GPU (cuVS) | CPU     | Speedup   |
+| ------------- | ---------- | ---------- | ------- | --------- |
+| CAGRA vs HNSW | 5M x 1536d | 89.7s      | 1106.1s | **12.3x** |
+| CAGRA vs HNSW | 100M x 96d | 518.5s     | 3322.1s | **6.4x**  |
+| IVF-PQ        | 5M x 1536d | 9.0s       | 42.0s   | **4.7x**  |
+| IVF-Flat      | 5M x 1536d | 15.2s      | 24.4s   | 1.6x      |
 
 **Search Latency (95% recall@10, single query):**
 
-| Index Type | Dataset | GPU (cuVS) | CPU | Speedup |
-|---|---|---|---|---|
-| CAGRA vs HNSW | 5M x 1536d | 0.15ms | 0.71ms | **4.7x** |
-| IVF-PQ | 5M x 1536d | 0.22ms | 1.78ms | **8.1x** |
-| IVF-Flat | 5M x 1536d | 1.14ms | 1.98ms | 1.7x |
-| CAGRA vs HNSW | 100M x 96d | 0.23ms | 0.56ms | 2.4x |
+| Index Type    | Dataset    | GPU (cuVS) | CPU    | Speedup  |
+| ------------- | ---------- | ---------- | ------ | -------- |
+| CAGRA vs HNSW | 5M x 1536d | 0.15ms     | 0.71ms | **4.7x** |
+| IVF-PQ        | 5M x 1536d | 0.22ms     | 1.78ms | **8.1x** |
+| IVF-Flat      | 5M x 1536d | 1.14ms     | 1.98ms | 1.7x     |
+| CAGRA vs HNSW | 100M x 96d | 0.23ms     | 0.56ms | 2.4x     |
 
 ### Why NOT FAISS-GPU for Our Stack
 
 1. **No persistence** -- must save/load index manually, no WAL, no crash recovery
-2. **No payload filtering** -- cannot filter by vault, file path, tags
-3. **No sparse vector support** -- no hybrid search
-4. **No named vectors** -- cannot store dense + sparse side by side
-5. **Library, not database** -- requires building all DB features yourself
-6. **H100-class GPU required** for meaningful speedups at scale
-7. **Our scale is too small** -- at 100K vectors, CPU HNSW search is <1ms anyway
+1. **No payload filtering** -- cannot filter by vault, file path, tags
+1. **No sparse vector support** -- no hybrid search
+1. **No named vectors** -- cannot store dense + sparse side by side
+1. **Library, not database** -- requires building all DB features yourself
+1. **H100-class GPU required** for meaningful speedups at scale
+1. **Our scale is too small** -- at 100K vectors, CPU HNSW search is \<1ms anyway
 
 ### Verdict
 
 FAISS-GPU is for billion-scale similarity search in research/production ML pipelines. It is **not a vector database** and would require massive integration work to replace Qdrant's feature set.
 
----
+______________________________________________________________________
 
 ## 3. Milvus with GPU Index
 
@@ -149,10 +150,10 @@ Milvus 2.4+ integrates NVIDIA cuVS for GPU-native CAGRA indexing:
 ### Why NOT Milvus for Our Stack
 
 1. **Requires Docker server** -- `milvus-standalone` or `milvus-distributed`
-2. **Heavy operational footprint** -- etcd + MinIO + Milvus containers
-3. **Designed for 10M+ vectors** -- overkill for our scale
-4. **No local embedded mode** -- unlike Qdrant's `path=...` mode
-5. **GPU benefits only at scale** -- batch throughput gains irrelevant for single-user queries
+1. **Heavy operational footprint** -- etcd + MinIO + Milvus containers
+1. **Designed for 10M+ vectors** -- overkill for our scale
+1. **No local embedded mode** -- unlike Qdrant's `path=...` mode
+1. **GPU benefits only at scale** -- batch throughput gains irrelevant for single-user queries
 
 ### When Milvus GPU Would Matter
 
@@ -165,7 +166,7 @@ Milvus 2.4+ integrates NVIDIA cuVS for GPU-native CAGRA indexing:
 
 Milvus GPU is impressive for large-scale deployments but is **architecturally mismatched** for our local, single-user, embedded use case. The Docker + etcd + MinIO overhead alone disqualifies it.
 
----
+______________________________________________________________________
 
 ## 4. GPU Cross-Encoder Reranking
 
@@ -175,13 +176,13 @@ Cross-encoders score (query, document) pairs jointly, producing much higher qual
 
 ### Available Models (sentence-transformers)
 
-| Model | Params | NDCG@10 | Speed (docs/sec) | Use Case |
-|---|---|---|---|---|
-| `cross-encoder/ms-marco-MiniLM-L6-v2` | ~22M | 74.30 | 1,800 | **Best balance** |
-| `cross-encoder/ms-marco-MiniLM-L12-v2` | ~33M | 74.31 | 960 | Slightly better accuracy |
-| `cross-encoder/ms-marco-MiniLM-L4-v2` | ~19M | 73.04 | 2,500 | Fastest accurate |
-| `cross-encoder/ms-marco-TinyBERT-L2-v2` | ~4.4M | 69.84 | 9,000 | Ultra-fast |
-| `BAAI/bge-reranker-v2-m3` | ~568M | -- | ~200 | Multilingual, highest quality |
+| Model                                   | Params | NDCG@10 | Speed (docs/sec) | Use Case                      |
+| --------------------------------------- | ------ | ------- | ---------------- | ----------------------------- |
+| `cross-encoder/ms-marco-MiniLM-L6-v2`   | ~22M   | 74.30   | 1,800            | **Best balance**              |
+| `cross-encoder/ms-marco-MiniLM-L12-v2`  | ~33M   | 74.31   | 960              | Slightly better accuracy      |
+| `cross-encoder/ms-marco-MiniLM-L4-v2`   | ~19M   | 73.04   | 2,500            | Fastest accurate              |
+| `cross-encoder/ms-marco-TinyBERT-L2-v2` | ~4.4M  | 69.84   | 9,000            | Ultra-fast                    |
+| `BAAI/bge-reranker-v2-m3`               | ~568M  | --      | ~200             | Multilingual, highest quality |
 
 ### GPU Usage
 
@@ -213,18 +214,18 @@ reranked = sorted(zip(top_k_results, scores), key=lambda x: x[1], reverse=True)
 Query -> [Dense + Sparse Encoding] -> [Qdrant RRF Fusion] -> top-20 -> [CrossEncoder Rerank] -> top-5
 ```
 
----
+______________________________________________________________________
 
 ## 5. Summary: Are We Leaving Performance on the Table?
 
-| Component | GPU Option | Benefit at Our Scale | Recommendation |
-|---|---|---|---|
-| **Embedding inference** | sentence-transformers + CUDA | **HIGH** -- 10-50x vs CPU | Already in our stack |
-| **Vector search** | Qdrant CPU HNSW | Sufficient (<1ms) | **Keep CPU** |
-| **Index builds** | Qdrant GPU (Docker) | Low (saves seconds) | Skip -- requires server mode |
-| **Index builds** | FAISS-GPU / cuVS | Low (wrong tool) | Skip -- not a database |
-| **Post-retrieval reranking** | CrossEncoder on GPU | **MEDIUM** -- quality boost | **Consider adding** |
-| **Vector DB alternative** | Milvus GPU | None (overkill) | Skip -- wrong scale |
+| Component                    | GPU Option                   | Benefit at Our Scale        | Recommendation               |
+| ---------------------------- | ---------------------------- | --------------------------- | ---------------------------- |
+| **Embedding inference**      | sentence-transformers + CUDA | **HIGH** -- 10-50x vs CPU   | Already in our stack         |
+| **Vector search**            | Qdrant CPU HNSW              | Sufficient (\<1ms)          | **Keep CPU**                 |
+| **Index builds**             | Qdrant GPU (Docker)          | Low (saves seconds)         | Skip -- requires server mode |
+| **Index builds**             | FAISS-GPU / cuVS             | Low (wrong tool)            | Skip -- not a database       |
+| **Post-retrieval reranking** | CrossEncoder on GPU          | **MEDIUM** -- quality boost | **Consider adding**          |
+| **Vector DB alternative**    | Milvus GPU                   | None (overkill)             | Skip -- wrong scale          |
 
 ### Final Architecture Recommendation
 
@@ -243,14 +244,14 @@ Query -> [Dense + Sparse Encoding] -> [Qdrant RRF Fusion] -> top-20 -> [CrossEnc
 
 **The only GPU acceleration gap worth filling is cross-encoder reranking.** Everything else is either already GPU-accelerated (embeddings) or doesn't benefit from GPU at our scale (vector search, index builds).
 
----
+______________________________________________________________________
 
 ## 6. Risks & Caveats
 
-| Item | Detail |
-|---|---|
-| Qdrant GPU requires Docker (Linux x86_64) | Cannot use with `QdrantClient(path=...)` local mode |
-| FAISS-GPU benchmarks use H100 | Consumer GPUs (RTX 3060-4090) will see smaller speedups |
-| CrossEncoder adds latency | ~5-10ms per query for 20 docs; acceptable but not free |
-| SPLADE + dense + reranker = 3 models in VRAM | ~2.1 GB total in fp16; fits on any modern GPU |
-| Reranker model selection | MiniLM-L6-v2 is English-only; use BGE-reranker-v2-m3 for multilingual |
+| Item                                         | Detail                                                                |
+| -------------------------------------------- | --------------------------------------------------------------------- |
+| Qdrant GPU requires Docker (Linux x86_64)    | Cannot use with `QdrantClient(path=...)` local mode                   |
+| FAISS-GPU benchmarks use H100                | Consumer GPUs (RTX 3060-4090) will see smaller speedups               |
+| CrossEncoder adds latency                    | ~5-10ms per query for 20 docs; acceptable but not free                |
+| SPLADE + dense + reranker = 3 models in VRAM | ~2.1 GB total in fp16; fits on any modern GPU                         |
+| Reranker model selection                     | MiniLM-L6-v2 is English-only; use BGE-reranker-v2-m3 for multilingual |

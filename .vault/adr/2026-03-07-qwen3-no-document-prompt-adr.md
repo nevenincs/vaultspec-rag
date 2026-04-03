@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-06-gpu-only-rag-stack-adr]]"
-  - "[[2026-03-09-qwen3-task-prefix-verification-research]]"
+  - '[[2026-03-06-gpu-only-rag-stack-adr]]'
+  - '[[2026-03-09-qwen3-task-prefix-verification-research]]'
 ---
 
 # ADR: Qwen3-Embedding encodes documents without prompt, queries with `prompt_name="query"`
@@ -43,18 +43,18 @@ model.default_prompt_name = None
    that tells the model to optimize for retrieval. Omitting it drops
    performance 1-5%.
 
-2. **Document prompt is empty**: `prompt_name="document"` prepends an empty
+1. **Document prompt is empty**: `prompt_name="document"` prepends an empty
    string -- functionally identical to omitting it. Explicitly passing it is
    harmless but unnecessary.
 
-3. **`prompt` overrides `prompt_name`**: if both are provided, `prompt` takes
+1. **`prompt` overrides `prompt_name`**: if both are provided, `prompt` takes
    priority. This allows custom code-specific instructions:
 
    ```python
    model.encode(queries, prompt="Instruct: Given a code search query, retrieve relevant source code\nQuery:")
    ```
 
-4. **Current codebase is correct**: `embeddings.py` already uses
+1. **Current codebase is correct**: `embeddings.py` already uses
    `prompt_name="query"` for queries and omits it for documents.
 
 ## Consequences

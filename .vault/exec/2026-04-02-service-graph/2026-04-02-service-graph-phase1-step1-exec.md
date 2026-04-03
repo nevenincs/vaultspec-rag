@@ -1,10 +1,10 @@
 ---
 tags:
-  - "#exec"
-  - "#service-graph"
+  - '#exec'
+  - '#service-graph'
 date: 2026-04-02
 related:
-  - "[[2026-04-02-service-graph-phase1-plan]]"
+  - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-1 step-1: graph cache unification (D3, R36-C1)

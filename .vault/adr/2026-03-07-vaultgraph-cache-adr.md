@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#adr"
-  - "#gpu-rag-stack"
+  - '#adr'
+  - '#gpu-rag-stack'
 date: 2026-03-07
 related:
-  - "[[2026-03-07-threading-lock-for-singleton-adr]]"
-  - "[[2026-03-07-continuous-research]]"
+  - '[[2026-03-07-threading-lock-for-singleton-adr]]'
+  - '[[2026-03-07-continuous-research]]'
 ---
 
 # ADR: VaultGraph cache with `threading.Lock` and explicit invalidation
@@ -56,18 +56,19 @@ Call `_graph_cache.invalidate()` after reindex completes.
    threads (see ADR: threading-lock-for-singleton). Double-checked locking
    avoids contention on the hot path.
 
-2. **Explicit invalidation after reindex** is reliable because reindex and
+1. **Explicit invalidation after reindex** is reliable because reindex and
    search happen in the same process. The indexer (or API facade) calls
    `invalidate()` when done.
 
-3. **Alternatives rejected:**
+1. **Alternatives rejected:**
+
    - `weakref`: wrong semantic -- we want the graph to stay alive between
      calls, not be GC'd when no references remain
    - `functools.lru_cache`: not invalidatable, stale forever
    - File mtime checking: adds stat() per access, mtime has 1-2s resolution
      on some platforms, unnecessary when reindex is in-process
 
-4. **Concurrent reads are lock-free**: `VaultGraph` is read-only after
+1. **Concurrent reads are lock-free**: `VaultGraph` is read-only after
    construction. Multiple threads can read simultaneously without locking.
    Only construction and invalidation acquire the lock.
 
