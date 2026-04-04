@@ -237,6 +237,20 @@ def handle_index(
             help="Port of running MCP server (fast path).",
         ),
     ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="List files that would be indexed without indexing.",
+        ),
+    ] = False,
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude",
+            help="Ad-hoc exclusion pattern (repeatable, gitignore syntax).",
+        ),
+    ] = None,
 ) -> None:
     """Index vault documents and/or codebase chunks.
 
@@ -252,12 +266,40 @@ def handle_index(
         clean: Delete the existing index before rebuilding.
         port: Port of a running MCP server for fast-path
             delegation.
+        dry_run: List files that would be indexed without
+            actually indexing.  Codebase only.
+        exclude: Ad-hoc exclusion patterns (gitignore syntax,
+            repeatable).  Combined with ``.vaultragignore``.
 
     Raises:
         typer.Exit: On GPU errors or locked index files.
 
     """
+    state: CLIState = ctx.obj
+    target = state.target
+
+    # --dry-run: list codebase files without loading GPU or Qdrant.
+    # Must come before --port MCP delegation (D9).
+    if dry_run:
+        if index_type not in ("code", "all"):
+            console.print("[yellow]--dry-run only applies to codebase indexing.[/]")
+            return
+        # Bypass __init__ to avoid loading GPU model and Qdrant store;
+        # scan_files() only needs root_dir and _extra_excludes.
+        c_indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        c_indexer.root_dir = target
+        c_indexer._extra_excludes = exclude or []
+        files = c_indexer.scan_files()
+        console.print(f"[bold]{len(files)}[/] files would be indexed:")
+        for f in sorted(files):
+            console.print(f"  {f.relative_to(target)}")
+        return
+
     if port is not None:
+        if exclude:
+            console.print(
+                "[yellow]--exclude is ignored when delegating to MCP server.[/]",
+            )
         do_vault = index_type in ("vault", "all")
         do_code = index_type in ("code", "all")
         v_data = None
@@ -326,9 +368,6 @@ def handle_index(
 
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
-    state: CLIState = ctx.obj
-    target = state.target
-
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -368,7 +407,11 @@ def handle_index(
                 _handle_gpu_error(e)
             progress.advance(init_task)
             v_indexer = VaultIndexer(target, emb_model, store) if do_vault else None
-            c_indexer = CodebaseIndexer(target, emb_model, store) if do_code else None
+            c_indexer = (
+                CodebaseIndexer(target, emb_model, store, extra_excludes=exclude or [])
+                if do_code
+                else None
+            )
             progress.advance(init_task)
 
             v_res = None

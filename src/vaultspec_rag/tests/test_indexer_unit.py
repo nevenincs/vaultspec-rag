@@ -681,6 +681,7 @@ class TestGitignoreNegationPatterns:
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
         # code.py should always be found
@@ -1010,6 +1011,7 @@ class TestR10MinorAnchoredPattern:
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = root
+        indexer._extra_excludes = []
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(root)).replace("\\", "/") for p in paths}
@@ -1063,3 +1065,158 @@ class TestR11M1NonAsciiChunkText:
         combined = "\n".join(c[0] for c in chunks)
         assert "处理" in combined
         assert "数据" in combined
+
+
+class TestVaultragignore:
+    """Tests for .vaultragignore support and extra_excludes (D1-D7)."""
+
+    @pytest.mark.unit
+    def test_vaultragignore_excludes_matching_files(self, tmp_path: Path):
+        """Files matching .vaultragignore patterns are excluded from scan."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "generated.py").write_text("y = 2\n", encoding="utf-8")
+        (tmp_path / ".vaultragignore").write_text("generated.py\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "main.py" in rel
+        assert "generated.py" not in rel
+
+    @pytest.mark.unit
+    def test_missing_vaultragignore_no_error(self, tmp_path: Path):
+        """Missing .vaultragignore is silently ignored (D3)."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "app.py" in rel
+
+    @pytest.mark.unit
+    def test_extra_excludes_applied(self, tmp_path: Path):
+        """CLI --exclude patterns are applied via extra_excludes (D4)."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "temp.py").write_text("y = 2\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = ["temp.py"]
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "main.py" in rel
+        assert "temp.py" not in rel
+
+    @pytest.mark.unit
+    def test_vaultragignore_negation_cannot_override_gitignore(self, tmp_path: Path):
+        """Negation in .vaultragignore cannot un-ignore .gitignore entries (D1)."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "secret.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "main.py").write_text("y = 2\n", encoding="utf-8")
+        (tmp_path / ".gitignore").write_text("secret.py\n", encoding="utf-8")
+        # Attempt to un-ignore secret.py from .vaultragignore — must fail
+        (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "secret.py" not in rel, (
+            ".vaultragignore negation must not override .gitignore"
+        )
+        assert "main.py" in rel
+
+    @pytest.mark.unit
+    def test_vaultragignore_internal_negation_works(self, tmp_path: Path):
+        """Negation within .vaultragignore works for its own patterns (D1).
+
+        *.test.py is excluded, but !important.test.py brings it back.
+        """
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "foo.test.py").write_text("y = 2\n", encoding="utf-8")
+        (tmp_path / "important.test.py").write_text("z = 3\n", encoding="utf-8")
+        (tmp_path / ".vaultragignore").write_text(
+            "*.test.py\n!important.test.py\n", encoding="utf-8"
+        )
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "main.py" in rel
+        assert "foo.test.py" not in rel
+        assert "important.test.py" in rel
+
+    @pytest.mark.unit
+    def test_gitignore_still_respected_alongside_vaultragignore(self, tmp_path: Path):
+        """Both .gitignore and .vaultragignore exclusions are applied (D1)."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "build_output.py").write_text("y = 2\n", encoding="utf-8")
+        (tmp_path / "vendor_lib.py").write_text("z = 3\n", encoding="utf-8")
+        (tmp_path / ".gitignore").write_text("build_output.py\n", encoding="utf-8")
+        (tmp_path / ".vaultragignore").write_text("vendor_lib.py\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "main.py" in rel
+        assert "build_output.py" not in rel
+        assert "vendor_lib.py" not in rel
+
+    @pytest.mark.unit
+    def test_scan_files_matches_scan_codebase(self, tmp_path: Path):
+        """scan_files() returns the same result as _scan_codebase() (D5)."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        assert indexer.scan_files() == indexer._scan_codebase()
+
+    @pytest.mark.unit
+    def test_vaultragignore_directory_exclusion(self, tmp_path: Path):
+        """Directory patterns in .vaultragignore prune entire subtrees."""
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        (vendor / "lib.py").write_text("y = 2\n", encoding="utf-8")
+        (tmp_path / ".vaultragignore").write_text("vendor/\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        files = indexer.scan_files()
+        rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
+        assert "main.py" in rel
+        assert "vendor/lib.py" not in rel
