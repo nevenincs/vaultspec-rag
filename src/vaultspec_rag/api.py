@@ -314,7 +314,16 @@ class GraphCache:
         self._lock = threading.Lock()
 
     def _is_stale(self, root_dir: pathlib.Path) -> bool:
-        """Return ``True`` when the cache needs a rebuild."""
+        """Return ``True`` when the cache needs a rebuild.
+
+        Args:
+            root_dir: Workspace root directory to check against the
+                cached root.
+
+        Returns:
+            ``True`` if the graph has not been built yet, targets a
+            different *root_dir*, or the TTL has expired.
+        """
         if self._graph is None or self._root != root_dir:
             return True
         return (time.monotonic() - self._built_at) >= self._ttl_seconds

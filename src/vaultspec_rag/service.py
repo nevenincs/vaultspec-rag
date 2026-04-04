@@ -69,6 +69,7 @@ class ServiceRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize the registry with empty model and project state."""
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         self._lock = threading.Lock()

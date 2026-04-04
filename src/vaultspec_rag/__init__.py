@@ -1,7 +1,17 @@
 """RAG (Retrieval-Augmented Generation) for vault documents.
 
-GPU-native embedding pipeline using sentence-transformers + Qwen3-Embedding-0.6B
-for dense embeddings and SPLADE v3 for sparse. Qdrant local mode for vector storage.
+GPU-native embedding and search pipeline for vault documents and codebase files.
+Uses Qwen3-Embedding-0.6B for dense embeddings and SPLADE v3 for sparse embeddings,
+with optional cross-encoder reranking (BAAI/bge-reranker-v2-m3). Hybrid search via
+Qdrant local-mode vector database with unified query interface across vault documents,
+codebase files, and vault relationship graphs.
+
+Exports:
+    High-level API: index(), search_vault(), search_codebase(), search_all(),
+    index_codebase(), list_documents(), get_related()
+
+    Core classes: VaultStore, VaultSearcher, VaultIndexer, CodebaseIndexer,
+    EmbeddingModel, VaultDocument, CodeChunk, SearchResult, ParsedQuery
 """
 
 from __future__ import annotations

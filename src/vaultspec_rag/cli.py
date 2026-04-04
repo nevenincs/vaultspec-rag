@@ -1,4 +1,15 @@
-"""Primary CLI application for vaultspec-rag."""
+"""CLI application for vaultspec-rag.
+
+VaultSpec RAG is a GPU-accelerated Retrieval-Augmented Generation (RAG) engine
+that provides unified hybrid search over project documentation and source code.
+It uses dense embeddings (Qwen3), sparse embeddings (SPLADE), and learned
+reranking (CrossEncoder) to find the most relevant context for code generation,
+code review, and documentation discovery.
+
+This module provides command handlers for indexing, searching, and managing the
+RAG engine, including support for background service operation via MCP (Model
+Context Protocol).
+"""
 
 from __future__ import annotations
 
@@ -51,6 +62,7 @@ def _handle_gpu_error(exc: Exception) -> None:
 
     Raises:
         typer.Exit: Always exits with code 1.
+
     """
     if isinstance(exc, ImportError):
         console.print(
@@ -84,11 +96,17 @@ server_app.add_typer(service_app, name="service")
 
 
 class CLIState:
-    """Shared state for CLI commands.
+    """Shared state container for CLI commands and sub-applications.
+
+    Initialized by the main callback and passed via ``typer.Context.obj``
+    to all subcommands. Holds validated workspace metadata and sets the
+    ``VAULTSPEC_ROOT`` environment variable for downstream services.
 
     Attributes:
-        layout: The resolved workspace layout.
-        target: The target directory path from the layout.
+        layout: The resolved workspace layout containing validated
+            directories (.vault, .vaultspec, target).
+        target: The target directory path (project root) from the layout.
+
     """
 
     def __init__(self, layout: WorkspaceLayout) -> None:
@@ -97,6 +115,7 @@ class CLIState:
         Args:
             layout: Validated workspace layout containing
                 target, vault, and vaultspec directories.
+
         """
         self.layout = layout
         self.target = layout.target_dir
@@ -111,6 +130,7 @@ def version_callback(value: bool) -> None:
 
     Raises:
         typer.Exit: Exits after printing the version.
+
     """
     if value:
         import importlib.metadata
@@ -169,6 +189,7 @@ def main(
     Raises:
         typer.Exit: On workspace resolution failure (code 1)
             or when no subcommand is given (code 0).
+
     """
     configure_logging(debug=debug, level="INFO" if verbose else None)
 
@@ -234,6 +255,7 @@ def handle_index(
 
     Raises:
         typer.Exit: On GPU errors or locked index files.
+
     """
     if port is not None:
         do_vault = index_type in ("vault", "all")
@@ -435,6 +457,7 @@ def _try_mcp_reindex(
     Returns:
         Parsed JSON response dict on success, or None if the
         server is unavailable or an error occurs.
+
     """
     import asyncio
 
@@ -497,6 +520,7 @@ def _try_mcp_search(
     Returns:
         List of result dicts on success, or None if the server
         is unavailable or an error occurs.
+
     """
     import asyncio
 
@@ -547,6 +571,7 @@ def _display_search_results(
             ``snippet``, and optional ``line_start`` keys.
         search_type: Label for the table title (e.g.
             ``vault``, ``code``, ``all``).
+
     """
     table = Table(title=f"Search Results: {search_type}", box=None)
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
@@ -630,6 +655,7 @@ def handle_search(
 
     Raises:
         typer.Exit: On GPU initialization errors.
+
     """
     if port is not None:
         mcp_results = _try_mcp_search(query, search_type, max_results, port)
@@ -704,6 +730,7 @@ def handle_status(ctx: typer.Context) -> None:
 
     Raises:
         typer.Exit: On missing GPU dependencies.
+
     """
     state: CLIState = ctx.obj
     target = state.target
@@ -754,9 +781,19 @@ def mcp_start(
 ) -> None:
     """Start the MCP server in the foreground.
 
+    Launches the Model Context Protocol (MCP) server which provides tools for
+    searching and reindexing the RAG engine. By default uses stdio transport
+    (suitable for LLM integration), or HTTP on the specified port for standalone
+    use. Propagates the ``--target`` root option to the server via the
+    ``VAULTSPEC_ROOT`` environment variable.
+
     Args:
-        ctx: Typer context for reading root ``--target``.
-        port: Run on HTTP port instead of stdio transport.
+        ctx: Typer context for reading root ``--target`` parameter.
+        port: TCP port for HTTP transport. If omitted, uses stdio.
+
+    Raises:
+        SystemExit: When the MCP server process exits (typically via Ctrl+C).
+
     """
     from .mcp_server import main as run_mcp
 
@@ -774,10 +811,18 @@ def mcp_start(
 
 @mcp_app.command("stop")
 def mcp_stop() -> None:
-    """Stop the MCP server.
+    """Provide guidance for stopping the MCP server.
 
-    The MCP server uses stdio transport and runs in the foreground.
-    Terminate it via Ctrl+C or the parent process manager.
+    The MCP server uses stdio transport and runs in the foreground by default.
+    It does not have a built-in stop mechanism; instead, terminate it via
+    Ctrl+C in the terminal where it was started, or stop the parent process
+    manager (e.g., systemd, Docker, or your IDE).
+
+    Note:
+        For the background service (``service`` commands), use ``service stop``
+        which sends graceful termination signals and manages the process
+        lifecycle automatically.
+
     """
     console.print(
         Panel(
@@ -791,7 +836,12 @@ def mcp_stop() -> None:
 
 @mcp_app.command("status")
 def mcp_status() -> None:
-    """Display the MCP server's configuration and readiness."""
+    """Display the MCP server configuration, available tools, and entry points.
+
+    Shows a table with server name, transport mode, registered tools
+    (search_vault, search_codebase, search_all, reindex_vault, reindex_codebase,
+    get_index_status, get_code_file), available resources, and prompts.
+    """
     table = Table(title="MCP Server Configuration", show_header=False, padding=(0, 2))
     table.add_column("Key", style="bold")
     table.add_column("Value")
@@ -832,6 +882,7 @@ def _status_file() -> Path:
 
     Returns:
         Path to ``~/.vaultspec-rag/service.json``.
+
     """
     return _status_dir() / "service.json"
 
@@ -841,6 +892,7 @@ def _log_file() -> Path:
 
     Returns:
         Path to ``~/.vaultspec-rag/service.log``.
+
     """
     return _status_dir() / "service.log"
 
@@ -851,6 +903,7 @@ def _write_service_status(pid: int, port: int) -> None:
     Args:
         pid: Process ID of the running service.
         port: TCP port the service is listening on.
+
     """
     data = {
         "pid": pid,
@@ -869,6 +922,7 @@ def _read_service_status() -> dict[str, Any] | None:
     Returns:
         Parsed status dict, or None if the file is missing,
         unreadable, or lacks ``pid``/``port`` keys.
+
     """
     sf = _status_file()
     if not sf.exists():
@@ -890,6 +944,7 @@ def _is_pid_alive(pid: int) -> bool:
 
     Returns:
         True if the process exists and is running.
+
     """
     if pid <= 0:
         return False
@@ -932,6 +987,7 @@ def _is_our_service(pid: int) -> bool:
 
     Returns:
         True if the process appears to be a vaultspec-rag service.
+
     """
     if not _is_pid_alive(pid):
         return False
@@ -956,6 +1012,7 @@ def _port_is_available(port: int) -> bool:
 
     Returns:
         True if the port is free, False if already in use.
+
     """
     import socket
 
@@ -994,6 +1051,7 @@ def _health_probe(port: int) -> dict[str, Any] | None:
         ``"error"`` and ``http_code`` for HTTP errors (server
         running but unhealthy), or None for connection errors
         (server not running).
+
     """
     url = f"http://127.0.0.1:{port}/health"
     opener = urllib.request.build_opener(_NoRedirect)
@@ -1015,6 +1073,7 @@ def _spawn_service(port: int, log_path: Path) -> int:
 
     Returns:
         PID of the spawned process.
+
     """
     cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
     log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
@@ -1047,6 +1106,7 @@ def _terminate_pid(pid: int) -> None:
 
     Args:
         pid: Process ID to terminate.
+
     """
     if sys.platform == "win32":
         with contextlib.suppress(OSError):
@@ -1089,6 +1149,7 @@ def service_start(
 
     Raises:
         typer.Exit: On failure to start or timeout.
+
     """
     # Port-level guard: prevents concurrent start races (ADR D1)
     if not _port_is_available(port):
@@ -1180,9 +1241,11 @@ def service_start(
 def service_stop() -> None:
     """Stop the background RAG service.
 
-    Reads the status file, verifies the PID is alive, sends
-    a termination signal, waits briefly, and removes the
-    status file.
+    Reads the status file from ``~/.vaultspec-rag/service.json``, verifies
+    the PID is still alive and belongs to a vaultspec-rag process, sends
+    a graceful termination signal (SIGTERM on Unix, CTRL_BREAK_EVENT on
+    Windows), waits briefly for graceful shutdown, and removes the status file.
+    Force-kills (SIGKILL/TerminateProcess) if graceful shutdown fails.
     """
     status = _read_service_status()
     if status is None:
@@ -1227,11 +1290,15 @@ def service_stop() -> None:
 
 @service_app.command("status")
 def service_status() -> None:
-    """Show the status of the background RAG service.
+    """Display the current status of the background RAG service.
 
-    Reads the status file, checks PID liveness, probes the
-    health endpoint, and displays a Rich table with service
-    state.
+    Reads the status file from ``~/.vaultspec-rag/service.json``, checks if
+    the stored PID belongs to an active vaultspec-rag process, probes the
+    HTTP health endpoint (``/health``) to retrieve realtime metrics (uptime,
+    CUDA status, models loaded, projects indexed), and displays a Rich table
+    with process state, port, startup time, and health details. Returns
+    appropriate status messages for stopped, stale, unreachable, or healthy
+    service instances.
     """
     status = _read_service_status()
     table = Table(title="Service Status", show_header=False, padding=(0, 2))
@@ -1289,6 +1356,7 @@ def service_warmup() -> None:
     Raises:
         typer.Exit: If CUDA is not available or huggingface_hub
             is not installed.
+
     """
     try:
         import torch
@@ -1373,6 +1441,7 @@ def handle_benchmark(
     Raises:
         typer.Exit: When vault is empty (code 1) or on GPU
             errors.
+
     """
     import statistics
     import time
@@ -1500,6 +1569,7 @@ def handle_quality() -> None:
     Raises:
         typer.Exit: When test corpus is missing (code 1),
             on GPU errors, or when precision drops below 75%.
+
     """
     import shutil
     import tempfile
@@ -1619,6 +1689,7 @@ def handle_test(ctx: typer.Context) -> None:
         vaultspec-rag test
         vaultspec-rag test -m unit
         vaultspec-rag test -m integration -v --timeout=120
+
     """
     test_dir = str(Path(__file__).resolve().parent / "tests")
     cmd = [sys.executable, "-m", "pytest", test_dir, *ctx.args]
