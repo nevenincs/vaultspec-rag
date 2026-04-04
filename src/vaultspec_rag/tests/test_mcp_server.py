@@ -8,6 +8,7 @@ import threading
 
 import pytest
 
+from vaultspec_rag.config import EnvVar
 from vaultspec_rag.mcp_server import (
     HealthResponse,
     IndexResponse,
@@ -292,48 +293,48 @@ class TestResolveRoot:
         """When project_root is None and env unset, falls back to cwd."""
         from pathlib import Path
 
-        orig = os.environ.pop("VAULTSPEC_ROOT", None)
+        orig = os.environ.pop(EnvVar.RAG_ROOT, None)
         try:
             result = _resolve_root(None)
             assert result == Path.cwd().resolve()
         finally:
             if orig is not None:
-                os.environ["VAULTSPEC_ROOT"] = orig
+                os.environ[EnvVar.RAG_ROOT] = orig
 
     def test_resolve_root_from_env(self, tmp_path):
-        orig = os.environ.get("VAULTSPEC_ROOT")
-        os.environ["VAULTSPEC_ROOT"] = str(tmp_path)
+        orig = os.environ.get(EnvVar.RAG_ROOT)
+        os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
         try:
             result = _resolve_root(None)
             assert result == tmp_path.resolve()
         finally:
             if orig is not None:
-                os.environ["VAULTSPEC_ROOT"] = orig
+                os.environ[EnvVar.RAG_ROOT] = orig
             else:
-                os.environ.pop("VAULTSPEC_ROOT", None)
+                os.environ.pop(EnvVar.RAG_ROOT, None)
 
     def test_default_root_from_env(self, tmp_path):
-        orig = os.environ.get("VAULTSPEC_ROOT")
-        os.environ["VAULTSPEC_ROOT"] = str(tmp_path)
+        orig = os.environ.get(EnvVar.RAG_ROOT)
+        os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
         try:
             result = _default_root()
             assert result == tmp_path.resolve()
         finally:
             if orig is not None:
-                os.environ["VAULTSPEC_ROOT"] = orig
+                os.environ[EnvVar.RAG_ROOT] = orig
             else:
-                os.environ.pop("VAULTSPEC_ROOT", None)
+                os.environ.pop(EnvVar.RAG_ROOT, None)
 
     def test_default_root_cwd(self):
         from pathlib import Path
 
-        orig = os.environ.pop("VAULTSPEC_ROOT", None)
+        orig = os.environ.pop(EnvVar.RAG_ROOT, None)
         try:
             result = _default_root()
             assert result == Path.cwd().resolve()
         finally:
             if orig is not None:
-                os.environ["VAULTSPEC_ROOT"] = orig
+                os.environ[EnvVar.RAG_ROOT] = orig
 
 
 class TestServiceRegistryIntegration:

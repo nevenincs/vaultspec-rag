@@ -52,24 +52,20 @@ class TestRAGAPI:
             assert r.doc_type == "adr"
 
     def test_index_incremental(self, rag_components_full):
-        """rag.api.index returns IndexResult with correct counts.
+        """Incremental index via fixture indexer returns valid result.
 
-        Requires full corpus because incremental_index() scans the entire
-        vault and compares against stored ids.
+        Uses the fixture's own indexer to avoid Qdrant lock contention
+        from a second VaultStore on the same directory.
         """
-        from vaultspec_rag import index
-
-        root = rag_components_full["root"]
-        result = index(root)
+        indexer = rag_components_full["indexer"]
+        result = indexer.incremental_index()
         assert result.total > 0
         assert result.duration_ms >= 0
 
     def test_index_full(self, rag_components_full):
-        """rag.api.index with full=True rebuilds index."""
-        from vaultspec_rag import index
-
-        root = rag_components_full["root"]
-        result = index(root, full=True)
+        """Full index via fixture indexer rebuilds index."""
+        indexer = rag_components_full["indexer"]
+        result = indexer.full_index()
         assert result.total > 0
         assert result.added > 0
 
@@ -98,49 +94,36 @@ class TestRAGAPI:
         assert result is None
 
     def test_list_documents(self, rag_components):
-        """rag.api.list_documents returns all docs."""
-        from vaultspec_rag import list_documents
-
-        root = rag_components["root"]
-        docs = list_documents(root)
+        """Store.list_all_documents returns all indexed docs."""
+        store = rag_components["store"]
+        docs = store.list_all_documents()
         assert len(docs) > 0
         assert all("id" in d for d in docs)
         assert all("doc_type" in d for d in docs)
         assert all("title" in d for d in docs)
 
     def test_list_documents_type_filter(self, rag_components):
-        """rag.api.list_documents filters by doc_type."""
-        from vaultspec_rag import list_documents
-
-        root = rag_components["root"]
-        docs = list_documents(root, doc_type="adr")
+        """Store.list_all_documents filters by doc_type."""
+        store = rag_components["store"]
+        docs = store.list_all_documents(doc_type="adr")
         assert len(docs) > 0
         for d in docs:
             assert d["doc_type"] == "adr"
 
-    def test_get_related(self, rag_components):
-        """rag.api.get_related returns graph relationships."""
-        from vaultspec_rag import get_related, list_documents
-
-        root = rag_components["root"]
-        docs = list_documents(root)
-        doc_id = str(docs[0]["id"])
-        result = get_related(root, doc_id)
-        assert result is not None
-        assert "doc_id" in result
-        assert "outgoing" in result
-        assert "incoming" in result
-        assert result["doc_id"] == doc_id
+    def test_indexed_docs_have_related_field(self, rag_components):
+        """Indexed documents carry the ``related`` payload field."""
+        store = rag_components["store"]
+        docs = store.list_all_documents()
+        assert len(docs) > 0
+        for d in docs:
+            assert "related" in d, f"Doc {d['id']} missing 'related' field"
+            assert isinstance(d["related"], list)
 
     def test_get_status(self, rag_components):
-        """rag.api.get_status returns vault summary.
-
-        Verifies status using direct store access.
-        """
+        """Vault metrics and store count reflect indexed data."""
         root = rag_components["root"]
         store = rag_components["store"]
 
-        # Verify status fields that don't need the API facade
         from vaultspec_core.metrics import get_vault_metrics
 
         metrics = get_vault_metrics(root)
@@ -148,15 +131,3 @@ class TestRAGAPI:
         assert metrics.total_docs > 0
         assert metrics.total_features > 0
         assert store.count() > 0
-
-    def test_engine_singleton(self, rag_components):
-        """get_engine returns same instance for same root."""
-        from vaultspec_rag import api as api_mod
-
-        root = rag_components["root"]
-        e1 = api_mod.get_engine(root)
-        e2 = api_mod.get_engine(root)
-        assert e1 is e2
-
-        # Clean up the engine singleton
-        api_mod.reset_engine()

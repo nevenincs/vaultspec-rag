@@ -47,10 +47,12 @@ def _default_root() -> Path:
     """Resolve the default project root from env or cwd.
 
     Returns:
-        Resolved ``Path`` from ``VAULTSPEC_ROOT`` env var, falling
+        Resolved ``Path`` from ``VAULTSPEC_RAG_ROOT`` env var, falling
         back to the current working directory.
     """
-    root_env = os.environ.get("VAULTSPEC_ROOT")
+    from .config import EnvVar
+
+    root_env = os.environ.get(EnvVar.RAG_ROOT)
     return Path(root_env).resolve() if root_env else Path.cwd().resolve()
 
 
@@ -78,7 +80,9 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     t_total = time.perf_counter()
 
     # HF cache status
-    hf_home = os.environ.get("HF_HOME", "~/.cache/huggingface")
+    from .config import EnvVar
+
+    hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
 
     # Wire watcher lifecycle into registry so close_project() stops watchers
@@ -443,7 +447,7 @@ async def search_vault(
             type:adr, feature:name, etc.).
         top_k: Number of results to return.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         SearchResponse with ranked vault results and a
@@ -496,7 +500,7 @@ async def search_codebase(
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         SearchResponse with ranked codebase results and a
@@ -546,7 +550,7 @@ async def search_all(
         query: Natural language search string.
         top_k: Number of results to return from each source.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         SearchResponse with merged vault and codebase results,
@@ -585,7 +589,7 @@ async def get_index_status(
 
     Args:
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         IndexStatus with document counts, storage path, and
@@ -635,7 +639,7 @@ async def get_code_file(
     Args:
         path: Path to the file relative to codebase root.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         The UTF-8 text content of the file.
@@ -679,7 +683,7 @@ async def reindex_vault(
         clean: If True, drop and recreate the vault collection
             before a full re-index.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -725,7 +729,7 @@ async def reindex_codebase(
         clean: If True, drop and recreate the codebase
             collection before a full re-index.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 
     Returns:
         IndexResponse with counts of added, updated, and

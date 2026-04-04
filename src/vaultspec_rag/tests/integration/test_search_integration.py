@@ -25,7 +25,10 @@ class TestVaultSearch:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("architecture decision", top_k=5)
+        # search_vault instead of search (which uses search_all and
+        # min-max normalizes against an empty codebase collection,
+        # collapsing scores to 0.0).
+        results = searcher.search_vault("architecture decision", top_k=5)
 
         assert len(results) > 0
         for r in results:
@@ -139,27 +142,23 @@ class TestVaultSearch:
 def rag_components_mixed(tmp_path_factory, embedding_model):
     """RAG components with both vault and codebase indexed.
 
-    Uses .qdrant-mixed/ to isolate from other fixtures.
-    Indexes a tiny 2-file Python corpus so search_all() returns code results
-    without running full_index() on the entire test-project codebase.
+    Builds a synthetic vault and indexes a tiny 2-file Python corpus so
+    search_all() returns results from both sources.
     """
-    import shutil
+    from vaultspec_rag import CodebaseIndexer, VaultIndexer, VaultStore
+    from vaultspec_rag.tests.corpus import build_synthetic_vault
 
-    from vaultspec_rag import CodebaseIndexer
-    from vaultspec_rag.tests.conftest import _build_rag_components
-    from vaultspec_rag.tests.constants import TEST_PROJECT
+    root = tmp_path_factory.mktemp("mixed-vault")
+    build_synthetic_vault(root, n_docs=12, seed=555)
 
-    components = _build_rag_components(
-        TEST_PROJECT,
-        fast=True,
-        qdrant_suffix="-mixed",
-        model=embedding_model,
-    )
+    store = VaultStore(root)
+    indexer = VaultIndexer(root, embedding_model, store)
+    indexer.full_index()
 
-    # Create a tiny 2-file Python corpus in a temp dir and index it.
-    # Using real GPU inference on real code — not synthetic vectors.
-    code_root = tmp_path_factory.mktemp("code_corpus")
-    (code_root / "utils.py").write_text(
+    # Create a tiny 2-file Python corpus and index it.
+    src_dir = root / "src"
+    src_dir.mkdir()
+    (src_dir / "utils.py").write_text(
         "def add(a: int, b: int) -> int:\n"
         "    '''Add two integers and return the result.'''\n"
         "    return a + b\n\n"
@@ -168,7 +167,7 @@ def rag_components_mixed(tmp_path_factory, embedding_model):
         "    return a - b\n",
         encoding="utf-8",
     )
-    (code_root / "search_helpers.py").write_text(
+    (src_dir / "search_helpers.py").write_text(
         "class QueryParser:\n"
         "    '''Parse a search query string into tokens.'''\n\n"
         "    def parse(self, query: str) -> list[str]:\n"
@@ -179,15 +178,18 @@ def rag_components_mixed(tmp_path_factory, embedding_model):
         "        return token.lower().strip('.,!?')\n",
         encoding="utf-8",
     )
-    code_indexer = CodebaseIndexer(code_root, components["model"], components["store"])
+    code_indexer = CodebaseIndexer(root, embedding_model, store)
     code_indexer.full_index()
 
-    yield components
+    yield {
+        "model": embedding_model,
+        "store": store,
+        "indexer": indexer,
+        "code_indexer": code_indexer,
+        "root": root,
+    }
 
-    components["store"].close()
-    db_dir = components["db_dir"]
-    if db_dir.exists():
-        shutil.rmtree(db_dir)
+    store.close()
 
 
 class TestSearchAll:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from ..constants import TEST_PROJECT
-
 pytestmark = [pytest.mark.integration]
 
 # ---- Indexer Tests ----
@@ -51,16 +49,16 @@ class TestDocumentPreparation:
     """Tests for individual document preparation."""
 
     @pytest.mark.timeout(60)
-    def test_prepare_real_document(self):
-        # Find a real document in the test-project
+    def test_prepare_real_document(self, rag_components):
         from vaultspec_core.vaultcore import scan_vault
 
         from vaultspec_rag import prepare_document
 
-        docs = list(scan_vault(TEST_PROJECT))
-        assert len(docs) > 0, "test-project should have documents"
+        root = rag_components["root"]
+        docs = list(scan_vault(root))
+        assert len(docs) > 0, "Synthetic vault should have documents"
 
-        doc = prepare_document(docs[0], TEST_PROJECT)
+        doc = prepare_document(docs[0], root)
         assert doc is not None
         assert doc.id
         assert doc.path
@@ -68,21 +66,20 @@ class TestDocumentPreparation:
         assert doc.content
 
     @pytest.mark.timeout(300)
-    def test_prepare_all_documents(self):
+    def test_prepare_all_documents(self, rag_components):
         from vaultspec_core.vaultcore import scan_vault
 
         from vaultspec_rag import prepare_document
         from vaultspec_rag.config import get_config
 
-        docs_dir = TEST_PROJECT / get_config().docs_dir
+        root = rag_components["root"]
+        docs_dir = root / get_config().docs_dir
         prepared = 0
         skipped = 0
-        for path in scan_vault(TEST_PROJECT):
-            doc = prepare_document(path, TEST_PROJECT)
+        for path in scan_vault(root):
+            doc = prepare_document(path, root)
             if doc is not None:
                 prepared += 1
-                # doc.id is relative to docs_dir without extension
-                # e.g., "adr/overview" not just "overview"
                 rel = str(path.relative_to(docs_dir)).replace("\\", "/")
                 expected_id = rel.rsplit(".", 1)[0] if "." in rel else rel
                 assert doc.id == expected_id
@@ -126,22 +123,17 @@ class TestIndexEdgeCases:
         assert result.total == rag_components_full["index_result"].total
 
     @pytest.mark.timeout(300)
-    def test_docs_without_frontmatter_counted(self):
-        """Verify how many docs in the vault lack frontmatter entirely.
-        These should all be in unsupported directories (stories) or have
-        no YAML block at all (some research docs).
-        """
+    def test_all_synthetic_docs_have_frontmatter(self, rag_components):
+        """All synthetic vault docs should have valid frontmatter (tags + date)."""
         from vaultspec_core.vaultcore import parse_vault_metadata, scan_vault
 
-        no_frontmatter = []
-        for path in scan_vault(TEST_PROJECT):
+        root = rag_components["root"]
+        for path in scan_vault(root):
             content = path.read_text(encoding="utf-8")
             metadata, _body = parse_vault_metadata(content)
-            if not metadata.tags and metadata.date is None:
-                no_frontmatter.append(path.name)
-
-        # We expect some docs without frontmatter (stories, some research)
-        assert len(no_frontmatter) > 0, "Should find docs without frontmatter"
+            assert metadata.tags or metadata.date is not None, (
+                f"Synthetic doc {path.name} should have frontmatter"
+            )
 
 
 class TestIncrementalModifyAndDelete:

@@ -33,6 +33,7 @@ from rich.table import Table
 
 load_dotenv()
 
+from .config import EnvVar  # noqa: E402
 from .embeddings import EmbeddingModel  # noqa: E402
 from .indexer import CodebaseIndexer, VaultIndexer  # noqa: E402
 from .logging_config import configure_logging  # noqa: E402
@@ -100,7 +101,7 @@ class CLIState:
         """
         self.layout = layout
         self.target = layout.target_dir
-        os.environ["VAULTSPEC_ROOT"] = str(self.target)
+        os.environ[EnvVar.RAG_ROOT] = str(self.target)
 
 
 def version_callback(value: bool) -> None:
@@ -145,6 +146,48 @@ def main(
         bool,
         typer.Option("--debug", "-d", help="Enable DEBUG logging"),
     ] = False,
+    data_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--data-dir",
+            help="RAG data root (default: .vault/data/search-data)",
+        ),
+    ] = None,
+    qdrant_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--qdrant-dir",
+            help="Qdrant storage directory relative to data-dir",
+        ),
+    ] = None,
+    index_meta: Annotated[
+        str | None,
+        typer.Option(
+            "--index-meta",
+            help="Vault index metadata filename",
+        ),
+    ] = None,
+    code_index_meta: Annotated[
+        str | None,
+        typer.Option(
+            "--code-index-meta",
+            help="Code index metadata filename",
+        ),
+    ] = None,
+    status_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--status-dir",
+            help="Service status directory (default: ~/.vaultspec-rag)",
+        ),
+    ] = None,
+    log_file: Annotated[
+        str | None,
+        typer.Option(
+            "--log-file",
+            help="Service log filename relative to status-dir",
+        ),
+    ] = None,
     _version: Annotated[
         bool,
         typer.Option(
@@ -164,6 +207,12 @@ def main(
             ``.vaultspec``. Resolved to absolute path.
         verbose: Enable INFO-level logging.
         debug: Enable DEBUG-level logging.
+        data_dir: Override RAG data root directory.
+        qdrant_dir: Override Qdrant storage subdirectory.
+        index_meta: Override vault index metadata filename.
+        code_index_meta: Override code index metadata filename.
+        status_dir: Override service status directory.
+        log_file: Override service log filename.
         _version: Eagerly print version and exit.
 
     Raises:
@@ -171,6 +220,25 @@ def main(
             or when no subcommand is given (code 0).
     """
     configure_logging(debug=debug, level="INFO" if verbose else None)
+
+    # Wire CLI overrides into the config system.
+    from .config import get_config
+
+    cli_overrides: dict[str, Any] = {}
+    if data_dir is not None:
+        cli_overrides["data_dir"] = data_dir
+    if qdrant_dir is not None:
+        cli_overrides["qdrant_dir"] = qdrant_dir
+    if index_meta is not None:
+        cli_overrides["index_metadata_file"] = index_meta
+    if code_index_meta is not None:
+        cli_overrides["code_index_metadata_file"] = code_index_meta
+    if status_dir is not None:
+        cli_overrides["status_dir"] = status_dir
+    if log_file is not None:
+        cli_overrides["log_file"] = log_file
+    if cli_overrides:
+        get_config(cli_overrides)
 
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
@@ -765,7 +833,7 @@ def mcp_start(
     # so we read --target directly from the root context params here.
     root_target = ctx.find_root().params.get("target")
     if root_target is not None:
-        os.environ["VAULTSPEC_ROOT"] = str(root_target)
+        os.environ[EnvVar.RAG_ROOT] = str(root_target)
 
     transport = f"streamable-http on port {port}" if port else "stdio"
     console.print(f"[bold green]Launching FastMCP server ({transport})...[/]")
@@ -815,14 +883,17 @@ def mcp_status() -> None:
 def _status_dir() -> Path:
     """Return the global service status directory, creating it if needed.
 
-    Respects ``VAULTSPEC_RAG_STATUS_DIR`` env var for overriding
-    the default ``~/.vaultspec-rag/`` location.
+    Resolved via ``cfg.status_dir`` (which checks CLI override, then
+    ``VAULTSPEC_RAG_STATUS_DIR`` env var, then default
+    ``~/.vaultspec-rag/``).
 
     Returns:
         Path to the service status directory.
     """
-    override = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
-    d = Path(override) if override else Path.home() / ".vaultspec-rag"
+    from .config import get_config
+
+    cfg = get_config()
+    d = Path(cfg.status_dir).expanduser()
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -831,7 +902,7 @@ def _status_file() -> Path:
     """Return the path to the service status JSON file.
 
     Returns:
-        Path to ``~/.vaultspec-rag/service.json``.
+        Path to ``{status_dir}/service.json``.
     """
     return _status_dir() / "service.json"
 
@@ -839,10 +910,15 @@ def _status_file() -> Path:
 def _log_file() -> Path:
     """Return the path to the service log file.
 
+    Resolved via ``cfg.log_file`` relative to the status directory.
+
     Returns:
-        Path to ``~/.vaultspec-rag/service.log``.
+        Path to ``{status_dir}/{log_file}``.
     """
-    return _status_dir() / "service.log"
+    from .config import get_config
+
+    cfg = get_config()
+    return _status_dir() / cfg.log_file
 
 
 def _write_service_status(pid: int, port: int) -> None:
@@ -1074,7 +1150,7 @@ def service_start(
         typer.Option(
             "--port",
             help="TCP port for the HTTP service.",
-            envvar="VAULTSPEC_RAG_PORT",
+            envvar=EnvVar.PORT,
         ),
     ] = 8766,
 ) -> None:
@@ -1306,7 +1382,7 @@ def service_warmup() -> None:
         console.print("[bold red]Error:[/] huggingface_hub is not installed.")
         raise typer.Exit(code=1) from None
 
-    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
+    os.environ.setdefault(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT, "300")
 
     from .config import get_config
 
@@ -1473,94 +1549,49 @@ def handle_benchmark(
         store.close()
 
 
-_QUALITY_PROBES: list[tuple[str, int, str]] = [
-    # (query, top_k, label)  — check functions defined in handle_quality
-    ("nexus security audit vulnerability", 10, "Security audit doc in top 10"),
-    ("NexusPipelineExecutor", 5, "NexusPipelineExecutor → pipeline doc in top 5"),
-    ("connector api gRPC protocol", 10, "Connector API docs in top 10"),
-    ("scheduler EDF worker pool", 10, "Scheduler docs in top 10"),
-    ("type:adr architecture", 10, "type:adr returns only ADR docs"),
-    ("feature:connector-api protocol", 10, "feature:connector-api filter exact"),
-    ("type:nonexistent query", 5, "Invalid type filter returns empty"),
-    ("asdfghjkl zxcvbnm", 5, "Nonsense query scores below 0.10"),
-]
-
-
 @app.command("quality")
 def handle_quality() -> None:
-    """Run quality-scoring probes against the bundled test corpus.
+    """Run quality-scoring probes against a synthetic test corpus.
 
-    Indexes the test-project corpus, runs 8 known-answer probes,
-    and reports precision@K. Exits 1 if fewer than 75% of probes
-    pass.
+    Generates a temporary synthetic vault, indexes it, runs
+    needle-based precision probes, and reports results. Exits 1
+    if fewer than 75% of probes pass.
 
     This is a developer regression tool -- not tied to a specific
     user vault.
 
     Raises:
-        typer.Exit: When test corpus is missing (code 1),
-            on GPU errors, or when precision drops below 75%.
+        typer.Exit: On GPU errors or when precision drops below 75%.
     """
-    import shutil
     import tempfile
 
-    test_project = Path(__file__).resolve().parent.parent.parent / "test-project"
-    if not test_project.exists():
-        console.print(
-            f"[bold red]Error:[/] Test corpus not found at {test_project}.\n"
-            "The bundled test-project/ directory is required.",
-        )
-        raise typer.Exit(code=1)
+    from .synthetic import build_synthetic_vault
 
     with tempfile.TemporaryDirectory(prefix="vaultspec-quality-") as _tmp:
-        qdrant_dir = Path(_tmp)
+        root = Path(_tmp)
+        manifest = build_synthetic_vault(root, n_docs=24, seed=42)
 
         try:
             model = EmbeddingModel()
         except (ImportError, RuntimeError) as e:
             _handle_gpu_error(e)
 
-        store = VaultStore(test_project)
-        # Redirect Qdrant client to the temp dir so we don't pollute test-project
-        assert store._client is not None
-        store._client.close()
-        store.db_path = qdrant_dir
-        from qdrant_client import QdrantClient
-
-        store._client = QdrantClient(path=str(qdrant_dir))
+        store = VaultStore(root)
 
         try:
-            indexer = VaultIndexer(test_project, model, store)
-            with console.status("[bold green]Indexing test corpus..."):
+            indexer = VaultIndexer(root, model, store)
+            with console.status("[bold green]Indexing synthetic corpus..."):
                 indexer.full_index()
 
-            searcher = VaultSearcher(test_project, model, store)
+            searcher = VaultSearcher(root, model, store)
 
-            def _check(query: str, results: list) -> bool:
-                if "type:adr" in query and "nonexistent" not in query:
-                    return len(results) > 0 and all(
-                        r.doc_type == "adr" for r in results
-                    )
-                if "feature:connector-api" in query:
-                    return len(results) > 0 and all(
-                        r.feature == "connector-api" for r in results
-                    )
-                if "type:nonexistent" in query:
-                    return len(results) == 0
-                if "asdfghjkl" in query:
-                    return not results or max(r.score for r in results) < 0.10
-                if "security" in query:
-                    return any("security-audit" in r.id for r in results)
-                if "NexusPipeline" in query:
-                    return any("pipeline" in r.id for r in results)
-                if "connector" in query.lower():
-                    return any("connector" in r.id for r in results)
-                if "scheduler" in query.lower():
-                    return any("scheduler" in r.id for r in results)
-                return True
+            # Build probes from the manifest's needle keywords.
+            probes: list[tuple[str, int, str, str]] = []
+            for needle, doc_id in list(manifest.needles.items())[:8]:
+                probes.append((needle, 5, f"Needle → {doc_id}", doc_id))
 
             table = Table(
-                title="Quality Probes — Test Corpus",
+                title="Quality Probes — Synthetic Corpus",
                 show_header=True,
             )
             table.add_column("#", style="bold", justify="right")
@@ -1569,16 +1600,19 @@ def handle_quality() -> None:
             table.add_column("Result", justify="center")
 
             passed = 0
-            for i, (query, top_k, label) in enumerate(_QUALITY_PROBES, 1):
-                results = searcher.search(query, top_k=top_k)
-                ok = _check(query, results)
+            for i, (query, top_k, label, expected_id) in enumerate(
+                probes,
+                1,
+            ):
+                results = searcher.search_vault(query, top_k=top_k)
+                ok = any(expected_id in r.id for r in results)
                 if ok:
                     passed += 1
                 status = "[green]PASS[/]" if ok else "[red]FAIL[/]"
                 table.add_row(str(i), label, query, status)
 
-            total = len(_QUALITY_PROBES)
-            precision = passed / total
+            total = len(probes)
+            precision = passed / total if total else 0
             console.print(table)
             console.print(
                 f"\nPassed [bold]{passed}/{total}[/] probes "
@@ -1595,7 +1629,6 @@ def handle_quality() -> None:
             console.print("[bold green]PASSED[/]")
         finally:
             store.close()
-            shutil.rmtree(qdrant_dir, ignore_errors=True)
 
 
 @app.command(

@@ -4,21 +4,56 @@ RAG test constants and fixtures live in
 src/vaultspec_rag/tests/conftest.py and src/vaultspec_rag/tests/constants.py.
 """
 
+import os
+
 import pytest
 
 # Markers whose tests require exclusive GPU access
 _GPU_MARKERS = frozenset({"integration", "quality", "performance", "robustness"})
 
+# Marker for CLI subprocess tests that load their own GPU models.
+# These must NOT co-schedule with _GPU_MARKERS tests — combined VRAM
+# exceeds 16 GB on RTX 4080.
+_SUBPROCESS_GPU = "subprocess_gpu"
+
+
+def _load_dotenv_if_available() -> None:
+    """Load .env file from project root if python-dotenv is available."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+
+_load_dotenv_if_available()
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Auto-apply xdist_group("gpu") to GPU-bound tests.
-
-    This is a no-op when pytest-xdist is not installed. If xdist is ever
-    added, it ensures all GPU tests run in the same worker process —
-    CUDA is not fork-safe and concurrent GPU access must be serialized.
-    """
+    """Auto-apply GPU xdist grouping to GPU-bound tests."""
     gpu_group = pytest.mark.xdist_group("gpu")
     for item in items:
         item_markers = {m.name for m in item.iter_markers()}
         if item_markers & _GPU_MARKERS:
             item.add_marker(gpu_group)
+
+
+def pytest_runtestloop(session: pytest.Session) -> None:
+    """Fail fast if HF_TOKEN is missing and GPU tests are about to run.
+
+    Runs after deselection so only *selected* items are checked.
+    This avoids blocking unit-only runs that don't need GPU access.
+    """
+    needs_token = _GPU_MARKERS | {_SUBPROCESS_GPU}
+    for item in session.items:
+        item_markers = {m.name for m in item.iter_markers()}
+        if item_markers & needs_token:
+            if not os.environ.get("HF_TOKEN"):
+                pytest.exit(
+                    "HF_TOKEN environment variable is required for GPU "
+                    "tests (gated model naver/splade-v3). Set it in .env "
+                    "or export it before running tests.",
+                    returncode=1,
+                )
+            break

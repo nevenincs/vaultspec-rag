@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -67,9 +65,6 @@ def code_project(rag_components, tmp_path):
     }
 
     store.close()
-    qdrant_dir = tmp_path / ".qdrant"
-    if qdrant_dir.exists():
-        shutil.rmtree(qdrant_dir)
 
 
 class TestCodebaseFullIndex:
@@ -347,127 +342,12 @@ def mixed_project(rag_components, tmp_path):
     }
 
     store.close()
-    qdrant_dir = tmp_path / ".qdrant"
-    if qdrant_dir.exists():
-        shutil.rmtree(qdrant_dir)
 
-
-class TestCodebaseSearchNexus:
-    """Known-answer tests against the real test-project/src/ Nexus codebase.
-
-    These tests verify that CodebaseIndexer correctly indexes the 6 Python
-    source files in test-project/src/ and that search returns relevant
-    results for Nexus-specific identifiers.
-    """
-
-    @pytest.mark.timeout(120)
-    def test_finds_nexus_pipeline_executor(self, rag_components_with_code):
-        """'NexusPipelineExecutor' should surface executor.py in top results."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components_with_code["root"],
-            rag_components_with_code["model"],
-            rag_components_with_code["store"],
-        )
-        results = searcher.search_codebase("NexusPipelineExecutor dispatch", top_k=5)
-
-        assert len(results) > 0
-        paths = [r.path for r in results]
-        assert any("executor" in p for p in paths), (
-            f"Expected executor.py in results, got: {paths}"
-        )
-
-    @pytest.mark.timeout(120)
-    def test_finds_worker_pool(self, rag_components_with_code):
-        """'WorkerPool priority queue' should surface worker_pool.py."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components_with_code["root"],
-            rag_components_with_code["model"],
-            rag_components_with_code["store"],
-        )
-        results = searcher.search_codebase(
-            "WorkerPool priority queue scheduler",
-            top_k=5,
-        )
-
-        assert len(results) > 0
-        paths = [r.path for r in results]
-        assert any("worker_pool" in p or "scheduler" in p for p in paths), (
-            f"Expected worker_pool.py in results, got: {paths}"
-        )
-
-    @pytest.mark.timeout(120)
-    def test_finds_connector_registry(self, rag_components_with_code):
-        """'ConnectorRegistry register handler' should surface registry.py."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components_with_code["root"],
-            rag_components_with_code["model"],
-            rag_components_with_code["store"],
-        )
-        results = searcher.search_codebase(
-            "ConnectorRegistry register handler",
-            top_k=5,
-        )
-
-        assert len(results) > 0
-        paths = [r.path for r in results]
-        assert any("registry" in p or "connector" in p for p in paths), (
-            f"Expected registry.py in results, got: {paths}"
-        )
-
-    @pytest.mark.timeout(120)
-    def test_nexus_results_have_python_language(self, rag_components_with_code):
-        """All test-project/src/ chunks should be detected as Python."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components_with_code["root"],
-            rag_components_with_code["model"],
-            rag_components_with_code["store"],
-        )
-        results = searcher.search_codebase("pipeline executor stage", top_k=10)
-
-        assert len(results) > 0
-        for r in results:
-            assert r.language == "python", (
-                f"Expected python, got {r.language} for {r.path}"
-            )
-
-    @pytest.mark.timeout(120)
-    def test_nexus_snippet_contains_source(self, rag_components_with_code):
-        """Snippets from Nexus code chunks should contain actual Python source."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components_with_code["root"],
-            rag_components_with_code["model"],
-            rag_components_with_code["store"],
-        )
-        results = searcher.search_codebase(
-            "execution graph dependency counter",
-            top_k=5,
-        )
-
-        assert len(results) > 0
-        for r in results:
-            assert len(r.snippet.strip()) > 0, f"Result {r.id} has empty snippet"
-            assert r.line_start is not None and r.line_start >= 1
-
-    @pytest.mark.timeout(120)
-    def test_code_count_matches_expected_chunks(self, rag_components_with_code):
-        """test-project/src/ has 6 Python files; store should have > 0 code chunks."""
-        store = rag_components_with_code["store"]
-        count = store.count_code()
-        assert count > 0, "Expected code chunks from test-project/src/ to be indexed"
-        # 6 files with multiple functions/classes each; expect at least 10 chunks
-        assert count >= 10, (
-            f"Expected >= 10 code chunks from 6 Nexus source files, got {count}"
-        )
+    # TestCodebaseSearchNexus was removed: it tested project-specific
+    # identifiers (NexusPipelineExecutor, WorkerPool, ConnectorRegistry)
+    # that no longer exist in the synthetic corpus.  The same indexing
+    # and search behaviour is already covered by TestCodebaseSearch and
+    # TestCodebaseFullIndex above, which use inline Python source files.
 
 
 class TestSearchAllMixed:

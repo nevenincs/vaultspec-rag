@@ -2,28 +2,20 @@
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 
-from ..conftest import _build_rag_components
-from ..constants import QDRANT_SUFFIX_FULL, TEST_PROJECT
+from ..conftest import _index_corpus
+from ..corpus import build_synthetic_vault
 
 
 @pytest.fixture(scope="session")
-def _bench_components(embedding_model):
-    """Session-scoped RAG components for benchmarks (full corpus)."""
-    components = _build_rag_components(
-        TEST_PROJECT,
-        fast=False,
-        qdrant_suffix=f"{QDRANT_SUFFIX_FULL}-bench",
-        model=embedding_model,
-    )
-    yield components
+def _bench_components(embedding_model, tmp_path_factory):
+    """Session-scoped RAG components for benchmarks (48-doc corpus)."""
+    root = tmp_path_factory.mktemp("bench-vault")
+    manifest = build_synthetic_vault(root, n_docs=48, seed=300)
+    components = _index_corpus(root, embedding_model)
+    yield {**components, "manifest": manifest}
     components["store"].close()
-    db_dir = components["db_dir"]
-    if db_dir.exists():
-        shutil.rmtree(db_dir)
 
 
 @pytest.fixture(scope="session")
@@ -55,5 +47,5 @@ def searcher(_bench_components):
 
 @pytest.fixture(scope="session")
 def root(_bench_components):
-    """Test project root path."""
+    """Synthetic project root path."""
     return _bench_components["root"]

@@ -21,8 +21,6 @@ from vaultspec_rag.indexer import (
     _is_binary,
 )
 
-from .constants import TEST_PROJECT
-
 pytestmark = [pytest.mark.unit]
 
 
@@ -90,30 +88,34 @@ class TestIndexResult:
 
 
 class TestPrepareDocument:
-    def test_prepares_valid_document(self):
-        doc_path = (
-            TEST_PROJECT / ".vault" / "adr" / "2026-01-12-connector-protocol-design.md"
-        )
-        doc = prepare_document(doc_path, TEST_PROJECT)
+    def test_prepares_valid_document(self, synthetic_vault):
+        root = synthetic_vault.root
+        # Pick the first ADR doc from the manifest.
+        adr_docs = [d for d in synthetic_vault.docs if d.doc_type == "adr"]
+        assert adr_docs, "Synthetic vault must contain ADR docs"
+        target = adr_docs[0]
+
+        doc = prepare_document(target.path, root)
         assert doc is not None
-        assert doc.id == "adr/2026-01-12-connector-protocol-design"
+        assert doc.id == target.doc_id
         assert doc.doc_type == "adr"
-        assert doc.feature == "connector-api"
         assert len(doc.title) > 0
         assert doc.vector == []
 
-    def test_returns_doc_for_audit_dir(self):
-        audit_files = list((TEST_PROJECT / ".vault" / "audit").glob("*.md"))
-        assert len(audit_files) > 0, "test-project must contain audit/*.md files"
-        doc = prepare_document(audit_files[0], TEST_PROJECT)
-        assert doc is not None, f"prepare_document returned None for {audit_files[0]}"
+    def test_returns_doc_for_audit_dir(self, synthetic_vault):
+        root = synthetic_vault.root
+        audit_docs = [d for d in synthetic_vault.docs if d.doc_type == "audit"]
+        assert len(audit_docs) > 0, "Synthetic vault must contain audit docs"
+        doc = prepare_document(audit_docs[0].path, root)
+        assert doc is not None, (
+            f"prepare_document returned None for {audit_docs[0].path}"
+        )
         assert doc.doc_type == "audit"
 
-    def test_returns_none_for_nonexistent_file(self):
-        missing = (
-            TEST_PROJECT / ".vault" / "adr" / "nonexistent-doc-that-does-not-exist.md"
-        )
-        doc = prepare_document(missing, TEST_PROJECT)
+    def test_returns_none_for_nonexistent_file(self, synthetic_vault):
+        root = synthetic_vault.root
+        missing = root / ".vault" / "adr" / "nonexistent-doc-that-does-not-exist.md"
+        doc = prepare_document(missing, root)
         assert doc is None
 
 
@@ -471,7 +473,7 @@ class TestIncrementalIndexMetadata:
         # Construct an indexer just enough to test _write_meta / _load_meta.
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = tmp_path
-        indexer._meta_path = tmp_path / ".qdrant" / "code_index_meta.json"
+        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         with open(src, "rb") as f:
             content_hash = hashlib.file_digest(f, "blake2b").hexdigest()
@@ -507,7 +509,7 @@ class TestIncrementalIndexUnhashedFiles:
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = tmp_path
-        indexer._meta_path = tmp_path / ".qdrant" / "code_index_meta.json"
+        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         # Simulate: two files scanned, but one failed hashing.
         # current_files would have both, but current_hashes only has ok.py.
@@ -724,7 +726,7 @@ class TestHashingPermissionError:
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = tmp_path
-        indexer._meta_path = tmp_path / ".qdrant" / "code_index_meta.json"
+        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         # Create a readable file and write meta with its hash
         good = tmp_path / "good.py"

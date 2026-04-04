@@ -21,6 +21,7 @@ from vaultspec_rag.cli import (
     _write_service_status,
     app,
 )
+from vaultspec_rag.config import EnvVar
 
 pytestmark = [pytest.mark.unit]
 
@@ -212,7 +213,7 @@ class TestServiceDaemonHelpers:
 
     def test_write_read_status_roundtrip(self, tmp_path: Path):
         """Write and read back should produce the same pid/port."""
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=12345, port=9999)
             data = _read_service_status()
@@ -221,11 +222,11 @@ class TestServiceDaemonHelpers:
             assert data["port"] == 9999
             assert "started_at" in data
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_write_creates_valid_json(self, tmp_path: Path):
         """Status file must be valid JSON with expected keys."""
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=42, port=8766)
             import json
@@ -234,41 +235,41 @@ class TestServiceDaemonHelpers:
             data = json.loads(sf.read_text(encoding="utf-8"))
             assert set(data.keys()) == {"pid", "port", "started_at"}
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_read_status_missing_file(self, tmp_path: Path):
         """Reading a nonexistent file should return None."""
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(empty_dir)
+        os.environ[EnvVar.STATUS_DIR] = str(empty_dir)
         try:
             assert _read_service_status() is None
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_read_status_invalid_json(self, tmp_path: Path):
         """Invalid JSON in status file should return None."""
         sf = tmp_path / "service.json"
         sf.write_text("not json", encoding="utf-8")
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             assert _read_service_status() is None
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_read_status_missing_pid_key(self, tmp_path: Path):
         """Status JSON without a pid key should return None."""
         sf = tmp_path / "service.json"
         sf.write_text('{"port": 8766}', encoding="utf-8")
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             assert _read_service_status() is None
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_stop_stale_pid(self, tmp_path: Path):
         """service_stop with a dead PID cleans up the status file."""
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=99999999, port=8766)
             sf = tmp_path / "service.json"
@@ -280,11 +281,11 @@ class TestServiceDaemonHelpers:
             assert "no longer running" in out or "cleaned" in out
             assert not sf.exists()
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_stale_pid(self, tmp_path: Path):
         """service_status with a dead PID shows stale cleanup message."""
-        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=99999999, port=8766)
             sf = tmp_path / "service.json"
@@ -297,7 +298,7 @@ class TestServiceDaemonHelpers:
             )
             assert not sf.exists()
         finally:
-            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_health_probe_nonlistening_port(self):
         """Health probe on a port with no listener should return None."""

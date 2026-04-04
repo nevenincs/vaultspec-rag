@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .config import EnvVar
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -196,7 +198,7 @@ class EmbeddingModel:
 
         logger.info(
             "HF cache: %s",
-            os.environ.get("HF_HOME", "~/.cache/huggingface"),
+            os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface"),
         )
 
         model_kwargs: dict[str, object] = {

@@ -121,7 +121,10 @@ def test_bench_memory(root) -> dict:
     result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
     # Qdrant disk size
-    qdrant_dir = root / ".qdrant"
+    from vaultspec_rag.config import get_config
+
+    cfg = get_config()
+    qdrant_dir = root / cfg.data_dir / cfg.qdrant_dir
     if qdrant_dir.exists():
         total_bytes = sum(
             f.stat().st_size for f in qdrant_dir.rglob("*") if f.is_file()
