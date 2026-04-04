@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 from vaultspec_rag.cli import (
     _display_search_results,
     _health_probe,
+    _is_our_service,
     _is_pid_alive,
     _read_service_status,
     _try_mcp_search,
@@ -205,6 +206,22 @@ class TestServiceDaemonHelpers:
     def test_is_pid_alive_negative(self):
         """Negative PIDs should return False."""
         assert _is_pid_alive(-1) is False
+
+    def test_is_our_service_current_process(self):
+        """Current process (Python) should be recognized as ours."""
+        assert _is_our_service(os.getpid()) is True
+
+    def test_is_our_service_dead_pid(self):
+        """A dead PID should return False."""
+        assert _is_our_service(99999999) is False
+
+    def test_is_our_service_zero(self):
+        """PID 0 should return False."""
+        assert _is_our_service(0) is False
+
+    def test_is_our_service_negative(self):
+        """Negative PIDs should return False."""
+        assert _is_our_service(-1) is False
 
     def test_write_read_status_roundtrip(self, tmp_path: Path):
         """Write and read back should produce the same pid/port."""

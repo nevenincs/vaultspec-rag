@@ -12,6 +12,7 @@ alongside the MCP transport at ``/mcp``.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import os
 import threading
@@ -43,6 +44,24 @@ _watcher_lock = threading.Lock()
 _start_time: float = 0.0
 
 
+def _validate_vault_root(root: Path) -> Path:
+    """Ensure *root* contains a ``.vault/`` directory.
+
+    Args:
+        root: Resolved project root path.
+
+    Returns:
+        The validated path (unchanged).
+
+    Raises:
+        ValueError: If *root* has no ``.vault/`` subdirectory.
+    """
+    if not (root / ".vault").is_dir():
+        msg = f"not a vaultspec project (no .vault/ directory): {root}"
+        raise ValueError(msg)
+    return root
+
+
 def _default_root() -> Path:
     """Resolve the default project root from env or cwd.
 
@@ -53,7 +72,8 @@ def _default_root() -> Path:
     from .config import EnvVar
 
     root_env = os.environ.get(EnvVar.RAG_ROOT)
-    return Path(root_env).resolve() if root_env else Path.cwd().resolve()
+    root = Path(root_env).resolve() if root_env else Path.cwd().resolve()
+    return _validate_vault_root(root)
 
 
 # -- lifespan ---------------------------------------------------------------
@@ -142,7 +162,7 @@ async def health_handler(_request: Request) -> object:
             "status": status,
             "cuda": cuda,
             "models_loaded": reg_health["model_loaded"],
-            "projects": reg_health["projects"],
+            "project_count": reg_health["project_count"],
             "uptime_s": round(uptime, 2),
         },
     )
@@ -299,8 +319,6 @@ class IndexStatus(BaseModel):
         storage_path: Absolute path to the Qdrant local
             database directory.
         target_dir: Workspace root directory being indexed.
-        gpu_name: CUDA GPU device name (e.g.,
-            ``"NVIDIA GeForce RTX 4080"``).
         vram_gb: Total GPU VRAM in gigabytes.
     """
 
@@ -315,10 +333,6 @@ class IndexStatus(BaseModel):
     )
     target_dir: str = Field(
         description="Workspace root directory",
-    )
-    gpu_name: str = Field(
-        default="unknown",
-        description="GPU device name",
     )
     vram_gb: float = Field(
         default=0.0,
@@ -360,20 +374,20 @@ class HealthResponse(BaseModel):
     """Health check response for the service.
 
     Attributes:
-        status: Service state — ``"ready"``, ``"loading"``,
+        status: Service state — ``"ready"``, ``"degraded"``,
             or ``"error"``.
         cuda: Whether a CUDA GPU is available.
         models_loaded: Whether GPU models have been loaded.
-        projects: List of connected project root paths.
+        project_count: Number of connected projects.
         uptime_s: Seconds since service startup.
     """
 
     status: str = Field(description="Service state")
     cuda: bool = Field(description="CUDA GPU available")
     models_loaded: bool = Field(description="GPU models loaded")
-    projects: list[str] = Field(
-        default_factory=list,
-        description="Connected project roots",
+    project_count: int = Field(
+        default=0,
+        description="Number of connected projects",
     )
     uptime_s: float = Field(
         default=0.0,
@@ -382,6 +396,43 @@ class HealthResponse(BaseModel):
 
 
 _MAX_QUERY_LEN = 10_000  # characters; prevents accidental OOM on huge queries
+
+_SENSITIVE_PATTERNS: tuple[str, ...] = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*credentials*",
+    "*secrets*",
+    "service.json",
+)
+
+_SENSITIVE_DIRS: tuple[str, ...] = (
+    ".git",
+    ".vaultspec-rag",
+)
+
+
+def _is_sensitive_path(rel_path: str) -> bool:
+    """Check whether *rel_path* matches a sensitive file pattern.
+
+    Uses forward-slash normalized paths for cross-platform consistency.
+    Checks each path component against ``_SENSITIVE_DIRS`` and the
+    filename against ``_SENSITIVE_PATTERNS``.
+
+    Args:
+        rel_path: File path relative to the workspace root.
+
+    Returns:
+        True if the path matches any sensitive pattern.
+    """
+    normalised = rel_path.replace("\\", "/")
+    parts = normalised.split("/")
+    for part in parts[:-1]:
+        if part in _SENSITIVE_DIRS:
+            return True
+    filename = parts[-1]
+    return any(fnmatch.fnmatch(filename, pat) for pat in _SENSITIVE_PATTERNS)
 
 
 def _clamp_top_k(top_k: int) -> int:
@@ -425,9 +476,13 @@ def _resolve_root(project_root: str | None) -> Path:
 
     Returns:
         Resolved ``Path`` for the project root.
+
+    Raises:
+        ValueError: If the resolved path has no ``.vault/``
+            subdirectory.
     """
     if project_root:
-        return Path(project_root).resolve()
+        return _validate_vault_root(Path(project_root).resolve())
     return _default_root()
 
 
@@ -563,23 +618,18 @@ async def get_index_status(
         try:
             import torch
 
-            gpu_name = (
-                torch.cuda.get_device_name(0) if torch.cuda.is_available() else "no GPU"
-            )
             vram_gb = (
                 torch.cuda.get_device_properties(0).total_memory / 1e9
                 if torch.cuda.is_available()
                 else 0.0
             )
         except ImportError:
-            gpu_name = "unknown"
             vram_gb = 0.0
         return IndexStatus(
             vault_count=slot.store.count(),
             code_count=slot.store.count_code(),
             storage_path=str(slot.store.db_path),
             target_dir=str(root),
-            gpu_name=gpu_name,
             vram_gb=round(vram_gb, 2),
         )
 
@@ -615,6 +665,8 @@ async def get_code_file(
         full_path = (root_resolved / path).resolve()
         if not full_path.is_relative_to(root_resolved):
             raise ValueError(f"path '{path}' is outside the workspace")
+        if _is_sensitive_path(path):
+            raise ValueError("access denied")
         if not full_path.exists():
             raise FileNotFoundError(f"File '{path}' not found")
         if full_path.stat().st_size > max_read_size:
