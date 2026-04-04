@@ -265,6 +265,217 @@ class TestConcurrency:
             registry.close_project(root)
 
 
+def _make_project(tmp_path: Path, name: str, docs: dict[str, str]) -> Path:
+    """Create a project directory with .vault/ documents.
+
+    Args:
+        tmp_path: Base temporary directory.
+        name: Project directory name.
+        docs: Mapping of ``subdir/filename.md`` to markdown content.
+            Each file gets YAML frontmatter prepended automatically.
+
+    Returns:
+        The project root path.
+    """
+    root = tmp_path / name
+    for relpath, body in docs.items():
+        p = root / ".vault" / relpath
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    return root
+
+
+class TestMultiProjectSearch:
+    """Real GPU-backed search across multiple concurrent projects.
+
+    Two independent projects are created with distinct vault content,
+    indexed with real GPU embeddings, and searched concurrently to
+    verify result isolation and GPU lock correctness.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.integration]
+
+    @pytest.fixture()
+    def two_projects(
+        self,
+        registry: ServiceRegistry,
+        tmp_path: Path,
+    ) -> Iterator[tuple[Path, ProjectSlot, Path, ProjectSlot]]:
+        """Create and index two projects with non-overlapping content."""
+        root_a = _make_project(
+            tmp_path,
+            "proj_alpha",
+            {
+                "adr/database-selection.md": (
+                    "---\ntags:\n  - '#adr'\ndate: 2026-01-01\n---\n"
+                    "# ADR: Use PostgreSQL for persistence\n\n"
+                    "We chose PostgreSQL as our primary relational "
+                    "database for ACID transactions, JSON columns, "
+                    "and mature replication support.\n"
+                ),
+                "adr/api-design.md": (
+                    "---\ntags:\n  - '#adr'\ndate: 2026-01-02\n---\n"
+                    "# ADR: REST API design conventions\n\n"
+                    "The HTTP API follows REST conventions with JSON "
+                    "payloads, standard status codes, and pagination "
+                    "via cursor tokens.\n"
+                ),
+            },
+        )
+        root_b = _make_project(
+            tmp_path,
+            "proj_beta",
+            {
+                "research/embedding-eval.md": (
+                    "---\ntags:\n  - '#research'\ndate: 2026-02-01\n---\n"
+                    "# Embedding model evaluation\n\n"
+                    "Qwen3-Embedding-0.6B and BGE-M3 were benchmarked "
+                    "for semantic search on vault documents. Qwen3 was "
+                    "selected for its 1024-d dense output and multilingual "
+                    "instruction tuning.\n"
+                ),
+                "research/vector-db.md": (
+                    "---\ntags:\n  - '#research'\ndate: 2026-02-02\n---\n"
+                    "# Vector database selection\n\n"
+                    "Qdrant in local mode provides hybrid search with "
+                    "dense and SPLADE sparse vectors via the Universal "
+                    "Query API and RRF fusion.\n"
+                ),
+            },
+        )
+
+        slot_a = registry.get_project(root_a)
+        slot_b = registry.get_project(root_b)
+
+        # Index both (real GPU encoding — no mocks)
+        slot_a.vault_indexer.full_index()
+        slot_b.vault_indexer.full_index()
+
+        yield root_a, slot_a, root_b, slot_b
+
+        registry.close_project(root_a)
+        registry.close_project(root_b)
+
+    def test_each_project_returns_its_own_docs(
+        self,
+        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+    ) -> None:
+        """Search results are isolated: project A docs never appear in B."""
+        _root_a, slot_a, _root_b, slot_b = two_projects
+
+        results_a = slot_a.searcher.search_vault(
+            "PostgreSQL database persistence",
+            top_k=5,
+        )
+        results_b = slot_b.searcher.search_vault(
+            "embedding model semantic search",
+            top_k=5,
+        )
+
+        assert len(results_a) > 0, "Project A search returned no results"
+        assert len(results_b) > 0, "Project B search returned no results"
+
+        a_ids = {r.id for r in results_a}
+        b_ids = {r.id for r in results_b}
+        assert a_ids.isdisjoint(b_ids), f"Result isolation violated: {a_ids & b_ids}"
+
+    def test_concurrent_searches_two_projects(
+        self,
+        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+    ) -> None:
+        """Two threads searching different projects concurrently."""
+        _root_a, slot_a, _root_b, slot_b = two_projects
+        results: dict[str, list] = {}
+        barrier = threading.Barrier(2)
+
+        def search(slot: ProjectSlot, query: str, key: str) -> None:
+            barrier.wait()
+            results[key] = slot.searcher.search_vault(query, top_k=3)
+
+        t1 = threading.Thread(
+            target=search,
+            args=(slot_a, "REST API design", "a"),
+        )
+        t2 = threading.Thread(
+            target=search,
+            args=(slot_b, "vector database Qdrant", "b"),
+        )
+        t1.start()
+        t2.start()
+        t1.join(timeout=30)
+        t2.join(timeout=30)
+
+        assert "a" in results and "b" in results
+        assert len(results["a"]) > 0
+        assert len(results["b"]) > 0
+        a_ids = {r.id for r in results["a"]}
+        b_ids = {r.id for r in results["b"]}
+        assert a_ids.isdisjoint(b_ids)
+
+    def test_four_concurrent_searches(
+        self,
+        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+    ) -> None:
+        """Four threads (2 per project) all complete with valid results."""
+        _root_a, slot_a, _root_b, slot_b = two_projects
+        results: dict[str, list] = {}
+        barrier = threading.Barrier(4)
+
+        def search(slot: ProjectSlot, query: str, key: str) -> None:
+            barrier.wait()
+            results[key] = slot.searcher.search_vault(query, top_k=3)
+
+        threads = [
+            threading.Thread(
+                target=search,
+                args=(slot_a, "database transactions", "a1"),
+            ),
+            threading.Thread(
+                target=search,
+                args=(slot_a, "REST API pagination", "a2"),
+            ),
+            threading.Thread(
+                target=search,
+                args=(slot_b, "embedding models Qwen3", "b1"),
+            ),
+            threading.Thread(
+                target=search,
+                args=(slot_b, "SPLADE sparse vectors", "b2"),
+            ),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        assert len(results) == 4, f"Expected 4 results, got {list(results)}"
+        for key, res in results.items():
+            assert len(res) > 0, f"Search '{key}' returned no results"
+            assert all(isinstance(r.score, float) and r.score > 0 for r in res), (
+                f"Search '{key}' has invalid scores"
+            )
+        # Cross-project isolation still holds
+        a_ids = {r.id for r in results["a1"]} | {r.id for r in results["a2"]}
+        b_ids = {r.id for r in results["b1"]} | {r.id for r in results["b2"]}
+        assert a_ids.isdisjoint(b_ids)
+
+    def test_search_all_across_projects(
+        self,
+        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+    ) -> None:
+        """search_all() on each project only returns that project's docs."""
+        _root_a, slot_a, _root_b, slot_b = two_projects
+
+        all_a = slot_a.searcher.search_all("architecture", top_k=5)
+        all_b = slot_b.searcher.search_all("research", top_k=5)
+
+        assert len(all_a) > 0
+        assert len(all_b) > 0
+        a_ids = {r.id for r in all_a}
+        b_ids = {r.id for r in all_b}
+        assert a_ids.isdisjoint(b_ids)
+
+
 class TestSharedReranker:
     """CrossEncoder is shared across all project slots (PERF-004)."""
 
