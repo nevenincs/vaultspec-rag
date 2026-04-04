@@ -25,9 +25,7 @@ class TestVaultSearch:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        # search_vault instead of search (which uses search_all and
-        # min-max normalizes against an empty codebase collection,
-        # collapsing scores to 0.0).
+        # search_vault searches only the vault collection.
         results = searcher.search_vault("architecture decision", top_k=5)
 
         assert len(results) > 0
@@ -44,7 +42,7 @@ class TestVaultSearch:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("implementation plan", top_k=5)
+        results = searcher.search_vault("implementation plan", top_k=5)
 
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
@@ -57,7 +55,7 @@ class TestVaultSearch:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("type:adr architecture", top_k=10)
+        results = searcher.search_vault("type:adr architecture", top_k=10)
 
         # All results should be ADRs
         for r in results:
@@ -71,7 +69,7 @@ class TestVaultSearch:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("project", top_k=3)
+        results = searcher.search_vault("project", top_k=3)
 
         assert len(results) <= 3
 
@@ -83,7 +81,7 @@ class TestVaultSearch:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("architecture", top_k=1)
+        results = searcher.search_vault("architecture", top_k=1)
 
         if results:
             assert isinstance(results[0].snippet, str)
@@ -138,105 +136,11 @@ class TestVaultSearch:
 # ---- Search edge cases ----
 
 
-@pytest.fixture(scope="module")
-def rag_components_mixed(tmp_path_factory, embedding_model):
-    """RAG components with both vault and codebase indexed.
-
-    Builds a synthetic vault and indexes a tiny 2-file Python corpus so
-    search_all() returns results from both sources.
-    """
-    from vaultspec_rag import CodebaseIndexer, VaultIndexer, VaultStore
-    from vaultspec_rag.tests.corpus import build_synthetic_vault
-
-    root = tmp_path_factory.mktemp("mixed-vault")
-    build_synthetic_vault(root, n_docs=12, seed=555)
-
-    store = VaultStore(root)
-    indexer = VaultIndexer(root, embedding_model, store)
-    indexer.full_index()
-
-    # Create a tiny 2-file Python corpus and index it.
-    src_dir = root / "src"
-    src_dir.mkdir()
-    (src_dir / "utils.py").write_text(
-        "def add(a: int, b: int) -> int:\n"
-        "    '''Add two integers and return the result.'''\n"
-        "    return a + b\n\n"
-        "def subtract(a: int, b: int) -> int:\n"
-        "    '''Subtract b from a.'''\n"
-        "    return a - b\n",
-        encoding="utf-8",
-    )
-    (src_dir / "search_helpers.py").write_text(
-        "class QueryParser:\n"
-        "    '''Parse a search query string into tokens.'''\n\n"
-        "    def parse(self, query: str) -> list[str]:\n"
-        "        '''Split query on whitespace and return token list.'''\n"
-        "        return query.split()\n\n"
-        "    def normalize(self, token: str) -> str:\n"
-        "        '''Lowercase and strip punctuation from token.'''\n"
-        "        return token.lower().strip('.,!?')\n",
-        encoding="utf-8",
-    )
-    code_indexer = CodebaseIndexer(root, embedding_model, store)
-    code_indexer.full_index()
-
-    yield {
-        "model": embedding_model,
-        "store": store,
-        "indexer": indexer,
-        "code_indexer": code_indexer,
-        "root": root,
-    }
-
-    store.close()
-
-
-class TestSearchAll:
-    """Tests for VaultSearcher.search_all() combining vault and code results."""
-
-    def test_search_all_returns_vault_results(self, rag_components):
-        """search_all on a vault-only index returns only vault results."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components["root"],
-            rag_components["model"],
-            rag_components["store"],
-        )
-        results = searcher.search_all("architecture decision", top_k=5)
-
-        assert len(results) > 0
-        assert all(r.source in ("vault", "codebase") for r in results)
-        scores = [r.score for r in results]
-        assert scores == sorted(scores, reverse=True)
-
-    def test_search_all_returns_mixed_results(self, rag_components_mixed):
-        """search_all on a vault+code index returns results from both sources."""
-        from vaultspec_rag import VaultSearcher
-
-        searcher = VaultSearcher(
-            rag_components_mixed["root"],
-            rag_components_mixed["model"],
-            rag_components_mixed["store"],
-        )
-        results = searcher.search_all("function definition", top_k=10)
-
-        assert len(results) > 0
-        sources = {r.source for r in results}
-        assert "vault" in sources, f"Expected vault results, got sources: {sources}"
-        assert "codebase" in sources, (
-            f"Expected codebase results, got sources: {sources}"
-        )
-        scores = [r.score for r in results]
-        assert scores == sorted(scores, reverse=True)
-
-
 class TestSearchEdgeCases:
     """Edge cases for search operations."""
 
     def test_empty_query(self, rag_components):
-        """VaultSearcher.search('') should not crash."""
+        """VaultSearcher.search_vault('') should not crash."""
         from vaultspec_rag import VaultSearcher
 
         model = rag_components["model"]
@@ -244,7 +148,7 @@ class TestSearchEdgeCases:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("", top_k=5)
+        results = searcher.search_vault("", top_k=5)
         # Should return some results (empty query still embeds something)
         # or empty list -- but must not crash
         assert isinstance(results, list)
@@ -258,7 +162,7 @@ class TestSearchEdgeCases:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("type:adr", top_k=10)
+        results = searcher.search_vault("type:adr", top_k=10)
         assert isinstance(results, list)
         # Should find some ADR docs
         if results:
@@ -274,7 +178,7 @@ class TestSearchEdgeCases:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("type:nonexistent some query", top_k=5)
+        results = searcher.search_vault("type:nonexistent some query", top_k=5)
         assert isinstance(results, list)
         assert len(results) == 0
 
@@ -295,7 +199,7 @@ class TestSearchEdgeCases:
             "query with <angle> & ampersand",
         ]
         for q in special_queries:
-            results = searcher.search(q, top_k=3)
+            results = searcher.search_vault(q, top_k=3)
             assert isinstance(results, list), f"Query '{q}' should not crash"
 
     def test_very_long_query(self, rag_components):
@@ -308,7 +212,7 @@ class TestSearchEdgeCases:
 
         searcher = VaultSearcher(root, model, store)
         long_query = "architecture decision " * 30  # ~660 chars
-        results = searcher.search(long_query, top_k=5)
+        results = searcher.search_vault(long_query, top_k=5)
         assert isinstance(results, list)
 
     def test_sql_injection_in_filter_value(self, rag_components):
@@ -330,11 +234,11 @@ class TestSearchEdgeCases:
             "feature:test' UNION SELECT * FROM vault_docs --",
         ]
         for q in adversarial_queries:
-            results = searcher.search(q, top_k=3)
+            results = searcher.search_vault(q, top_k=3)
             assert isinstance(results, list)
 
         # Verify the store is still functional after adversarial queries
-        results = searcher.search("architecture", top_k=3)
+        results = searcher.search_vault("architecture", top_k=3)
         assert len(results) > 0, "Store should still work after adversarial queries"
 
 

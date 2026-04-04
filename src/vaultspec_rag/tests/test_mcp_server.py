@@ -40,7 +40,6 @@ class TestToolRegistration:
         expected = {
             "search_vault",
             "search_codebase",
-            "search_all",
             "get_index_status",
             "get_code_file",
             "reindex_vault",
@@ -50,7 +49,7 @@ class TestToolRegistration:
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 7
+        assert len(tools) == 6
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())
@@ -63,7 +62,6 @@ class TestToolRegistration:
         tools_with_project_root = {
             "search_vault",
             "search_codebase",
-            "search_all",
             "get_index_status",
             "get_code_file",
             "reindex_vault",

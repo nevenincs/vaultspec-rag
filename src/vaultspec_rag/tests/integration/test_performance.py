@@ -36,10 +36,10 @@ class TestPerformance:
         searcher = VaultSearcher(root, model, store)
 
         # Warmup: ensure FTS index is built and model is warm
-        searcher.search("warmup", top_k=1)
+        searcher.search_vault("warmup", top_k=1)
 
         start = time.perf_counter()
-        results = searcher.search("architecture decision", top_k=5)
+        results = searcher.search_vault("architecture decision", top_k=5)
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert len(results) > 0, "Should return results"
@@ -161,11 +161,11 @@ class TestPerformance:
         searcher = VaultSearcher(root, model, store)
 
         # First search builds graph
-        searcher.search("architecture", top_k=1)
+        searcher.search_vault("architecture", top_k=1)
         graph1 = searcher._cached_graph
 
         # Second search should reuse same graph instance
-        searcher.search("editor", top_k=1)
+        searcher.search_vault("editor", top_k=1)
         graph2 = searcher._cached_graph
 
         assert graph1 is graph2, "Graph should be reused across searches"
@@ -180,10 +180,10 @@ class TestPerformance:
 
         searcher = VaultSearcher(root, model, store, graph_ttl_seconds=0)
 
-        searcher.search("architecture", top_k=1)
+        searcher.search_vault("architecture", top_k=1)
         graph1 = searcher._cached_graph
 
-        searcher.search("editor", top_k=1)
+        searcher.search_vault("editor", top_k=1)
         graph2 = searcher._cached_graph
 
         assert graph1 is not graph2, "Graph should be rebuilt with TTL=0"

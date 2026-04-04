@@ -1,4 +1,9 @@
-"""RAG integration test fixtures."""
+"""RAG integration test fixtures.
+
+Uses the session-scoped ``rag_components`` from the parent conftest.
+Only defines ``rag_components_with_code`` for tests that need codebase
+indexing on top of vault indexing.
+"""
 
 from __future__ import annotations
 
@@ -6,21 +11,6 @@ import pytest
 
 from ..conftest import _index_corpus
 from ..corpus import build_synthetic_vault
-
-
-@pytest.fixture(scope="session")
-def rag_components(embedding_model, tmp_path_factory):
-    """Real RAG components backed by a synthetic vault (24 docs).
-
-    Each integration test session gets its own tmp_path-based corpus.
-    """
-    root = tmp_path_factory.mktemp("integ-vault")
-    manifest = build_synthetic_vault(root, n_docs=24, seed=100)
-    components = _index_corpus(root, embedding_model)
-
-    yield {**components, "manifest": manifest}
-
-    components["store"].close()
 
 
 @pytest.fixture(scope="session")

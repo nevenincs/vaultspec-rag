@@ -539,49 +539,6 @@ async def search_codebase(
 
 
 @mcp.tool()
-async def search_all(
-    query: str,
-    top_k: int = 5,
-    project_root: str | None = None,
-) -> SearchResponse:
-    """Search both documentation and codebase for comprehensive context.
-
-    Args:
-        query: Natural language search string.
-        top_k: Number of results to return from each source.
-        project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
-
-    Returns:
-        SearchResponse with merged vault and codebase results,
-        ranked by normalized relevance score.
-
-    Raises:
-        RuntimeError: If RAG components fail to initialize
-            (e.g., no CUDA GPU available).
-    """
-    top_k = _clamp_top_k(top_k)
-    query = _validate_query(query)
-    root = _resolve_root(project_root)
-
-    def _run() -> SearchResponse:
-        slot = _registry.get_project(root)
-        logger.info("Unified search for: %s", query)
-        results = slot.searcher.search_all(query, top_k=top_k)
-        items = [
-            SearchResultItem.model_validate(r, from_attributes=True) for r in results
-        ]
-        return SearchResponse(
-            results=items,
-            summary=f"Found {len(results)} mixed results from vault and codebase.",
-        )
-
-    result = await _run_in_thread(_run)
-    _ensure_watcher(root)
-    return result
-
-
-@mcp.tool()
 async def get_index_status(
     project_root: str | None = None,
 ) -> IndexStatus:

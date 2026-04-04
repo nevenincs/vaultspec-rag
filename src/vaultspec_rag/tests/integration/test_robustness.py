@@ -88,9 +88,6 @@ class TestRobustness:
 
         searcher = VaultSearcher(root, model, store)
         # Use a broad query that should match many docs.
-        # search_vault is used instead of search (which delegates to
-        # search_all and applies min-max normalization that can zero
-        # out scores when there is no codebase collection).
         results = searcher.search_vault("pipeline implementation", top_k=15)
 
         assert len(results) > 0, "Should find results for broad query"

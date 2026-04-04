@@ -89,13 +89,13 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
     ]
 
     # Warmup
-    searcher.search("warmup", top_k=1)
+    searcher.search_vault("warmup", top_k=1)
 
     latencies = []
     for i in range(n_queries):
         q = queries[i % len(queries)]
         start = time.perf_counter()
-        searcher.search(q, top_k=5)
+        searcher.search_vault(q, top_k=5)
         elapsed_ms = (time.perf_counter() - start) * 1000
         latencies.append(elapsed_ms)
 

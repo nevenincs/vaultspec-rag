@@ -159,11 +159,6 @@ class TestMcpFastPath:
         result = _try_mcp_search("test query", "code", 5, 1)
         assert result is None
 
-    def test_tool_map_all(self):
-        """search_type='all' maps to search_all, returns None on failure."""
-        result = _try_mcp_search("test query", "all", 5, 1)
-        assert result is None
-
     def test_invalid_search_type(self):
         """Unknown search_type falls back to search_vault, returns None on failure."""
         result = _try_mcp_search("test query", "invalid", 5, 1)

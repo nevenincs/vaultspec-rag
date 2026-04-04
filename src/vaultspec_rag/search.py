@@ -177,32 +177,6 @@ def rerank_with_graph(
     return all_results
 
 
-def _normalize_minmax(results: list[SearchResult], weight: float = 1.0) -> None:
-    """Normalize scores in-place using min-max scaling, then apply weight.
-
-    Handles edge cases: empty list, all-same scores (set to weight).
-
-    Args:
-        results: Search results whose ``score`` attributes are
-            modified in-place.
-        weight: Multiplier applied after scaling to [0, 1].
-
-    Returns:
-        None.  Scores are mutated in-place.
-    """
-    if not results:
-        return
-    scores = [r.score for r in results]
-    lo, hi = min(scores), max(scores)
-    span = hi - lo
-    if span == 0:
-        for r in results:
-            r.score = weight
-    else:
-        for r in results:
-            r.score = ((r.score - lo) / span) * weight
-
-
 class VaultSearcher:
     """Orchestrates hybrid search across vault and codebase."""
 
@@ -526,8 +500,8 @@ class VaultSearcher:
     ) -> tuple[ParsedQuery, str, list[float], SparseResult]:
         """Parse and encode a query, returning shared components.
 
-        Used by ``search_vault``, ``search_codebase``, and
-        ``search_all`` to encode the query exactly once.
+        Used by ``search_vault`` and ``search_codebase`` to
+        encode the query exactly once.
 
         Args:
             raw_query: Raw query string, possibly with filter
@@ -602,73 +576,3 @@ class VaultSearcher:
             function_name=function_name,
             class_name=class_name,
         )
-
-    def search_all(
-        self,
-        raw_query: str,
-        top_k: int = 5,
-        *,
-        vault_weight: float = 0.5,
-        code_weight: float = 0.5,
-    ) -> list[SearchResult]:
-        """Search both vault and codebase with score normalization.
-
-        Each result set is normalized independently before combining:
-        - RRF (Reciprocal Rank Fusion) scores from Qdrant hybrid
-          search use min-max normalization.
-        - CrossEncoder scores use sigmoid normalization (when the
-          reranker is enabled).
-
-        Note: Graph reranking is NOT applied to search_all results
-        -- it only applies within search_vault().  Vault and code
-        results are normalized separately using min-max scaling
-        before merging (equal weighting by default).
-
-        Args:
-            raw_query: Natural language search query.
-            top_k: Number of results to return.
-            vault_weight: Weight for vault results (default 0.5).
-            code_weight: Weight for codebase results (default 0.5).
-
-        Returns:
-            Merged and re-sorted list of SearchResult from both
-            vault and codebase collections.
-        """
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
-
-        vault_results = self._search_vault_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            top_k,
-        )
-        code_results = self._search_codebase_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            top_k,
-        )
-
-        _normalize_minmax(vault_results, vault_weight)
-        _normalize_minmax(code_results, code_weight)
-
-        all_results = vault_results + code_results
-        all_results.sort(key=lambda r: r.score, reverse=True)
-        return all_results[:top_k]
-
-    def search(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
-        """Search vault and codebase with equal weights.
-
-        Delegates to ``search_all`` with default weights
-        (vault_weight=0.5, code_weight=0.5).
-
-        Args:
-            raw_query: Natural language search query.
-            top_k: Number of results to return.
-
-        Returns:
-            Merged and re-sorted list of SearchResult.
-        """
-        return self.search_all(raw_query, top_k=top_k)

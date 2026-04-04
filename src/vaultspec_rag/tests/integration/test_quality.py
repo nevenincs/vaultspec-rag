@@ -29,7 +29,7 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("audit report security compliance", top_k=10)
+        results = searcher.search_vault("audit report security compliance", top_k=10)
 
         result_ids = [r.id for r in results]
         assert any("audit" in rid for rid in result_ids), (
@@ -45,7 +45,7 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("architecture decision trade-offs", top_k=10)
+        results = searcher.search_vault("architecture decision trade-offs", top_k=10)
 
         assert len(results) > 0, "Should find architecture docs"
         found = any(r.doc_type == "adr" for r in results)
@@ -63,7 +63,7 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search(
+        results = searcher.search_vault(
             "implementation plan milestones deliverables",
             top_k=10,
         )
@@ -89,7 +89,7 @@ class TestHelpfulness:
         needle = next(iter(manifest.needles))
         expected_doc_id = manifest.needles[needle]
 
-        results = searcher.search(needle, top_k=3)
+        results = searcher.search_vault(needle, top_k=3)
 
         assert len(results) > 0, f"Should find results for needle {needle}"
         result_ids = [r.id for r in results]
@@ -127,7 +127,7 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("type:adr architecture", top_k=10)
+        results = searcher.search_vault("type:adr architecture", top_k=10)
 
         assert len(results) > 0, "Should find ADR architecture docs"
         for r in results:
@@ -147,7 +147,7 @@ class TestHelpfulness:
         # Pick a feature that has docs in the corpus
         target_feature = manifest.docs[0].feature
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search(
+        results = searcher.search_vault(
             f"feature:{target_feature} implementation",
             top_k=10,
         )
@@ -167,7 +167,7 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("date:2026-01-01 architecture", top_k=10)
+        results = searcher.search_vault("date:2026-01-01 architecture", top_k=10)
 
         assert len(results) > 0, "Should find docs from 2026-01-01"
         for r in results:
@@ -190,7 +190,7 @@ class TestHelpfulness:
         target_feature = adr_docs[0].feature
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search(
+        results = searcher.search_vault(
             f"type:adr feature:{target_feature}",
             top_k=10,
         )
@@ -220,7 +220,7 @@ class TestHelpfulness:
         # Test with multiple needles
         tested = 0
         for needle, expected_id in list(manifest.needles.items())[:5]:
-            results = searcher.search(needle, top_k=5)
+            results = searcher.search_vault(needle, top_k=5)
             if results:
                 result_ids = [r.id for r in results]
                 assert expected_id in result_ids, (
@@ -248,7 +248,7 @@ class TestHelpfulness:
         root = rag_components_full["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results = searcher.search("implementation plan architecture", top_k=15)
+        results = searcher.search_vault("implementation plan architecture", top_k=15)
 
         assert len(results) >= 2, "Need at least 2 results to compare authority"
 
@@ -298,8 +298,8 @@ class TestHelpfulness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        results_3 = searcher.search("implementation plan", top_k=3)
-        results_10 = searcher.search("implementation plan", top_k=10)
+        results_3 = searcher.search_vault("implementation plan", top_k=3)
+        results_10 = searcher.search_vault("implementation plan", top_k=10)
 
         assert len(results_10) >= len(results_3), (
             f"top_k=10 ({len(results_10)}) should return >= "

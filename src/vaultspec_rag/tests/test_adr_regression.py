@@ -77,13 +77,6 @@ class TestMCPAsyncTools:
 
         assert asyncio.iscoroutinefunction(search_codebase)
 
-    def test_search_all_is_async(self):
-        import asyncio
-
-        from vaultspec_rag.mcp_server import search_all
-
-        assert asyncio.iscoroutinefunction(search_all)
-
     def test_reindex_vault_is_async(self):
         import asyncio
 
@@ -111,46 +104,6 @@ class TestMCPAsyncTools:
         from vaultspec_rag.mcp_server import get_code_file
 
         assert asyncio.iscoroutinefunction(get_code_file)
-
-
-class TestScoreNormalization:
-    """ADR: score-normalization — _normalize_minmax keeps scores in [0, w]."""
-
-    def test_normalize_produces_bounded_scores(self):
-        from vaultspec_rag.search import SearchResult, _normalize_minmax
-
-        results = [
-            SearchResult(
-                id=f"d{i}",
-                path=f"p{i}",
-                title=f"t{i}",
-                score=float(i * 10),
-                snippet="x",
-                source="vault",
-            )
-            for i in range(5)
-        ]
-        _normalize_minmax(results, weight=1.0)
-        for r in results:
-            assert 0.0 <= r.score <= 1.0
-
-    def test_normalize_all_same_scores(self):
-        from vaultspec_rag.search import SearchResult, _normalize_minmax
-
-        results = [
-            SearchResult(
-                id=f"d{i}",
-                path=f"p{i}",
-                title=f"t{i}",
-                score=5.0,
-                snippet="x",
-                source="vault",
-            )
-            for i in range(3)
-        ]
-        _normalize_minmax(results, weight=0.7)
-        for r in results:
-            assert r.score == pytest.approx(0.7)
 
 
 class TestPathResolveCache:

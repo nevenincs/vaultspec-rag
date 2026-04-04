@@ -568,7 +568,7 @@ def _try_mcp_search(
     """
     import asyncio
 
-    tool_map = {"vault": "search_vault", "code": "search_codebase", "all": "search_all"}
+    tool_map = {"vault": "search_vault", "code": "search_codebase"}
     tool_name = tool_map.get(search_type, "search_vault")
 
     async def _call() -> list[dict[str, object]] | None:
@@ -639,10 +639,10 @@ def handle_search(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
     search_type: Annotated[
-        Literal["vault", "code", "all"],
+        Literal["vault", "code"],
         typer.Option(
             "--type",
-            help="Search source: 'vault' (docs), 'code' (source), or 'all' (both).",
+            help="Search source: 'vault' (docs) or 'code' (source).",
             show_default=True,
         ),
     ] = "vault",
@@ -685,8 +685,7 @@ def handle_search(
     Args:
         ctx: Typer context carrying ``CLIState``.
         query: The search query text.
-        search_type: Search source: ``vault``, ``code``, or
-            ``all``.
+        search_type: Search source: ``vault`` or ``code``.
         max_results: Maximum number of results to return.
         language: Language filter for code search.
         node_type: AST node type filter for code search.
@@ -726,9 +725,7 @@ def handle_search(
                 _handle_gpu_error(e)
             searcher = VaultSearcher(target, model, store)
 
-            if search_type == "vault":
-                results = searcher.search_vault(query, top_k=max_results)
-            elif search_type == "code":
+            if search_type == "code":
                 results = searcher.search_codebase(
                     query,
                     top_k=max_results,
@@ -738,7 +735,7 @@ def handle_search(
                     class_name=class_name,
                 )
             else:
-                results = searcher.search_all(query, top_k=max_results)
+                results = searcher.search_vault(query, top_k=max_results)
     finally:
         store.close()
 
@@ -867,7 +864,7 @@ def mcp_status() -> None:
     table.add_row("Transport", "stdio")
     table.add_row(
         "Tools",
-        "search_vault, search_codebase, search_all, "
+        "search_vault, search_codebase, "
         "get_index_status, get_code_file, "
         "reindex_vault, reindex_codebase",
     )
@@ -1497,7 +1494,7 @@ def handle_benchmark(
         ]
 
         with console.status("[bold green]Warming up..."):
-            searcher.search("warmup", top_k=1)
+            searcher.search_vault("warmup", top_k=1)
 
         latencies: list[float] = []
         with console.status(
@@ -1506,7 +1503,7 @@ def handle_benchmark(
             for i in range(n_queries):
                 q = _bench_queries[i % len(_bench_queries)]
                 t0 = time.perf_counter()
-                searcher.search(q, top_k=5)
+                searcher.search_vault(q, top_k=5)
                 latencies.append((time.perf_counter() - t0) * 1000)
 
         latencies.sort()

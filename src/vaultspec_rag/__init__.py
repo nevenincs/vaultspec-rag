@@ -19,7 +19,6 @@ from .api import (
     index,
     index_codebase,
     list_documents,
-    search_all,
     search_codebase,
     search_vault,
 )
@@ -55,7 +54,6 @@ __all__ = [
     "parse_query",
     "prepare_document",
     "rerank_with_graph",
-    "search_all",
     "search_codebase",
     "search_vault",
 ]
