@@ -484,15 +484,22 @@ stored metadata and re-embeds only changed files.
 
 ### Service layer
 
-`ServiceRegistry` holds one shared `EmbeddingModel` instance across all
-projects, since loading GPU models takes several seconds and ~2 GB VRAM. Each
-project gets a `ProjectSlot` keyed by resolved `Path`, containing a
-`VaultStore`, `VaultSearcher`, `VaultIndexer`, `CodebaseIndexer`, and
-`GraphCache`.
+`ServiceRegistry` holds one shared `EmbeddingModel` and one shared
+`CrossEncoder` reranker across all projects, since loading GPU models
+takes several seconds and ~2 GB VRAM. Each project gets a `ProjectSlot`
+keyed by resolved `Path`, containing a `VaultStore`, `VaultSearcher`,
+`VaultIndexer`, `CodebaseIndexer`, and `GraphCache`.
 
-`threading.Lock` with a double-check pattern protects all shared state.
-`GraphCache` uses TTL-based expiry (300 seconds by default) and is invalidated
-immediately after a vault reindex by resetting `_graph_built_at` to zero.
+A global `gpu_lock` serializes GPU-bound operations (encoding and
+reranking) across concurrent requests. Each project root also gets its
+own lock so that indexing one project does not block searches on another.
+
+The registry manages filesystem watcher lifecycle through an
+`_on_close_project` callback and a `_shutting_down` guard that prevents
+new slots from being created during shutdown.
+
+`GraphCache` uses TTL-based expiry (300 seconds by default) and is
+invalidated immediately after a vault reindex.
 
 ## Getting help
 
