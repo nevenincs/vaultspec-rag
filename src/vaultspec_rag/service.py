@@ -228,8 +228,18 @@ class ServiceRegistry:
                 gpu_lock=self._gpu_lock,
                 reranker=reranker,
             )
-            vault_indexer = VaultIndexer(root, model, store)
-            code_indexer = CodebaseIndexer(root, model, store)
+            vault_indexer = VaultIndexer(
+                root,
+                model,
+                store,
+                gpu_lock=self._gpu_lock,
+            )
+            code_indexer = CodebaseIndexer(
+                root,
+                model,
+                store,
+                gpu_lock=self._gpu_lock,
+            )
         except Exception:
             store.close()
             raise

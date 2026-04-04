@@ -178,7 +178,6 @@ def _ensure_watcher(root: Path) -> None:
                 code_indexer=slot.code_indexer,
                 stop_event=stop_event,
                 graph_cache=slot.graph_cache,
-                gpu_lock=_registry.gpu_lock,
             ),
         )
         _watcher_tasks[root] = task
@@ -692,11 +691,10 @@ async def reindex_vault(
         slot = _registry.get_project(root)
         mode = "full" if clean else "incremental"
         logger.info("Starting %s vault re-index...", mode)
-        with _registry.gpu_lock:
-            if clean:
-                result = slot.vault_indexer.full_index(clean=True)
-            else:
-                result = slot.vault_indexer.incremental_index()
+        if clean:
+            result = slot.vault_indexer.full_index(clean=True)
+        else:
+            result = slot.vault_indexer.incremental_index()
         slot.graph_cache.invalidate()
         return IndexResponse(
             total=result.total,
@@ -739,11 +737,10 @@ async def reindex_codebase(
         slot = _registry.get_project(root)
         mode = "full" if clean else "incremental"
         logger.info("Starting %s codebase re-index...", mode)
-        with _registry.gpu_lock:
-            if clean:
-                result = slot.code_indexer.full_index(clean=True)
-            else:
-                result = slot.code_indexer.incremental_index()
+        if clean:
+            result = slot.code_indexer.full_index(clean=True)
+        else:
+            result = slot.code_indexer.incremental_index()
         return IndexResponse(
             total=result.total,
             added=result.added,

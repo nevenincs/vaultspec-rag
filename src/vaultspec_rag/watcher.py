@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import time
-from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,7 +17,6 @@ from watchfiles import Change, awatch
 
 if TYPE_CHECKING:
     import asyncio
-    import threading
 
     from .api import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
@@ -107,16 +105,15 @@ async def watch_and_reindex(
     cooldown: float = 30.0,
     searcher: VaultSearcher | None = None,
     graph_cache: GraphCache | None = None,
-    gpu_lock: threading.Lock | None = None,
 ) -> None:
     """Watch for file changes and trigger incremental re-indexing.
 
-    Runs until stop_event is set. Uses gpu_lock to serialize GPU access
-    with concurrent MCP tool calls. Applies an application-level cooldown
-    between index runs to prevent thrashing. Cooldown is tracked
-    independently per source: vault and code each have separate
-    30-second windows so a vault reindex does not suppress a subsequent
-    code reindex (or vice versa).
+    Runs until stop_event is set. GPU serialization is handled
+    internally by the indexers' ``gpu_lock``. Applies an
+    application-level cooldown between index runs to prevent
+    thrashing. Cooldown is tracked independently per source: vault
+    and code each have separate 30-second windows so a vault reindex
+    does not suppress a subsequent code reindex (or vice versa).
 
     Args:
         root_dir: Project root directory to watch.
@@ -134,8 +131,6 @@ async def watch_and_reindex(
         graph_cache: Optional GraphCache to invalidate after a
             successful vault reindex.  Preferred over the legacy
             ``searcher._graph_built_at`` poke.
-        gpu_lock: Optional ``threading.Lock`` that serializes GPU
-            operations during re-indexing.
 
     Raises:
         This coroutine does not propagate exceptions from indexing.
@@ -186,12 +181,9 @@ async def watch_and_reindex(
                     "Vault changes detected, triggering incremental re-index...",
                 )
                 try:
-
-                    def _vault_reindex():
-                        with gpu_lock if gpu_lock is not None else nullcontext():
-                            return vault_indexer.incremental_index()
-
-                    result = await _run_in_thread(_vault_reindex)
+                    result = await _run_in_thread(
+                        vault_indexer.incremental_index,
+                    )
                     if graph_cache is not None:
                         graph_cache.invalidate()
                     elif searcher is not None:
@@ -218,12 +210,9 @@ async def watch_and_reindex(
                     "Code changes detected, triggering incremental re-index...",
                 )
                 try:
-
-                    def _code_reindex():
-                        with gpu_lock if gpu_lock is not None else nullcontext():
-                            return code_indexer.incremental_index()
-
-                    result = await _run_in_thread(_code_reindex)
+                    result = await _run_in_thread(
+                        code_indexer.incremental_index,
+                    )
                     _last_code_index = time.monotonic()
                     logger.info(
                         "Code re-index complete: +%d /%d -%d (%dms)",
