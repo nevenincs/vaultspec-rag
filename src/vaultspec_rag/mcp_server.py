@@ -81,6 +81,9 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     hf_home = os.environ.get("HF_HOME", "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
 
+    # Wire watcher lifecycle into registry so close_project() stops watchers
+    _registry._on_close_project = _stop_watcher
+
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
     t0 = time.perf_counter()
     await _run_in_thread(_registry.load_model)
@@ -205,7 +208,8 @@ def _stop_watcher(root: Path) -> None:
 
 def _stop_all_watchers() -> None:
     """Stop all running watchers."""
-    roots = list(_watcher_tasks.keys())
+    with _watcher_lock:
+        roots = list(_watcher_tasks.keys())
     for root in roots:
         _stop_watcher(root)
 

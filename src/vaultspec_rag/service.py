@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from sentence_transformers import CrossEncoder
@@ -75,6 +76,8 @@ class ServiceRegistry:
         self._gpu_lock = threading.Lock()
         self._reranker: CrossEncoder | None = None
         self._reranker_lock = threading.Lock()
+        self._on_close_project: Callable[[Path], None] | None = None
+        self._shutting_down = False
 
     # -- model lifecycle ---------------------------------------------------
 
@@ -192,6 +195,12 @@ class ServiceRegistry:
                 return slot
             slot = self._create_slot(root)
             with self._lock:
+                if self._shutting_down:
+                    # close_all() ran while we were creating the slot.
+                    # Don't publish — close the orphaned store.
+                    slot.store.close()
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
                 self._projects[root] = slot
         return slot
 
@@ -256,10 +265,17 @@ class ServiceRegistry:
     def close_project(self, root: Path) -> None:
         """Close and remove the project slot for *root*.
 
+        Invokes ``_on_close_project`` callback (if set) to stop the
+        project's filesystem watcher before closing the store.
+
         Args:
             root: Workspace root directory.
         """
         root = root.resolve()
+        # Stop the watcher BEFORE closing the store to prevent
+        # incremental_index() running against a closed store.
+        if self._on_close_project is not None:
+            self._on_close_project(root)
         with self._lock:
             slot = self._projects.pop(root, None)
             self._root_locks.pop(root, None)
@@ -269,7 +285,21 @@ class ServiceRegistry:
             logger.info("ProjectSlot closed for %s", root)
 
     def close_all(self) -> None:
-        """Close all project stores and release the model."""
+        """Close all project stores and release the model.
+
+        Invokes ``_on_close_project`` for each project to stop
+        watchers before closing stores.  Sets ``_shutting_down``
+        so any in-flight ``get_project()`` calls don't publish
+        new slots after close.
+        """
+        with self._lock:
+            self._shutting_down = True
+            roots = list(self._projects.keys())
+        # Stop watchers first (outside _lock to avoid deadlock
+        # with watcher callbacks that may call get_project)
+        if self._on_close_project is not None:
+            for root in roots:
+                self._on_close_project(root)
         with self._lock:
             for root, slot in self._projects.items():
                 slot.store.close()
