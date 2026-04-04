@@ -459,15 +459,15 @@ class TestMultiProjectSearch:
         b_ids = {r.id for r in results["b1"]} | {r.id for r in results["b2"]}
         assert a_ids.isdisjoint(b_ids)
 
-    def test_search_all_across_projects(
+    def test_search_vault_across_projects(
         self,
         two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
     ) -> None:
-        """search_all() on each project only returns that project's docs."""
+        """search_vault() on each project only returns that project's docs."""
         _root_a, slot_a, _root_b, slot_b = two_projects
 
-        all_a = slot_a.searcher.search_all("architecture", top_k=5)
-        all_b = slot_b.searcher.search_all("research", top_k=5)
+        all_a = slot_a.searcher.search_vault("architecture", top_k=5)
+        all_b = slot_b.searcher.search_vault("research", top_k=5)
 
         assert len(all_a) > 0
         assert len(all_b) > 0

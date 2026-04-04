@@ -36,10 +36,10 @@ class TestPerformance:
         searcher = VaultSearcher(root, model, store)
 
         # Warmup: ensure FTS index is built and model is warm
-        searcher.search("warmup", top_k=1)
+        searcher.search_vault("warmup", top_k=1)
 
         start = time.perf_counter()
-        results = searcher.search("architecture decision", top_k=5)
+        results = searcher.search_vault("architecture decision", top_k=5)
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert len(results) > 0, "Should return results"
@@ -48,7 +48,7 @@ class TestPerformance:
         )
 
     def test_batch_query_latency(self, rag_components):
-        """5 sequential queries should complete within 5 seconds total."""
+        """5 sequential vault queries should complete within 5 seconds total."""
         import time
 
         from vaultspec_rag import VaultSearcher
@@ -66,9 +66,12 @@ class TestPerformance:
             "security audit",
         ]
 
+        # Warmup: ensure CrossEncoder is loaded and FTS index built.
+        searcher.search_vault("warmup", top_k=1)
+
         start = time.perf_counter()
         for q in queries:
-            searcher.search(q, top_k=5)
+            searcher.search_vault(q, top_k=5)
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert elapsed_ms < 5000, (
@@ -109,8 +112,12 @@ class TestPerformance:
     # -- Resource tests --
 
     def test_store_disk_footprint(self, rag_components_full):
-        """The .qdrant/ directory should be under 50MB for the full corpus."""
-        db_dir = rag_components_full["db_dir"]
+        """The Qdrant data directory should be under 50MB for the full corpus."""
+        from vaultspec_rag.config import get_config
+
+        cfg = get_config()
+        root = rag_components_full["root"]
+        db_dir = root / cfg.data_dir / cfg.qdrant_dir
         assert db_dir.exists(), f"db_dir does not exist: {db_dir}"
 
         total_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
@@ -154,11 +161,11 @@ class TestPerformance:
         searcher = VaultSearcher(root, model, store)
 
         # First search builds graph
-        searcher.search("architecture", top_k=1)
+        searcher.search_vault("architecture", top_k=1)
         graph1 = searcher._cached_graph
 
         # Second search should reuse same graph instance
-        searcher.search("editor", top_k=1)
+        searcher.search_vault("editor", top_k=1)
         graph2 = searcher._cached_graph
 
         assert graph1 is graph2, "Graph should be reused across searches"
@@ -173,10 +180,10 @@ class TestPerformance:
 
         searcher = VaultSearcher(root, model, store, graph_ttl_seconds=0)
 
-        searcher.search("architecture", top_k=1)
+        searcher.search_vault("architecture", top_k=1)
         graph1 = searcher._cached_graph
 
-        searcher.search("editor", top_k=1)
+        searcher.search_vault("editor", top_k=1)
         graph2 = searcher._cached_graph
 
         assert graph1 is not graph2, "Graph should be rebuilt with TTL=0"

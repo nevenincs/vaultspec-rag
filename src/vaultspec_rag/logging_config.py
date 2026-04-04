@@ -72,7 +72,9 @@ def configure_logging(
             resolved_level = level
     else:
         # Fallback to environment or default
-        env_level = os.environ.get("VAULTSPEC_RAG_LOG_LEVEL", "INFO").upper()
+        from .config import EnvVar
+
+        env_level = os.environ.get(EnvVar.LOG_LEVEL, "WARNING").upper()
         resolved_level = getattr(logging, env_level, logging.INFO)
 
     # 2. Configure root logger

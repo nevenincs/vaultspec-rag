@@ -802,7 +802,7 @@ class VaultIndexer:
         self.model = model
         self.store = store
         self._gpu_lock = gpu_lock
-        self._meta_path = root_dir / cfg.qdrant_dir / cfg.index_metadata_file
+        self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
 
     def full_index(self, clean: bool = False) -> IndexResult:
         """Full re-index of all vault documents.
@@ -1084,7 +1084,7 @@ class CodebaseIndexer:
         from .config import get_config
 
         cfg = get_config()
-        self._meta_path = root_dir / cfg.qdrant_dir / "code_index_meta.json"
+        self._meta_path = root_dir / cfg.data_dir / cfg.code_index_metadata_file
 
     @staticmethod
     def _get_language(path: pathlib.Path) -> str:
@@ -1113,13 +1113,16 @@ class CodebaseIndexer:
         """
         import pathspec
 
+        from .config import get_config
+
+        cfg = get_config()
         patterns: list[str] = [
             # Always exclude these directories.
             ".venv/",
             ".git/",
             "node_modules/",
             "__pycache__/",
-            ".qdrant/",
+            f"{cfg.data_dir}/",
         ]
         for gitignore in self.root_dir.rglob(".gitignore"):
             try:

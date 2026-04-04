@@ -23,39 +23,6 @@ LIB_SRC: pathlib.Path = PROJECT_ROOT / "src" / "vaultspec_rag"
 #: CLI entry points are now modules inside the vaultspec package
 SCRIPTS: pathlib.Path = PROJECT_ROOT / "src" / "vaultspec_rag"
 
-#: test-project/ fixture directory (git-tracked .vault/ seed corpus)
-TEST_PROJECT: pathlib.Path = PROJECT_ROOT / "test-project"
-
-#: test-project/.vault/ documentation vault
-TEST_VAULT: pathlib.Path = TEST_PROJECT / ".vault"
-
-GPU_FAST_CORPUS_STEMS: frozenset[str] = frozenset(
-    [
-        # adr (4)
-        "2026-01-10-pipeline-execution-model",
-        "2026-01-12-connector-protocol-design",
-        "2026-01-15-storage-backend-selection",
-        "2026-01-20-scheduler-algorithm-choice",
-        # plan (2)
-        "2026-01-10-pipeline-engine-phase1-plan",
-        "2026-01-20-scheduler-phase1-plan",
-        # exec (2)
-        "2026-01-11-pipeline-parser-complete",
-        "2026-01-22-scheduler-worker-pool-complete",
-        # reference (3)
-        "2026-01-10-pipeline-engine-reference",
-        "2026-01-12-connector-api-reference",
-        "2026-01-18-nexus-security-audit",
-        # research (2)
-        "2026-01-09-dag-execution-research",
-        "2026-01-19-scheduling-algorithms-research",
-    ],
-)
-
-QDRANT_SUFFIX_FAST: str = "-fast"
-QDRANT_SUFFIX_FULL: str = "-full"
-QDRANT_SUFFIX_UNIT: str = "-fast-unit"
-
 TEST_PORT_BASE: int = 10001
 TEST_PORT_A2A_BASE: int = 10020
 TEST_PORT_SUBAGENT: int = 10010

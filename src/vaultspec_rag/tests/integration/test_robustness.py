@@ -20,16 +20,28 @@ class TestRobustness:
     # -- Document edge cases --
 
     def test_stories_without_frontmatter_skipped(self, rag_components):
-        """Stories in .vault/stories/ have no YAML frontmatter and are French fiction.
+        """Files in .vault/stories/ have no YAML frontmatter.
 
         Since DocType enum doesn't include 'stories', get_doc_type returns None
         and prepare_document returns None. Verify they are gracefully skipped.
+
+        The synthetic corpus does not ship story files, so this test
+        creates them on the fly inside the fixture's vault root.
         """
         from vaultspec_core.vaultcore import scan_vault
 
         from vaultspec_rag import prepare_document
 
         root = rag_components["root"]
+
+        # Create a stories subdirectory with a frontmatter-less markdown file.
+        stories_dir = root / ".vault" / "stories"
+        stories_dir.mkdir(parents=True, exist_ok=True)
+        (stories_dir / "tale-of-the-fox.md").write_text(
+            "# The Fox\n\nOnce upon a time there was a clever fox.\n",
+            encoding="utf-8",
+        )
+
         story_paths = [p for p in scan_vault(root) if "stories" in p.parts]
         assert len(story_paths) > 0, "Should find story files in scanner output"
 
@@ -75,8 +87,8 @@ class TestRobustness:
         root = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
-        # Use a broad query that should match many docs
-        results = searcher.search("pipeline implementation", top_k=15)
+        # Use a broad query that should match many docs.
+        results = searcher.search_vault("pipeline implementation", top_k=15)
 
         assert len(results) > 0, "Should find results for broad query"
         # All results should have valid scores (even orphans)

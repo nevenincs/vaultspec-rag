@@ -117,6 +117,7 @@ log_file_level = "DEBUG"
 markers = [
     "unit: fast tests with no external dependencies",
     "integration: requires CLI tools and network",
+    "subprocess_gpu: CLI subprocess tests that load their own GPU models (run separately from integration)",
     "performance: benchmarking tests for throughput and latency",
     "quality: precision/recall and document coverage tests",
     "robustness: edge case and error handling tests",

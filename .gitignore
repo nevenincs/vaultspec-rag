@@ -160,10 +160,9 @@ AGENTS.md
 **/.lance/
 vault_index.json
 
-# Test project workspace
-test-project/*
-!test-project/.vault/
-!test-project/README.md
+
+# RAG search data (Qdrant, index metadata)
+.vault/data/search-data/
 
 # Obsidian
 .vault/.obsidian/

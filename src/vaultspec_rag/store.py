@@ -110,7 +110,8 @@ class CodeChunk:
 class VaultStore:
     """Qdrant-backed vector store for vault documents and codebase chunks.
 
-    Storage lives at ``{root_dir}/.qdrant/``. The collection ``vault_docs``
+    Storage lives at ``{root_dir}/{data_dir}/{qdrant_dir}/`` (by default
+    ``.vault/data/search-data/qdrant/``).  The collection ``vault_docs``
     holds one point per indexed document, and ``codebase_docs`` holds
     points per source code chunk.
     """
@@ -123,7 +124,9 @@ class VaultStore:
         root_dir: pathlib.Path | str,
         embedding_dim: int | None = None,
     ) -> None:
-        """Connect to (or create) the Qdrant store at ``{root_dir}/.qdrant/``.
+        """Connect to (or create) the Qdrant store.
+
+        Path: ``{root_dir}/{data_dir}/{qdrant_dir}/``.
 
         Args:
             root_dir: Workspace root directory.
@@ -143,7 +146,7 @@ class VaultStore:
         cfg = get_config()
 
         self.root_dir = _pathlib.Path(root_dir)
-        self.db_path = self.root_dir / cfg.qdrant_dir
+        self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
         self.db_path.mkdir(parents=True, exist_ok=True)
         self._client: QdrantClient | None = _QdrantClient(path=str(self.db_path))
         self._embedding_dim = embedding_dim or EMBEDDING_DIM
