@@ -307,6 +307,12 @@ class TestSensitiveFileDenyList:
             "tls/server.key",
             "service.json",
             ".vaultspec-rag/service.json",
+            # Nested sensitive dirs
+            "vendor/.git/objects/pack",
+            "sub/dir/.vaultspec-rag/data",
+            # Mid-name matches for credentials/secrets patterns
+            "my-credentials-backup.txt",
+            "app.secrets.yaml",
         ],
     )
     def test_sensitive_paths_blocked(self, path):
@@ -321,6 +327,10 @@ class TestSensitiveFileDenyList:
             "docs/environment.md",
             "config/settings.toml",
             "src/services/auth.py",
+            # Edge cases that should NOT be blocked
+            "src/service.py",
+            "envconfig.toml",
+            ".github/workflows/ci.yml",
         ],
     )
     def test_safe_paths_allowed(self, path):
