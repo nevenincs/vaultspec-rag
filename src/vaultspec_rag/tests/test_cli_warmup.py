@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from vaultspec_rag.cli import app
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.integration]
 
 runner = CliRunner()
 
