@@ -45,6 +45,9 @@ class VaultSpecConfigWrapper:
 
         Args:
             base: The base ``VaultSpecConfig`` to wrap.
+
+        Returns:
+            None.
         """
         self._base = base
 
@@ -125,6 +128,13 @@ def get_config(
 
 
 def reset_config() -> None:
-    """Clear the cached config singleton (for testing)."""
+    """Clear the cached config singleton (for testing).
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
     global _cached_config
     _cached_config = None

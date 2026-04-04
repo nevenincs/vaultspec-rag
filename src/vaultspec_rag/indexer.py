@@ -68,7 +68,13 @@ class IndexResult:
 
 
 class TextSplitter:
-    """Simple structure-aware text splitter for code and markdown."""
+    """Structure-aware text splitter for code and markdown.
+
+    Recursively splits text using language-specific separators (e.g. class
+    and function boundaries for code, headings for markdown). Falls back to
+    character-level splitting when no structural separator is found. Supports
+    configurable chunk size and overlap.
+    """
 
     def __init__(
         self,
@@ -758,7 +764,14 @@ def prepare_document(
 
 
 class VaultIndexer:
-    """Orchestrates vault document indexing into the vector store."""
+    """Orchestrates vault document indexing into the vector store.
+
+    Scans the ``.vault/`` directory for markdown documents, parses YAML
+    frontmatter to extract metadata (tags, dates, related links), generates
+    dense and sparse embeddings via the provided ``EmbeddingModel``, and
+    upserts the results into Qdrant. Supports both full and incremental
+    indexing using blake2b content hashing to skip unchanged documents.
+    """
 
     def __init__(
         self,
@@ -1020,7 +1033,15 @@ class VaultIndexer:
 
 
 class CodebaseIndexer:
-    """Orchestrates source code indexing into the vector store."""
+    """Orchestrates source code indexing into the vector store.
+
+    Walks the project tree with ``.gitignore``-aware pruning, chunks source
+    files using tree-sitter AST analysis when a grammar is available or
+    ``TextSplitter`` as a fallback, generates dense and sparse embeddings,
+    and upserts the results into Qdrant. Supports 16+ languages via
+    tree-sitter grammars and incremental indexing using blake2b content
+    hashing to skip unchanged files.
+    """
 
     def __init__(
         self,

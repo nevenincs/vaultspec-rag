@@ -9,6 +9,10 @@ from vaultspec_rag.cli import app
 
 
 def main() -> None:
+    """Entry point for ``python -m vaultspec_rag``.
+
+    Delegates to the root Typer CLI application.
+    """
     app()
 
 

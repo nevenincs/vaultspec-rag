@@ -31,7 +31,16 @@ class LayoutMode(Enum):
 
 @dataclass(frozen=True)
 class GitInfo:
-    """Discovered git repository metadata."""
+    """Discovered git repository metadata.
+
+    Attributes:
+        git_dir: Path to the .git directory or .gt container.
+        repo_root: Root of the git repository.
+        is_worktree: Whether this is a linked worktree.
+        is_bare: Whether the repository is bare.
+        worktree_root: Root of the worktree, if is_worktree is True.
+        container_root: Root of the .gt container, if is_bare is True.
+    """
 
     git_dir: Path
     repo_root: Path
@@ -43,7 +52,15 @@ class GitInfo:
 
 @dataclass(frozen=True)
 class WorkspaceLayout:
-    """Fully resolved, validated workspace paths."""
+    """Fully resolved, validated workspace paths.
+
+    Attributes:
+        target_dir: The root directory of the workspace.
+        vault_dir: Path to the .vault directory within target_dir.
+        vaultspec_dir: Path to the .vaultspec framework directory within target_dir.
+        mode: How the layout was resolved (EXPLICIT or STANDALONE).
+        git: Discovered git repository metadata, if any.
+    """
 
     target_dir: Path
     vault_dir: Path
@@ -53,7 +70,14 @@ class WorkspaceLayout:
 
 
 def _strip_unc(path: Path) -> Path:
-    """Strip Windows \\\\?\\ UNC prefix if present."""
+    """Strip Windows \\\\?\\ UNC prefix if present.
+
+    Args:
+        path: Path that may have a Windows UNC prefix.
+
+    Returns:
+        Path with the UNC prefix removed if it was present, otherwise unchanged.
+    """
     s = str(path)
     if s.startswith("\\\\?\\"):
         return Path(s[4:])
@@ -61,7 +85,14 @@ def _strip_unc(path: Path) -> Path:
 
 
 def _parse_git_pointer(git_path: Path) -> Path | None:
-    """Parse a .git file containing gitdir: <path>."""
+    """Parse a .git file containing gitdir: <path>.
+
+    Args:
+        git_path: Path to a .git file (not directory).
+
+    Returns:
+        Resolved path to the actual git directory, or None if parsing fails.
+    """
     try:
         content = git_path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
@@ -82,7 +113,15 @@ def _parse_git_pointer(git_path: Path) -> Path | None:
 
 
 def _walk_up_for_git(start: Path) -> tuple[Path, bool] | None:
-    """Walk up from start looking for .git (file or directory)."""
+    """Walk up from start looking for .git (file or directory).
+
+    Args:
+        start: Starting path from which to walk upward.
+
+    Returns:
+        Tuple of (git_path, is_file) where is_file indicates if .git is a file
+        (worktree) or directory (normal repo), or None if no .git found.
+    """
     current = start.resolve()
     current = _strip_unc(current)
 
@@ -100,7 +139,17 @@ def _walk_up_for_git(start: Path) -> tuple[Path, bool] | None:
 
 
 def discover_git(start: Path) -> GitInfo | None:
-    """Walk up from start to find and classify the git repository."""
+    """Walk up from start to find and classify the git repository.
+
+    Checks for .gt bare container first, then walks up to find .git directory
+    or file, classifying it as a normal repository, linked worktree, or bare repo.
+
+    Args:
+        start: Starting path from which to walk upward.
+
+    Returns:
+        GitInfo object with repository metadata if found, otherwise None.
+    """
     resolved_start = _strip_unc(start.resolve())
 
     # Check for .gt/ container
@@ -170,7 +219,14 @@ class WorkspaceError(Exception):
 
 
 def _validate(layout: WorkspaceLayout) -> None:
-    """Validate a resolved WorkspaceLayout."""
+    """Validate a resolved WorkspaceLayout.
+
+    Args:
+        layout: WorkspaceLayout to validate.
+
+    Raises:
+        WorkspaceError: If vaultspec_dir does not exist or target_dir is invalid.
+    """
     if not layout.vaultspec_dir.is_dir():
         raise WorkspaceError(
             f"vaultspec_dir does not exist or is not a directory: "
@@ -191,7 +247,26 @@ def resolve_workspace(
     framework_dir_name: str = ".vaultspec",
     cwd: Path | None = None,
 ) -> WorkspaceLayout:
-    """Resolve the complete workspace layout."""
+    """Resolve the complete workspace layout.
+
+    Resolves workspace in EXPLICIT mode (if target_override is provided) or
+    STANDALONE mode (via git detection or cwd fallback). Validates that the
+    resolved layout contains required directories before returning.
+
+    Args:
+        target_override: Explicit target directory. If provided,
+            uses EXPLICIT mode.
+        framework_dir_name: Name of the framework directory
+            within target (default: ``".vaultspec"``).
+        cwd: Current working directory for git detection
+            (default: ``Path.cwd()``).
+
+    Returns:
+        WorkspaceLayout with resolved and validated paths.
+
+    Raises:
+        WorkspaceError: If vaultspec_dir or target_dir validation fails.
+    """
     effective_cwd = (cwd or Path.cwd()).resolve()
     effective_cwd = _strip_unc(effective_cwd)
 

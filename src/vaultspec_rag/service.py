@@ -59,6 +59,7 @@ class ServiceRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize the registry with empty model and project state."""
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         self._lock = threading.Lock()
@@ -185,7 +186,12 @@ class ServiceRegistry:
             logger.info("ProjectSlot closed for %s", root)
 
     def close_all(self) -> None:
-        """Close all project stores and release the model."""
+        """Close all project stores and release the model.
+
+        Iterates over every registered ``ProjectSlot``, closing its
+        Qdrant store.  Then clears the project dict and sets the
+        shared ``EmbeddingModel`` reference to ``None``.
+        """
         with self._lock:
             for root, slot in self._projects.items():
                 slot.store.close()

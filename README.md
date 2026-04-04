@@ -10,22 +10,20 @@ vaultspec-rag adds GPU-accelerated search to projects managed by
 [vaultspec-core](https://github.com/wgergely/vaultspec-core). It
 indexes your `.vault/` documents — research notes, architecture
 decisions, plans, execution logs — alongside your source code, and
-lets you search across both with a single query. Runs locally on
-your GPU and integrates with Claude through the Model Context
-Protocol (MCP).
+lets you search across both with a single query.
 
 ______________________________________________________________________
 
 ## Features
 
-- Hybrid search combining dense and sparse embeddings with
-  rank fusion
+- Search vault documents and source code with natural language
 - Two indexing modes: vault documents and project source code
-- Structure-aware code chunking across 16+ programming languages
-- Graph-aware reranking using wiki-link relationships between
-  vault documents
-- Incremental indexing — only re-embeds changed files
+- Code-aware chunking across 16+ programming languages
+- Results ranked by content relevance and document relationships
+- Incremental indexing — only processes changed files
 - CLI, Python API, and MCP server interfaces
+- Model Context Protocol (MCP) integration for Claude and other
+  AI tools
 - Runs entirely on your local GPU — no external services
 
 ______________________________________________________________________
@@ -54,21 +52,17 @@ vaultspec-rag status
 
 ### Index and search
 
-Index vault documents and search across them:
+vaultspec-rag indexes two sources: **vault** (`.vault/` documents)
+and **code** (project source files).
 
 ```bash
-vaultspec-rag index --type vault
+vaultspec-rag index                          # both
+vaultspec-rag index --type vault             # vault only
+vaultspec-rag index --type code              # code only
+
 vaultspec-rag search "architecture decision"
+vaultspec-rag search --type code "error handling"
 ```
-
-Index source code and search with language filters:
-
-```bash
-vaultspec-rag index --type code
-vaultspec-rag search --type code "lang:python error handling"
-```
-
-Run `vaultspec-rag index` to index both at once.
 
 ______________________________________________________________________
 

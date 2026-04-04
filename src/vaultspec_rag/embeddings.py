@@ -314,6 +314,9 @@ class EmbeddingModel:
 
         Returns:
             numpy array of shape ``(dimension,)`` with normalized embedding.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If the GPU runs out of memory.
         """
         import numpy as np
 
@@ -373,6 +376,9 @@ class EmbeddingModel:
 
         Returns:
             SparseResult with .indices and .values.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If the GPU runs out of memory.
         """
         max_chars = self._default_max_embed_chars()
         sparse_tensor = self._sparse_model.encode_query([query[:max_chars]])
