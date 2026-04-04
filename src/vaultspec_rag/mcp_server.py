@@ -37,9 +37,8 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("VaultSpec Search", stateless_http=True)
 
 _registry = ServiceRegistry()
-_gpu_sem = asyncio.Semaphore(1)
-_watcher_stop = asyncio.Event()
-_watcher_task: asyncio.Task[None] | None = None
+_watcher_tasks: dict[Path, asyncio.Task[None]] = {}
+_watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
 
@@ -82,6 +81,9 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     hf_home = os.environ.get("HF_HOME", "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
 
+    # Wire watcher lifecycle into registry so close_project() stops watchers
+    _registry._on_close_project = _stop_watcher
+
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
     t0 = time.perf_counter()
     await _run_in_thread(_registry.load_model)
@@ -92,9 +94,9 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        _watcher_stop.set()
-        if _watcher_task is not None and not _watcher_task.done():
-            _watcher_task.cancel()
+        # Cancel watchers BEFORE closing stores to prevent
+        # incremental_index() running against a closed store.
+        _stop_all_watchers()
         _registry.close_all()
         logger.info("Service shutdown complete")
 
@@ -146,11 +148,11 @@ async def health_handler(_request: Request) -> object:
 
 
 def _ensure_watcher(root: Path) -> None:
-    """Launch the filesystem watcher as a background asyncio task.
+    """Launch a filesystem watcher for *root* as a background asyncio task.
 
-    Safe to call repeatedly — only starts once.  Uses a double-check
-    lock pattern to prevent duplicate watcher creation when multiple
-    tool handlers finish near-simultaneously.
+    Safe to call repeatedly — starts at most one watcher per root.
+    Uses a double-check lock pattern to prevent duplicate watcher
+    creation when multiple tool handlers finish near-simultaneously.
 
     Must be called from the async event loop thread (not from a
     worker thread).
@@ -158,30 +160,58 @@ def _ensure_watcher(root: Path) -> None:
     Args:
         root: Project root directory to watch.
     """
-    global _watcher_task
-    if _watcher_task is not None:
+    root = root.resolve()
+    if root in _watcher_tasks:
         return
     with _watcher_lock:
-        if _watcher_task is not None:
+        if root in _watcher_tasks:
             return
 
         slot = _registry.get_project(root)
 
         from .watcher import watch_and_reindex
 
+        stop_event = asyncio.Event()
         vault_dir = root / ".vault"
-        _watcher_task = asyncio.ensure_future(
+        task = asyncio.ensure_future(
             watch_and_reindex(
                 root_dir=root,
                 vault_dir=vault_dir,
                 vault_indexer=slot.vault_indexer,
                 code_indexer=slot.code_indexer,
-                gpu_sem=_gpu_sem,
-                stop_event=_watcher_stop,
+                stop_event=stop_event,
                 graph_cache=slot.graph_cache,
             ),
         )
+        _watcher_tasks[root] = task
+        _watcher_stops[root] = stop_event
         logger.info("Filesystem watcher started for %s", root)
+
+
+def _stop_watcher(root: Path) -> None:
+    """Stop and remove the watcher for *root*.
+
+    Args:
+        root: Project root directory (must be resolved).
+    """
+    root = root.resolve()
+    with _watcher_lock:
+        stop_event = _watcher_stops.pop(root, None)
+        task = _watcher_tasks.pop(root, None)
+    if stop_event is not None:
+        stop_event.set()
+    if task is not None and not task.done():
+        task.cancel()
+    if task is not None:
+        logger.info("Filesystem watcher stopped for %s", root)
+
+
+def _stop_all_watchers() -> None:
+    """Stop all running watchers."""
+    with _watcher_lock:
+        roots = list(_watcher_tasks.keys())
+    for root in roots:
+        _stop_watcher(root)
 
 
 # -- Pydantic models --------------------------------------------------------
@@ -439,8 +469,7 @@ async def search_vault(
             summary=f"Found {len(results)} relevant documents in the vault.",
         )
 
-    async with _gpu_sem:
-        result = await _run_in_thread(_run)
+    result = await _run_in_thread(_run)
     _ensure_watcher(root)
     return result
 
@@ -500,8 +529,7 @@ async def search_codebase(
             summary=f"Found {len(results)} relevant code blocks.",
         )
 
-    async with _gpu_sem:
-        result = await _run_in_thread(_run)
+    result = await _run_in_thread(_run)
     _ensure_watcher(root)
     return result
 
@@ -544,8 +572,7 @@ async def search_all(
             summary=f"Found {len(results)} mixed results from vault and codebase.",
         )
 
-    async with _gpu_sem:
-        result = await _run_in_thread(_run)
+    result = await _run_in_thread(_run)
     _ensure_watcher(root)
     return result
 
@@ -595,8 +622,7 @@ async def get_index_status(
             vram_gb=round(vram_gb, 2),
         )
 
-    async with _gpu_sem:
-        return await _run_in_thread(_run)
+    return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -636,8 +662,7 @@ async def get_code_file(
             )
         return full_path.read_text(encoding="utf-8")
 
-    async with _gpu_sem:
-        return await _run_in_thread(_run)
+    return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -684,8 +709,7 @@ async def reindex_vault(
             files=result.files,
         )
 
-    async with _gpu_sem:
-        result = await _run_in_thread(_run)
+    result = await _run_in_thread(_run)
     _ensure_watcher(root)
     return result
 
@@ -730,8 +754,7 @@ async def reindex_codebase(
             files=result.files,
         )
 
-    async with _gpu_sem:
-        result = await _run_in_thread(_run)
+    result = await _run_in_thread(_run)
     _ensure_watcher(root)
     return result
 
@@ -763,8 +786,7 @@ async def get_vault_document(doc_id: str) -> str:
             raise FileNotFoundError(f"Document '{doc_id}' not found")
         return doc.get("content", "")
 
-    async with _gpu_sem:
-        return await _run_in_thread(_run)
+    return await _run_in_thread(_run)
 
 
 # -- Prompts -----------------------------------------------------------------

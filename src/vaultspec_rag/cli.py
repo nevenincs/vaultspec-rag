@@ -865,11 +865,14 @@ def mcp_status() -> None:
 def _status_dir() -> Path:
     """Return the global service status directory, creating it if needed.
 
-    Returns:
-        Path to ``~/.vaultspec-rag/``.
+    Respects ``VAULTSPEC_RAG_STATUS_DIR`` env var for overriding
+    the default ``~/.vaultspec-rag/`` location.
 
+    Returns:
+        Path to the service status directory.
     """
-    d = Path.home() / ".vaultspec-rag"
+    override = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
+    d = Path(override) if override else Path.home() / ".vaultspec-rag"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

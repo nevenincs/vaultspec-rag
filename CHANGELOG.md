@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.3](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.2...vaultspec-rag-v0.1.3) (2026-04-03)
+
+
+### Features
+
+* complete architecture alignment with vaultspec-core ([80919f6](https://github.com/wgergely/vaultspec-rag/commit/80919f6f24fd2ba33838bf1cf54afd3a1d710a7d))
+
+
+### Bug Fixes
+
+* complete markdown pipeline alignment with core ([bb28d2a](https://github.com/wgergely/vaultspec-rag/commit/bb28d2a595a563b3a3da067edc667cbe6af243df))
+* gitignore cleanup and vault-audit CI bug ([85c79ce](https://github.com/wgergely/vaultspec-rag/commit/85c79cecdda31ca406a8fae7d081e5f43de9e010))
+
 ## [0.1.2](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.1...vaultspec-rag-v0.1.2) (2026-04-03)
 
 

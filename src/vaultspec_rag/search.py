@@ -9,6 +9,7 @@ import logging
 import re
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -262,6 +263,8 @@ class VaultSearcher:
         *,
         graph_ttl_seconds: float | None = None,
         graph_provider: Callable[[], VaultGraph | None] | None = None,
+        gpu_lock: threading.Lock | None = None,
+        reranker: CrossEncoder | None = None,
     ) -> None:
         """Initialize the searcher.
 
@@ -278,6 +281,14 @@ class VaultSearcher:
                 ``_get_graph()`` delegates entirely to it and the
                 internal cache fields are unused.  When ``None``,
                 an internal lock+TTL cache is used as fallback.
+            gpu_lock: Optional ``threading.Lock`` that serializes
+                GPU operations (encoding + reranking) across
+                concurrent search calls.  When ``None``, no
+                external serialization is applied.
+            reranker: Optional pre-loaded ``CrossEncoder`` shared
+                across searchers (avoids ~560 MB VRAM per instance).
+                When ``None``, the searcher loads its own on first
+                use.
         """
         from .config import get_config
 
@@ -292,9 +303,10 @@ class VaultSearcher:
         self._cached_graph: VaultGraph | None = None
         self._graph_built_at: float = 0.0
         self._graph_lock = threading.Lock()
+        self._gpu_lock = gpu_lock
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
-        self._reranker = None
+        self._reranker = reranker
         self._reranker_lock = threading.Lock()
 
     def _get_reranker(self) -> CrossEncoder:
@@ -369,19 +381,20 @@ class VaultSearcher:
         reranker = self._get_reranker()
         pairs = [(query, r.snippet) for r in results]
         batch_size = get_config().reranker_batch_size
-        while True:
-            try:
-                scores = reranker.predict(pairs, batch_size=batch_size)
-                break
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
-                if batch_size <= 1:
-                    raise
-                batch_size = max(1, batch_size // 2)
-                logger.warning(
-                    "CUDA OOM during reranking, retrying with batch_size=%d",
-                    batch_size,
-                )
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            while True:
+                try:
+                    scores = reranker.predict(pairs, batch_size=batch_size)
+                    break
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    if batch_size <= 1:
+                        raise
+                    batch_size = max(1, batch_size // 2)
+                    logger.warning(
+                        "CUDA OOM during reranking, retrying with batch_size=%d",
+                        batch_size,
+                    )
         for result, score in zip(results, scores, strict=True):
             result.score = float(score)
         results.sort(key=lambda r: r.score, reverse=True)
@@ -575,8 +588,9 @@ class VaultSearcher:
         """
         parsed = parse_query(raw_query)
         query_text = parsed.text or raw_query
-        query_vector = self.model.encode_query(query_text).tolist()
-        sparse_vector = self.model.encode_query_sparse(query_text)
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            query_vector = self.model.encode_query(query_text).tolist()
+            sparse_vector = self.model.encode_query_sparse(query_text)
         return parsed, query_text, query_vector, sparse_vector
 
     def search_vault(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
