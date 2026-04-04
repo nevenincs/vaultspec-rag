@@ -18,6 +18,8 @@ exclude_path = [
   ".vault/research/",
   ".vault\\\\audit\\\\",
   ".vault\\\\research\\\\",
+  ".vaultspec/rules/skills/",
+  ".vaultspec\\\\rules\\\\skills\\\\",
 ]
 no_progress = true
 verbose = "info"
