@@ -14,10 +14,13 @@ import os
 import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    import threading
+
     from tree_sitter import Node as TSNode
     from tree_sitter_language_pack import SupportedLanguage
 
@@ -765,6 +768,8 @@ class VaultIndexer:
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
+        *,
+        gpu_lock: threading.Lock | None = None,
     ) -> None:
         """Initialize the indexer with a workspace root, embedding model, and store.
 
@@ -772,6 +777,8 @@ class VaultIndexer:
             root_dir: Path to the vault workspace root.
             model: Embedding model used to encode document text.
             store: Vector store where indexed documents are persisted.
+            gpu_lock: Optional ``threading.Lock`` that serializes
+                GPU operations (encoding) with concurrent searches.
         """
         from .config import get_config
 
@@ -780,6 +787,7 @@ class VaultIndexer:
         self.root_dir = root_dir
         self.model = model
         self.store = store
+        self._gpu_lock = gpu_lock
         self._meta_path = root_dir / cfg.qdrant_dir / cfg.index_metadata_file
 
     def full_index(self, clean: bool = False) -> IndexResult:
@@ -825,8 +833,9 @@ class VaultIndexer:
             )
 
         texts = [f"{d.title}\n\n{d.content}" for d in docs]
-        vectors = self.model.encode_documents(texts)
-        sparse_vecs = self.model.encode_documents_sparse(texts)
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            vectors = self.model.encode_documents(texts)
+            sparse_vecs = self.model.encode_documents_sparse(texts)
 
         for doc, vec, svec in zip(docs, vectors, sparse_vecs, strict=True):
             doc.vector = vec.tolist()
@@ -934,8 +943,9 @@ class VaultIndexer:
 
         if docs_to_index:
             texts = [f"{d.title}\n\n{d.content}" for d in docs_to_index]
-            vectors = self.model.encode_documents(texts)
-            sparse_vecs = self.model.encode_documents_sparse(texts)
+            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+                vectors = self.model.encode_documents(texts)
+                sparse_vecs = self.model.encode_documents_sparse(texts)
             for doc, vec, svec in zip(docs_to_index, vectors, sparse_vecs, strict=True):
                 doc.vector = vec.tolist()
                 doc.sparse_indices = list(svec.indices)
@@ -1027,6 +1037,8 @@ class CodebaseIndexer:
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
+        *,
+        gpu_lock: threading.Lock | None = None,
     ) -> None:
         """Initialize the codebase indexer.
 
@@ -1035,10 +1047,13 @@ class CodebaseIndexer:
             model: Embedding model used to encode code chunks.
             store: Vector store where indexed code chunks are
                 persisted.
+            gpu_lock: Optional ``threading.Lock`` that serializes
+                GPU operations (encoding) with concurrent searches.
         """
         self.root_dir = root_dir
         self.model = model
         self.store = store
+        self._gpu_lock = gpu_lock
         from .config import get_config
 
         cfg = get_config()
@@ -1328,8 +1343,9 @@ class CodebaseIndexer:
             )
 
         texts = [c.content for c in all_chunks]
-        vectors = self.model.encode_documents(texts)
-        sparse_vecs = self.model.encode_documents_sparse(texts)
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            vectors = self.model.encode_documents(texts)
+            sparse_vecs = self.model.encode_documents_sparse(texts)
         for chunk, vec, svec in zip(all_chunks, vectors, sparse_vecs, strict=True):
             chunk.vector = vec.tolist()
             chunk.sparse_indices = list(svec.indices)
@@ -1421,8 +1437,9 @@ class CodebaseIndexer:
 
         if all_new_chunks:
             texts = [c.content for c in all_new_chunks]
-            vectors = self.model.encode_documents(texts)
-            sparse_vecs = self.model.encode_documents_sparse(texts)
+            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+                vectors = self.model.encode_documents(texts)
+                sparse_vecs = self.model.encode_documents_sparse(texts)
             for chunk, vec, svec in zip(
                 all_new_chunks,
                 vectors,
