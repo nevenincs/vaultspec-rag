@@ -193,8 +193,9 @@ def _stop_watcher(root: Path) -> None:
         root: Project root directory (must be resolved).
     """
     root = root.resolve()
-    stop_event = _watcher_stops.pop(root, None)
-    task = _watcher_tasks.pop(root, None)
+    with _watcher_lock:
+        stop_event = _watcher_stops.pop(root, None)
+        task = _watcher_tasks.pop(root, None)
     if stop_event is not None:
         stop_event.set()
     if task is not None and not task.done():
