@@ -173,8 +173,17 @@ class ServiceRegistry:
             The ``ProjectSlot`` for *root*.
 
         Raises:
-            RuntimeError: If ``load_model()`` has not been called.
+            RuntimeError: If ``load_model()`` has not been called
+                or the registry is shutting down.
         """
+        # NOTE: The 3-level lock dance (global → per-root → global) exists
+        # to satisfy PERF-002 (parallel init of different roots).  In alpha
+        # this is unlikely to matter — _create_slot takes ~50-200ms and
+        # contention only happens on cold first-request.  If this ever
+        # causes trouble, reverting to the original single global-lock
+        # double-check pattern is a safe simplification.  The _shutting_down
+        # guard was added to prevent a race where close_all() runs while
+        # _create_slot() is in-flight (Codex review, 2026-04-04).
         root = root.resolve()
         slot = self._projects.get(root)
         if slot is not None:
