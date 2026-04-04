@@ -3,7 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-06
-related: []
+related:
+  - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---
 
 # CodebaseIndexer Audit — 2026-03-06
@@ -407,7 +408,7 @@ The accepted ADR explicitly states: "Add: ... `qdrant-client>=1.17`". But `pypro
 The ADR states: "Optional: `flash-attn>=2.5` (for flash_attention_2 acceleration)." But it's not listed in `pyproject.toml` at all — not even in `[project.optional-dependencies]`. (Also flagged as R6-m1.)
 
 **R8-m3. Superseded ADR still says `status: accepted`** (adr rag-stack-migration.md:4)
-The frontmatter says `status: accepted` but also `superseded-by: [[2026-03-06-gpu-only-rag-stack]]`. The status should be `superseded` for consistency. The superseding ADR correctly says "supersedes" in its metadata.
+The frontmatter says `status: accepted` but also `superseded-by: 2026-03-06-gpu-only-rag-stack`. The status should be `superseded` for consistency. The superseding ADR correctly says "supersedes" in its metadata.
 
 **R8-m4. ADR mentions `CrossEncoder` reranker but doesn't include it in the decision** (adr gpu-only-rag-stack.md)
 The "Public Interface" section lists `CodebaseIndexer` but never mentions the CrossEncoder reranker (`cross-encoder/ms-marco-MiniLM-L6-v2`) which was added to the implementation. The reranker is present in `config.py` defaults and `search.py` but absent from either ADR. It should have its own ADR or be documented in the existing one.

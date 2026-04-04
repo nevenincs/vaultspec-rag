@@ -3,7 +3,6 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
-related: []
 ---
 
 # Audit: mcp_server.py, config.py, watcher.py — Round 28

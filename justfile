@@ -189,7 +189,7 @@ _dev-audit target:
     deps) \
       tmp="${TMPDIR:-${TEMP:-/tmp}}/vaultspec-pip-audit-$$.txt"; \
       trap 'rm -f "$tmp"' EXIT; \
-      uv export --frozen --group dev \
+      uv export --locked --group dev \
         --no-emit-project --output-file "$tmp"; \
       uv run pip-audit --strict -r "$tmp" ;; \
     *) \

@@ -3,7 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: 2026-03-08
-related: []
+related:
+  - '[[2026-03-07-continuous-research]]'
 ---
 
 # FastMCP Lifespan Context Research for Task #25
@@ -29,7 +30,7 @@ ______________________________________________________________________
 ### What works
 
 - **Parameter exists**: `FastMCP.__init__(lifespan=...)` signature confirmed
-- **Type signature**: `Callable[[FastMCP[LifespanResultT]], AbstractAsyncContextManager[LifespanResultT]] | None`
+- **Type signature**: `Callable[[FastMCP[LifespanResultT], AbstractAsyncContextManager[LifespanResultT]] | None`
 - **Access in tools**: `@mcp.tool()` decorated functions receive `ctx: Context` parameter
   - Lifespan result stored in: `ctx.request_context.lifespan_context`
   - Type: `RequestContext[SessionT, LifespanContextT, RequestT].lifespan_context` attribute

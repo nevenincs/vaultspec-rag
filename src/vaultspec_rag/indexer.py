@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     import threading
 
+    import pathspec
     from tree_sitter import Node as TSNode
     from tree_sitter_language_pack import SupportedLanguage
 
@@ -1060,6 +1061,7 @@ class CodebaseIndexer:
         store: VaultStore,
         *,
         gpu_lock: threading.Lock | None = None,
+        extra_excludes: list[str] | None = None,
     ) -> None:
         """Initialize the codebase indexer.
 
@@ -1070,11 +1072,15 @@ class CodebaseIndexer:
                 persisted.
             gpu_lock: Optional ``threading.Lock`` that serializes
                 GPU operations (encoding) with concurrent searches.
+            extra_excludes: Additional gitignore-syntax exclusion
+                patterns (e.g. from CLI ``--exclude``). Merged into
+                the ``.vaultragignore`` spec.
         """
         self.root_dir = root_dir
         self.model = model
         self.store = store
         self._gpu_lock = gpu_lock
+        self._extra_excludes = extra_excludes or []
         from .config import get_config
 
         cfg = get_config()
@@ -1094,18 +1100,16 @@ class CodebaseIndexer:
         entry = LANGUAGE_MAP.get(path.suffix.lower())
         return entry[0] if entry else "text"
 
-    def _scan_codebase(self) -> list[pathlib.Path]:
-        """Scan codebase for supported source files.
+    def _build_gitignore_spec(self) -> pathspec.GitIgnoreSpec:
+        """Build a pathspec from hardcoded exclusions and ``.gitignore`` files.
 
-        Walks the project tree using ``os.walk``, pruning directories
-        matched by ``.gitignore`` patterns via ``pathspec``.  Skips
-        binary files and files exceeding ``_MAX_FILE_SIZE``.
+        Collects patterns from all ``.gitignore`` files in the project
+        tree, prefixing each pattern by the file's relative directory
+        so that patterns work correctly from the project root.
 
         Returns:
-            List of absolute paths to indexable source files.
-
-        Raises:
-            OSError: If the root directory cannot be traversed.
+            A compiled ``GitIgnoreSpec`` covering hardcoded dirs and
+            all ``.gitignore`` entries.
         """
         import pathspec
 
@@ -1141,7 +1145,61 @@ class CodebaseIndexer:
                     else:
                         patterns.append(f"{prefix}/{stripped.lstrip('/')}")
 
-        spec = pathspec.GitIgnoreSpec.from_lines(patterns)
+        return pathspec.GitIgnoreSpec.from_lines(patterns)
+
+    def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
+        """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns.
+
+        Reads patterns from the ``.vaultragignore`` file at the project
+        root (if it exists) and merges any ``extra_excludes`` passed via
+        the constructor.  Returns ``None`` when no patterns are present.
+
+        Returns:
+            A compiled ``GitIgnoreSpec``, or ``None`` if there are no
+            patterns to apply.
+        """
+        import pathspec
+
+        patterns: list[str] = []
+        ignore_file = self.root_dir / ".vaultragignore"
+        if ignore_file.is_file():
+            try:
+                lines = ignore_file.read_text(encoding="utf-8").splitlines()
+                patterns.extend(
+                    line.strip()
+                    for line in lines
+                    if line.strip() and not line.strip().startswith("#")
+                )
+            except OSError:
+                pass  # silently ignore unreadable file
+        patterns.extend(self._extra_excludes)
+        if not patterns:
+            return None
+        return pathspec.GitIgnoreSpec.from_lines(patterns)
+
+    def _scan_codebase(self) -> list[pathlib.Path]:
+        """Scan codebase for supported source files.
+
+        Walks the project tree using ``os.walk``, pruning directories
+        matched by ``.gitignore`` and ``.vaultragignore`` patterns via
+        ``pathspec``.  The two specs are independent — a file is
+        excluded if **either** matches (OR logic), so
+        ``.vaultragignore`` can never un-ignore ``.gitignore`` entries.
+        Skips binary files and files exceeding ``_MAX_FILE_SIZE``.
+
+        Returns:
+            List of absolute paths to indexable source files.
+
+        Raises:
+            OSError: If the root directory cannot be traversed.
+        """
+        git_spec = self._build_gitignore_spec()
+        rag_spec = self._build_vaultragignore_spec()
+
+        def _is_excluded(rel_path: str) -> bool:
+            if git_spec.match_file(rel_path):
+                return True
+            return rag_spec is not None and rag_spec.match_file(rel_path)
 
         result: list[pathlib.Path] = []
         root_str = str(self.root_dir)
@@ -1149,15 +1207,15 @@ class CodebaseIndexer:
             # Prune ignored directories in-place to avoid traversal
             rel_dir = os.path.relpath(dirpath, root_str).replace("\\", "/")
             if rel_dir == ".":
-                dirs[:] = [d for d in dirs if not spec.match_file(f"{d}/")]
+                dirs[:] = [d for d in dirs if not _is_excluded(f"{d}/")]
             else:
-                dirs[:] = [d for d in dirs if not spec.match_file(f"{rel_dir}/{d}/")]
+                dirs[:] = [d for d in dirs if not _is_excluded(f"{rel_dir}/{d}/")]
             for fname in files:
                 p = pathlib.Path(dirpath) / fname
                 if p.suffix.lower() not in SUPPORTED_EXTENSIONS:
                     continue
                 rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
-                if spec.match_file(rel):
+                if _is_excluded(rel):
                     continue
                 if p.stat().st_size > _MAX_FILE_SIZE:
                     logger.debug("Skipping oversized file: %s", rel)
@@ -1167,6 +1225,17 @@ class CodebaseIndexer:
                     continue
                 result.append(p)
         return result
+
+    def scan_files(self) -> list[pathlib.Path]:
+        """Return the list of files that would be indexed.
+
+        Does not require GPU or vector store — safe to call with
+        ``model=None`` and ``store=None`` for dry-run usage.
+
+        Returns:
+            List of absolute paths to indexable source files.
+        """
+        return self._scan_codebase()
 
     def _chunk_file(self, path: pathlib.Path) -> list[CodeChunk]:
         """Read file and split into AST-aware CodeChunks.

@@ -264,3 +264,144 @@ class TestCodebaseIncrementalModifyDelete:
         result = indexer.incremental_index()
         assert result.removed >= 1, f"Expected removed >= 1, got {result.removed}"
         assert store.count_code() < count_before
+
+
+SAMPLE_VENDOR = '''\
+"""Vendored library that should be excluded from indexing."""
+
+
+def vendor_helper():
+    """Do vendor things."""
+    return "vendor"
+'''
+
+
+class TestVaultragignore:
+    """Integration tests for .vaultragignore exclusion (D1 two-spec OR).
+
+    These verify the full pipeline: .vaultragignore file on disk ->
+    _scan_codebase() -> full_index() -> chunks in Qdrant, using real
+    GPU embeddings and real Qdrant storage.
+    """
+
+    @pytest.mark.timeout(120)
+    def test_vaultragignore_excludes_file_from_full_index(
+        self, rag_components, tmp_path
+    ):
+        """Files matching .vaultragignore are not indexed."""
+        from vaultspec_rag import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "app.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        (src_dir / "vendor.py").write_text(SAMPLE_VENDOR, encoding="utf-8")
+
+        # Exclude vendor.py via .vaultragignore
+        (tmp_path / ".vaultragignore").write_text("src/vendor.py\n", encoding="utf-8")
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            result = indexer.full_index()
+
+            # vendor.py excluded — only app.py chunks should exist
+            assert result.added > 0
+            all_ids = store.get_all_code_ids()
+            paths_indexed = {cid.split(":")[0] for cid in all_ids}
+            assert "src/app.py" in paths_indexed
+            assert "src/vendor.py" not in paths_indexed
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(120)
+    def test_removing_vaultragignore_includes_previously_excluded(
+        self, rag_components, tmp_path
+    ):
+        """Removing .vaultragignore causes previously excluded files to appear."""
+        from vaultspec_rag import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "app.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        (src_dir / "vendor.py").write_text(SAMPLE_VENDOR, encoding="utf-8")
+
+        ignore_file = tmp_path / ".vaultragignore"
+        ignore_file.write_text("src/vendor.py\n", encoding="utf-8")
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            indexer.full_index()
+            ids_before = store.get_all_code_ids()
+            paths_before = {cid.split(":")[0] for cid in ids_before}
+            assert "src/vendor.py" not in paths_before
+
+            # Remove .vaultragignore and re-index
+            ignore_file.unlink()
+            indexer2 = CodebaseIndexer(tmp_path, model, store)
+            indexer2.full_index(clean=True)
+            ids_after = store.get_all_code_ids()
+            paths_after = {cid.split(":")[0] for cid in ids_after}
+            assert "src/vendor.py" in paths_after
+            assert "src/app.py" in paths_after
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(120)
+    def test_vaultragignore_negation_cannot_override_gitignore(
+        self, rag_components, tmp_path
+    ):
+        """D1: .vaultragignore negation cannot un-ignore .gitignore entries."""
+        from vaultspec_rag import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+
+        (tmp_path / "public.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        (tmp_path / "secret.py").write_text(SAMPLE_VENDOR, encoding="utf-8")
+
+        # .gitignore excludes secret.py
+        (tmp_path / ".gitignore").write_text("secret.py\n", encoding="utf-8")
+        # .vaultragignore tries to un-ignore it — must fail
+        (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            indexer.full_index()
+            all_ids = store.get_all_code_ids()
+            paths_indexed = {cid.split(":")[0] for cid in all_ids}
+            assert "public.py" in paths_indexed
+            assert "secret.py" not in paths_indexed, (
+                ".vaultragignore negation must not override .gitignore"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(120)
+    def test_extra_excludes_applied_in_full_index(self, rag_components, tmp_path):
+        """CLI --exclude patterns flow through extra_excludes to full_index."""
+        from vaultspec_rag import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "app.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        (src_dir / "temp.py").write_text(SAMPLE_VENDOR, encoding="utf-8")
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(
+                tmp_path, model, store, extra_excludes=["src/temp.py"]
+            )
+            indexer.full_index()
+            all_ids = store.get_all_code_ids()
+            paths_indexed = {cid.split(":")[0] for cid in all_ids}
+            assert "src/app.py" in paths_indexed
+            assert "src/temp.py" not in paths_indexed
+        finally:
+            store.close()
