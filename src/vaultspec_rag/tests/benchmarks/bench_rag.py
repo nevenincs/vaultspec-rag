@@ -89,13 +89,13 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
     ]
 
     # Warmup
-    searcher.search("warmup", top_k=1)
+    searcher.search_vault("warmup", top_k=1)
 
     latencies = []
     for i in range(n_queries):
         q = queries[i % len(queries)]
         start = time.perf_counter()
-        searcher.search(q, top_k=5)
+        searcher.search_vault(q, top_k=5)
         elapsed_ms = (time.perf_counter() - start) * 1000
         latencies.append(elapsed_ms)
 
@@ -121,7 +121,10 @@ def test_bench_memory(root) -> dict:
     result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
     # Qdrant disk size
-    qdrant_dir = root / ".qdrant"
+    from vaultspec_rag.config import get_config
+
+    cfg = get_config()
+    qdrant_dir = root / cfg.data_dir / cfg.qdrant_dir
     if qdrant_dir.exists():
         total_bytes = sum(
             f.stat().st_size for f in qdrant_dir.rglob("*") if f.is_file()

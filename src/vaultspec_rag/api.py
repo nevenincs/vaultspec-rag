@@ -32,7 +32,6 @@ __all__ = [
     "index_codebase",
     "list_documents",
     "reset_engine",
-    "search_all",
     "search_codebase",
     "search_vault",
 ]
@@ -241,29 +240,6 @@ def search_codebase(
         function_name=function_name,
         class_name=class_name,
     )
-
-
-def search_all(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-) -> list[SearchResult]:
-    """Search both documentation and codebase.
-
-    The query is encoded once and dispatched to both vault and
-    codebase searches, then results are merged and re-ranked.
-
-    Args:
-        root_dir: Workspace root directory.
-        query: Natural language search query.
-        top_k: Number of results to return.
-
-    Returns:
-        Ranked list of SearchResult objects from both sources.
-    """
-    engine = get_engine(root_dir)
-    return engine.searcher.search_all(query, top_k=top_k)
 
 
 def list_documents(

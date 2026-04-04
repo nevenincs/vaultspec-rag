@@ -2343,7 +2343,7 @@ wheels = [
 
 [[package]]
 name = "vaultspec-core"
-version = "0.1.19"
+version = "0.1.6"
 source = { editable = "../../vaultspec-core-worktrees/main" }
 dependencies = [
     { name = "httpx" },
