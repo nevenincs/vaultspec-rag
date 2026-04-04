@@ -11,7 +11,9 @@ tags:
 date: '2026-04-04'
 # Related documents as quoted wiki-links
 # (e.g., "[[2026-02-04-feature-plan]]")
-related: []
+related:
+  - '[[2026-04-04-vaultragignore-adr]]'
+  - '[[2026-04-04-vaultragignore-plan]]'
 ---
 
 <!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
