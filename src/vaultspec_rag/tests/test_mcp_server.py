@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -321,10 +322,10 @@ class TestServiceRegistryIntegration:
 
         assert isinstance(_registry, ServiceRegistry)
 
-    def test_gpu_sem_is_semaphore(self):
-        from vaultspec_rag.mcp_server import _gpu_sem
+    def test_registry_has_gpu_lock(self):
+        from vaultspec_rag.mcp_server import _registry
 
-        assert isinstance(_gpu_sem, asyncio.Semaphore)
+        assert isinstance(_registry.gpu_lock, threading.Lock)
 
     def test_stateless_http_enabled(self):
         """FastMCP instance should have stateless_http=True."""

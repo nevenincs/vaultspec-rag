@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from .embeddings import EmbeddingModel
     from .indexer import CodebaseIndexer, VaultIndexer
     from .search import VaultSearcher
@@ -56,12 +58,23 @@ class ServiceRegistry:
     across all projects, and a ``dict[Path, ProjectSlot]`` for
     per-project isolation.  Thread-safe: mutations to ``_projects``
     are guarded by ``_lock``.
+
+    A shared ``gpu_lock`` serializes GPU-bound operations (query
+    encoding + reranker predict) so that Qdrant I/O and graph
+    reranking can overlap across concurrent requests.
+
+    A shared ``CrossEncoder`` reranker avoids loading ~560 MB VRAM
+    per project.  Lazily loaded on first use, thread-safe.
     """
 
     def __init__(self) -> None:
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         self._lock = threading.Lock()
+        self._root_locks: dict[Path, threading.Lock] = {}
+        self._gpu_lock = threading.Lock()
+        self._reranker: CrossEncoder | None = None
+        self._reranker_lock = threading.Lock()
 
     # -- model lifecycle ---------------------------------------------------
 
@@ -95,14 +108,60 @@ class ServiceRegistry:
             )
         return self._model
 
+    @property
+    def gpu_lock(self) -> threading.Lock:
+        """Return the shared GPU serialization lock."""
+        return self._gpu_lock
+
+    def get_reranker(self) -> CrossEncoder:
+        """Return the shared CrossEncoder, loading it lazily.
+
+        Thread-safe via double-check lock pattern.  The reranker
+        is project-independent (scores text pairs regardless of
+        which vault they came from).
+
+        Returns:
+            Shared ``CrossEncoder`` instance.
+
+        Raises:
+            RuntimeError: If no CUDA GPU is available.
+        """
+        if self._reranker is not None:
+            return self._reranker
+        with self._reranker_lock:
+            if self._reranker is not None:
+                return self._reranker
+            import torch
+            from sentence_transformers import CrossEncoder
+
+            from .config import get_config
+
+            cfg = get_config()
+            if not torch.cuda.is_available():
+                msg = (
+                    "CUDA GPU required for CrossEncoder reranker. No CUDA device found."
+                )
+                raise RuntimeError(msg)
+            self._reranker = CrossEncoder(
+                cfg.reranker_model,
+                device="cuda",
+                activation_fn=torch.nn.Sigmoid(),
+            )
+            logger.info(
+                "Shared CrossEncoder loaded on %s: %s",
+                torch.cuda.get_device_name(0),
+                cfg.reranker_model,
+            )
+            return self._reranker
+
     # -- per-project slots -------------------------------------------------
 
     def get_project(self, root: Path) -> ProjectSlot:
         """Return (or lazily create) the component slot for *root*.
 
-        Thread-safe: uses a lock with double-check pattern so that
-        concurrent callers never create duplicate slots for the same
-        project root.
+        Thread-safe: uses a per-root lock so that concurrent callers
+        for *different* roots proceed in parallel, while concurrent
+        callers for the *same* root are serialized.
 
         Args:
             root: Workspace root directory (resolved internally).
@@ -117,12 +176,23 @@ class ServiceRegistry:
         slot = self._projects.get(root)
         if slot is not None:
             return slot
+        # Get or create a per-root lock (global lock held briefly)
         with self._lock:
             slot = self._projects.get(root)
             if slot is not None:
                 return slot
+            root_lock = self._root_locks.get(root)
+            if root_lock is None:
+                root_lock = threading.Lock()
+                self._root_locks[root] = root_lock
+        # Per-root lock: only blocks concurrent callers for the same root
+        with root_lock:
+            slot = self._projects.get(root)
+            if slot is not None:
+                return slot
             slot = self._create_slot(root)
-            self._projects[root] = slot
+            with self._lock:
+                self._projects[root] = slot
         return slot
 
     def _create_slot(self, root: Path) -> ProjectSlot:
@@ -149,11 +219,14 @@ class ServiceRegistry:
         store = VaultStore(root)
         try:
             graph_cache = GraphCache(ttl_seconds=cfg.graph_ttl_seconds)
+            reranker = self.get_reranker() if cfg.reranker_enabled else None
             searcher = VaultSearcher(
                 root,
                 model,
                 store,
                 graph_provider=lambda gc=graph_cache, r=root: gc.get(r),
+                gpu_lock=self._gpu_lock,
+                reranker=reranker,
             )
             vault_indexer = VaultIndexer(root, model, store)
             code_indexer = CodebaseIndexer(root, model, store)
@@ -179,6 +252,7 @@ class ServiceRegistry:
         root = root.resolve()
         with self._lock:
             slot = self._projects.pop(root, None)
+            self._root_locks.pop(root, None)
         if slot is not None:
             slot.graph_cache.invalidate()
             slot.store.close()
@@ -191,7 +265,9 @@ class ServiceRegistry:
                 slot.store.close()
                 logger.info("ProjectSlot closed for %s", root)
             self._projects.clear()
+            self._root_locks.clear()
             self._model = None
+            self._reranker = None
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------
