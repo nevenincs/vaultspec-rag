@@ -3,7 +3,6 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
-related: []
 ---
 
 # Test Mandate Compliance Re-audit — 2026-03-08 (Post-Task #19, #41, #42)

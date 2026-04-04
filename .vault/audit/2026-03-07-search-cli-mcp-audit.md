@@ -3,7 +3,6 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-07
-related: []
 ---
 
 # Round 21 Audit -- search.py, cli.py, mcp_server.py

@@ -3,7 +3,6 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
-related: []
 ---
 
 # Audit Round 2: search.py & embeddings.py

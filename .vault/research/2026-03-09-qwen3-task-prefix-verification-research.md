@@ -3,7 +3,6 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: 2026-03-09
-related: []
 ---
 
 # Research Topic 21: Qwen3 Embedding Task Prefixes — Deep Verification

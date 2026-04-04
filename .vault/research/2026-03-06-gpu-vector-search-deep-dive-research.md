@@ -3,7 +3,6 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: 2026-03-06
-related: []
 ---
 
 # GPU Vector Search Deep Dive

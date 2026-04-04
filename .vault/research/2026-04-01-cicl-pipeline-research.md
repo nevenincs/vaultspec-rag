@@ -3,7 +3,6 @@ tags:
   - '#research'
   - '#cicl'
 date: 2026-04-01
-related: []
 ---
 
 # `cicl` research: CI/CD pipeline and release automation

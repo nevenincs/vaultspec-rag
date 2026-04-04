@@ -3,7 +3,6 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-09
-related: []
 ---
 
 # Round 36: Graph/Embedding Domain Audit (2026-03-09)
