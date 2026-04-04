@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from vaultspec_rag.service import ServiceRegistry
+from vaultspec_rag.service import ProjectSlot, ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -263,3 +263,178 @@ class TestConcurrency:
             assert all(r is results[0] for r in results)
         finally:
             registry.close_project(root)
+
+
+class TestSharedReranker:
+    """CrossEncoder is shared across all project slots (PERF-004)."""
+
+    pytestmark: ClassVar = [pytest.mark.integration]
+
+    def test_get_reranker_returns_cross_encoder(
+        self,
+        registry: ServiceRegistry,
+    ) -> None:
+        from sentence_transformers import CrossEncoder
+
+        reranker = registry.get_reranker()
+        assert isinstance(reranker, CrossEncoder)
+
+    def test_get_reranker_idempotent(
+        self,
+        registry: ServiceRegistry,
+    ) -> None:
+        r1 = registry.get_reranker()
+        r2 = registry.get_reranker()
+        assert r1 is r2
+
+    def test_shared_reranker_across_projects(
+        self,
+        registry: ServiceRegistry,
+        tmp_path: Path,
+    ) -> None:
+        root_a = _make_vault_dir(tmp_path / "proj_a")
+        root_b = _make_vault_dir(tmp_path / "proj_b")
+        slot_a = registry.get_project(root_a)
+        slot_b = registry.get_project(root_b)
+        try:
+            # Both searchers share the same CrossEncoder instance
+            assert slot_a.searcher._reranker is slot_b.searcher._reranker
+            # And it's the registry's shared instance
+            assert slot_a.searcher._reranker is registry.get_reranker()
+        finally:
+            registry.close_project(root_a)
+            registry.close_project(root_b)
+
+    def test_get_reranker_thread_safe(
+        self,
+        registry: ServiceRegistry,
+    ) -> None:
+        results: list[object] = []
+        barrier = threading.Barrier(4)
+
+        def worker() -> None:
+            barrier.wait()
+            results.append(registry.get_reranker())
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert len(results) == 4
+        assert all(r is results[0] for r in results)
+
+    def test_close_all_clears_reranker(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = ServiceRegistry()
+        reg._model = embedding_model
+        root = _make_vault_dir(tmp_path)
+        reg.get_project(root)
+        reranker = reg.get_reranker()
+        assert reranker is not None
+
+        reg.close_all()
+        assert reg._reranker is None
+
+
+class TestGpuLock:
+    """GPU lock wired from registry into each VaultSearcher (PERF-001)."""
+
+    pytestmark: ClassVar = [pytest.mark.integration]
+
+    def test_registry_gpu_lock_is_lock(
+        self,
+        registry: ServiceRegistry,
+    ) -> None:
+        assert isinstance(registry.gpu_lock, threading.Lock)
+
+    def test_searcher_receives_gpu_lock(
+        self,
+        registry: ServiceRegistry,
+        tmp_path: Path,
+    ) -> None:
+        root = _make_vault_dir(tmp_path)
+        slot = registry.get_project(root)
+        try:
+            assert slot.searcher._gpu_lock is registry.gpu_lock
+        finally:
+            registry.close_project(root)
+
+    def test_two_projects_share_gpu_lock(
+        self,
+        registry: ServiceRegistry,
+        tmp_path: Path,
+    ) -> None:
+        root_a = _make_vault_dir(tmp_path / "proj_a")
+        root_b = _make_vault_dir(tmp_path / "proj_b")
+        slot_a = registry.get_project(root_a)
+        slot_b = registry.get_project(root_b)
+        try:
+            assert slot_a.searcher._gpu_lock is slot_b.searcher._gpu_lock
+        finally:
+            registry.close_project(root_a)
+            registry.close_project(root_b)
+
+
+class TestPerRootLocks:
+    """Per-root locks allow parallel get_project() for different roots (PERF-002)."""
+
+    pytestmark: ClassVar = [pytest.mark.integration]
+
+    def test_concurrent_different_roots_no_deadlock(
+        self,
+        registry: ServiceRegistry,
+        tmp_path: Path,
+    ) -> None:
+        root_a = _make_vault_dir(tmp_path / "proj_a")
+        root_b = _make_vault_dir(tmp_path / "proj_b")
+        results: dict[str, ProjectSlot] = {}
+        barrier = threading.Barrier(2)
+
+        def worker(root: Path, key: str) -> None:
+            barrier.wait()
+            results[key] = registry.get_project(root)
+
+        t1 = threading.Thread(target=worker, args=(root_a, "a"))
+        t2 = threading.Thread(target=worker, args=(root_b, "b"))
+        t1.start()
+        t2.start()
+        t1.join(timeout=30)
+        t2.join(timeout=30)
+
+        try:
+            assert "a" in results and "b" in results
+            assert results["a"] is not results["b"]
+            assert results["a"].store is not results["b"].store
+        finally:
+            registry.close_project(root_a)
+            registry.close_project(root_b)
+
+    def test_close_project_clears_root_lock(
+        self,
+        registry: ServiceRegistry,
+        tmp_path: Path,
+    ) -> None:
+        root = _make_vault_dir(tmp_path)
+        registry.get_project(root)
+        resolved = root.resolve()
+        assert resolved in registry._root_locks
+        registry.close_project(root)
+        assert resolved not in registry._root_locks
+
+    def test_close_all_clears_root_locks(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = ServiceRegistry()
+        reg._model = embedding_model
+        root = _make_vault_dir(tmp_path)
+        reg.get_project(root)
+        assert len(reg._root_locks) > 0
+        reg.close_all()
+        assert len(reg._root_locks) == 0

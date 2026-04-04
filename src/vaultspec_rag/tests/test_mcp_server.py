@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 
 import pytest
@@ -287,30 +288,52 @@ class TestResolveRoot:
         result = _resolve_root(str(tmp_path))
         assert result == tmp_path.resolve()
 
-    def test_resolve_root_none_uses_default(self, monkeypatch):
-        """When project_root is None, falls back to env or cwd."""
-        monkeypatch.delenv("VAULTSPEC_ROOT", raising=False)
+    def test_resolve_root_none_uses_default(self):
+        """When project_root is None and env unset, falls back to cwd."""
         from pathlib import Path
 
-        result = _resolve_root(None)
-        assert result == Path.cwd().resolve()
+        orig = os.environ.pop("VAULTSPEC_ROOT", None)
+        try:
+            result = _resolve_root(None)
+            assert result == Path.cwd().resolve()
+        finally:
+            if orig is not None:
+                os.environ["VAULTSPEC_ROOT"] = orig
 
-    def test_resolve_root_from_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("VAULTSPEC_ROOT", str(tmp_path))
-        result = _resolve_root(None)
-        assert result == tmp_path.resolve()
+    def test_resolve_root_from_env(self, tmp_path):
+        orig = os.environ.get("VAULTSPEC_ROOT")
+        os.environ["VAULTSPEC_ROOT"] = str(tmp_path)
+        try:
+            result = _resolve_root(None)
+            assert result == tmp_path.resolve()
+        finally:
+            if orig is not None:
+                os.environ["VAULTSPEC_ROOT"] = orig
+            else:
+                os.environ.pop("VAULTSPEC_ROOT", None)
 
-    def test_default_root_from_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("VAULTSPEC_ROOT", str(tmp_path))
-        result = _default_root()
-        assert result == tmp_path.resolve()
+    def test_default_root_from_env(self, tmp_path):
+        orig = os.environ.get("VAULTSPEC_ROOT")
+        os.environ["VAULTSPEC_ROOT"] = str(tmp_path)
+        try:
+            result = _default_root()
+            assert result == tmp_path.resolve()
+        finally:
+            if orig is not None:
+                os.environ["VAULTSPEC_ROOT"] = orig
+            else:
+                os.environ.pop("VAULTSPEC_ROOT", None)
 
-    def test_default_root_cwd(self, monkeypatch):
-        monkeypatch.delenv("VAULTSPEC_ROOT", raising=False)
+    def test_default_root_cwd(self):
         from pathlib import Path
 
-        result = _default_root()
-        assert result == Path.cwd().resolve()
+        orig = os.environ.pop("VAULTSPEC_ROOT", None)
+        try:
+            result = _default_root()
+            assert result == Path.cwd().resolve()
+        finally:
+            if orig is not None:
+                os.environ["VAULTSPEC_ROOT"] = orig
 
 
 class TestServiceRegistryIntegration:
@@ -362,8 +385,8 @@ class TestHealthHandler:
     def test_health_status_reflects_model_state(self):
         """Without models loaded, status should not be 'ready'.
 
-        Uses a fresh ServiceRegistry so we don't mutate the
-        module-level _registry internals.
+        Swaps in a fresh, model-less registry for the duration of the
+        test and restores the original in finally.
         """
         from starlette.testclient import TestClient
 
@@ -376,7 +399,6 @@ class TestHealthHandler:
         import vaultspec_rag.mcp_server as mod
         from vaultspec_rag.service import ServiceRegistry
 
-        # Swap in a fresh, model-less registry and zero start_time
         orig_registry = mod._registry
         orig_start = mod._start_time
 
@@ -396,3 +418,44 @@ class TestHealthHandler:
         finally:
             mod._registry = orig_registry
             mod._start_time = orig_start
+
+
+class TestMultiProjectWatcher:
+    """Module-level watcher state supports multiple projects (PHASE3-001)."""
+
+    def test_watcher_tasks_is_dict(self):
+        from vaultspec_rag.mcp_server import _watcher_tasks
+
+        assert isinstance(_watcher_tasks, dict)
+
+    def test_watcher_stops_is_dict(self):
+        from vaultspec_rag.mcp_server import _watcher_stops
+
+        assert isinstance(_watcher_stops, dict)
+
+    def test_stop_all_watchers_callable(self):
+        from vaultspec_rag.mcp_server import _stop_all_watchers
+
+        assert callable(_stop_all_watchers)
+
+    def test_stop_watcher_callable(self):
+        from vaultspec_rag.mcp_server import _stop_watcher
+
+        assert callable(_stop_watcher)
+
+    def test_ensure_watcher_callable(self):
+        from vaultspec_rag.mcp_server import _ensure_watcher
+
+        assert callable(_ensure_watcher)
+
+    def test_stop_all_on_empty_is_safe(self):
+        """Calling _stop_all_watchers with no running watchers is a no-op."""
+        from vaultspec_rag.mcp_server import _stop_all_watchers
+
+        _stop_all_watchers()  # must not raise
+
+    def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path):
+        """Stopping a watcher for a root that was never started is safe."""
+        from vaultspec_rag.mcp_server import _stop_watcher
+
+        _stop_watcher(tmp_path)  # must not raise

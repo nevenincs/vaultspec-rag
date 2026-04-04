@@ -210,121 +210,94 @@ class TestServiceDaemonHelpers:
         """Negative PIDs should return False."""
         assert _is_pid_alive(-1) is False
 
-    def test_write_read_status_roundtrip(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_write_read_status_roundtrip(self, tmp_path: Path):
         """Write and read back should produce the same pid/port."""
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: tmp_path / "service.json",
-        )
-        _write_service_status(pid=12345, port=9999)
-        data = _read_service_status()
-        assert data is not None
-        assert data["pid"] == 12345
-        assert data["port"] == 9999
-        assert "started_at" in data
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        try:
+            _write_service_status(pid=12345, port=9999)
+            data = _read_service_status()
+            assert data is not None
+            assert data["pid"] == 12345
+            assert data["port"] == 9999
+            assert "started_at" in data
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
-    def test_write_creates_valid_json(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_write_creates_valid_json(self, tmp_path: Path):
         """Status file must be valid JSON with expected keys."""
-        sf = tmp_path / "service.json"
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: sf,
-        )
-        _write_service_status(pid=42, port=8766)
-        import json
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        try:
+            _write_service_status(pid=42, port=8766)
+            import json
 
-        data = json.loads(sf.read_text(encoding="utf-8"))
-        assert set(data.keys()) == {"pid", "port", "started_at"}
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            assert set(data.keys()) == {"pid", "port", "started_at"}
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
-    def test_read_status_missing_file(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_read_status_missing_file(self, tmp_path: Path):
         """Reading a nonexistent file should return None."""
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: tmp_path / "does-not-exist.json",
-        )
-        assert _read_service_status() is None
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(empty_dir)
+        try:
+            assert _read_service_status() is None
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
-    def test_read_status_invalid_json(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_read_status_invalid_json(self, tmp_path: Path):
         """Invalid JSON in status file should return None."""
         sf = tmp_path / "service.json"
         sf.write_text("not json", encoding="utf-8")
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: sf,
-        )
-        assert _read_service_status() is None
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        try:
+            assert _read_service_status() is None
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
-    def test_read_status_missing_pid_key(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_read_status_missing_pid_key(self, tmp_path: Path):
         """Status JSON without a pid key should return None."""
         sf = tmp_path / "service.json"
         sf.write_text('{"port": 8766}', encoding="utf-8")
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: sf,
-        )
-        assert _read_service_status() is None
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        try:
+            assert _read_service_status() is None
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
-    def test_service_stop_stale_pid(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_service_stop_stale_pid(self, tmp_path: Path):
         """service_stop with a dead PID cleans up the status file."""
-        sf = tmp_path / "service.json"
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: sf,
-        )
-        # Write a status file with a PID that is certainly dead
-        _write_service_status(pid=99999999, port=8766)
-        assert sf.exists()
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        try:
+            _write_service_status(pid=99999999, port=8766)
+            sf = tmp_path / "service.json"
+            assert sf.exists()
 
-        result = runner.invoke(app, ["server", "service", "stop"])
-        assert result.exit_code == 0
-        out = result.output.lower()
-        assert "no longer running" in out or "cleaned" in out
-        # Status file should be removed
-        assert not sf.exists()
+            result = runner.invoke(app, ["server", "service", "stop"])
+            assert result.exit_code == 0
+            out = result.output.lower()
+            assert "no longer running" in out or "cleaned" in out
+            assert not sf.exists()
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
-    def test_service_status_stale_pid(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
+    def test_service_status_stale_pid(self, tmp_path: Path):
         """service_status with a dead PID shows stale cleanup message."""
-        sf = tmp_path / "service.json"
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._status_file",
-            lambda: sf,
-        )
-        _write_service_status(pid=99999999, port=8766)
-        assert sf.exists()
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        try:
+            _write_service_status(pid=99999999, port=8766)
+            sf = tmp_path / "service.json"
+            assert sf.exists()
 
-        result = runner.invoke(app, ["server", "service", "status"])
-        assert result.exit_code == 0
-        assert "stale" in result.output.lower() or "cleaned" in result.output.lower()
-        # Status file should be removed
-        assert not sf.exists()
+            result = runner.invoke(app, ["server", "service", "status"])
+            assert result.exit_code == 0
+            assert (
+                "stale" in result.output.lower() or "cleaned" in result.output.lower()
+            )
+            assert not sf.exists()
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
 
     def test_health_probe_nonlistening_port(self):
         """Health probe on a port with no listener should return None."""
