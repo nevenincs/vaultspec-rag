@@ -1049,8 +1049,8 @@ def _is_pid_alive(pid: int) -> bool:
 def _is_our_service(pid: int) -> bool:
     """Check if PID belongs to a vaultspec-rag MCP server process.
 
-    On Windows, verifies the process executable path contains
-    ``"python"`` via ``QueryFullProcessImageNameW``.  On Unix,
+    On Windows, uses ``QueryFullProcessImageNameW`` via ctypes to
+    verify the process executable contains ``"python"``.  On Unix,
     inspects ``/proc/{pid}/cmdline`` for the module name.  Falls
     back to basic PID liveness when verification is unavailable.
 
@@ -1064,44 +1064,26 @@ def _is_our_service(pid: int) -> bool:
     if not _is_pid_alive(pid):
         return False
     if sys.platform == "win32":
-        return _is_python_process_win32(pid)
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFO
+        if not handle:
+            return True  # can't query → fall back to PID-alive trust
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return "python" in buf.value.lower()
+            return True  # API call failed → fall back to trust
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
         return "vaultspec_rag" in cmdline
     except (OSError, ValueError):
         return True  # fallback to basic liveness on non-procfs systems
-
-
-def _is_python_process_win32(pid: int) -> bool:
-    """Check whether *pid* is a Python process on Windows.
-
-    Uses ``QueryFullProcessImageNameW`` via ctypes.  Returns True
-    if the executable path contains ``"python"`` (covers ``python.exe``,
-    ``pythonw.exe``, and virtualenv shims).  Falls back to True if
-    the process cannot be queried (e.g., elevated process).
-
-    Args:
-        pid: Process ID to check.
-
-    Returns:
-        True if the process appears to be Python, or if the check
-        cannot be performed.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
-    handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFO
-    if not handle:
-        return True  # can't query → fall back to PID-alive trust
-    try:
-        buf = ctypes.create_unicode_buffer(1024)
-        size = wintypes.DWORD(1024)
-        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-            return "python" in buf.value.lower()
-        return True  # API call failed → fall back to trust
-    finally:
-        kernel32.CloseHandle(handle)
 
 
 def _port_is_available(port: int) -> bool:
