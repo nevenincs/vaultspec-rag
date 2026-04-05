@@ -17,7 +17,9 @@ from vaultspec_rag.mcp_server import (
     SearchResultItem,
     _clamp_top_k,
     _default_root,
+    _is_sensitive_path,
     _resolve_root,
+    _validate_vault_root,
     analyze_feature,
     health_handler,
     mcp,
@@ -210,13 +212,13 @@ class TestPydanticModels:
             status="ready",
             cuda=True,
             models_loaded=True,
-            projects=["/tmp/project-a"],
+            project_count=1,
             uptime_s=42.5,
         )
         assert resp.status == "ready"
         assert resp.cuda is True
         assert resp.models_loaded is True
-        assert resp.projects == ["/tmp/project-a"]
+        assert resp.project_count == 1
         assert resp.uptime_s == 42.5
 
     def test_health_response_defaults(self):
@@ -225,7 +227,7 @@ class TestPydanticModels:
             cuda=False,
             models_loaded=False,
         )
-        assert resp.projects == []
+        assert resp.project_count == 0
         assert resp.uptime_s == 0.0
 
 
@@ -261,6 +263,84 @@ class TestPathTraversalValidation:
         assert not full_path.is_relative_to(root_resolved)
 
 
+class TestVaultBoundaryValidation:
+    """SEC-001: _validate_vault_root rejects paths without .vault/."""
+
+    def test_valid_vault_root(self, tmp_path):
+        (tmp_path / ".vault").mkdir()
+        result = _validate_vault_root(tmp_path)
+        assert result == tmp_path
+
+    def test_missing_vault_raises(self, tmp_path):
+        with pytest.raises(ValueError, match=r"no \.vault/ directory"):
+            _validate_vault_root(tmp_path)
+
+    def test_nonexistent_path_raises(self, tmp_path):
+        fake = tmp_path / "does-not-exist"
+        with pytest.raises(ValueError, match=r"no \.vault/ directory"):
+            _validate_vault_root(fake)
+
+    def test_resolve_root_rejects_non_vault(self, tmp_path):
+        with pytest.raises(ValueError, match=r"no \.vault/ directory"):
+            _resolve_root(str(tmp_path))
+
+    def test_resolve_root_accepts_vault(self, tmp_path):
+        (tmp_path / ".vault").mkdir()
+        result = _resolve_root(str(tmp_path))
+        assert result == tmp_path.resolve()
+
+
+class TestSensitiveFileDenyList:
+    """SEC-002: _is_sensitive_path blocks sensitive file patterns."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            ".env",
+            ".env.local",
+            ".env.production",
+            ".git/config",
+            ".git/HEAD",
+            "deploy/secrets.yaml",
+            "config/credentials.json",
+            "tls/server.pem",
+            "tls/server.key",
+            "service.json",
+            ".vaultspec-rag/service.json",
+            # Nested sensitive dirs
+            "vendor/.git/objects/pack",
+            "sub/dir/.vaultspec-rag/data",
+            # Mid-name matches for credentials/secrets patterns
+            "my-credentials-backup.txt",
+            "app.secrets.yaml",
+        ],
+    )
+    def test_sensitive_paths_blocked(self, path):
+        assert _is_sensitive_path(path) is True
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/main.py",
+            "README.md",
+            ".vault/adr/test.md",
+            "docs/environment.md",
+            "config/settings.toml",
+            "src/services/auth.py",
+            # Edge cases that should NOT be blocked
+            "src/service.py",
+            "envconfig.toml",
+            ".github/workflows/ci.yml",
+        ],
+    )
+    def test_safe_paths_allowed(self, path):
+        assert _is_sensitive_path(path) is False
+
+    def test_backslash_normalization(self):
+        assert _is_sensitive_path(".git\\config") is True
+        assert _is_sensitive_path("src\\main.py") is False
+
+
 class TestClampTopK:
     """Test the _clamp_top_k helper."""
 
@@ -284,6 +364,7 @@ class TestResolveRoot:
     """Test the _resolve_root and _default_root helpers."""
 
     def test_resolve_root_explicit(self, tmp_path):
+        (tmp_path / ".vault").mkdir()
         result = _resolve_root(str(tmp_path))
         assert result == tmp_path.resolve()
 
@@ -300,6 +381,7 @@ class TestResolveRoot:
                 os.environ[EnvVar.RAG_ROOT] = orig
 
     def test_resolve_root_from_env(self, tmp_path):
+        (tmp_path / ".vault").mkdir()
         orig = os.environ.get(EnvVar.RAG_ROOT)
         os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
         try:
@@ -312,6 +394,7 @@ class TestResolveRoot:
                 os.environ.pop(EnvVar.RAG_ROOT, None)
 
     def test_default_root_from_env(self, tmp_path):
+        (tmp_path / ".vault").mkdir()
         orig = os.environ.get(EnvVar.RAG_ROOT)
         os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
         try:
@@ -378,7 +461,7 @@ class TestHealthHandler:
         assert "status" in data
         assert "cuda" in data
         assert "models_loaded" in data
-        assert "projects" in data
+        assert "project_count" in data
         assert "uptime_s" in data
 
     def test_health_status_reflects_model_state(self):
@@ -417,6 +500,58 @@ class TestHealthHandler:
         finally:
             mod._registry = orig_registry
             mod._start_time = orig_start
+
+
+class TestHealthInfoReduction:
+    """SEC-003: Health endpoint does not leak sensitive information."""
+
+    def test_health_no_project_paths(self):
+        """Health response must not contain absolute project paths."""
+        from starlette.testclient import TestClient
+
+        async def _lifespan(app):
+            yield
+
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+
+        app = Starlette(
+            routes=[Route("/health", health_handler)],
+            lifespan=_lifespan,
+        )
+        client = TestClient(app)
+        data = client.get("/health").json()
+        assert "projects" not in data
+        assert "project_count" in data
+        assert isinstance(data["project_count"], int)
+
+    def test_health_no_gpu_name(self):
+        """Health response must not contain GPU device name."""
+        from starlette.testclient import TestClient
+
+        async def _lifespan(app):
+            yield
+
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+
+        app = Starlette(
+            routes=[Route("/health", health_handler)],
+            lifespan=_lifespan,
+        )
+        client = TestClient(app)
+        data = client.get("/health").json()
+        assert "gpu_name" not in data
+
+    def test_index_status_no_gpu_name(self):
+        """IndexStatus model must not have gpu_name field."""
+        status = IndexStatus(
+            vault_count=10,
+            code_count=50,
+            storage_path="/tmp/db",
+            target_dir="/tmp/ws",
+        )
+        assert not hasattr(status, "gpu_name") or "gpu_name" not in status.model_fields
 
 
 class TestMultiProjectWatcher:

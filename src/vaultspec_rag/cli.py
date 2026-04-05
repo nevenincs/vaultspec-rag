@@ -1092,9 +1092,10 @@ def _is_pid_alive(pid: int) -> bool:
 def _is_our_service(pid: int) -> bool:
     """Check if PID belongs to a vaultspec-rag MCP server process.
 
-    On Unix, inspects ``/proc/{pid}/cmdline`` for the module name.
-    Falls back to basic PID liveness when procfs is unavailable or
-    on Windows (localhost trust boundary is sufficient).
+    On Windows, uses ``QueryFullProcessImageNameW`` via ctypes to
+    verify the process executable contains ``"python"``.  On Unix,
+    inspects ``/proc/{pid}/cmdline`` for the module name.  Falls
+    back to basic PID liveness when verification is unavailable.
 
     Args:
         pid: Process ID to verify.
@@ -1106,7 +1107,21 @@ def _is_our_service(pid: int) -> bool:
     if not _is_pid_alive(pid):
         return False
     if sys.platform == "win32":
-        return True  # localhost trust boundary — PID alive is sufficient
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFO
+        if not handle:
+            return True  # can't query → fall back to PID-alive trust
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return "python" in buf.value.lower()
+            return True  # API call failed → fall back to trust
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
         return "vaultspec_rag" in cmdline
