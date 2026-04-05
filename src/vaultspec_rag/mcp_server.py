@@ -95,14 +95,19 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
 
     logger.info("Service startup complete in %.2fs", time.perf_counter() - t_total)
 
-    try:
-        yield
-    finally:
-        # Cancel watchers BEFORE closing stores to prevent
-        # incremental_index() running against a closed store.
-        _stop_all_watchers()
-        _registry.close_all()
-        logger.info("Service shutdown complete")
+    # Start the MCP session manager.  Starlette's Mount does NOT
+    # propagate lifespan to sub-apps, so the streamable_http_app's
+    # own lifespan never fires.  Running it here ensures the session
+    # manager's task group is active before the first /mcp request.
+    async with mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            # Cancel watchers BEFORE closing stores to prevent
+            # incremental_index() running against a closed store.
+            _stop_all_watchers()
+            _registry.close_all()
+            logger.info("Service shutdown complete")
 
 
 # -- health endpoint --------------------------------------------------------
@@ -800,9 +805,15 @@ def main(port: int | None = None) -> None:
         from starlette.applications import Starlette
         from starlette.routing import Mount, Route
 
+        # Override the default streamable_http_path so the inner
+        # Starlette app serves at "/" instead of "/mcp".  Combined
+        # with Mount("/mcp"), the effective client URL is "/mcp".
+        mcp.settings.streamable_http_path = "/"
+        mcp_http_app = mcp.streamable_http_app()
+
         app = Starlette(
             routes=[
-                Mount("/mcp", app=mcp.streamable_http_app()),
+                Mount("/mcp", app=mcp_http_app),
                 Route("/health", health_handler),
             ],
             lifespan=service_lifespan,
