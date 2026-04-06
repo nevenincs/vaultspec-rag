@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.4](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.3...vaultspec-rag-v0.1.4) (2026-04-06)
+
+
+### Features
+
+* add .vaultragignore support for codebase indexer ([#31](https://github.com/wgergely/vaultspec-rag/issues/31)) ([a8f5e73](https://github.com/wgergely/vaultspec-rag/commit/a8f5e7344c2dd37cfcc7c0bb0dc8b807accc0544))
+* centralize data paths under .vault/data/search-data/ + synthetic test corpus ([#32](https://github.com/wgergely/vaultspec-rag/issues/32), [#33](https://github.com/wgergely/vaultspec-rag/issues/33)) ([e9a90a6](https://github.com/wgergely/vaultspec-rag/commit/e9a90a624da92fdf2f09ddd65e022645b90ed2a9))
+* implement SEC-001–SEC-004 security hardening ([118f90c](https://github.com/wgergely/vaultspec-rag/commit/118f90cec7dc5df6ad179cb28a1f85288233a0bb))
+* narrow GPU semaphore + multi-project watcher ([#22](https://github.com/wgergely/vaultspec-rag/issues/22), [#23](https://github.com/wgergely/vaultspec-rag/issues/23)) ([47b1657](https://github.com/wgergely/vaultspec-rag/commit/47b1657d65678c838778bc278c727824a450b79d))
+
+
+### Bug Fixes
+
+* add related links to research doc (fixes vault dangling check) ([0fbfd99](https://github.com/wgergely/vaultspec-rag/commit/0fbfd995b34d33496ec6f4f7c9001130a6b6302a))
+* address code review findings — watcher lifecycle, shutdown race, lock scope ([8ec521d](https://github.com/wgergely/vaultspec-rag/commit/8ec521d96fad644d8530e19852e0a01570e9f392))
+* exclude .vaultspec/rules/skills/ from lychee link checker ([450c825](https://github.com/wgergely/vaultspec-rag/commit/450c8257c8b6567a7caf2c6c6d6185ec6c996430))
+* MCP HTTP transport session manager never initialized ([b41f6f6](https://github.com/wgergely/vaultspec-rag/commit/b41f6f667389a1491ce629e06f7f7b59792e2a54))
+* narrow GPU lock in indexers — hold only during encode, not full_index ([bdf9249](https://github.com/wgergely/vaultspec-rag/commit/bdf924953151a46fe2e6a88e62bf73f97b382196))
+* regenerate uv.lock with UV_NO_SOURCES=1 for CI compatibility ([5b67abb](https://github.com/wgergely/vaultspec-rag/commit/5b67abb891f5818cdc23390685e6feb833bfedd0))
+* remove .vault/*.index.md from git (generated artifacts) ([effa0d8](https://github.com/wgergely/vaultspec-rag/commit/effa0d8f85c5341604a477af769a77cdd2ac0c6f))
+* remove [[wiki-links]] from HTML comments in vault docs ([52c3624](https://github.com/wgergely/vaultspec-rag/commit/52c36244cc66cffc47f9c5fb2f4991e2e205ea91))
+* resolve all vault audit errors for CI ([3ad9506](https://github.com/wgergely/vaultspec-rag/commit/3ad950646e539631eda15cd500e92cc93c06a07f))
+* resolve CI failures — ty windll error and vault dangling links ([c2217d5](https://github.com/wgergely/vaultspec-rag/commit/c2217d5870591fde17f9f2a40d39baad6428b629))
+* warmup tests need GPU (mark integration), pip-audit --frozen→--locked ([69d26fe](https://github.com/wgergely/vaultspec-rag/commit/69d26fee8c77dfbed8ec4d4189ecc22036794fda))
+
 ## [0.1.3](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.2...vaultspec-rag-v0.1.3) (2026-04-03)
 
 
