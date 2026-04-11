@@ -1,507 +1,243 @@
 # vaultspec-rag
 
-vaultspec-rag is a GPU-native retrieval-augmented generation (RAG) pipeline. It
-searches vault documents and project source code using hybrid dense and sparse
-embeddings with graph-aware reranking.
+GPU-accelerated hybrid search over vault documents and source code. This is an extension to [vaultspec-core](https://github.com/wgergely/vaultspec-core) and requires it as a dependency. See the [project README](../../README.md) for background. Report issues on the [GitHub tracker](https://github.com/wgergely/vaultspec-rag/issues).
 
-A "vault" is the `.vault/` directory of structured markdown documents managed by
-[vaultspec-core](https://github.com/wgergely/vaultspec-core). The embedding
-stack combines
-[Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B),
-[SPLADE v3](https://huggingface.co/naver/splade-v3),
-[Qdrant](https://qdrant.tech/), and
-[bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3).
+## Prerequisites
 
-> See the [project README](../README.md) for an introduction.
+- NVIDIA GPU with CUDA support (no CPU fallback; raises `RuntimeError` without one)
+- Python >= 3.13
+- [vaultspec-core](https://github.com/wgergely/vaultspec-core) >= 0.1.0
+- ~3 GB free VRAM (Qwen3 ~1.5 GB, SPLADE ~0.5 GB, reranker ~0.56 GB)
 
 ## Installation
 
-Install with [uv](https://docs.astral.sh/uv/):
+Install with `uv`:
 
 ```sh
 uv add vaultspec-rag
 ```
 
-vaultspec-rag requires a CUDA GPU with at least 3 GB VRAM. Qwen3 uses ~1.5 GB
-and SPLADE ~0.5 GB in fp16. The reranker loads lazily on first use. vaultspec-rag
-raises a `RuntimeError` if no CUDA device is available. PyTorch installs from
-the cu130 index at `pytorch.org/whl/cu130`.
+PyTorch requires the CUDA package index. The project's `pyproject.toml` configures the `pytorch-cu130` index at `https://download.pytorch.org/whl/cu130` automatically.
 
-Dependencies:
+Two entry points register on install:
 
-- Python >= 3.13
-- vaultspec-core >= 0.1.0
-- Optional: flash-attn >= 2.5 for flash attention 2 acceleration
+- `vaultspec-rag` -- CLI
+- `vaultspec-search-mcp` -- MCP server
 
-Verify your installation:
+Verify the installation:
 
 ```sh
-vaultspec-rag status
+vaultspec-rag --version
 ```
 
-This prints GPU device details and storage paths. Run the test suite with:
+## Quick start
+
+From a directory containing `.vault/` and `.vaultspec/`, run:
 
 ```sh
-vaultspec-rag test
-```
-
-Tests exercise real GPU inference and real Qdrant — no mocks.
-
-## Two indexing modes
-
-vaultspec-rag maintains two separate search collections:
-
-- **Vault** — indexes `.vault/` markdown documents (ADRs, plans, research,
-  references, audit reports). Parses YAML frontmatter for metadata filters like
-  `type:`, `feature:`, and `date:`. Uses the vault's wiki-link graph for
-  relationship-aware reranking.
-- **Codebase** — indexes project source files across 16+ languages. Uses
-  tree-sitter for structure-aware chunking that preserves function and class
-  boundaries. Supports filters like `lang:`, `func:`, and `class:`.
-
-Each mode has its own Qdrant collection, indexing pipeline, and filter set. You
-can index and search them independently or together.
-
-The codebase indexer respects `.gitignore` files and applies hardcoded
-exclusions (`.venv/`, `.git/`, `node_modules/`, `__pycache__/`, `.qdrant/`).
-Files are also filtered by supported language extensions and a 10 MB size limit.
-
-## Quickstart
-
-Index vault documents and search:
-
-```sh
-vaultspec-rag index --type vault
-vaultspec-rag search "architecture decision"
-```
-
-Index source code and search:
-
-```sh
-vaultspec-rag index --type code
-vaultspec-rag search --type code "lang:python error handling"
-```
-
-Index both at once:
-
-```sh
+cd your-project
 vaultspec-rag index
+vaultspec-rag search "your query"
 ```
 
-Results appear as a table with Score, Location, and Snippet columns.
+`index` builds embeddings for both vault documents and source code. `search` queries the vault by default, returning the top 5 results as a table with Score, Location, and Snippet columns.
 
-## CLI usage
+## Architecture overview
 
-Run `vaultspec-rag` directly or via `uv run vaultspec-rag` in uv-managed
-environments.
+### Access layers
 
-### Global options
+Three interfaces expose the same underlying engine: the CLI (`vaultspec-rag`), the MCP server (`vaultspec-search-mcp`), and the Python API (`vaultspec_rag.api`).
 
-```text
---target, -t PATH    Set the project root directory
---verbose, -v        Enable verbose output
---debug, -d          Enable debug logging
---version, -V        Show version and exit
+The CLI runs indexing and search in-process by default. Pass `--port` to delegate to a running MCP service over HTTP. If the service is unreachable, the CLI falls back to in-process execution.
+
+The MCP server wraps the engine behind tool endpoints, accepting connections from any MCP-compatible client. The Python API is the underlying facade -- call `index()`, `search_vault()`, and `search_codebase()` directly.
+
+### GPU model lifecycle
+
+A single shared `EmbeddingModel` loads three models into VRAM once at initialization:
+
+- **Dense encoder** -- `Qwen/Qwen3-Embedding-0.6B` (1024-dimensional vectors, fp16)
+- **Sparse encoder** -- `naver/splade-v3` (asymmetric SPLADE with separate query and document encoding)
+- **Reranker** -- `BAAI/bge-reranker-v2-m3` (CrossEncoder with sigmoid activation, loaded lazily on first use)
+
+A shared lock serializes GPU operations. CUDA is mandatory -- the system raises `RuntimeError` if no GPU is available.
+
+### Multi-project support
+
+The MCP service manages isolated per-project slots. Each slot contains its own Qdrant store, indexers, searcher, and relationship graph cache. All slots share the single `EmbeddingModel` instance.
+
+MCP tools accept a `project_root` parameter to target a specific project. Different projects initialize in parallel under per-root locks.
+
+### File watching
+
+When running as a service, background watchers monitor vault (`.md`) and source files for each registered project. Changes trigger incremental reindexing after a 2-second debounce.
+
+Per-source cooldowns of 30 seconds prevent thrashing. Vault and codebase cooldowns are independent -- a burst of `.md` edits won't delay source reindexing.
+
+Vault changes also invalidate the relationship graph cache.
+
+## CLI commands
+
+Run `vaultspec-rag --help` for the full option list.
+
+### Command tree
+
+```
+vaultspec-rag
+├── index              Index vault documents and/or codebase source files
+├── search             Search documentation or code
+├── status             Show engine status, storage metrics, and GPU info
+├── benchmark          Run search latency probes (p50/p95/p99)
+├── quality            Run precision probes against a synthetic corpus
+├── test               Run the test suite (forwards args to pytest)
+└── server
+    ├── mcp
+    │   ├── start      Start MCP server (stdio by default, HTTP with --port)
+    │   ├── stop       Guidance for stopping (Ctrl+C)
+    │   └── status     Show registered tools, resources, and prompts
+    └── service
+        ├── start      Spawn background daemon (HTTP, default port 8766)
+        ├── stop       Stop the background service
+        ├── status     Show daemon health and connected projects
+        └── warmup     Pre-download model weights to HuggingFace cache
 ```
 
-### Primary commands
+**Global options:** `--target` / `-t` sets the workspace root. `--verbose` / `-v` and `--debug` / `-d` control log verbosity. `--version` / `-V` prints the installed version.
 
-#### search
+**Config overrides:** `--data-dir`, `--qdrant-dir`, `--index-meta`, `--code-index-meta`, `--status-dir`, and `--log-file` override the default storage paths.
 
-Run a semantic hybrid search across vault documents, codebase, or both.
+### The `--port` fast path
 
-```bash
-vaultspec-rag search "query string"
-vaultspec-rag search --type code --max-results 10 "function signature"
-vaultspec-rag search --port 8766 "delegated query"
-```
+The `index` and `search` commands accept a `--port` flag. When set, the CLI delegates to a running MCP service over HTTP instead of loading GPU models in-process. If the service is unavailable, the CLI falls back to in-process operation with a warning.
 
-| Option                    | Description                                |
-| :------------------------ | :----------------------------------------- |
-| `--type {vault,code,all}` | Search scope (default: `vault`)            |
-| `--max-results N`         | Number of results to return (default: `5`) |
-| `--language`              | Filter by programming language             |
-| `--node-type`             | Filter by syntax tree node type            |
-| `--function-name`         | Filter by function name                    |
-| `--class-name`            | Filter by class name                       |
-| `--port PORT`             | Delegate the query to a running MCP server |
-
-Embed filters directly in the query string instead of using flags:
-
-```text
-type:adr feature:editor date:2026-03 tag:research
-lang:python path:src/ func:reindex class:VaultStore nodetype:function
-```
-
-Output is a table with Score, Location, and Snippet columns. When you pass
-`--port`, the CLI connects to the MCP server and skips local model loading.
-
-#### index
-
-Index vault documents, source files, or both.
-
-```bash
-vaultspec-rag index
-vaultspec-rag index --type vault --clean
-vaultspec-rag index --port 8766
-```
-
-| Option                    | Description                                        |
-| :------------------------ | :------------------------------------------------- |
-| `--type {vault,code,all}` | Index scope (default: `all`)                       |
-| `--clean`                 | Drop existing collections and rebuild from scratch |
-| `--port PORT`             | Delegate indexing to a running MCP server          |
-
-Output is a summary table with Added, Updated, Removed, and Total counts plus
-elapsed duration.
-
-#### status
-
-Display GPU device details, storage path, and document counts for each
-collection.
-
-```bash
-vaultspec-rag status
-```
-
-#### benchmark
-
-Profile search latency across a batch of queries.
-
-```bash
-vaultspec-rag benchmark
-vaultspec-rag benchmark --n-queries 50
-```
-
-Reports p50, p95, and p99 latencies. Default sample size is 20 queries.
-
-#### test
-
-Run the pytest suite. All extra arguments are forwarded to pytest.
-
-```bash
-vaultspec-rag test
-vaultspec-rag test -k "test_search" --tb=short
-```
-
-### Server commands
-
-#### server mcp start
-
-Start the MCP server. Pass `--port` for HTTP transport; omit it for stdio mode.
-
-```bash
-vaultspec-rag server mcp start
-vaultspec-rag server mcp start --port 8766
-```
-
-The server inherits the project root from `--target` via the `VAULTSPEC_ROOT`
-environment variable.
-
-#### server mcp stop
-
-Print instructions for stopping the MCP server process.
-
-```bash
-vaultspec-rag server mcp stop
-```
-
-#### server mcp status
-
-Show the MCP server configuration, including registered tools, resources, and
-prompts.
-
-```bash
-vaultspec-rag server mcp status
-```
-
-#### server service start
-
-Start a detached background service with health-check polling.
-
-```bash
-vaultspec-rag server service start
-vaultspec-rag server service start --port 9000
-```
-
-| Option        | Description                                            |
-| :------------ | :----------------------------------------------------- |
-| `--port PORT` | HTTP port (default: `8766`, env: `VAULTSPEC_RAG_PORT`) |
-
-The service acquires a port mutex and checks for stale PIDs. It polls `/health`
-with exponential backoff and writes runtime state to
-`~/.vaultspec-rag/service.json`.
-
-#### server service stop
-
-Stop the background service. Sends SIGTERM first, then force-kills if the
-process does not exit.
-
-```bash
-vaultspec-rag server service stop
-```
-
-#### server service status
-
-Show runtime state: PID, port, health endpoint response, and uptime.
-
-```bash
-vaultspec-rag server service status
-```
-
-#### server service warmup
-
-Pre-download GPU models to the local HuggingFace cache without starting the
-server.
-
-```bash
-vaultspec-rag server service warmup
-```
-
-## MCP integration
-
-vaultspec-rag exposes a Model Context Protocol (MCP) server that gives Claude
-access to vault and codebase search.
-
-### Starting the server
-
-vaultspec-rag provides two entry points:
-
-- `vaultspec-search-mcp` — installed script, stdio mode by default
-- `vaultspec-rag server mcp start` — CLI subcommand
-
-Set `VAULTSPEC_ROOT` to point the server at your project root.
-
-**Stdio mode** (default) connects directly to Claude Desktop or claude-code.
-**HTTP mode** (`--port`) runs a Starlette app with MCP transport at `/mcp` and a
-health check at `/health`. HTTP mode eagerly loads GPU models before accepting
-connections and serializes GPU access with an asyncio semaphore.
-
-### Claude Desktop configuration
-
-Add this to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "vaultspec-rag": {
-      "command": "vaultspec-search-mcp",
-      "env": {
-        "VAULTSPEC_ROOT": "/path/to/your/project"
-      }
-    }
-  }
-}
-```
-
-For a persistent server, start in HTTP mode and configure the client to connect
-to `http://localhost:<port>/mcp`.
-
-### Available tools
-
-| Tool               | Description                              |
-| :----------------- | :--------------------------------------- |
-| `search_vault`     | Search vault documents by query          |
-| `search_codebase`  | Search source code with optional filters |
-| `search_all`       | Search vault and codebase combined       |
-| `get_index_status` | Return indexing statistics               |
-| `get_code_file`    | Retrieve a source file by path           |
-| `reindex_vault`    | Rebuild the vault index                  |
-| `reindex_codebase` | Rebuild the codebase index               |
-
-All tools accept an optional `project_root` parameter that overrides
-`VAULTSPEC_ROOT`.
-
-The server also exposes a `vault://{doc_id}` resource for retrieving full vault
-documents by stem ID and an `analyze_feature(feature_name)` prompt for
-multi-step feature analysis.
-
-## Python API
-
-The `vaultspec_rag.api` module provides a thread-safe facade over the indexing
-and search engine. A singleton engine per project root is managed by
-`get_engine(root_dir)` with a `threading.Lock`.
-
-### Example
-
-```python
-from pathlib import Path
-from vaultspec_rag.api import index, search_vault
-
-root = Path("/path/to/project")
-index(root)  # incremental by default; pass full=True to rebuild
-
-results = search_vault(root, "authentication flow", top_k=3)
-for r in results:
-    print(f"{r.id} ({r.score:.2f}): {r.title}")
-```
-
-### Function reference
-
-Signatures use Python type hints.
-
-```text
-index(root_dir, *, full=False) -> IndexResult
-index_codebase(root_dir, *, full=False) -> IndexResult
-search_vault(root_dir, query, *, top_k=5) -> list[SearchResult]
-search_codebase(root_dir, query, *, top_k=5, ...) -> list[SearchResult]
-search_all(root_dir, query, *, top_k=5) -> list[SearchResult]
-list_documents(root_dir, doc_type=None) -> list[dict[str, object]]
-get_related(root_dir, doc_id) -> dict[str, object] | None
-reset_engine() -> None
-```
-
-- `index` and `index_codebase` perform incremental updates by default. Pass
-  `full=True` to rebuild from scratch.
-- `search_codebase` accepts optional filters for `language`, `node_type`,
-  `function_name`, and `class_name`.
-- Call `reset_engine` only in tests — it tears down the cached engine.
-
-## Search query syntax
-
-Prefix any query with structured filters to narrow results. The engine strips
-recognized prefixes before encoding the remaining text for semantic search.
-
-### Filter reference
-
-| Prefix      | Field                                                       | Applies to |
-| :---------- | :---------------------------------------------------------- | :--------- |
-| `type:`     | Document type (adr, plan, research, reference, audit, exec) | Vault      |
-| `feature:`  | Feature name                                                | Vault      |
-| `date:`     | ISO date prefix (e.g., `2026-03`)                           | Vault      |
-| `tag:`      | Tag value (`#` prefix stripped automatically)               | Vault      |
-| `lang:`     | Programming language                                        | Codebase   |
-| `path:`     | File path substring                                         | Codebase   |
-| `func:`     | Function name                                               | Codebase   |
-| `class:`    | Class name                                                  | Codebase   |
-| `nodetype:` | AST node type                                               | Codebase   |
-
-### Examples
-
-Find architecture decision records about authentication:
-
-```text
-type:adr authentication flow
-```
-
-Search Python code in the pipeline feature for executor logic:
-
-```text
-feature:pipeline lang:python executor
-```
-
-Locate a specific function within a class:
-
-```text
-func:execute class:Pipeline
-```
-
-Find vault documents from a specific month:
-
-```text
-date:2026-03 migration strategy
-```
+Loading the embedding models takes several seconds on a cold start. Point `--port` at a running `server service` instance to skip that overhead entirely.
 
 ## Configuration
 
-`VaultSpecConfigWrapper` layers RAG-specific defaults on top of the base
-vaultspec-core configuration.
+### Precedence
 
-| Key                    | Default                     | Description        |
-| :--------------------- | :-------------------------- | :----------------- |
-| `qdrant_dir`           | `.qdrant`                   | Storage directory  |
-| `embedding_model`      | `Qwen/Qwen3-Embedding-0.6B` | Dense model        |
-| `embedding_dimension`  | `1024`                      | Dense vector size  |
-| `sparse_model`         | `naver/splade-v3`           | Sparse model       |
-| `reranker_enabled`     | `True`                      | Enable reranking   |
-| `reranker_model`       | `BAAI/bge-reranker-v2-m3`   | Reranker model     |
-| `embedding_batch_size` | `64`                        | Docs per batch     |
-| `max_embed_chars`      | `8000`                      | Max chars to embed |
-| `reranker_batch_size`  | `32`                        | Pairs per batch    |
-| `graph_ttl_seconds`    | `300.0`                     | Graph cache TTL    |
-| `index_metadata_file`  | `index_meta.json`           | Hash store file    |
+Configuration resolves through three tiers: CLI flags override environment variables, which override built-in defaults. Boolean env vars accept `1`, `true`, or `yes` (case-insensitive). The system parses integer and float values from strings.
 
-Override any key by passing a dict to `get_config(overrides={...})` or by
-setting values through the vaultspec-core config system.
+### Environment variables
 
-## Architecture
+| Variable                        | Default                   | Description                                       |
+| ------------------------------- | ------------------------- | ------------------------------------------------- |
+| `VAULTSPEC_RAG_ROOT`            | cwd                       | Project root directory                            |
+| `VAULTSPEC_RAG_DATA_DIR`        | `.vault/data/search-data` | Search data directory                             |
+| `VAULTSPEC_RAG_QDRANT_DIR`      | `qdrant`                  | Qdrant storage subdirectory, relative to data dir |
+| `VAULTSPEC_RAG_INDEX_META`      | `index_meta.json`         | Vault index metadata filename                     |
+| `VAULTSPEC_RAG_CODE_INDEX_META` | `code_index_meta.json`    | Codebase index metadata filename                  |
+| `VAULTSPEC_RAG_STATUS_DIR`      | `~/.vaultspec-rag`        | Service status and log directory                  |
+| `VAULTSPEC_RAG_LOG_FILE`        | `service.log`             | Log filename, relative to status dir              |
+| `VAULTSPEC_RAG_PORT`            | `8766`                    | MCP HTTP server port                              |
+| `VAULTSPEC_RAG_LOG_LEVEL`       | `WARNING`                 | Logging level                                     |
 
-### Embedding stack
+The tool also respects two third-party environment variables. Set `HF_HOME` to control where HuggingFace caches downloaded models. Set `HF_HUB_DOWNLOAD_TIMEOUT` to increase the model download timeout.
 
-Three GPU-resident models handle dense retrieval, sparse retrieval, and
-reranking.
+### `.vaultragignore`
 
-**Qwen3-Embedding-0.6B** produces 1024-dimensional dense vectors in fp16 with
-optional flash attention 2. Queries use `prompt_name="query"` for
-instruction-following; documents omit the prompt. Requires ~1.5 GB VRAM. See the
-[model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B).
+Place a `.vaultragignore` file at the project root to exclude files from codebase indexing. It uses gitignore syntax via `pathspec`. Patterns merge with CLI `--exclude` flags.
 
-**SPLADE v3** (Sparse Lexical and Expansion) produces sparse vectors through
-`SparseEncoder`. Encoding is asymmetric: `encode_query()` and
-`encode_document()` apply different internal prompts. Requires ~0.5 GB VRAM. See
-the [model card](https://huggingface.co/naver/splade-v3).
+This file operates independently from `.gitignore` -- both apply with OR logic. The indexer skips any file excluded by either spec.
 
-**bge-reranker-v2-m3** scores query-document pairs via `CrossEncoder` with
-sigmoid activation, producing calibrated scores in [0, 1]. Loaded lazily on
-first use. Requires ~0.56 GB VRAM. Batch size starts at 32 and halves on OOM.
-See the [model card](https://huggingface.co/BAAI/bge-reranker-v2-m3).
+## Service management
 
-### Search flow
+### Foreground vs. background
 
-1. `parse_query()` extracts filters and clean text from the raw query string.
-1. `_encode_query()` produces a dense vector (1024d) and a sparse vector
-   (SPLADE). The query is encoded once and reused across collections.
-1. `store.hybrid_search()` dispatches dual `Prefetch` operations to Qdrant:
-   dense (`limit * 4`) and sparse (`limit * 4`), each with filters applied at
-   the prefetch level.
-1. Reciprocal Rank Fusion (RRF) with `k=60` merges the two result sets using
-   the formula `1 / (k + rank)`.
-1. CrossEncoder reranking scores each query-snippet pair through sigmoid
-   activation, yielding a [0, 1] confidence score.
-1. Graph-aware reranking applies two boosts. The in-link boost:
-   `score *= 1 + 0.1 * min(in_links, 10)`. The feature-neighbor boost:
-   `score *= 1.15`.
-1. `search_all()` encodes once, searches both vault and codebase collections,
-   applies min-max normalization to each result set, and merges by score.
+`vaultspec-rag server mcp start` runs the MCP server in the foreground over stdio transport, suitable for direct LLM integration. Pass `--port` to switch to HTTP transport.
 
-### Indexing flow
+`vaultspec-rag server service start` spawns a background HTTP daemon. The default port is 8766; override it with `--port` or the `VAULTSPEC_RAG_PORT` env var.
 
-**Vault indexer.** `VaultIndexer` scans `.vault/`, parses YAML frontmatter via
-`prepare_document()`, and extracts `doc_type`, `feature`, `tags`, `related`, and
-`title`. Each document ID is the relative path without extension (e.g.,
-`adr/overview`). `blake2b` file hashes enable incremental change detection.
-Metadata writes are atomic: write to `.tmp`, then `os.replace`.
+On startup, the daemon eagerly loads GPU models and polls `/health` until ready. It writes a status file to `~/.vaultspec-rag/service.json` containing the PID, port, and start time.
 
-**Codebase indexer.** `CodebaseIndexer` walks the project tree with `os.walk`,
-pruning paths matched by `.gitignore`. It skips binary files (null byte in first
-8 KB) and files larger than 10 MB. `ASTChunker` uses tree-sitter for
-language-aware splitting across 16+ languages; `TextSplitter` handles the rest.
-Chunk IDs follow the pattern `{path}:{line_start}-{line_end}:{blake2b_6bytes}`.
+Stop the daemon with `vaultspec-rag server service stop`. This sends `SIGTERM` on Unix or `CTRL_BREAK_EVENT` on Windows, waits two seconds, then force-kills the process if needed.
 
-**Full vs. incremental.** `full_index(clean=True)` drops and recreates the
-Qdrant collection. Incremental indexing compares `blake2b` hashes against the
-stored metadata and re-embeds only changed files.
+### Health endpoint
 
-### Service layer
+The HTTP service exposes a `/health` endpoint returning JSON:
 
-`ServiceRegistry` holds one shared `EmbeddingModel` and one shared
-`CrossEncoder` reranker across all projects, since loading GPU models
-takes several seconds and ~2 GB VRAM. Each project gets a `ProjectSlot`
-keyed by resolved `Path`, containing a `VaultStore`, `VaultSearcher`,
-`VaultIndexer`, `CodebaseIndexer`, and `GraphCache`.
+- `status` -- `ready` (models loaded), `degraded` (started but models failed), or `error` (not started)
+- `cuda` -- boolean indicating GPU availability
+- `models_loaded` -- boolean indicating whether all three models initialized
+- `project_count` -- number of connected projects
+- `uptime_s` -- seconds since startup
 
-A global `gpu_lock` serializes GPU-bound operations (encoding and
-reranking) across concurrent requests. Each project root also gets its
-own lock so that indexing one project does not block searches on another.
+Check health from the CLI with `vaultspec-rag server service status`.
 
-The registry manages filesystem watcher lifecycle through an
-`_on_close_project` callback and a `_shutting_down` guard that prevents
-new slots from being created during shutdown.
+### Model warmup
 
-`GraphCache` uses TTL-based expiry (300 seconds by default) and is
-invalidated immediately after a vault reindex.
+`vaultspec-rag server service warmup` pre-downloads the three model weights (dense, sparse, reranker) to the local HuggingFace cache. Run this before first use to avoid cold-start delays on the initial server launch.
 
-## Getting help
+The command respects `HF_HOME` and `HF_HUB_DOWNLOAD_TIMEOUT` env vars.
 
-Report bugs and request features on the
-[GitHub issue tracker](https://github.com/wgergely/vaultspec-rag/issues).
+## Indexing
+
+Index vault documents (markdown in `.vault/`) or codebase source files, or both.
+
+- `vaultspec-rag index --type vault` indexes vault documents. One document maps to one index entry.
+- `vaultspec-rag index --type code` indexes source files. Tree-sitter handles structural chunking when grammars are available; text splitting serves as the fallback. Supported languages include Python, Rust, TypeScript, JavaScript, Go, Java, C/C++, C#, Ruby, and Kotlin.
+- `vaultspec-rag index` (default `--type all`) indexes both.
+- Add `--clean` to drop and recreate the index from scratch.
+- Incremental indexing (the default) uses blake2b content hashing to detect changes.
+- `--dry-run` lists files that would be indexed without writing anything (codebase only).
+
+## Searching
+
+- `vaultspec-rag search "query" --type vault` searches vault documents (default).
+- `vaultspec-rag search "query" --type code` searches source code. Filters: `--language`, `--node-type`, `--function-name`, `--class-name`.
+- Embed filters directly in the query string with tokens: `type:adr`, `feature:auth`, `lang:python`, `func:main`, `class:Engine`, `date:2026-03`.
+- Results include score, file path, snippet, and (for code) line numbers and AST metadata.
+
+## MCP integration
+
+The MCP server exposes six tools:
+
+| Tool               | Purpose                                  |
+| ------------------ | ---------------------------------------- |
+| `search_vault`     | Search vault documents                   |
+| `search_codebase`  | Search source code with optional filters |
+| `reindex_vault`    | Re-index vault (incremental or clean)    |
+| `reindex_codebase` | Re-index codebase (incremental or clean) |
+| `get_index_status` | Return index stats and GPU status        |
+| `get_code_file`    | Retrieve full source file content        |
+
+All tools accept an optional `project_root` parameter for multi-project use.
+
+The server also exposes a `vault://{doc_id}` resource for retrieving vault document content, and an `analyze_feature` prompt.
+
+**Connecting a client.** For stdio, configure the MCP client to run `vaultspec-search-mcp`. For HTTP, point to `http://127.0.0.1:{port}/mcp`.
+
+## Python API
+
+The `vaultspec_rag` package exports a facade in `vaultspec_rag.api`:
+
+| Function                                                           | Purpose                                           |
+| ------------------------------------------------------------------ | ------------------------------------------------- |
+| `index(root_dir, *, full=False)`                                   | Index vault documents                             |
+| `index_codebase(root_dir, *, full=False)`                          | Index source files                                |
+| `search_vault(root_dir, query, *, top_k=5)`                        | Search vault                                      |
+| `search_codebase(root_dir, query, *, top_k=5, language=None, ...)` | Search code                                       |
+| `list_documents(root_dir, doc_type=None)`                          | List indexed documents                            |
+| `get_related(root_dir, doc_id)`                                    | Get graph relationships (outgoing/incoming links) |
+
+All functions accept a `root_dir: Path` and manage a thread-safe singleton engine internally. The engine loads GPU models on first call.
+
+## Models
+
+| Component         | Model                                                                         | Role                                             |
+| ----------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| Dense embeddings  | [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) | 1024-dimensional semantic vectors                |
+| Sparse embeddings | [naver/splade-v3](https://huggingface.co/naver/splade-v3)                     | Learned term-weight vectors for keyword matching |
+| Reranker          | [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)     | Cross-encoder rescoring with sigmoid activation  |
+| Vector storage    | [Qdrant](https://qdrant.tech/documentation/) (local mode)                     | Hybrid dense + sparse search with RRF fusion     |
+
+Qdrant's universal query API searches dense and sparse vectors together using reciprocal rank fusion. The reranker optionally rescores top candidates for improved precision.
+
+## See also
+
+- [Project background](../../README.md)
+- [vaultspec-core](https://github.com/wgergely/vaultspec-core) -- the spec-driven development framework
+- [MCP specification](https://modelcontextprotocol.io)
+- [Qdrant documentation](https://qdrant.tech/documentation/)
+- Model cards: [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [splade-v3](https://huggingface.co/naver/splade-v3), [bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)
+- [GitHub issues](https://github.com/wgergely/vaultspec-rag/issues)
