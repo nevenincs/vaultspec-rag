@@ -474,6 +474,30 @@ class TestHttpModeResolveRoot:
             else:
                 os.environ.pop(EnvVar.RAG_ROOT, None)
 
+    def test_resolve_root_empty_string_raises(self):
+        """Empty string project_root is rejected in both modes."""
+        with pytest.raises(ValueError, match="must not be empty"):
+            _resolve_root("")
+
+    def test_resolve_root_whitespace_only_raises(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            _resolve_root("   ")
+
+    def test_vault_resource_raises_in_http_mode(self):
+        """get_vault_document should raise with resource-specific message."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(
+                ValueError,
+                match="only available in stdio mode",
+            ):
+                _run(mod.get_vault_document("adr/overview"))
+        finally:
+            mod._http_mode = orig
+
 
 class TestServiceRegistryIntegration:
     """Test that the module-level _registry is a ServiceRegistry."""

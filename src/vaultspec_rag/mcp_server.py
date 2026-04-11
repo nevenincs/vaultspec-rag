@@ -42,7 +42,7 @@ _watcher_tasks: dict[Path, asyncio.Task[None]] = {}
 _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
-_http_mode: bool = False
+_http_mode: bool = False  # set once in main() before event loop starts
 
 
 def _validate_vault_root(root: Path) -> Path:
@@ -505,7 +505,10 @@ def _resolve_root(project_root: str | None) -> Path:
             subdirectory, or if ``project_root`` is omitted
             in HTTP mode.
     """
-    if project_root:
+    if project_root is not None:
+        if not project_root.strip():
+            msg = "project_root must not be empty"
+            raise ValueError(msg)
         return _validate_vault_root(Path(project_root).resolve())
     return _default_root()
 
@@ -916,7 +919,14 @@ def main(port: int | None = None) -> None:
         finally:
             _registry.close_all()
     else:
-        mcp.run(transport="stdio")
+        # Eager model load for stdio — matches HTTP mode's service_lifespan.
+        # Without this, the first tool call hits "EmbeddingModel not loaded"
+        # because ServiceRegistry.get_project() requires a loaded model.
+        _registry.load_model()
+        try:
+            mcp.run(transport="stdio")
+        finally:
+            _registry.close_all()
 
 
 if __name__ == "__main__":

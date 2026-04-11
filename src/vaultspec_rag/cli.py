@@ -905,13 +905,17 @@ def mcp_start(
     """
     from .mcp_server import main as run_mcp
 
-    # Propagate --target from the root callback to the MCP server via env var.
-    # The main callback skips workspace resolution for "server" subcommands,
-    # so we read --target directly from the root context params here.
-    # Only set for stdio mode — HTTP is multi-tenant with no default root.
+    # Propagate --target to the MCP server via env var (stdio only).
+    # HTTP mode is multi-tenant — project context comes per-request.
     root_target = ctx.find_root().params.get("target")
-    if root_target is not None and port is None:
-        os.environ[EnvVar.RAG_ROOT] = str(root_target)
+    if root_target is not None:
+        if port is not None:
+            console.print(
+                "[yellow]Warning:[/] --target is ignored in HTTP mode "
+                "(project_root must be passed per-request)",
+            )
+        else:
+            os.environ[EnvVar.RAG_ROOT] = str(root_target)
 
     transport = f"streamable-http on port {port}" if port else "stdio"
     console.print(f"[bold green]Launching FastMCP server ({transport})...[/]")
@@ -1208,11 +1212,9 @@ def _spawn_service(port: int, log_path: Path) -> int:
     cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
     # Strip VAULTSPEC_RAG_ROOT from the daemon env — the HTTP service is
     # multi-tenant and must not fall back to a baked-in project root.
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.upper().startswith("VAULTSPEC_RAG_")
-    }
+    # Case-insensitive compare: Windows os.environ stores original case
+    # but is case-insensitive for lookups.
+    env = {k: v for k, v in os.environ.items() if k.upper() != EnvVar.RAG_ROOT}
     log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
     if sys.platform == "win32":
         proc = subprocess.Popen(
