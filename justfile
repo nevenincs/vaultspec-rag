@@ -190,7 +190,10 @@ _dev-audit target:
       tmp="${TMPDIR:-${TEMP:-/tmp}}/vaultspec-pip-audit-$$.txt"; \
       trap 'rm -f "$tmp"' EXIT; \
       uv export --locked --group dev \
-        --no-emit-project --output-file "$tmp"; \
+        --no-emit-project --no-hashes \
+        --no-emit-package torch \
+        --no-emit-package vaultspec-core \
+        --output-file "$tmp"; \
       uv run pip-audit --strict -r "$tmp" ;; \
     *) \
       echo "unknown dev audit target: {{target}}" >&2; \

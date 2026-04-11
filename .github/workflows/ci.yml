@@ -17,10 +17,6 @@ concurrency:
 env:
   NO_COLOR: "1"
   FORCE_COLOR: "0"
-  # TODO: Remove UV_NO_SOURCES once vaultspec-core is published to PyPI.
-  # Currently required because the local editable source path in
-  # [tool.uv.sources] does not exist in CI.
-  UV_NO_SOURCES: "1"
 
 jobs:
   workflow-lint:
