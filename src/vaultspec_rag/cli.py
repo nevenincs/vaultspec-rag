@@ -952,14 +952,14 @@ def mcp_status() -> None:
     """Display the MCP server configuration, available tools, and entry points.
 
     Shows a table with server name, transport mode, registered tools
-    (search_vault, search_codebase, search_all, reindex_vault, reindex_codebase,
+    (search_vault, search_codebase, reindex_vault, reindex_codebase,
     get_index_status, get_code_file), available resources, and prompts.
     """
     table = Table(title="MCP Server Configuration", show_header=False, padding=(0, 2))
     table.add_column("Key", style="bold")
     table.add_column("Value")
     table.add_row("Server Name", "VaultSpec Search")
-    table.add_row("Transport", "stdio")
+    table.add_row("Transport", "stdio (default), HTTP via service start")
     table.add_row(
         "Tools",
         "search_vault, search_codebase, "
@@ -1214,7 +1214,8 @@ def _spawn_service(port: int, log_path: Path) -> int:
     # multi-tenant and must not fall back to a baked-in project root.
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.
-    env = {k: v for k, v in os.environ.items() if k.upper() != EnvVar.RAG_ROOT}
+    _excluded = str(EnvVar.RAG_ROOT).upper()
+    env = {k: v for k, v in os.environ.items() if k.upper() != _excluded}
     log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
     if sys.platform == "win32":
         proc = subprocess.Popen(

@@ -209,6 +209,8 @@ def _ensure_watcher(root: Path) -> None:
     with _watcher_lock:
         if root in _watcher_tasks:
             return
+        if _registry._shutting_down:
+            return
 
         slot = _registry.get_project(root)
 
@@ -216,7 +218,7 @@ def _ensure_watcher(root: Path) -> None:
 
         stop_event = asyncio.Event()
         vault_dir = root / ".vault"
-        task = asyncio.ensure_future(
+        task = asyncio.create_task(
             watch_and_reindex(
                 root_dir=root,
                 vault_dir=vault_dir,
@@ -858,6 +860,12 @@ def analyze_feature(feature_name: str) -> str:
         search vault ADRs, find codebase implementation, and
         summarize alignment.
     """
+    root_note = (
+        "\n\nNote: In HTTP service mode, you must include "
+        "`project_root` in every tool call."
+        if _http_mode
+        else ""
+    )
     return (
         f"Please analyze the implementation and documentation "
         f"for the '{feature_name}' feature.\n\n"
@@ -867,6 +875,7 @@ def analyze_feature(feature_name: str) -> str:
         f"implementation logic.\n"
         f"3. Summarize how the implementation aligns with "
         f"the original design specs."
+        f"{root_note}"
     )
 
 
@@ -887,10 +896,10 @@ def main(port: int | None = None) -> None:
         port: If provided, run on streamable-http at
             127.0.0.1:<port>. Otherwise use stdio transport.
     """
-    if port is not None:
-        global _http_mode
-        _http_mode = True
+    global _http_mode
+    _http_mode = port is not None
 
+    if port is not None:
         import uvicorn
         from starlette.applications import Starlette
         from starlette.routing import Mount, Route
@@ -923,9 +932,11 @@ def main(port: int | None = None) -> None:
         # Without this, the first tool call hits "EmbeddingModel not loaded"
         # because ServiceRegistry.get_project() requires a loaded model.
         _registry.load_model()
+        _registry._on_close_project = _stop_watcher
         try:
             mcp.run(transport="stdio")
         finally:
+            _stop_all_watchers()
             _registry.close_all()
 
 
