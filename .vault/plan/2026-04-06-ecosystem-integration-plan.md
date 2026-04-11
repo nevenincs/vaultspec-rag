@@ -7,97 +7,87 @@ revised: 2026-04-11
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
   - '[[2026-04-06-ecosystem-integration-research]]'
+  - '[[2026-04-11-ecosystem-integration-deep-audit]]'
 ---
 
-# `ecosystem-integration` `phase-1` plan (revised 2026-04-11)
+# `ecosystem-integration` `full-scope` plan (revised 2026-04-11)
 
-Implements the unblocked portion of the companion-package integration
-model. Scope reduced to items with zero upstream core dependencies.
-Derived from the accepted ADR (scope revision 2026-04-11).
+Implements the companion-package integration model between vaultspec-rag
+and vaultspec-core 0.1.7. All upstream blockers (core#36, core#43, core#50,
+core#51) have been resolved. Scope expanded from phase-1-only to full
+delivery of #54, #47, #48, #55.
 
 ## Scope
 
-**In scope (this PR):**
+**Delivered (this PR):**
 
-- #54 (partial): rule authoring + CLAUDE.md enrollment + sync verification
-- #47: `.gitattributes` eol=lf completion + line ending normalization
+- #54 (partial): `vaultspec-rag.builtin.md` rule + sync verification
+- #47: `.gitattributes` eol=lf completion + renormalization
+- #48: pre-commit hook migration to core 0.1.7 canonical pattern
+- #55: MCP server registration via core's registry
 
-**Deferred (blocked on core):**
+**Out of scope (separate issues filed):**
 
-- #54 (install/uninstall CLI) — awaits core#43, core#36
-- #48 (pre-commit hook standardization) — awaits core#36
-- #55 (MCP registry enrollment) — awaits core#43
+- #54 (install/uninstall CLI): deferred — requires further design
+- #59 (workspace.py re-implementation): technical debt, pre-beta
 
 ## Proposed Changes
 
-Create a builtin rule that teaches LLMs about RAG capabilities and when
-to use RAG vs core. Enroll it in CLAUDE.md and verify core's sync
-propagates it. Fix `.gitattributes` to enforce `eol=lf` on all text file
-types and renormalize existing files.
+Deliver four integration channels between RAG and core: rule enrollment
+via sync pipeline, MCP server registration via registry, pre-commit hook
+standardization via canonical patterns, and git config normalization.
 
 ## Tasks
 
-### Task 1: create `vaultspec-rag.builtin.md`
+### Task 1: create `vaultspec-rag.builtin.md` (DONE)
 
-Create `.vaultspec/rules/rules/vaultspec-rag.builtin.md` containing:
+Created `.vaultspec/rules/rules/vaultspec-rag.builtin.md` with CLI
+commands, MCP tool signatures, decision guide, data directory contract,
+env var namespace. Verified via code review — all signatures match
+`mcp_server.py` and `cli.py` exactly.
 
-- Companion model explanation (RAG is a peer to core, not a plugin)
-- RAG CLI command reference: `index`, `search`, `status`, `server`,
-  `benchmark`, `quality`, `test`
-- MCP tool reference (6 tools): `search_vault`, `search_codebase`,
-  `get_index_status`, `get_code_file`, `reindex_vault`,
-  `reindex_codebase`; 1 resource: `vault://{doc_id}`
-- MCP entry points: `vaultspec-search-mcp` (console script),
-  `vaultspec-rag server start` (HTTP mode)
-- Decision guide: when to use `vaultspec-rag search` (semantic) vs
-  `vaultspec-core vault list/check` (structured CRUD)
-- Data directory contract: `.vault/data/search-data/` is RAG-managed,
-  gitignored, invisible to core's scanner
-- Env var namespace: `VAULTSPEC_RAG_*` (documented in rule)
+### Task 2: sync and verify provider enrollment (DONE)
 
-**Source verification needed:** read `src/vaultspec_rag/mcp_server.py`
-for exact MCP tool signatures; read `pyproject.toml` for entry points.
+Ran `vaultspec-core sync`. Rule propagated to `.claude/rules/` and
+enrolled in `CLAUDE.md` automatically. Body content matches source.
 
-### Task 2: sync and verify provider enrollment
+### Task 3: `.gitattributes` eol=lf completion (DONE)
 
-Run `vaultspec-core sync` to propagate the new rule to all configured
-providers. Core's sync pipeline reads `.vaultspec/rules/rules/` from
-disk and distributes to provider-specific directories (`.claude/rules/`,
-etc.). Enrollment in provider configs (e.g., `CLAUDE.md`) is managed
-entirely by core's sync — we do NOT manually edit provider configs.
+Added `eol=lf` to all text file types: `*.md`, `*.txt`, `*.yml`,
+`*.yaml`, `*.toml`, `*.xml`, `*.json`, `*.css`, `*.js`, `*.ts`,
+`*.tsx`, `*.html`. Ran `git add --renormalize .`.
 
-Verify the rule lands in at least one provider directory after sync.
-This confirms the companion-package seeding mechanism works as designed.
+### Task 4: pre-commit hook migration (DONE)
 
-### Task 3: `.gitattributes` eol=lf completion (#47)
+Replaced 5 deprecated hooks (`check-naming`, `check-dangling`,
+`check-body-links`, `vault-doctor`, `vault-doctor-deep`) with 2
+canonical consolidated hooks (`vault-fix`, `spec-check`) using
+`uv run --no-sync vaultspec-core` entry prefix. Eliminates fragile
+`python -c` import pattern and `python -m` without `--no-sync`.
 
-Current `.gitattributes` has `text` without `eol=lf` for:
+### Task 5: MCP server registration (DONE)
 
-- `*.md`, `*.txt` (documentation)
-- `*.yml`, `*.yaml`, `*.toml`, `*.xml` (config)
-- `*.json`, `*.css`, `*.js`, `*.ts`, `*.tsx` (web)
-- `*.html` (uses `text diff=html`, no eol)
+Created `.vaultspec/rules/mcps/vaultspec-rag.builtin.json` with stdio
+server definition (`uv run vaultspec-search-mcp`). Core's `mcp_sync()`
+pass merges this into `.mcp.json` on `vaultspec-core sync`.
 
-Add `eol=lf` to all text file types. Then run
-`git add --renormalize .` to normalize existing files in the index.
+### Task 6: gitignore cleanup (DONE)
 
-**Note:** the `.vaultspec/rules/` CRLF drift visible in `git status` is
-exactly this issue — renormalization will fix it.
+Removed duplicate manual entries superseded by core's managed block.
+Core's #50 fix replaced blanket `.vault/` with fine-grained entries
+(`.vault/.obsidian/`, `.vault/.trash/`, `.vault/data/`, `.vault/logs/`).
 
-## Parallelization
+### Task 7: pymarkdown config (DONE)
 
-- Tasks 1-2 are sequential (rule must exist before sync)
-- Task 3 is independent of tasks 1-2 and can run in parallel
-
-Best strategy: implement tasks 1-2 sequentially, task 3 can be done
-at any point.
+Added `vaultspec` to `allowed_elements` in `.pymarkdown.json` — required
+for `<vaultspec>` tags in core-generated `CLAUDE.md`.
 
 ## Verification
 
-- `vaultspec-core sync` propagates rule to provider directories
-- Rule content matches MCP tool signatures from `mcp_server.py`
-- Provider configs (e.g., `CLAUDE.md`) updated by core's sync pipeline
+- `vaultspec-core sync` propagates rule to all provider directories
+- Rule content verified against `mcp_server.py` and `cli.py` (code review)
 - `.gitattributes` has `eol=lf` on all text types
-- `git diff` after renormalize shows LF normalization on affected files
-- All existing tests pass (`vaultspec-rag test`)
-- Pre-commit hooks (ruff, ty) pass on modified files
+- Pre-commit hooks use canonical `uv run --no-sync vaultspec-core` pattern
+- MCP definition file exists at `.vaultspec/rules/mcps/vaultspec-rag.builtin.json`
+- All pre-commit hooks pass
+- Upstream bugs filed: core#54 (sync crash), RAG #59 (workspace.py)

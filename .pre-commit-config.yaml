@@ -52,6 +52,12 @@ repos:
     types:
     - markdown
     exclude: ^test-project/
+  - id: check-provider-artifacts
+    name: Check provider artifacts
+    entry: uv run --no-sync vaultspec-core check-providers
+    language: system
+    always_run: true
+    pass_filenames: false
   - id: spec-check
     name: Workspace doctor
     entry: uv run --no-sync vaultspec-core doctor
