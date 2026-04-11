@@ -139,21 +139,6 @@ cython_debug/
 # VS Code
 .vscode/
 
-# Claude Code
-.claude/
-CLAUDE.md
-
-# Gemini CLI
-.gemini/
-GEMINI.md
-
-# Antigravity / CODEX
-.agents/
-.codex/
-AGENTS.md
-
-# mcp
-.mcp.json
 
 # LanceDB vector store
 .lance/

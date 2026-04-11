@@ -28,15 +28,32 @@ If the current virtual environment has `vaultspec-rag` installed, run it
 directly as `vaultspec-rag` or `uv run vaultspec-rag` in uv managed
 environments.
 
+Search and indexing:
+
 ```
-index                   Index vault docs and/or codebase
-search <query>          Semantic search (vault, codebase, or all)
-status                  Show index status and GPU info
-server start            Start the MCP HTTP server
-server stop             Stop the running server
-benchmark               Run search quality benchmarks
-quality                 Run search quality checks
-test [PYTEST_ARGS...]   Run the test suite
+index                        Index vault docs and/or codebase
+search <query>               Semantic search (vault, codebase, or all)
+status                       Show index status and GPU info
+```
+
+Server management:
+
+```
+server mcp start             Start the MCP server (stdio)
+server mcp stop              Stop the MCP server
+server mcp status            Show MCP server status
+server service start         Start the HTTP RAG service
+server service stop          Stop the HTTP RAG service
+server service status        Show service status
+server service warmup        Pre-load GPU models without serving
+```
+
+Development:
+
+```
+benchmark                    Run search quality benchmarks
+quality                      Run search quality checks
+test [PYTEST_ARGS...]        Run the test suite
 ```
 
 ## MCP Tools
@@ -45,9 +62,9 @@ The `vaultspec-search-mcp` server exposes the following tools:
 
 - `search_vault(query, top_k, project_root)` — semantic search across
   vault documents. Returns ranked results with scores and metadata.
-- `search_codebase(query, top_k, language, node_type, project_root)` —
-  semantic search across indexed source code. Supports language and
-  AST node type filters.
+- `search_codebase(query, top_k, language, node_type, function_name, class_name, project_root)` —
+  semantic search across indexed source code. Supports language,
+  AST node type, function name, and class name filters.
 - `get_index_status(project_root)` — returns index statistics, document
   counts, and GPU hardware info.
 - `get_code_file(path, project_root)` — retrieve full source file content
@@ -68,7 +85,8 @@ to analyze a feature across docs and code.
 - `vaultspec-rag` — CLI (package: `vaultspec_rag.__main__:main`)
 - `vaultspec-search-mcp` — MCP server stdio mode
   (package: `vaultspec_rag.mcp_server:main`)
-- `vaultspec-rag server start` — MCP server HTTP mode
+- `vaultspec-rag server mcp start` — MCP server via CLI
+- `vaultspec-rag server service start` — HTTP RAG service
 
 ## Data Directory
 
@@ -82,5 +100,5 @@ RAG-specific configuration uses the `VAULTSPEC_RAG_` prefix:
 
 - `VAULTSPEC_RAG_ROOT` — override project root resolution
 - `VAULTSPEC_RAG_DATA_DIR` — override data directory location
-- `VAULTSPEC_RAG_PORT` — HTTP server port (default: 8765)
+- `VAULTSPEC_RAG_PORT` — HTTP server port (default: 8766)
 - `VAULTSPEC_RAG_LOG_LEVEL` — logging verbosity
