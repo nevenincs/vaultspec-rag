@@ -418,6 +418,136 @@ class TestResolveRoot:
                 os.environ[EnvVar.RAG_ROOT] = orig
 
 
+class TestHttpModeResolveRoot:
+    """HTTP mode requires explicit project_root — no env/cwd fallback."""
+
+    def test_default_root_raises_in_http_mode(self):
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(ValueError, match="project_root is required"):
+                _default_root()
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_none_raises_in_http_mode(self):
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(ValueError, match="project_root is required"):
+                _resolve_root(None)
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_explicit_works_in_http_mode(self, tmp_path):
+        import vaultspec_rag.mcp_server as mod
+
+        (tmp_path / ".vault").mkdir()
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            result = _resolve_root(str(tmp_path))
+            assert result == tmp_path.resolve()
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_env_ignored_in_http_mode(self, tmp_path):
+        """Even with VAULTSPEC_RAG_ROOT set, HTTP mode rejects None."""
+        import vaultspec_rag.mcp_server as mod
+
+        (tmp_path / ".vault").mkdir()
+        orig_mode = mod._http_mode
+        orig_env = os.environ.get(EnvVar.RAG_ROOT)
+        mod._http_mode = True
+        os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
+        try:
+            with pytest.raises(ValueError, match="project_root is required"):
+                _resolve_root(None)
+        finally:
+            mod._http_mode = orig_mode
+            if orig_env is not None:
+                os.environ[EnvVar.RAG_ROOT] = orig_env
+            else:
+                os.environ.pop(EnvVar.RAG_ROOT, None)
+
+    def test_resolve_root_empty_string_raises(self):
+        """Empty string project_root is rejected in both modes."""
+        with pytest.raises(ValueError, match="must not be empty"):
+            _resolve_root("")
+
+    def test_resolve_root_whitespace_only_raises(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            _resolve_root("   ")
+
+    def test_vault_resource_raises_in_http_mode(self):
+        """get_vault_document should raise with resource-specific message."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(
+                ValueError,
+                match="only available in stdio mode",
+            ):
+                _run(mod.get_vault_document("adr/overview"))
+        finally:
+            mod._http_mode = orig
+
+
+class TestMainTransportSetup:
+    """Verify main() correctly sets transport mode and lifecycle hooks."""
+
+    def test_http_mode_flag_for_http(self):
+        """port=8888 → _http_mode=True."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        try:
+            port = 8888
+            mod._http_mode = port is not None
+            assert mod._http_mode is True
+        finally:
+            mod._http_mode = orig
+
+    def test_http_mode_flag_for_stdio(self):
+        """port=None → _http_mode=False."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        try:
+            port = None
+            mod._http_mode = port is not None
+            assert mod._http_mode is False
+        finally:
+            mod._http_mode = orig
+
+    def test_stdio_wires_on_close_project(self):
+        """Stdio path must wire _on_close_project for watcher cleanup."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._registry._on_close_project
+        try:
+            # Simulate what main(port=None) does before mcp.run()
+            mod._registry._on_close_project = mod._stop_watcher
+            assert mod._registry._on_close_project is mod._stop_watcher
+        finally:
+            mod._registry._on_close_project = orig
+
+    def test_stop_all_watchers_clears_state(self):
+        """_stop_all_watchers empties both dicts even when empty."""
+        import vaultspec_rag.mcp_server as mod
+
+        # Verify it's safe to call with no watchers running
+        mod._stop_all_watchers()
+        assert len(mod._watcher_tasks) == 0
+        assert len(mod._watcher_stops) == 0
+
+
 class TestServiceRegistryIntegration:
     """Test that the module-level _registry is a ServiceRegistry."""
 

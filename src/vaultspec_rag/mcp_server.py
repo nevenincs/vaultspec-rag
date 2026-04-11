@@ -42,6 +42,7 @@ _watcher_tasks: dict[Path, asyncio.Task[None]] = {}
 _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
+_http_mode: bool = False  # set once in main() before event loop starts
 
 
 def _validate_vault_root(root: Path) -> Path:
@@ -65,10 +66,23 @@ def _validate_vault_root(root: Path) -> Path:
 def _default_root() -> Path:
     """Resolve the default project root from env or cwd.
 
+    Only used in stdio mode.  HTTP mode must always provide an
+    explicit ``project_root`` — see ``_resolve_root()``.
+
     Returns:
         Resolved ``Path`` from ``VAULTSPEC_RAG_ROOT`` env var, falling
         back to the current working directory.
+
+    Raises:
+        ValueError: If called in HTTP mode (should never happen —
+            ``_resolve_root`` guards this).
     """
+    if _http_mode:
+        msg = (
+            "project_root is required in HTTP service mode — "
+            "the multi-tenant service has no default project"
+        )
+        raise ValueError(msg)
     from .config import EnvVar
 
     root_env = os.environ.get(EnvVar.RAG_ROOT)
@@ -192,17 +206,21 @@ def _ensure_watcher(root: Path) -> None:
     root = root.resolve()
     if root in _watcher_tasks:
         return
+    # Resolve the project slot OUTSIDE the lock — get_project() has
+    # its own per-root locking and can take 50-200ms on cold start.
+    # Holding _watcher_lock during that would block the event loop.
+    slot = _registry.get_project(root)
     with _watcher_lock:
         if root in _watcher_tasks:
             return
-
-        slot = _registry.get_project(root)
+        if _registry._shutting_down:
+            return
 
         from .watcher import watch_and_reindex
 
         stop_event = asyncio.Event()
         vault_dir = root / ".vault"
-        task = asyncio.ensure_future(
+        task = asyncio.create_task(
             watch_and_reindex(
                 root_dir=root,
                 vault_dir=vault_dir,
@@ -475,18 +493,26 @@ def _validate_query(query: str) -> str:
 def _resolve_root(project_root: str | None) -> Path:
     """Resolve a project root path from an optional string.
 
+    In HTTP service mode, ``project_root`` is required — the
+    multi-tenant daemon has no default project.  In stdio mode,
+    falls back to ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+
     Args:
         project_root: Explicit project root path, or ``None``
-            to use the default.
+            to use the default (stdio only).
 
     Returns:
         Resolved ``Path`` for the project root.
 
     Raises:
         ValueError: If the resolved path has no ``.vault/``
-            subdirectory.
+            subdirectory, or if ``project_root`` is omitted
+            in HTTP mode.
     """
-    if project_root:
+    if project_root is not None:
+        if not project_root.strip():
+            msg = "project_root must not be empty"
+            raise ValueError(msg)
         return _validate_vault_root(Path(project_root).resolve())
     return _default_root()
 
@@ -507,7 +533,8 @@ async def search_vault(
             type:adr, feature:name, etc.).
         top_k: Number of results to return.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         SearchResponse with ranked vault results and a
@@ -560,7 +587,8 @@ async def search_codebase(
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         SearchResponse with ranked codebase results and a
@@ -606,7 +634,8 @@ async def get_index_status(
 
     Args:
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         IndexStatus with document counts, storage path, and
@@ -651,7 +680,8 @@ async def get_code_file(
     Args:
         path: Path to the file relative to codebase root.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         The UTF-8 text content of the file.
@@ -697,7 +727,8 @@ async def reindex_vault(
         clean: If True, drop and recreate the vault collection
             before a full re-index.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -743,7 +774,8 @@ async def reindex_codebase(
         clean: If True, drop and recreate the codebase
             collection before a full re-index.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -784,6 +816,9 @@ async def reindex_codebase(
 async def get_vault_document(doc_id: str) -> str:
     """Retrieve the full content of a vault document by its stem ID.
 
+    Only available in stdio mode (single-project).  In HTTP mode,
+    use the ``search_vault`` tool with an explicit ``project_root``.
+
     Args:
         doc_id: Relative path without extension (e.g.,
             ``"adr/overview"``).
@@ -793,8 +828,12 @@ async def get_vault_document(doc_id: str) -> str:
 
     Raises:
         FileNotFoundError: If no document matches the given ID.
+        ValueError: If called in HTTP service mode.
         RuntimeError: If RAG components fail to initialize.
     """
+    if _http_mode:
+        msg = "Resource vault:// is only available in stdio mode (single-project)."
+        raise ValueError(msg)
     root = _default_root()
 
     def _run() -> str:
@@ -823,6 +862,12 @@ def analyze_feature(feature_name: str) -> str:
         search vault ADRs, find codebase implementation, and
         summarize alignment.
     """
+    root_note = (
+        "\n\nNote: In HTTP service mode, you must include "
+        "`project_root` in every tool call."
+        if _http_mode
+        else ""
+    )
     return (
         f"Please analyze the implementation and documentation "
         f"for the '{feature_name}' feature.\n\n"
@@ -832,6 +877,7 @@ def analyze_feature(feature_name: str) -> str:
         f"implementation logic.\n"
         f"3. Summarize how the implementation aligns with "
         f"the original design specs."
+        f"{root_note}"
     )
 
 
@@ -852,6 +898,9 @@ def main(port: int | None = None) -> None:
         port: If provided, run on streamable-http at
             127.0.0.1:<port>. Otherwise use stdio transport.
     """
+    global _http_mode
+    _http_mode = port is not None
+
     if port is not None:
         import uvicorn
         from starlette.applications import Starlette
@@ -881,7 +930,16 @@ def main(port: int | None = None) -> None:
         finally:
             _registry.close_all()
     else:
-        mcp.run(transport="stdio")
+        # Eager model load for stdio — matches HTTP mode's service_lifespan.
+        # Without this, the first tool call hits "EmbeddingModel not loaded"
+        # because ServiceRegistry.get_project() requires a loaded model.
+        _registry.load_model()
+        _registry._on_close_project = _stop_watcher
+        try:
+            mcp.run(transport="stdio")
+        finally:
+            _stop_all_watchers()
+            _registry.close_all()
 
 
 if __name__ == "__main__":

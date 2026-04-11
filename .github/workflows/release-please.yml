@@ -37,8 +37,6 @@ jobs:
 
       - name: Push updated lockfile
         if: steps.release.outputs.pr && !steps.release.outputs.release_created
-        env:
-          UV_NO_SOURCES: "1"
         run: |
           uv lock
           if git diff --quiet uv.lock; then
