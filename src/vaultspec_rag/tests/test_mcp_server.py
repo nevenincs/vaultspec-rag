@@ -418,6 +418,63 @@ class TestResolveRoot:
                 os.environ[EnvVar.RAG_ROOT] = orig
 
 
+class TestHttpModeResolveRoot:
+    """HTTP mode requires explicit project_root — no env/cwd fallback."""
+
+    def test_default_root_raises_in_http_mode(self):
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(ValueError, match="project_root is required"):
+                _default_root()
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_none_raises_in_http_mode(self):
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(ValueError, match="project_root is required"):
+                _resolve_root(None)
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_explicit_works_in_http_mode(self, tmp_path):
+        import vaultspec_rag.mcp_server as mod
+
+        (tmp_path / ".vault").mkdir()
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            result = _resolve_root(str(tmp_path))
+            assert result == tmp_path.resolve()
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_env_ignored_in_http_mode(self, tmp_path):
+        """Even with VAULTSPEC_RAG_ROOT set, HTTP mode rejects None."""
+        import vaultspec_rag.mcp_server as mod
+
+        (tmp_path / ".vault").mkdir()
+        orig_mode = mod._http_mode
+        orig_env = os.environ.get(EnvVar.RAG_ROOT)
+        mod._http_mode = True
+        os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
+        try:
+            with pytest.raises(ValueError, match="project_root is required"):
+                _resolve_root(None)
+        finally:
+            mod._http_mode = orig_mode
+            if orig_env is not None:
+                os.environ[EnvVar.RAG_ROOT] = orig_env
+            else:
+                os.environ.pop(EnvVar.RAG_ROOT, None)
+
+
 class TestServiceRegistryIntegration:
     """Test that the module-level _registry is a ServiceRegistry."""
 

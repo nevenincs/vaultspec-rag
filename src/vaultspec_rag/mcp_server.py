@@ -42,6 +42,7 @@ _watcher_tasks: dict[Path, asyncio.Task[None]] = {}
 _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
+_http_mode: bool = False
 
 
 def _validate_vault_root(root: Path) -> Path:
@@ -65,10 +66,23 @@ def _validate_vault_root(root: Path) -> Path:
 def _default_root() -> Path:
     """Resolve the default project root from env or cwd.
 
+    Only used in stdio mode.  HTTP mode must always provide an
+    explicit ``project_root`` — see ``_resolve_root()``.
+
     Returns:
         Resolved ``Path`` from ``VAULTSPEC_RAG_ROOT`` env var, falling
         back to the current working directory.
+
+    Raises:
+        ValueError: If called in HTTP mode (should never happen —
+            ``_resolve_root`` guards this).
     """
+    if _http_mode:
+        msg = (
+            "project_root is required in HTTP service mode — "
+            "the multi-tenant service has no default project"
+        )
+        raise ValueError(msg)
     from .config import EnvVar
 
     root_env = os.environ.get(EnvVar.RAG_ROOT)
@@ -475,16 +489,21 @@ def _validate_query(query: str) -> str:
 def _resolve_root(project_root: str | None) -> Path:
     """Resolve a project root path from an optional string.
 
+    In HTTP service mode, ``project_root`` is required — the
+    multi-tenant daemon has no default project.  In stdio mode,
+    falls back to ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+
     Args:
         project_root: Explicit project root path, or ``None``
-            to use the default.
+            to use the default (stdio only).
 
     Returns:
         Resolved ``Path`` for the project root.
 
     Raises:
         ValueError: If the resolved path has no ``.vault/``
-            subdirectory.
+            subdirectory, or if ``project_root`` is omitted
+            in HTTP mode.
     """
     if project_root:
         return _validate_vault_root(Path(project_root).resolve())
@@ -784,6 +803,9 @@ async def reindex_codebase(
 async def get_vault_document(doc_id: str) -> str:
     """Retrieve the full content of a vault document by its stem ID.
 
+    Only available in stdio mode (single-project).  In HTTP mode,
+    use the ``search_vault`` tool with an explicit ``project_root``.
+
     Args:
         doc_id: Relative path without extension (e.g.,
             ``"adr/overview"``).
@@ -793,6 +815,7 @@ async def get_vault_document(doc_id: str) -> str:
 
     Raises:
         FileNotFoundError: If no document matches the given ID.
+        ValueError: If called in HTTP service mode.
         RuntimeError: If RAG components fail to initialize.
     """
     root = _default_root()
@@ -853,6 +876,9 @@ def main(port: int | None = None) -> None:
             127.0.0.1:<port>. Otherwise use stdio transport.
     """
     if port is not None:
+        global _http_mode
+        _http_mode = True
+
         import uvicorn
         from starlette.applications import Starlette
         from starlette.routing import Mount, Route

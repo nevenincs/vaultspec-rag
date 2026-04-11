@@ -1205,6 +1205,9 @@ def _spawn_service(port: int, log_path: Path) -> int:
 
     """
     cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
+    # Strip VAULTSPEC_RAG_ROOT from the daemon env — the HTTP service is
+    # multi-tenant and must not fall back to a baked-in project root.
+    env = {k: v for k, v in os.environ.items() if k != EnvVar.RAG_ROOT}
     log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
     if sys.platform == "win32":
         proc = subprocess.Popen(
@@ -1212,6 +1215,7 @@ def _spawn_service(port: int, log_path: Path) -> int:
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
+            env=env,
             creationflags=0x00000200 | 0x08000000,  # NEW_PROCESS_GROUP | NO_WINDOW
         )
     else:
@@ -1220,6 +1224,7 @@ def _spawn_service(port: int, log_path: Path) -> int:
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
+            env=env,
             start_new_session=True,
         )
     log_fh.close()  # child has the fd now
