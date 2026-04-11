@@ -60,7 +60,7 @@ repos:
     pass_filenames: false
   - id: spec-check
     name: Workspace doctor
-    entry: uv run --no-sync vaultspec-core doctor
+    entry: uv run --no-sync vaultspec-core spec doctor
     language: system
     types:
     - markdown
