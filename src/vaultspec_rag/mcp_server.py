@@ -526,7 +526,8 @@ async def search_vault(
             type:adr, feature:name, etc.).
         top_k: Number of results to return.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         SearchResponse with ranked vault results and a
@@ -579,7 +580,8 @@ async def search_codebase(
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         SearchResponse with ranked codebase results and a
@@ -625,7 +627,8 @@ async def get_index_status(
 
     Args:
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         IndexStatus with document counts, storage path, and
@@ -670,7 +673,8 @@ async def get_code_file(
     Args:
         path: Path to the file relative to codebase root.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         The UTF-8 text content of the file.
@@ -716,7 +720,8 @@ async def reindex_vault(
         clean: If True, drop and recreate the vault collection
             before a full re-index.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -762,7 +767,8 @@ async def reindex_codebase(
         clean: If True, drop and recreate the codebase
             collection before a full re-index.
         project_root: Optional project root path. Defaults to
-            ``VAULTSPEC_RAG_ROOT`` env var or cwd.
+            ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
+            Required in HTTP service mode.
 
     Returns:
         IndexResponse with counts of added, updated, and
@@ -818,6 +824,9 @@ async def get_vault_document(doc_id: str) -> str:
         ValueError: If called in HTTP service mode.
         RuntimeError: If RAG components fail to initialize.
     """
+    if _http_mode:
+        msg = "Resource vault:// is only available in stdio mode (single-project)."
+        raise ValueError(msg)
     root = _default_root()
 
     def _run() -> str:
