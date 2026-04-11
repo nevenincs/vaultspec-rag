@@ -146,15 +146,6 @@ cython_debug/
 vault_index.json
 
 
-# RAG search data (Qdrant, index metadata)
-.vault/data/search-data/
-
-# Obsidian
-.vault/.obsidian/
-
-# VaultSpec Logs
-.vault/logs/
-
 # Temporary reference files
 tmp-ref/
 
@@ -164,7 +155,10 @@ tmp-ref/
 .codex/
 .gemini/
 .mcp.json
-.vault/
+.vault/.obsidian/
+.vault/.trash/
+.vault/data/
+.vault/logs/
 .vaultspec/
 .vaultspec/_snapshots/
 AGENTS.md
