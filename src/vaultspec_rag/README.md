@@ -42,6 +42,29 @@ vaultspec-rag search "your query"
 
 `index` builds embeddings for both vault documents and source code. `search` queries the vault by default, returning the top 5 results as a table with Score, Location, and Snippet columns.
 
+## Usage modes
+
+vaultspec-rag operates in two modes: **ad-hoc** and **service**.
+
+**Ad-hoc mode** runs everything in-process. Each CLI command loads the GPU models, performs the operation, and exits. This is the default -- no setup beyond installation is needed. The tradeoff is that loading models takes several seconds per invocation.
+
+```sh
+vaultspec-rag index
+vaultspec-rag search "your query"
+```
+
+**Service mode** runs a persistent background daemon that keeps models loaded in VRAM. CLI commands delegate to the service via `--port`, avoiding repeated model loading. The service also watches for file changes and reindexes automatically.
+
+Start the service, then use `--port` on CLI commands:
+
+```sh
+vaultspec-rag server service start
+vaultspec-rag search --port 8766 "your query"
+vaultspec-rag index --port 8766
+```
+
+Ad-hoc mode suits one-off tasks or environments where a persistent process isn't practical. Service mode suits active development where you search frequently and want the index to stay current as files change.
+
 ## Architecture overview
 
 ### Access layers
