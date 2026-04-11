@@ -139,21 +139,6 @@ cython_debug/
 # VS Code
 .vscode/
 
-# Claude Code
-.claude/
-CLAUDE.md
-
-# Gemini CLI
-.gemini/
-GEMINI.md
-
-# Antigravity / CODEX
-.agents/
-.codex/
-AGENTS.md
-
-# mcp
-.mcp.json
 
 # LanceDB vector store
 .lance/
@@ -161,18 +146,22 @@ AGENTS.md
 vault_index.json
 
 
-# RAG search data (Qdrant, index metadata)
-.vault/data/search-data/
-
-# Obsidian
-.vault/.obsidian/
-
-# VaultSpec Logs
-.vault/logs/
-
 # Temporary reference files
 tmp-ref/
 
 # >>> vaultspec-managed (do not edit this block) >>>
+.agents/
+.claude/
+.codex/
+.gemini/
+.mcp.json
+.vault/.obsidian/
+.vault/.trash/
+.vault/data/
+.vault/logs/
+.vaultspec/
 .vaultspec/_snapshots/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
 # <<< vaultspec-managed <<<
