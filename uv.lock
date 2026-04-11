@@ -2361,7 +2361,7 @@ dependencies = [
 
 [[package]]
 name = "vaultspec-rag"
-version = "0.2.0a0"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
