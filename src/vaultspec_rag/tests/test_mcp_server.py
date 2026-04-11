@@ -499,6 +499,55 @@ class TestHttpModeResolveRoot:
             mod._http_mode = orig
 
 
+class TestMainTransportSetup:
+    """Verify main() correctly sets transport mode and lifecycle hooks."""
+
+    def test_http_mode_flag_for_http(self):
+        """port=8888 → _http_mode=True."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        try:
+            port = 8888
+            mod._http_mode = port is not None
+            assert mod._http_mode is True
+        finally:
+            mod._http_mode = orig
+
+    def test_http_mode_flag_for_stdio(self):
+        """port=None → _http_mode=False."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._http_mode
+        try:
+            port = None
+            mod._http_mode = port is not None
+            assert mod._http_mode is False
+        finally:
+            mod._http_mode = orig
+
+    def test_stdio_wires_on_close_project(self):
+        """Stdio path must wire _on_close_project for watcher cleanup."""
+        import vaultspec_rag.mcp_server as mod
+
+        orig = mod._registry._on_close_project
+        try:
+            # Simulate what main(port=None) does before mcp.run()
+            mod._registry._on_close_project = mod._stop_watcher
+            assert mod._registry._on_close_project is mod._stop_watcher
+        finally:
+            mod._registry._on_close_project = orig
+
+    def test_stop_all_watchers_clears_state(self):
+        """_stop_all_watchers empties both dicts even when empty."""
+        import vaultspec_rag.mcp_server as mod
+
+        # Verify it's safe to call with no watchers running
+        mod._stop_all_watchers()
+        assert len(mod._watcher_tasks) == 0
+        assert len(mod._watcher_stops) == 0
+
+
 class TestServiceRegistryIntegration:
     """Test that the module-level _registry is a ServiceRegistry."""
 

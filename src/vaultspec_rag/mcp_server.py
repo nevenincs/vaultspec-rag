@@ -206,13 +206,15 @@ def _ensure_watcher(root: Path) -> None:
     root = root.resolve()
     if root in _watcher_tasks:
         return
+    # Resolve the project slot OUTSIDE the lock — get_project() has
+    # its own per-root locking and can take 50-200ms on cold start.
+    # Holding _watcher_lock during that would block the event loop.
+    slot = _registry.get_project(root)
     with _watcher_lock:
         if root in _watcher_tasks:
             return
         if _registry._shutting_down:
             return
-
-        slot = _registry.get_project(root)
 
         from .watcher import watch_and_reindex
 
