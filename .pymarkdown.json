@@ -19,7 +19,7 @@
       "enabled": false
     },
     "md033": {
-      "allowed_elements": "p,img,br,!--,![CDATA[,!DOCTYPE,tag,key,value,path,feature,yyyy-mm-dd,title,type"
+      "allowed_elements": "p,img,br,!--,![CDATA[,!DOCTYPE,tag,key,value,path,feature,yyyy-mm-dd,title,type,vaultspec"
     },
     "md034": {
       "enabled": false

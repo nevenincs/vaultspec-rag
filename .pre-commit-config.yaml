@@ -29,6 +29,13 @@ repos:
     types:
     - python
     pass_filenames: false
+  - id: vault-fix
+    name: Vault checks with auto-fix
+    entry: uv run --no-sync vaultspec-core vault check all --fix
+    language: system
+    types:
+    - markdown
+    pass_filenames: false
   - id: mdformat-check
     name: Check Markdown formatting (mdformat)
     entry: uv run --no-sync mdformat --check
@@ -45,23 +52,16 @@ repos:
     types:
     - markdown
     exclude: ^test-project/
-  - id: vault-fix
-    name: Vault Doctor
-    entry: uv run --no-sync vaultspec-core vault check all --fix
-    language: system
-    types:
-    - markdown
-    pass_filenames: false
   - id: check-provider-artifacts
     name: Check provider artifacts
     entry: uv run --no-sync vaultspec-core check-providers
-    always_run: true
     language: system
+    always_run: true
     pass_filenames: false
   - id: spec-check
-    name: Spec check
+    name: Workspace doctor
     entry: uv run --no-sync vaultspec-core spec doctor
+    language: system
     types:
     - markdown
-    language: system
     pass_filenames: false

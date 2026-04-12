@@ -139,36 +139,12 @@ cython_debug/
 # VS Code
 .vscode/
 
-# Claude Code
-.claude/
-CLAUDE.md
-
-# Gemini CLI
-.gemini/
-GEMINI.md
-
-# Antigravity / CODEX
-.agents/
-.codex/
-AGENTS.md
-
-# mcp
-.mcp.json
 
 # LanceDB vector store
 .lance/
 **/.lance/
 vault_index.json
 
-
-# RAG search data (Qdrant, index metadata)
-.vault/data/search-data/
-
-# Obsidian
-.vault/.obsidian/
-
-# VaultSpec Logs
-.vault/logs/
 
 # Temporary reference files
 tmp-ref/
