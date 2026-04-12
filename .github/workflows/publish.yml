@@ -1,13 +1,10 @@
 name: Publish
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (e.g. vaultspec-rag-v0.1.0)"
+        description: "Release tag to publish (e.g. vaultspec-rag-v0.1.4)"
         required: true
         type: string
 
@@ -26,7 +23,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ inputs.tag }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -53,7 +50,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ inputs.tag }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
