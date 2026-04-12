@@ -96,10 +96,11 @@ dev = [
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-# >>> TEMPORARY pin against vaultspec-core PR #69 (reconciling mcp_sync).
-# Remove this entry once vaultspec-core 0.1.10 is released to PyPI and
-# rebuild the lockfile. Tracked in this rag PR's body. <<<
-vaultspec-core = { git = "https://github.com/wgergely/vaultspec-core.git", rev = "feature/reconciling-sync" }
+# >>> TEMPORARY pin against vaultspec-core main post-merge of PR #69
+# (reconciling mcp_sync). Release-please PR #68 is queued to publish
+# 0.1.10 to PyPI; once that lands, REMOVE this entry and rebuild the
+# lockfile against the published wheel. Tracked in this rag PR's body. <<<
+vaultspec-core = { git = "https://github.com/wgergely/vaultspec-core.git", rev = "main" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
