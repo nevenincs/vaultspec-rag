@@ -30,7 +30,7 @@ repos:
     - python
     pass_filenames: false
   - id: vault-fix
-    name: Vault checks with auto-fix
+    name: Vault fix
     entry: uv run --no-sync vaultspec-core vault check all --fix
     language: system
     types:
@@ -59,7 +59,7 @@ repos:
     always_run: true
     pass_filenames: false
   - id: spec-check
-    name: Workspace doctor
+    name: Spec check
     entry: uv run --no-sync vaultspec-core spec doctor
     language: system
     types:
