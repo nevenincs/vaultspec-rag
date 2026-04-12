@@ -341,3 +341,63 @@ class TestServiceDaemonHelpers:
         finally:
             server.server_close()
             t.join(timeout=5)
+
+
+def _find_free_port() -> int:
+    """Bind to an ephemeral port, close, and return the number.
+
+    Good enough for the in-process service-down tests: the OS will not
+    reuse it immediately, so subsequent connection attempts reliably
+    fail with ConnectionRefused.
+    """
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+class TestServiceProjectsCli:
+    """In-process CLI coverage for `service projects list|evict`."""
+
+    def test_projects_list_help_renders(self) -> None:
+        result = runner.invoke(
+            app,
+            ["server", "service", "projects", "list", "--help"],
+        )
+        assert result.exit_code == 0
+        assert "project slots" in result.output.lower()
+
+    def test_projects_evict_help_renders(self) -> None:
+        result = runner.invoke(
+            app,
+            ["server", "service", "projects", "evict", "--help"],
+        )
+        assert result.exit_code == 0
+        assert "Evict" in result.output or "evict" in result.output
+
+    def test_projects_list_service_down_returns_exit_3(self) -> None:
+        port = _find_free_port()
+        result = runner.invoke(
+            app,
+            ["server", "service", "projects", "list", "--port", str(port)],
+        )
+        assert result.exit_code == 3
+
+    def test_projects_evict_service_down_returns_exit_3(self) -> None:
+        port = _find_free_port()
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "service",
+                "projects",
+                "evict",
+                "/some/root",
+                "--port",
+                str(port),
+            ],
+        )
+        assert result.exit_code == 3

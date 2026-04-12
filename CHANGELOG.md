@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Service lifecycle
+
+- Bounded multi-tenant `ServiceRegistry` with idle-TTL eviction, LRU admission cap, and a context-manager `lease` API; `close_all()` performs a 5-second graceful drain before force-closing busy slots ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
+- Collapsed the legacy `api.py._engine` parallel cache onto `ServiceRegistry.lease`; every facade function now routes through the single registry ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
+- New `list_projects` and `evict_project` MCP admin tools plus `vaultspec-rag service projects list|evict` CLI subcommands ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
+- `DaemonRotatingFileHandler` with re-`dup2` of fds 1/2 on rollover installed in `mcp_server.main()`; `service.log` is now bounded by the new `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES` / `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` knobs ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
+
 ## [0.2.0a0](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.1.4...vaultspec-rag-v0.2.0a0) (2026-04-06)
 
 First alpha release. This milestone collects all work since 0.1.1 into a single

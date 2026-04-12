@@ -13,12 +13,13 @@ Covers:
 from __future__ import annotations
 
 import threading
+import time
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
 from vaultspec_rag.progress import NullProgressReporter
-from vaultspec_rag.service import ProjectSlot, ServiceRegistry
+from vaultspec_rag.service import ProjectSlot, RegistryFullError, ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -83,7 +84,7 @@ class TestGetProject:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        slot = registry.get_project(root)
+        slot = registry.peek_project(root)
         try:
             assert slot.store is not None
             assert slot.searcher is not None
@@ -99,8 +100,8 @@ class TestGetProject:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        s1 = registry.get_project(root)
-        s2 = registry.get_project(root)
+        s1 = registry.peek_project(root)
+        s2 = registry.peek_project(root)
         try:
             assert s1 is s2
         finally:
@@ -112,7 +113,7 @@ class TestGetProject:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        slot = registry.get_project(root)
+        slot = registry.peek_project(root)
         try:
             assert slot.searcher.model is registry.model
         finally:
@@ -131,8 +132,8 @@ class TestMultiProject:
     ) -> None:
         root_a = _make_vault_dir(tmp_path / "project_a")
         root_b = _make_vault_dir(tmp_path / "project_b")
-        slot_a = registry.get_project(root_a)
-        slot_b = registry.get_project(root_b)
+        slot_a = registry.peek_project(root_a)
+        slot_b = registry.peek_project(root_b)
         try:
             # Same EmbeddingModel instance
             assert slot_a.searcher.model is slot_b.searcher.model
@@ -156,7 +157,7 @@ class TestCloseProject:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        registry.get_project(root)
+        registry.peek_project(root)
         resolved = root.resolve()
         assert resolved in registry._projects
         registry.close_project(root)
@@ -168,7 +169,7 @@ class TestCloseProject:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        slot = registry.get_project(root)
+        slot = registry.peek_project(root)
         store = slot.store
         registry.close_project(root)
         assert store._client is None
@@ -195,7 +196,7 @@ class TestCloseAll:
         reg = ServiceRegistry()
         reg._model = embedding_model
         root = _make_vault_dir(tmp_path)
-        slot = reg.get_project(root)
+        slot = reg.peek_project(root)
         store = slot.store
 
         reg.close_all()
@@ -223,7 +224,7 @@ class TestHealth:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        registry.get_project(root)
+        registry.peek_project(root)
         try:
             h = registry.health()
             assert h["model_loaded"] is True
@@ -249,7 +250,7 @@ class TestConcurrency:
 
         def worker() -> None:
             barrier.wait()
-            slot = registry.get_project(root)
+            slot = registry.peek_project(root)
             results.append(slot)
 
         threads = [threading.Thread(target=worker) for _ in range(4)]
@@ -345,8 +346,8 @@ class TestMultiProjectSearch:
             },
         )
 
-        slot_a = registry.get_project(root_a)
-        slot_b = registry.get_project(root_b)
+        slot_a = registry.peek_project(root_a)
+        slot_b = registry.peek_project(root_b)
 
         # Index both (real GPU encoding — no mocks)
         slot_a.vault_indexer.full_index(reporter=NullProgressReporter())
@@ -506,8 +507,8 @@ class TestSharedReranker:
     ) -> None:
         root_a = _make_vault_dir(tmp_path / "proj_a")
         root_b = _make_vault_dir(tmp_path / "proj_b")
-        slot_a = registry.get_project(root_a)
-        slot_b = registry.get_project(root_b)
+        slot_a = registry.peek_project(root_a)
+        slot_b = registry.peek_project(root_b)
         try:
             # Both searchers share the same CrossEncoder instance
             assert slot_a.searcher._reranker is slot_b.searcher._reranker
@@ -545,7 +546,7 @@ class TestSharedReranker:
         reg = ServiceRegistry()
         reg._model = embedding_model
         root = _make_vault_dir(tmp_path)
-        reg.get_project(root)
+        reg.peek_project(root)
         reranker = reg.get_reranker()
         assert reranker is not None
 
@@ -570,7 +571,7 @@ class TestGpuLock:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        slot = registry.get_project(root)
+        slot = registry.peek_project(root)
         try:
             assert slot.searcher._gpu_lock is registry.gpu_lock
         finally:
@@ -583,8 +584,8 @@ class TestGpuLock:
     ) -> None:
         root_a = _make_vault_dir(tmp_path / "proj_a")
         root_b = _make_vault_dir(tmp_path / "proj_b")
-        slot_a = registry.get_project(root_a)
-        slot_b = registry.get_project(root_b)
+        slot_a = registry.peek_project(root_a)
+        slot_b = registry.peek_project(root_b)
         try:
             assert slot_a.searcher._gpu_lock is slot_b.searcher._gpu_lock
         finally:
@@ -609,7 +610,7 @@ class TestPerRootLocks:
 
         def worker(root: Path, key: str) -> None:
             barrier.wait()
-            results[key] = registry.get_project(root)
+            results[key] = registry.peek_project(root)
 
         t1 = threading.Thread(target=worker, args=(root_a, "a"))
         t2 = threading.Thread(target=worker, args=(root_b, "b"))
@@ -632,7 +633,7 @@ class TestPerRootLocks:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        registry.get_project(root)
+        registry.peek_project(root)
         resolved = root.resolve()
         assert resolved in registry._root_locks
         registry.close_project(root)
@@ -646,7 +647,189 @@ class TestPerRootLocks:
         reg = ServiceRegistry()
         reg._model = embedding_model
         root = _make_vault_dir(tmp_path)
-        reg.get_project(root)
+        reg.peek_project(root)
         assert len(reg._root_locks) > 0
         reg.close_all()
         assert len(reg._root_locks) == 0
+
+
+class TestLeaseApi:
+    """ADR D3/D4/D6 — lease, refcount, idle sweep, LRU admission, drain."""
+
+    pytestmark: ClassVar = [pytest.mark.integration]
+
+    def _reg(
+        self,
+        embedding_model,
+        *,
+        max_projects: int,
+        idle_ttl: float,
+    ) -> ServiceRegistry:
+        reg = ServiceRegistry()
+        reg._model = embedding_model
+        reg._max_projects = max_projects
+        reg._idle_ttl_seconds = idle_ttl
+        return reg
+
+    def test_lease_increments_refcount(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        try:
+            with reg.lease(root) as slot:
+                assert slot.ref_count == 1
+                assert reg._projects[root].ref_count == 1
+        finally:
+            reg.close_all()
+
+    def test_lease_decrements_on_exit(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        try:
+            with reg.lease(root) as _slot:
+                pass
+            assert reg._projects[root].ref_count == 0
+        finally:
+            reg.close_all()
+
+    def test_peek_does_not_change_refcount(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        try:
+            slot = reg.peek_project(root)
+            assert slot.ref_count == 0
+            assert slot.last_access == 0.0
+            slot2 = reg.peek_project(root)
+            assert slot2 is slot
+            assert slot.ref_count == 0
+        finally:
+            reg.close_all()
+
+    def test_sweep_evicts_idle(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        # Large TTL so the first lease doesn't immediately sweep itself;
+        # we rewind last_access manually below.
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=5.0)
+        root_a = _make_vault_dir(tmp_path / "a").resolve()
+        root_b = _make_vault_dir(tmp_path / "b").resolve()
+        try:
+            with reg.lease(root_a):
+                pass
+            # Rewind A's last_access deep into the past.
+            reg._projects[root_a].last_access = time.monotonic() - 100.0
+            assert root_a in reg._projects
+
+            with reg.lease(root_b):
+                pass
+            assert root_a not in reg._projects, "idle sweep should have evicted A"
+            assert root_b in reg._projects
+        finally:
+            reg.close_all()
+
+    def test_lru_admission_evicts_oldest(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=2, idle_ttl=0)
+        root_a = _make_vault_dir(tmp_path / "a").resolve()
+        root_b = _make_vault_dir(tmp_path / "b").resolve()
+        root_c = _make_vault_dir(tmp_path / "c").resolve()
+        try:
+            with reg.lease(root_a):
+                pass
+            with reg.lease(root_b):
+                pass
+            # Force A to be the LRU victim.
+            reg._projects[root_a].last_access = 1.0
+            reg._projects[root_b].last_access = 2.0
+            with reg.lease(root_c):
+                pass
+            assert root_a not in reg._projects
+            assert root_b in reg._projects
+            assert root_c in reg._projects
+        finally:
+            reg.close_all()
+
+    def test_lru_full_raises(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=1, idle_ttl=0)
+        root_a = _make_vault_dir(tmp_path / "a").resolve()
+        root_b = _make_vault_dir(tmp_path / "b").resolve()
+        try:
+            cm = reg.lease(root_a)
+            slot_a = cm.__enter__()
+            try:
+                assert slot_a.ref_count == 1
+                with (
+                    pytest.raises(RegistryFullError) as excinfo,
+                    reg.lease(root_b),
+                ):
+                    pass
+                assert excinfo.value.max_projects == 1
+            finally:
+                cm.__exit__(None, None, None)
+        finally:
+            reg.close_all()
+
+    def test_acquire_blocks_during_shutdown(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        try:
+            with reg.lease(root):
+                pass
+            with reg._lock:
+                reg._shutting_down = True
+            with (
+                pytest.raises(RuntimeError, match="shutting down"),
+                reg.lease(root),
+            ):
+                pass
+        finally:
+            with reg._lock:
+                reg._shutting_down = False
+            reg.close_all()
+
+    def test_close_all_drains_then_force(
+        self,
+        embedding_model,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        # Seed the slot, then hold ref_count directly (simulating an
+        # in-flight request pinned through the drain deadline).  We
+        # mutate ref_count under _lock rather than going through
+        # reg.lease() because the test needs to observe force-close
+        # behavior while the ref is held past the deadline, and
+        # lease's release after close_all would hit a cleared dict.
+        reg.peek_project(root)
+        with reg._lock:
+            reg._projects[root].ref_count = 1
+        t0 = time.monotonic()
+        reg.close_all()
+        elapsed = time.monotonic() - t0
+        # 5s bounded drain + a small epsilon for teardown work.
+        assert 4.5 < elapsed < 7.0, f"close_all took {elapsed:.2f}s"
+        assert len(reg._projects) == 0

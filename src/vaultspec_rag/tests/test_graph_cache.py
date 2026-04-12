@@ -1,4 +1,4 @@
-"""Tests for GraphCache (api.py) and VaultSearcher graph_provider (search.py).
+"""Tests for GraphCache (graph_cache.py) and VaultSearcher graph_provider (search.py).
 
 Covers:
 - GraphCache.get() with TTL expiry
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from vaultspec_rag.api import GraphCache
+from vaultspec_rag.graph_cache import GraphCache
 
 if TYPE_CHECKING:
     from pathlib import Path

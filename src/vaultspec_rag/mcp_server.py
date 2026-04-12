@@ -19,14 +19,15 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from anyio.to_thread import run_sync as _run_in_thread
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from .progress import NullProgressReporter
-from .service import ServiceRegistry
+from .registry import get_registry
+from .service import RegistryFullError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -38,12 +39,37 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("VaultSpec Search", stateless_http=True)
 
-_registry = ServiceRegistry()
+_registry = get_registry()
 _watcher_tasks: dict[Path, asyncio.Task[None]] = {}
 _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
+
+
+def _resolve_log_path() -> Path:
+    """Resolve the daemon's rotating log path.
+
+    Mirrors the parent CLI's ``_log_file()`` resolution so the
+    daemon writes to the same file the parent created on spawn.
+    """
+    from .config import get_config
+
+    cfg = get_config()
+    status_dir = Path(cfg.status_dir).expanduser()
+    status_dir.mkdir(parents=True, exist_ok=True)
+    return status_dir / cfg.log_file
+
+
+def _registry_full_error_dict(exc: RegistryFullError) -> dict[str, Any]:
+    """Build the ADR D4 structured error dict for registry-full errors."""
+    return {
+        "ok": False,
+        "error": "registry_full",
+        "message": str(exc),
+        "max_projects": _registry.max_projects,
+        "busy_projects": [str(p) for p in _registry.busy_roots()],
+    }
 
 
 def _validate_vault_root(root: Path) -> Path:
@@ -207,10 +233,10 @@ def _ensure_watcher(root: Path) -> None:
     root = root.resolve()
     if root in _watcher_tasks:
         return
-    # Resolve the project slot OUTSIDE the lock — get_project() has
+    # Resolve the project slot OUTSIDE the lock — peek_project() has
     # its own per-root locking and can take 50-200ms on cold start.
     # Holding _watcher_lock during that would block the event loop.
-    slot = _registry.get_project(root)
+    slot = _registry.peek_project(root)
     with _watcher_lock:
         if root in _watcher_tasks:
             return
@@ -526,7 +552,7 @@ async def search_vault(
     query: str,
     top_k: int = 5,
     project_root: str | None = None,
-) -> SearchResponse:
+) -> SearchResponse | dict[str, Any]:
     """Search the documentation vault for relevant ADRs, plans, and research.
 
     Args:
@@ -549,20 +575,25 @@ async def search_vault(
     query = _validate_query(query)
     root = _resolve_root(project_root)
 
-    def _run() -> SearchResponse:
-        slot = _registry.get_project(root)
-        logger.info("Searching vault for: %s", query)
-        results = slot.searcher.search_vault(query, top_k=top_k)
-        items = [
-            SearchResultItem.model_validate(r, from_attributes=True) for r in results
-        ]
-        return SearchResponse(
-            results=items,
-            summary=f"Found {len(results)} relevant documents in the vault.",
-        )
+    def _run() -> SearchResponse | dict[str, Any]:
+        try:
+            with _registry.lease(root) as slot:
+                logger.info("Searching vault for: %s", query)
+                results = slot.searcher.search_vault(query, top_k=top_k)
+                items = [
+                    SearchResultItem.model_validate(r, from_attributes=True)
+                    for r in results
+                ]
+                return SearchResponse(
+                    results=items,
+                    summary=f"Found {len(results)} relevant documents in the vault.",
+                )
+        except RegistryFullError as exc:
+            return _registry_full_error_dict(exc)
 
     result = await _run_in_thread(_run)
-    _ensure_watcher(root)
+    if isinstance(result, SearchResponse):
+        _ensure_watcher(root)
     return result
 
 
@@ -575,7 +606,7 @@ async def search_codebase(
     function_name: str | None = None,
     class_name: str | None = None,
     project_root: str | None = None,
-) -> SearchResponse:
+) -> SearchResponse | dict[str, Any]:
     """Search the source codebase for relevant functions, classes, or logic.
 
     Args:
@@ -603,34 +634,43 @@ async def search_codebase(
     query = _validate_query(query)
     root = _resolve_root(project_root)
 
-    def _run() -> SearchResponse:
-        slot = _registry.get_project(root)
-        logger.info("Searching codebase for: %s (lang=%s)", query, language)
-        results = slot.searcher.search_codebase(
-            query,
-            top_k=top_k,
-            language=language,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-        )
-        items = [
-            SearchResultItem.model_validate(r, from_attributes=True) for r in results
-        ]
-        return SearchResponse(
-            results=items,
-            summary=f"Found {len(results)} relevant code blocks.",
-        )
+    def _run() -> SearchResponse | dict[str, Any]:
+        try:
+            with _registry.lease(root) as slot:
+                logger.info(
+                    "Searching codebase for: %s (lang=%s)",
+                    query,
+                    language,
+                )
+                results = slot.searcher.search_codebase(
+                    query,
+                    top_k=top_k,
+                    language=language,
+                    node_type=node_type,
+                    function_name=function_name,
+                    class_name=class_name,
+                )
+                items = [
+                    SearchResultItem.model_validate(r, from_attributes=True)
+                    for r in results
+                ]
+                return SearchResponse(
+                    results=items,
+                    summary=f"Found {len(results)} relevant code blocks.",
+                )
+        except RegistryFullError as exc:
+            return _registry_full_error_dict(exc)
 
     result = await _run_in_thread(_run)
-    _ensure_watcher(root)
+    if isinstance(result, SearchResponse):
+        _ensure_watcher(root)
     return result
 
 
 @mcp.tool()
 async def get_index_status(
     project_root: str | None = None,
-) -> IndexStatus:
+) -> IndexStatus | dict[str, Any]:
     """Return the current status of the RAG index and GPU hardware.
 
     Args:
@@ -648,25 +688,28 @@ async def get_index_status(
     """
     root = _resolve_root(project_root)
 
-    def _run() -> IndexStatus:
-        slot = _registry.get_project(root)
+    def _run() -> IndexStatus | dict[str, Any]:
         try:
-            import torch
+            with _registry.lease(root) as slot:
+                try:
+                    import torch
 
-            vram_gb = (
-                torch.cuda.get_device_properties(0).total_memory / 1e9
-                if torch.cuda.is_available()
-                else 0.0
-            )
-        except ImportError:
-            vram_gb = 0.0
-        return IndexStatus(
-            vault_count=slot.store.count(),
-            code_count=slot.store.count_code(),
-            storage_path=str(slot.store.db_path),
-            target_dir=str(root),
-            vram_gb=round(vram_gb, 2),
-        )
+                    vram_gb = (
+                        torch.cuda.get_device_properties(0).total_memory / 1e9
+                        if torch.cuda.is_available()
+                        else 0.0
+                    )
+                except ImportError:
+                    vram_gb = 0.0
+                return IndexStatus(
+                    vault_count=slot.store.count(),
+                    code_count=slot.store.count_code(),
+                    storage_path=str(slot.store.db_path),
+                    target_dir=str(root),
+                    vram_gb=round(vram_gb, 2),
+                )
+        except RegistryFullError as exc:
+            return _registry_full_error_dict(exc)
 
     return await _run_in_thread(_run)
 
@@ -718,7 +761,7 @@ async def get_code_file(
 async def reindex_vault(
     clean: bool = False,
     project_root: str | None = None,
-) -> IndexResponse:
+) -> IndexResponse | dict[str, Any]:
     """Re-index vault documentation (incremental by default).
 
     Invalidates the VaultGraph cache after indexing so the next
@@ -741,30 +784,34 @@ async def reindex_vault(
     """
     root = _resolve_root(project_root)
 
-    def _run() -> IndexResponse:
-        slot = _registry.get_project(root)
-        mode = "full" if clean else "incremental"
-        logger.info("Starting %s vault re-index...", mode)
-        if clean:
-            result = slot.vault_indexer.full_index(
-                clean=True, reporter=NullProgressReporter()
-            )
-        else:
-            result = slot.vault_indexer.incremental_index(
-                reporter=NullProgressReporter()
-            )
-        slot.graph_cache.invalidate()
-        return IndexResponse(
-            total=result.total,
-            added=result.added,
-            updated=result.updated,
-            removed=result.removed,
-            duration_ms=result.duration_ms,
-            files=result.files,
-        )
+    def _run() -> IndexResponse | dict[str, Any]:
+        try:
+            with _registry.lease(root) as slot:
+                mode = "full" if clean else "incremental"
+                logger.info("Starting %s vault re-index...", mode)
+                if clean:
+                    result = slot.vault_indexer.full_index(
+                        clean=True, reporter=NullProgressReporter()
+                    )
+                else:
+                    result = slot.vault_indexer.incremental_index(
+                        reporter=NullProgressReporter()
+                    )
+                slot.graph_cache.invalidate()
+                return IndexResponse(
+                    total=result.total,
+                    added=result.added,
+                    updated=result.updated,
+                    removed=result.removed,
+                    duration_ms=result.duration_ms,
+                    files=result.files,
+                )
+        except RegistryFullError as exc:
+            return _registry_full_error_dict(exc)
 
     result = await _run_in_thread(_run)
-    _ensure_watcher(root)
+    if isinstance(result, IndexResponse):
+        _ensure_watcher(root)
     return result
 
 
@@ -772,7 +819,7 @@ async def reindex_vault(
 async def reindex_codebase(
     clean: bool = False,
     project_root: str | None = None,
-) -> IndexResponse:
+) -> IndexResponse | dict[str, Any]:
     """Re-index the source codebase (incremental by default).
 
     Args:
@@ -792,30 +839,111 @@ async def reindex_codebase(
     """
     root = _resolve_root(project_root)
 
-    def _run() -> IndexResponse:
-        slot = _registry.get_project(root)
-        mode = "full" if clean else "incremental"
-        logger.info("Starting %s codebase re-index...", mode)
-        if clean:
-            result = slot.code_indexer.full_index(
-                clean=True, reporter=NullProgressReporter()
-            )
-        else:
-            result = slot.code_indexer.incremental_index(
-                reporter=NullProgressReporter()
-            )
-        return IndexResponse(
-            total=result.total,
-            added=result.added,
-            updated=result.updated,
-            removed=result.removed,
-            duration_ms=result.duration_ms,
-            files=result.files,
-        )
+    def _run() -> IndexResponse | dict[str, Any]:
+        try:
+            with _registry.lease(root) as slot:
+                mode = "full" if clean else "incremental"
+                logger.info("Starting %s codebase re-index...", mode)
+                if clean:
+                    result = slot.code_indexer.full_index(
+                        clean=True, reporter=NullProgressReporter()
+                    )
+                else:
+                    result = slot.code_indexer.incremental_index(
+                        reporter=NullProgressReporter()
+                    )
+                return IndexResponse(
+                    total=result.total,
+                    added=result.added,
+                    updated=result.updated,
+                    removed=result.removed,
+                    duration_ms=result.duration_ms,
+                    files=result.files,
+                )
+        except RegistryFullError as exc:
+            return _registry_full_error_dict(exc)
 
     result = await _run_in_thread(_run)
-    _ensure_watcher(root)
+    if isinstance(result, IndexResponse):
+        _ensure_watcher(root)
     return result
+
+
+# -- Admin tools -------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_projects(
+    project_root: str | None = None,
+) -> dict[str, Any]:
+    """Return a snapshot of every active :class:`ProjectSlot`.
+
+    Args:
+        project_root: Accepted for signature parity with other admin
+            tools (``get_index_status``, ``reindex_*``).  Ignored —
+            the list is registry-wide.
+
+    Returns:
+        Dict with keys ``projects`` (list), ``max_projects`` (int),
+        and ``idle_ttl_seconds`` (float).  Each project entry has
+        ``root``, ``last_access_iso`` (ISO-8601 local timestamp
+        derived from the monotonic ``idle_seconds``),
+        ``idle_seconds``, and ``ref_count``.
+    """
+    del project_root  # signature parity only
+
+    def _run() -> dict[str, Any]:
+        from datetime import datetime
+
+        snapshot = _registry.snapshot()
+        wall_now = datetime.now().astimezone()
+        projects = []
+        for entry in snapshot:
+            idle_s = float(entry["idle_seconds"])
+            last_access_wall = wall_now.timestamp() - idle_s
+            last_access_iso = (
+                datetime.fromtimestamp(last_access_wall).astimezone().isoformat()
+            )
+            projects.append(
+                {
+                    "root": str(entry["root"]),
+                    "last_access_iso": last_access_iso,
+                    "idle_seconds": idle_s,
+                    "ref_count": int(entry["ref_count"]),
+                },
+            )
+        return {
+            "projects": projects,
+            "max_projects": _registry.max_projects,
+            "idle_ttl_seconds": _registry.idle_ttl_seconds,
+        }
+
+    return await _run_in_thread(_run)
+
+
+@mcp.tool()
+async def evict_project(root: str) -> dict[str, Any]:
+    """Force-evict the :class:`ProjectSlot` for *root*.
+
+    Args:
+        root: Workspace root directory (resolved internally).
+
+    Returns:
+        One of:
+
+        - ``{"evicted": True,  "reason": "forced"}`` — slot removed.
+        - ``{"evicted": False, "reason": "busy"}`` — slot had live
+          leases; operator should retry.
+        - ``{"evicted": False, "reason": "not_found"}`` — unknown
+          root.
+    """
+    target = Path(root).resolve()
+
+    def _run() -> dict[str, Any]:
+        evicted, reason = _registry.try_evict(target)
+        return {"evicted": evicted, "reason": reason}
+
+    return await _run_in_thread(_run)
 
 
 # -- Resources ---------------------------------------------------------------
@@ -846,11 +974,11 @@ async def get_vault_document(doc_id: str) -> str:
     root = _default_root()
 
     def _run() -> str:
-        slot = _registry.get_project(root)
-        doc = slot.store.get_by_id(doc_id)
-        if not doc:
-            raise FileNotFoundError(f"Document '{doc_id}' not found")
-        return doc.get("content", "")
+        with _registry.lease(root) as slot:
+            doc = slot.store.get_by_id(doc_id)
+            if not doc:
+                raise FileNotFoundError(f"Document '{doc_id}' not found")
+            return doc.get("content", "")
 
     return await _run_in_thread(_run)
 
@@ -915,6 +1043,30 @@ def main(port: int | None = None) -> None:
         from starlette.applications import Starlette
         from starlette.routing import Mount, Route
 
+        from .config import get_config
+        from .logging_config import (
+            configure_logging,
+            install_daemon_log_rotation,
+        )
+
+        # ADR D1 install ordering (CRITICAL):
+        # argparse → configure_logging → install_daemon_log_rotation → uvicorn.run.
+        # The spawned daemon inherits the parent's stdout/stderr FD
+        # redirection onto service.log via Popen, but its own
+        # logging handlers are empty.  Core's configure_logging
+        # installs a stderr RichHandler, and install_daemon_log_rotation
+        # then layers the rotating file handler on top and re-dup2s
+        # fds 1/2 onto the rotating stream.  Rotation is a stdio-mode
+        # asymmetry on purpose: stdio is one-shot CLI tooling, not a
+        # long-lived daemon, so no rotation is needed there.
+        configure_logging()
+        cfg = get_config()
+        install_daemon_log_rotation(
+            _resolve_log_path(),
+            max_bytes=int(cfg.service_log_max_bytes),
+            backup_count=int(cfg.service_log_backup_count),
+        )
+
         # Override the default streamable_http_path so the inner
         # Starlette app serves at "/" instead of "/mcp".  Combined
         # with Mount("/mcp"), the effective client URL is "/mcp".
@@ -941,7 +1093,7 @@ def main(port: int | None = None) -> None:
     else:
         # Eager model load for stdio — matches HTTP mode's service_lifespan.
         # Without this, the first tool call hits "EmbeddingModel not loaded"
-        # because ServiceRegistry.get_project() requires a loaded model.
+        # because ServiceRegistry.lease()/peek_project() require a loaded model.
         _registry.load_model()
         _registry._on_close_project = _stop_watcher
         try:

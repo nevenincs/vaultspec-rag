@@ -12,18 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import socket
-import time
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
-from vaultspec_core.config import reset_config
 
 from vaultspec_rag.cli import (
-    _health_probe,
     _is_pid_alive,
     _read_service_status,
     _spawn_service,
@@ -32,74 +26,18 @@ from vaultspec_rag.cli import (
     _write_service_status,
     app,
 )
-from vaultspec_rag.config import reset_config as reset_rag_config
+
+from ._helpers import (
+    _get_ephemeral_port,
+    _poll_health,
+    _service_env,
+    _wait_for_exit,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 runner = CliRunner()
-
-
-# -- Helpers -----------------------------------------------------------------
-
-
-def _get_ephemeral_port() -> int:
-    """Bind to port 0 to get an OS-assigned free port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
-    """Poll ``_health_probe`` with exponential backoff until ready.
-
-    Returns the health dict or raises ``TimeoutError``.
-    """
-    delay = 0.5
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        health = _health_probe(port)
-        if health is not None and health.get("status") == "ready":
-            return health
-        time.sleep(delay)
-        delay = min(delay * 2, 5.0)
-    msg = f"Service on port {port} not ready after {timeout:.0f}s"
-    raise TimeoutError(msg)
-
-
-def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
-    """Wait for a process to exit.  Returns True if exited within timeout."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not _is_pid_alive(pid):
-            return True
-        time.sleep(0.3)
-    return False
-
-
-@contextmanager
-def _service_env(tmp_path: Path):
-    """Isolate service state files to *tmp_path*.
-
-    Sets ``VAULTSPEC_RAG_STATUS_DIR`` so the spawned subprocess and all
-    CLI helpers write to the temp directory.  Resets config singletons
-    on entry and exit.
-    """
-    env_key = "VAULTSPEC_RAG_STATUS_DIR"
-    prev_value = os.environ.get(env_key)
-    os.environ[env_key] = str(tmp_path)
-
-    reset_config()
-    reset_rag_config()
-    try:
-        yield
-    finally:
-        if prev_value is None:
-            os.environ.pop(env_key, None)
-        else:
-            os.environ[env_key] = prev_value
-        reset_config()
-        reset_rag_config()
 
 
 # -- Tests -------------------------------------------------------------------
@@ -121,7 +59,7 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         assert "cuda" in health
         assert "models_loaded" in health
         assert "uptime_s" in health
-        assert "projects" in health
+        assert "project_count" in health
         assert health["status"] == "ready"
 
         _terminate_pid(pid)

@@ -107,11 +107,11 @@ class TestMCPAsyncTools:
 
 
 class TestPathResolveCache:
-    """ADR: get_engine normalizes with Path.resolve() for cache consistency."""
+    """ADR: registry normalizes with Path.resolve() for cache consistency."""
 
     def test_relative_and_dot_relative_same_engine(self, tmp_path):
-        """get_engine(Path('./x')) and get_engine(Path('x')) return same instance."""
-        from vaultspec_rag.api import _engine_lock  # noqa: F401
+        """Path('./x') and Path('x') resolve to the same registry key."""
+        from vaultspec_rag.registry import get_registry
 
         # Both paths resolve to the same absolute path
         abs_path = tmp_path / "project"
@@ -119,13 +119,15 @@ class TestPathResolveCache:
         p1 = abs_path
         p2 = abs_path.resolve()
         assert p1.resolve() == p2.resolve()
+        # The registry is the single cache path for slots now.
+        assert get_registry() is get_registry()
 
 
 class TestGraphCache:
     """ADR: GraphCache returns same instance on repeated calls."""
 
     def test_graph_cache_invalidate_clears(self):
-        from vaultspec_rag.api import GraphCache
+        from vaultspec_rag.graph_cache import GraphCache
 
         cache = GraphCache(ttl_seconds=300.0)
         # After invalidate, internal state is cleared
@@ -137,7 +139,7 @@ class TestGraphCache:
     def test_graph_cache_has_lock(self):
         import threading
 
-        from vaultspec_rag.api import GraphCache
+        from vaultspec_rag.graph_cache import GraphCache
 
         cache = GraphCache(ttl_seconds=300.0)
         assert isinstance(cache._lock, type(threading.Lock()))
@@ -177,12 +179,13 @@ class TestThreadingLock:
 
         assert isinstance(_registry._lock, type(threading.Lock()))
 
-    def test_api_engine_lock_exists(self):
+    def test_registry_singleton_has_lock(self):
         import threading
 
-        from vaultspec_rag.api import _engine_lock
+        from vaultspec_rag.registry import get_registry
 
-        assert isinstance(_engine_lock, type(threading.Lock()))
+        reg = get_registry()
+        assert isinstance(reg._lock, type(threading.Lock()))
 
 
 class TestFilterOnPrefetch:

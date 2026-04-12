@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import typer
 from rich.console import Console
@@ -123,10 +123,14 @@ app = typer.Typer(
 server_app = typer.Typer(help="Manage RAG servers and backend services.")
 mcp_app = typer.Typer(help="Control the Model Context Protocol (MCP) server.")
 service_app = typer.Typer(help="Manage local or containerized RAG services.")
+service_projects_app = typer.Typer(
+    help="Inspect and evict project slots on a running RAG service.",
+)
 
 app.add_typer(server_app, name="server")
 server_app.add_typer(mcp_app, name="mcp")
 server_app.add_typer(service_app, name="service")
+service_app.add_typer(service_projects_app, name="projects")
 
 
 class CLIState:
@@ -638,6 +642,101 @@ def _try_mcp_reindex(
         return asyncio.run(_call())
     except Exception:
         return None
+
+
+def _try_mcp_admin(
+    tool_name: str,
+    args: dict[str, object],
+    port: int | None,
+) -> dict[str, object] | None:
+    """Call an admin MCP tool on a running RAG service.
+
+    Distinguishes "service unreachable" (connection refused → returns
+    ``None``) from "tool error" (bad response, missing tool → returns
+    the raw dict so the caller can render the structured error).
+
+    Args:
+        tool_name: Name of the MCP tool (``list_projects`` or
+            ``evict_project``).
+        args: Keyword arguments forwarded to the tool.
+        port: TCP port of the running MCP server.  If ``None``, the
+            helper returns ``None`` immediately.
+
+    Returns:
+        Parsed response dict on success, the error dict if the tool
+        returned one, or ``None`` when the service is unreachable.
+    """
+    if port is None:
+        return None
+
+    import asyncio
+    import errno
+
+    refused_errnos = {
+        errno.ECONNREFUSED,
+        getattr(errno, "WSAECONNREFUSED", 10061),
+    }
+    httpx_refused_types: tuple[type[BaseException], ...]
+    try:
+        from httpx import ConnectError, ConnectTimeout, ReadError
+
+        httpx_refused_types = (ConnectError, ConnectTimeout, ReadError)
+    except ImportError:  # pragma: no cover - httpx is a hard dep but stay defensive
+        httpx_refused_types = ()
+
+    def _is_connection_refused(exc: BaseException) -> bool:
+        """Walk an exception chain looking for a connect-refused signal."""
+        seen: set[int] = set()
+        stack: list[BaseException] = [exc]
+        while stack:
+            current = stack.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            if isinstance(current, ConnectionRefusedError):
+                return True
+            if (
+                isinstance(current, OSError)
+                and getattr(current, "errno", None) in refused_errnos
+            ):
+                return True
+            if httpx_refused_types and isinstance(current, httpx_refused_types):
+                return True
+            if current.__cause__ is not None:
+                stack.append(current.__cause__)
+            if current.__context__ is not None:
+                stack.append(current.__context__)
+            if isinstance(current, BaseExceptionGroup):
+                stack.extend(current.exceptions)
+        return False
+
+    async def _call() -> dict[str, object] | None:
+        import json
+
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.types import TextContent
+
+        url = f"http://127.0.0.1:{port}/mcp"
+        async with (
+            streamable_http_client(url) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool(tool_name, args)
+            if result.content:
+                first = result.content[0]
+                if isinstance(first, TextContent):
+                    return json.loads(first.text)
+            return {}
+
+    try:
+        return asyncio.run(_call())
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            return None
+        # Any other failure is a live-service-but-broken-tool case.
+        return {}
 
 
 def _try_mcp_search(
@@ -1604,6 +1703,141 @@ def service_warmup() -> None:
                 )
 
     console.print(table)
+
+
+# --- Service projects (eviction admin) ---
+
+
+def _humanize_idle(seconds: float) -> str:
+    """Format an idle duration as ``1h 5m``, ``2m 14s``, or ``12s``."""
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        m, s = divmod(int(seconds), 60)
+        return f"{m}m {s}s"
+    h, rem = divmod(int(seconds), 3600)
+    m = rem // 60
+    return f"{h}h {m}m"
+
+
+def _truncate_root(root: str, width: int = 60) -> str:
+    if len(root) <= width:
+        return root
+    return "\u2026" + root[-(width - 1) :]
+
+
+def _default_service_port() -> int | None:
+    """Return the port of the currently running service, or ``None``.
+
+    Reads ``service.json`` in the status directory; if absent or
+    unparsable, returns ``None`` so callers emit the exit-3
+    "service down" code path.
+    """
+    try:
+        data = _read_service_status()
+    except Exception:
+        return None
+    if not data:
+        return None
+    port = data.get("port")
+    if isinstance(port, int):
+        return port
+    try:
+        return int(port) if port is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+@service_projects_app.command("list")
+def service_projects_list(
+    port: Annotated[
+        int | None,
+        typer.Option("--port", help="MCP port (defaults to running service)."),
+    ] = None,
+) -> None:
+    """List active project slots on a running RAG service."""
+    resolved_port = port if port is not None else _default_service_port()
+    result = _try_mcp_admin("list_projects", {}, resolved_port)
+    if result is None:
+        console.print(
+            "[red]Service is not running.[/] "
+            "Start it with [bold]vaultspec-rag server service start[/].",
+        )
+        raise typer.Exit(3)
+
+    raw_projects = result.get("projects")
+    projects: list[object] = (
+        list(raw_projects) if isinstance(raw_projects, list) else []
+    )
+    max_projects = result.get("max_projects", 0)
+    idle_ttl = result.get("idle_ttl_seconds", 0)
+
+    if not projects:
+        console.print(
+            f"No active project slots. (0/{max_projects} slots, idle TTL {idle_ttl}s)",
+        )
+        return
+
+    table = Table(title="Active project slots")
+    table.add_column("Root", overflow="ellipsis")
+    table.add_column("Idle", justify="right")
+    table.add_column("Refs", justify="right")
+    table.add_column("Last access", justify="right")
+    for raw_entry in projects:
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = cast("dict[str, object]", raw_entry)
+        root_str = _truncate_root(str(entry.get("root", "")))
+        idle_raw = entry.get("idle_seconds", 0.0)
+        idle_s = float(idle_raw) if isinstance(idle_raw, int | float) else 0.0
+        refs_raw = entry.get("ref_count", 0)
+        refs = int(refs_raw) if isinstance(refs_raw, int | float) else 0
+        iso = str(entry.get("last_access_iso", ""))
+        # Show just HH:MM:SS from ISO timestamp.
+        hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
+        table.add_row(root_str, _humanize_idle(idle_s), str(refs), hms)
+    console.print(table)
+    console.print(
+        f"{len(projects)}/{max_projects} slots, idle TTL {idle_ttl}s",
+    )
+
+
+@service_projects_app.command("evict")
+def service_projects_evict(
+    root: Annotated[str, typer.Argument(help="Project root to evict.")],
+    port: Annotated[
+        int | None,
+        typer.Option("--port", help="MCP port (defaults to running service)."),
+    ] = None,
+) -> None:
+    """Evict a project slot on a running RAG service."""
+    resolved_port = port if port is not None else _default_service_port()
+    result = _try_mcp_admin(
+        "evict_project",
+        {"root": root},
+        resolved_port,
+    )
+    if result is None:
+        console.print(
+            "[red]Service is not running.[/] "
+            "Start it with [bold]vaultspec-rag server service start[/].",
+        )
+        raise typer.Exit(3)
+
+    reason = str(result.get("reason", ""))
+    evicted = bool(result.get("evicted", False))
+    if evicted:
+        console.print(f"[green]Evicted[/] project slot: {root}")
+        raise typer.Exit(0)
+    if reason == "busy":
+        console.print(f"[yellow]Slot busy[/]: {root} — retry shortly.")
+        raise typer.Exit(1)
+    if reason == "not_found":
+        console.print(f"[red]Slot not found[/]: {root}")
+        raise typer.Exit(2)
+    console.print(f"[red]Unexpected response[/]: {result}")
+    raise typer.Exit(1)
 
 
 @app.command("benchmark")

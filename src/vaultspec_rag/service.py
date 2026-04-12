@@ -9,13 +9,15 @@ initialization in ``api.py`` and ``mcp_server.py``.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from sentence_transformers import CrossEncoder
@@ -25,11 +27,25 @@ if TYPE_CHECKING:
     from .search import VaultSearcher
     from .store import VaultStore
 
-from .api import GraphCache
+from .graph_cache import GraphCache
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ProjectSlot", "ServiceRegistry"]
+__all__ = ["ProjectSlot", "RegistryFullError", "ServiceRegistry"]
+
+
+class RegistryFullError(Exception):
+    """Raised by :meth:`ServiceRegistry._admit_with_lru` when no slot is evictable.
+
+    Attributes:
+        max_projects: The registry's configured ``max_projects`` cap.
+    """
+
+    def __init__(self, max_projects: int) -> None:
+        super().__init__(
+            f"ServiceRegistry is full ({max_projects} slots, all busy)",
+        )
+        self.max_projects = max_projects
 
 
 @dataclass
@@ -43,6 +59,12 @@ class ProjectSlot:
         vault_indexer: Incremental indexer for ``.vault/`` documents.
         code_indexer: Incremental indexer for source code files.
         graph_cache: Thread-safe TTL graph cache for this project.
+        last_access: Monotonic seconds of the most recent successful
+            :meth:`ServiceRegistry.lease` acquire.  Never mutated or
+            read outside the registry's ``_lock``.
+        ref_count: Number of currently held leases against this slot.
+            Incremented on lease acquire and decremented on release;
+            only the sweeper looks at slots with ``ref_count == 0``.
     """
 
     store: VaultStore
@@ -50,6 +72,8 @@ class ProjectSlot:
     vault_indexer: VaultIndexer
     code_indexer: CodebaseIndexer
     graph_cache: GraphCache
+    last_access: float = field(default=0.0)
+    ref_count: int = field(default=0)
 
 
 class ServiceRegistry:
@@ -70,6 +94,9 @@ class ServiceRegistry:
 
     def __init__(self) -> None:
         """Initialize the registry with empty model and project state."""
+        from .config import get_config
+
+        cfg = get_config()
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         self._lock = threading.Lock()
@@ -79,6 +106,20 @@ class ServiceRegistry:
         self._reranker_lock = threading.Lock()
         self._on_close_project: Callable[[Path], None] | None = None
         self._shutting_down = False
+        self._idle_ttl_seconds: float = float(cfg.service_idle_ttl_seconds)
+        self._max_projects: int = int(cfg.service_max_projects)
+
+    # -- eviction config --------------------------------------------------
+
+    @property
+    def max_projects(self) -> int:
+        """Return the configured LRU cap (``0`` disables the cap)."""
+        return self._max_projects
+
+    @property
+    def idle_ttl_seconds(self) -> float:
+        """Return the idle-sweep TTL (``0`` disables idle eviction)."""
+        return self._idle_ttl_seconds
 
     # -- model lifecycle ---------------------------------------------------
 
@@ -160,12 +201,17 @@ class ServiceRegistry:
 
     # -- per-project slots -------------------------------------------------
 
-    def get_project(self, root: Path) -> ProjectSlot:
-        """Return (or lazily create) the component slot for *root*.
+    def peek_project(self, root: Path) -> ProjectSlot:
+        """Return (or lazily create) the slot for *root* without bumping refcount.
 
-        Thread-safe: uses a per-root lock so that concurrent callers
-        for *different* roots proceed in parallel, while concurrent
-        callers for the *same* root are serialized.
+        Reserved for non-request-path callers (watcher wiring, lifespan
+        preload, tests).  Request-path callers MUST use :meth:`lease`
+        instead so eviction refcount accounting is honored.
+
+        Thread-safe: uses the same three-level lock dance as the
+        service-graph ADR so that concurrent callers for *different*
+        roots proceed in parallel, while concurrent callers for the
+        *same* root are serialized.
 
         Args:
             root: Workspace root directory (resolved internally).
@@ -174,23 +220,17 @@ class ServiceRegistry:
             The ``ProjectSlot`` for *root*.
 
         Raises:
-            RuntimeError: If ``load_model()`` has not been called
-                or the registry is shutting down.
+            RuntimeError: If ``load_model()`` has not been called or
+                the registry is shutting down.
         """
-        # NOTE: The 3-level lock dance (global → per-root → global) exists
-        # to satisfy PERF-002 (parallel init of different roots).  In alpha
-        # this is unlikely to matter — _create_slot takes ~50-200ms and
-        # contention only happens on cold first-request.  If this ever
-        # causes trouble, reverting to the original single global-lock
-        # double-check pattern is a safe simplification.  The _shutting_down
-        # guard was added to prevent a race where close_all() runs while
-        # _create_slot() is in-flight (Codex review, 2026-04-04).
         root = root.resolve()
         slot = self._projects.get(root)
         if slot is not None:
             return slot
-        # Get or create a per-root lock (global lock held briefly)
         with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
             slot = self._projects.get(root)
             if slot is not None:
                 return slot
@@ -198,7 +238,6 @@ class ServiceRegistry:
             if root_lock is None:
                 root_lock = threading.Lock()
                 self._root_locks[root] = root_lock
-        # Per-root lock: only blocks concurrent callers for the same root
         with root_lock:
             slot = self._projects.get(root)
             if slot is not None:
@@ -206,13 +245,235 @@ class ServiceRegistry:
             slot = self._create_slot(root)
             with self._lock:
                 if self._shutting_down:
-                    # close_all() ran while we were creating the slot.
-                    # Don't publish — close the orphaned store.
                     slot.store.close()
                     msg = "ServiceRegistry is shutting down"
                     raise RuntimeError(msg)
                 self._projects[root] = slot
         return slot
+
+    # -- lease API ---------------------------------------------------------
+
+    @contextlib.contextmanager
+    def lease(self, root: Path) -> Iterator[ProjectSlot]:
+        """Acquire a refcounted lease against the slot for *root*.
+
+        Use as ``with registry.lease(root) as slot: ...``.  On enter,
+        the slot is created if necessary (honoring the LRU cap and
+        triggering an idle sweep), its ``last_access`` is updated, and
+        its ``ref_count`` is incremented.  On exit, the refcount is
+        decremented.  Eviction never touches a slot with
+        ``ref_count > 0``.
+
+        Args:
+            root: Workspace root directory.
+
+        Yields:
+            The leased ``ProjectSlot``.
+
+        Raises:
+            RegistryFullError: When admission would exceed
+                ``max_projects`` and every existing slot is busy.
+            RuntimeError: If ``load_model()`` has not been called or
+                the registry is shutting down.
+        """
+        slot = self._acquire(root)
+        try:
+            yield slot
+        finally:
+            self._release(slot)
+
+    def _acquire(self, root: Path) -> ProjectSlot:
+        """Admit or fetch *root*'s slot and increment its ``ref_count``.
+
+        Must NOT be called outside :meth:`lease`.  Holds ``_lock`` for
+        the slot lookup / admission / refcount mutation / opportunistic
+        idle sweep.  Slot creation itself runs outside ``_lock`` via
+        :meth:`peek_project` to preserve the service-graph ADR's
+        parallel cold-start guarantee.
+
+        Args:
+            root: Workspace root directory.
+
+        Returns:
+            The acquired ``ProjectSlot``, already bumped.
+
+        Raises:
+            RegistryFullError: When admission would exceed the LRU cap
+                and no slot is evictable.
+            RuntimeError: When the registry is shutting down.
+        """
+        resolved = root.resolve()
+
+        # Fast path: slot already exists. Still take _lock to mutate
+        # ref_count and last_access atomically.
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            slot = self._projects.get(resolved)
+            if slot is not None:
+                slot.last_access = time.monotonic()
+                slot.ref_count += 1
+                self._sweep_idle()
+                return slot
+            # LRU admission: may evict a victim synchronously.
+            self._admit_with_lru(resolved)
+
+        # Create (outside _lock so GPU parallel init is preserved).
+        slot = self.peek_project(resolved)
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            slot.last_access = time.monotonic()
+            slot.ref_count += 1
+            self._sweep_idle()
+        return slot
+
+    def _release(self, slot: ProjectSlot) -> None:
+        """Decrement a slot's ``ref_count`` under ``_lock``."""
+        with self._lock:
+            if slot.ref_count > 0:
+                slot.ref_count -= 1
+
+    # -- eviction ---------------------------------------------------------
+
+    def _sweep_idle(self) -> None:
+        """Evict slots whose ``last_access`` is older than the idle TTL.
+
+        Caller MUST hold ``self._lock``.  Returns with ``self._lock``
+        still held.  Pops every victim from ``_projects`` *while the
+        lock is held* so a concurrent :meth:`lease` cannot resurrect
+        a slot that is about to be torn down, then runs the actual
+        teardown (watcher stop + store close) outside ``_lock``.
+        """
+        if self._idle_ttl_seconds <= 0:
+            return
+        now = time.monotonic()
+        victim_slots: list[tuple[Path, ProjectSlot]] = []
+        for r, s in list(self._projects.items()):
+            if s.ref_count == 0 and (now - s.last_access) >= self._idle_ttl_seconds:
+                self._projects.pop(r, None)
+                self._root_locks.pop(r, None)
+                victim_slots.append((r, s))
+        if not victim_slots:
+            return
+        self._lock.release()
+        try:
+            for root, slot in victim_slots:
+                self._teardown_slot(root, slot, reason="idle")
+        finally:
+            self._lock.acquire()
+
+    def _admit_with_lru(self, root: Path) -> None:
+        """Enforce the LRU cap before admitting *root*.
+
+        Caller MUST hold ``self._lock``.  If the registry is below the
+        cap, returns immediately.  Otherwise selects the slot with the
+        smallest ``last_access`` among ``ref_count == 0`` candidates,
+        pops it from ``_projects`` *under the lock*, then runs teardown
+        outside the lock.  Raises :class:`RegistryFullError` if every
+        slot is busy.
+
+        Args:
+            root: The root being admitted (unused beyond diagnostics).
+        """
+        del root  # kept for future per-root logging
+        if self._max_projects <= 0:
+            return
+        if len(self._projects) < self._max_projects:
+            return
+        candidates = [
+            (slot.last_access, r)
+            for r, slot in self._projects.items()
+            if slot.ref_count == 0
+        ]
+        if not candidates:
+            raise RegistryFullError(self._max_projects)
+        candidates.sort()
+        victim_root = candidates[0][1]
+        # Pop under the lock so a concurrent lease() cannot resurrect
+        # the slot before teardown completes.
+        victim_slot = self._projects.pop(victim_root, None)
+        self._root_locks.pop(victim_root, None)
+        if victim_slot is None:
+            return
+        self._lock.release()
+        try:
+            self._teardown_slot(victim_root, victim_slot, reason="lru")
+        finally:
+            self._lock.acquire()
+
+    def _teardown_slot(
+        self,
+        root: Path,
+        slot: ProjectSlot,
+        *,
+        reason: str,
+    ) -> None:
+        """Run the watcher-stop + store-close teardown for an evicted slot.
+
+        Caller MUST have already removed *slot* from ``self._projects``.
+        Caller MUST NOT hold ``self._lock``.  Mirrors the teardown order
+        used by :meth:`close_project` (watcher first, then store) so that
+        ``incremental_index()`` cannot fire against a closed store.
+        """
+        if self._on_close_project is not None:
+            self._on_close_project(root)
+        slot.graph_cache.invalidate()
+        slot.store.close()
+        logger.info("Evicted ProjectSlot %s (reason=%s)", root, reason)
+
+    def try_evict(self, root: Path) -> tuple[bool, str]:
+        """Manually evict *root* atomically.
+
+        Used by the ``evict_project`` MCP admin tool and the
+        ``vaultspec-rag service projects evict`` CLI command.  All
+        decisions (existence + busy check + pop) happen under
+        ``self._lock`` so a concurrent :meth:`lease` cannot race the
+        evict.  Teardown runs outside the lock per the same protocol
+        as :meth:`_sweep_idle` and :meth:`_admit_with_lru`.
+
+        Returns:
+            ``(True, "forced")`` when the slot was evicted,
+            ``(False, "busy")`` when ``ref_count > 0``,
+            ``(False, "not_found")`` when no slot exists for *root*.
+        """
+        target = root.resolve()
+        with self._lock:
+            slot = self._projects.get(target)
+            if slot is None:
+                return (False, "not_found")
+            if slot.ref_count > 0:
+                return (False, "busy")
+            self._projects.pop(target, None)
+            self._root_locks.pop(target, None)
+        self._teardown_slot(target, slot, reason="forced")
+        return (True, "forced")
+
+    def busy_roots(self) -> list[Path]:
+        """Return a list of resolved roots with ``ref_count > 0``."""
+        with self._lock:
+            return [r for r, s in self._projects.items() if s.ref_count > 0]
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        """Return a list of per-slot diagnostic dicts (for ``list_projects``).
+
+        Each dict contains ``root`` (resolved Path), ``last_access``
+        (monotonic float), ``ref_count`` (int), and ``idle_seconds``
+        (float, derived from ``time.monotonic() - last_access``).
+        """
+        now = time.monotonic()
+        with self._lock:
+            return [
+                {
+                    "root": r,
+                    "last_access": slot.last_access,
+                    "ref_count": slot.ref_count,
+                    "idle_seconds": max(0.0, now - slot.last_access),
+                }
+                for r, slot in self._projects.items()
+            ]
 
     def _create_slot(self, root: Path) -> ProjectSlot:
         """Build all per-project components for *root*.
@@ -295,23 +556,46 @@ class ServiceRegistry:
             logger.info("ProjectSlot closed for %s", root)
 
     def close_all(self) -> None:
-        """Close all project stores and release the model.
+        """Shut down the registry with a bounded 5-second busy drain.
 
-        Invokes ``_on_close_project`` for each project to stop
-        watchers before closing stores.  Sets ``_shutting_down``
-        so any in-flight ``get_project()`` calls don't publish
-        new slots after close.
+        Implements ADR D6 "graceful drain": sets ``_shutting_down``
+        first so new :meth:`lease` calls raise, polls every 100ms for
+        busy slots to drain, and force-closes any still-busy slots
+        after a 5-second deadline (logging a warning for each).
+
+        The 5.0s constant is intentionally NOT configurable per
+        ADR D6 — long enough for worst-case search latency, short
+        enough that uvicorn lifespan shutdown never looks hung.
         """
         with self._lock:
             self._shutting_down = True
+
+        # ADR D6: bounded drain.  5.0 seconds is intentionally hardcoded.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            with self._lock:
+                busy = any(s.ref_count > 0 for s in self._projects.values())
+            if not busy:
+                break
+            time.sleep(0.1)
+
+        with self._lock:
             roots = list(self._projects.keys())
-        # Stop watchers first (outside _lock to avoid deadlock
-        # with watcher callbacks that may call get_project)
+
+        # Stop watchers first (outside _lock to avoid deadlock with
+        # watcher callbacks that may call back into the registry).
         if self._on_close_project is not None:
             for root in roots:
                 self._on_close_project(root)
+
         with self._lock:
-            for root, slot in self._projects.items():
+            for root, slot in list(self._projects.items()):
+                if slot.ref_count > 0:
+                    logger.warning(
+                        "Force-closing busy slot %s (ref_count=%d)",
+                        root,
+                        slot.ref_count,
+                    )
                 slot.store.close()
                 logger.info("ProjectSlot closed for %s", root)
             self._projects.clear()
