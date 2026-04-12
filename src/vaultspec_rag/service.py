@@ -373,9 +373,7 @@ class ServiceRegistry:
             # failure cannot mask the original exception.
             if acquired_slot is not None:
                 try:
-                    with self._lock:
-                        if acquired_slot.ref_count > 0:
-                            acquired_slot.ref_count -= 1
+                    self._release(acquired_slot)
                 except Exception:
                     logger.exception(
                         "Failed to roll back ref_count during _acquire rollback",
