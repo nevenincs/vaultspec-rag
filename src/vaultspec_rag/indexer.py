@@ -13,7 +13,7 @@ import logging
 import os
 import pathlib
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -843,7 +843,7 @@ class VaultIndexer:
         docs: list[VaultDocument] = []
         with ThreadPoolExecutor() as pool:
             futures = [pool.submit(prepare_document, p, self.root_dir) for p in paths]
-            for future in futures:
+            for future in as_completed(futures):
                 try:
                     doc = future.result()
                 except Exception:
@@ -1532,7 +1532,7 @@ class CodebaseIndexer:
         all_chunks: list[CodeChunk] = []
         with ThreadPoolExecutor() as pool:
             futures = [pool.submit(self._chunk_file, p) for p in paths]
-            for future in futures:
+            for future in as_completed(futures):
                 try:
                     file_chunks = future.result()
                 except Exception:
@@ -1683,7 +1683,7 @@ class CodebaseIndexer:
             paths_to_index = [current_files[f] for f in to_index]
             with ThreadPoolExecutor() as pool:
                 futures = [pool.submit(self._chunk_file, p) for p in paths_to_index]
-                for future in futures:
+                for future in as_completed(futures):
                     try:
                         file_chunks = future.result()
                     except Exception:

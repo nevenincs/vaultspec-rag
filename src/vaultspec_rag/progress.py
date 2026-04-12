@@ -124,17 +124,10 @@ class RichProgressReporter:
     def phase_start(self, name: str, total: int | None) -> None:
         if self._is_tty:
             if self._progress is None:
-                self._progress = Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    MofNCompleteColumn(),
-                    TimeElapsedColumn(),
-                    console=self._console,
+                raise RuntimeError(
+                    "RichProgressReporter must be used as a context manager",
                 )
-                self._progress.__enter__()
-                self._started = True
-            self._task_id = self._progress.add_task(name, total=total or 0)
+            self._task_id = self._progress.add_task(name, total=total)
             self._phase_name = name
             self._phase_total = total
             with self._lock:
@@ -158,15 +151,14 @@ class RichProgressReporter:
 
     def phase_end(self) -> None:
         if self._is_tty:
-            if (
-                self._progress is not None
-                and self._task_id is not None
-                and self._phase_total is not None
-            ):
-                self._progress.update(
-                    self._task_id,
-                    completed=self._phase_total,
-                )
+            if self._progress is not None and self._task_id is not None:
+                if self._phase_total is not None:
+                    self._progress.update(
+                        self._task_id,
+                        completed=self._phase_total,
+                    )
+                else:
+                    self._progress.update(self._task_id, total=1, completed=1)
             self._task_id = None
             self._phase_name = None
             self._phase_total = None

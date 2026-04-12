@@ -138,6 +138,16 @@ class TestRichProgressReporterFallback:
         reporter = RichProgressReporter(console)
         assert isinstance(reporter, ProgressReporter)
 
+    def test_rich_reporter_rejects_use_outside_context_manager(self) -> None:
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        reporter = RichProgressReporter(console)
+        with pytest.raises(
+            RuntimeError,
+            match="must be used as a context manager",
+        ):
+            reporter.phase_start("x", total=1)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
