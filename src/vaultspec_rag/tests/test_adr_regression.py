@@ -170,22 +170,33 @@ class TestQwen3NoDocumentPrompt:
 
 
 class TestThreadingLock:
-    """ADR: mcp_server and api use threading locks for initialization."""
+    """ADR: mcp_server and api use threading locks for initialization.
+
+    The eviction work (#45) upgraded ``ServiceRegistry._lock`` from a
+    plain ``threading.Lock`` to a reentrant ``threading.RLock`` so the
+    eviction codepaths can call ``close_project`` while still holding
+    the registry lock without deadlocking.  Both lock types expose the
+    same ``acquire``/``release`` interface but ``isinstance`` against
+    ``type(threading.Lock())`` rejects the RLock — these tests now
+    accept the RLock as well.
+    """
+
+    @staticmethod
+    def _lock_types() -> tuple[type, ...]:
+        import threading
+
+        return (type(threading.Lock()), type(threading.RLock()))
 
     def test_mcp_registry_lock_exists(self):
-        import threading
-
         from vaultspec_rag.mcp_server import _registry
 
-        assert isinstance(_registry._lock, type(threading.Lock()))
+        assert isinstance(_registry._lock, self._lock_types())
 
     def test_registry_singleton_has_lock(self):
-        import threading
-
         from vaultspec_rag.registry import get_registry
 
         reg = get_registry()
-        assert isinstance(reg._lock, type(threading.Lock()))
+        assert isinstance(reg._lock, self._lock_types())
 
 
 class TestFilterOnPrefetch:
