@@ -77,15 +77,40 @@ def seed_builtins(target_rules_dir: Path, *, force: bool = False) -> list[str]:
         actually written.
     """
     src_root = _builtins_root()
+    target_resolved = target_rules_dir.resolve()
     written: list[str] = []
 
     for rel in _BUNDLED_FILES:
+        # Defense in depth: even though _BUNDLED_FILES is a static
+        # tuple, refuse anything that could escape target_rules_dir.
+        # Future maintainers must not be able to introduce a path
+        # traversal by editing the manifest without noticing.
+        if rel.startswith(("/", "\\")) or ".." in Path(rel).parts:
+            logger.warning("Refusing unsafe bundled rel path: %s", rel)
+            continue
+
         src_file = src_root / rel
         if not src_file.is_file():
             logger.warning("Bundled file missing at source: %s", src_file)
             continue
 
         dest = target_rules_dir / rel
+        try:
+            dest_resolved = dest.resolve()
+        except OSError as exc:
+            logger.warning("Cannot resolve dest %s: %s", dest, exc)
+            continue
+        # Containment check: dest_resolved must be inside
+        # target_resolved. Path.is_relative_to is the canonical test
+        # since 3.9; rag targets 3.13.
+        if not dest_resolved.is_relative_to(target_resolved):
+            logger.warning(
+                "Refusing dest outside target: %s (target=%s)",
+                dest_resolved,
+                target_resolved,
+            )
+            continue
+
         if dest.exists() and not force:
             continue
 

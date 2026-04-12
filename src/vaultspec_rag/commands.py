@@ -205,7 +205,18 @@ def install_run(
 
     rules_dir = target / ".vaultspec" / "rules"
     if not dry_run:
-        report.seeded = seed_builtins(rules_dir, force=force or upgrade)
+        # Wrap seed + sync in a single try/except so a failure inside
+        # seed_builtins (or sync_provider) does not leave the
+        # workspace partially seeded with no record of what was
+        # written. On failure we attempt to remove only files that
+        # *this* install actually created (tracked in report.seeded),
+        # surface the error as a warning, and re-raise so the caller
+        # sees the failure.
+        try:
+            report.seeded = seed_builtins(rules_dir, force=force or upgrade)
+        except Exception:
+            _rollback_seeded(rules_dir, report.seeded, report)
+            raise
     else:
         # Compute what would be written without touching disk.
         from .builtins import list_builtins
@@ -234,9 +245,31 @@ def install_run(
             )
         except Exception as exc:
             logger.error("sync_provider failed during install: %s", exc)
-            report.warnings.append(f"core sync failed: {exc}")
+            report.warnings.append(
+                f"core sync failed: {exc} "
+                f"(seeded files left in place; re-run install or "
+                f"uninstall --force to clean up)"
+            )
 
     return report
+
+
+def _rollback_seeded(rules_dir: Path, seeded: list[str], report: InstallReport) -> None:
+    """Best-effort cleanup of files seeded during a failed install.
+
+    Removes only files that *this* install actually wrote (recorded in
+    ``seeded``). Never removes pre-existing files. Errors during
+    rollback are recorded as warnings — they cannot mask the original
+    install failure since the caller re-raises.
+    """
+    for rel in seeded:
+        try:
+            (rules_dir / rel).unlink(missing_ok=True)
+        except OSError as exc:
+            report.warnings.append(f"rollback: failed to remove {rel}: {exc}")
+    report.warnings.append(
+        f"install failed mid-seed; rolled back {len(seeded)} file(s)"
+    )
 
 
 def uninstall_run(
@@ -319,10 +352,29 @@ def uninstall_run(
 
     if remove_data:
         data_dir = target / ".vault" / "data"
-        if data_dir.is_dir():
+        # Symlink containment guard: rag must NEVER follow a symlink
+        # out of the workspace and rmtree somewhere unexpected. If
+        # ``.vault/data/`` is a symlink (even one pointing inside the
+        # workspace), refuse the destructive operation and surface a
+        # clear warning. The user must resolve the symlink manually
+        # before re-running uninstall, which forces an explicit
+        # decision about what to delete.
+        if data_dir.is_symlink():
+            msg = (
+                f"refusing to --remove-data: {data_dir} is a symlink. "
+                f"Resolve the symlink manually and re-run uninstall."
+            )
+            logger.warning(msg)
+            report.warnings.append(msg)
+        elif data_dir.is_dir():
+            # is_dir() is False for symlinks-to-files but True for
+            # symlinks-to-dirs, so the symlink check above must run
+            # first. Belt-and-braces: also pass ``onerror`` so any
+            # symlink encountered *inside* the tree is unlinked
+            # rather than followed.
             if not dry_run:
                 try:
-                    shutil.rmtree(data_dir)
+                    shutil.rmtree(data_dir, onerror=_rmtree_safe_onerror)
                 except OSError as exc:
                     logger.warning("Failed to remove %s: %s", data_dir, exc)
                     report.warnings.append(f"failed to remove .vault/data: {exc}")
@@ -332,3 +384,22 @@ def uninstall_run(
                 report.data_removed = True
 
     return report
+
+
+def _rmtree_safe_onerror(_func, path, exc_info) -> None:
+    """``shutil.rmtree`` error handler that unlinks symlinks instead
+    of following them.
+
+    Defensive secondary guard against the case where a symlink is
+    encountered inside ``.vault/data/`` after the top-level
+    ``is_symlink`` check has already passed.
+    """
+    p = Path(path)
+    if p.is_symlink():
+        try:
+            p.unlink()
+        except OSError as exc:
+            logger.warning("Failed to unlink symlink %s: %s", p, exc)
+        return
+    # Re-raise the original error for non-symlink failures.
+    raise exc_info[1]

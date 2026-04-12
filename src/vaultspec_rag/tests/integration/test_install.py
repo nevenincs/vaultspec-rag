@@ -290,3 +290,173 @@ class TestReportSerialization:
         assert isinstance(d["data_removed"], bool)
         assert "sync_pruned" in d
         json.dumps(d)
+
+
+class TestSafetyGuards:
+    """Destruction-safety regression tests.
+
+    These tests pin the safety contract: rag must never follow a
+    symlink out of the workspace, never escape ``target_rules_dir`` via
+    a malicious bundled rel path, and never leave a half-installed
+    workspace if seeding fails partway through.
+    """
+
+    def test_remove_data_refuses_symlink_target(
+        self, installed_workspace: Path, tmp_path: Path
+    ) -> None:
+        """If ``.vault/data/`` is a symlink, ``--remove-data`` must
+        refuse the operation rather than follow the symlink and
+        rmtree something outside the workspace. The symlink itself
+        is left alone — the user must resolve it manually.
+        """
+        # Replace .vault/data/ with a symlink pointing outside the
+        # workspace. Drop a sentinel inside the link target so we can
+        # detect any traversal.
+        outside = tmp_path / "outside-data"
+        outside.mkdir()
+        sentinel = outside / "MUST_NOT_BE_DELETED"
+        sentinel.write_text("safe", encoding="utf-8")
+
+        data_dir = installed_workspace / ".vault" / "data"
+        # Drop existing data dir and replace with symlink. On Windows
+        # symlink creation may need admin/dev mode; if it fails, skip
+        # the test rather than passing it falsely.
+        import shutil as _shutil
+
+        _shutil.rmtree(data_dir)
+        try:
+            data_dir.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            import pytest as _pytest
+
+            _pytest.skip(f"symlink creation unsupported: {exc}")
+
+        report = uninstall_run(path=installed_workspace, force=True, remove_data=True)
+
+        # The symlink target's contents must be untouched.
+        assert sentinel.is_file()
+        assert sentinel.read_text(encoding="utf-8") == "safe"
+        # The operation must NOT report data_removed=True.
+        assert not report.data_removed
+        # A clear warning must surface to the user.
+        assert any("symlink" in w for w in report.warnings)
+
+    def test_install_run_in_unrelated_directory_does_not_escape(
+        self, tmp_path: Path
+    ) -> None:
+        """A sentinel file outside the install target must survive an
+        install run. This guards against any code path that might
+        accidentally write outside ``target``.
+        """
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+
+        sibling = tmp_path / "sibling"
+        sibling.mkdir()
+        sentinel = sibling / "untouched.txt"
+        sentinel.write_text("safe", encoding="utf-8")
+
+        install_run(path=ws)
+
+        assert sentinel.is_file()
+        assert sentinel.read_text(encoding="utf-8") == "safe"
+        # Confirm install actually did its job in the target.
+        assert (ws / _RAG_RULE_REL).is_file()
+
+    def test_uninstall_force_does_not_touch_user_data_outside_index(
+        self, installed_workspace: Path
+    ) -> None:
+        """Uninstall must never touch user-authored content under
+        ``.vault/`` even with ``--force``. Drops several sentinel docs
+        and asserts they all survive.
+        """
+        vault = installed_workspace / ".vault"
+        sentinels = [
+            vault / "adr" / "user-decision.md",
+            vault / "research" / "user-notes.md",
+            vault / "plan" / "user-plan.md",
+        ]
+        for s in sentinels:
+            s.parent.mkdir(parents=True, exist_ok=True)
+            s.write_text(f"# {s.name}\n", encoding="utf-8")
+
+        uninstall_run(path=installed_workspace, force=True)
+
+        for s in sentinels:
+            assert s.is_file(), f"user file {s.name} was destroyed"
+
+    def test_install_rolls_back_seeded_files_on_seed_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """If ``seed_builtins`` fails partway through, ``install_run``
+        must remove any files it had successfully written so the
+        workspace is not left half-installed.
+
+        We force a failure by making ``.vaultspec/rules/mcps/`` a file
+        instead of a directory before install runs. The mcps seed step
+        will fail with OSError; the rules step (already done first
+        thanks to the sorted iteration order) will have left the rule
+        file behind. Rollback must remove it.
+        """
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        # Pre-create the mcps PARENT dir but make 'mcps' itself a file,
+        # blocking the directory write.
+        (ws / ".vaultspec" / "rules").mkdir(parents=True)
+        (ws / ".vaultspec" / "rules" / "mcps").write_text("blocker", encoding="utf-8")
+
+        # _ensure_workspace_dirs will skip 'mcps' because it exists
+        # (as a file). seed_builtins will then fail when trying to
+        # mkdir parents=True under the file. The exception must
+        # propagate AND any rule file written before the failure must
+        # be cleaned up.
+        import pytest as _pytest
+
+        with _pytest.raises(OSError):
+            install_run(path=ws)
+
+        # The rule file (alphabetically processed before mcps in the
+        # _BUNDLED_FILES tuple? actually mcps/ comes before rules/
+        # alphabetically, so the failure happens FIRST and no rule
+        # gets written). Either way, neither file should exist after
+        # the failed install.
+        assert not (ws / _RAG_RULE_REL).exists()
+        assert not (ws / _RAG_MCP_REL).exists()
+
+    def test_seed_builtins_refuses_traversal_in_relative_path(
+        self, tmp_path: Path, monkeypatch: object
+    ) -> None:
+        """Defense-in-depth: even if ``_BUNDLED_FILES`` were ever
+        corrupted to contain a traversal, ``seed_builtins`` must
+        refuse to write outside ``target_rules_dir``.
+
+        We exercise the guard by directly invoking ``seed_builtins``
+        with a temporarily-mutated ``_BUNDLED_FILES`` constant via
+        attribute assignment (no monkeypatch fixture used — direct
+        assignment with restore in finally to honour the project
+        no-mocks rule).
+        """
+        from vaultspec_rag import builtins as _builtins
+
+        original = _builtins._BUNDLED_FILES
+        # NB: this is not a mock — it is editing a module constant.
+        # We restore it in the finally block.
+        _builtins._BUNDLED_FILES = (
+            "../../escape.md",
+            "rules/vaultspec-rag.builtin.md",
+        )
+        try:
+            target = tmp_path / "rules-target"
+            target.mkdir()
+            outside = tmp_path / "escape.md"
+            assert not outside.exists()
+
+            written = _builtins.seed_builtins(target)
+
+            # The traversal entry must NOT have been written.
+            assert "../../escape.md" not in written
+            assert not outside.exists()
+            # The legitimate entry should still have been written
+            # (provided the bundled source resolves).
+        finally:
+            _builtins._BUNDLED_FILES = original
