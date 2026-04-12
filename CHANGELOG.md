@@ -9,6 +9,13 @@
 - New `list_projects` and `evict_project` MCP admin tools plus `vaultspec-rag service projects list|evict` CLI subcommands ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
 - `DaemonRotatingFileHandler` with re-`dup2` of fds 1/2 on rollover installed in `mcp_server.main()`; `service.log` is now bounded by the new `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES` / `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` knobs ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
 
+## [0.2.2](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.1...vaultspec-rag-v0.2.2) (2026-04-12)
+
+
+### Bug Fixes
+
+* **service:** roll back acquired ref_count if _acquire raises mid-flight ([#77](https://github.com/wgergely/vaultspec-rag/issues/77)) ([8c83e37](https://github.com/wgergely/vaultspec-rag/commit/8c83e371554a16ea776427d0c39f3792cf864490))
+
 ## [0.2.1](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.0...vaultspec-rag-v0.2.1) (2026-04-12)
 
 
