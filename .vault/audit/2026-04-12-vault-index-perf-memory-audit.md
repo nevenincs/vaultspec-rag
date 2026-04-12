@@ -357,3 +357,81 @@ After Iteration 4 commits, re-walk the ten domains against:
 If Iteration 5 finds new items, open F5.x. Continue until an
 iteration passes with zero new items across every domain and
 every file in the change set and its dependents.
+
+### Iteration 5 — quiet pass (2026-04-12)
+
+Re-walked the ten domains plus the two added domains
+(backwards compatibility, CLI surface) against the Iteration-4
+state. Full unit + integration matrix re-run.
+
+**Findings — all accepted / no fix:**
+
+- **F5.1 (analysed → no bug)** — if `store.ensure_table()` raises
+  inside the `prepare collection` phase's new try block,
+  `existing_ids_before` is never bound. Verified by code path:
+  the exception propagates out of `full_index` before the purge
+  phase runs, so `NameError` is unreachable. Safe.
+- **F5.2 LOW** — `MemoryProbe._sampler_stop` / `_lock` use
+  `field(default_factory=...)`, so every instance gets a fresh
+  Event / Lock. Verified correct.
+- **F5.3 MEDIUM (accepted)** — concurrent first-call race on
+  `_psutil_process` and `_torch_module` module-level caches
+  could lead to 2× initialisation in parallel samplers. Values
+  are identical, so it's a small waste, not a bug. Accepted;
+  adding a lock would be over-engineering for a diagnostic tool.
+- **F5.4 LOW (verified safe)** — my new
+  `test_full_index_clean_on_empty_corpus_purges_all` uses a
+  distinct `tmp_path_factory.mktemp` root. `VaultStore` joins
+  `root_dir` with the config's **relative** `data_dir`, so
+  session-scoped `rag_components` and this test point at
+  different Qdrant directories. Isolated.
+- **F5.5 LOW (no change)** — `MemoryProbe.__post_init__`
+  assigns `peak_rss_mb = start_rss_mb` before the sampler
+  starts. No race window because the sampler only updates
+  `peak_rss_mb` under `self._lock` and no external thread can
+  observe the probe before `__post_init__` returns.
+- **F5.6 LOW (accepted)** — `datetime.date.today()` in the
+  repro script is local-time; vault frontmatter does not care
+  about UTC vs local. Accepted.
+- **F5.7 LOW (verified)** — `MemoryProbe.phase` context manager
+  relays to `checkpoint`, which is already
+  `self._enabled`-guarded. No duplicate env check.
+- **F5.8 LOW (accepted)** — module-level caches persist across
+  tests in a pytest session. PID / torch state are also
+  process-global, so the cache never becomes stale. No test
+  resets the caches.
+- **F5.9 LOW (accepted as design)** — `threading.Lock` is not
+  reentrant. If a caller already holds `gpu_lock` before calling
+  `full_index`, a deadlock would occur. Verified against all
+  call sites (CLI, watcher, MCP tools, tests): none acquire the
+  lock before calling full_index. Accepted as architectural
+  invariant.
+- **F5.10 LOW (verified)** — `cli.py handle_index` calls
+  `full_index(clean=True)` when `--clean` is passed. New
+  behaviour is strictly safer (failure-safe rebuild). Help
+  text and README do not promise destructive drop-first
+  semantics, so no copy change needed.
+- **F5.11 LOW (accepted)** — `get_all_ids` may raise
+  `RuntimeError`/`VaultStoreLockedError` (not `OSError`). Those
+  propagate out of the `except OSError` branch intentionally:
+  lock contention should fail fast rather than be silently
+  swallowed into an empty snapshot.
+- **F5.12 LOW (accepted)** — `_stream_encode_and_upsert_vault`
+  unconditionally constructs a `MemoryProbe` even when `docs`
+  is empty. When the probe env var is disabled this is a no-op;
+  when enabled, it briefly spins up a sampler thread and
+  immediately tears it down. Correct, cheap.
+
+**Test matrix (full run):**
+
+- `pytest -m "unit or integration"`: **486 passed, 50 deselected**.
+- Ruff / ruff-format / ty: all clean.
+
+**Iteration 5 is the first pass that produced zero action items.**
+The audit loop reaches a fixed point here for the current PR
+surface. Iteration 6+ will re-open when new code review comments
+arrive from wgergely, gemini-code-assist, codex-connector, or a
+Claude self-review pass.
+
+**Loop state:** idle. New findings append as F6.x, F7.x, … below
+when reviewers post additional comments.
