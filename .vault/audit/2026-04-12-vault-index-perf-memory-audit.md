@@ -634,16 +634,74 @@ vs the original baseline:
 - 324 unit + 41 integration tests pass on the merged branch.
 - Ruff / format / ty all clean.
 
-**Iteration 8 — re-audit queue:**
+### Iteration 8 — re-audit of wall-clock surfaces (2026-04-12)
 
-After Iteration 7 commits, the deeper sweep should re-walk the
-following surfaces for any second-order issues:
+Re-walked Iteration 7 changes for any second-order bugs.
 
-- `EmbeddingModel.__init__` — verify the new
-  `max_seq_length` setattr is robust to alternative
-  SentenceTransformer versions / wrapped modules.
-- `_stream_encode_and_upsert_*` — verify the length-sort
-  doesn't introduce ID-ordering bugs (e.g. tests that compare
-  ordered output by index).
-- Watcher / MCP / CLI re-encode paths under the new
-  `embedding_encode_batch_size` default.
+**Findings — all verified safe / no fix:**
+
+- **F8.1 verified** — `int(self._dense_model.max_seq_length)`
+  in the dense-load log line. If the setattr fails (caught by
+  the broad `except`), the attribute retains its prior value
+  (32768 for Qwen3) and the log line prints whatever the
+  actual value is. Defensive against weird ST versions; log
+  remains accurate.
+- **F8.2 verified** — `embedding_max_seq_length` config
+  default (2048) is delivered by the wrapper's `_RAG_DEFAULTS`
+  and confirmed readable via `cfg.embedding_max_seq_length`.
+  The `hasattr` check in embeddings.py is belt-and-suspenders
+  against non-wrapper configs.
+- **F8.3 verified** — Python's `sorted` is stable. Two docs
+  with identical length retain their scan order, so
+  determinism is preserved across runs of the same input.
+- **F8.4 verified** — `_default_encode_batch_size()` reads
+  the config on every call, so runtime config changes
+  propagate per encode. Consistent with how
+  `_default_max_embed_chars()` already worked.
+- **F8.5 verified** — `_default_batch_size()` is now unused
+  inside `EmbeddingModel`. It still reads
+  `embedding_batch_size` (the slice size), so external
+  callers that import it still get the slice-size config.
+  Left in place for backward compatibility; no churn.
+- **F8.6 verified** — No test or caller depends on the
+  "first slice = scan order" expectation. Result counts are
+  computed via set operations (new_ids, deleted_ids) which
+  are order-independent. `_save_meta` writes a dict where
+  order doesn't matter.
+- **F8.7 verified** — `sorted(...)` is O(n log n); for 50k
+  docs the sort cost is negligible (~ms in Python).
+- **F8.8 verified** — `len(d.title) + len(d.content)` is a
+  cheap O(1) length lookup, not a string concat. No double
+  work.
+- **F8.9 verified** — `incremental_index` uses the streaming
+  helper for changed docs only. The helper sorts a copy via
+  `sorted()` and does not mutate the input list, so the
+  caller's `docs_to_index` order is preserved if it iterates
+  again afterward.
+- **F8.10 verified** — `result.added = len(docs)` is computed
+  from the original (not sorted) docs list in the full_index
+  return statement, so the count is consistent regardless of
+  internal processing order.
+- **F8.11 verified** — `embedding_encode_batch_size=8` OOM
+  backoff path: 8 → 4 → 2 → 1. Same shape as the previous
+  64 → 32 → 16 → … → 1 path; the smaller starting point
+  reduces OOM probability further.
+- **F8.12 verified** — Live regression numbers after
+  iteration 7: `delta=+54MB, wall=~3.5s` on the 135-doc
+  synthetic corpus. Memory and wall-time ceilings have
+  abundant headroom for slower hardware.
+
+**Iteration 8 produced zero action items.** The wall-clock
+fix is correct and complete; its second-order surface area
+has been swept.
+
+**Iteration 9 — re-audit queue:**
+
+- Re-fetch any new code review comments on PR #70 from
+  gemini-code-assist / codex-connector / Claude self-reviews
+  triggered by the iteration-7 push.
+- Sweep the broader codebase for any module that might have
+  hard-coded `embedding_batch_size` as both slice + encode
+  size (e.g. external integrations).
+- If new findings appear, open them as F9.x; otherwise the
+  loop is idle until reviewers post additional comments.
