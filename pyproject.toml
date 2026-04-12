@@ -105,11 +105,18 @@ explicit = true
 [tool.hatch.build.targets.wheel]
 packages = ["src/vaultspec_rag"]
 
+# `uv build` builds the sdist first, then rebuilds the wheel from the unpacked
+# sdist — so any path referenced by `wheel.force-include` must also live inside
+# the sdist, otherwise the wheel rebuild fails with FileNotFoundError. Mirror
+# the two companion-owned files into the sdist so the wheel build can find
+# them. Bundle ONLY the files vaultspec-rag exclusively owns; the broader
+# .vaultspec/rules/ tree contains vaultspec-core's bundled content too and
+# each companion must ship only its own.
+[tool.hatch.build.targets.sdist.force-include]
+".vaultspec/rules/rules/vaultspec-rag.builtin.md" = ".vaultspec/rules/rules/vaultspec-rag.builtin.md"
+".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = ".vaultspec/rules/mcps/vaultspec-rag.builtin.json"
+
 [tool.hatch.build.targets.wheel.force-include]
-# Bundle ONLY the files vaultspec-rag exclusively owns. The broader
-# .vaultspec/rules/ tree contains vaultspec-core's bundled content too;
-# rag must not ship duplicates of core's files (each companion bundles
-# only its own).
 ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
 ".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = "vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json"
 
