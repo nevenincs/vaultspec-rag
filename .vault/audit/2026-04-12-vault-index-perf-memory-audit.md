@@ -260,3 +260,100 @@ and re-check the dependent tests for knock-on regressions:
 If Iteration 4 finds new items, open F4.x below and continue.
 Loop terminates only when a full ten-domain pass returns zero
 new items across all of these files.
+
+### Iteration 4 — deeper sweep of the Iteration 2/3 surfaces (2026-04-12)
+
+**New findings — fixed in this iteration:**
+
+- **F4.1 LOW — stale docstring in `VaultIndexer.full_index`.** The
+  docstring still said `clean: If True, drop and recreate the collection` and its `Raises:` section still described the old
+  non-clean delete path. **Fix**: rewrote both the `Args:clean`
+  entry and the `Raises:` / `Returns:` entries to describe the
+  new failure-safe streaming + post-purge semantics, and called
+  out that explicit schema reset must use `store.drop_table()`.
+- **F4.2 MEDIUM — new phases had no try/finally around
+  `phase_end`.** The "prepare collection", "purge stale
+  documents" / "purge stale chunks", and "write metadata" phases
+  in both `VaultIndexer.full_index` and `CodebaseIndexer.full_index`
+  all followed the `phase_start(...); do_work(); phase_end()`
+  pattern. If `ensure_table`, `delete_documents`, or
+  `_save_meta` raised, `phase_end()` was skipped and the reporter
+  would see an unbalanced phase. **Fix**: wrapped each of the six
+  phases (three per indexer) in its own `try/finally`. The inner
+  `try: delete_documents() except OSError: raise` pattern in the
+  purge step is preserved inside the outer try so the error log
+  still fires before the exception propagates.
+
+**New findings — accepted / documented (no fix):**
+
+- **F4.3 LOW — pre-existing phases without try/finally.** The
+  older phases (`scan vault`, `parse documents`, `scan codebase`,
+  `hash files`, `chunk files`, and the incremental-index phases)
+  also use the unguarded pattern. They are not part of the #68
+  Track B surface area and were not introduced by this PR;
+  fixing them all is scope creep. Tracked here for a future
+  `indexer reporter hygiene` pass.
+- **F4.4 LOW — `IndexResult.removed` always zero on full_index.**
+  The new purge step can delete rows, but `IndexResult.removed`
+  remains `0` for `full_index`. The field is only populated by
+  `incremental_index`. Accepted — changing the reporting contract
+  for full_index is a semantics change that should be its own PR.
+- **F4.5 LOW — empty-vault phase sequence not covered by the
+  progress integration test.** `test_indexer_progress_integration`
+  only runs against a non-empty synthetic vault. The new
+  `test_full_index_clean_on_empty_corpus_purges_all` covers the
+  empty path at the store-count level but does not assert the
+  progress event sequence. Accepted — the event sequence is
+  identical between empty and non-empty (same `phase_start`
+  invocations with zero totals); adding a dedicated progress
+  assertion would be redundant.
+- **F4.6 LOW — `full_index` docstring on `CodebaseIndexer`
+  already updated in Iteration 2, re-verified here.** No
+  additional change needed.
+- **F4.7 LOW — `cli.py` `full_index(clean=True)` sites re-
+  checked.** Two call sites in `handle_index`; behaviour is
+  strictly safer (no destructive upfront drop). No change
+  needed.
+- **F4.8 LOW — `test_codebase_integration::test_vaultragignore_*`
+  re-checked.** The test re-indexes with `clean=True` after
+  adding a file that was previously ignored. New behaviour
+  (upsert in place + purge stale) still ends up with both
+  `src/app.py` (re-upserted with the same chunk IDs) and
+  `src/vendor.py` (newly added) in the store. Test passes.
+
+**Test results:**
+
+- 30 integration tests passed, including the new empty-corpus
+  regression.
+- Ruff / ruff-format / ty all clean.
+
+### Iteration 5 — re-audit queue
+
+After Iteration 4 commits, re-walk the ten domains against:
+
+- `memory_probe.py` — no changes this iteration; re-audit cached-
+  module edge cases (concurrent first-call from multiple threads,
+  psutil import raising something other than ImportError).
+- `indexer.py` — six new `try/finally` blocks; check none of them
+  swallow exceptions and that the `raise` inside the purge step
+  is still reachable.
+- `test_indexer_integration.py` — new regression test touches
+  `VaultStore` directly with a test-managed `tmp_path_factory`;
+  verify it isolates the Qdrant data dir from the session-scoped
+  `rag_components` fixture (distinct `root_dir`, so the config
+  lookup goes to a distinct path).
+- The broader test suite — spot-check for any test that
+  implicitly relies on the old destructive `clean=True` semantics
+  (there were two candidates audited above; none failed).
+- **New domains to add next iteration**:
+  1. **Backwards compatibility** — does the new streaming helper
+     still produce bytewise-identical Qdrant collections vs the
+     old drop-then-upsert path? (Deterministic input → same IDs
+     → same payloads; the answer should be yes but worth a
+     direct verification against a reference hash.)
+  1. **CLI surface** — does `--clean` flag behaviour still match
+     what the help text and README claim?
+
+If Iteration 5 finds new items, open F5.x. Continue until an
+iteration passes with zero new items across every domain and
+every file in the change set and its dependents.

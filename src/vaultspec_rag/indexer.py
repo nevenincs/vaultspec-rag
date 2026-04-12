@@ -930,18 +930,30 @@ class VaultIndexer:
         Emits phase events through ``reporter`` at every pipeline step.
 
         Args:
-            clean: If True, drop and recreate the collection before
-                indexing to guarantee no stale documents persist.
+            clean: Retained for backwards-compatibility. Since #68
+                Track B the rebuild is always failure-safe: the
+                indexer ensures the table, streams upserts in place
+                (idempotent by doc_id), and purges only the IDs that
+                are absent from the new corpus. The documented
+                "no stale documents persist" contract is honoured
+                regardless of this flag's value; the flag now only
+                influences a debug log when the stale set is empty.
+                Dropping the collection for a schema reset must be
+                done explicitly (``store.drop_table()``).
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
 
         Returns:
-            An ``IndexResult`` where ``added`` equals the total number of
-            documents written and ``updated``/``removed`` are both zero.
+            An ``IndexResult`` where ``added`` equals the total number
+            of documents written and ``updated``/``removed`` are both
+            zero. If the vault is empty the returned counts are all
+            zero and every previously-indexed row is purged.
 
         Raises:
-            OSError: If existing documents cannot be deleted during a
-                non-clean full re-index (raised to prevent duplicates).
+            OSError: If the post-stream stale-document purge fails
+                against a Qdrant collection that was successfully
+                rebuilt (the collection still contains valid new
+                data plus the stale rows).
         """
         from .config import get_config
 
@@ -983,18 +995,20 @@ class VaultIndexer:
         # documented contract ("no stale documents persist") via the
         # final purge step.
         reporter.phase_start("prepare collection", 1)
-        self.store.ensure_table()
         try:
-            existing_ids_before: set[str] = set(self.store.get_all_ids())
-        except OSError:
-            logger.warning(
-                "Could not snapshot existing vault IDs before rebuild; "
-                "stale-document purge will be skipped",
-                exc_info=True,
-            )
-            existing_ids_before = set()
-        reporter.advance(1)
-        reporter.phase_end()
+            self.store.ensure_table()
+            try:
+                existing_ids_before: set[str] = set(self.store.get_all_ids())
+            except OSError:
+                logger.warning(
+                    "Could not snapshot existing vault IDs before "
+                    "rebuild; stale-document purge will be skipped",
+                    exc_info=True,
+                )
+                existing_ids_before = set()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         _stream_encode_and_upsert_vault(
             docs=docs,
@@ -1011,19 +1025,21 @@ class VaultIndexer:
         new_ids = {doc.id for doc in docs}
         stale_ids = sorted(existing_ids_before - new_ids)
         reporter.phase_start("purge stale documents", len(stale_ids))
-        if stale_ids:
-            try:
-                self.store.delete_documents(stale_ids)
-            except OSError:
-                logger.error(
-                    "Failed to purge stale vault documents after "
-                    "successful rebuild — collection still contains "
-                    "valid new data plus %d stale rows",
-                    len(stale_ids),
-                )
-                raise
-            reporter.advance(len(stale_ids))
-        reporter.phase_end()
+        try:
+            if stale_ids:
+                try:
+                    self.store.delete_documents(stale_ids)
+                except OSError:
+                    logger.error(
+                        "Failed to purge stale vault documents after "
+                        "successful rebuild — collection still "
+                        "contains valid new data plus %d stale rows",
+                        len(stale_ids),
+                    )
+                    raise
+                reporter.advance(len(stale_ids))
+        finally:
+            reporter.phase_end()
         if clean and not stale_ids and existing_ids_before:
             logger.debug(
                 "clean=True requested but every existing ID is also "
@@ -1031,9 +1047,11 @@ class VaultIndexer:
             )
 
         reporter.phase_start("write metadata", 1)
-        self._save_meta(docs)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._save_meta(docs)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -1643,18 +1661,21 @@ class CodebaseIndexer:
         # the old chunks live until after streaming succeeds, then
         # purge only the chunk IDs that are absent from the new corpus.
         reporter.phase_start("prepare collection", 1)
-        self.store.ensure_code_table()
         try:
-            existing_ids_before: set[str] = set(self.store.get_all_code_ids())
-        except OSError:
-            logger.warning(
-                "Could not snapshot existing code-chunk IDs before "
-                "rebuild; stale-chunk purge will be skipped",
-                exc_info=True,
-            )
-            existing_ids_before = set()
-        reporter.advance(1)
-        reporter.phase_end()
+            self.store.ensure_code_table()
+            try:
+                existing_ids_before: set[str] = set(self.store.get_all_code_ids())
+            except OSError:
+                logger.warning(
+                    "Could not snapshot existing code-chunk IDs "
+                    "before rebuild; stale-chunk purge will be "
+                    "skipped",
+                    exc_info=True,
+                )
+                existing_ids_before = set()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         _stream_encode_and_upsert_codebase(
             chunks=all_chunks,
@@ -1668,24 +1689,28 @@ class CodebaseIndexer:
         new_ids = {chunk.id for chunk in all_chunks}
         stale_ids = sorted(existing_ids_before - new_ids)
         reporter.phase_start("purge stale chunks", len(stale_ids))
-        if stale_ids:
-            try:
-                self.store.delete_code_chunks(stale_ids)
-            except OSError:
-                logger.error(
-                    "Failed to purge stale code chunks after "
-                    "successful rebuild — collection still contains "
-                    "valid new chunks plus %d stale rows",
-                    len(stale_ids),
-                )
-                raise
-            reporter.advance(len(stale_ids))
-        reporter.phase_end()
+        try:
+            if stale_ids:
+                try:
+                    self.store.delete_code_chunks(stale_ids)
+                except OSError:
+                    logger.error(
+                        "Failed to purge stale code chunks after "
+                        "successful rebuild — collection still "
+                        "contains valid new chunks plus %d stale rows",
+                        len(stale_ids),
+                    )
+                    raise
+                reporter.advance(len(stale_ids))
+        finally:
+            reporter.phase_end()
 
         reporter.phase_start("write metadata", 1)
-        self._write_meta(meta)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._write_meta(meta)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
