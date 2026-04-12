@@ -15,9 +15,10 @@ the manifest is identical between editable and wheel builds.
 from __future__ import annotations
 
 import logging
-import shutil
 from importlib import resources
 from pathlib import Path
+
+from vaultspec_core.core.helpers import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,12 @@ def seed_builtins(target_rules_dir: Path, *, force: bool = False) -> list[str]:
 
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_file, dest)
+            # Use core's atomic_write (tmp + os.replace) per the ADR.
+            # Both bundled files are UTF-8 text (Markdown rule + JSON
+            # MCP definition); reading and writing as text preserves
+            # content correctly. Crash consistency is the same as
+            # core's own builtin seeding pipeline.
+            atomic_write(dest, src_file.read_text(encoding="utf-8"))
         except OSError as exc:
             logger.warning("Failed to seed %s: %s", rel, exc)
             continue

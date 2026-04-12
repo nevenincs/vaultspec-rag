@@ -241,7 +241,7 @@ def install_run(
                 "all",
                 dry_run=False,
                 force=force,
-                skip=skip - {"core"} if "core" in skip else skip,
+                skip=skip,
             )
         except Exception as exc:
             logger.error("sync_provider failed during install: %s", exc)
@@ -344,7 +344,7 @@ def uninstall_run(
                 "all",
                 dry_run=False,
                 force=force,
-                skip=skip - {"core"} if "core" in skip else skip,
+                skip=skip,
             )
         except Exception as exc:
             logger.error("sync_provider failed during uninstall: %s", exc)
