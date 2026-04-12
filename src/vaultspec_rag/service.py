@@ -326,31 +326,49 @@ class ServiceRegistry:
         resolved = root.resolve()
         victims: list[tuple[Path, ProjectSlot, str]] = []
 
-        # Fast path: slot already exists. Still take _lock to mutate
-        # ref_count and last_access atomically.
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
-            slot = self._projects.get(resolved)
-            if slot is not None:
+        try:
+            # Fast path: slot already exists. Still take _lock to
+            # mutate ref_count and last_access atomically.
+            with self._lock:
+                if self._shutting_down:
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
+                slot = self._projects.get(resolved)
+                if slot is not None:
+                    slot.last_access = time.monotonic()
+                    slot.ref_count += 1
+                    victims.extend(self._collect_idle_victims())
+                    return slot, victims
+                # LRU admission may collect a victim under the lock.
+                victims.extend(self._collect_lru_victim())
+
+            # Create (outside _lock so GPU parallel init is preserved).
+            slot = self.peek_project(resolved)
+            with self._lock:
+                if self._shutting_down:
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
                 slot.last_access = time.monotonic()
                 slot.ref_count += 1
                 victims.extend(self._collect_idle_victims())
-                return slot, victims
-            # LRU admission may collect a victim under the lock.
-            victims.extend(self._collect_lru_victim())
-
-        # Create (outside _lock so GPU parallel init is preserved).
-        slot = self.peek_project(resolved)
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
-            slot.last_access = time.monotonic()
-            slot.ref_count += 1
-            victims.extend(self._collect_idle_victims())
-        return slot, victims
+            return slot, victims
+        except BaseException:
+            # We popped *victims* from the registry under the lock but
+            # are about to raise before lease() can tear them down.
+            # The slots are unreachable from ``_projects`` now, so any
+            # cached Qdrant handles + filesystem watchers would leak
+            # forever.  Tear them down here on the failure path.
+            # Best-effort: a teardown error must NOT mask the original
+            # exception that triggered this branch.
+            for v_root, v_slot, v_reason in victims:
+                try:
+                    self._teardown_slot(v_root, v_slot, reason=v_reason)
+                except Exception:
+                    logger.exception(
+                        "Failed to tear down victim %s during _acquire rollback",
+                        v_root,
+                    )
+            raise
 
     def _release(self, slot: ProjectSlot) -> None:
         """Decrement a slot's ``ref_count`` under ``_lock``."""
