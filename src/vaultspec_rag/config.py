@@ -87,7 +87,23 @@ class VaultSpecConfigWrapper:
         "log_file": "service.log",
         "graph_ttl_seconds": 300.0,
         "embedding_batch_size": 64,
+        # Inner sub-batch size passed to SentenceTransformer.encode().
+        # SentenceTransformer sorts each call's input by sequence
+        # length, then processes ``encode_batch_size``-item sub-batches
+        # of the sorted list. Smaller values produce tighter
+        # length-uniform sub-batches and dramatically reduce padding
+        # waste on variable-length corpora (e.g. vault docs ranging
+        # from 200 to 8000 chars). 8 is the empirical sweet spot for
+        # Qwen3-Embedding-0.6B on a 16 GB GPU. #68 wall-clock work.
+        "embedding_encode_batch_size": 8,
         "max_embed_chars": 8000,
+        # Hard cap on the sequence length the model is allowed to
+        # process. ``max_embed_chars=8000`` truncates text to ~2000
+        # tokens for typical Qwen3 BPE; capping ``max_seq_length`` at
+        # 2048 prevents the model from advertising 32 k context, which
+        # otherwise leaks into kernel-selection heuristics and wastes
+        # attention memory on padded sequences.
+        "embedding_max_seq_length": 2048,
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_model": "naver/splade-v3",

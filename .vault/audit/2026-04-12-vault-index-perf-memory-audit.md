@@ -562,17 +562,88 @@ any change required from this PR.
   shape dependent — Iteration 7 wall-clock work is expected
   to dramatically reduce both via sort-by-length batching.
 
-### Iteration 7 — wall-clock work (in scope per user 2026-04-12)
+### Iteration 7 — wall-clock fixes (2026-04-12)
 
 User pivoted PR scope to include wall-clock too. Track A
 ("Wall-clock investigation is out of scope") is retracted.
-This iteration owns:
 
-- Sort-by-length within slice to eliminate padding waste
-- Explicit `max_seq_length` on the SentenceTransformer
-- Verify `max_embed_chars=8000` aligns with token budget
-- Re-measure peak RSS + wall time after each change
-- Update the regression test threshold if the new budget
-  allows tightening it
+**Diagnosis:**
 
-Findings will be appended as F7.x once each step lands.
+`SentenceTransformer.encode` length-sorts each call's input
+internally, then iterates `batch_size`-item sub-batches of the
+sorted list. The streaming helper was passing
+`batch_size=embedding_batch_size=64` (the slice size), which
+meant the entire 64-doc slice became one sub-batch. Within
+that sub-batch the longest doc (~2000 tokens) determined the
+attention matrix size for all 64 — for variable-length vault
+corpora (200–8000 chars) this was the source of the 200x
+per-item slowdown. Confirmed by inspecting
+`SentenceTransformer.encode` source (`length_sorted_idx = np.argsort(...)`) and by querying the loaded model:
+`max_seq_length=32768`, `tokenizer.model_max_length=131072`.
+
+**Fixes (commit pending):**
+
+- **F7.1 — `embedding_max_seq_length=2048` config + applied to
+  the dense Qwen3 model.** Caps the model's advertised context
+  window so the tokenizer truncates aggressively and the model
+  cannot allocate position-embedding / attention buffers for
+  the 32 k context. `max_embed_chars=8000` truncates raw text
+  to ~2000 BPE tokens for Qwen3, so 2048 is the right ceiling.
+  **Sparse encoder is intentionally NOT capped**: SPLADE is
+  BERT-based (`max_position_embeddings=512`) and a 2048 cap
+  causes a position-embedding shape mismatch at forward time.
+  The sparse path already truncates internally.
+- **F7.2 — `embedding_encode_batch_size=8` config.** New
+  config key separate from `embedding_batch_size` (slice size).
+  `encode_documents` and `encode_documents_sparse` default to
+  this value when no `batch_size` is passed, so
+  SentenceTransformer's per-call length sort produces 8-item
+  length-uniform sub-batches instead of one 64-item batch.
+- **F7.3 — Length-sort docs/chunks BEFORE the streaming
+  loop.** Both `_stream_encode_and_upsert_vault` and
+  `_stream_encode_and_upsert_codebase` now `sorted(..., key=lambda d: -len(...))` before the slice loop, so each
+  slice contains length-uniform items. Combined with F7.2 the
+  worst-case padding cost is bounded to one 8-doc sub-batch's
+  longest item, not one 64-doc slice's longest item.
+
+**Measured impact (135-doc synthetic corpus, RTX 4080 SUPER):**
+
+| metric             | baseline | iter 6 | iter 7 (live repro) | iter 7 (regression test) |
+| ------------------ | -------: | -----: | ------------------: | -----------------------: |
+| peak RSS delta     |    24 GB | 8.2 GB |              2.6 GB |                   871 MB |
+| wall time (s)      |     1117 |   18.7 |                 4.5 |                      3.5 |
+| cuda reserved peak |      n/a |  17 GB |              3.6 GB |                    ~3 GB |
+
+vs the original baseline:
+
+- Peak RSS: **24 GB → 2.6 GB** (9x reduction).
+- Wall time: **1117 s → 4.5 s** (248x faster).
+- Both targets from the issue (peak RSS 3-5 GB, wall \<30 s)
+  are exceeded comfortably.
+
+**Regression test ceilings tightened:**
+
+- `test_vault_full_index_peak_rss_bounded` now asserts
+  `delta_mb < 4 * 1024` (was `< 8 * 1024`).
+- New assertion: `wall_seconds < 30.0`. Original baseline was
+  ~1117 s; empirical post-fix is ~3.5 s on RTX 4080 SUPER, so
+  30 s leaves >8x headroom for slower hardware.
+
+**Tests:**
+
+- 324 unit + 41 integration tests pass on the merged branch.
+- Ruff / format / ty all clean.
+
+**Iteration 8 — re-audit queue:**
+
+After Iteration 7 commits, the deeper sweep should re-walk the
+following surfaces for any second-order issues:
+
+- `EmbeddingModel.__init__` — verify the new
+  `max_seq_length` setattr is robust to alternative
+  SentenceTransformer versions / wrapped modules.
+- `_stream_encode_and_upsert_*` — verify the length-sort
+  doesn't introduce ID-ordering bugs (e.g. tests that compare
+  ordered output by index).
+- Watcher / MCP / CLI re-encode paths under the new
+  `embedding_encode_batch_size` default.

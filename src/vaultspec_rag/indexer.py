@@ -798,14 +798,34 @@ def _stream_encode_and_upsert_vault(
     Streaming the pipeline slice-by-slice keeps peak memory bounded to
     one batch's worth of embedding tensors and attention activations.
     The caching allocator is flushed at each slice boundary.
+
+    Docs are processed in length-sorted order (longest first) so each
+    slice contains length-uniform documents. Combined with
+    SentenceTransformer's per-call length sort and the smaller
+    ``embedding_encode_batch_size`` sub-batching, this eliminates the
+    padding-waste pathology described in #68 where a single 8000-char
+    research doc would force a 64-doc slice's attention matrix to be
+    padded for everyone. The Qdrant upsert is order-independent
+    (idempotent by doc_id) so the input order is purely a perf
+    optimisation. Wall-clock work, #68.
     """
     from .memory_probe import MemoryProbe
 
+    # Sort docs by combined title+content length, longest first.
+    # SentenceTransformer.encode internally sorts again per call, but
+    # our slice-level sort makes each slice's longest document close
+    # in length to its shortest, so the slice's worst-case padding
+    # cost is bounded.
+    sorted_docs = sorted(
+        docs,
+        key=lambda d: -(len(d.title) + len(d.content)),
+    )
+
     with MemoryProbe(name="vault-full-index") as probe:
-        reporter.phase_start("embed + upsert documents", len(docs))
+        reporter.phase_start("embed + upsert documents", len(sorted_docs))
         try:
-            for i in range(0, len(docs), slice_size):
-                slice_docs = docs[i : i + slice_size]
+            for i in range(0, len(sorted_docs), slice_size):
+                slice_docs = sorted_docs[i : i + slice_size]
                 slice_texts: list[str] | None = [
                     f"{d.title}\n\n{d.content}" for d in slice_docs
                 ]
@@ -868,15 +888,19 @@ def _stream_encode_and_upsert_codebase(
 
     Codebase chunks are generally smaller than vault documents, so the
     RSS benefit is less pronounced, but we apply the same pattern for
-    consistency and so that large monorepos stay bounded too.
+    consistency and so that large monorepos stay bounded too. Chunks
+    are length-sorted before slicing for the same reason as the vault
+    helper — minimises padding waste in the model's encode call.
     """
     from .memory_probe import MemoryProbe
 
+    sorted_chunks = sorted(chunks, key=lambda c: -len(c.content))
+
     with MemoryProbe(name="codebase-full-index") as probe:
-        reporter.phase_start("embed + upsert chunks", len(chunks))
+        reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
         try:
-            for i in range(0, len(chunks), slice_size):
-                slice_chunks = chunks[i : i + slice_size]
+            for i in range(0, len(sorted_chunks), slice_size):
+                slice_chunks = sorted_chunks[i : i + slice_size]
                 slice_texts: list[str] | None = [c.content for c in slice_chunks]
                 dense = None
                 sparse = None
