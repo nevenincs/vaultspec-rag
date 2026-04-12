@@ -49,7 +49,7 @@ from .embeddings import EmbeddingModel  # noqa: E402
 from .indexer import CodebaseIndexer, VaultIndexer  # noqa: E402
 from .logging_config import configure_logging  # noqa: E402
 from .search import VaultSearcher  # noqa: E402
-from .store import VaultStore  # noqa: E402
+from .store import VaultStore, VaultStoreLockedError  # noqa: E402
 from .workspace import WorkspaceError, WorkspaceLayout, resolve_workspace  # noqa: E402
 
 console = Console(legacy_windows=False)
@@ -78,6 +78,39 @@ def _handle_gpu_error(exc: Exception) -> None:
     else:
         console.print(f"[bold red]Error:[/] {exc}")
     raise typer.Exit(code=1)
+
+
+def _open_vault_store(target: Path) -> VaultStore:
+    """Open a VaultStore, translating lock errors into a friendly CLI exit.
+
+    Args:
+        target: Workspace root directory.
+
+    Returns:
+        An open VaultStore instance.
+
+    Raises:
+        typer.Exit: With code 1 if the Qdrant storage is already held by
+            another process. The message names the exact path and lists
+            the three options available to the user.
+    """
+    try:
+        return VaultStore(target)
+    except VaultStoreLockedError as exc:
+        console.print(
+            f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
+            "is currently in use by another process.\n\n"
+            "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
+            "or file watcher is likely running against this workspace.\n\n"
+            "  To resolve, do one of the following:\n"
+            "    1. Wait for the other process to finish.\n"
+            "    2. Stop the running server:\n"
+            "         [cyan]vaultspec-rag server mcp stop[/]\n"
+            "         [cyan]vaultspec-rag server service stop[/]\n"
+            "    3. If no vaultspec-rag process is alive, look for an "
+            "orphaned Python process holding the lock and stop it manually.",
+        )
+        raise typer.Exit(code=1) from exc
 
 
 app = typer.Typer(
@@ -452,26 +485,21 @@ def handle_index(
             "[yellow]MCP server unavailable, falling back to in-process indexing...[/]",
         )
 
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        console=console,
-    )
+    from .progress import RichProgressReporter
 
     do_vault = index_type in ("vault", "all")
     do_code = index_type in ("code", "all")
+    v_res = None
+    c_res = None
 
-    with progress:
-        # Phase 0: Initialize
-        init_task = progress.add_task("Initializing RAG components...", total=3)
-        store = VaultStore(target)
+    with RichProgressReporter(console) as reporter:
+        reporter.phase_start("resolve workspace", 1)
+        reporter.advance(1)
+        reporter.phase_end()
 
+        reporter.phase_start("open store", 1)
+        store = _open_vault_store(target)
         if clean:
-            console.log(f"Cleaning existing index at [cyan]{store.db_path}[/]...")
             store.close()
             if store.db_path.exists():
                 try:
@@ -483,60 +511,40 @@ def handle_index(
                         "Close any other processes using the index and retry.",
                     )
                     raise typer.Exit(code=1) from None
-            store = VaultStore(target)
+            store = _open_vault_store(target)
+        reporter.advance(1)
+        reporter.phase_end()
 
         try:
-            progress.advance(init_task)
+            reporter.phase_start("load embedding model", 1)
             try:
                 emb_model = EmbeddingModel(model_name=model)
             except (ImportError, RuntimeError) as e:
                 _handle_gpu_error(e)
-            progress.advance(init_task)
+            reporter.advance(1)
+            reporter.phase_end()
+
             v_indexer = VaultIndexer(target, emb_model, store) if do_vault else None
             c_indexer = (
                 CodebaseIndexer(target, emb_model, store, extra_excludes=exclude or [])
                 if do_code
                 else None
             )
-            progress.advance(init_task)
 
-            v_res = None
-            c_res = None
-
-            # Phase 1: Vault indexing
             if do_vault:
                 assert v_indexer is not None
-                vault_task = progress.add_task(
-                    "Indexing documentation vault...", total=1
-                )
                 v_res = (
-                    v_indexer.full_index(clean=True)
+                    v_indexer.full_index(clean=True, reporter=reporter)
                     if clean
-                    else v_indexer.incremental_index()
-                )
-                progress.advance(vault_task)
-                console.log(
-                    f"Vault: [green]{v_res.added}[/] added, "
-                    f"[yellow]{v_res.updated}[/] updated, "
-                    f"[red]{v_res.removed}[/] removed "
-                    f"({v_res.duration_ms}ms)",
+                    else v_indexer.incremental_index(reporter=reporter)
                 )
 
-            # Phase 2: Codebase indexing
             if do_code:
                 assert c_indexer is not None
-                code_task = progress.add_task("Indexing codebase...", total=1)
                 c_res = (
-                    c_indexer.full_index(clean=True)
+                    c_indexer.full_index(clean=True, reporter=reporter)
                     if clean
-                    else c_indexer.incremental_index()
-                )
-                progress.advance(code_task)
-                console.log(
-                    f"Codebase: [green]{c_res.added}[/] added, "
-                    f"[yellow]{c_res.updated}[/] updated, "
-                    f"[red]{c_res.removed}[/] removed "
-                    f"({c_res.duration_ms}ms)",
+                    else c_indexer.incremental_index(reporter=reporter)
                 )
         finally:
             store.close()
@@ -821,7 +829,7 @@ def handle_search(
             "[yellow]MCP server unavailable, falling back to in-process search...[/]",
         )
 
-    store = VaultStore(target)
+    store = _open_vault_store(target)
     try:
         with console.status(f"[bold green]Searching {search_type}..."):
             try:
@@ -894,7 +902,7 @@ def handle_status(ctx: typer.Context) -> None:
         gpu_status = "[red]No CUDA GPU available[/]"
 
     # Store metrics
-    store = VaultStore(target)
+    store = _open_vault_store(target)
     try:
         vault_count = store.count()
         code_count = store.count_code()
@@ -1627,7 +1635,7 @@ def handle_benchmark(
     state: CLIState = ctx.obj
     target = state.target
 
-    store = VaultStore(target)
+    store = _open_vault_store(target)
     try:
         vault_count = store.count()
         if vault_count == 0:
@@ -1747,12 +1755,14 @@ def handle_quality() -> None:
         except (ImportError, RuntimeError) as e:
             _handle_gpu_error(e)
 
-        store = VaultStore(root)
+        store = _open_vault_store(root)
 
         try:
+            from .progress import NullProgressReporter
+
             indexer = VaultIndexer(root, model, store)
             with console.status("[bold green]Indexing synthetic corpus..."):
-                indexer.full_index()
+                indexer.full_index(reporter=NullProgressReporter())
 
             searcher = VaultSearcher(root, model, store)
 

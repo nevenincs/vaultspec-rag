@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
+
 pytestmark = [pytest.mark.performance]
 
 
@@ -222,7 +224,7 @@ class TestPerformance:
         indexer = rag_components_full["indexer"]
 
         start = time.perf_counter()
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert result.added == 0

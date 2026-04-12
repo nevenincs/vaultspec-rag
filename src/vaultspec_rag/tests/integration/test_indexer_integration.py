@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
+
 pytestmark = [pytest.mark.integration]
 
 # ---- Indexer Tests ----
@@ -34,7 +36,7 @@ class TestVaultIndexer:
         vault and compares against stored ids.
         """
         indexer = rag_components_full["indexer"]
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
         # No new files, no modifications, no deletions
         assert result.added == 0
         assert result.removed == 0
@@ -104,7 +106,7 @@ class TestIndexEdgeCases:
         first_count = store.count()
 
         # Run full index again
-        result = indexer.full_index()
+        result = indexer.full_index(reporter=NullProgressReporter())
         second_count = store.count()
 
         assert first_count == second_count, (
@@ -116,7 +118,7 @@ class TestIndexEdgeCases:
     def test_incremental_after_full_stable(self, rag_components_full):
         """Incremental index after full should report zero changes."""
         indexer = rag_components_full["indexer"]
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
 
         assert result.added == 0, f"Expected 0 added, got {result.added}"
         assert result.removed == 0, f"Expected 0 removed, got {result.removed}"
@@ -159,13 +161,13 @@ class TestIncrementalModifyAndDelete:
                 original_content + "\n<!-- test modification -->\n",
                 encoding="utf-8",
             )
-            result = indexer.incremental_index()
+            result = indexer.incremental_index(reporter=NullProgressReporter())
             assert result.updated >= 1, f"Expected >= 1 updated, got {result.updated}"
         finally:
             # Restore original content
             target.write_text(original_content, encoding="utf-8")
             # Re-index to restore metadata
-            indexer.incremental_index()
+            indexer.incremental_index(reporter=NullProgressReporter())
 
     @pytest.mark.timeout(300)
     def test_incremental_detects_deleted_file(self, rag_components_full):
@@ -184,11 +186,11 @@ class TestIncrementalModifyAndDelete:
 
         try:
             target.unlink()
-            result = indexer.incremental_index()
+            result = indexer.incremental_index(reporter=NullProgressReporter())
             assert result.removed >= 1, f"Expected >= 1 removed, got {result.removed}"
             assert store.count() < count_before
         finally:
             # Restore the file
             target.write_text(original_content, encoding="utf-8")
             # Re-index to restore
-            indexer.incremental_index()
+            indexer.incremental_index(reporter=NullProgressReporter())

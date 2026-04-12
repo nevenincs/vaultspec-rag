@@ -12,6 +12,8 @@ import time
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
+
 
 @pytest.mark.performance
 def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
@@ -37,7 +39,7 @@ def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
 def test_bench_full_index(root, model, store, indexer) -> dict:
     """Time full_index() on the entire vault corpus."""
     start = time.perf_counter()
-    result = indexer.full_index()
+    result = indexer.full_index(reporter=NullProgressReporter())
     elapsed = time.perf_counter() - start
 
     return {
@@ -52,7 +54,7 @@ def test_bench_full_index(root, model, store, indexer) -> dict:
 def test_bench_incremental_noop(indexer) -> dict:
     """Time incremental_index() when nothing has changed."""
     start = time.perf_counter()
-    result = indexer.incremental_index()
+    result = indexer.incremental_index(reporter=NullProgressReporter())
     elapsed = time.perf_counter() - start
 
     return {

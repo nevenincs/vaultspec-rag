@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
+
 pytestmark = [pytest.mark.integration]
 
 SAMPLE_PYTHON = '''\
@@ -72,14 +74,16 @@ class TestCodebaseFullIndex:
 
     @pytest.mark.timeout(120)
     def test_full_index_produces_chunks(self, code_project):
-        result = code_project["code_indexer"].full_index()
+        result = code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter()
+        )
         assert result.added > 0
         assert result.total > 0
         assert result.duration_ms >= 0
 
     @pytest.mark.timeout(120)
     def test_full_index_chunks_in_store(self, code_project):
-        code_project["code_indexer"].full_index()
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         store = code_project["store"]
         assert store.count_code() > 0
 
@@ -88,10 +92,10 @@ class TestCodebaseFullIndex:
         indexer = code_project["code_indexer"]
         store = code_project["store"]
 
-        indexer.full_index()
+        indexer.full_index(reporter=NullProgressReporter())
         first_count = store.count_code()
 
-        indexer.full_index()
+        indexer.full_index(reporter=NullProgressReporter())
         second_count = store.count_code()
 
         assert first_count == second_count
@@ -103,9 +107,9 @@ class TestCodebaseIncrementalIndex:
     @pytest.mark.timeout(120)
     def test_incremental_after_full_no_changes(self, code_project):
         indexer = code_project["code_indexer"]
-        indexer.full_index()
+        indexer.full_index(reporter=NullProgressReporter())
 
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
         assert result.added == 0
         assert result.removed == 0
 
@@ -115,11 +119,11 @@ class TestCodebaseIncrementalIndex:
         store = code_project["store"]
         src_dir = code_project["src_dir"]
 
-        indexer.full_index()
+        indexer.full_index(reporter=NullProgressReporter())
         count_before = store.count_code()
 
         (src_dir / "extra.py").write_text(SAMPLE_PYTHON_2, encoding="utf-8")
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
 
         assert result.added > 0
         assert store.count_code() > count_before
@@ -132,7 +136,7 @@ class TestCodebaseSearch:
     def test_search_codebase_returns_results(self, code_project):
         from vaultspec_rag import VaultSearcher
 
-        code_project["code_indexer"].full_index()
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         model = code_project["model"]
         store = code_project["store"]
         root = code_project["root"]
@@ -147,7 +151,7 @@ class TestCodebaseSearch:
     def test_search_codebase_with_language_filter(self, code_project):
         from vaultspec_rag import VaultSearcher
 
-        code_project["code_indexer"].full_index()
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         model = code_project["model"]
         store = code_project["store"]
         root = code_project["root"]
@@ -168,7 +172,7 @@ class TestCodebaseSearch:
         """Search for 'calculator' returns results with Calculator class content."""
         from vaultspec_rag import VaultSearcher
 
-        code_project["code_indexer"].full_index()
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         searcher = VaultSearcher(
             code_project["root"],
             code_project["model"],
@@ -187,7 +191,7 @@ class TestCodebaseSearch:
         """Codebase search results must include line_start metadata."""
         from vaultspec_rag import VaultSearcher
 
-        code_project["code_indexer"].full_index()
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         searcher = VaultSearcher(
             code_project["root"],
             code_project["model"],
@@ -205,7 +209,7 @@ class TestCodebaseSearch:
         """Snippets should contain actual source code, not empty strings."""
         from vaultspec_rag import VaultSearcher
 
-        code_project["code_indexer"].full_index()
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         searcher = VaultSearcher(
             code_project["root"],
             code_project["model"],
@@ -229,7 +233,7 @@ class TestCodebaseIncrementalModifyDelete:
         src_dir = code_project["src_dir"]
         sample = src_dir / "sample.py"
 
-        indexer.full_index()
+        indexer.full_index(reporter=NullProgressReporter())
         original = sample.read_text(encoding="utf-8")
 
         try:
@@ -237,7 +241,7 @@ class TestCodebaseIncrementalModifyDelete:
                 original + "\n\ndef new_function():\n    return 42\n",
                 encoding="utf-8",
             )
-            result = indexer.incremental_index()
+            result = indexer.incremental_index(reporter=NullProgressReporter())
             assert result.updated >= 1 or result.added >= 1, (
                 f"Expected updated/added >= 1 after modify, got "
                 f"updated={result.updated}, added={result.added}"
@@ -255,13 +259,13 @@ class TestCodebaseIncrementalModifyDelete:
         # Add a second file then index
         extra = src_dir / "extra.py"
         extra.write_text(SAMPLE_PYTHON_2, encoding="utf-8")
-        indexer.full_index()
+        indexer.full_index(reporter=NullProgressReporter())
         count_before = store.count_code()
         assert count_before > 0
 
         # Delete the extra file and re-index incrementally
         extra.unlink()
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
         assert result.removed >= 1, f"Expected removed >= 1, got {result.removed}"
         assert store.count_code() < count_before
 
@@ -304,7 +308,7 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            result = indexer.full_index()
+            result = indexer.full_index(reporter=NullProgressReporter())
 
             # vendor.py excluded — only app.py chunks should exist
             assert result.added > 0
@@ -335,7 +339,7 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index()
+            indexer.full_index(reporter=NullProgressReporter())
             ids_before = store.get_all_code_ids()
             paths_before = {cid.split(":")[0] for cid in ids_before}
             assert "src/vendor.py" not in paths_before
@@ -343,7 +347,7 @@ class TestVaultragignore:
             # Remove .vaultragignore and re-index
             ignore_file.unlink()
             indexer2 = CodebaseIndexer(tmp_path, model, store)
-            indexer2.full_index(clean=True)
+            indexer2.full_index(clean=True, reporter=NullProgressReporter())
             ids_after = store.get_all_code_ids()
             paths_after = {cid.split(":")[0] for cid in ids_after}
             assert "src/vendor.py" in paths_after
@@ -371,7 +375,7 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index()
+            indexer.full_index(reporter=NullProgressReporter())
             all_ids = store.get_all_code_ids()
             paths_indexed = {cid.split(":")[0] for cid in all_ids}
             assert "public.py" in paths_indexed
@@ -398,7 +402,7 @@ class TestVaultragignore:
             indexer = CodebaseIndexer(
                 tmp_path, model, store, extra_excludes=["src/temp.py"]
             )
-            indexer.full_index()
+            indexer.full_index(reporter=NullProgressReporter())
             all_ids = store.get_all_code_ids()
             paths_indexed = {cid.split(":")[0] for cid in all_ids}
             assert "src/app.py" in paths_indexed

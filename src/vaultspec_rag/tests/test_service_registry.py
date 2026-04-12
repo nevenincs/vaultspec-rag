@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
 from vaultspec_rag.service import ProjectSlot, ServiceRegistry
 
 if TYPE_CHECKING:
@@ -348,8 +349,8 @@ class TestMultiProjectSearch:
         slot_b = registry.get_project(root_b)
 
         # Index both (real GPU encoding — no mocks)
-        slot_a.vault_indexer.full_index()
-        slot_b.vault_indexer.full_index()
+        slot_a.vault_indexer.full_index(reporter=NullProgressReporter())
+        slot_b.vault_indexer.full_index(reporter=NullProgressReporter())
 
         yield root_a, slot_a, root_b, slot_b
 

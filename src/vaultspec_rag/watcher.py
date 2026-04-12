@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import Change, awatch
 
+from .progress import NullProgressReporter
+
 if TYPE_CHECKING:
     import asyncio
 
@@ -182,7 +184,9 @@ async def watch_and_reindex(
                 )
                 try:
                     result = await _run_in_thread(
-                        vault_indexer.incremental_index,
+                        lambda: vault_indexer.incremental_index(
+                            reporter=NullProgressReporter()
+                        ),
                     )
                     if graph_cache is not None:
                         graph_cache.invalidate()
@@ -211,7 +215,9 @@ async def watch_and_reindex(
                 )
                 try:
                     result = await _run_in_thread(
-                        code_indexer.incremental_index,
+                        lambda: code_indexer.incremental_index(
+                            reporter=NullProgressReporter()
+                        ),
                     )
                     _last_code_index = time.monotonic()
                     logger.info(
