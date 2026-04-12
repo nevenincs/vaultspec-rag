@@ -174,14 +174,89 @@ incorporated into Iteration 1.
   `30 passed`
 - Ruff, ruff-format, ty — all clean.
 
-### Iteration 3 — re-audit queue (opens after Iteration 2 commit)
+### Iteration 3 — re-audit of Iteration 2 surfaces (2026-04-12)
 
-After commit + push, re-read the four changed surfaces
-(`memory_probe.py`, `indexer.py`, `test_performance.py`,
-`tools/profile_vault_index.py`) plus the four dependent tests
-(`test_indexer_integration.py`,
-`test_indexer_progress_integration.py`,
-`test_codebase_integration.py`, `test_adr_regression.py`) and
-walk each of the ten audit domains from scratch. Any new finding
-opens F3.x in a new section below. Loop terminates only when a
-full ten-domain pass returns zero new items.
+Re-walked every audit domain against the post-Iteration-2 state
+of `memory_probe.py`, `indexer.py`, `test_performance.py`,
+`tools/profile_vault_index.py`, and the integration test
+surfaces.
+
+**New findings — fixed in this iteration:**
+
+- **F3.10 P1 CRITICAL — regression of `clean=True` contract.**
+  `VaultIndexer.full_index` still had an early-return branch for
+  `if not docs:` that skipped the new `"purge stale documents"`
+  step entirely. If a user deletes every `.md` file and then runs
+  `full_index(clean=True)` the previously-indexed rows survive —
+  directly contradicting the documented "no stale documents
+  persist" guarantee. **Fix**: removed the empty-docs short
+  circuit; the streaming helper already handles a zero-length
+  list, and letting the main path run means the purge step wipes
+  all previously-indexed rows when the new corpus is empty.
+- **F3.11 P1 CRITICAL — same for CodebaseIndexer.** Same empty
+  branch, same fix.
+- **F3.4 LOW — `_torch_probed` set before probe completes.**
+  `current_cuda_mb` set `_torch_probed = True` at the top of its
+  init block, meaning a non-ImportError failure from
+  `torch.cuda.is_available()` (driver hiccup) would be cached
+  forever as "no CUDA". **Fix**: set `_torch_probed` only after
+  the full init succeeds; negative ImportError is still cached
+  because a missing package is a permanent condition, but a
+  transient CUDA failure is no longer sticky.
+
+**New findings — accepted / documented (no fix):**
+
+- **F3.1 LOW — `_psutil_process` not fork-safe.** If the host
+  process forks after the first probe sample, the child will
+  still reference the parent PID. Not an issue for the current
+  use cases (indexer runs in the main process, no forking) but
+  worth tracking. Accepted; revisit if we ever spawn worker
+  subprocesses.
+- **F3.2 LOW — single-use probe.** Reusing a probe instance
+  across multiple `with` blocks will not restart the sampler.
+  Accepted; single-use is the documented contract.
+- **F3.3 LOW — `samples` list not lock-protected.** Only the
+  main thread mutates `samples`; the background sampler touches
+  only `peak_rss_mb` (which is lock-protected). Accepted.
+- **F3.9 MEDIUM — `clean=True` no longer resets collection
+  schema.** The old drop-and-recreate path reset payload indexes
+  and dimension. If the user changes embedding_dimension in
+  config, the new upsert would fail with a Qdrant dimension
+  mismatch. Accepted as a deliberate tradeoff for failure safety:
+  schema reset must now be explicit (`store.drop_table()` or
+  reinstall). Worth calling out in release notes.
+
+**New test coverage:**
+
+- `test_full_index_clean_on_empty_corpus_purges_all` builds a
+  6-doc synthetic vault, indexes it, deletes every `.md` file,
+  runs `full_index(clean=True)`, and asserts `store.count() == 0`.
+  This test would fail against the old empty-docs early-return.
+
+**Test results:**
+
+- 30 integration tests + regression guard: passed.
+- Ruff / format / ty: clean.
+
+### Iteration 4 — re-audit queue
+
+After Iteration 3 commits, re-walk the ten domains against the
+updated surfaces:
+
+- `memory_probe.py` (changed — `_torch_probed` ordering)
+- `indexer.py` (changed — empty-branch removal in both indexers)
+- `test_indexer_integration.py` (changed — new regression test)
+
+and re-check the dependent tests for knock-on regressions:
+
+- `test_indexer_progress_integration.py` — no change needed
+  (already asserts `purge stale documents == 0` on a fresh
+  collection; should still hold).
+- `test_performance.py` — no change needed.
+- `test_codebase_integration.py` — no change needed.
+- `test_adr_regression.py` — cross-check whether any ADR test
+  pinned `clean=True` destructive behaviour.
+
+If Iteration 4 finds new items, open F4.x below and continue.
+Loop terminates only when a full ten-domain pass returns zero
+new items across all of these files.

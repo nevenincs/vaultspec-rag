@@ -968,23 +968,12 @@ class VaultIndexer:
                 reporter.advance()
         reporter.phase_end()
 
-        if not docs:
-            reporter.phase_start("prepare collection", 0)
-            reporter.phase_end()
-            reporter.phase_start("embed + upsert documents", 0)
-            reporter.phase_end()
-            reporter.phase_start("purge stale documents", 0)
-            reporter.phase_end()
-            reporter.phase_start("write metadata", 0)
-            reporter.phase_end()
-            return IndexResult(
-                total=0,
-                added=0,
-                updated=0,
-                removed=0,
-                duration_ms=0,
-                device=self.model.device,
-            )
+        # Note: we intentionally do NOT short-circuit when docs is
+        # empty. The streaming helper handles a zero-length list
+        # correctly, and falling through the main path means
+        # ``full_index(clean=True)`` on a now-empty vault still
+        # purges every previously-indexed row (F3.10 regression
+        # guard).
 
         # Failure-safe rebuild: ensure the table exists, snapshot the
         # current ID set, stream upsert (idempotent by doc_id — existing
@@ -1645,23 +1634,10 @@ class CodebaseIndexer:
                 reporter.advance()
         reporter.phase_end()
 
-        if not all_chunks:
-            reporter.phase_start("prepare collection", 0)
-            reporter.phase_end()
-            reporter.phase_start("embed + upsert chunks", 0)
-            reporter.phase_end()
-            reporter.phase_start("purge stale chunks", 0)
-            reporter.phase_end()
-            reporter.phase_start("write metadata", 0)
-            reporter.phase_end()
-            return IndexResult(
-                total=0,
-                added=0,
-                updated=0,
-                removed=0,
-                duration_ms=0,
-                device=self.model.device,
-            )
+        # Fall through on an empty codebase as well — the purge step
+        # must still run so a rebuild after deleting every source
+        # file actually clears the old collection (F3.11 regression
+        # guard).
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): keep
         # the old chunks live until after streaming succeeds, then

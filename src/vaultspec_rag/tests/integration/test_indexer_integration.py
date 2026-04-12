@@ -125,6 +125,51 @@ class TestIndexEdgeCases:
         assert result.total == rag_components_full["index_result"].total
 
     @pytest.mark.timeout(300)
+    def test_full_index_clean_on_empty_corpus_purges_all(
+        self,
+        embedding_model,
+        tmp_path_factory,
+    ):
+        """Regression guard for F3.10 / F3.11: a clean full_index on a
+        vault whose every source file has been deleted must leave the
+        collection empty. Previously the empty-docs early-return
+        silently preserved the old rows.
+        """
+        from vaultspec_rag.indexer import VaultIndexer
+        from vaultspec_rag.store import VaultStore
+        from vaultspec_rag.tests.corpus import build_synthetic_vault
+
+        root = tmp_path_factory.mktemp("full-index-empty-regression")
+        manifest = build_synthetic_vault(root, n_docs=6, seed=310)
+        store = VaultStore(root)
+        try:
+            indexer = VaultIndexer(root, embedding_model, store)
+            initial = indexer.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+            )
+            assert initial.added == len(manifest.docs)
+            assert store.count() == len(manifest.docs)
+
+            # Delete every indexed .md file, then run a clean full
+            # index — the store must end up empty.
+            for doc in manifest.docs:
+                doc.path.unlink()
+
+            result = indexer.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+            )
+            assert result.added == 0
+            assert result.total == 0
+            assert store.count() == 0, (
+                "clean=True full_index on an empty vault must purge "
+                "every previously-indexed row"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(300)
     def test_all_synthetic_docs_have_frontmatter(self, rag_components):
         """All synthetic vault docs should have valid frontmatter (tags + date)."""
         from vaultspec_core.vaultcore import parse_vault_metadata, scan_vault

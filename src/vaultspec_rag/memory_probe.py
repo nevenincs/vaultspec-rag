@@ -81,15 +81,22 @@ def current_cuda_mb() -> tuple[float, float]:
     """
     global _torch_module, _torch_probed, _torch_has_cuda
     if not _torch_probed:
-        _torch_probed = True
+        # Set _torch_probed last so a transient failure from
+        # is_available() (e.g. driver hiccup on first touch) does
+        # not get cached as "no CUDA forever". If the import fails
+        # we intentionally do cache the negative result because
+        # missing torch is a permanent condition.
         try:
             import torch as _torch
         except ImportError:
             _torch_module = None
             _torch_has_cuda = False
+            _torch_probed = True
         else:
+            has_cuda = _torch.cuda.is_available()
             _torch_module = _torch
-            _torch_has_cuda = _torch.cuda.is_available()
+            _torch_has_cuda = has_cuda
+            _torch_probed = True
     if _torch_module is None or not _torch_has_cuda:
         return (0.0, 0.0)
     allocated = _torch_module.cuda.memory_allocated() / (1024.0 * 1024.0)
