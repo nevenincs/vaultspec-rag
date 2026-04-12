@@ -325,6 +325,14 @@ class ServiceRegistry:
         """
         resolved = root.resolve()
         victims: list[tuple[Path, ProjectSlot, str]] = []
+        # Track the slot whose ref_count we have already incremented
+        # so we can roll the increment back on the failure path.
+        # Without this, an exception raised AFTER ``ref_count += 1`` but
+        # BEFORE the value is returned would leak the increment forever:
+        # ``lease`` never sees the slot, never calls ``_release``, and
+        # the slot becomes ineligible for eviction (ref_count > 0
+        # disqualifies it from both the idle sweep and LRU admission).
+        acquired_slot: ProjectSlot | None = None
 
         try:
             # Fast path: slot already exists. Still take _lock to
@@ -337,6 +345,7 @@ class ServiceRegistry:
                 if slot is not None:
                     slot.last_access = time.monotonic()
                     slot.ref_count += 1
+                    acquired_slot = slot
                     victims.extend(self._collect_idle_victims())
                     return slot, victims
                 # LRU admission may collect a victim under the lock.
@@ -350,16 +359,27 @@ class ServiceRegistry:
                     raise RuntimeError(msg)
                 slot.last_access = time.monotonic()
                 slot.ref_count += 1
+                acquired_slot = slot
                 victims.extend(self._collect_idle_victims())
             return slot, victims
         except BaseException:
-            # We popped *victims* from the registry under the lock but
-            # are about to raise before lease() can tear them down.
-            # The slots are unreachable from ``_projects`` now, so any
-            # cached Qdrant handles + filesystem watchers would leak
-            # forever.  Tear them down here on the failure path.
-            # Best-effort: a teardown error must NOT mask the original
-            # exception that triggered this branch.
+            # Rollback BEFORE re-raising:
+            # 1. Decrement ref_count on the target slot if we already
+            #    bumped it — otherwise the slot is stuck busy forever
+            #    and the caller never sees it via lease().
+            # 2. Tear down popped victims so their Qdrant handles and
+            #    watchers do not leak.
+            # Both rollback steps swallow their own errors so a cleanup
+            # failure cannot mask the original exception.
+            if acquired_slot is not None:
+                try:
+                    with self._lock:
+                        if acquired_slot.ref_count > 0:
+                            acquired_slot.ref_count -= 1
+                except Exception:
+                    logger.exception(
+                        "Failed to roll back ref_count during _acquire rollback",
+                    )
             for v_root, v_slot, v_reason in victims:
                 try:
                     self._teardown_slot(v_root, v_slot, reason=v_reason)
