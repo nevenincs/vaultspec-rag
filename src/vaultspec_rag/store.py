@@ -22,7 +22,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CodeChunk", "VaultDocument", "VaultStore"]
+__all__ = ["CodeChunk", "VaultDocument", "VaultStore", "VaultStoreLockedError"]
+
+
+class VaultStoreLockedError(RuntimeError):
+    """Raised when the Qdrant storage folder is already opened by another process.
+
+    Attributes:
+        db_path: Absolute path to the locked Qdrant storage folder.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+        super().__init__(
+            f"Qdrant storage at {db_path} is already in use by another process.",
+        )
+
 
 EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
 
@@ -135,6 +150,8 @@ class VaultStore:
 
         Raises:
             ImportError: If qdrant-client is not installed.
+            VaultStoreLockedError: If the Qdrant storage folder is already opened
+                by another process.
         """
         _check_rag_deps()
         import pathlib as _pathlib
@@ -148,7 +165,12 @@ class VaultStore:
         self.root_dir = _pathlib.Path(root_dir)
         self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
         self.db_path.mkdir(parents=True, exist_ok=True)
-        self._client: QdrantClient | None = _QdrantClient(path=str(self.db_path))
+        try:
+            self._client: QdrantClient | None = _QdrantClient(path=str(self.db_path))
+        except RuntimeError as exc:
+            if "already accessed by another instance" in str(exc):
+                raise VaultStoreLockedError(str(self.db_path)) from exc
+            raise
         self._embedding_dim = embedding_dim or EMBEDDING_DIM
         self._vault_ensured = False
         self._code_ensured = False

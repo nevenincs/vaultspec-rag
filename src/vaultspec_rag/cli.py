@@ -49,7 +49,7 @@ from .embeddings import EmbeddingModel  # noqa: E402
 from .indexer import CodebaseIndexer, VaultIndexer  # noqa: E402
 from .logging_config import configure_logging  # noqa: E402
 from .search import VaultSearcher  # noqa: E402
-from .store import VaultStore  # noqa: E402
+from .store import VaultStore, VaultStoreLockedError  # noqa: E402
 from .workspace import WorkspaceError, WorkspaceLayout, resolve_workspace  # noqa: E402
 
 console = Console(legacy_windows=False)
@@ -78,6 +78,39 @@ def _handle_gpu_error(exc: Exception) -> None:
     else:
         console.print(f"[bold red]Error:[/] {exc}")
     raise typer.Exit(code=1)
+
+
+def _open_vault_store(target: Path) -> VaultStore:
+    """Open a VaultStore, translating lock errors into a friendly CLI exit.
+
+    Args:
+        target: Workspace root directory.
+
+    Returns:
+        An open VaultStore instance.
+
+    Raises:
+        typer.Exit: With code 1 if the Qdrant storage is already held by
+            another process. The message names the exact path and lists
+            the three options available to the user.
+    """
+    try:
+        return VaultStore(target)
+    except VaultStoreLockedError as exc:
+        console.print(
+            f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
+            "is currently in use by another process.\n\n"
+            "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
+            "or file watcher is likely running against this workspace.\n\n"
+            "  To resolve, do one of the following:\n"
+            "    1. Wait for the other process to finish.\n"
+            "    2. Stop the running server:\n"
+            "         [cyan]vaultspec-rag server mcp stop[/]\n"
+            "         [cyan]vaultspec-rag server service stop[/]\n"
+            "    3. If no vaultspec-rag process is alive, look for an "
+            "orphaned Python process holding the lock and stop it manually.",
+        )
+        raise typer.Exit(code=1) from exc
 
 
 app = typer.Typer(
@@ -449,7 +482,7 @@ def handle_index(
         reporter.phase_end()
 
         reporter.phase_start("open store", 1)
-        store = VaultStore(target)
+        store = _open_vault_store(target)
         if clean:
             store.close()
             if store.db_path.exists():
@@ -462,7 +495,7 @@ def handle_index(
                         "Close any other processes using the index and retry.",
                     )
                     raise typer.Exit(code=1) from None
-            store = VaultStore(target)
+            store = _open_vault_store(target)
         reporter.advance(1)
         reporter.phase_end()
 
@@ -780,7 +813,7 @@ def handle_search(
             "[yellow]MCP server unavailable, falling back to in-process search...[/]",
         )
 
-    store = VaultStore(target)
+    store = _open_vault_store(target)
     try:
         with console.status(f"[bold green]Searching {search_type}..."):
             try:
@@ -853,7 +886,7 @@ def handle_status(ctx: typer.Context) -> None:
         gpu_status = "[red]No CUDA GPU available[/]"
 
     # Store metrics
-    store = VaultStore(target)
+    store = _open_vault_store(target)
     try:
         vault_count = store.count()
         code_count = store.count_code()
@@ -1586,7 +1619,7 @@ def handle_benchmark(
     state: CLIState = ctx.obj
     target = state.target
 
-    store = VaultStore(target)
+    store = _open_vault_store(target)
     try:
         vault_count = store.count()
         if vault_count == 0:
@@ -1706,7 +1739,7 @@ def handle_quality() -> None:
         except (ImportError, RuntimeError) as e:
             _handle_gpu_error(e)
 
-        store = VaultStore(root)
+        store = _open_vault_store(root)
 
         try:
             from .progress import NullProgressReporter

@@ -40,6 +40,19 @@ class TestVaultStore:
         # After exiting context, client should be released
         assert store._client is None
 
+    def test_vault_store_locked_raises_typed_exception(self, tmp_path):
+        """Opening the same Qdrant storage twice must raise VaultStoreLockedError."""
+        from vaultspec_rag.store import VaultStore, VaultStoreLockedError
+
+        first = VaultStore(tmp_path)
+        try:
+            with pytest.raises(VaultStoreLockedError) as excinfo:
+                VaultStore(tmp_path)
+            assert str(first.db_path) == excinfo.value.db_path
+            assert "already in use" in str(excinfo.value)
+        finally:
+            first.close()
+
     def test_hybrid_search_returns_results(self, rag_components):
         model = rag_components["model"]
         store = rag_components["store"]
