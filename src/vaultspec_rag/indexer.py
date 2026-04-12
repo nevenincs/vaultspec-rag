@@ -768,6 +768,111 @@ def prepare_document(
     )
 
 
+def _release_cuda_cache() -> None:
+    """Return unused CUDA caching-allocator blocks to the driver.
+
+    Called between embedding slices to prevent the allocator from
+    growing unboundedly as per-batch activation buffers accumulate —
+    the root cause of the 24 GB RSS leak documented in issue #68.
+    Safe no-op when torch is unavailable.
+    """
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _stream_encode_and_upsert_vault(
+    *,
+    docs: list[VaultDocument],
+    slice_size: int,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    reporter: ProgressReporter,
+) -> None:
+    """Encode dense + sparse vectors and upsert per-slice.
+
+    Streaming the pipeline slice-by-slice keeps peak memory bounded to
+    one batch's worth of embedding tensors and attention activations.
+    The caching allocator is flushed at each slice boundary.
+    """
+    from .memory_probe import MemoryProbe
+
+    probe = MemoryProbe(name="vault-full-index")
+
+    reporter.phase_start("embed + upsert documents", len(docs))
+    with gpu_lock if gpu_lock is not None else nullcontext():
+        for i in range(0, len(docs), slice_size):
+            slice_docs = docs[i : i + slice_size]
+            slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
+            probe.checkpoint(f"slice-{i}-before-encode")
+            dense = model.encode_documents(slice_texts)
+            sparse = model.encode_documents_sparse(slice_texts)
+            probe.checkpoint(f"slice-{i}-after-encode")
+            for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
+                doc.vector = vec.tolist()
+                doc.sparse_indices = list(svec.indices)
+                doc.sparse_values = list(svec.values)
+            store.upsert_documents(slice_docs)
+            # Drop references to per-slice tensors before releasing the
+            # CUDA caching pool so freed blocks are returned to the
+            # driver immediately.
+            del dense, sparse, slice_texts
+            _release_cuda_cache()
+            probe.checkpoint(f"slice-{i}-after-empty-cache")
+            reporter.advance(len(slice_docs))
+    reporter.phase_end()
+    probe.stop()
+    if probe.samples:
+        logger.info("%s", probe.report())
+
+
+def _stream_encode_and_upsert_codebase(
+    *,
+    chunks: list[CodeChunk],
+    slice_size: int,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    reporter: ProgressReporter,
+) -> None:
+    """Streaming variant of :func:`_stream_encode_and_upsert_vault`.
+
+    Codebase chunks are generally smaller than vault documents, so the
+    RSS benefit is less pronounced, but we apply the same pattern for
+    consistency and so that large monorepos stay bounded too.
+    """
+    from .memory_probe import MemoryProbe
+
+    probe = MemoryProbe(name="codebase-full-index")
+
+    reporter.phase_start("embed + upsert chunks", len(chunks))
+    with gpu_lock if gpu_lock is not None else nullcontext():
+        for i in range(0, len(chunks), slice_size):
+            slice_chunks = chunks[i : i + slice_size]
+            slice_texts = [c.content for c in slice_chunks]
+            probe.checkpoint(f"slice-{i}-before-encode")
+            dense = model.encode_documents(slice_texts)
+            sparse = model.encode_documents_sparse(slice_texts)
+            probe.checkpoint(f"slice-{i}-after-encode")
+            for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
+                chunk.vector = vec.tolist()
+                chunk.sparse_indices = list(svec.indices)
+                chunk.sparse_values = list(svec.values)
+            store.upsert_code_chunks(slice_chunks)
+            del dense, sparse, slice_texts
+            _release_cuda_cache()
+            probe.checkpoint(f"slice-{i}-after-empty-cache")
+            reporter.advance(len(slice_chunks))
+    reporter.phase_end()
+    probe.stop()
+    if probe.samples:
+        logger.info("%s", probe.report())
+
+
 class VaultIndexer:
     """Orchestrates vault document indexing into the vector store.
 
@@ -856,11 +961,9 @@ class VaultIndexer:
         reporter.phase_end()
 
         if not docs:
-            reporter.phase_start("embed documents (dense)", 0)
+            reporter.phase_start("prepare collection", 0)
             reporter.phase_end()
-            reporter.phase_start("embed documents (sparse)", 0)
-            reporter.phase_end()
-            reporter.phase_start("upsert documents", 0)
+            reporter.phase_start("embed + upsert documents", 0)
             reporter.phase_end()
             reporter.phase_start("write metadata", 0)
             reporter.phase_end()
@@ -873,32 +976,10 @@ class VaultIndexer:
                 device=self.model.device,
             )
 
-        texts = [f"{d.title}\n\n{d.content}" for d in docs]
-
-        reporter.phase_start("embed documents (dense)", len(texts))
-        all_dense: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk = texts[i : i + slice_size]
-                all_dense.extend(self.model.encode_documents(chunk))
-                reporter.advance(len(chunk))
-        reporter.phase_end()
-
-        reporter.phase_start("embed documents (sparse)", len(texts))
-        all_sparse: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk = texts[i : i + slice_size]
-                all_sparse.extend(self.model.encode_documents_sparse(chunk))
-                reporter.advance(len(chunk))
-        reporter.phase_end()
-
-        for doc, vec, svec in zip(docs, all_dense, all_sparse, strict=True):
-            doc.vector = vec.tolist()
-            doc.sparse_indices = list(svec.indices)
-            doc.sparse_values = list(svec.values)
-
-        reporter.phase_start("upsert documents", 1)
+        # Prepare the destination table before streaming slices so each
+        # slice can be upserted and freed immediately — required to keep
+        # peak RSS bounded on large corpora (#68).
+        reporter.phase_start("prepare collection", 1)
         if clean:
             self.store.drop_table()
             self.store.ensure_table()
@@ -914,9 +995,17 @@ class VaultIndexer:
                     "re-index — aborting to prevent duplicates",
                 )
                 raise
-        self.store.upsert_documents(docs)
         reporter.advance(1)
         reporter.phase_end()
+
+        _stream_encode_and_upsert_vault(
+            docs=docs,
+            slice_size=slice_size,
+            model=self.model,
+            store=self.store,
+            gpu_lock=self._gpu_lock,
+            reporter=reporter,
+        )
 
         reporter.phase_start("write metadata", 1)
         self._save_meta(docs)
@@ -1019,43 +1108,17 @@ class VaultIndexer:
         reporter.phase_end()
 
         if docs_to_index:
-            texts = [f"{d.title}\n\n{d.content}" for d in docs_to_index]
-
-            reporter.phase_start("embed documents (dense)", len(texts))
-            all_dense: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk = texts[i : i + slice_size]
-                    all_dense.extend(self.model.encode_documents(chunk))
-                    reporter.advance(len(chunk))
-            reporter.phase_end()
-
-            reporter.phase_start("embed documents (sparse)", len(texts))
-            all_sparse: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk = texts[i : i + slice_size]
-                    all_sparse.extend(self.model.encode_documents_sparse(chunk))
-                    reporter.advance(len(chunk))
-            reporter.phase_end()
-
-            for doc, vec, svec in zip(
-                docs_to_index, all_dense, all_sparse, strict=True
-            ):
-                doc.vector = vec.tolist()
-                doc.sparse_indices = list(svec.indices)
-                doc.sparse_values = list(svec.values)
+            _stream_encode_and_upsert_vault(
+                docs=docs_to_index,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+            )
         else:
-            reporter.phase_start("embed documents (dense)", 0)
+            reporter.phase_start("embed + upsert documents", 0)
             reporter.phase_end()
-            reporter.phase_start("embed documents (sparse)", 0)
-            reporter.phase_end()
-
-        reporter.phase_start("upsert documents", 1 if docs_to_index else 0)
-        if docs_to_index:
-            self.store.upsert_documents(docs_to_index)
-            reporter.advance(1)
-        reporter.phase_end()
 
         reporter.phase_start("delete removed", len(deleted_ids))
         if deleted_ids:
@@ -1544,11 +1607,9 @@ class CodebaseIndexer:
         reporter.phase_end()
 
         if not all_chunks:
-            reporter.phase_start("embed chunks (dense)", 0)
+            reporter.phase_start("prepare collection", 0)
             reporter.phase_end()
-            reporter.phase_start("embed chunks (sparse)", 0)
-            reporter.phase_end()
-            reporter.phase_start("upsert chunks", 0)
+            reporter.phase_start("embed + upsert chunks", 0)
             reporter.phase_end()
             reporter.phase_start("write metadata", 0)
             reporter.phase_end()
@@ -1561,32 +1622,7 @@ class CodebaseIndexer:
                 device=self.model.device,
             )
 
-        texts = [c.content for c in all_chunks]
-
-        reporter.phase_start("embed chunks (dense)", len(texts))
-        all_dense: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk_texts = texts[i : i + slice_size]
-                all_dense.extend(self.model.encode_documents(chunk_texts))
-                reporter.advance(len(chunk_texts))
-        reporter.phase_end()
-
-        reporter.phase_start("embed chunks (sparse)", len(texts))
-        all_sparse: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk_texts = texts[i : i + slice_size]
-                all_sparse.extend(self.model.encode_documents_sparse(chunk_texts))
-                reporter.advance(len(chunk_texts))
-        reporter.phase_end()
-
-        for chunk, vec, svec in zip(all_chunks, all_dense, all_sparse, strict=True):
-            chunk.vector = vec.tolist()
-            chunk.sparse_indices = list(svec.indices)
-            chunk.sparse_values = list(svec.values)
-
-        reporter.phase_start("upsert chunks", 1)
+        reporter.phase_start("prepare collection", 1)
         if clean:
             self.store.drop_code_table()
             self.store.ensure_code_table()
@@ -1595,9 +1631,17 @@ class CodebaseIndexer:
             existing_ids = self.store.get_all_code_ids()
             if existing_ids:
                 self.store.delete_code_chunks(list(existing_ids))
-        self.store.upsert_code_chunks(all_chunks)
         reporter.advance(1)
         reporter.phase_end()
+
+        _stream_encode_and_upsert_codebase(
+            chunks=all_chunks,
+            slice_size=slice_size,
+            model=self.model,
+            store=self.store,
+            gpu_lock=self._gpu_lock,
+            reporter=reporter,
+        )
 
         reporter.phase_start("write metadata", 1)
         self._write_meta(meta)
@@ -1704,46 +1748,17 @@ class CodebaseIndexer:
         reporter.phase_end()
 
         if all_new_chunks:
-            texts = [c.content for c in all_new_chunks]
-
-            reporter.phase_start("embed chunks (dense)", len(texts))
-            all_dense: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk_texts = texts[i : i + slice_size]
-                    all_dense.extend(self.model.encode_documents(chunk_texts))
-                    reporter.advance(len(chunk_texts))
-            reporter.phase_end()
-
-            reporter.phase_start("embed chunks (sparse)", len(texts))
-            all_sparse: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk_texts = texts[i : i + slice_size]
-                    all_sparse.extend(self.model.encode_documents_sparse(chunk_texts))
-                    reporter.advance(len(chunk_texts))
-            reporter.phase_end()
-
-            for chunk, vec, svec in zip(
-                all_new_chunks,
-                all_dense,
-                all_sparse,
-                strict=True,
-            ):
-                chunk.vector = vec.tolist()
-                chunk.sparse_indices = list(svec.indices)
-                chunk.sparse_values = list(svec.values)
+            _stream_encode_and_upsert_codebase(
+                chunks=all_new_chunks,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+            )
         else:
-            reporter.phase_start("embed chunks (dense)", 0)
+            reporter.phase_start("embed + upsert chunks", 0)
             reporter.phase_end()
-            reporter.phase_start("embed chunks (sparse)", 0)
-            reporter.phase_end()
-
-        reporter.phase_start("upsert chunks", 1 if all_new_chunks else 0)
-        if all_new_chunks:
-            self.store.upsert_code_chunks(all_new_chunks)
-            reporter.advance(1)
-        reporter.phase_end()
 
         reporter.phase_start("write metadata", 1)
         self._write_meta(current_hashes)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from vaultspec_rag.progress import NullProgressReporter
@@ -212,6 +214,62 @@ class TestPerformance:
         assert graph_ms < 2000, (
             f"VaultGraph build took {graph_ms:.0f}ms, expected < 2000ms"
         )
+
+    def test_vault_full_index_peak_rss_bounded(
+        self,
+        embedding_model,
+        tmp_path_factory,
+    ):
+        """Vault full_index must not leak — peak RSS delta stays under 8 GB.
+
+        Regression test for issue #68, where a 135-document vault
+        blew the indexer RSS up to ~24 GB because per-batch CUDA
+        caching-allocator blocks were never returned to the driver.
+        The synthetic corpus here is sized to match the real vault.
+        """
+        from vaultspec_rag import VaultIndexer, VaultStore
+        from vaultspec_rag.memory_probe import MemoryProbe
+        from vaultspec_rag.tests.corpus import build_synthetic_vault
+
+        # Enable the background RSS sampler for this test only.
+        os.environ["VAULTSPEC_RAG_MEMORY_PROBE"] = "1"
+        try:
+            root = tmp_path_factory.mktemp("vault-leak-regression")
+            build_synthetic_vault(root, n_docs=135, seed=68)
+
+            store = VaultStore(root)
+            try:
+                indexer = VaultIndexer(root, embedding_model, store)
+
+                probe = MemoryProbe(name="regression-#68")
+                probe.checkpoint("before-index")
+                result = indexer.full_index(
+                    clean=True,
+                    reporter=NullProgressReporter(),
+                )
+                probe.checkpoint("after-index")
+                probe.stop()
+
+                # Hard ceiling: +8 GB from the pre-index baseline.
+                # Empirically the fix lands at ~1 GB RSS growth on a
+                # 16 GB RTX 4080 SUPER, so a 8 GB headroom is large
+                # enough to avoid flakes on slower hardware while still
+                # locking the regression.
+                baseline_mb = probe.samples[0].rss_mb
+                delta_mb = probe.peak_rss_mb - baseline_mb
+                assert result.added >= 120, (
+                    f"Expected ~135 docs indexed, got {result.added}"
+                )
+                assert delta_mb < 8 * 1024, (
+                    f"Peak RSS grew by {delta_mb:.0f}MB during "
+                    f"full_index (baseline={baseline_mb:.0f}MB, "
+                    f"peak={probe.peak_rss_mb:.0f}MB) — "
+                    f"regression of #68. Report:\n{probe.report()}"
+                )
+            finally:
+                store.close()
+        finally:
+            os.environ.pop("VAULTSPEC_RAG_MEMORY_PROBE", None)
 
     def test_incremental_noop_latency(self, rag_components_full):
         """Incremental index with no changes should be fast (< 3s).
