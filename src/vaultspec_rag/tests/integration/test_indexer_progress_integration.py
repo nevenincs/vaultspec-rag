@@ -100,9 +100,9 @@ class TestVaultIndexerProgress:
             expected = [
                 "scan vault",
                 "parse documents",
-                "embed documents (dense)",
-                "embed documents (sparse)",
-                "upsert documents",
+                "prepare collection",
+                "embed + upsert documents",
+                "purge stale documents",
                 "write metadata",
             ]
             assert names == expected, f"unexpected phase order: {names}"
@@ -122,9 +122,10 @@ class TestVaultIndexerProgress:
                     current = None
 
             assert phase_totals["parse documents"] >= n_docs
-            assert phase_totals["embed documents (dense)"] == n_docs
-            assert phase_totals["embed documents (sparse)"] == n_docs
-            assert phase_totals["upsert documents"] == 1
+            assert phase_totals["prepare collection"] == 1
+            assert phase_totals["embed + upsert documents"] == n_docs
+            # Fresh collection — no stale IDs to purge.
+            assert phase_totals["purge stale documents"] == 0
             assert phase_totals["write metadata"] == 1
         finally:
             store.close()
@@ -154,9 +155,9 @@ class TestCodebaseIndexerProgress:
                 "scan codebase",
                 "hash files",
                 "chunk files",
-                "embed chunks (dense)",
-                "embed chunks (sparse)",
-                "upsert chunks",
+                "prepare collection",
+                "embed + upsert chunks",
+                "purge stale chunks",
                 "write metadata",
             ]
             assert names == expected, f"unexpected phase order: {names}"
@@ -176,9 +177,9 @@ class TestCodebaseIndexerProgress:
 
             n_chunks = result.added
             if n_chunks > 0:
-                assert phase_totals["embed chunks (dense)"] == n_chunks
-                assert phase_totals["embed chunks (sparse)"] == n_chunks
-                assert phase_totals["upsert chunks"] == 1
+                assert phase_totals["prepare collection"] == 1
+                assert phase_totals["embed + upsert chunks"] == n_chunks
+                assert phase_totals["purge stale chunks"] == 0
                 assert phase_totals["write metadata"] == 1
         finally:
             store.close()

@@ -213,6 +213,87 @@ class TestPerformance:
             f"VaultGraph build took {graph_ms:.0f}ms, expected < 2000ms"
         )
 
+    def test_vault_full_index_peak_rss_bounded(
+        self,
+        embedding_model,
+        tmp_path_factory,
+        monkeypatch,
+    ):
+        """Vault full_index must not leak — RSS delta and wall time bounded.
+
+        Regression guard for issue #68:
+
+        - **Memory:** the original 135-doc corpus drove peak RSS to
+          ~24 GB because per-batch CUDA caching-allocator blocks
+          were never returned to the driver. After the streaming
+          rebuild + per-slice ``empty_cache()`` fix, RSS delta on a
+          135-doc synthetic corpus stays well under 4 GB on an
+          RTX 4080 SUPER. The 4 GB ceiling here is a tight regression
+          guard that still leaves headroom for slower hardware.
+        - **Wall clock:** the original wall time was ~1117 s for the
+          135-doc corpus (~8.3 s/doc). After the wall-clock fixes
+          (length-sorted slicing, smaller encode sub-batches,
+          ``max_seq_length=2048`` cap on Qwen3) the same corpus
+          completes in well under 30 s on an RTX 4080 SUPER. The
+          30 s ceiling here is generous (real measurements are
+          ~5 s) but still locks the 200x regression.
+        """
+        import time
+
+        from vaultspec_rag import VaultIndexer, VaultStore
+        from vaultspec_rag.memory_probe import MemoryProbe
+        from vaultspec_rag.tests.corpus import build_synthetic_vault
+
+        # monkeypatch.setenv scopes the mutation to this test so the
+        # probe never bleeds into parallel pytest-xdist workers.
+        monkeypatch.setenv("VAULTSPEC_RAG_MEMORY_PROBE", "1")
+
+        root = tmp_path_factory.mktemp("vault-leak-regression")
+        build_synthetic_vault(root, n_docs=135, seed=68)
+
+        store = VaultStore(root)
+        try:
+            indexer = VaultIndexer(root, embedding_model, store)
+
+            # MemoryProbe is entered as a context manager so its
+            # background sampler is always torn down — even if any
+            # assertion below raises.
+            with MemoryProbe(name="regression-#68") as probe:
+                probe.checkpoint("before-index")
+                start = time.perf_counter()
+                result = indexer.full_index(
+                    clean=True,
+                    reporter=NullProgressReporter(),
+                )
+                wall_seconds = time.perf_counter() - start
+                probe.checkpoint("after-index")
+
+            baseline_mb = probe.samples[0].rss_mb
+            delta_mb = probe.peak_rss_mb - baseline_mb
+            assert result.added >= 120, (
+                f"Expected ~135 docs indexed, got {result.added}"
+            )
+            # Memory ceiling: +4 GB from baseline. Empirical
+            # measurement after the wall-clock fix is ~850 MB
+            # delta on RTX 4080 SUPER; 4 GB leaves >4x headroom.
+            assert delta_mb < 4 * 1024, (
+                f"Peak RSS grew by {delta_mb:.0f}MB during full_index "
+                f"(baseline={baseline_mb:.0f}MB, "
+                f"peak={probe.peak_rss_mb:.0f}MB) — regression of #68 "
+                f"memory fix. Report:\n{probe.report()}"
+            )
+            # Wall-clock ceiling: <30 s for 135 docs. Empirical
+            # measurement is ~5 s on RTX 4080 SUPER; 30 s locks
+            # the original 200x per-item slowdown without flaking
+            # on slower hardware.
+            assert wall_seconds < 30.0, (
+                f"full_index of 135 docs took {wall_seconds:.1f}s, "
+                f"expected <30s. Original baseline before #68 fix "
+                f"was ~1117s."
+            )
+        finally:
+            store.close()
+
     def test_incremental_noop_latency(self, rag_components_full):
         """Incremental index with no changes should be fast (< 3s).
 

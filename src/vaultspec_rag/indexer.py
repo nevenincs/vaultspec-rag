@@ -768,6 +768,173 @@ def prepare_document(
     )
 
 
+def _release_cuda_cache() -> None:
+    """Return unused CUDA caching-allocator blocks to the driver.
+
+    Called between embedding slices to prevent the allocator from
+    growing unboundedly as per-batch activation buffers accumulate —
+    the root cause of the 24 GB RSS leak documented in issue #68.
+    Safe no-op when torch is unavailable.
+    """
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _stream_encode_and_upsert_vault(
+    *,
+    docs: list[VaultDocument],
+    slice_size: int,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    reporter: ProgressReporter,
+) -> None:
+    """Encode dense + sparse vectors and upsert per-slice.
+
+    Streaming the pipeline slice-by-slice keeps peak memory bounded to
+    one batch's worth of embedding tensors and attention activations.
+    The caching allocator is flushed at each slice boundary.
+
+    Docs are processed in length-sorted order (longest first) so each
+    slice contains length-uniform documents. Combined with
+    SentenceTransformer's per-call length sort and the smaller
+    ``embedding_encode_batch_size`` sub-batching, this eliminates the
+    padding-waste pathology described in #68 where a single 8000-char
+    research doc would force a 64-doc slice's attention matrix to be
+    padded for everyone. The Qdrant upsert is order-independent
+    (idempotent by doc_id) so the input order is purely a perf
+    optimisation. Wall-clock work, #68.
+    """
+    from .memory_probe import MemoryProbe
+
+    # Sort docs by combined title+content length, longest first.
+    # SentenceTransformer.encode internally sorts again per call, but
+    # our slice-level sort makes each slice's longest document close
+    # in length to its shortest, so the slice's worst-case padding
+    # cost is bounded.
+    sorted_docs = sorted(
+        docs,
+        key=lambda d: -(len(d.title) + len(d.content)),
+    )
+
+    with MemoryProbe(name="vault-full-index") as probe:
+        reporter.phase_start("embed + upsert documents", len(sorted_docs))
+        try:
+            for i in range(0, len(sorted_docs), slice_size):
+                slice_docs = sorted_docs[i : i + slice_size]
+                slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
+                # Pre-bind dense/sparse to None so the finally clause
+                # can ``del`` them unconditionally even when the encode
+                # call raises before binding them.
+                dense = None
+                sparse = None
+                probe.checkpoint(f"slice-{i}-before-encode")
+                # Inner try/finally guarantees the per-slice CUDA
+                # caching pool is released on every exit path —
+                # success, exception, or KeyboardInterrupt — so a
+                # mid-encode interrupt cannot leave a stale reserved
+                # pool wedged in the allocator (#68 audit F6.9).
+                try:
+                    # Hold the GPU lock only across the encode call so
+                    # that the I/O-bound upsert below runs without
+                    # blocking concurrent searches on the same GPU.
+                    with gpu_lock if gpu_lock is not None else nullcontext():
+                        dense = model.encode_documents(slice_texts)
+                        sparse = model.encode_documents_sparse(slice_texts)
+                    probe.checkpoint(f"slice-{i}-after-encode")
+                    for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
+                        doc.vector = vec.tolist()
+                        doc.sparse_indices = list(svec.indices)
+                        doc.sparse_values = list(svec.values)
+                    store.upsert_documents(slice_docs)
+                finally:
+                    # Drop references to per-slice tensors before
+                    # releasing the CUDA caching pool so freed blocks
+                    # are returned to the driver immediately. ``del``
+                    # is preferred over ``= None`` because it removes
+                    # the local entirely from the frame instead of
+                    # leaving a None binding. F10.3 audit fix.
+                    del dense
+                    del sparse
+                    del slice_texts
+                    _release_cuda_cache()
+                probe.checkpoint(f"slice-{i}-after-empty-cache")
+                reporter.advance(len(slice_docs))
+        finally:
+            # Always close the phase so progress reporters never see
+            # an unbalanced phase_start/phase_end pair, even when the
+            # slice loop raises (CUDA OOM, Qdrant I/O error, etc).
+            reporter.phase_end()
+
+    if probe.samples:
+        logger.info("%s", probe.report())
+
+
+def _stream_encode_and_upsert_codebase(
+    *,
+    chunks: list[CodeChunk],
+    slice_size: int,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    reporter: ProgressReporter,
+) -> None:
+    """Streaming variant of :func:`_stream_encode_and_upsert_vault`.
+
+    Codebase chunks are generally smaller than vault documents, so the
+    RSS benefit is less pronounced, but we apply the same pattern for
+    consistency and so that large monorepos stay bounded too. Chunks
+    are length-sorted before slicing for the same reason as the vault
+    helper — minimises padding waste in the model's encode call.
+    """
+    from .memory_probe import MemoryProbe
+
+    sorted_chunks = sorted(chunks, key=lambda c: -len(c.content))
+
+    with MemoryProbe(name="codebase-full-index") as probe:
+        reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
+        try:
+            for i in range(0, len(sorted_chunks), slice_size):
+                slice_chunks = sorted_chunks[i : i + slice_size]
+                slice_texts = [c.content for c in slice_chunks]
+                dense = None
+                sparse = None
+                probe.checkpoint(f"slice-{i}-before-encode")
+                # Mirror the vault helper: inner try/finally so the
+                # CUDA caching pool is released on every exit path
+                # (#68 audit F6.9).
+                try:
+                    with gpu_lock if gpu_lock is not None else nullcontext():
+                        dense = model.encode_documents(slice_texts)
+                        sparse = model.encode_documents_sparse(slice_texts)
+                    probe.checkpoint(f"slice-{i}-after-encode")
+                    for chunk, vec, svec in zip(
+                        slice_chunks, dense, sparse, strict=True
+                    ):
+                        chunk.vector = vec.tolist()
+                        chunk.sparse_indices = list(svec.indices)
+                        chunk.sparse_values = list(svec.values)
+                    store.upsert_code_chunks(slice_chunks)
+                finally:
+                    # F10.4 audit fix — del beats = None for dropping
+                    # the local out of the frame entirely.
+                    del dense
+                    del sparse
+                    del slice_texts
+                    _release_cuda_cache()
+                probe.checkpoint(f"slice-{i}-after-empty-cache")
+                reporter.advance(len(slice_chunks))
+        finally:
+            reporter.phase_end()
+
+    if probe.samples:
+        logger.info("%s", probe.report())
+
+
 class VaultIndexer:
     """Orchestrates vault document indexing into the vector store.
 
@@ -792,8 +959,11 @@ class VaultIndexer:
             root_dir: Path to the vault workspace root.
             model: Embedding model used to encode document text.
             store: Vector store where indexed documents are persisted.
-            gpu_lock: Optional ``threading.Lock`` that serializes
-                GPU operations (encoding) with concurrent searches.
+            gpu_lock: Optional non-reentrant ``threading.Lock`` that
+                serializes GPU operations (encoding) with concurrent
+                searches. ``threading.Lock`` (not ``RLock``) is
+                expected — same-thread re-entry would deadlock; the
+                indexer never nests its own GPU acquisitions.
         """
         from .config import get_config
 
@@ -803,6 +973,15 @@ class VaultIndexer:
         self.model = model
         self.store = store
         self._gpu_lock = gpu_lock
+        # Indexer-level writer lock that serializes full_index and
+        # incremental_index against each other and against themselves.
+        # Without this, two concurrent MCP / CLI / watcher reindex
+        # calls on the same indexer instance could race their
+        # ``existing_ids_before`` snapshots and overwrite each other's
+        # contributions (#68 audit F6.6).
+        import threading as _threading
+
+        self._writer_lock: _threading.Lock = _threading.Lock()
         self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
 
     def full_index(
@@ -811,24 +990,60 @@ class VaultIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Full re-index of all vault documents.
+        """Full re-index serialized through the indexer writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_full_index_locked`. The lock guarantees that two
+        concurrent ``full_index`` (or ``incremental_index``) calls on
+        the same indexer instance run sequentially, eliminating the
+        ``existing_ids_before`` snapshot race documented in the #68
+        rolling audit (F6.6).
+        """
+        with self._writer_lock:
+            return self._full_index_locked(clean=clean, reporter=reporter)
+
+    def _full_index_locked(
+        self,
+        clean: bool = False,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`full_index`.
 
         Scans all documents, embeds them, and replaces the entire store.
         Emits phase events through ``reporter`` at every pipeline step.
 
         Args:
-            clean: If True, drop and recreate the collection before
-                indexing to guarantee no stale documents persist.
+            clean: When ``True``, drop and recreate the vault
+                collection up front so schema-level changes (e.g.
+                a new embedding dimension) take effect (#68 audit
+                F9.6 — codex P2). On the ``clean=True`` path an
+                interrupted run (CUDA OOM, process kill, Qdrant
+                I/O failure mid-stream) may leave the collection
+                empty until the next successful run — this is
+                the explicit user opt-in to destructive semantics.
+                The default ``clean=False`` path is failure-safe:
+                it streams upserts in place and purges only the
+                stale doc IDs after a successful rebuild, so an
+                interrupted run never leaves the collection empty.
+                Both modes deliver the "no stale documents persist"
+                contract on successful completion.
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
 
         Returns:
-            An ``IndexResult`` where ``added`` equals the total number of
-            documents written and ``updated``/``removed`` are both zero.
+            An ``IndexResult`` where ``added`` equals the total number
+            of documents written, ``updated`` is ``0``, and ``removed``
+            reports the post-stream stale-document purge count
+            (#68 audit F10.5). If the vault is empty the returned
+            counts are ``added=0`` and ``removed`` reflects every
+            previously-indexed row that was purged.
 
         Raises:
-            OSError: If existing documents cannot be deleted during a
-                non-clean full re-index (raised to prevent duplicates).
+            OSError: If the post-stream stale-document purge fails
+                against a Qdrant collection that was successfully
+                rebuilt (the collection still contains valid new
+                data plus the stale rows).
         """
         from .config import get_config
 
@@ -855,80 +1070,104 @@ class VaultIndexer:
                 reporter.advance()
         reporter.phase_end()
 
-        if not docs:
-            reporter.phase_start("embed documents (dense)", 0)
-            reporter.phase_end()
-            reporter.phase_start("embed documents (sparse)", 0)
-            reporter.phase_end()
-            reporter.phase_start("upsert documents", 0)
-            reporter.phase_end()
-            reporter.phase_start("write metadata", 0)
-            reporter.phase_end()
-            return IndexResult(
-                total=0,
-                added=0,
-                updated=0,
-                removed=0,
-                duration_ms=0,
-                device=self.model.device,
-            )
+        # Note: we intentionally do NOT short-circuit when docs is
+        # empty. The streaming helper handles a zero-length list
+        # correctly, and falling through the main path means
+        # ``full_index(clean=True)`` on a now-empty vault still
+        # purges every previously-indexed row (F3.10 regression
+        # guard).
 
-        texts = [f"{d.title}\n\n{d.content}" for d in docs]
-
-        reporter.phase_start("embed documents (dense)", len(texts))
-        all_dense: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk = texts[i : i + slice_size]
-                all_dense.extend(self.model.encode_documents(chunk))
-                reporter.advance(len(chunk))
-        reporter.phase_end()
-
-        reporter.phase_start("embed documents (sparse)", len(texts))
-        all_sparse: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk = texts[i : i + slice_size]
-                all_sparse.extend(self.model.encode_documents_sparse(chunk))
-                reporter.advance(len(chunk))
-        reporter.phase_end()
-
-        for doc, vec, svec in zip(docs, all_dense, all_sparse, strict=True):
-            doc.vector = vec.tolist()
-            doc.sparse_indices = list(svec.indices)
-            doc.sparse_values = list(svec.values)
-
-        reporter.phase_start("upsert documents", 1)
-        if clean:
-            self.store.drop_table()
-            self.store.ensure_table()
-        else:
+        # Failure-safe rebuild: ensure the table exists, snapshot the
+        # current ID set, stream upsert (idempotent by doc_id — existing
+        # rows are overwritten in place), then purge only the IDs that
+        # no longer exist in the new corpus. If any slice raises we have
+        # not destroyed the old collection. clean=True preserves its
+        # documented contract ("no stale documents persist") via the
+        # final purge step.
+        #
+        # When ``clean=True`` is explicitly passed, we ALSO drop the
+        # collection up front so that schema-level changes (e.g. a
+        # new embedding dimension) take effect (#68 audit F9.6).
+        # This re-introduces a narrow data-loss window between the
+        # drop and the streaming upsert — but only on the explicit
+        # opt-in path. ``clean=False`` (the default + watcher path)
+        # remains failure-safe.
+        reporter.phase_start("prepare collection", 1)
+        try:
+            if clean:
+                self.store.drop_table()
             self.store.ensure_table()
             try:
-                existing_ids = self.store.get_all_ids()
-                if existing_ids:
-                    self.store.delete_documents(list(existing_ids))
-            except OSError:
-                logger.error(
-                    "Failed to delete existing documents during full "
-                    "re-index — aborting to prevent duplicates",
+                existing_ids_before: set[str] = set(self.store.get_all_ids())
+            except (OSError, RuntimeError):
+                # OSError covers I/O failures; RuntimeError covers
+                # Qdrant client errors and lock contention
+                # (VaultStoreLockedError). Either way the safest
+                # response is to skip the stale-document purge so
+                # the rebuild can still complete (#68 audit F9.4).
+                logger.warning(
+                    "Could not snapshot existing vault IDs before "
+                    "rebuild; stale-document purge will be skipped",
+                    exc_info=True,
                 )
-                raise
-        self.store.upsert_documents(docs)
-        reporter.advance(1)
-        reporter.phase_end()
+                existing_ids_before = set()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
+
+        _stream_encode_and_upsert_vault(
+            docs=docs,
+            slice_size=slice_size,
+            model=self.model,
+            store=self.store,
+            gpu_lock=self._gpu_lock,
+            reporter=reporter,
+        )
+
+        # Streaming completed successfully — now it is safe to delete
+        # the rows that were in the collection before but are absent
+        # from the freshly-indexed corpus.
+        new_ids = {doc.id for doc in docs}
+        stale_ids = sorted(existing_ids_before - new_ids)
+        reporter.phase_start("purge stale documents", len(stale_ids))
+        try:
+            if stale_ids:
+                try:
+                    self.store.delete_documents(stale_ids)
+                except OSError:
+                    logger.error(
+                        "Failed to purge stale vault documents after "
+                        "successful rebuild — collection still "
+                        "contains valid new data plus %d stale rows",
+                        len(stale_ids),
+                    )
+                    raise
+                reporter.advance(len(stale_ids))
+        finally:
+            reporter.phase_end()
+        # F10.1: removed dead `if clean and not stale_ids and
+        # existing_ids_before` debug log. After iter 9, clean=True
+        # drops the collection up front, so existing_ids_before is
+        # always empty on that path and the condition could never
+        # fire. The non-clean path with no stale_ids is the no-op
+        # case and doesn't need a log line.
 
         reporter.phase_start("write metadata", 1)
-        self._save_meta(docs)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._save_meta(docs)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
             total=len(docs),
             added=len(docs),
             updated=0,
-            removed=0,
+            # Report the post-stream stale-purge count so MCP / CLI /
+            # watcher observability reflects the rows actually deleted
+            # by the failure-safe rebuild (#68 audit F6.3 / F6.10).
+            removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
         )
@@ -938,7 +1177,22 @@ class VaultIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Incremental index: only re-index new and modified documents.
+        """Incremental re-index serialized through the writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_incremental_index_locked`. Serializes against
+        concurrent ``full_index`` / ``incremental_index`` callers on
+        the same indexer (#68 audit F6.6).
+        """
+        with self._writer_lock:
+            return self._incremental_index_locked(reporter=reporter)
+
+    def _incremental_index_locked(
+        self,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`incremental_index`.
 
         Compares blake2b content hashes against stored metadata to identify
         changes. Emits phase events through ``reporter``.
@@ -1019,43 +1273,17 @@ class VaultIndexer:
         reporter.phase_end()
 
         if docs_to_index:
-            texts = [f"{d.title}\n\n{d.content}" for d in docs_to_index]
-
-            reporter.phase_start("embed documents (dense)", len(texts))
-            all_dense: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk = texts[i : i + slice_size]
-                    all_dense.extend(self.model.encode_documents(chunk))
-                    reporter.advance(len(chunk))
-            reporter.phase_end()
-
-            reporter.phase_start("embed documents (sparse)", len(texts))
-            all_sparse: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk = texts[i : i + slice_size]
-                    all_sparse.extend(self.model.encode_documents_sparse(chunk))
-                    reporter.advance(len(chunk))
-            reporter.phase_end()
-
-            for doc, vec, svec in zip(
-                docs_to_index, all_dense, all_sparse, strict=True
-            ):
-                doc.vector = vec.tolist()
-                doc.sparse_indices = list(svec.indices)
-                doc.sparse_values = list(svec.values)
+            _stream_encode_and_upsert_vault(
+                docs=docs_to_index,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+            )
         else:
-            reporter.phase_start("embed documents (dense)", 0)
+            reporter.phase_start("embed + upsert documents", 0)
             reporter.phase_end()
-            reporter.phase_start("embed documents (sparse)", 0)
-            reporter.phase_end()
-
-        reporter.phase_start("upsert documents", 1 if docs_to_index else 0)
-        if docs_to_index:
-            self.store.upsert_documents(docs_to_index)
-            reporter.advance(1)
-        reporter.phase_end()
 
         reporter.phase_start("delete removed", len(deleted_ids))
         if deleted_ids:
@@ -1178,6 +1406,12 @@ class CodebaseIndexer:
         self.store = store
         self._gpu_lock = gpu_lock
         self._extra_excludes = extra_excludes or []
+        # Indexer-level writer lock that serializes full_index and
+        # incremental_index against each other on the same instance
+        # (#68 audit F6.6 — concurrent reindex race).
+        import threading as _threading
+
+        self._writer_lock: _threading.Lock = _threading.Lock()
         from .config import get_config
 
         cfg = get_config()
@@ -1493,16 +1727,39 @@ class CodebaseIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Full re-index of all codebase files.
+        """Full codebase re-index serialized through the writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_full_index_locked`. Mirrors the VaultIndexer wrapper
+        and serializes against concurrent reindex callers (#68 audit
+        F6.6).
+        """
+        with self._writer_lock:
+            return self._full_index_locked(clean=clean, reporter=reporter)
+
+    def _full_index_locked(
+        self,
+        clean: bool = False,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`full_index`.
 
         Args:
-            clean: If True, drop and recreate the collection before
-                indexing to guarantee no stale chunks persist.
+            clean: When ``True``, drop and recreate the codebase
+                collection up front so schema-level changes (e.g.
+                a new embedding dimension) take effect (#68 audit
+                F9.6 — codex P2). The default ``clean=False`` path
+                is failure-safe: it streams upserts in place and
+                purges only the stale chunk IDs after a successful
+                rebuild, so an interrupted run never leaves the
+                collection empty.
             reporter: Required progress reporter.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total chunk
-            count and ``updated``/``removed`` are both zero.
+            count and ``removed`` reports the post-stream stale-chunk
+            purge count.
 
         Raises:
             OSError: If source files cannot be read or hashed.
@@ -1543,73 +1800,81 @@ class CodebaseIndexer:
                 reporter.advance()
         reporter.phase_end()
 
-        if not all_chunks:
-            reporter.phase_start("embed chunks (dense)", 0)
-            reporter.phase_end()
-            reporter.phase_start("embed chunks (sparse)", 0)
-            reporter.phase_end()
-            reporter.phase_start("upsert chunks", 0)
-            reporter.phase_end()
-            reporter.phase_start("write metadata", 0)
-            reporter.phase_end()
-            return IndexResult(
-                total=0,
-                added=0,
-                updated=0,
-                removed=0,
-                duration_ms=0,
-                device=self.model.device,
-            )
+        # Fall through on an empty codebase as well — the purge step
+        # must still run so a rebuild after deleting every source
+        # file actually clears the old collection (F3.11 regression
+        # guard).
 
-        texts = [c.content for c in all_chunks]
-
-        reporter.phase_start("embed chunks (dense)", len(texts))
-        all_dense: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk_texts = texts[i : i + slice_size]
-                all_dense.extend(self.model.encode_documents(chunk_texts))
-                reporter.advance(len(chunk_texts))
-        reporter.phase_end()
-
-        reporter.phase_start("embed chunks (sparse)", len(texts))
-        all_sparse: list = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            for i in range(0, len(texts), slice_size):
-                chunk_texts = texts[i : i + slice_size]
-                all_sparse.extend(self.model.encode_documents_sparse(chunk_texts))
-                reporter.advance(len(chunk_texts))
-        reporter.phase_end()
-
-        for chunk, vec, svec in zip(all_chunks, all_dense, all_sparse, strict=True):
-            chunk.vector = vec.tolist()
-            chunk.sparse_indices = list(svec.indices)
-            chunk.sparse_values = list(svec.values)
-
-        reporter.phase_start("upsert chunks", 1)
-        if clean:
-            self.store.drop_code_table()
+        # Failure-safe rebuild (mirrors VaultIndexer.full_index): keep
+        # the old chunks live until after streaming succeeds, then
+        # purge only the chunk IDs that are absent from the new corpus.
+        # When ``clean=True`` is explicitly passed, ALSO drop the
+        # collection up front so schema-level changes (e.g. new
+        # embedding dimension) take effect (#68 audit F9.6). The
+        # default ``clean=False`` path remains failure-safe.
+        reporter.phase_start("prepare collection", 1)
+        try:
+            if clean:
+                self.store.drop_code_table()
             self.store.ensure_code_table()
-        else:
-            self.store.ensure_code_table()
-            existing_ids = self.store.get_all_code_ids()
-            if existing_ids:
-                self.store.delete_code_chunks(list(existing_ids))
-        self.store.upsert_code_chunks(all_chunks)
-        reporter.advance(1)
-        reporter.phase_end()
+            try:
+                existing_ids_before: set[str] = set(self.store.get_all_code_ids())
+            except (OSError, RuntimeError):
+                logger.warning(
+                    "Could not snapshot existing code-chunk IDs "
+                    "before rebuild; stale-chunk purge will be "
+                    "skipped",
+                    exc_info=True,
+                )
+                existing_ids_before = set()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
+
+        _stream_encode_and_upsert_codebase(
+            chunks=all_chunks,
+            slice_size=slice_size,
+            model=self.model,
+            store=self.store,
+            gpu_lock=self._gpu_lock,
+            reporter=reporter,
+        )
+
+        new_ids = {chunk.id for chunk in all_chunks}
+        stale_ids = sorted(existing_ids_before - new_ids)
+        reporter.phase_start("purge stale chunks", len(stale_ids))
+        try:
+            if stale_ids:
+                try:
+                    self.store.delete_code_chunks(stale_ids)
+                except OSError:
+                    logger.error(
+                        "Failed to purge stale code chunks after "
+                        "successful rebuild — collection still "
+                        "contains valid new chunks plus %d stale rows",
+                        len(stale_ids),
+                    )
+                    raise
+                reporter.advance(len(stale_ids))
+        finally:
+            reporter.phase_end()
 
         reporter.phase_start("write metadata", 1)
-        self._write_meta(meta)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._write_meta(meta)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
             total=len(all_chunks),
             added=len(all_chunks),
             updated=0,
-            removed=0,
+            # Mirror VaultIndexer.full_index — surface the post-stream
+            # purge count so MCP / CLI clients can observe how many
+            # stale chunks were swept (#68 audit F6.3 / F6.10).
+            removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(paths),
@@ -1620,7 +1885,21 @@ class CodebaseIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Incremental index: only re-index new and modified source files.
+        """Incremental codebase re-index serialized through the writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_incremental_index_locked`. Mirrors VaultIndexer
+        and serializes concurrent reindex callers (#68 audit F6.6).
+        """
+        with self._writer_lock:
+            return self._incremental_index_locked(reporter=reporter)
+
+    def _incremental_index_locked(
+        self,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`incremental_index`.
 
         Uses blake2b content hashing to detect changes (not mtime). Emits
         phase events through ``reporter``.
@@ -1704,46 +1983,17 @@ class CodebaseIndexer:
         reporter.phase_end()
 
         if all_new_chunks:
-            texts = [c.content for c in all_new_chunks]
-
-            reporter.phase_start("embed chunks (dense)", len(texts))
-            all_dense: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk_texts = texts[i : i + slice_size]
-                    all_dense.extend(self.model.encode_documents(chunk_texts))
-                    reporter.advance(len(chunk_texts))
-            reporter.phase_end()
-
-            reporter.phase_start("embed chunks (sparse)", len(texts))
-            all_sparse: list = []
-            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                for i in range(0, len(texts), slice_size):
-                    chunk_texts = texts[i : i + slice_size]
-                    all_sparse.extend(self.model.encode_documents_sparse(chunk_texts))
-                    reporter.advance(len(chunk_texts))
-            reporter.phase_end()
-
-            for chunk, vec, svec in zip(
-                all_new_chunks,
-                all_dense,
-                all_sparse,
-                strict=True,
-            ):
-                chunk.vector = vec.tolist()
-                chunk.sparse_indices = list(svec.indices)
-                chunk.sparse_values = list(svec.values)
+            _stream_encode_and_upsert_codebase(
+                chunks=all_new_chunks,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+            )
         else:
-            reporter.phase_start("embed chunks (dense)", 0)
+            reporter.phase_start("embed + upsert chunks", 0)
             reporter.phase_end()
-            reporter.phase_start("embed chunks (sparse)", 0)
-            reporter.phase_end()
-
-        reporter.phase_start("upsert chunks", 1 if all_new_chunks else 0)
-        if all_new_chunks:
-            self.store.upsert_code_chunks(all_new_chunks)
-            reporter.advance(1)
-        reporter.phase_end()
 
         reporter.phase_start("write metadata", 1)
         self._write_meta(current_hashes)

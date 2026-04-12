@@ -150,14 +150,31 @@ class EmbeddingModel:
 
     @staticmethod
     def _default_batch_size() -> int:
-        """Return the configured embedding batch size.
+        """Return the configured streaming slice size.
 
-        Returns:
-            Batch size from VaultSpecConfigWrapper.
+        Note this is the *slice* size (one slice's worth of docs is
+        encoded + upserted before the next slice begins). It is NOT
+        the inner sub-batch size that the model's encode call uses
+        for its forward passes — that is governed by
+        :meth:`_default_encode_batch_size`.
         """
         from .config import get_config
 
         return get_config().embedding_batch_size
+
+    @staticmethod
+    def _default_encode_batch_size() -> int:
+        """Return the configured inner sub-batch size for ``encode``.
+
+        SentenceTransformer sorts each ``encode`` call's input by
+        sequence length, then iterates ``encode_batch_size``-item
+        sub-batches of the sorted list. A small value (default 8)
+        keeps each sub-batch length-uniform and minimises padding
+        waste on variable-length corpora.
+        """
+        from .config import get_config
+
+        return get_config().embedding_encode_batch_size
 
     @staticmethod
     def _default_max_embed_chars() -> int:
@@ -223,7 +240,26 @@ class EmbeddingModel:
             model_kwargs=model_kwargs,
             tokenizer_kwargs={"padding_side": "left"},
         )
-        logger.info("Dense model loaded in %.2fs", time.perf_counter() - t0)
+        # Cap the model's advertised max sequence length so the
+        # tokenizer truncates aggressively and the model never
+        # allocates attention buffers for the 32 k context window.
+        # ``max_embed_chars=8000`` truncates raw text to ~2000 BPE
+        # tokens for Qwen3, so 2048 is the right ceiling. #68
+        # wall-clock work.
+        max_seq_len = (
+            cfg.embedding_max_seq_length
+            if hasattr(cfg, "embedding_max_seq_length")
+            else 2048
+        )
+        try:
+            self._dense_model.max_seq_length = int(max_seq_len)
+        except Exception:  # defensive setattr — old st versions vary
+            logger.warning("Could not set dense model max_seq_length=%d", max_seq_len)
+        logger.info(
+            "Dense model loaded in %.2fs (max_seq_length=%d)",
+            time.perf_counter() - t0,
+            int(self._dense_model.max_seq_length),
+        )
 
         t0 = time.perf_counter()
         self._sparse_model = SparseEncoder(
@@ -231,7 +267,16 @@ class EmbeddingModel:
             device="cuda",
             model_kwargs={"torch_dtype": torch.float16},
         )
-        logger.info("Sparse model loaded in %.2fs", time.perf_counter() - t0)
+        # Do NOT override the sparse model's max_seq_length: SPLADE
+        # is BERT-based and has max_position_embeddings=512. Setting
+        # it to 2048 causes a position-embedding shape mismatch at
+        # forward time. The sparse path already truncates internally.
+        sparse_max = int(getattr(self._sparse_model, "max_seq_length", 512))
+        logger.info(
+            "Sparse model loaded in %.2fs (max_seq_length=%d, native cap)",
+            time.perf_counter() - t0,
+            sparse_max,
+        )
 
         self._device = "cuda"
         self.dimension: int = (
@@ -268,7 +313,14 @@ class EmbeddingModel:
 
         Args:
             texts: List of document texts (title + body).
-            batch_size: Max texts per encoding batch.
+            batch_size: Inner sub-batch size passed to
+                ``SentenceTransformer.encode``. SentenceTransformer
+                length-sorts the input then iterates
+                ``batch_size``-item sub-batches; small values
+                produce length-uniform sub-batches and minimise
+                padding waste on variable-length corpora. Defaults
+                to :meth:`_default_encode_batch_size` (config
+                ``embedding_encode_batch_size``).
 
         Returns:
             numpy array of shape ``(n, dimension)`` with normalized
@@ -282,7 +334,7 @@ class EmbeddingModel:
         import torch
 
         if batch_size is None:
-            batch_size = self._default_batch_size()
+            batch_size = self._default_encode_batch_size()
 
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
@@ -333,13 +385,17 @@ class EmbeddingModel:
         self,
         texts: list[str],
         *,
-        batch_size: int = 32,
+        batch_size: int | None = None,
     ) -> list[SparseResult]:
         """Encode document texts as SPLADE sparse vectors on GPU.
 
         Args:
             texts: List of document texts.
-            batch_size: Max texts per encoding batch.
+            batch_size: Inner sub-batch size for SPLADE encoding.
+                Defaults to :meth:`_default_encode_batch_size`
+                (config ``embedding_encode_batch_size``) so the
+                sparse path mirrors the dense path's length-uniform
+                sub-batching strategy.
 
         Returns:
             List of SparseResult objects with .indices and .values.
@@ -349,6 +405,9 @@ class EmbeddingModel:
                 batch_size=1.
         """
         import torch
+
+        if batch_size is None:
+            batch_size = self._default_encode_batch_size()
 
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
