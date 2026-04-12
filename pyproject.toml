@@ -21,7 +21,7 @@ dependencies = [
     "qdrant-client>=1.16.0",
     "pydantic>=2.12.5",
     "rich>=14.3.2",
-    "vaultspec-core>=0.1.0",
+    "vaultspec-core>=0.1.10",
     "mcp>=1.26.0",
     "typer>=0.12.0",
     "click>=8.1.7",
@@ -104,6 +104,14 @@ explicit = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vaultspec_rag"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Bundle ONLY the files vaultspec-rag exclusively owns. The broader
+# .vaultspec/rules/ tree contains vaultspec-core's bundled content too;
+# rag must not ship duplicates of core's files (each companion bundles
+# only its own).
+".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
+".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = "vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
