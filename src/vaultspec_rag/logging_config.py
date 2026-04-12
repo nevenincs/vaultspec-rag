@@ -95,7 +95,12 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
         if self.maxBytes > 0:
             try:
                 size = os.fstat(self.stream.fileno()).st_size
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError occurs when the underlying file object has
+                # already been closed (.fileno() raises on a closed stream).
+                # OSError covers fstat-level errors on platforms that
+                # support it.  Either way, fall back to the handler's
+                # last-known write offset.
                 size = self.stream.tell()
             msg = f"{self.format(record)}\n"
             if size + len(msg) >= self.maxBytes:
@@ -114,6 +119,18 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
         ``os.devnull`` for the duration of the rename, then re-``dup2``
         them onto the freshly-opened stream once the parent class has
         swapped files.
+
+        If anything in the rollover sequence raises (e.g. transient
+        Windows file-lock conflict, or ``self.stream is None`` because
+        the handler is in ``delay=True`` mode), fds 1 and 2 are
+        restored to *whatever ``self.baseFilename`` currently points
+        at* by opening it fresh and ``dup2``-ing the new fd onto 1 and
+        2.  This prevents the silent-log-loss failure mode where a
+        partial rollover leaves stdout/stderr permanently pinned to
+        ``/dev/null``.  Note that we do **not** save the original fds
+        1 / 2 before redirecting to ``/dev/null`` because those fds
+        point at the active log file and would themselves block the
+        Windows rename inside ``super().doRollover()``.
         """
         # logging.Handler.acquire() returns a reentrant RLock so it is
         # safe even when emit() already holds it on our behalf.
@@ -125,14 +142,39 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
                 os.dup2(devnull_fd, 2)
             finally:
                 os.close(devnull_fd)
-            super().doRollover()
-            if self.stream is not None:
+            try:
+                super().doRollover()
+                if self.stream is None:
+                    msg = (
+                        "DaemonRotatingFileHandler.doRollover: stream is "
+                        "None after super().doRollover()"
+                    )
+                    raise RuntimeError(msg)
                 fd = self.stream.fileno()
                 os.dup2(fd, 1)
                 os.dup2(fd, 2)
-        except Exception:
-            logger.exception("DaemonRotatingFileHandler.doRollover failed")
-            raise
+            except Exception:
+                # Recovery: open whatever currently lives at
+                # ``baseFilename`` (the active log path) and re-bind
+                # fds 1/2 onto it so subsequent stdout/stderr writes
+                # are NOT silently routed to /dev/null.  Best-effort
+                # only — if even this fails the original exception
+                # still propagates with the rich traceback.
+                try:
+                    recovery_fd = os.open(
+                        self.baseFilename,
+                        os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                        0o644,
+                    )
+                    try:
+                        os.dup2(recovery_fd, 1)
+                        os.dup2(recovery_fd, 2)
+                    finally:
+                        os.close(recovery_fd)
+                except OSError:
+                    pass
+                logger.exception("DaemonRotatingFileHandler.doRollover failed")
+                raise
         finally:
             self.release()
 

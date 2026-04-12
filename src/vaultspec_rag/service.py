@@ -99,7 +99,11 @@ class ServiceRegistry:
         cfg = get_config()
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
-        self._lock = threading.Lock()
+        # Reentrant so eviction can call close_project() while still
+        # holding the lock that selected the victim — closing without
+        # releasing the lock first eliminates a TOCTOU window where a
+        # concurrent lease() could resurrect the victim.
+        self._lock = threading.RLock()
         self._root_locks: dict[Path, threading.Lock] = {}
         self._gpu_lock = threading.Lock()
         self._reranker: CrossEncoder | None = None
@@ -342,10 +346,18 @@ class ServiceRegistry:
         """Evict slots whose ``last_access`` is older than the idle TTL.
 
         Caller MUST hold ``self._lock``.  Returns with ``self._lock``
-        still held.  Pops every victim from ``_projects`` *while the
-        lock is held* so a concurrent :meth:`lease` cannot resurrect
-        a slot that is about to be torn down, then runs the actual
-        teardown (watcher stop + store close) outside ``_lock``.
+        still held.
+
+        Race-safety: every victim is popped from ``_projects`` *while
+        the lock is held*, so a concurrent :meth:`lease` call cannot
+        observe a victim and resurrect it once teardown begins.  The
+        teardown itself (watcher stop → graph invalidate → store close)
+        runs *outside* the lock to avoid holding the registry critical
+        section across slow Qdrant close I/O — the slot is already
+        unreachable from ``_projects`` at that point so no other thread
+        can race it.  ``self._lock`` is reentrant (``RLock``) as a
+        defensive measure for any future code path that needs to call
+        :meth:`close_project` while still holding the lock.
         """
         if self._idle_ttl_seconds <= 0:
             return
