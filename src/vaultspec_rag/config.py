@@ -31,6 +31,10 @@ class EnvVar(StrEnum):
     LOG_FILE = "VAULTSPEC_RAG_LOG_FILE"
     PORT = "VAULTSPEC_RAG_PORT"
     LOG_LEVEL = "VAULTSPEC_RAG_LOG_LEVEL"
+    SERVICE_IDLE_TTL_SECONDS = "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS"
+    SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
+    SERVICE_LOG_MAX_BYTES = "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES"
+    SERVICE_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT"
 
     # Third-party env vars referenced in the codebase — defined here so
     # the string literal lives in exactly one place.
@@ -48,6 +52,10 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "log_file": EnvVar.LOG_FILE,
     "mcp_port": EnvVar.PORT,
     "log_level": EnvVar.LOG_LEVEL,
+    "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
+    "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
+    "service_log_max_bytes": EnvVar.SERVICE_LOG_MAX_BYTES,
+    "service_log_backup_count": EnvVar.SERVICE_LOG_BACKUP_COUNT,
 }
 
 
@@ -88,6 +96,10 @@ class VaultSpecConfigWrapper:
         "reranker_batch_size": 32,
         "mcp_port": 8766,
         "log_level": "WARNING",
+        "service_idle_ttl_seconds": 1800,
+        "service_max_projects": 16,
+        "service_log_max_bytes": 10485760,
+        "service_log_backup_count": 5,
     }
 
     def __init__(self, base: BaseConfig) -> None:

@@ -122,7 +122,10 @@ vaultspec-rag
         ├── start      Spawn background daemon (HTTP, default port 8766)
         ├── stop       Stop the background service
         ├── status     Show daemon health and connected projects
-        └── warmup     Pre-download model weights to HuggingFace cache
+        ├── warmup     Pre-download model weights to HuggingFace cache
+        └── projects
+            ├── list   Show per-project slot table (idle, refs, last access)
+            └── evict  Evict an idle project slot by root path
 ```
 
 **Global options:** `--target` / `-t` sets the workspace root. `--verbose` / `-v` and `--debug` / `-d` control log verbosity. `--version` / `-V` prints the installed version.
@@ -143,17 +146,21 @@ Configuration resolves through three tiers: CLI flags override environment varia
 
 ### Environment variables
 
-| Variable                        | Default                   | Description                                       |
-| ------------------------------- | ------------------------- | ------------------------------------------------- |
-| `VAULTSPEC_RAG_ROOT`            | cwd                       | Project root directory                            |
-| `VAULTSPEC_RAG_DATA_DIR`        | `.vault/data/search-data` | Search data directory                             |
-| `VAULTSPEC_RAG_QDRANT_DIR`      | `qdrant`                  | Qdrant storage subdirectory, relative to data dir |
-| `VAULTSPEC_RAG_INDEX_META`      | `index_meta.json`         | Vault index metadata filename                     |
-| `VAULTSPEC_RAG_CODE_INDEX_META` | `code_index_meta.json`    | Codebase index metadata filename                  |
-| `VAULTSPEC_RAG_STATUS_DIR`      | `~/.vaultspec-rag`        | Service status and log directory                  |
-| `VAULTSPEC_RAG_LOG_FILE`        | `service.log`             | Log filename, relative to status dir              |
-| `VAULTSPEC_RAG_PORT`            | `8766`                    | MCP HTTP server port                              |
-| `VAULTSPEC_RAG_LOG_LEVEL`       | `WARNING`                 | Logging level                                     |
+| Variable                                 | Default                   | Description                                                    |
+| ---------------------------------------- | ------------------------- | -------------------------------------------------------------- |
+| `VAULTSPEC_RAG_ROOT`                     | cwd                       | Project root directory                                         |
+| `VAULTSPEC_RAG_DATA_DIR`                 | `.vault/data/search-data` | Search data directory                                          |
+| `VAULTSPEC_RAG_QDRANT_DIR`               | `qdrant`                  | Qdrant storage subdirectory, relative to data dir              |
+| `VAULTSPEC_RAG_INDEX_META`               | `index_meta.json`         | Vault index metadata filename                                  |
+| `VAULTSPEC_RAG_CODE_INDEX_META`          | `code_index_meta.json`    | Codebase index metadata filename                               |
+| `VAULTSPEC_RAG_STATUS_DIR`               | `~/.vaultspec-rag`        | Service status and log directory                               |
+| `VAULTSPEC_RAG_LOG_FILE`                 | `service.log`             | Log filename, relative to status dir                           |
+| `VAULTSPEC_RAG_PORT`                     | `8766`                    | MCP HTTP server port                                           |
+| `VAULTSPEC_RAG_LOG_LEVEL`                | `WARNING`                 | Logging level                                                  |
+| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | `1800`                    | Idle TTL before an unused project slot is evicted (0 disables) |
+| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | `16`                      | Maximum concurrent project slots (0 disables the LRU cap)      |
+| `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES`    | `10485760`                | Daemon log rotation threshold in bytes (0 disables rotation)   |
+| `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` | `5`                       | Number of rotated log backups to retain                        |
 
 The tool also respects two third-party environment variables. Set `HF_HOME` to control where HuggingFace caches downloaded models. Set `HF_HUB_DOWNLOAD_TIMEOUT` to increase the model download timeout.
 
@@ -194,6 +201,19 @@ Check health from the CLI with `vaultspec-rag server service status`.
 `vaultspec-rag server service warmup` pre-downloads the three model weights (dense, sparse, reranker) to the local HuggingFace cache. Run this before first use to avoid cold-start delays on the initial server launch.
 
 The command respects `HF_HOME` and `HF_HUB_DOWNLOAD_TIMEOUT` env vars.
+
+### Project slot eviction
+
+The daemon bounds its in-memory per-project state in two dimensions. Each reachable workspace root occupies one `ProjectSlot` (Qdrant store, indexers, searcher, graph cache, watcher). Slots are admitted lazily on first traffic and evicted in two ways:
+
+- **Idle TTL.** A slot with `ref_count == 0` that has not been accessed for at least `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` (default 1800, i.e. 30 minutes) is evicted opportunistically the next time any request touches the registry. Set the env var to `0` to disable.
+- **LRU cap.** At most `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS` slots (default 16) live concurrently. Admitting a new slot at the cap evicts the least-recently-accessed idle slot. If every slot is busy, the MCP tool returns a structured `{"ok": false, "error": "registry_full", "busy_projects": [...]}` response and the caller should retry. Set to `0` to disable.
+
+Inspect and evict slots via `vaultspec-rag service projects list` and `vaultspec-rag service projects evict <root>`. The `list` command renders a Rich table (`Root`, `Idle`, `Refs`, `Last access`) plus a footer summarizing `{used}/{max}` slots and the idle TTL. The `evict` command exits `0` on success, `1` if the slot is busy, `2` if the root is unknown, and `3` if the service is unreachable. Both commands accept `--port` to target a specific daemon.
+
+### Log rotation
+
+The daemon installs a `DaemonRotatingFileHandler` on the root logger during `mcp_server.main()`. It wraps Python's `RotatingFileHandler` and, on every `doRollover`, re-`dup2`s file descriptors 1 and 2 onto the freshly opened stream so `print()`, uvicorn access logs, and any bare C-level writes land in the active log file instead of sticking to the rotated backup. Rotation thresholds come from `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES` (default 10 MiB) and `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` (default 5). Setting `max_bytes=0` disables size-based rotation while still installing the handler.
 
 ## Indexing
 
