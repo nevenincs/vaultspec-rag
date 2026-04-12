@@ -265,7 +265,23 @@ def main(
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
 
-    if ctx.invoked_subcommand in ("test", "quality", "server"):
+    if ctx.invoked_subcommand in (
+        "test",
+        "quality",
+        "server",
+        "install",
+        "uninstall",
+    ):
+        # These subcommands either operate without a resolved
+        # workspace (test/quality/server) or resolve their own via
+        # core's resolver (install/uninstall). Even so, stash the
+        # global ``--target`` (if any) on ctx.obj so the install /
+        # uninstall handlers can read it. Click consumes group
+        # options before subcommand options, so the global value
+        # would otherwise be silently dropped if the user invoked
+        # ``vaultspec-rag --target /path install`` instead of
+        # ``vaultspec-rag install --target /path``.
+        ctx.obj = {"target": target}
         return
 
     try:
@@ -1812,6 +1828,243 @@ def handle_test(ctx: typer.Context) -> None:
     test_dir = str(Path(__file__).resolve().parent / "tests")
     cmd = [sys.executable, "-m", "pytest", test_dir, *ctx.args]
     raise SystemExit(subprocess.call(cmd))
+
+
+@app.command("install")
+def handle_install(
+    ctx: typer.Context,
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            "-t",
+            help="Workspace path (default: current working directory).",
+        ),
+    ] = None,
+    upgrade: Annotated[
+        bool,
+        typer.Option(
+            "--upgrade",
+            help="Re-seed bundled rule and MCP files even if present.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview changes without writing.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Override contents if already installed.",
+        ),
+    ] = False,
+    skip: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--skip",
+            help="Skip a component (repeatable).",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output result as JSON."),
+    ] = False,
+) -> None:
+    """Install vaultspec-rag enrollment into a workspace.
+
+    Seeds rag's bundled rule and MCP source files into
+    ``.vaultspec/rules/`` and invokes vaultspec-core's sync to
+    propagate them to ``.mcp.json`` and provider directories. The
+    workspace is created if it does not yet exist; rag is fully
+    self-sufficient and does not require core to have run install
+    first.
+
+    Flag names mirror ``vaultspec-core install`` exactly. The
+    positional ``provider`` argument core takes is omitted because
+    rag has no provider concept of its own — propagation flows
+    through core's existing per-provider sync.
+    """
+    from .commands import install_run
+
+    # Honour the global ``--target`` from the root callback. Click
+    # consumes group options before subcommand options, so the user
+    # invoking ``vaultspec-rag --target /path install`` would lose
+    # the path entirely if we only read the local ``target``.
+    effective_target = target or _global_target(ctx)
+
+    try:
+        report = install_run(
+            path=effective_target,
+            upgrade=upgrade,
+            dry_run=dry_run,
+            force=force,
+            skip=set(skip or []),
+        )
+    except Exception as exc:
+        console.print(f"[bold red]install failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        import json as _json
+
+        console.print_json(_json.dumps(report.to_dict(), default=str))
+        return
+
+    _render_install_report(report)
+
+
+@app.command("uninstall")
+def handle_uninstall(
+    ctx: typer.Context,
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            "-t",
+            help="Workspace path (default: current working directory).",
+        ),
+    ] = None,
+    remove_data: Annotated[
+        bool,
+        typer.Option(
+            "--remove-data",
+            help="Also remove .vault/data/ (rag's index, preserved by default).",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview changes without removing.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Required to execute. Uninstall is destructive.",
+        ),
+    ] = False,
+    skip: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--skip",
+            help="Skip a component (repeatable).",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output result as JSON."),
+    ] = False,
+) -> None:
+    """Remove vaultspec-rag enrollment from a workspace.
+
+    Symmetric mirror of ``install``: removes rag's bundled rule and
+    MCP source files from ``.vaultspec/rules/`` and invokes
+    vaultspec-core's sync to propagate the removal to ``.mcp.json``
+    and provider directories.
+
+    Without ``--force``, returns a dry-run preview only. ``.vault/``
+    documents are always preserved. The rag index under
+    ``.vault/data/`` is preserved unless ``--remove-data`` is set.
+    rag never touches vaultspec-core's installation.
+    """
+    from .commands import uninstall_run
+
+    # Honour the global ``--target`` from the root callback (see
+    # handle_install for the rationale).
+    effective_target = target or _global_target(ctx)
+
+    try:
+        report = uninstall_run(
+            path=effective_target,
+            remove_data=remove_data,
+            dry_run=dry_run,
+            force=force,
+            skip=set(skip or []),
+        )
+    except Exception as exc:
+        console.print(f"[bold red]uninstall failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        import json as _json
+
+        console.print_json(_json.dumps(report.to_dict(), default=str))
+        return
+
+    _render_uninstall_report(report)
+
+
+def _global_target(ctx: typer.Context) -> Path | None:
+    """Read the global ``--target`` value the root callback stashed
+    on ``ctx.obj`` for short-circuited subcommands (install /
+    uninstall).
+
+    Returns ``None`` if the user did not pass a global target. The
+    callback only sets a dict here for the install/uninstall path;
+    other subcommands receive a ``CLIState`` instance instead, which
+    we ignore.
+    """
+    obj = ctx.obj
+    if isinstance(obj, dict):
+        value = obj.get("target")
+        if isinstance(value, Path):
+            return value
+    return None
+
+
+def _render_install_report(report: Any) -> None:
+    """Render an install report to the Rich console."""
+    title = {
+        "install": "[bold green]vaultspec-rag installed[/]",
+        "upgrade": "[bold green]vaultspec-rag upgraded[/]",
+        "dry_run": "[bold yellow]vaultspec-rag install (dry-run)[/]",
+    }.get(report.action, "[bold]vaultspec-rag install[/]")
+    console.print(title)
+    console.print(f"target: [cyan]{report.target}[/]")
+    if report.created_dirs:
+        console.print(f"created [bold]{len(report.created_dirs)}[/] directories")
+    if report.seeded:
+        console.print(f"seeded [bold]{len(report.seeded)}[/] bundled files:")
+        for rel in report.seeded:
+            console.print(f"  [green]+[/] {rel}")
+    sync_added = sum(getattr(r, "added", 0) for r in report.sync_results)
+    sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
+    sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
+    if sync_added or sync_updated or sync_pruned:
+        console.print(
+            f"core sync: [green]+{sync_added}[/] "
+            f"[yellow]~{sync_updated}[/] [red]-{sync_pruned}[/]"
+        )
+    for warning in report.warnings:
+        console.print(f"[yellow]warning:[/] {warning}")
+
+
+def _render_uninstall_report(report: Any) -> None:
+    """Render an uninstall report to the Rich console."""
+    title = {
+        "uninstall": "[bold green]vaultspec-rag uninstalled[/]",
+        "dry_run": "[bold yellow]vaultspec-rag uninstall (dry-run; "
+        "use --force to apply)[/]",
+    }.get(report.action, "[bold]vaultspec-rag uninstall[/]")
+    console.print(title)
+    console.print(f"target: [cyan]{report.target}[/]")
+    if report.removed:
+        console.print(f"removed [bold]{len(report.removed)}[/] bundled source files:")
+        for rel in report.removed:
+            console.print(f"  [red]-[/] {rel}")
+    if report.data_removed:
+        console.print("[red]-[/] .vault/data/ (rag index purged)")
+    sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
+    if sync_pruned:
+        console.print(f"core sync pruned: [red]-{sync_pruned}[/]")
+    for warning in report.warnings:
+        console.print(f"[yellow]warning:[/] {warning}")
 
 
 if __name__ == "__main__":
