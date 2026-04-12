@@ -2343,8 +2343,8 @@ wheels = [
 
 [[package]]
 name = "vaultspec-core"
-version = "0.1.8"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.10"
+source = { git = "https://github.com/wgergely/vaultspec-core.git?rev=feature%2Freconciling-sync#b170b74e851bfba75a5bf93bb6c5f4b8186e8ccd" }
 dependencies = [
     { name = "httpx" },
     { name = "mcp" },
@@ -2357,10 +2357,6 @@ dependencies = [
     { name = "starlette" },
     { name = "typer" },
     { name = "uvicorn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/05/46eb43959c010bcddf7a7422ccf04a97c0118cf53595729d41df88b5bce6/vaultspec_core-0.1.8.tar.gz", hash = "sha256:fc8c6738238238a7a44c40468db3a1d739f9f246d1516c1bbafc37b337107a7d", size = 1821879, upload-time = "2026-04-11T17:00:49.691Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/75/cc36bb8cc73df09217832d5ebf10d4ba823ec38d8eae94abba9bcd849d0f/vaultspec_core-0.1.8-py3-none-any.whl", hash = "sha256:dda16c1264db9516861956a51922df3c2ec3b92d7ecd32558b4b02c67e491795", size = 373848, upload-time = "2026-04-11T17:00:48.348Z" },
 ]
 
 [[package]]
@@ -2452,7 +2448,7 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=0.10" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.15" },
     { name = "typer", specifier = ">=0.12.0" },
-    { name = "vaultspec-core", specifier = ">=0.1.0" },
+    { name = "vaultspec-core", git = "https://github.com/wgergely/vaultspec-core.git?rev=feature%2Freconciling-sync" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["dev"]
