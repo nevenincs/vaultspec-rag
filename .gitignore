@@ -174,5 +174,18 @@ vault_index.json
 tmp-ref/
 
 # >>> vaultspec-managed (do not edit this block) >>>
+.agents/
+.claude/
+.codex/
+.gemini/
+.mcp.json
+.vault/.obsidian/
+.vault/.trash/
+.vault/data/
+.vault/logs/
+.vaultspec/
 .vaultspec/_snapshots/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
 # <<< vaultspec-managed <<<
