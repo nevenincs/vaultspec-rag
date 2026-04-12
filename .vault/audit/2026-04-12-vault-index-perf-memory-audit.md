@@ -435,3 +435,144 @@ Claude self-review pass.
 
 **Loop state:** idle. New findings append as F6.x, F7.x, … below
 when reviewers post additional comments.
+
+### Iteration 6 — deep sweep on user request (2026-04-12)
+
+User pushed back on Iteration 5's "quiet pass" verdict —
+correctly identifying that the audit had been too willing to
+mark items "accepted" without actually chasing them. This
+iteration reopens the loop with twelve concrete tasks that
+trace into files Iteration 5 never opened (watcher, MCP
+reindex tools, benchmarks) and into edge cases that were
+hand-waved (psutil error paths, sampler thread safety,
+concurrent reindex race, signal handling, IndexResult
+observability, profile-script scope).
+
+**New findings — fixed in commit `1036085`:**
+
+- **F6.1 HIGH** — Stale MCP tool docstrings.
+  `reindex_vault` and `reindex_codebase` still claimed
+  `clean=True` "drops and recreates the collection". MCP tool
+  docstrings ship to LLM clients as authoritative tool specs,
+  so this was actively misleading. Rewrote both to describe
+  the failure-safe streaming + post-stream stale-purge
+  semantics and noted the new `removed` field semantics.
+- **F6.2 MEDIUM (analysed → fixed by F6.6)** — Concurrent MCP
+  reindex calls dispatch through `_run_in_thread` to anyio's
+  worker pool with no indexer-level lock. Two concurrent
+  callers on the same project root could race the
+  `existing_ids_before` snapshot. Resolved by F6.6.
+- **F6.3 LOW → MEDIUM (escalated)** — `IndexResponse.removed`
+  always reported `0` on the `full_index` path because the
+  underlying `IndexResult.removed` was hard-coded to `0`.
+  MCP / CLI / watcher observability lost the stale-purge
+  count entirely. Fixed by F6.10.
+- **F6.4 LOW** — `_torch_probed = True` was set BEFORE the
+  init body, so a transient `torch.cuda.is_available()`
+  failure (driver hiccup on first touch) would be cached as
+  "no CUDA forever". Set `_torch_probed` only after the
+  full init succeeds; ImportError still cached because a
+  missing torch install is permanent.
+- **F6.5 LOW** — `tools/profile_vault_index.py` assigned
+  `result` inside the inner try block; if `VaultIndexer(...)`
+  or `full_index(...)` raised before binding, the
+  post-with-block prints raised `UnboundLocalError` and
+  masked the original exception. Pre-bind `result = None`
+  and guard the prints.
+- **F6.6 MEDIUM** — No indexer-level lock against concurrent
+  `full_index` / `incremental_index` calls. Real race: two
+  reindex calls (manual CLI + watcher, two MCP calls, etc.)
+  on the same indexer instance could both snapshot
+  `existing_ids_before`, both stream upserts, and both purge.
+  Pre-existing class of race that the new failure-safe path
+  made longer (the snapshot now lives across the entire
+  encode pipeline, not just the upsert). **Fix**: per-indexer
+  `threading.Lock` `_writer_lock` acquired by thin public
+  wrappers around new `_full_index_locked` /
+  `_incremental_index_locked` private methods. Same pattern
+  applied to both VaultIndexer and CodebaseIndexer. Search
+  reads do not acquire the lock.
+- **F6.7 MEDIUM** — `current_rss_mb` had no exception
+  handling. `psutil.NoSuchProcess` (stale PID after fork),
+  `psutil.AccessDenied` (Windows ACLs),
+  `psutil.ZombieProcess` (Linux) would propagate out of the
+  sampler thread and crash it silently. Wrapped in try /
+  except + drop the cached process handle on failure so the
+  next call can re-probe.
+- **F6.8 MEDIUM** — `_run` sampler body had no try/except.
+  A single bad sample (psutil failure, signal interrupt)
+  would crash the thread; subsequent `stop()` joins on a
+  dead thread without warning. Wrapped the body in
+  try/except, log a warning on failure, continue the loop.
+- **F6.9 MEDIUM** — `_release_cuda_cache()` was only called
+  on the success path of each slice. KeyboardInterrupt or a
+  CUDA OOM mid-encode would skip the release, leaving the
+  reserved pool inflated until the next operation. Wrapped
+  the slice body in its own try/finally so cleanup runs on
+  every exit path. Pre-bind `dense = sparse = None` so the
+  finally clause does not hit a `NameError` on early raise.
+- **F6.10 MEDIUM** — `IndexResult.removed` on `full_index`.
+  The new purge step can legitimately delete rows, but the
+  result object always reported `removed=0`. Set
+  `removed = len(stale_ids)` in both VaultIndexer and
+  CodebaseIndexer return values so MCP responses, CLI
+  summaries, and watcher logs surface the actual number of
+  purged rows.
+
+**New findings — verified safe / no fix:**
+
+- **F6.11 LOW (verified)** — `_release_cuda_cache()` ordering
+  vs upsert. Considered moving it before the I/O-bound upsert
+  so concurrent search queries see a smaller pool during the
+  I/O wait. Verified that the peak CUDA reserved pool happens
+  *during* encode, not after — once encode returns, the
+  blocks are idle whether released before or after the
+  upsert. Releasing earlier would still incur the host-device
+  sync. Left order as-is.
+- **F6.12 LOW (accepted as design)** — `memory_probe` import
+  is hard-coded into the streaming helpers. If `memory_probe.py`
+  were broken, the indexer would break too. Considered making
+  it a soft dep; decided against it because a broken probe
+  module should fail loudly at install time, and silently
+  degrading is worse.
+- **F6.13 LOW (accepted)** — `gpu_lock` is `threading.Lock`,
+  not `RLock`. Same-thread re-entry would deadlock. Verified
+  no caller nests gpu_lock acquisitions; documented on the
+  `VaultIndexer.__init__` docstring.
+
+**Iteration 6 also merged `origin/main` (commits up to
+`8c83e37`)**, picking up:
+
+- The `test_mcp_registry_lock_exists` RLock-acceptance fix
+  (PR #76) that was failing in CI on this branch
+- The companion-package release pipeline + store-eviction
+  work from #71/#72/#73/#74/#75/#77
+
+After the merge, CI Tests goes from FAILURE → SUCCESS without
+any change required from this PR.
+
+**Test results:**
+
+- 324 unit (was 313 pre-merge — main brought 11 new tests)
+- 41 integration (vault + codebase + progress + performance)
+- Ruff / format / ty all clean
+- Live RSS regression repro (synthetic 135 docs, RTX 4080
+  SUPER): peak RSS 8.2 GB, peak CUDA reserved 17 GB during
+  the worst slice, 1.4 GB between slices. Variance is corpus-
+  shape dependent — Iteration 7 wall-clock work is expected
+  to dramatically reduce both via sort-by-length batching.
+
+### Iteration 7 — wall-clock work (in scope per user 2026-04-12)
+
+User pivoted PR scope to include wall-clock too. Track A
+("Wall-clock investigation is out of scope") is retracted.
+This iteration owns:
+
+- Sort-by-length within slice to eliminate padding waste
+- Explicit `max_seq_length` on the SentenceTransformer
+- Verify `max_embed_chars=8000` aligns with token budget
+- Re-measure peak RSS + wall time after each change
+- Update the regression test threshold if the new budget
+  allows tightening it
+
+Findings will be appended as F7.x once each step lands.
