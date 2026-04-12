@@ -768,15 +768,21 @@ async def reindex_vault(
     search picks up updated document relationships.
 
     Args:
-        clean: If True, drop and recreate the vault collection
-            before a full re-index.
+        clean: If True, run a full re-index that re-encodes every
+            vault document and purges any rows whose IDs are absent
+            from the new corpus. The rebuild is failure-safe — the
+            old collection is preserved until the new slices have
+            been streamed in place — so an interrupted clean run
+            never leaves the store empty (#68 Track B).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
 
     Returns:
         IndexResponse with counts of added, updated, and
-        removed documents plus timing.
+        removed documents plus timing. ``removed`` reflects the
+        number of stale rows purged after the streaming rebuild
+        when ``clean=True``.
 
     Raises:
         RuntimeError: If RAG components fail to initialize
@@ -823,15 +829,20 @@ async def reindex_codebase(
     """Re-index the source codebase (incremental by default).
 
     Args:
-        clean: If True, drop and recreate the codebase
-            collection before a full re-index.
+        clean: If True, run a full re-index that re-encodes every
+            source chunk and purges any chunk IDs absent from the
+            new scan. The rebuild is failure-safe — the old chunks
+            stay live until the new slices have streamed in place —
+            so an interrupted clean run never leaves the codebase
+            collection empty (#68 Track B).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
 
     Returns:
         IndexResponse with counts of added, updated, and
-        removed chunks plus timing.
+        removed chunks plus timing. ``removed`` reflects the
+        post-stream stale-purge count when ``clean=True``.
 
     Raises:
         RuntimeError: If RAG components fail to initialize

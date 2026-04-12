@@ -62,13 +62,30 @@ def current_rss_mb() -> float:
     startup cheap when the probe is disabled. The ``psutil.Process``
     handle is cached on first call because this function runs at
     250 ms cadence from the background sampler.
+
+    Returns ``0.0`` (rather than raising) on any psutil failure —
+    the sampler thread must survive transient errors so a single
+    bad reading does not silently kill RSS tracking for the rest
+    of the run. See F6.7 / F6.8 in the rolling audit.
     """
     global _psutil_process
-    if _psutil_process is None:
+    try:
         import psutil
-
-        _psutil_process = psutil.Process(os.getpid())
-    return _psutil_process.memory_info().rss / (1024.0 * 1024.0)
+    except ImportError:
+        return 0.0
+    try:
+        if _psutil_process is None:
+            _psutil_process = psutil.Process(os.getpid())
+        return _psutil_process.memory_info().rss / (1024.0 * 1024.0)
+    except (
+        psutil.NoSuchProcess,
+        psutil.AccessDenied,
+        psutil.ZombieProcess,
+    ):
+        # Drop the cached handle so a subsequent call can re-probe
+        # (the PID may legitimately have changed across a fork).
+        _psutil_process = None
+        return 0.0
 
 
 def current_cuda_mb() -> tuple[float, float]:
@@ -160,8 +177,20 @@ class MemoryProbe:
 
     def _start_sampler(self) -> None:
         def _run() -> None:
+            # The sampler must survive transient errors. A single
+            # bad sample (psutil hiccup, signal interruption) is
+            # logged once and the loop continues so peak_rss_mb
+            # keeps tracking. F6.8 in the rolling audit.
             while not self._sampler_stop.wait(0.25):
-                rss = current_rss_mb()
+                try:
+                    rss = current_rss_mb()
+                except Exception:  # defensive sampler — must not die
+                    logger.warning(
+                        "memory-probe %s sample failed; continuing",
+                        self.name,
+                        exc_info=True,
+                    )
+                    continue
                 with self._lock:
                     if rss > self.peak_rss_mb:
                         self.peak_rss_mb = rss

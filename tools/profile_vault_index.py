@@ -111,6 +111,11 @@ def main() -> int:
             print("memory probe disabled — set VAULTSPEC_RAG_MEMORY_PROBE=1")
             return 2
 
+        # Pre-bind result so the post-with-block prints never raise
+        # UnboundLocalError when the inner try fails before
+        # full_index returns. F6.5 in the rolling audit.
+        result = None
+
         # The probe is used as a context manager so that any exception
         # (CUDA OOM, model load failure) still tears down the sampler
         # thread cleanly.
@@ -139,12 +144,13 @@ def main() -> int:
             probe.checkpoint("after-store-close")
 
         print(probe.report())
-        print(
-            f"indexed={result.total} added={result.added} "
-            f"duration_ms={result.duration_ms}",
-        )
+        if result is not None:
+            print(
+                f"indexed={result.total} added={result.added} "
+                f"duration_ms={result.duration_ms}",
+            )
         print(f"PEAK RSS: {probe.peak_rss_mb:.0f}MB")
-        return 0
+        return 0 if result is not None else 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

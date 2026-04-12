@@ -806,25 +806,43 @@ def _stream_encode_and_upsert_vault(
         try:
             for i in range(0, len(docs), slice_size):
                 slice_docs = docs[i : i + slice_size]
-                slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
+                slice_texts: list[str] | None = [
+                    f"{d.title}\n\n{d.content}" for d in slice_docs
+                ]
+                # Pre-bind dense/sparse so the finally clause never
+                # hits a NameError when the encode call raises before
+                # binding them.
+                dense = None
+                sparse = None
                 probe.checkpoint(f"slice-{i}-before-encode")
-                # Hold the GPU lock only across the encode call so that
-                # the I/O-bound upsert below runs without blocking
-                # concurrent searches on the same GPU.
-                with gpu_lock if gpu_lock is not None else nullcontext():
-                    dense = model.encode_documents(slice_texts)
-                    sparse = model.encode_documents_sparse(slice_texts)
-                probe.checkpoint(f"slice-{i}-after-encode")
-                for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
-                    doc.vector = vec.tolist()
-                    doc.sparse_indices = list(svec.indices)
-                    doc.sparse_values = list(svec.values)
-                store.upsert_documents(slice_docs)
-                # Drop references to per-slice tensors before
-                # releasing the CUDA caching pool so freed blocks are
-                # returned to the driver immediately.
-                del dense, sparse, slice_texts
-                _release_cuda_cache()
+                # Inner try/finally guarantees the per-slice CUDA
+                # caching pool is released on every exit path —
+                # success, exception, or KeyboardInterrupt — so a
+                # mid-encode interrupt cannot leave a stale reserved
+                # pool wedged in the allocator (#68 audit F6.9).
+                try:
+                    # Hold the GPU lock only across the encode call so
+                    # that the I/O-bound upsert below runs without
+                    # blocking concurrent searches on the same GPU.
+                    with gpu_lock if gpu_lock is not None else nullcontext():
+                        dense = model.encode_documents(slice_texts)
+                        sparse = model.encode_documents_sparse(slice_texts)
+                    probe.checkpoint(f"slice-{i}-after-encode")
+                    for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
+                        doc.vector = vec.tolist()
+                        doc.sparse_indices = list(svec.indices)
+                        doc.sparse_values = list(svec.values)
+                    store.upsert_documents(slice_docs)
+                finally:
+                    # Drop references to per-slice tensors before
+                    # releasing the CUDA caching pool so freed blocks
+                    # are returned to the driver immediately. The
+                    # rebind to None drops the previous binding's ref
+                    # count even when the encode raised mid-call.
+                    dense = None
+                    sparse = None
+                    slice_texts = None
+                    _release_cuda_cache()
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_docs))
         finally:
@@ -859,19 +877,30 @@ def _stream_encode_and_upsert_codebase(
         try:
             for i in range(0, len(chunks), slice_size):
                 slice_chunks = chunks[i : i + slice_size]
-                slice_texts = [c.content for c in slice_chunks]
+                slice_texts: list[str] | None = [c.content for c in slice_chunks]
+                dense = None
+                sparse = None
                 probe.checkpoint(f"slice-{i}-before-encode")
-                with gpu_lock if gpu_lock is not None else nullcontext():
-                    dense = model.encode_documents(slice_texts)
-                    sparse = model.encode_documents_sparse(slice_texts)
-                probe.checkpoint(f"slice-{i}-after-encode")
-                for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
-                    chunk.vector = vec.tolist()
-                    chunk.sparse_indices = list(svec.indices)
-                    chunk.sparse_values = list(svec.values)
-                store.upsert_code_chunks(slice_chunks)
-                del dense, sparse, slice_texts
-                _release_cuda_cache()
+                # Mirror the vault helper: inner try/finally so the
+                # CUDA caching pool is released on every exit path
+                # (#68 audit F6.9).
+                try:
+                    with gpu_lock if gpu_lock is not None else nullcontext():
+                        dense = model.encode_documents(slice_texts)
+                        sparse = model.encode_documents_sparse(slice_texts)
+                    probe.checkpoint(f"slice-{i}-after-encode")
+                    for chunk, vec, svec in zip(
+                        slice_chunks, dense, sparse, strict=True
+                    ):
+                        chunk.vector = vec.tolist()
+                        chunk.sparse_indices = list(svec.indices)
+                        chunk.sparse_values = list(svec.values)
+                    store.upsert_code_chunks(slice_chunks)
+                finally:
+                    dense = None
+                    sparse = None
+                    slice_texts = None
+                    _release_cuda_cache()
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))
         finally:
@@ -905,8 +934,11 @@ class VaultIndexer:
             root_dir: Path to the vault workspace root.
             model: Embedding model used to encode document text.
             store: Vector store where indexed documents are persisted.
-            gpu_lock: Optional ``threading.Lock`` that serializes
-                GPU operations (encoding) with concurrent searches.
+            gpu_lock: Optional non-reentrant ``threading.Lock`` that
+                serializes GPU operations (encoding) with concurrent
+                searches. ``threading.Lock`` (not ``RLock``) is
+                expected — same-thread re-entry would deadlock; the
+                indexer never nests its own GPU acquisitions.
         """
         from .config import get_config
 
@@ -916,6 +948,15 @@ class VaultIndexer:
         self.model = model
         self.store = store
         self._gpu_lock = gpu_lock
+        # Indexer-level writer lock that serializes full_index and
+        # incremental_index against each other and against themselves.
+        # Without this, two concurrent MCP / CLI / watcher reindex
+        # calls on the same indexer instance could race their
+        # ``existing_ids_before`` snapshots and overwrite each other's
+        # contributions (#68 audit F6.6).
+        import threading as _threading
+
+        self._writer_lock: _threading.Lock = _threading.Lock()
         self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
 
     def full_index(
@@ -924,7 +965,25 @@ class VaultIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Full re-index of all vault documents.
+        """Full re-index serialized through the indexer writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_full_index_locked`. The lock guarantees that two
+        concurrent ``full_index`` (or ``incremental_index``) calls on
+        the same indexer instance run sequentially, eliminating the
+        ``existing_ids_before`` snapshot race documented in the #68
+        rolling audit (F6.6).
+        """
+        with self._writer_lock:
+            return self._full_index_locked(clean=clean, reporter=reporter)
+
+    def _full_index_locked(
+        self,
+        clean: bool = False,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`full_index`.
 
         Scans all documents, embeds them, and replaces the entire store.
         Emits phase events through ``reporter`` at every pipeline step.
@@ -1058,7 +1117,10 @@ class VaultIndexer:
             total=len(docs),
             added=len(docs),
             updated=0,
-            removed=0,
+            # Report the post-stream stale-purge count so MCP / CLI /
+            # watcher observability reflects the rows actually deleted
+            # by the failure-safe rebuild (#68 audit F6.3 / F6.10).
+            removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
         )
@@ -1068,7 +1130,22 @@ class VaultIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Incremental index: only re-index new and modified documents.
+        """Incremental re-index serialized through the writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_incremental_index_locked`. Serializes against
+        concurrent ``full_index`` / ``incremental_index`` callers on
+        the same indexer (#68 audit F6.6).
+        """
+        with self._writer_lock:
+            return self._incremental_index_locked(reporter=reporter)
+
+    def _incremental_index_locked(
+        self,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`incremental_index`.
 
         Compares blake2b content hashes against stored metadata to identify
         changes. Emits phase events through ``reporter``.
@@ -1282,6 +1359,12 @@ class CodebaseIndexer:
         self.store = store
         self._gpu_lock = gpu_lock
         self._extra_excludes = extra_excludes or []
+        # Indexer-level writer lock that serializes full_index and
+        # incremental_index against each other on the same instance
+        # (#68 audit F6.6 — concurrent reindex race).
+        import threading as _threading
+
+        self._writer_lock: _threading.Lock = _threading.Lock()
         from .config import get_config
 
         cfg = get_config()
@@ -1593,11 +1676,27 @@ class CodebaseIndexer:
 
     def full_index(
         self,
+        clean: bool = False,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Full codebase re-index serialized through the writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_full_index_locked`. Mirrors the VaultIndexer wrapper
+        and serializes against concurrent reindex callers (#68 audit
+        F6.6).
+        """
+        with self._writer_lock:
+            return self._full_index_locked(clean=clean, reporter=reporter)
+
+    def _full_index_locked(
+        self,
         clean: bool = False,  # noqa: ARG002  -- kept for API symmetry
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Full re-index of all codebase files.
+        """Locked implementation of :meth:`full_index`.
 
         Args:
             clean: Retained for API symmetry with ``VaultIndexer``.
@@ -1611,7 +1710,8 @@ class CodebaseIndexer:
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total chunk
-            count and ``updated``/``removed`` are both zero.
+            count and ``removed`` reports the post-stream stale-chunk
+            purge count.
 
         Raises:
             OSError: If source files cannot be read or hashed.
@@ -1717,7 +1817,10 @@ class CodebaseIndexer:
             total=len(all_chunks),
             added=len(all_chunks),
             updated=0,
-            removed=0,
+            # Mirror VaultIndexer.full_index — surface the post-stream
+            # purge count so MCP / CLI clients can observe how many
+            # stale chunks were swept (#68 audit F6.3 / F6.10).
+            removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(paths),
@@ -1728,7 +1831,21 @@ class CodebaseIndexer:
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
-        """Incremental index: only re-index new and modified source files.
+        """Incremental codebase re-index serialized through the writer lock.
+
+        Thin wrapper that acquires ``self._writer_lock`` and delegates
+        to :meth:`_incremental_index_locked`. Mirrors VaultIndexer
+        and serializes concurrent reindex callers (#68 audit F6.6).
+        """
+        with self._writer_lock:
+            return self._incremental_index_locked(reporter=reporter)
+
+    def _incremental_index_locked(
+        self,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`incremental_index`.
 
         Uses blake2b content hashing to detect changes (not mtime). Emits
         phase events through ``reporter``.
