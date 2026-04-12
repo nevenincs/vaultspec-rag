@@ -35,6 +35,11 @@ class EnvVar(StrEnum):
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
     SERVICE_LOG_MAX_BYTES = "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES"
     SERVICE_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT"
+    # Wall-clock + memory tuning knobs introduced in #68 Track B.
+    EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
+    EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
+    EMBEDDING_MAX_SEQ_LENGTH = "VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH"
+    MAX_EMBED_CHARS = "VAULTSPEC_RAG_MAX_EMBED_CHARS"
 
     # Third-party env vars referenced in the codebase — defined here so
     # the string literal lives in exactly one place.
@@ -56,6 +61,13 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
     "service_log_max_bytes": EnvVar.SERVICE_LOG_MAX_BYTES,
     "service_log_backup_count": EnvVar.SERVICE_LOG_BACKUP_COUNT,
+    # Performance tuning knobs (#68 audit F9.1) — surface them via
+    # env vars too so deploy-time tuning does not require CLI flags
+    # or config file edits.
+    "embedding_batch_size": EnvVar.EMBEDDING_BATCH_SIZE,
+    "embedding_encode_batch_size": EnvVar.EMBEDDING_ENCODE_BATCH_SIZE,
+    "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
+    "max_embed_chars": EnvVar.MAX_EMBED_CHARS,
 }
 
 

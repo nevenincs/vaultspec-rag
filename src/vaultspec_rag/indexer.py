@@ -1013,16 +1013,15 @@ class VaultIndexer:
         Emits phase events through ``reporter`` at every pipeline step.
 
         Args:
-            clean: Retained for backwards-compatibility. Since #68
-                Track B the rebuild is always failure-safe: the
-                indexer ensures the table, streams upserts in place
-                (idempotent by doc_id), and purges only the IDs that
-                are absent from the new corpus. The documented
-                "no stale documents persist" contract is honoured
-                regardless of this flag's value; the flag now only
-                influences a debug log when the stale set is empty.
-                Dropping the collection for a schema reset must be
-                done explicitly (``store.drop_table()``).
+            clean: When ``True``, drop and recreate the vault
+                collection up front so schema-level changes (e.g.
+                a new embedding dimension) take effect (#68 audit
+                F9.6 — codex P2). The default ``clean=False`` path
+                is failure-safe: it streams upserts in place and
+                purges only the stale doc IDs after a successful
+                rebuild, so an interrupted run never leaves the
+                collection empty. Both modes honour the documented
+                "no stale documents persist" contract.
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
 
@@ -1077,12 +1076,27 @@ class VaultIndexer:
         # not destroyed the old collection. clean=True preserves its
         # documented contract ("no stale documents persist") via the
         # final purge step.
+        #
+        # When ``clean=True`` is explicitly passed, we ALSO drop the
+        # collection up front so that schema-level changes (e.g. a
+        # new embedding dimension) take effect (#68 audit F9.6).
+        # This re-introduces a narrow data-loss window between the
+        # drop and the streaming upsert — but only on the explicit
+        # opt-in path. ``clean=False`` (the default + watcher path)
+        # remains failure-safe.
         reporter.phase_start("prepare collection", 1)
         try:
+            if clean:
+                self.store.drop_table()
             self.store.ensure_table()
             try:
                 existing_ids_before: set[str] = set(self.store.get_all_ids())
-            except OSError:
+            except (OSError, RuntimeError):
+                # OSError covers I/O failures; RuntimeError covers
+                # Qdrant client errors and lock contention
+                # (VaultStoreLockedError). Either way the safest
+                # response is to skip the stale-document purge so
+                # the rebuild can still complete (#68 audit F9.4).
                 logger.warning(
                     "Could not snapshot existing vault IDs before "
                     "rebuild; stale-document purge will be skipped",
@@ -1716,20 +1730,21 @@ class CodebaseIndexer:
 
     def _full_index_locked(
         self,
-        clean: bool = False,  # noqa: ARG002  -- kept for API symmetry
+        clean: bool = False,
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
 
         Args:
-            clean: Retained for API symmetry with ``VaultIndexer``.
-                The streaming rebuild is always failure-safe: it
-                upserts in place and purges stale chunks after a
-                successful run regardless of this flag's value.
-                Passing ``clean=True`` no longer drops the collection
-                up front (#68 Track B), so the old drop-then-rebuild
-                data-loss window has been eliminated.
+            clean: When ``True``, drop and recreate the codebase
+                collection up front so schema-level changes (e.g.
+                a new embedding dimension) take effect (#68 audit
+                F9.6 — codex P2). The default ``clean=False`` path
+                is failure-safe: it streams upserts in place and
+                purges only the stale chunk IDs after a successful
+                rebuild, so an interrupted run never leaves the
+                collection empty.
             reporter: Required progress reporter.
 
         Returns:
@@ -1784,12 +1799,18 @@ class CodebaseIndexer:
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): keep
         # the old chunks live until after streaming succeeds, then
         # purge only the chunk IDs that are absent from the new corpus.
+        # When ``clean=True`` is explicitly passed, ALSO drop the
+        # collection up front so schema-level changes (e.g. new
+        # embedding dimension) take effect (#68 audit F9.6). The
+        # default ``clean=False`` path remains failure-safe.
         reporter.phase_start("prepare collection", 1)
         try:
+            if clean:
+                self.store.drop_code_table()
             self.store.ensure_code_table()
             try:
                 existing_ids_before: set[str] = set(self.store.get_all_code_ids())
-            except OSError:
+            except (OSError, RuntimeError):
                 logger.warning(
                     "Could not snapshot existing code-chunk IDs "
                     "before rebuild; stale-chunk purge will be "

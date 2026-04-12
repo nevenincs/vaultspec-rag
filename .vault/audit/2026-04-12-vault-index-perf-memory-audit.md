@@ -695,13 +695,98 @@ Re-walked Iteration 7 changes for any second-order bugs.
 fix is correct and complete; its second-order surface area
 has been swept.
 
-**Iteration 9 — re-audit queue:**
+### Iteration 9 — fresh reviewer responses on iter 6/7/8 (2026-04-12)
 
-- Re-fetch any new code review comments on PR #70 from
-  gemini-code-assist / codex-connector / Claude self-reviews
-  triggered by the iteration-7 push.
-- Sweep the broader codebase for any module that might have
-  hard-coded `embedding_batch_size` as both slice + encode
-  size (e.g. external integrations).
-- If new findings appear, open them as F9.x; otherwise the
-  loop is idle until reviewers post additional comments.
+User triggered fresh `@codex review`, `@gemini review pr`,
+`@claude review safety` after iteration 8. All three bots
+re-reviewed against the merged-main commit `f32b221`.
+
+**Claude safety review — CLEAN on all three requested areas:**
+
+- `_writer_lock` pattern: consistent ordering, no deadlock,
+  no re-entrant trap. The `_full_index_locked` private method
+  never calls back into the public wrapper, so the
+  non-reentrant `threading.Lock` is safe.
+- `except Exception` in sampler thread: narrowly scoped to
+  `current_rss_mb()` only; logs full traceback via
+  `exc_info=True`; `BaseException` (KeyboardInterrupt,
+  SystemExit) escapes correctly. Not a catch-all that hides
+  business logic.
+- Length-sort ordering: `sorted()` returns a new list so the
+  input is not mutated; in-place mutation of `VaultDocument`
+  objects flows correctly through both `docs` and `sorted_docs`
+  references; all `IndexResult` fields are order-independent.
+- Verdict: **"branch is safe to merge from a concurrency and
+  correctness standpoint."**
+
+**Claude flagged 2 INFO findings — both addressed in commit
+pending:**
+
+- **F9.1 INFO** — `embedding_encode_batch_size` and
+  `embedding_max_seq_length` (plus `embedding_batch_size` and
+  `max_embed_chars` for symmetry) absent from
+  `_ENV_OVERRIDE_MAP`. **Fix**: added all four perf knobs to
+  `_ENV_OVERRIDE_MAP` with new `EnvVar` enum members
+  (`EMBEDDING_BATCH_SIZE`, `EMBEDDING_ENCODE_BATCH_SIZE`,
+  `EMBEDDING_MAX_SEQ_LENGTH`, `MAX_EMBED_CHARS`). The wrapper's
+  type-coercion path handles `int` env values automatically.
+  Verified end-to-end: `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE=128`
+  etc. all read back as the correct int value.
+- **F9.2 INFO (pre-existing)** — `_incremental_index_locked`
+  for CodebaseIndexer deletes old chunk IDs before upsert.
+  Search queries between the delete and upsert see missing
+  chunks. Pre-existing behavior, asymmetric with the
+  `_full_index_locked` upsert-then-purge approach. Tracked
+  as a follow-up; not regressed by this PR.
+
+**Gemini review — 3 line-level findings:**
+
+- **F9.3 CRITICAL (FALSE POSITIVE)** — gemini reported
+  `start` undefined in `_full_index_locked` after the wrapper
+  refactor. Verified at `indexer.py:1043`: `start = time.time()` IS in scope, inside `_full_index_locked` body.
+  CI Tests (full integration suite) is GREEN, which would
+  catch a NameError on the very first integration test run.
+  Gemini misread the diff. Marked as no-fix.
+- **F9.4 MEDIUM** — `except OSError` in the `prepare collection` step only catches OS-level errors. If
+  `get_all_ids` raises `RuntimeError` (Qdrant client error or
+  `VaultStoreLockedError`) the indexer crashes entirely.
+  **Fix**: broaden to `except (OSError, RuntimeError)` so
+  the rebuild continues with an empty `existing_ids_before`
+  snapshot (the stale-purge step is then a no-op). Same fix
+  applied to both `VaultIndexer` and `CodebaseIndexer`.
+- **F9.5 MEDIUM (FALSE POSITIVE)** — `strict=True` in zip
+  requires Python 3.10+. The project's `pyproject.toml`
+  declares `requires-python = ">=3.13"`, so this is satisfied
+  by a generous margin. No-fix.
+
+**Codex review — 1 P2 line-level finding:**
+
+- **F9.6 P2** — `clean=True` no longer drops the collection
+  up front, so users who changed embedding model / dimension
+  cannot recover via `vaultspec-rag index --clean`. The
+  `ensure_table()` call sees the existing collection (with
+  the old dimension) and reuses it; subsequent upserts then
+  fail with a Qdrant schema mismatch.
+  **Fix**: restore destructive `drop_table()` /
+  `drop_code_table()` calls in the `prepare collection`
+  phase BUT only when `clean=True` is explicitly passed. The
+  default `clean=False` path remains failure-safe. This
+  resolves the codex iteration 2 P1 (failure-safe by
+  default) and the codex iteration 9 P2 (schema reset
+  capability) simultaneously: users get failure safety on
+  the watcher / incremental path AND a destructive reset
+  capability when they explicitly opt in.
+
+**Tests after iteration 9 fixes:**
+
+- 324 unit + 41 integration: PASSED
+- Ruff / format / ty: clean
+- Env-var override roundtrip verified for all 4 new keys.
+
+**Iteration 10 — re-audit queue:**
+
+After Iteration 9 commits, re-trigger the bots once more to
+verify the new `clean=True` destructive path is acceptable
+(it directly addresses both codex iterations). Also re-check
+any existing tests that exercise `clean=True` to ensure they
+still see the expected post-rebuild state.
