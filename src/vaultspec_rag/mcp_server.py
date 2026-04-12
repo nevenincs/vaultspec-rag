@@ -903,10 +903,32 @@ def main(port: int | None = None) -> None:
     In stdio mode, delegates to ``mcp.run(transport="stdio")``
     for Claude Desktop compatibility (no lifespan).
 
+    When invoked as the ``vaultspec-search-mcp`` console script with no
+    explicit ``port`` argument, parses ``sys.argv`` for ``--port`` and
+    ``--help``. ``--help`` must be free (no GPU, no model load) so that
+    packaging smoke tests and install probes succeed in environments
+    without CUDA.
+
     Args:
         port: If provided, run on streamable-http at
-            127.0.0.1:<port>. Otherwise use stdio transport.
+            127.0.0.1:<port>. Otherwise parse argv (or use stdio).
     """
+    if port is None:
+        import argparse
+
+        parser = argparse.ArgumentParser(
+            prog="vaultspec-search-mcp",
+            description="VaultSpec RAG MCP server",
+        )
+        parser.add_argument(
+            "--port",
+            type=int,
+            default=None,
+            help="HTTP port (default: stdio transport)",
+        )
+        args = parser.parse_args()
+        port = args.port
+
     global _http_mode
     _http_mode = port is not None
 
@@ -952,14 +974,4 @@ def main(port: int | None = None) -> None:
 
 
 if __name__ == "__main__":
-    import argparse
-
-    _parser = argparse.ArgumentParser(description="VaultSpec RAG MCP server")
-    _parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help="HTTP port (default: stdio transport)",
-    )
-    _args = _parser.parse_args()
-    main(port=_args.port)
+    main()
