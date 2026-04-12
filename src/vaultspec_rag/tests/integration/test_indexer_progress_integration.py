@@ -102,6 +102,7 @@ class TestVaultIndexerProgress:
                 "parse documents",
                 "prepare collection",
                 "embed + upsert documents",
+                "purge stale documents",
                 "write metadata",
             ]
             assert names == expected, f"unexpected phase order: {names}"
@@ -123,6 +124,8 @@ class TestVaultIndexerProgress:
             assert phase_totals["parse documents"] >= n_docs
             assert phase_totals["prepare collection"] == 1
             assert phase_totals["embed + upsert documents"] == n_docs
+            # Fresh collection — no stale IDs to purge.
+            assert phase_totals["purge stale documents"] == 0
             assert phase_totals["write metadata"] == 1
         finally:
             store.close()
@@ -154,6 +157,7 @@ class TestCodebaseIndexerProgress:
                 "chunk files",
                 "prepare collection",
                 "embed + upsert chunks",
+                "purge stale chunks",
                 "write metadata",
             ]
             assert names == expected, f"unexpected phase order: {names}"
@@ -175,6 +179,7 @@ class TestCodebaseIndexerProgress:
             if n_chunks > 0:
                 assert phase_totals["prepare collection"] == 1
                 assert phase_totals["embed + upsert chunks"] == n_chunks
+                assert phase_totals["purge stale chunks"] == 0
                 assert phase_totals["write metadata"] == 1
         finally:
             store.close()

@@ -803,30 +803,35 @@ def _stream_encode_and_upsert_vault(
 
     with MemoryProbe(name="vault-full-index") as probe:
         reporter.phase_start("embed + upsert documents", len(docs))
-        for i in range(0, len(docs), slice_size):
-            slice_docs = docs[i : i + slice_size]
-            slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
-            probe.checkpoint(f"slice-{i}-before-encode")
-            # Hold the GPU lock only across the encode call so that the
-            # I/O-bound upsert below runs without blocking concurrent
-            # searches on the same GPU.
-            with gpu_lock if gpu_lock is not None else nullcontext():
-                dense = model.encode_documents(slice_texts)
-                sparse = model.encode_documents_sparse(slice_texts)
-            probe.checkpoint(f"slice-{i}-after-encode")
-            for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
-                doc.vector = vec.tolist()
-                doc.sparse_indices = list(svec.indices)
-                doc.sparse_values = list(svec.values)
-            store.upsert_documents(slice_docs)
-            # Drop references to per-slice tensors before releasing the
-            # CUDA caching pool so freed blocks are returned to the
-            # driver immediately.
-            del dense, sparse, slice_texts
-            _release_cuda_cache()
-            probe.checkpoint(f"slice-{i}-after-empty-cache")
-            reporter.advance(len(slice_docs))
-        reporter.phase_end()
+        try:
+            for i in range(0, len(docs), slice_size):
+                slice_docs = docs[i : i + slice_size]
+                slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
+                probe.checkpoint(f"slice-{i}-before-encode")
+                # Hold the GPU lock only across the encode call so that
+                # the I/O-bound upsert below runs without blocking
+                # concurrent searches on the same GPU.
+                with gpu_lock if gpu_lock is not None else nullcontext():
+                    dense = model.encode_documents(slice_texts)
+                    sparse = model.encode_documents_sparse(slice_texts)
+                probe.checkpoint(f"slice-{i}-after-encode")
+                for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
+                    doc.vector = vec.tolist()
+                    doc.sparse_indices = list(svec.indices)
+                    doc.sparse_values = list(svec.values)
+                store.upsert_documents(slice_docs)
+                # Drop references to per-slice tensors before
+                # releasing the CUDA caching pool so freed blocks are
+                # returned to the driver immediately.
+                del dense, sparse, slice_texts
+                _release_cuda_cache()
+                probe.checkpoint(f"slice-{i}-after-empty-cache")
+                reporter.advance(len(slice_docs))
+        finally:
+            # Always close the phase so progress reporters never see
+            # an unbalanced phase_start/phase_end pair, even when the
+            # slice loop raises (CUDA OOM, Qdrant I/O error, etc).
+            reporter.phase_end()
 
     if probe.samples:
         logger.info("%s", probe.report())
@@ -851,24 +856,26 @@ def _stream_encode_and_upsert_codebase(
 
     with MemoryProbe(name="codebase-full-index") as probe:
         reporter.phase_start("embed + upsert chunks", len(chunks))
-        for i in range(0, len(chunks), slice_size):
-            slice_chunks = chunks[i : i + slice_size]
-            slice_texts = [c.content for c in slice_chunks]
-            probe.checkpoint(f"slice-{i}-before-encode")
-            with gpu_lock if gpu_lock is not None else nullcontext():
-                dense = model.encode_documents(slice_texts)
-                sparse = model.encode_documents_sparse(slice_texts)
-            probe.checkpoint(f"slice-{i}-after-encode")
-            for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
-                chunk.vector = vec.tolist()
-                chunk.sparse_indices = list(svec.indices)
-                chunk.sparse_values = list(svec.values)
-            store.upsert_code_chunks(slice_chunks)
-            del dense, sparse, slice_texts
-            _release_cuda_cache()
-            probe.checkpoint(f"slice-{i}-after-empty-cache")
-            reporter.advance(len(slice_chunks))
-        reporter.phase_end()
+        try:
+            for i in range(0, len(chunks), slice_size):
+                slice_chunks = chunks[i : i + slice_size]
+                slice_texts = [c.content for c in slice_chunks]
+                probe.checkpoint(f"slice-{i}-before-encode")
+                with gpu_lock if gpu_lock is not None else nullcontext():
+                    dense = model.encode_documents(slice_texts)
+                    sparse = model.encode_documents_sparse(slice_texts)
+                probe.checkpoint(f"slice-{i}-after-encode")
+                for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
+                    chunk.vector = vec.tolist()
+                    chunk.sparse_indices = list(svec.indices)
+                    chunk.sparse_values = list(svec.values)
+                store.upsert_code_chunks(slice_chunks)
+                del dense, sparse, slice_texts
+                _release_cuda_cache()
+                probe.checkpoint(f"slice-{i}-after-empty-cache")
+                reporter.advance(len(slice_chunks))
+        finally:
+            reporter.phase_end()
 
     if probe.samples:
         logger.info("%s", probe.report())
@@ -966,6 +973,8 @@ class VaultIndexer:
             reporter.phase_end()
             reporter.phase_start("embed + upsert documents", 0)
             reporter.phase_end()
+            reporter.phase_start("purge stale documents", 0)
+            reporter.phase_end()
             reporter.phase_start("write metadata", 0)
             reporter.phase_end()
             return IndexResult(
@@ -977,25 +986,24 @@ class VaultIndexer:
                 device=self.model.device,
             )
 
-        # Prepare the destination table before streaming slices so each
-        # slice can be upserted and freed immediately — required to keep
-        # peak RSS bounded on large corpora (#68).
+        # Failure-safe rebuild: ensure the table exists, snapshot the
+        # current ID set, stream upsert (idempotent by doc_id — existing
+        # rows are overwritten in place), then purge only the IDs that
+        # no longer exist in the new corpus. If any slice raises we have
+        # not destroyed the old collection. clean=True preserves its
+        # documented contract ("no stale documents persist") via the
+        # final purge step.
         reporter.phase_start("prepare collection", 1)
-        if clean:
-            self.store.drop_table()
-            self.store.ensure_table()
-        else:
-            self.store.ensure_table()
-            try:
-                existing_ids = self.store.get_all_ids()
-                if existing_ids:
-                    self.store.delete_documents(list(existing_ids))
-            except OSError:
-                logger.error(
-                    "Failed to delete existing documents during full "
-                    "re-index — aborting to prevent duplicates",
-                )
-                raise
+        self.store.ensure_table()
+        try:
+            existing_ids_before: set[str] = set(self.store.get_all_ids())
+        except OSError:
+            logger.warning(
+                "Could not snapshot existing vault IDs before rebuild; "
+                "stale-document purge will be skipped",
+                exc_info=True,
+            )
+            existing_ids_before = set()
         reporter.advance(1)
         reporter.phase_end()
 
@@ -1007,6 +1015,31 @@ class VaultIndexer:
             gpu_lock=self._gpu_lock,
             reporter=reporter,
         )
+
+        # Streaming completed successfully — now it is safe to delete
+        # the rows that were in the collection before but are absent
+        # from the freshly-indexed corpus.
+        new_ids = {doc.id for doc in docs}
+        stale_ids = sorted(existing_ids_before - new_ids)
+        reporter.phase_start("purge stale documents", len(stale_ids))
+        if stale_ids:
+            try:
+                self.store.delete_documents(stale_ids)
+            except OSError:
+                logger.error(
+                    "Failed to purge stale vault documents after "
+                    "successful rebuild — collection still contains "
+                    "valid new data plus %d stale rows",
+                    len(stale_ids),
+                )
+                raise
+            reporter.advance(len(stale_ids))
+        reporter.phase_end()
+        if clean and not stale_ids and existing_ids_before:
+            logger.debug(
+                "clean=True requested but every existing ID is also "
+                "present in the new corpus — nothing to purge",
+            )
 
         reporter.phase_start("write metadata", 1)
         self._save_meta(docs)
@@ -1553,15 +1586,20 @@ class CodebaseIndexer:
 
     def full_index(
         self,
-        clean: bool = False,
+        clean: bool = False,  # noqa: ARG002  -- kept for API symmetry
         *,
         reporter: ProgressReporter,
     ) -> IndexResult:
         """Full re-index of all codebase files.
 
         Args:
-            clean: If True, drop and recreate the collection before
-                indexing to guarantee no stale chunks persist.
+            clean: Retained for API symmetry with ``VaultIndexer``.
+                The streaming rebuild is always failure-safe: it
+                upserts in place and purges stale chunks after a
+                successful run regardless of this flag's value.
+                Passing ``clean=True`` no longer drops the collection
+                up front (#68 Track B), so the old drop-then-rebuild
+                data-loss window has been eliminated.
             reporter: Required progress reporter.
 
         Returns:
@@ -1612,6 +1650,8 @@ class CodebaseIndexer:
             reporter.phase_end()
             reporter.phase_start("embed + upsert chunks", 0)
             reporter.phase_end()
+            reporter.phase_start("purge stale chunks", 0)
+            reporter.phase_end()
             reporter.phase_start("write metadata", 0)
             reporter.phase_end()
             return IndexResult(
@@ -1623,15 +1663,20 @@ class CodebaseIndexer:
                 device=self.model.device,
             )
 
+        # Failure-safe rebuild (mirrors VaultIndexer.full_index): keep
+        # the old chunks live until after streaming succeeds, then
+        # purge only the chunk IDs that are absent from the new corpus.
         reporter.phase_start("prepare collection", 1)
-        if clean:
-            self.store.drop_code_table()
-            self.store.ensure_code_table()
-        else:
-            self.store.ensure_code_table()
-            existing_ids = self.store.get_all_code_ids()
-            if existing_ids:
-                self.store.delete_code_chunks(list(existing_ids))
+        self.store.ensure_code_table()
+        try:
+            existing_ids_before: set[str] = set(self.store.get_all_code_ids())
+        except OSError:
+            logger.warning(
+                "Could not snapshot existing code-chunk IDs before "
+                "rebuild; stale-chunk purge will be skipped",
+                exc_info=True,
+            )
+            existing_ids_before = set()
         reporter.advance(1)
         reporter.phase_end()
 
@@ -1643,6 +1688,23 @@ class CodebaseIndexer:
             gpu_lock=self._gpu_lock,
             reporter=reporter,
         )
+
+        new_ids = {chunk.id for chunk in all_chunks}
+        stale_ids = sorted(existing_ids_before - new_ids)
+        reporter.phase_start("purge stale chunks", len(stale_ids))
+        if stale_ids:
+            try:
+                self.store.delete_code_chunks(stale_ids)
+            except OSError:
+                logger.error(
+                    "Failed to purge stale code chunks after "
+                    "successful rebuild — collection still contains "
+                    "valid new chunks plus %d stale rows",
+                    len(stale_ids),
+                )
+                raise
+            reporter.advance(len(stale_ids))
+        reporter.phase_end()
 
         reporter.phase_start("write metadata", 1)
         self._write_meta(meta)

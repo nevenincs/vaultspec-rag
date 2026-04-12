@@ -17,6 +17,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,17 @@ __all__ = [
 
 
 ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
+
+# Module-level caches for hot-path samplers. ``current_rss_mb`` and
+# ``current_cuda_mb`` are called once per 250 ms by the background
+# sampler — re-importing psutil/torch and re-instantiating
+# ``psutil.Process`` on every call is wasteful. Cache on first use.
+# ``Any`` is intentional: torch is an optional dependency on some
+# install matrices, and ty cannot narrow our own sentinel probe.
+_psutil_process: Any = None
+_torch_module: Any = None
+_torch_probed: bool = False
+_torch_has_cuda: bool = False
 
 
 def is_enabled() -> bool:
@@ -47,27 +59,41 @@ def current_rss_mb() -> float:
 
     ``psutil`` is a hard dependency of the RAG package so this is
     always available; the import is deferred only to keep cold-path
-    startup cheap when the probe is disabled.
+    startup cheap when the probe is disabled. The ``psutil.Process``
+    handle is cached on first call because this function runs at
+    250 ms cadence from the background sampler.
     """
-    import psutil
+    global _psutil_process
+    if _psutil_process is None:
+        import psutil
 
-    return psutil.Process(os.getpid()).memory_info().rss / (1024.0 * 1024.0)
+        _psutil_process = psutil.Process(os.getpid())
+    return _psutil_process.memory_info().rss / (1024.0 * 1024.0)
 
 
 def current_cuda_mb() -> tuple[float, float]:
     """Return ``(allocated_mb, reserved_mb)`` for the active CUDA device.
 
     Returns zeros when torch is not importable or CUDA is unavailable —
-    the probe must never crash host code.
+    the probe must never crash host code. The torch module reference
+    and the CUDA availability flag are cached on first call so the
+    background sampler does not pay repeated import / probe costs.
     """
-    try:
-        import torch
-    except ImportError:
+    global _torch_module, _torch_probed, _torch_has_cuda
+    if not _torch_probed:
+        _torch_probed = True
+        try:
+            import torch as _torch
+        except ImportError:
+            _torch_module = None
+            _torch_has_cuda = False
+        else:
+            _torch_module = _torch
+            _torch_has_cuda = _torch.cuda.is_available()
+    if _torch_module is None or not _torch_has_cuda:
         return (0.0, 0.0)
-    if not torch.cuda.is_available():
-        return (0.0, 0.0)
-    allocated = torch.cuda.memory_allocated() / (1024.0 * 1024.0)
-    reserved = torch.cuda.memory_reserved() / (1024.0 * 1024.0)
+    allocated = _torch_module.cuda.memory_allocated() / (1024.0 * 1024.0)
+    reserved = _torch_module.cuda.memory_reserved() / (1024.0 * 1024.0)
     return (allocated, reserved)
 
 
@@ -107,12 +133,18 @@ class MemoryProbe:
     start_rss_mb: float = 0.0
     peak_rss_mb: float = 0.0
     _t0: float = 0.0
+    _enabled: bool = False
     _sampler_thread: threading.Thread | None = None
     _sampler_stop: threading.Event = field(default_factory=threading.Event)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
-        if not is_enabled():
+        # Snapshot the enabled flag once so the probe's lifecycle is
+        # deterministic: if the env var changes mid-run we neither
+        # silently stop recording nor suddenly start recording without
+        # a baseline sample or a running sampler thread.
+        self._enabled = is_enabled()
+        if not self._enabled:
             return
         self._t0 = time.perf_counter()
         self.start_rss_mb = current_rss_mb()
@@ -140,7 +172,7 @@ class MemoryProbe:
 
         Returns ``None`` when the probe is disabled.
         """
-        if not is_enabled():
+        if not self._enabled:
             return None
         rss = current_rss_mb()
         allocated, reserved = current_cuda_mb()
@@ -185,11 +217,25 @@ class MemoryProbe:
         self.stop()
 
     def stop(self) -> None:
-        """Stop the background sampler thread."""
-        if self._sampler_thread is None:
+        """Stop the background sampler thread.
+
+        Idempotent — safe to call from both ``__exit__`` and an
+        explicit ``stop()`` invocation. Logs a warning if the sampler
+        did not terminate cleanly within the join timeout so silent
+        cleanup failures are observable in the logs.
+        """
+        thread = self._sampler_thread
+        if thread is None:
             return
         self._sampler_stop.set()
-        self._sampler_thread.join(timeout=1.0)
+        thread.join(timeout=1.0)
+        if thread.is_alive():
+            logger.warning(
+                "memory-probe %s sampler thread did not terminate "
+                "within 1s — continuing, but the thread will keep "
+                "sampling until process exit",
+                self.name,
+            )
         self._sampler_thread = None
 
     def report(self) -> str:

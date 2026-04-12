@@ -14,6 +14,7 @@ peak RSS observed by the background sampler.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import random
@@ -47,6 +48,7 @@ def _write_corpus(target: Path) -> None:
     (vault / "adr").mkdir(parents=True, exist_ok=True)
     (vault / "research").mkdir(parents=True, exist_ok=True)
     rng = random.Random(0xC0FFEE)
+    today = datetime.date.today().isoformat()
     words = [
         "lorem",
         "ipsum",
@@ -73,11 +75,11 @@ def _write_corpus(target: Path) -> None:
             *(LONG_LEN_RANGE if is_long else SHORT_LEN_RANGE),
         )
         subdir = "research" if is_long else "adr"
-        path = vault / subdir / f"2026-04-12-synthetic-{i:03d}.md"
+        path = vault / subdir / f"{today}-synthetic-{i:03d}.md"
         frontmatter = (
             "---\n"
             f'tags: ["#{subdir}", "#synthetic-bench"]\n'
-            "date: 2026-04-12\n"
+            f"date: {today}\n"
             "---\n\n"
             f"# synthetic document {i}\n\n"
         )
@@ -109,27 +111,33 @@ def main() -> int:
             print("memory probe disabled — set VAULTSPEC_RAG_MEMORY_PROBE=1")
             return 2
 
-        probe = MemoryProbe(name="repro-vault-index")
-        probe.checkpoint("cold-start")
-        print(f"cold rss={current_rss_mb():.0f}MB")
+        # The probe is used as a context manager so that any exception
+        # (CUDA OOM, model load failure) still tears down the sampler
+        # thread cleanly.
+        with MemoryProbe(name="repro-vault-index") as probe:
+            probe.checkpoint("cold-start")
+            print(f"cold rss={current_rss_mb():.0f}MB")
 
-        probe.checkpoint("before-model-load")
-        model = EmbeddingModel()
-        probe.checkpoint("after-model-load")
+            probe.checkpoint("before-model-load")
+            model = EmbeddingModel()
+            probe.checkpoint("after-model-load")
 
-        store = VaultStore(tmp, embedding_dim=model.dimension)
-        probe.checkpoint("after-store-init")
+            store = VaultStore(tmp, embedding_dim=model.dimension)
+            try:
+                probe.checkpoint("after-store-init")
 
-        indexer = VaultIndexer(tmp, model=model, store=store)
-        probe.checkpoint("before-full-index")
+                indexer = VaultIndexer(tmp, model=model, store=store)
+                probe.checkpoint("before-full-index")
 
-        result = indexer.full_index(clean=True, reporter=NullProgressReporter())
-        probe.checkpoint("after-full-index")
+                result = indexer.full_index(
+                    clean=True,
+                    reporter=NullProgressReporter(),
+                )
+                probe.checkpoint("after-full-index")
+            finally:
+                store.close()
+            probe.checkpoint("after-store-close")
 
-        store.close()
-        probe.checkpoint("after-store-close")
-
-        probe.stop()
         print(probe.report())
         print(
             f"indexed={result.total} added={result.added} "
