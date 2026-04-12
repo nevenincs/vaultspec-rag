@@ -17,8 +17,11 @@ if TYPE_CHECKING:
 
     from vaultspec_core.graph import VaultGraph
 
+    from .progress import ProgressReporter
+
 from .embeddings import EmbeddingModel
 from .indexer import CodebaseIndexer, IndexResult, VaultIndexer
+from .progress import NullProgressReporter
 from .search import SearchResult, VaultSearcher
 from .store import VaultStore
 
@@ -134,7 +137,12 @@ def reset_engine() -> None:
             _engine = None
 
 
-def index(root_dir: pathlib.Path, *, full: bool = False) -> IndexResult:
+def index(
+    root_dir: pathlib.Path,
+    *,
+    full: bool = False,
+    reporter: ProgressReporter | None = None,
+) -> IndexResult:
     """Index vault documents, returning an IndexResult.
 
     Invalidates the cached ``VaultGraph`` after indexing so that
@@ -144,13 +152,21 @@ def index(root_dir: pathlib.Path, *, full: bool = False) -> IndexResult:
         root_dir: Workspace root directory.
         full: If ``True``, perform a full re-index (drops and
             recreates the collection); otherwise incremental.
+        reporter: Optional progress reporter. A ``NullProgressReporter``
+            is used when omitted so library consumers can call this
+            facade without any UI.
 
     Returns:
         An ``IndexResult`` with counts of added, updated, and
         removed documents.
     """
     engine = get_engine(root_dir)
-    result = engine.indexer.full_index() if full else engine.indexer.incremental_index()
+    rep = reporter if reporter is not None else NullProgressReporter()
+    result = (
+        engine.indexer.full_index(reporter=rep)
+        if full
+        else engine.indexer.incremental_index(reporter=rep)
+    )
     engine.graph_cache.invalidate()
     return result
 
@@ -159,6 +175,7 @@ def index_codebase(
     root_dir: pathlib.Path,
     *,
     full: bool = False,
+    reporter: ProgressReporter | None = None,
 ) -> IndexResult:
     """Index codebase source files, returning an IndexResult.
 
@@ -170,15 +187,17 @@ def index_codebase(
         full: If ``True``, perform a full re-index (drops and
             recreates the codebase collection); otherwise
             incremental.
+        reporter: Optional progress reporter.
 
     Returns:
         An ``IndexResult`` with counts of added, updated, and
         removed code chunks.
     """
     engine = get_engine(root_dir)
+    rep = reporter if reporter is not None else NullProgressReporter()
     if full:
-        return engine.code_indexer.full_index()
-    return engine.code_indexer.incremental_index()
+        return engine.code_indexer.full_index(reporter=rep)
+    return engine.code_indexer.incremental_index(reporter=rep)
 
 
 def search_vault(

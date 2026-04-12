@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
+
 pytestmark = [pytest.mark.integration]
 
 
@@ -58,14 +60,14 @@ class TestRAGAPI:
         from a second VaultStore on the same directory.
         """
         indexer = rag_components_full["indexer"]
-        result = indexer.incremental_index()
+        result = indexer.incremental_index(reporter=NullProgressReporter())
         assert result.total > 0
         assert result.duration_ms >= 0
 
     def test_index_full(self, rag_components_full):
         """Full index via fixture indexer rebuilds index."""
         indexer = rag_components_full["indexer"]
-        result = indexer.full_index()
+        result = indexer.full_index(reporter=NullProgressReporter())
         assert result.total > 0
         assert result.added > 0
 

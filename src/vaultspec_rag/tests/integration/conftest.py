@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+from vaultspec_rag.progress import NullProgressReporter
+
 from ..conftest import _index_corpus
 from ..corpus import build_synthetic_vault
 
@@ -25,7 +27,7 @@ def rag_components_with_code(embedding_model, tmp_path_factory):
     components = _index_corpus(root, embedding_model)
 
     code_indexer = components["code_indexer"]
-    code_indexer.full_index()
+    code_indexer.full_index(reporter=NullProgressReporter())
 
     yield {**components, "manifest": manifest}
 

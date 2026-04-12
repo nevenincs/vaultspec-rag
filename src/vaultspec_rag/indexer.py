@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from tree_sitter_language_pack import SupportedLanguage
 
     from .embeddings import EmbeddingModel
+    from .progress import ProgressReporter
     from .store import VaultStore
 
 from vaultspec_core.vaultcore import (
@@ -804,14 +805,22 @@ class VaultIndexer:
         self._gpu_lock = gpu_lock
         self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
 
-    def full_index(self, clean: bool = False) -> IndexResult:
+    def full_index(
+        self,
+        clean: bool = False,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
         """Full re-index of all vault documents.
 
         Scans all documents, embeds them, and replaces the entire store.
+        Emits phase events through ``reporter`` at every pipeline step.
 
         Args:
             clean: If True, drop and recreate the collection before
                 indexing to guarantee no stale documents persist.
+            reporter: Required progress reporter. Callers without a UI
+                should pass ``NullProgressReporter``.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total number of
@@ -821,10 +830,17 @@ class VaultIndexer:
             OSError: If existing documents cannot be deleted during a
                 non-clean full re-index (raised to prevent duplicates).
         """
-        start = time.time()
+        from .config import get_config
 
+        start = time.time()
+        slice_size = max(1, get_config().embedding_batch_size)
+
+        reporter.phase_start("scan vault", None)
         paths = list(scan_vault(self.root_dir))
-        docs = []
+        reporter.phase_end()
+
+        reporter.phase_start("parse documents", len(paths))
+        docs: list[VaultDocument] = []
         with ThreadPoolExecutor() as pool:
             futures = [pool.submit(prepare_document, p, self.root_dir) for p in paths]
             for future in futures:
@@ -832,11 +848,22 @@ class VaultIndexer:
                     doc = future.result()
                 except Exception:
                     logger.warning("Worker failed to prepare document", exc_info=True)
+                    reporter.advance()
                     continue
                 if doc is not None:
                     docs.append(doc)
+                reporter.advance()
+        reporter.phase_end()
 
         if not docs:
+            reporter.phase_start("embed documents (dense)", 0)
+            reporter.phase_end()
+            reporter.phase_start("embed documents (sparse)", 0)
+            reporter.phase_end()
+            reporter.phase_start("upsert documents", 0)
+            reporter.phase_end()
+            reporter.phase_start("write metadata", 0)
+            reporter.phase_end()
             return IndexResult(
                 total=0,
                 added=0,
@@ -847,15 +874,31 @@ class VaultIndexer:
             )
 
         texts = [f"{d.title}\n\n{d.content}" for d in docs]
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            vectors = self.model.encode_documents(texts)
-            sparse_vecs = self.model.encode_documents_sparse(texts)
 
-        for doc, vec, svec in zip(docs, vectors, sparse_vecs, strict=True):
+        reporter.phase_start("embed documents (dense)", len(texts))
+        all_dense: list = []
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            for i in range(0, len(texts), slice_size):
+                chunk = texts[i : i + slice_size]
+                all_dense.extend(self.model.encode_documents(chunk))
+                reporter.advance(len(chunk))
+        reporter.phase_end()
+
+        reporter.phase_start("embed documents (sparse)", len(texts))
+        all_sparse: list = []
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            for i in range(0, len(texts), slice_size):
+                chunk = texts[i : i + slice_size]
+                all_sparse.extend(self.model.encode_documents_sparse(chunk))
+                reporter.advance(len(chunk))
+        reporter.phase_end()
+
+        for doc, vec, svec in zip(docs, all_dense, all_sparse, strict=True):
             doc.vector = vec.tolist()
             doc.sparse_indices = list(svec.indices)
             doc.sparse_values = list(svec.values)
 
+        reporter.phase_start("upsert documents", 1)
         if clean:
             self.store.drop_table()
             self.store.ensure_table()
@@ -871,10 +914,14 @@ class VaultIndexer:
                     "re-index — aborting to prevent duplicates",
                 )
                 raise
-
         self.store.upsert_documents(docs)
+        reporter.advance(1)
+        reporter.phase_end()
 
+        reporter.phase_start("write metadata", 1)
         self._save_meta(docs)
+        reporter.advance(1)
+        reporter.phase_end()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -886,11 +933,18 @@ class VaultIndexer:
             device=self.model.device,
         )
 
-    def incremental_index(self) -> IndexResult:
+    def incremental_index(
+        self,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
         """Incremental index: only re-index new and modified documents.
 
         Compares blake2b content hashes against stored metadata to identify
-        changes.
+        changes. Emits phase events through ``reporter``.
+
+        Args:
+            reporter: Required progress reporter.
 
         Returns:
             An ``IndexResult`` with counts for newly added, updated, and
@@ -899,12 +953,14 @@ class VaultIndexer:
         Raises:
             OSError: If vault files cannot be read or hashed.
         """
+        from .config import get_config
+
         start = time.time()
+        slice_size = max(1, get_config().embedding_batch_size)
 
         prev_meta = self._load_meta()
 
-        from .config import get_config
-
+        reporter.phase_start("scan vault", None)
         docs_dir = self.root_dir / get_config().docs_dir
         current_docs: dict[str, pathlib.Path] = {}
         for path in scan_vault(self.root_dir):
@@ -916,14 +972,15 @@ class VaultIndexer:
                     rel = path.name
                 doc_id = rel.rsplit(".", 1)[0] if "." in rel else rel
                 current_docs[doc_id] = path
+        reporter.phase_end()
 
         stored_ids = self.store.get_all_ids()
-
         current_ids = set(current_docs.keys())
         new_ids = current_ids - stored_ids
         deleted_ids = stored_ids - current_ids
         potentially_modified = current_ids & stored_ids
 
+        reporter.phase_start("hash documents", len(current_docs))
         current_hashes: dict[str, str] = {}
         for doc_id, path in current_docs.items():
             try:
@@ -934,6 +991,8 @@ class VaultIndexer:
                     ).hexdigest()
             except OSError:
                 logger.warning("Cannot hash file, skipping: %s", doc_id)
+            reporter.advance()
+        reporter.phase_end()
 
         modified_ids = {
             doc_id
@@ -943,7 +1002,9 @@ class VaultIndexer:
         }
 
         to_index_ids = new_ids | modified_ids
-        docs_to_index = []
+        docs_to_index: list[VaultDocument] = []
+
+        reporter.phase_start("parse documents", len(to_index_ids))
         if to_index_ids:
             paths_to_index = [current_docs[doc_id] for doc_id in to_index_ids]
             with ThreadPoolExecutor() as pool:
@@ -954,22 +1015,58 @@ class VaultIndexer:
                 for doc in results:
                     if doc is not None:
                         docs_to_index.append(doc)
+                    reporter.advance()
+        reporter.phase_end()
 
         if docs_to_index:
             texts = [f"{d.title}\n\n{d.content}" for d in docs_to_index]
+
+            reporter.phase_start("embed documents (dense)", len(texts))
+            all_dense: list = []
             with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                vectors = self.model.encode_documents(texts)
-                sparse_vecs = self.model.encode_documents_sparse(texts)
-            for doc, vec, svec in zip(docs_to_index, vectors, sparse_vecs, strict=True):
+                for i in range(0, len(texts), slice_size):
+                    chunk = texts[i : i + slice_size]
+                    all_dense.extend(self.model.encode_documents(chunk))
+                    reporter.advance(len(chunk))
+            reporter.phase_end()
+
+            reporter.phase_start("embed documents (sparse)", len(texts))
+            all_sparse: list = []
+            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+                for i in range(0, len(texts), slice_size):
+                    chunk = texts[i : i + slice_size]
+                    all_sparse.extend(self.model.encode_documents_sparse(chunk))
+                    reporter.advance(len(chunk))
+            reporter.phase_end()
+
+            for doc, vec, svec in zip(
+                docs_to_index, all_dense, all_sparse, strict=True
+            ):
                 doc.vector = vec.tolist()
                 doc.sparse_indices = list(svec.indices)
                 doc.sparse_values = list(svec.values)
-            self.store.upsert_documents(docs_to_index)
+        else:
+            reporter.phase_start("embed documents (dense)", 0)
+            reporter.phase_end()
+            reporter.phase_start("embed documents (sparse)", 0)
+            reporter.phase_end()
 
+        reporter.phase_start("upsert documents", 1 if docs_to_index else 0)
+        if docs_to_index:
+            self.store.upsert_documents(docs_to_index)
+            reporter.advance(1)
+        reporter.phase_end()
+
+        reporter.phase_start("delete removed", len(deleted_ids))
         if deleted_ids:
             self.store.delete_documents(list(deleted_ids))
+            reporter.advance(len(deleted_ids))
+        reporter.phase_end()
 
+        reporter.phase_start("write metadata", 1)
         self._write_meta(current_hashes)
+        reporter.advance(1)
+        reporter.phase_end()
 
         total = self.store.count()
         duration_ms = int((time.time() - start) * 1000)
@@ -1390,12 +1487,18 @@ class CodebaseIndexer:
             )
         return chunks
 
-    def full_index(self, clean: bool = False) -> IndexResult:
+    def full_index(
+        self,
+        clean: bool = False,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
         """Full re-index of all codebase files.
 
         Args:
             clean: If True, drop and recreate the collection before
                 indexing to guarantee no stale chunks persist.
+            reporter: Required progress reporter.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total chunk
@@ -1404,11 +1507,16 @@ class CodebaseIndexer:
         Raises:
             OSError: If source files cannot be read or hashed.
         """
-        start = time.time()
-        paths = self._scan_codebase()
+        from .config import get_config
 
-        # Hash files at scan time (before chunking/embedding) so the
-        # metadata is consistent with the content that was actually indexed.
+        start = time.time()
+        slice_size = max(1, get_config().embedding_batch_size)
+
+        reporter.phase_start("scan codebase", None)
+        paths = self._scan_codebase()
+        reporter.phase_end()
+
+        reporter.phase_start("hash files", len(paths))
         meta: dict[str, str] = {}
         for p in paths:
             rel = str(p.relative_to(self.root_dir)).replace("\\", "/")
@@ -1417,15 +1525,33 @@ class CodebaseIndexer:
                     meta[rel] = hashlib.file_digest(f, "blake2b").hexdigest()
             except OSError:
                 logger.warning("Cannot hash file for metadata: %s", rel)
+            reporter.advance()
+        reporter.phase_end()
 
-        all_chunks = []
-
+        reporter.phase_start("chunk files", len(paths))
+        all_chunks: list[CodeChunk] = []
         with ThreadPoolExecutor() as pool:
-            results = pool.map(self._chunk_file, paths)
-            for file_chunks in results:
+            futures = [pool.submit(self._chunk_file, p) for p in paths]
+            for future in futures:
+                try:
+                    file_chunks = future.result()
+                except Exception:
+                    logger.warning("Worker failed to chunk file", exc_info=True)
+                    reporter.advance()
+                    continue
                 all_chunks.extend(file_chunks)
+                reporter.advance()
+        reporter.phase_end()
 
         if not all_chunks:
+            reporter.phase_start("embed chunks (dense)", 0)
+            reporter.phase_end()
+            reporter.phase_start("embed chunks (sparse)", 0)
+            reporter.phase_end()
+            reporter.phase_start("upsert chunks", 0)
+            reporter.phase_end()
+            reporter.phase_start("write metadata", 0)
+            reporter.phase_end()
             return IndexResult(
                 total=0,
                 added=0,
@@ -1436,14 +1562,31 @@ class CodebaseIndexer:
             )
 
         texts = [c.content for c in all_chunks]
+
+        reporter.phase_start("embed chunks (dense)", len(texts))
+        all_dense: list = []
         with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            vectors = self.model.encode_documents(texts)
-            sparse_vecs = self.model.encode_documents_sparse(texts)
-        for chunk, vec, svec in zip(all_chunks, vectors, sparse_vecs, strict=True):
+            for i in range(0, len(texts), slice_size):
+                chunk_texts = texts[i : i + slice_size]
+                all_dense.extend(self.model.encode_documents(chunk_texts))
+                reporter.advance(len(chunk_texts))
+        reporter.phase_end()
+
+        reporter.phase_start("embed chunks (sparse)", len(texts))
+        all_sparse: list = []
+        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+            for i in range(0, len(texts), slice_size):
+                chunk_texts = texts[i : i + slice_size]
+                all_sparse.extend(self.model.encode_documents_sparse(chunk_texts))
+                reporter.advance(len(chunk_texts))
+        reporter.phase_end()
+
+        for chunk, vec, svec in zip(all_chunks, all_dense, all_sparse, strict=True):
             chunk.vector = vec.tolist()
             chunk.sparse_indices = list(svec.indices)
             chunk.sparse_values = list(svec.values)
 
+        reporter.phase_start("upsert chunks", 1)
         if clean:
             self.store.drop_code_table()
             self.store.ensure_code_table()
@@ -1452,9 +1595,14 @@ class CodebaseIndexer:
             existing_ids = self.store.get_all_code_ids()
             if existing_ids:
                 self.store.delete_code_chunks(list(existing_ids))
-
         self.store.upsert_code_chunks(all_chunks)
+        reporter.advance(1)
+        reporter.phase_end()
+
+        reporter.phase_start("write metadata", 1)
         self._write_meta(meta)
+        reporter.advance(1)
+        reporter.phase_end()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -1467,10 +1615,18 @@ class CodebaseIndexer:
             files=len(paths),
         )
 
-    def incremental_index(self) -> IndexResult:
+    def incremental_index(
+        self,
+        *,
+        reporter: ProgressReporter,
+    ) -> IndexResult:
         """Incremental index: only re-index new and modified source files.
 
-        Uses blake2b content hashing to detect changes (not mtime).
+        Uses blake2b content hashing to detect changes (not mtime). Emits
+        phase events through ``reporter``.
+
+        Args:
+            reporter: Required progress reporter.
 
         Returns:
             An ``IndexResult`` with counts for newly added, updated, and
@@ -1479,15 +1635,22 @@ class CodebaseIndexer:
         Raises:
             OSError: If source files cannot be read or hashed.
         """
+        from .config import get_config
+
         start = time.time()
+        slice_size = max(1, get_config().embedding_batch_size)
+
         prev_meta = self._load_meta()
 
+        reporter.phase_start("scan codebase", None)
         current_paths = self._scan_codebase()
         current_files: dict[str, pathlib.Path] = {
             str(p.relative_to(self.root_dir)).replace("\\", "/"): p
             for p in current_paths
         }
+        reporter.phase_end()
 
+        reporter.phase_start("hash files", len(current_files))
         current_hashes: dict[str, str] = {}
         for rel, path in current_files.items():
             try:
@@ -1498,13 +1661,12 @@ class CodebaseIndexer:
                     ).hexdigest()
             except OSError:
                 logger.warning("Cannot hash file, skipping: %s", rel)
+            reporter.advance()
+        reporter.phase_end()
 
-        # Remove unhashed files from current_files so they are not
-        # passed to _chunk_file and don't reappear as "new" every run.
         for rel in set(current_files) - set(current_hashes):
             del current_files[rel]
 
-        # Identify changes (only consider files we successfully hashed)
         prev_files = set(prev_meta.keys())
         curr_files = set(current_hashes.keys())
         new_files = curr_files - prev_files
@@ -1515,39 +1677,78 @@ class CodebaseIndexer:
 
         to_index = new_files | modified_files
         all_new_chunks: list[CodeChunk] = []
+
+        reporter.phase_start("chunk files", len(to_index))
         if to_index:
             paths_to_index = [current_files[f] for f in to_index]
             with ThreadPoolExecutor() as pool:
-                results = pool.map(self._chunk_file, paths_to_index)
-                for file_chunks in results:
+                futures = [pool.submit(self._chunk_file, p) for p in paths_to_index]
+                for future in futures:
+                    try:
+                        file_chunks = future.result()
+                    except Exception:
+                        logger.warning("Worker failed to chunk file", exc_info=True)
+                        reporter.advance()
+                        continue
                     all_new_chunks.extend(file_chunks)
+                    reporter.advance()
+        reporter.phase_end()
 
         files_to_remove = modified_files | deleted_files
+        reporter.phase_start("delete removed", len(files_to_remove))
         if files_to_remove:
             old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
             if old_chunk_ids:
                 self.store.delete_code_chunks(old_chunk_ids)
+            reporter.advance(len(files_to_remove))
+        reporter.phase_end()
 
         if all_new_chunks:
             texts = [c.content for c in all_new_chunks]
+
+            reporter.phase_start("embed chunks (dense)", len(texts))
+            all_dense: list = []
             with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-                vectors = self.model.encode_documents(texts)
-                sparse_vecs = self.model.encode_documents_sparse(texts)
+                for i in range(0, len(texts), slice_size):
+                    chunk_texts = texts[i : i + slice_size]
+                    all_dense.extend(self.model.encode_documents(chunk_texts))
+                    reporter.advance(len(chunk_texts))
+            reporter.phase_end()
+
+            reporter.phase_start("embed chunks (sparse)", len(texts))
+            all_sparse: list = []
+            with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+                for i in range(0, len(texts), slice_size):
+                    chunk_texts = texts[i : i + slice_size]
+                    all_sparse.extend(self.model.encode_documents_sparse(chunk_texts))
+                    reporter.advance(len(chunk_texts))
+            reporter.phase_end()
+
             for chunk, vec, svec in zip(
                 all_new_chunks,
-                vectors,
-                sparse_vecs,
+                all_dense,
+                all_sparse,
                 strict=True,
             ):
                 chunk.vector = vec.tolist()
                 chunk.sparse_indices = list(svec.indices)
                 chunk.sparse_values = list(svec.values)
-            self.store.upsert_code_chunks(all_new_chunks)
+        else:
+            reporter.phase_start("embed chunks (dense)", 0)
+            reporter.phase_end()
+            reporter.phase_start("embed chunks (sparse)", 0)
+            reporter.phase_end()
 
-        # Save updated metadata (file path -> content hash).
-        # Use current_hashes (not current_files) as source — files that
-        # failed hashing are excluded so they don't cause KeyError.
+        reporter.phase_start("upsert chunks", 1 if all_new_chunks else 0)
+        if all_new_chunks:
+            self.store.upsert_code_chunks(all_new_chunks)
+            reporter.advance(1)
+        reporter.phase_end()
+
+        reporter.phase_start("write metadata", 1)
         self._write_meta(current_hashes)
+        reporter.advance(1)
+        reporter.phase_end()
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)

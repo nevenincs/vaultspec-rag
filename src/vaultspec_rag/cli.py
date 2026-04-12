@@ -436,26 +436,21 @@ def handle_index(
             "[yellow]MCP server unavailable, falling back to in-process indexing...[/]",
         )
 
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        console=console,
-    )
+    from .progress import RichProgressReporter
 
     do_vault = index_type in ("vault", "all")
     do_code = index_type in ("code", "all")
+    v_res = None
+    c_res = None
 
-    with progress:
-        # Phase 0: Initialize
-        init_task = progress.add_task("Initializing RAG components...", total=3)
+    with RichProgressReporter(console) as reporter:
+        reporter.phase_start("resolve workspace", 1)
+        reporter.advance(1)
+        reporter.phase_end()
+
+        reporter.phase_start("open store", 1)
         store = VaultStore(target)
-
         if clean:
-            console.log(f"Cleaning existing index at [cyan]{store.db_path}[/]...")
             store.close()
             if store.db_path.exists():
                 try:
@@ -468,59 +463,39 @@ def handle_index(
                     )
                     raise typer.Exit(code=1) from None
             store = VaultStore(target)
+        reporter.advance(1)
+        reporter.phase_end()
 
         try:
-            progress.advance(init_task)
+            reporter.phase_start("load embedding model", 1)
             try:
                 emb_model = EmbeddingModel(model_name=model)
             except (ImportError, RuntimeError) as e:
                 _handle_gpu_error(e)
-            progress.advance(init_task)
+            reporter.advance(1)
+            reporter.phase_end()
+
             v_indexer = VaultIndexer(target, emb_model, store) if do_vault else None
             c_indexer = (
                 CodebaseIndexer(target, emb_model, store, extra_excludes=exclude or [])
                 if do_code
                 else None
             )
-            progress.advance(init_task)
 
-            v_res = None
-            c_res = None
-
-            # Phase 1: Vault indexing
             if do_vault:
                 assert v_indexer is not None
-                vault_task = progress.add_task(
-                    "Indexing documentation vault...", total=1
-                )
                 v_res = (
-                    v_indexer.full_index(clean=True)
+                    v_indexer.full_index(clean=True, reporter=reporter)
                     if clean
-                    else v_indexer.incremental_index()
-                )
-                progress.advance(vault_task)
-                console.log(
-                    f"Vault: [green]{v_res.added}[/] added, "
-                    f"[yellow]{v_res.updated}[/] updated, "
-                    f"[red]{v_res.removed}[/] removed "
-                    f"({v_res.duration_ms}ms)",
+                    else v_indexer.incremental_index(reporter=reporter)
                 )
 
-            # Phase 2: Codebase indexing
             if do_code:
                 assert c_indexer is not None
-                code_task = progress.add_task("Indexing codebase...", total=1)
                 c_res = (
-                    c_indexer.full_index(clean=True)
+                    c_indexer.full_index(clean=True, reporter=reporter)
                     if clean
-                    else c_indexer.incremental_index()
-                )
-                progress.advance(code_task)
-                console.log(
-                    f"Codebase: [green]{c_res.added}[/] added, "
-                    f"[yellow]{c_res.updated}[/] updated, "
-                    f"[red]{c_res.removed}[/] removed "
-                    f"({c_res.duration_ms}ms)",
+                    else c_indexer.incremental_index(reporter=reporter)
                 )
         finally:
             store.close()
@@ -1734,9 +1709,11 @@ def handle_quality() -> None:
         store = VaultStore(root)
 
         try:
+            from .progress import NullProgressReporter
+
             indexer = VaultIndexer(root, model, store)
             with console.status("[bold green]Indexing synthetic corpus..."):
-                indexer.full_index()
+                indexer.full_index(reporter=NullProgressReporter())
 
             searcher = VaultSearcher(root, model, store)
 

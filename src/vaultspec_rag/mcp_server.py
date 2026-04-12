@@ -25,6 +25,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
+from .progress import NullProgressReporter
 from .service import ServiceRegistry
 
 if TYPE_CHECKING:
@@ -745,9 +746,13 @@ async def reindex_vault(
         mode = "full" if clean else "incremental"
         logger.info("Starting %s vault re-index...", mode)
         if clean:
-            result = slot.vault_indexer.full_index(clean=True)
+            result = slot.vault_indexer.full_index(
+                clean=True, reporter=NullProgressReporter()
+            )
         else:
-            result = slot.vault_indexer.incremental_index()
+            result = slot.vault_indexer.incremental_index(
+                reporter=NullProgressReporter()
+            )
         slot.graph_cache.invalidate()
         return IndexResponse(
             total=result.total,
@@ -792,9 +797,13 @@ async def reindex_codebase(
         mode = "full" if clean else "incremental"
         logger.info("Starting %s codebase re-index...", mode)
         if clean:
-            result = slot.code_indexer.full_index(clean=True)
+            result = slot.code_indexer.full_index(
+                clean=True, reporter=NullProgressReporter()
+            )
         else:
-            result = slot.code_indexer.incremental_index()
+            result = slot.code_indexer.incremental_index(
+                reporter=NullProgressReporter()
+            )
         return IndexResponse(
             total=result.total,
             added=result.added,

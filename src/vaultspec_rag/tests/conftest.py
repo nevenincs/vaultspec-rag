@@ -13,6 +13,7 @@ from vaultspec_core.config import reset_config
 from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
 from vaultspec_rag.config import get_config
 from vaultspec_rag.config import reset_config as reset_rag_config
+from vaultspec_rag.progress import NullProgressReporter
 
 from .corpus import CorpusManifest, build_synthetic_vault
 
@@ -33,7 +34,7 @@ def _index_corpus(
     store = VaultStore(root)
     indexer = VaultIndexer(root, model, store)
     code_indexer = CodebaseIndexer(root, model, store)
-    result = indexer.full_index()
+    result = indexer.full_index(reporter=NullProgressReporter())
 
     return {
         "model": model,
