@@ -54,9 +54,9 @@ ______________________________________________________________________
 
 ## Using the MCP server
 
-The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server gives AI assistants direct access to vault and codebase search. Two entry points: `vaultspec-search-mcp` (installed script) or `vaultspec-rag server mcp start`.
+The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server gives AI assistants direct access to vault and codebase search. It runs in two transport modes with different project-resolution rules.
 
-Add the following to your Claude Desktop configuration for stdio mode:
+**stdio mode** -- one process per project. The MCP client launches `vaultspec-search-mcp` as a subprocess, scoped to a single workspace via `VAULTSPEC_RAG_ROOT`. Use this for Claude Desktop, Claude Code, and similar single-project AI tools.
 
 ```json
 {
@@ -64,14 +64,16 @@ Add the following to your Claude Desktop configuration for stdio mode:
     "vaultspec-rag": {
       "command": "vaultspec-search-mcp",
       "env": {
-        "VAULTSPEC_ROOT": "/path/to/your/project"
+        "VAULTSPEC_RAG_ROOT": "/path/to/your/project"
       }
     }
   }
 }
 ```
 
-For HTTP mode, pass `--port`. See the [MCP tool reference](./src/vaultspec_rag/README.md#mcp-integration) for available tools and HTTP mode details.
+**HTTP mode** -- one daemon, many projects. Start `vaultspec-rag server service start` as a background daemon, then connect any MCP client to `http://127.0.0.1:8766/mcp`. The daemon has no default project; every tool call must include `project_root`. Use this to share one GPU-loaded service across workspaces.
+
+See the [MCP integration reference](./src/vaultspec_rag/README.md#mcp-integration) for the full tool list, both modes' contracts, and choosing between them.
 
 ______________________________________________________________________
 

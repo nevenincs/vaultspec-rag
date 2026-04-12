@@ -44,18 +44,16 @@ vaultspec-rag search "your query"
 
 ## Usage modes
 
-vaultspec-rag operates in two modes: **ad-hoc** and **service**.
+The CLI runs in one of two modes: **ad-hoc** and **service-delegated**.
 
-**Ad-hoc mode** runs everything in-process. Each CLI command loads the GPU models, performs the operation, and exits. This is the default -- no setup beyond installation is needed. The tradeoff is that loading models takes several seconds per invocation.
+**Ad-hoc mode** runs everything in-process. Each CLI command loads the GPU models, performs the operation, and exits. This is the default; installation is the only setup. The tradeoff is that loading models takes several seconds per invocation.
 
 ```sh
 vaultspec-rag index
 vaultspec-rag search "your query"
 ```
 
-**Service mode** runs a persistent background daemon that keeps models loaded in VRAM. CLI commands delegate to the service via `--port`, avoiding repeated model loading. The service also watches for file changes and reindexes automatically.
-
-Start the service, then use `--port` on CLI commands:
+**Service-delegated mode** points the CLI at a running HTTP daemon via `--port`. Models stay loaded in VRAM across invocations, so each command returns near-instantly. The CLI sends the current workspace as `project_root` on every call, so one daemon serves any project.
 
 ```sh
 vaultspec-rag server service start
@@ -63,7 +61,9 @@ vaultspec-rag search --port 8766 "your query"
 vaultspec-rag index --port 8766
 ```
 
-Ad-hoc mode suits one-off tasks or environments where a persistent process isn't practical. Service mode suits active development where you search frequently and want the index to stay current as files change.
+Use ad-hoc for one-off tasks or environments where a persistent process isn't practical. Use service-delegated for active development. It keeps one shared daemon across projects and returns results near-instantly.
+
+For AI tools that speak MCP directly (Claude Desktop, Claude Code), see [MCP integration](#mcp-integration). The same daemon serves them, with different project-resolution rules per transport.
 
 ## Architecture overview
 
@@ -171,6 +171,8 @@ This file operates independently from `.gitignore` -- both apply with OR logic. 
 
 `vaultspec-rag server service start` spawns a background HTTP daemon. The default port is 8766; override it with `--port` or the `VAULTSPEC_RAG_PORT` env var.
 
+The daemon is multi-tenant by design. It starts with no baked-in project root. The spawn process strips `VAULTSPEC_RAG_ROOT` from the daemon's environment so it cannot leak across projects. Every MCP tool call must carry an explicit `project_root`. See [MCP integration](#mcp-integration) for the client contract.
+
 On startup, the daemon eagerly loads GPU models and polls `/health` until ready. It writes a status file to `~/.vaultspec-rag/service.json` containing the PID, port, and start time.
 
 Stop the daemon with `vaultspec-rag server service stop`. This sends `SIGTERM` on Unix or `CTRL_BREAK_EVENT` on Windows, waits two seconds, then force-kills the process if needed.
@@ -224,11 +226,52 @@ The MCP server exposes six tools:
 | `get_index_status` | Return index stats and GPU status        |
 | `get_code_file`    | Retrieve full source file content        |
 
-All tools accept an optional `project_root` parameter for multi-project use.
+The server runs in one of two transport modes, and the rules for the `project_root` parameter differ between them.
 
-The server also exposes a `vault://{doc_id}` resource for retrieving vault document content, and an `analyze_feature` prompt.
+### stdio mode (single-project)
 
-**Connecting a client.** For stdio, configure the MCP client to run `vaultspec-search-mcp`. For HTTP, point to `http://127.0.0.1:{port}/mcp`.
+The MCP client launches `vaultspec-search-mcp` as a subprocess, one process per project. The server reads `VAULTSPEC_RAG_ROOT` from its environment, falling back to its current working directory.
+
+- `project_root` is **optional** on every tool call. Omit it to use the env var or cwd.
+- The `vault://{doc_id}` resource returns full document content.
+- Suitable for Claude Desktop, Claude Code, or any client that spawns one MCP server per workspace.
+
+Configure a Claude Desktop client like this:
+
+```json
+{
+  "mcpServers": {
+    "vaultspec-rag": {
+      "command": "vaultspec-search-mcp",
+      "env": {
+        "VAULTSPEC_RAG_ROOT": "/path/to/your/project"
+      }
+    }
+  }
+}
+```
+
+### HTTP mode (multi-project)
+
+The server runs as a persistent daemon at `http://127.0.0.1:{port}/mcp` and serves multiple projects concurrently. The daemon starts with **no default project** -- `VAULTSPEC_RAG_ROOT` is stripped from its environment at spawn time.
+
+- `project_root` is **required** on every tool call. Omitting it raises `ValueError: project_root is required in HTTP service mode -- the multi-tenant service has no default project`.
+- The `vault://{doc_id}` resource is **not available** -- use `search_vault` or `get_code_file` with an explicit `project_root` instead.
+- Suitable for shared services across multiple workspaces or CI environments.
+
+Start the daemon and connect a client:
+
+```sh
+vaultspec-rag server service start --port 8766
+```
+
+Then point your MCP client at `http://127.0.0.1:8766/mcp` and pass `project_root` (an absolute path to a directory containing `.vault/`) on each tool invocation.
+
+### Choosing a mode
+
+Use stdio for desktop AI tools that work in one project at a time. The simpler config matches how those tools operate. Use HTTP to handle several projects from one service, or to share one GPU-loaded daemon across CLI and AI clients.
+
+See [Service management](#service-management) for daemon lifecycle details.
 
 ## Python API
 

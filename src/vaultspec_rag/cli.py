@@ -378,12 +378,14 @@ def handle_index(
                 "reindex_vault",
                 clean,
                 port,
+                str(target),
             )
         if do_code:
             c_data = _try_mcp_reindex(
                 "reindex_codebase",
                 clean,
                 port,
+                str(target),
             )
 
         if v_data is not None or c_data is not None:
@@ -556,6 +558,7 @@ def _try_mcp_reindex(
     tool_name: str,
     clean: bool,
     port: int,
+    project_root: str,
 ) -> dict[str, object] | None:
     """Reindex via a running MCP server over HTTP.
 
@@ -564,6 +567,9 @@ def _try_mcp_reindex(
             ``reindex_codebase``).
         clean: Whether to drop and recreate the collection.
         port: TCP port of the running MCP server.
+        project_root: Absolute path to the target project. The
+            HTTP service is multi-tenant and has no default
+            project, so every tool call must carry this value.
 
     Returns:
         Parsed JSON response dict on success, or None if the
@@ -594,7 +600,7 @@ def _try_mcp_reindex(
                 await session.initialize()
                 result = await session.call_tool(
                     tool_name,
-                    {"clean": clean},
+                    {"clean": clean, "project_root": project_root},
                 )
                 if result.content:
                     first = result.content[0]
@@ -615,6 +621,7 @@ def _try_mcp_search(
     search_type: str,
     top_k: int,
     port: int,
+    project_root: str,
 ) -> list[dict[str, object]] | None:
     """Search via a running MCP server over HTTP.
 
@@ -627,6 +634,9 @@ def _try_mcp_search(
         search_type: One of ``vault``, ``code``, or ``all``.
         top_k: Maximum number of results to return.
         port: TCP port of the running MCP server.
+        project_root: Absolute path to the target project. The
+            HTTP service is multi-tenant and has no default
+            project, so every tool call must carry this value.
 
     Returns:
         List of result dicts on success, or None if the server
@@ -654,7 +664,11 @@ def _try_mcp_search(
                 await session.initialize()
                 result = await session.call_tool(
                     tool_name,
-                    {"query": query, "top_k": top_k},
+                    {
+                        "query": query,
+                        "top_k": top_k,
+                        "project_root": project_root,
+                    },
                 )
                 if result.content:
                     first = result.content[0]
@@ -767,8 +781,17 @@ def handle_search(
         typer.Exit: On GPU initialization errors.
 
     """
+    state: CLIState = ctx.obj
+    target = state.target
+
     if port is not None:
-        mcp_results = _try_mcp_search(query, search_type, max_results, port)
+        mcp_results = _try_mcp_search(
+            query,
+            search_type,
+            max_results,
+            port,
+            str(target),
+        )
         if mcp_results is not None:
             if not mcp_results:
                 console.print(
@@ -781,9 +804,6 @@ def handle_search(
         console.print(
             "[yellow]MCP server unavailable, falling back to in-process search...[/]",
         )
-
-    state: CLIState = ctx.obj
-    target = state.target
 
     store = VaultStore(target)
     try:

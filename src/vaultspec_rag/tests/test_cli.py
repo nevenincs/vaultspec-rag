@@ -152,17 +152,17 @@ class TestMcpFastPath:
 
     def test_tool_map_vault(self):
         """Connection refused on port 1 returns None, no exception."""
-        result = _try_mcp_search("test query", "vault", 5, 1)
+        result = _try_mcp_search("test query", "vault", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_tool_map_code(self):
         """search_type='code' maps to search_codebase, returns None on failure."""
-        result = _try_mcp_search("test query", "code", 5, 1)
+        result = _try_mcp_search("test query", "code", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_invalid_search_type(self):
         """Unknown search_type falls back to search_vault, returns None on failure."""
-        result = _try_mcp_search("test query", "invalid", 5, 1)
+        result = _try_mcp_search("test query", "invalid", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_display_empty_results(self):
