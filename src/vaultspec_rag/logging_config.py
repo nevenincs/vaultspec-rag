@@ -9,6 +9,7 @@ here is the env-var override (``VAULTSPEC_RAG_LOG_LEVEL``) and RAG's
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -93,19 +94,32 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
         if self.stream is None:
             self.stream = self._open()
         if self.maxBytes > 0:
-            try:
-                size = os.fstat(self.stream.fileno()).st_size
-            except (OSError, ValueError):
-                # ValueError occurs when the underlying file object has
-                # already been closed (.fileno() raises on a closed stream).
-                # OSError covers fstat-level errors on platforms that
-                # support it.  Either way, fall back to the handler's
-                # last-known write offset.
-                size = self.stream.tell()
+            size = self._safe_stream_size()
             msg = f"{self.format(record)}\n"
             if size + len(msg) >= self.maxBytes:
                 return 1
         return 0
+
+    def _safe_stream_size(self) -> int:
+        """Best-effort current size of the active log file.
+
+        ``shouldRollover`` is called from inside ``emit`` and must never
+        propagate an exception, otherwise the handler's error path
+        triggers and the rollover never fires.  Both ``fileno()`` and
+        ``tell()`` raise ``ValueError`` on a closed stream, and ``fstat``
+        can fail with ``OSError`` on some platforms — fall back through
+        all three to ``0`` rather than letting any of them escape.
+        """
+        if self.stream is None:
+            return 0
+        try:
+            return os.fstat(self.stream.fileno()).st_size
+        except (OSError, ValueError):
+            pass
+        try:
+            return self.stream.tell()
+        except (OSError, ValueError):
+            return 0
 
     @override
     def doRollover(self) -> None:
@@ -144,39 +158,48 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
                 os.close(devnull_fd)
             try:
                 super().doRollover()
-                if self.stream is None:
-                    msg = (
-                        "DaemonRotatingFileHandler.doRollover: stream is "
-                        "None after super().doRollover()"
-                    )
-                    raise RuntimeError(msg)
-                fd = self.stream.fileno()
-                os.dup2(fd, 1)
-                os.dup2(fd, 2)
             except Exception:
-                # Recovery: open whatever currently lives at
-                # ``baseFilename`` (the active log path) and re-bind
-                # fds 1/2 onto it so subsequent stdout/stderr writes
-                # are NOT silently routed to /dev/null.  Best-effort
-                # only — if even this fails the original exception
-                # still propagates with the rich traceback.
-                try:
-                    recovery_fd = os.open(
-                        self.baseFilename,
-                        os.O_WRONLY | os.O_APPEND | os.O_CREAT,
-                        0o644,
-                    )
-                    try:
-                        os.dup2(recovery_fd, 1)
-                        os.dup2(recovery_fd, 2)
-                    finally:
-                        os.close(recovery_fd)
-                except OSError:
-                    pass
+                self._rebind_fds_to_basefile()
                 logger.exception("DaemonRotatingFileHandler.doRollover failed")
                 raise
+            # ``self.stream is None`` is the expected state when
+            # ``delay=True`` is configured: the parent class defers the
+            # next ``_open()`` until the following emit().  Treat it as
+            # a valid no-op and rebind fds 1/2 to the (newly empty)
+            # ``baseFilename`` so subsequent stdout/stderr writes still
+            # land in the active log file rather than ``/dev/null``.
+            if self.stream is None:
+                self._rebind_fds_to_basefile()
+                return
+            fd = self.stream.fileno()
+            os.dup2(fd, 1)
+            os.dup2(fd, 2)
         finally:
             self.release()
+
+    def _rebind_fds_to_basefile(self) -> None:
+        """Best-effort: re-``dup2`` fds 1 and 2 onto ``self.baseFilename``.
+
+        Used by :meth:`doRollover`'s recovery path and the ``delay=True``
+        no-op path.  Failures are swallowed because the caller is
+        already mid-recovery — the original error (if any) still
+        propagates with its traceback intact.
+        """
+        try:
+            recovery_fd = os.open(
+                self.baseFilename,
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                0o644,
+            )
+        except OSError:
+            return
+        try:
+            with contextlib.suppress(OSError):
+                os.dup2(recovery_fd, 1)
+                os.dup2(recovery_fd, 2)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(recovery_fd)
 
 
 def install_daemon_log_rotation(

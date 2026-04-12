@@ -35,7 +35,7 @@ __all__ = ["ProjectSlot", "RegistryFullError", "ServiceRegistry"]
 
 
 class RegistryFullError(Exception):
-    """Raised by :meth:`ServiceRegistry._admit_with_lru` when no slot is evictable.
+    """Raised by :meth:`ServiceRegistry._collect_lru_victim` when no slot is evictable.
 
     Attributes:
         max_projects: The registry's configured ``max_projects`` cap.
@@ -264,9 +264,12 @@ class ServiceRegistry:
         Use as ``with registry.lease(root) as slot: ...``.  On enter,
         the slot is created if necessary (honoring the LRU cap and
         triggering an idle sweep), its ``last_access`` is updated, and
-        its ``ref_count`` is incremented.  On exit, the refcount is
-        decremented.  Eviction never touches a slot with
-        ``ref_count > 0``.
+        its ``ref_count`` is incremented.  Any victim slots that the
+        admission/sweep selected are popped from the registry while
+        the lock is held and then torn down *after* the lock has been
+        fully released, never via manual ``release()`` on an ``RLock``.
+        On exit, the refcount is decremented.  Eviction never touches a
+        slot with ``ref_count > 0``.
 
         Args:
             root: Workspace root directory.
@@ -280,26 +283,40 @@ class ServiceRegistry:
             RuntimeError: If ``load_model()`` has not been called or
                 the registry is shutting down.
         """
-        slot = self._acquire(root)
+        slot, victims = self._acquire(root)
+        # Run teardown OUTSIDE the lock and BEFORE yielding so the
+        # caller never observes more than ``max_projects`` slots and
+        # so the file/socket resources held by victims are released
+        # before any caller-side work begins.
+        for v_root, v_slot, reason in victims:
+            self._teardown_slot(v_root, v_slot, reason=reason)
         try:
             yield slot
         finally:
             self._release(slot)
 
-    def _acquire(self, root: Path) -> ProjectSlot:
+    def _acquire(
+        self,
+        root: Path,
+    ) -> tuple[ProjectSlot, list[tuple[Path, ProjectSlot, str]]]:
         """Admit or fetch *root*'s slot and increment its ``ref_count``.
 
         Must NOT be called outside :meth:`lease`.  Holds ``_lock`` for
         the slot lookup / admission / refcount mutation / opportunistic
         idle sweep.  Slot creation itself runs outside ``_lock`` via
         :meth:`peek_project` to preserve the service-graph ADR's
-        parallel cold-start guarantee.
+        parallel cold-start guarantee.  Returns the acquired slot
+        plus a (possibly empty) list of victims that the caller MUST
+        tear down after the lock is fully released.
 
         Args:
             root: Workspace root directory.
 
         Returns:
-            The acquired ``ProjectSlot``, already bumped.
+            ``(slot, victims)`` — *slot* is the acquired
+            ``ProjectSlot`` (already bumped); *victims* is a list of
+            ``(root, slot, reason)`` triples that were popped from the
+            registry under the lock and need teardown.
 
         Raises:
             RegistryFullError: When admission would exceed the LRU cap
@@ -307,6 +324,7 @@ class ServiceRegistry:
             RuntimeError: When the registry is shutting down.
         """
         resolved = root.resolve()
+        victims: list[tuple[Path, ProjectSlot, str]] = []
 
         # Fast path: slot already exists. Still take _lock to mutate
         # ref_count and last_access atomically.
@@ -318,10 +336,10 @@ class ServiceRegistry:
             if slot is not None:
                 slot.last_access = time.monotonic()
                 slot.ref_count += 1
-                self._sweep_idle()
-                return slot
-            # LRU admission: may evict a victim synchronously.
-            self._admit_with_lru(resolved)
+                victims.extend(self._collect_idle_victims())
+                return slot, victims
+            # LRU admission may collect a victim under the lock.
+            victims.extend(self._collect_lru_victim())
 
         # Create (outside _lock so GPU parallel init is preserved).
         slot = self.peek_project(resolved)
@@ -331,8 +349,8 @@ class ServiceRegistry:
                 raise RuntimeError(msg)
             slot.last_access = time.monotonic()
             slot.ref_count += 1
-            self._sweep_idle()
-        return slot
+            victims.extend(self._collect_idle_victims())
+        return slot, victims
 
     def _release(self, slot: ProjectSlot) -> None:
         """Decrement a slot's ``ref_count`` under ``_lock``."""
@@ -342,59 +360,45 @@ class ServiceRegistry:
 
     # -- eviction ---------------------------------------------------------
 
-    def _sweep_idle(self) -> None:
-        """Evict slots whose ``last_access`` is older than the idle TTL.
+    def _collect_idle_victims(self) -> list[tuple[Path, ProjectSlot, str]]:
+        """Pop and return slots whose ``last_access`` is older than the idle TTL.
 
-        Caller MUST hold ``self._lock``.  Returns with ``self._lock``
-        still held.
-
-        Race-safety: every victim is popped from ``_projects`` *while
-        the lock is held*, so a concurrent :meth:`lease` call cannot
-        observe a victim and resurrect it once teardown begins.  The
-        teardown itself (watcher stop → graph invalidate → store close)
-        runs *outside* the lock to avoid holding the registry critical
-        section across slow Qdrant close I/O — the slot is already
-        unreachable from ``_projects`` at that point so no other thread
-        can race it.  ``self._lock`` is reentrant (``RLock``) as a
-        defensive measure for any future code path that needs to call
-        :meth:`close_project` while still holding the lock.
+        Caller MUST hold ``self._lock``.  Returns with the lock still
+        held.  Victims are popped from ``_projects`` while the lock is
+        held so a concurrent :meth:`lease` cannot observe them and
+        resurrect them once teardown begins.  Teardown itself (watcher
+        stop → graph invalidate → store close) is the *caller's*
+        responsibility once the lock has been fully released — the
+        manual ``RLock.release()/acquire()`` dance is fragile because
+        a single ``release()`` on a recursively-held ``RLock`` only
+        decrements the recursion counter and does not actually let
+        other threads in.
         """
         if self._idle_ttl_seconds <= 0:
-            return
+            return []
         now = time.monotonic()
-        victim_slots: list[tuple[Path, ProjectSlot]] = []
+        victims: list[tuple[Path, ProjectSlot, str]] = []
         for r, s in list(self._projects.items()):
             if s.ref_count == 0 and (now - s.last_access) >= self._idle_ttl_seconds:
                 self._projects.pop(r, None)
                 self._root_locks.pop(r, None)
-                victim_slots.append((r, s))
-        if not victim_slots:
-            return
-        self._lock.release()
-        try:
-            for root, slot in victim_slots:
-                self._teardown_slot(root, slot, reason="idle")
-        finally:
-            self._lock.acquire()
+                victims.append((r, s, "idle"))
+        return victims
 
-    def _admit_with_lru(self, root: Path) -> None:
-        """Enforce the LRU cap before admitting *root*.
+    def _collect_lru_victim(self) -> list[tuple[Path, ProjectSlot, str]]:
+        """Pop and return the LRU victim if the registry is at capacity.
 
-        Caller MUST hold ``self._lock``.  If the registry is below the
-        cap, returns immediately.  Otherwise selects the slot with the
-        smallest ``last_access`` among ``ref_count == 0`` candidates,
-        pops it from ``_projects`` *under the lock*, then runs teardown
-        outside the lock.  Raises :class:`RegistryFullError` if every
-        slot is busy.
-
-        Args:
-            root: The root being admitted (unused beyond diagnostics).
+        Caller MUST hold ``self._lock``.  Returns with the lock still
+        held.  If the registry is below ``max_projects`` returns an
+        empty list.  Otherwise selects the slot with the smallest
+        ``last_access`` among ``ref_count == 0`` candidates, pops it
+        from ``_projects``, and returns it as a single-element list.
+        Raises :class:`RegistryFullError` when every slot is busy.
         """
-        del root  # kept for future per-root logging
         if self._max_projects <= 0:
-            return
+            return []
         if len(self._projects) < self._max_projects:
-            return
+            return []
         candidates = [
             (slot.last_access, r)
             for r, slot in self._projects.items()
@@ -404,17 +408,11 @@ class ServiceRegistry:
             raise RegistryFullError(self._max_projects)
         candidates.sort()
         victim_root = candidates[0][1]
-        # Pop under the lock so a concurrent lease() cannot resurrect
-        # the slot before teardown completes.
         victim_slot = self._projects.pop(victim_root, None)
         self._root_locks.pop(victim_root, None)
         if victim_slot is None:
-            return
-        self._lock.release()
-        try:
-            self._teardown_slot(victim_root, victim_slot, reason="lru")
-        finally:
-            self._lock.acquire()
+            return []
+        return [(victim_root, victim_slot, "lru")]
 
     def _teardown_slot(
         self,
@@ -444,7 +442,7 @@ class ServiceRegistry:
         decisions (existence + busy check + pop) happen under
         ``self._lock`` so a concurrent :meth:`lease` cannot race the
         evict.  Teardown runs outside the lock per the same protocol
-        as :meth:`_sweep_idle` and :meth:`_admit_with_lru`.
+        as :meth:`_collect_idle_victims` and :meth:`_collect_lru_victim`.
 
         Returns:
             ``(True, "forced")`` when the slot was evicted,
