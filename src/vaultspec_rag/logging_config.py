@@ -1,43 +1,21 @@
-"""Central logging configuration for vaultspec-rag using RichHandler."""
+"""Logging configuration for vaultspec-rag.
+
+Thin wrapper over :mod:`vaultspec_core.logging_config`. RAG previously held a
+near-verbatim copy of core's implementation; it now delegates so the two
+packages cannot silently diverge. The only RAG-specific behavior preserved
+here is the env-var override (``VAULTSPEC_RAG_LOG_LEVEL``) and RAG's
+``WARNING`` default when no explicit level is supplied.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
 
-from rich.console import Console
-from rich.logging import RichHandler
+from vaultspec_core.logging_config import configure_logging as _core_configure_logging
+from vaultspec_core.logging_config import get_console, reset_logging
 
 __all__ = ["configure_logging", "get_console", "reset_logging"]
-
-# Shared Rich console instance (stderr, no syntax highlighting)
-_console: Console | None = None
-
-# Global flag to prevent multiple configurations
-_configured: bool = False
-
-
-def get_console() -> Console:
-    """Return the shared Rich console singleton (stderr, no highlighting).
-
-    Creates the instance on first call.
-
-    Returns:
-        The shared :class:`rich.console.Console` writing to ``stderr``.
-    """
-    global _console
-    if _console is None:
-        _console = Console(stderr=True, highlight=False)
-    return _console
-
-
-def reset_logging() -> None:
-    """Reset the logging configuration flag.
-
-    Allows :func:`configure_logging` to be called again.
-    """
-    global _configured
-    _configured = False
 
 
 def configure_logging(
@@ -45,10 +23,11 @@ def configure_logging(
     debug: bool = False,
     quiet: bool = False,
 ) -> None:
-    """Configure the root logger with a RichHandler.
+    """Configure the root logger via core's RichHandler setup.
 
-    Sets the log level based on provided arguments or the
-    ``VAULTSPEC_RAG_LOG_LEVEL`` environment variable.
+    Honors the RAG-specific ``VAULTSPEC_RAG_LOG_LEVEL`` env var with a
+    ``WARNING`` default when no explicit ``level``/``debug``/``quiet`` is
+    provided, then delegates to :func:`vaultspec_core.logging_config.configure_logging`.
 
     Args:
         level: Explicit log level (e.g. ``logging.INFO`` or ``"DEBUG"``).
@@ -56,46 +35,10 @@ def configure_logging(
             tracebacks with local variables.
         quiet: When ``True``, forces level to ``WARNING``.
     """
-    global _configured
-    if _configured:
-        return
-
-    # 1. Resolve level
-    if debug:
-        resolved_level = logging.DEBUG
-    elif quiet:
-        resolved_level = logging.WARNING
-    elif level is not None:
-        if isinstance(level, str):
-            resolved_level = getattr(logging, level.upper(), logging.INFO)
-        else:
-            resolved_level = level
-    else:
-        # Fallback to environment or default
+    if level is None and not debug and not quiet:
         from .config import EnvVar
 
         env_level = os.environ.get(EnvVar.LOG_LEVEL, "WARNING").upper()
-        resolved_level = getattr(logging, env_level, logging.INFO)
+        level = getattr(logging, env_level, logging.INFO)
 
-    # 2. Configure root logger
-    root = logging.getLogger()
-    root.setLevel(resolved_level)
-
-    # Clear any existing handlers to avoid duplicates
-    for handler in root.handlers[:]:
-        root.removeHandler(handler)
-
-    # 3. Add RichHandler
-    console = get_console()
-    handler = RichHandler(
-        console=console,
-        show_time=debug,
-        show_path=debug,
-        rich_tracebacks=True,
-        tracebacks_show_locals=debug,
-        markup=False,
-    )
-    handler.setLevel(resolved_level)
-    root.addHandler(handler)
-
-    _configured = True
+    _core_configure_logging(level=level, debug=debug, quiet=quiet)
