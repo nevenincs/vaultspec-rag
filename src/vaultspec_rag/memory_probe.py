@@ -176,6 +176,14 @@ class MemoryProbe:
         finally:
             self.checkpoint(f"exit:{label}")
 
+    def __enter__(self) -> MemoryProbe:
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        # Always tear down the background sampler so a failing pipeline
+        # never leaks the probe thread.
+        self.stop()
+
     def stop(self) -> None:
         """Stop the background sampler thread."""
         if self._sampler_thread is None:

@@ -801,16 +801,18 @@ def _stream_encode_and_upsert_vault(
     """
     from .memory_probe import MemoryProbe
 
-    probe = MemoryProbe(name="vault-full-index")
-
-    reporter.phase_start("embed + upsert documents", len(docs))
-    with gpu_lock if gpu_lock is not None else nullcontext():
+    with MemoryProbe(name="vault-full-index") as probe:
+        reporter.phase_start("embed + upsert documents", len(docs))
         for i in range(0, len(docs), slice_size):
             slice_docs = docs[i : i + slice_size]
             slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
             probe.checkpoint(f"slice-{i}-before-encode")
-            dense = model.encode_documents(slice_texts)
-            sparse = model.encode_documents_sparse(slice_texts)
+            # Hold the GPU lock only across the encode call so that the
+            # I/O-bound upsert below runs without blocking concurrent
+            # searches on the same GPU.
+            with gpu_lock if gpu_lock is not None else nullcontext():
+                dense = model.encode_documents(slice_texts)
+                sparse = model.encode_documents_sparse(slice_texts)
             probe.checkpoint(f"slice-{i}-after-encode")
             for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
                 doc.vector = vec.tolist()
@@ -824,8 +826,8 @@ def _stream_encode_and_upsert_vault(
             _release_cuda_cache()
             probe.checkpoint(f"slice-{i}-after-empty-cache")
             reporter.advance(len(slice_docs))
-    reporter.phase_end()
-    probe.stop()
+        reporter.phase_end()
+
     if probe.samples:
         logger.info("%s", probe.report())
 
@@ -847,16 +849,15 @@ def _stream_encode_and_upsert_codebase(
     """
     from .memory_probe import MemoryProbe
 
-    probe = MemoryProbe(name="codebase-full-index")
-
-    reporter.phase_start("embed + upsert chunks", len(chunks))
-    with gpu_lock if gpu_lock is not None else nullcontext():
+    with MemoryProbe(name="codebase-full-index") as probe:
+        reporter.phase_start("embed + upsert chunks", len(chunks))
         for i in range(0, len(chunks), slice_size):
             slice_chunks = chunks[i : i + slice_size]
             slice_texts = [c.content for c in slice_chunks]
             probe.checkpoint(f"slice-{i}-before-encode")
-            dense = model.encode_documents(slice_texts)
-            sparse = model.encode_documents_sparse(slice_texts)
+            with gpu_lock if gpu_lock is not None else nullcontext():
+                dense = model.encode_documents(slice_texts)
+                sparse = model.encode_documents_sparse(slice_texts)
             probe.checkpoint(f"slice-{i}-after-encode")
             for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
                 chunk.vector = vec.tolist()
@@ -867,8 +868,8 @@ def _stream_encode_and_upsert_codebase(
             _release_cuda_cache()
             probe.checkpoint(f"slice-{i}-after-empty-cache")
             reporter.advance(len(slice_chunks))
-    reporter.phase_end()
-    probe.stop()
+        reporter.phase_end()
+
     if probe.samples:
         logger.info("%s", probe.report())
 
