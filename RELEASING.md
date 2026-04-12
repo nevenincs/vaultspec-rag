@@ -66,7 +66,7 @@ secrets are stored anywhere.
 
    ```sh
    curl -s https://pypi.org/pypi/vaultspec-rag/json | jq .info.version
-   uv pip install --dry-run vaultspec-rag
+   uv pip install --dry-run --pre vaultspec-rag
    ```
 
 ## Troubleshooting
