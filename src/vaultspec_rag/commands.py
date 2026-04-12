@@ -205,15 +205,14 @@ def install_run(
 
     rules_dir = target / ".vaultspec" / "rules"
     if not dry_run:
-        # Wrap seed + sync in a single try/except so a failure inside
-        # seed_builtins (or sync_provider) does not leave the
-        # workspace partially seeded with no record of what was
-        # written. On failure we attempt to remove only files that
-        # *this* install actually created (tracked in report.seeded),
-        # surface the error as a warning, and re-raise so the caller
-        # sees the failure.
+        # Pass an out-list so partial progress is captured BEFORE any
+        # exception propagates. seed_builtins now raises OSError on
+        # the first per-file failure (no more silent partial seeds).
+        # On failure we roll back only the files this install actually
+        # wrote, surface the error as a warning, and re-raise so the
+        # caller sees the failure.
         try:
-            report.seeded = seed_builtins(rules_dir, force=force or upgrade)
+            seed_builtins(rules_dir, force=force or upgrade, written=report.seeded)
         except Exception:
             _rollback_seeded(rules_dir, report.seeded, report)
             raise
@@ -311,9 +310,20 @@ def uninstall_run(
     if not force:
         dry_run = True
 
-    target = _resolve_target(path, bootstrap=not dry_run)
+    # IMPORTANT: uninstall must NEVER create workspace directories.
+    # A user running ``vaultspec-rag uninstall --force`` in an empty
+    # or wrong directory expects a no-op (or a clear error), not the
+    # creation of fresh ``.vault/`` and ``.vaultspec/`` artefacts. We
+    # therefore resolve the path without bootstrapping; if no
+    # ``.vaultspec/`` exists at the target there is nothing rag could
+    # have installed and we return an empty report immediately.
+    target = _resolve_target(path, bootstrap=False)
     action = "dry_run" if dry_run else "uninstall"
     report = UninstallReport(action=action, target=target)
+
+    if not (target / ".vaultspec").is_dir():
+        report.warnings.append(f"no .vaultspec/ at {target}; nothing to uninstall")
+        return report
 
     rules_dir = target / ".vaultspec" / "rules"
     candidates = [
@@ -339,16 +349,26 @@ def uninstall_run(
             "removal to .mcp.json and provider dirs)"
         )
     elif "core" not in skip:
+        # sync_provider needs core's runtime context. Only bootstrap
+        # it now (after we've confirmed .vaultspec/ exists), so we
+        # never create workspace state during uninstall.
         try:
-            report.sync_results = sync_provider(
-                "all",
-                dry_run=False,
-                force=force,
-                skip=skip,
-            )
+            layout = resolve_workspace(target_override=target)
+            init_paths(layout)
         except Exception as exc:
-            logger.error("sync_provider failed during uninstall: %s", exc)
-            report.warnings.append(f"core sync failed: {exc}")
+            logger.error("workspace context bootstrap failed: %s", exc)
+            report.warnings.append(f"workspace bootstrap failed: {exc}")
+        else:
+            try:
+                report.sync_results = sync_provider(
+                    "all",
+                    dry_run=False,
+                    force=force,
+                    skip=skip,
+                )
+            except Exception as exc:
+                logger.error("sync_provider failed during uninstall: %s", exc)
+                report.warnings.append(f"core sync failed: {exc}")
 
     if remove_data:
         data_dir = target / ".vault" / "data"
@@ -374,7 +394,7 @@ def uninstall_run(
             # rather than followed.
             if not dry_run:
                 try:
-                    shutil.rmtree(data_dir, onerror=_rmtree_safe_onerror)
+                    shutil.rmtree(data_dir, onexc=_rmtree_safe_onexc)
                 except OSError as exc:
                     logger.warning("Failed to remove %s: %s", data_dir, exc)
                     report.warnings.append(f"failed to remove .vault/data: {exc}")
@@ -386,20 +406,22 @@ def uninstall_run(
     return report
 
 
-def _rmtree_safe_onerror(_func, path, exc_info) -> None:
-    """``shutil.rmtree`` error handler that unlinks symlinks instead
-    of following them.
+def _rmtree_safe_onexc(_func, path, exc) -> None:
+    """``shutil.rmtree`` error handler (Python 3.12+ ``onexc`` form)
+    that unlinks symlinks instead of following them.
 
     Defensive secondary guard against the case where a symlink is
     encountered inside ``.vault/data/`` after the top-level
-    ``is_symlink`` check has already passed.
+    ``is_symlink`` check has already passed. ``onerror`` was
+    deprecated in 3.12; ``onexc`` receives the exception instance
+    directly instead of an ``exc_info`` tuple.
     """
     p = Path(path)
     if p.is_symlink():
         try:
             p.unlink()
-        except OSError as exc:
-            logger.warning("Failed to unlink symlink %s: %s", p, exc)
+        except OSError as e:
+            logger.warning("Failed to unlink symlink %s: %s", p, e)
         return
     # Re-raise the original error for non-symlink failures.
-    raise exc_info[1]
+    raise exc

@@ -62,24 +62,45 @@ def _builtins_root() -> Path:
     return pkg_dir
 
 
-def seed_builtins(target_rules_dir: Path, *, force: bool = False) -> list[str]:
+def seed_builtins(
+    target_rules_dir: Path,
+    *,
+    force: bool = False,
+    written: list[str] | None = None,
+) -> list[str]:
     """Copy bundled builtins into a target ``.vaultspec/rules/`` directory.
 
     Only copies files that don't already exist unless *force* is ``True``.
     Iterates the explicit :data:`_BUNDLED_FILES` manifest so editable and
     wheel installs both seed exactly the same set.
 
+    Per-file ``OSError`` is **raised**, not swallowed. Silent partial
+    seeding would leave the workspace half-installed and bypass the
+    rollback path callers rely on. Callers may pass an out-parameter
+    ``written`` list to capture progress before the exception
+    propagates, enabling targeted rollback.
+
     Args:
         target_rules_dir: The ``.vaultspec/rules/`` directory to populate.
         force: Overwrite existing files.
+        written: Optional out-list. The function appends each
+            successfully-written relative path before continuing to
+            the next file. Pass an empty list to capture progress
+            even if a later iteration raises.
 
     Returns:
-        Sorted list of relative paths (forward-slash separated) that were
-        actually written.
+        Sorted list of relative paths (forward-slash separated) that
+        were actually written. Same content as ``written`` if the
+        out-list was provided.
+
+    Raises:
+        OSError: If a destination file write fails (permissions,
+            disk full, etc.).
     """
     src_root = _builtins_root()
     target_resolved = target_rules_dir.resolve()
-    written: list[str] = []
+    if written is None:
+        written = []
 
     for rel in _BUNDLED_FILES:
         # Defense in depth: even though _BUNDLED_FILES is a static
@@ -115,17 +136,16 @@ def seed_builtins(target_rules_dir: Path, *, force: bool = False) -> list[str]:
         if dest.exists() and not force:
             continue
 
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            # Use core's atomic_write (tmp + os.replace) per the ADR.
-            # Both bundled files are UTF-8 text (Markdown rule + JSON
-            # MCP definition); reading and writing as text preserves
-            # content correctly. Crash consistency is the same as
-            # core's own builtin seeding pipeline.
-            atomic_write(dest, src_file.read_text(encoding="utf-8"))
-        except OSError as exc:
-            logger.warning("Failed to seed %s: %s", rel, exc)
-            continue
+        # Per-file write failure is fatal: raise so the caller can
+        # roll back the partial state. Logging-and-continuing would
+        # leave a half-installed workspace and a "successful" report.
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Use core's atomic_write (tmp + os.replace) per the ADR.
+        # Both bundled files are UTF-8 text (Markdown rule + JSON
+        # MCP definition); reading and writing as text preserves
+        # content correctly. Crash consistency is the same as
+        # core's own builtin seeding pipeline.
+        atomic_write(dest, src_file.read_text(encoding="utf-8"))
         written.append(rel)
 
     written.sort()

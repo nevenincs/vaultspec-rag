@@ -392,36 +392,190 @@ class TestSafetyGuards:
         must remove any files it had successfully written so the
         workspace is not left half-installed.
 
-        We force a failure by making ``.vaultspec/rules/mcps/`` a file
-        instead of a directory before install runs. The mcps seed step
-        will fail with OSError; the rules step (already done first
-        thanks to the sorted iteration order) will have left the rule
-        file behind. Rollback must remove it.
+        ``_BUNDLED_FILES`` iterates rules-then-mcps. We block the
+        second (mcps) iteration by making its parent dir a regular
+        file, so ``dest.parent.mkdir(parents=True, exist_ok=True)``
+        raises ``FileExistsError`` after the first (rules) entry has
+        already been seeded successfully. Rollback must unlink the
+        rules file.
         """
+        import pytest as _pytest
+
         ws = tmp_path / "workspace"
         ws.mkdir()
-        # Pre-create the mcps PARENT dir but make 'mcps' itself a file,
-        # blocking the directory write.
-        (ws / ".vaultspec" / "rules").mkdir(parents=True)
-        (ws / ".vaultspec" / "rules" / "mcps").write_text("blocker", encoding="utf-8")
+        # Pre-create everything except the mcps parent dir, which
+        # we replace with a file. _ensure_workspace_dirs sees mcps
+        # already exists (as a file → not is_dir), tries mkdir, and
+        # would fail there — so we have to bypass _ensure_workspace_dirs
+        # entirely by pre-creating it as a dir, then converting after.
+        (ws / ".vault" / "data").mkdir(parents=True)
+        (ws / ".vaultspec" / "rules" / "rules").mkdir(parents=True)
+        # Critical: do NOT pre-create .vaultspec/rules/mcps as a dir.
+        # Instead create it as a FILE so _ensure_workspace_dirs's
+        # ``if d.is_dir(): continue`` falls through to mkdir, which
+        # raises. But we want seed_builtins to be the failure point,
+        # not _ensure_workspace_dirs. So we pre-create mcps as a dir
+        # and block seed_builtins by making the bundled DEST file
+        # path a non-empty directory; with force=True the existence
+        # check is bypassed and atomic_write fails.
+        (ws / ".vaultspec" / "rules" / "mcps").mkdir(parents=True)
+        (ws / _RAG_MCP_REL).mkdir()
+        (ws / _RAG_MCP_REL / "sentinel").write_text("x", encoding="utf-8")
 
-        # _ensure_workspace_dirs will skip 'mcps' because it exists
-        # (as a file). seed_builtins will then fail when trying to
-        # mkdir parents=True under the file. The exception must
-        # propagate AND any rule file written before the failure must
-        # be cleaned up.
+        with _pytest.raises(OSError):
+            install_run(path=ws, force=True)
+
+        # The rules file was written but must have been rolled back.
+        assert not (ws / _RAG_RULE_REL).exists()
+        # The mcps "file" is still a non-empty directory (we never
+        # wrote a file there); rollback only unlinks paths it
+        # actually wrote.
+        assert (ws / _RAG_MCP_REL).is_dir()
+        assert (ws / _RAG_MCP_REL / "sentinel").is_file()
+
+    def test_uninstall_in_empty_dir_does_not_create_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        """Codex P2: ``vaultspec-rag uninstall --force`` against an
+        empty directory must NOT create ``.vault/`` or ``.vaultspec/``
+        as a side effect. Cleanup automation that points at the wrong
+        directory should be a no-op, not a destructive bootstrap.
+        """
+        ws = tmp_path / "empty-workspace"
+        ws.mkdir()
+        # Confirm starting state
+        assert not (ws / ".vault").exists()
+        assert not (ws / ".vaultspec").exists()
+
+        report = uninstall_run(path=ws, force=True)
+
+        # The directories must NOT have been created.
+        assert not (ws / ".vault").exists()
+        assert not (ws / ".vaultspec").exists()
+        # The report must reflect that nothing was removed.
+        assert report.removed == []
+        assert any("nothing to uninstall" in w for w in report.warnings), (
+            report.warnings
+        )
+
+    def test_uninstall_in_dir_without_vaultspec_returns_early(
+        self, tmp_path: Path
+    ) -> None:
+        """If ``.vault/`` exists but ``.vaultspec/`` does not, uninstall
+        must still no-op rather than creating the missing dir or
+        attempting to read non-existent rag artefacts.
+        """
+        ws = tmp_path / "partial-workspace"
+        ws.mkdir()
+        (ws / ".vault").mkdir()  # only one of the two dirs exists
+
+        report = uninstall_run(path=ws, force=True)
+
+        # .vaultspec was NOT created.
+        assert not (ws / ".vaultspec").exists()
+        assert report.removed == []
+        assert any("nothing to uninstall" in w for w in report.warnings)
+
+    def test_seed_builtins_raises_on_per_file_failure(self, tmp_path: Path) -> None:
+        """Codex P2: ``seed_builtins`` must raise on per-file write
+        failures, not log-and-continue. Silent partial seeding bypasses
+        the install_run rollback path and leaves the workspace in an
+        undetectable broken state.
+        """
+        from vaultspec_rag.builtins import seed_builtins
+
+        target = tmp_path / "rules"
+        target.mkdir()
+        # Block one of the destination paths by making its parent dir
+        # a file. ``mcps/`` comes before ``rules/`` alphabetically in
+        # the bundled tuple, so the mcps write attempt will fail.
+        (target / "mcps").write_text("blocker", encoding="utf-8")
+
         import pytest as _pytest
 
         with _pytest.raises(OSError):
-            install_run(path=ws)
+            seed_builtins(target)
 
-        # The rule file (alphabetically processed before mcps in the
-        # _BUNDLED_FILES tuple? actually mcps/ comes before rules/
-        # alphabetically, so the failure happens FIRST and no rule
-        # gets written). Either way, neither file should exist after
-        # the failed install.
-        assert not (ws / _RAG_RULE_REL).exists()
-        assert not (ws / _RAG_MCP_REL).exists()
+    def test_seed_builtins_out_param_captures_partial_progress(
+        self, tmp_path: Path
+    ) -> None:
+        """The ``written`` out-list must contain everything seeded
+        before the failing iteration, so callers (install_run) can
+        roll back targeted partial state.
+        """
+        from vaultspec_rag.builtins import seed_builtins
+
+        target = tmp_path / "rules"
+        target.mkdir()
+        # _BUNDLED_FILES iterates rules-then-mcps. Make rules
+        # writeable and block the second (mcps) iteration by
+        # pre-creating its dest file path as a non-empty directory.
+        # With force=True the existence check is bypassed and
+        # atomic_write fails on the dir replacement.
+        (target / "rules").mkdir()
+        (target / "mcps").mkdir()
+        (target / "mcps" / "vaultspec-rag.builtin.json").mkdir()
+        (target / "mcps" / "vaultspec-rag.builtin.json" / "x").write_text(
+            "y", encoding="utf-8"
+        )
+
+        written: list[str] = []
+        import pytest as _pytest
+
+        with _pytest.raises(OSError):
+            seed_builtins(target, force=True, written=written)
+
+        # rules file got written before the mcps failure
+        assert "rules/vaultspec-rag.builtin.md" in written
+        # mcps file did NOT
+        assert "mcps/vaultspec-rag.builtin.json" not in written
+
+    def test_global_target_flag_routes_to_install(self, tmp_path: Path) -> None:
+        """Codex P1: ``vaultspec-rag --target /path install`` must
+        install into ``/path``, not into the current working
+        directory. The root callback's global ``--target`` is
+        consumed by Click before the subcommand options, so the
+        subcommand handler must explicitly read it from the context.
+        """
+        from typer.testing import CliRunner
+
+        from vaultspec_rag.cli import app
+
+        ws = tmp_path / "global-target-ws"
+        ws.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["--target", str(ws), "install"], catch_exceptions=False
+        )
+
+        assert result.exit_code == 0, result.output
+        # The bundled files must have landed in the global target,
+        # not in cwd.
+        assert (ws / _RAG_RULE_REL).is_file()
+        assert (ws / _RAG_MCP_REL).is_file()
+
+    def test_global_target_flag_routes_to_uninstall(
+        self, installed_workspace: Path
+    ) -> None:
+        """Same routing rule for uninstall: ``vaultspec-rag --target
+        /path uninstall --force`` must uninstall from ``/path``.
+        """
+        from typer.testing import CliRunner
+
+        from vaultspec_rag.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["--target", str(installed_workspace), "uninstall", "--force"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        # rag-owned files removed from the global target.
+        assert not (installed_workspace / _RAG_RULE_REL).exists()
+        assert not (installed_workspace / _RAG_MCP_REL).exists()
 
     def test_seed_builtins_refuses_traversal_in_relative_path(
         self, tmp_path: Path, monkeypatch: object

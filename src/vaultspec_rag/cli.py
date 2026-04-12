@@ -274,7 +274,14 @@ def main(
     ):
         # These subcommands either operate without a resolved
         # workspace (test/quality/server) or resolve their own via
-        # core's resolver (install/uninstall).
+        # core's resolver (install/uninstall). Even so, stash the
+        # global ``--target`` (if any) on ctx.obj so the install /
+        # uninstall handlers can read it. Click consumes group
+        # options before subcommand options, so the global value
+        # would otherwise be silently dropped if the user invoked
+        # ``vaultspec-rag --target /path install`` instead of
+        # ``vaultspec-rag install --target /path``.
+        ctx.obj = {"target": target}
         return
 
     try:
@@ -1825,6 +1832,7 @@ def handle_test(ctx: typer.Context) -> None:
 
 @app.command("install")
 def handle_install(
+    ctx: typer.Context,
     target: Annotated[
         Path | None,
         typer.Option(
@@ -1882,9 +1890,15 @@ def handle_install(
     """
     from .commands import install_run
 
+    # Honour the global ``--target`` from the root callback. Click
+    # consumes group options before subcommand options, so the user
+    # invoking ``vaultspec-rag --target /path install`` would lose
+    # the path entirely if we only read the local ``target``.
+    effective_target = target or _global_target(ctx)
+
     try:
         report = install_run(
-            path=target,
+            path=effective_target,
             upgrade=upgrade,
             dry_run=dry_run,
             force=force,
@@ -1905,6 +1919,7 @@ def handle_install(
 
 @app.command("uninstall")
 def handle_uninstall(
+    ctx: typer.Context,
     target: Annotated[
         Path | None,
         typer.Option(
@@ -1960,9 +1975,13 @@ def handle_uninstall(
     """
     from .commands import uninstall_run
 
+    # Honour the global ``--target`` from the root callback (see
+    # handle_install for the rationale).
+    effective_target = target or _global_target(ctx)
+
     try:
         report = uninstall_run(
-            path=target,
+            path=effective_target,
             remove_data=remove_data,
             dry_run=dry_run,
             force=force,
@@ -1979,6 +1998,24 @@ def handle_uninstall(
         return
 
     _render_uninstall_report(report)
+
+
+def _global_target(ctx: typer.Context) -> Path | None:
+    """Read the global ``--target`` value the root callback stashed
+    on ``ctx.obj`` for short-circuited subcommands (install /
+    uninstall).
+
+    Returns ``None`` if the user did not pass a global target. The
+    callback only sets a dict here for the install/uninstall path;
+    other subcommands receive a ``CLIState`` instance instead, which
+    we ignore.
+    """
+    obj = ctx.obj
+    if isinstance(obj, dict):
+        value = obj.get("target")
+        if isinstance(value, Path):
+            return value
+    return None
 
 
 def _render_install_report(report: Any) -> None:

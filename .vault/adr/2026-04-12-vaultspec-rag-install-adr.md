@@ -63,6 +63,13 @@ as the stable public surface, including (relevant to rag):
   `core.commands`, not re-exported through `core/__init__.py` but
   importable directly and called by core's own CLI without
   intermediation).
+- Workspace bootstrap: `resolve_workspace` (in
+  `vaultspec_core.config.workspace`) and `init_paths` (in
+  `vaultspec_core.core.types`). The first computes the
+  `WorkspaceContext` from a target path; the second installs that
+  context as the active runtime context that `sync_provider` reads
+  to locate `.vaultspec/` and `.mcp.json`. Both must be called
+  before the first `sync_provider` invocation.
 - Per-resource: `mcp_add`, `mcp_remove`, `mcp_list`, `mcp_sync`,
   `collect_mcp_servers`, `rules_sync`, `collect_rules`.
 - Helpers: `atomic_write`, `build_file`, `ensure_dir`.
@@ -284,7 +291,7 @@ Dependencies on core (direct imports — no try/except, core is hard dep):
 ```python
 from vaultspec_core.config.workspace import resolve_workspace
 from vaultspec_core.core.commands import sync_provider
-from vaultspec_core.core.mcps import mcp_remove
+from vaultspec_core.core.types import init_paths
 from vaultspec_core.core.helpers import atomic_write
 from vaultspec_core.core.exceptions import VaultSpecError, ResourceNotFoundError
 ```
