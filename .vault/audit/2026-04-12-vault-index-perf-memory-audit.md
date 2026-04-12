@@ -783,10 +783,76 @@ pending:**
 - Ruff / format / ty: clean
 - Env-var override roundtrip verified for all 4 new keys.
 
-**Iteration 10 — re-audit queue:**
+### Iteration 10 — fresh bot reviews on iter 9 (2026-04-12)
 
-After Iteration 9 commits, re-trigger the bots once more to
-verify the new `clean=True` destructive path is acceptable
-(it directly addresses both codex iterations). Also re-check
-any existing tests that exercise `clean=True` to ensure they
-still see the expected post-rebuild state.
+User triggered fresh `@codex review`, `@gemini review pr`,
+`@claude review safety` after iteration 9 (commit `debeb02`).
+Claude responded at 16:30, Gemini at 16:35. Codex did not
+re-review by the wakeup window.
+
+**Claude safety review on `debeb02` — CLEAN, no blockers.**
+Three areas reviewed in depth:
+
+1. Dual-mode `clean=True` data-loss path: **CLEAN** — the
+   data-loss window is real but correctly documented in the
+   inline comment. No undocumented regression.
+1. `(OSError, RuntimeError)` snapshot catch scope: **CLEAN**
+   — narrowly scoped, logged with traceback,
+   `VaultStoreLockedError` correctly handled, downstream
+   upsert errors propagate normally.
+1. Int coercion for 4 new env-var keys: **CLEAN** — all
+   four defaults are `int`, the wrapper's coercion path is
+   correct, naming is consistent throughout.
+
+Two LOW polish findings (F10.1, F10.2 below) — addressed.
+
+**Gemini PR review on `debeb02` — 4 medium findings.**
+
+**Findings — fixed in commit pending:**
+
+- **F10.1 LOW (claude + gemini agree)** — Dead debug log at
+  `indexer.py:1140`. The condition
+  `if clean and not stale_ids and existing_ids_before` can
+  never fire because iter 9's `clean=True` path runs
+  `drop_table()` first, leaving `existing_ids_before`
+  empty. **Fix**: removed the dead block from
+  `_full_index_locked` (vault path).
+- **F10.2 LOW (claude only)** — Misleading docstring at
+  `_full_index_locked` line 1021: "Both modes honour the
+  contract" overstates the guarantee for interrupted
+  `clean=True` runs. **Fix**: rewrote the `clean=True`
+  description to call out the data-loss window explicitly
+  and clarified that the contract is delivered "on
+  successful completion".
+- **F10.3 MEDIUM (gemini)** — `slice_texts: list[str] | None`
+  type hint misleading at the assignment site. **Fix**:
+  dropped the explicit annotation and switched the finally
+  block to `del` instead of `= None`. `del` actually drops
+  the local entirely from the frame; pre-binding
+  `dense = None` / `sparse = None` ensures `del` always
+  succeeds even when the encode raised before binding.
+- **F10.4 MEDIUM (gemini)** — Same as F10.3 for the
+  codebase helper. **Fix**: same `del`-based pattern.
+- **F10.5 MEDIUM (gemini)** — Stale `Returns` docstring at
+  `_full_index_locked` line 1030: said `removed` is always
+  zero, but the implementation now returns `len(stale_ids)`.
+  **Fix**: rewrote the `Returns` paragraph to describe
+  `removed` as the post-stream stale-purge count.
+- **F10.6 MEDIUM (gemini)** — Same dead-code finding as
+  F10.1; flagged independently. Already fixed via F10.1.
+
+**Codex re-review:** no response within the wakeup window.
+The previous codex P2 (F9.6) was directly addressed by iter
+9's `clean=True` drop-on-opt-in fix.
+
+**Tests after iteration 10 fixes:**
+
+- 324 unit + 41 integration: PASSED
+- Ruff / format / ty: clean
+
+**Iteration 11 — re-audit queue:**
+
+Wake up once more to check whether codex responded to the
+iter 9 trigger; if so, address any new findings; otherwise
+the audit loop has reached a fixed point and the PR is ready
+for human review and merge.

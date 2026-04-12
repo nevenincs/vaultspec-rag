@@ -826,12 +826,10 @@ def _stream_encode_and_upsert_vault(
         try:
             for i in range(0, len(sorted_docs), slice_size):
                 slice_docs = sorted_docs[i : i + slice_size]
-                slice_texts: list[str] | None = [
-                    f"{d.title}\n\n{d.content}" for d in slice_docs
-                ]
-                # Pre-bind dense/sparse so the finally clause never
-                # hits a NameError when the encode call raises before
-                # binding them.
+                slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
+                # Pre-bind dense/sparse to None so the finally clause
+                # can ``del`` them unconditionally even when the encode
+                # call raises before binding them.
                 dense = None
                 sparse = None
                 probe.checkpoint(f"slice-{i}-before-encode")
@@ -856,12 +854,13 @@ def _stream_encode_and_upsert_vault(
                 finally:
                     # Drop references to per-slice tensors before
                     # releasing the CUDA caching pool so freed blocks
-                    # are returned to the driver immediately. The
-                    # rebind to None drops the previous binding's ref
-                    # count even when the encode raised mid-call.
-                    dense = None
-                    sparse = None
-                    slice_texts = None
+                    # are returned to the driver immediately. ``del``
+                    # is preferred over ``= None`` because it removes
+                    # the local entirely from the frame instead of
+                    # leaving a None binding. F10.3 audit fix.
+                    del dense
+                    del sparse
+                    del slice_texts
                     _release_cuda_cache()
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_docs))
@@ -901,7 +900,7 @@ def _stream_encode_and_upsert_codebase(
         try:
             for i in range(0, len(sorted_chunks), slice_size):
                 slice_chunks = sorted_chunks[i : i + slice_size]
-                slice_texts: list[str] | None = [c.content for c in slice_chunks]
+                slice_texts = [c.content for c in slice_chunks]
                 dense = None
                 sparse = None
                 probe.checkpoint(f"slice-{i}-before-encode")
@@ -921,9 +920,11 @@ def _stream_encode_and_upsert_codebase(
                         chunk.sparse_values = list(svec.values)
                     store.upsert_code_chunks(slice_chunks)
                 finally:
-                    dense = None
-                    sparse = None
-                    slice_texts = None
+                    # F10.4 audit fix — del beats = None for dropping
+                    # the local out of the frame entirely.
+                    del dense
+                    del sparse
+                    del slice_texts
                     _release_cuda_cache()
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))
@@ -1016,20 +1017,27 @@ class VaultIndexer:
             clean: When ``True``, drop and recreate the vault
                 collection up front so schema-level changes (e.g.
                 a new embedding dimension) take effect (#68 audit
-                F9.6 — codex P2). The default ``clean=False`` path
-                is failure-safe: it streams upserts in place and
-                purges only the stale doc IDs after a successful
-                rebuild, so an interrupted run never leaves the
-                collection empty. Both modes honour the documented
-                "no stale documents persist" contract.
+                F9.6 — codex P2). On the ``clean=True`` path an
+                interrupted run (CUDA OOM, process kill, Qdrant
+                I/O failure mid-stream) may leave the collection
+                empty until the next successful run — this is
+                the explicit user opt-in to destructive semantics.
+                The default ``clean=False`` path is failure-safe:
+                it streams upserts in place and purges only the
+                stale doc IDs after a successful rebuild, so an
+                interrupted run never leaves the collection empty.
+                Both modes deliver the "no stale documents persist"
+                contract on successful completion.
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total number
-            of documents written and ``updated``/``removed`` are both
-            zero. If the vault is empty the returned counts are all
-            zero and every previously-indexed row is purged.
+            of documents written, ``updated`` is ``0``, and ``removed``
+            reports the post-stream stale-document purge count
+            (#68 audit F10.5). If the vault is empty the returned
+            counts are ``added=0`` and ``removed`` reflects every
+            previously-indexed row that was purged.
 
         Raises:
             OSError: If the post-stream stale-document purge fails
@@ -1137,11 +1145,12 @@ class VaultIndexer:
                 reporter.advance(len(stale_ids))
         finally:
             reporter.phase_end()
-        if clean and not stale_ids and existing_ids_before:
-            logger.debug(
-                "clean=True requested but every existing ID is also "
-                "present in the new corpus — nothing to purge",
-            )
+        # F10.1: removed dead `if clean and not stale_ids and
+        # existing_ids_before` debug log. After iter 9, clean=True
+        # drops the collection up front, so existing_ids_before is
+        # always empty on that path and the condition could never
+        # fire. The non-clean path with no stale_ids is the no-op
+        # case and doesn't need a log line.
 
         reporter.phase_start("write metadata", 1)
         try:
