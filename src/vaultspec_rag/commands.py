@@ -609,11 +609,13 @@ def _run_torch_config_uninstall(
         report.torch_config_action = "absent"
         return
     if state == torch_config.TorchConfigState.CUSTOMISED:
-        # Surface conflicts via a dry-run-style call.
-        patch_report = torch_config.remove_patch(pyproject) if not dry_run else None
+        # remove_patch is safe to call on CUSTOMISED — it short-circuits
+        # before any write and returns the conflict list. Call it in
+        # both dry-run and wet modes so the report is symmetric with
+        # the install side (which calls apply_patch unconditionally).
+        patch_report = torch_config.remove_patch(pyproject)
         report.torch_config_action = "skipped"
-        if patch_report is not None:
-            report.torch_config_conflicts = list(patch_report.conflicts)
+        report.torch_config_conflicts = list(patch_report.conflicts)
         report.warnings.append(
             "pyproject.toml has a non-canonical cu130 block; "
             "skipping removal — resolve manually"

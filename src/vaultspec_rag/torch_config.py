@@ -460,22 +460,20 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
     indices = _indices(doc)
     if indices is None:
         return
-    kept = []
-    for e in indices:
-        if isinstance(e, Table | InlineTable | dict) and _index_match(e) == "canonical":
-            continue
-        kept.append(e)
-    uv = _tool_uv(doc)
-    if uv is None:
-        return
-    if not kept:
-        del uv["index"]
-        return
-    # Rebuild the AoT from the kept entries.
-    aot = tomlkit.aot()
-    for e in kept:
-        aot.append(e)
-    uv["index"] = aot
+    # Iterate backwards and pop in-place so user trivia (comments,
+    # blank lines, custom formatting between tables) in the kept
+    # entries is preserved. Rebuilding the AoT from scratch would
+    # strip that metadata.
+    for i in range(len(indices) - 1, -1, -1):
+        entry = indices[i]
+        if isinstance(entry, Table | InlineTable | dict) and _index_match(entry) == (
+            "canonical"
+        ):
+            indices.pop(i)
+    if len(indices) == 0:
+        uv = _tool_uv(doc)
+        if uv is not None:
+            del uv["index"]
 
 
 def _drop_torch_source(doc: TOMLDocument) -> None:
@@ -497,21 +495,16 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
             del sources["torch"]
         return
 
-    # Array-of-inline-tables form.
-    kept = [
-        e
-        for e in torch_entry
-        if not (isinstance(e, InlineTable | dict) and _source_match(e) == "canonical")
-    ]
-    if not kept:
+    # Array-of-inline-tables form. Iterate backwards and pop in-place
+    # to preserve inline comments and formatting on non-canonical
+    # entries; rebuilding the array from a kept list would strip that
+    # trivia.
+    for i in range(len(torch_entry) - 1, -1, -1):
+        e = torch_entry[i]
+        if isinstance(e, InlineTable | dict) and _source_match(e) == "canonical":
+            torch_entry.pop(i)
+    if len(torch_entry) == 0:
         del sources["torch"]
-    else:
-        arr = tomlkit.array()
-        for e in kept:
-            arr.append(e)
-        if len(kept) > 1:
-            arr.multiline(True)
-        sources["torch"] = arr
 
     # If sources table is now empty, drop it. Same for [tool.uv] and [tool].
     if not sources:

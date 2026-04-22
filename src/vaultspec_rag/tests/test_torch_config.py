@@ -192,6 +192,45 @@ def test_apply_then_remove_semantic_round_trip(tmp_path: Path) -> None:
     assert "tool" not in final_parsed or "uv" not in final_parsed.get("tool", {})
 
 
+def test_remove_preserves_user_trivia_on_sibling_index_entries(
+    tmp_path: Path,
+) -> None:
+    """When the consumer has *other* [[tool.uv.index]] entries alongside
+    our cu130 block, removal must keep their comments and formatting.
+    Regression guard for the remove_patch in-place pop() approach.
+    """
+    p = tmp_path / "pyproject.toml"
+    content = (
+        PROJECT_ONLY + "\n" + "# user index before cu130\n"
+        "[[tool.uv.index]]\n"
+        'name = "private"\n'
+        'url = "https://private.example.com/simple"\n'
+        "\n"
+        "[[tool.uv.index]]\n"
+        'name = "pytorch-cu130"\n'
+        'url = "https://download.pytorch.org/whl/cu130"\n'
+        "explicit = true\n"
+        "\n"
+        "[tool.uv.sources]\n"
+        "# user comment above torch pin\n"
+        "torch = [\n"
+        '    {index = "pytorch-cu130", '
+        "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
+        "]\n"
+    )
+    _write(p, content)
+    tc.remove_patch(p)
+    after = p.read_text(encoding="utf-8")
+    # The user's sibling index entry and its preceding comment survive.
+    assert "# user index before cu130" in after
+    assert '"private"' in after
+    assert "https://private.example.com/simple" in after
+    # The cu130 entry is gone.
+    assert "pytorch-cu130" not in after
+    # File still reparses as valid TOML.
+    tomlkit.parse(after)
+
+
 def test_remove_on_missing_is_absent(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)

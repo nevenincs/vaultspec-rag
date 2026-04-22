@@ -186,6 +186,30 @@ class TestUninstallTorchConfig:
         sha_before = _sha(ws / "pyproject.toml")
         report = uninstall_run(path=ws, force=True)
         assert report.torch_config_action == "skipped"
+        assert report.torch_config_conflicts  # populated symmetrically
+        assert _sha(ws / "pyproject.toml") == sha_before
+
+    def test_uninstall_dry_run_on_customised_populates_conflicts(
+        self, tmp_path: Path
+    ) -> None:
+        """Dry-run on a CUSTOMISED workspace must still report conflicts
+        so the user sees why the removal would refuse. Mirrors the
+        install side, which surfaces conflicts in every mode.
+        """
+        ws = tmp_path / "customised"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(
+            PROJECT_ONLY + "\n[[tool.uv.index]]\n"
+            'name = "pytorch-cu130"\n'
+            'url = "https://download.pytorch.org/whl/cu121"\n'
+            "explicit = true\n",
+            encoding="utf-8",
+            newline="",
+        )
+        sha_before = _sha(ws / "pyproject.toml")
+        report = uninstall_run(path=ws, force=False)  # dry-run path
+        assert report.torch_config_action == "skipped"
+        assert report.torch_config_conflicts
         assert _sha(ws / "pyproject.toml") == sha_before
 
     def test_uninstall_dry_run_does_not_mutate(self, consumer_workspace: Path) -> None:
