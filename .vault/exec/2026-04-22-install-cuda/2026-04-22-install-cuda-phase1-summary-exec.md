@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#exec"
-  - "#install-cuda"
+  - '#exec'
+  - '#install-cuda'
 date: 2026-04-22
 related:
-  - "[[2026-04-22-install-cuda-plan]]"
-  - "[[2026-04-22-install-cuda-adr]]"
-  - "[[2026-04-22-install-cuda-research]]"
+  - '[[2026-04-22-install-cuda-plan]]'
+  - '[[2026-04-22-install-cuda-adr]]'
+  - '[[2026-04-22-install-cuda-research]]'
 ---
 
 # install-cuda phase-1 summary
@@ -18,16 +18,16 @@ Resolves [github issue #81](https://github.com/wgergely/vaultspec-rag/issues/81)
 
 ## artefacts landed
 
-| file                                                                       | kind     | lines                       | purpose                                                   |
-| :------------------------------------------------------------------------- | :------- | :-------------------------- | :-------------------------------------------------------- |
-| `pyproject.toml`                                                           | modified | +1 dep                      | `tomlkit>=0.13` runtime dep                               |
-| `uv.lock`                                                                  | modified | autogen                     | locks tomlkit 0.14.0                                      |
-| `src/vaultspec_rag/torch_config.py`                                        | NEW      | ~300                        | pure logic: detect/apply/remove cu130 block + diagnose_torch |
-| `src/vaultspec_rag/commands.py`                                            | modified | ~+160                       | install/uninstall orchestration calls torch_config; new params and report fields |
-| `src/vaultspec_rag/cli.py`                                                 | modified | ~+80                        | `--torch-config/--no-torch-config`, `--yes`, `--sync`; 3-state `_handle_gpu_error`; migrated `service_warmup` check |
-| `src/vaultspec_rag/tests/test_torch_config.py`                             | NEW      | 23 tests                    | unit coverage of torch_config module                      |
-| `src/vaultspec_rag/tests/test_install_torch_config.py`                     | NEW      | 14 tests                    | install/uninstall torch-config branch coverage            |
-| `README.md`                                                                | modified | +~30                        | install section rewrite, manual cu130 snippet, 3-state troubleshooting |
+| file                                                   | kind     | lines    | purpose                                                                                                             |
+| :----------------------------------------------------- | :------- | :------- | :------------------------------------------------------------------------------------------------------------------ |
+| `pyproject.toml`                                       | modified | +1 dep   | `tomlkit>=0.13` runtime dep                                                                                         |
+| `uv.lock`                                              | modified | autogen  | locks tomlkit 0.14.0                                                                                                |
+| `src/vaultspec_rag/torch_config.py`                    | NEW      | ~300     | pure logic: detect/apply/remove cu130 block + diagnose_torch                                                        |
+| `src/vaultspec_rag/commands.py`                        | modified | ~+160    | install/uninstall orchestration calls torch_config; new params and report fields                                    |
+| `src/vaultspec_rag/cli.py`                             | modified | ~+80     | `--torch-config/--no-torch-config`, `--yes`, `--sync`; 3-state `_handle_gpu_error`; migrated `service_warmup` check |
+| `src/vaultspec_rag/tests/test_torch_config.py`         | NEW      | 23 tests | unit coverage of torch_config module                                                                                |
+| `src/vaultspec_rag/tests/test_install_torch_config.py` | NEW      | 14 tests | install/uninstall torch-config branch coverage                                                                      |
+| `README.md`                                            | modified | +~30     | install section rewrite, manual cu130 snippet, 3-state troubleshooting                                              |
 
 Total: 37 new tests, all passing. 382 unit tests pass overall. ty clean. ruff clean.
 
@@ -69,11 +69,11 @@ None blocking. Tracked optional follow-ups (per ADR):
 
 ## acceptance-criteria mapping (issue #81)
 
-| criterion                                                                                       | status                                                                       |
-| :---------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------- |
-| `install` in a fresh project adds cu130 index + torch source, prompts for confirmation         | done (`--yes` bypasses; non-TTY requires explicit flag)                      |
-| Running `install` twice is a no-op for the torch-config block                                  | done (`test_install_idempotent_on_second_run`)                               |
-| `uninstall` removes only the exact entries install added                                       | done (canonical-shape match; CUSTOMISED left intact — `test_uninstall_on_customised_block_skips_with_conflict`) |
-| CPU-torch error names `uv run vaultspec-rag install` as the fix                                | done (`TorchDiagnosis.CPU_ONLY` branch in `_handle_gpu_error`)               |
-| CUDA-torch-but-no-GPU error stays as "No CUDA GPU detected"                                    | done (`TorchDiagnosis.NO_GPU` branch)                                        |
-| README install section updated                                                                 | done (lead with `uv add vaultspec-rag && uv run vaultspec-rag install`; manual snippet + troubleshooting retained) |
+| criterion                                                                              | status                                                                                                             |
+| :------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| `install` in a fresh project adds cu130 index + torch source, prompts for confirmation | done (`--yes` bypasses; non-TTY requires explicit flag)                                                            |
+| Running `install` twice is a no-op for the torch-config block                          | done (`test_install_idempotent_on_second_run`)                                                                     |
+| `uninstall` removes only the exact entries install added                               | done (canonical-shape match; CUSTOMISED left intact — `test_uninstall_on_customised_block_skips_with_conflict`)    |
+| CPU-torch error names `uv run vaultspec-rag install` as the fix                        | done (`TorchDiagnosis.CPU_ONLY` branch in `_handle_gpu_error`)                                                     |
+| CUDA-torch-but-no-GPU error stays as "No CUDA GPU detected"                            | done (`TorchDiagnosis.NO_GPU` branch)                                                                              |
+| README install section updated                                                         | done (lead with `uv add vaultspec-rag && uv run vaultspec-rag install`; manual snippet + troubleshooting retained) |

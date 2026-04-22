@@ -1,11 +1,11 @@
 ---
 tags:
-  - "#research"
-  - "#install-cuda"
+  - '#research'
+  - '#install-cuda'
 date: 2026-04-22
 related:
-  - "[[2026-04-12-vaultspec-rag-install-adr]]"
-  - "[[2026-04-06-ecosystem-integration-adr]]"
+  - '[[2026-04-12-vaultspec-rag-install-adr]]'
+  - '[[2026-04-06-ecosystem-integration-adr]]'
 ---
 
 # install-cuda research: configuring torch cuda for consumer projects
@@ -103,11 +103,11 @@ the cu130 wheel.
 
 `torch` exposes three observable states for CUDA support:
 
-| State                   | `torch.version.cuda`      | `torch.cuda.is_available()` | Meaning                                  |
-| :---------------------- | :------------------------ | :-------------------------- | :--------------------------------------- |
-| CPU-only wheel          | `None`                    | `False`                     | Packaging problem                        |
-| CUDA wheel, no GPU      | `"13.0"` (or similar str) | `False`                     | Driver / hardware problem                |
-| CUDA wheel, GPU present | `"13.0"` (or similar)     | `True`                      | Working                                  |
+| State                   | `torch.version.cuda`      | `torch.cuda.is_available()` | Meaning                   |
+| :---------------------- | :------------------------ | :-------------------------- | :------------------------ |
+| CPU-only wheel          | `None`                    | `False`                     | Packaging problem         |
+| CUDA wheel, no GPU      | `"13.0"` (or similar str) | `False`                     | Driver / hardware problem |
+| CUDA wheel, GPU present | `"13.0"` (or similar)     | `True`                      | Working                   |
 
 The current `_handle_gpu_error` in `src/vaultspec_rag/cli.py:58`
 collapses the first two states into one message, which is wrong for
@@ -194,8 +194,7 @@ and our idempotency check will leave it alone.
 
 Two options after patching:
 
-- **Shell out.** `subprocess.run(["uv", "sync",
-  "--reinstall-package", "torch"], cwd=target)`. Pros: one-shot, user
+- **Shell out.** `subprocess.run(["uv", "sync", "--reinstall-package", "torch"], cwd=target)`. Pros: one-shot, user
   ends in a ready state. Cons: requires `uv` on PATH, blocks on
   network, surfaces uv's error messages alongside ours.
 - **Print the command.** Write the block, then print
@@ -231,12 +230,12 @@ Same match predicate as the install idempotency check, inverted.
 
 Final `_handle_gpu_error` behaviour:
 
-| Caught exception                                 | Detected state                                | Message                                                                                                   |
-| :----------------------------------------------- | :-------------------------------------------- | :-------------------------------------------------------------------------------------------------------- |
-| `ImportError`                                    | torch not installed                           | `uv add vaultspec-rag && uv run vaultspec-rag install` (unchanged intent)                                 |
-| `RuntimeError` / any, with `torch.version.cuda is None` | CPU-only torch wheel                          | "PyTorch was installed without CUDA support (CPU-only wheel). Your GPU is fine." + `vaultspec-rag install` |
-| `RuntimeError` / any, with `torch.version.cuda` set and `torch.cuda.is_available()` False | CUDA wheel but no GPU / driver issue          | existing "No CUDA GPU detected" + driver/hardware hint                                                    |
-| other                                            | unknown                                       | fall-through (existing)                                                                                   |
+| Caught exception                                                                          | Detected state                       | Message                                                                                                    |
+| :---------------------------------------------------------------------------------------- | :----------------------------------- | :--------------------------------------------------------------------------------------------------------- |
+| `ImportError`                                                                             | torch not installed                  | `uv add vaultspec-rag && uv run vaultspec-rag install` (unchanged intent)                                  |
+| `RuntimeError` / any, with `torch.version.cuda is None`                                   | CPU-only torch wheel                 | "PyTorch was installed without CUDA support (CPU-only wheel). Your GPU is fine." + `vaultspec-rag install` |
+| `RuntimeError` / any, with `torch.version.cuda` set and `torch.cuda.is_available()` False | CUDA wheel but no GPU / driver issue | existing "No CUDA GPU detected" + driver/hardware hint                                                     |
+| other                                                                                     | unknown                              | fall-through (existing)                                                                                    |
 
 The message text, once locked down in the ADR, must also include the
 raw manual snippet so users who want to patch their `pyproject.toml`

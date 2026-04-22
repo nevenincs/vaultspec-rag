@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#adr"
-  - "#install-cuda"
+  - '#adr'
+  - '#install-cuda'
 date: 2026-04-22
 related:
-  - "[[2026-04-22-install-cuda-research]]"
-  - "[[2026-04-12-vaultspec-rag-install-adr]]"
-  - "[[2026-04-06-ecosystem-integration-adr]]"
+  - '[[2026-04-22-install-cuda-research]]'
+  - '[[2026-04-12-vaultspec-rag-install-adr]]'
+  - '[[2026-04-06-ecosystem-integration-adr]]'
 ---
 
 # install-cuda adr: patching consumer pyproject.toml for cu130 torch and actionable cpu-torch errors | (**status:** `proposed`)
@@ -107,13 +107,13 @@ in the error message and the README.
 
 One new file, three modified files:
 
-| file                                          | action   | role                                                                                                                                |
-| :-------------------------------------------- | :------- | :---------------------------------------------------------------------------------------------------------------------------------- |
-| `src/vaultspec_rag/torch_config.py`           | NEW      | Pure logic for detecting, writing, and removing the canonical cu130 block in a pyproject.toml. No Typer, no Rich, no I/O side-effects beyond the single `atomic_write`. |
-| `src/vaultspec_rag/commands.py`               | MODIFIED | `install_run` / `uninstall_run` call into `torch_config` after the seed / sync steps. Two new params thread through: `configure_torch: bool = True`, `assume_yes: bool = False`. |
-| `src/vaultspec_rag/cli.py`                    | MODIFIED | `cmd_install` / `cmd_uninstall` gain `--no-torch-config` and `--yes`/`-y`; `cmd_install` gains `--sync`. `_handle_gpu_error` refactored to the three-state taxonomy. The sibling bare check at `cli.py:1652` migrates to use the same helper (or a shared leaf). |
-| `src/vaultspec_rag/README.md`, root `README.md` | MODIFIED | Install section updated to `uv add vaultspec-rag && uv run vaultspec-rag install`. Manual cu130 snippet retained for air-gapped users. |
-| `pyproject.toml`                              | MODIFIED | Add `tomlkit>=0.13` to `[project] dependencies`. No other changes. |
+| file                                            | action   | role                                                                                                                                                                                                                                                             |
+| :---------------------------------------------- | :------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/vaultspec_rag/torch_config.py`             | NEW      | Pure logic for detecting, writing, and removing the canonical cu130 block in a pyproject.toml. No Typer, no Rich, no I/O side-effects beyond the single `atomic_write`.                                                                                          |
+| `src/vaultspec_rag/commands.py`                 | MODIFIED | `install_run` / `uninstall_run` call into `torch_config` after the seed / sync steps. Two new params thread through: `configure_torch: bool = True`, `assume_yes: bool = False`.                                                                                 |
+| `src/vaultspec_rag/cli.py`                      | MODIFIED | `cmd_install` / `cmd_uninstall` gain `--no-torch-config` and `--yes`/`-y`; `cmd_install` gains `--sync`. `_handle_gpu_error` refactored to the three-state taxonomy. The sibling bare check at `cli.py:1652` migrates to use the same helper (or a shared leaf). |
+| `src/vaultspec_rag/README.md`, root `README.md` | MODIFIED | Install section updated to `uv add vaultspec-rag && uv run vaultspec-rag install`. Manual cu130 snippet retained for air-gapped users.                                                                                                                           |
+| `pyproject.toml`                                | MODIFIED | Add `tomlkit>=0.13` to `[project] dependencies`. No other changes.                                                                                                                                                                                               |
 
 ### canonical cu130 block
 
@@ -212,15 +212,14 @@ After the existing `seed_builtins` + `sync_provider` steps, a new
 block runs:
 
 1. If `configure_torch` is False → skip, note in report.
-2. Call `torch_config.detect_state(target / "pyproject.toml")`.
-3. If `MISSING`: prompt (bypassed by `assume_yes`) → on yes, call
+1. Call `torch_config.detect_state(target / "pyproject.toml")`.
+1. If `MISSING`: prompt (bypassed by `assume_yes`) → on yes, call
    `apply_patch`, record the result in the report.
-4. If `CANONICAL`: no-op, record "already configured".
-5. If `CUSTOMISED`: warn with the conflicting keys, skip.
-6. If `NO_PROJECT_FILE`: warn, skip.
-7. If `sync_after` is True and the patch was applied,
-   `subprocess.run(["uv", "sync", "--reinstall-package", "torch"],
-   cwd=target, check=True)`. Errors surface as non-fatal
+1. If `CANONICAL`: no-op, record "already configured".
+1. If `CUSTOMISED`: warn with the conflicting keys, skip.
+1. If `NO_PROJECT_FILE`: warn, skip.
+1. If `sync_after` is True and the patch was applied,
+   `subprocess.run(["uv", "sync", "--reinstall-package", "torch"], cwd=target, check=True)`. Errors surface as non-fatal
    warnings on the report.
 
 `InstallReport` gains two fields:
@@ -408,8 +407,7 @@ comments, custom key ordering, and inline whitespace that regex
 surgery destroys. `tomlkit` preserves all of it. It is the idiomatic
 tool for this job and pulling it in is one line of dependency cost.
 
-**Sync opt-in, not default.** Running `uv sync --reinstall-package
-torch` implicitly from `install` surprises users who expect
+**Sync opt-in, not default.** Running `uv sync --reinstall-package torch` implicitly from `install` surprises users who expect
 file-only mutations, and breaks in CI / offline / containerised
 contexts. `--sync` is the one-liner escape hatch for users who
 want it.
@@ -476,8 +474,7 @@ pattern we use.
 and formatting. Fails the "respect user-authored files" criterion.
 
 **Shell out to `uv add --index`.** Rejected on two counts: (a) the
-relevant uv subcommand for this is not `uv add` but `uv add
---index` + `uv sources`, which does not yet have a stable
+relevant uv subcommand for this is not `uv add` but `uv add --index` + `uv sources`, which does not yet have a stable
 Python-facing API; (b) we'd still need to write the `torch`
 source pin separately. Direct tomlkit editing is simpler and more
 testable.

@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#plan"
-  - "#install-cuda"
+  - '#plan'
+  - '#install-cuda'
 date: 2026-04-22
 related:
-  - "[[2026-04-22-install-cuda-adr]]"
-  - "[[2026-04-22-install-cuda-research]]"
-  - "[[2026-04-12-vaultspec-rag-install-adr]]"
+  - '[[2026-04-22-install-cuda-adr]]'
+  - '[[2026-04-22-install-cuda-research]]'
+  - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---
 
 # install-cuda plan: executable implementation steps
@@ -46,6 +46,7 @@ list — current order is not strictly alphabetical).
 Run `uv lock` to refresh the lockfile.
 
 **exit criteria:**
+
 - `uv run python -c "import tomlkit; print(tomlkit.__version__)"`
   prints a version string ≥0.13.
 - `uv.lock` updated, no other dep deltas.
@@ -88,6 +89,7 @@ Implement per the ADR surface:
   string literal assembled from the three constants.
 
 Implementation tips (not verbatim code):
+
 - Use `tomlkit.aot()` (array-of-tables) when adding `[[tool.uv.index]]`
   to a doc that has no `[tool.uv]` table yet.
 - Use `tomlkit.array()` + `tomlkit.inline_table()` for the
@@ -97,11 +99,10 @@ Implementation tips (not verbatim code):
   constants only. No string reformatting sensitivity.
 
 **exit criteria:**
+
 - File exists. `uv run ruff check src/vaultspec_rag/torch_config.py`
   passes with 0 violations.
-- `uv run python -c "from vaultspec_rag.torch_config import
-  detect_state, apply_patch, remove_patch, diagnose_torch,
-  manual_snippet, TorchConfigState, TorchDiagnosis, PatchReport"`
+- `uv run python -c "from vaultspec_rag.torch_config import detect_state, apply_patch, remove_patch, diagnose_torch, manual_snippet, TorchConfigState, TorchDiagnosis, PatchReport"`
   succeeds.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task2.md`
@@ -115,6 +116,7 @@ no monkeypatching. Each fixture is a real `tmp_path / "pyproject.toml"`
 written with a known byte content, loaded by real `tomlkit`.
 
 Assertions to cover:
+
 - `detect_state` classifies each of the 5 fixtures correctly.
 - `apply_patch` on MISSING writes exactly the canonical block,
   preserves the rest of the file, and a second call returns
@@ -130,6 +132,7 @@ Assertions to cover:
   apply output for a blank input.
 
 **exit criteria:**
+
 - `uv run pytest src/vaultspec_rag/tests/unit/test_torch_config.py -v`
   passes, minimum 12 test cases.
 - 0 ruff / ty violations on the new test file.
@@ -146,15 +149,14 @@ Assertions to cover:
   Extend `to_dict()`.
 - Extend `UninstallReport` with `torch_config_removed: bool = False`.
   Extend `to_dict()`.
-- Change `install_run` signature to add `configure_torch: bool =
-  True`, `assume_yes: bool = False`, `sync_after: bool = False`
+- Change `install_run` signature to add `configure_torch: bool = True`, `assume_yes: bool = False`, `sync_after: bool = False`
   (all keyword-only).
 - Change `uninstall_run` signature to add `assume_yes: bool = False`.
 - Implement the install-side torch_config flow per ADR: after the
   `sync_provider` block, run the detect → (prompt / skip / apply)
   → optional `uv sync` pipeline. Record outcomes on the report.
   The confirmation prompt uses `rich.prompt.Confirm.ask` (rich is
-  already a dep).  Non-TTY detection via `sys.stdin.isatty()`:
+  already a dep). Non-TTY detection via `sys.stdin.isatty()`:
   when False and `assume_yes` is False, set
   `torch_config_action="skipped-non-tty"` and emit a warning that
   names the `--yes` / `--no-torch-config` flags.
@@ -166,11 +168,11 @@ Assertions to cover:
   intended action without writing.
 - `dry_run=True` on uninstall: call `detect_state`; report what
   would be removed without calling `remove_patch`.
-- The `sync_after` step uses `subprocess.run(["uv", "sync",
-  "--reinstall-package", "torch"], cwd=target, check=False)`.
+- The `sync_after` step uses `subprocess.run(["uv", "sync", "--reinstall-package", "torch"], cwd=target, check=False)`.
   Non-zero exit → warning on report, not an exception.
 
 **exit criteria:**
+
 - `uv run pytest src/vaultspec_rag/tests/integration/test_install.py`
   (existing) still passes — backward compat with the prior
   install feature.
@@ -184,14 +186,15 @@ Assertions to cover:
 **file:** `src/vaultspec_rag/cli.py`
 
 In `cmd_install`:
+
 - Add three new `Annotated[...]` parameters:
   `configure_torch` (bool, `--torch-config/--no-torch-config`,
   default True), `yes` (bool, `--yes`/`-y`, default False),
   `sync_after` (bool, `--sync`, default False).
-- Pass through to `install_run(..., configure_torch=configure_torch,
-  assume_yes=yes, sync_after=sync_after)`.
+- Pass through to `install_run(..., configure_torch=configure_torch, assume_yes=yes, sync_after=sync_after)`.
 
 In `cmd_uninstall`:
+
 - Add `yes` parameter (`--yes`/`-y`, default False).
 - Pass through to `uninstall_run(..., assume_yes=yes)`.
 
@@ -199,6 +202,7 @@ Render the new report fields in the post-run summary (both JSON
 and Rich panels) so the user sees the torch-config action.
 
 **exit criteria:**
+
 - `uv run vaultspec-rag install --help` shows the three new flags.
 - `uv run vaultspec-rag uninstall --help` shows the one new flag.
 - `uv run pytest src/vaultspec_rag/tests/unit/test_cli.py` still
@@ -207,7 +211,7 @@ and Rich panels) so the user sees the torch-config action.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task5.md`
 
-## step 6 — refactor _handle_gpu_error and migrate cli.py:1652
+## step 6 — refactor \_handle_gpu_error and migrate cli.py:1652
 
 **file:** `src/vaultspec_rag/cli.py`
 
@@ -225,6 +229,7 @@ if not torch.cuda.is_available():
 so both sites share the taxonomy.
 
 **exit criteria:**
+
 - A unit test in `tests/unit/test_torch_config.py::test_diagnose_torch`
   covers all 4 states (from step 3).
 - A manual smoke test (in the step record) confirms the 3 messages
@@ -256,6 +261,7 @@ live `uv` + network); document it in the step record as a manual
 verification step.
 
 **exit criteria:**
+
 - `uv run pytest src/vaultspec_rag/tests/integration/test_install_torch_config.py -v`
   passes. Minimum 6 test cases.
 
@@ -265,8 +271,7 @@ verification step.
 
 **files:** `README.md`, `src/vaultspec_rag/README.md`
 
-- Root `README.md`, Install section: lead with `uv add vaultspec-rag
-  && uv run vaultspec-rag install`. Add a callout naming `--sync`
+- Root `README.md`, Install section: lead with `uv add vaultspec-rag && uv run vaultspec-rag install`. Add a callout naming `--sync`
   for one-liner install and `--no-torch-config` for opt-out.
   Add a short "Troubleshooting: CPU torch" note that reproduces
   the 3-state error taxonomy.
@@ -275,6 +280,7 @@ verification step.
 - Retain the manual cu130 snippet for air-gapped users.
 
 **exit criteria:**
+
 - Markdown lints (`mdformat`, `pymarkdownlnt`) pass via the
   existing pre-commit hook.
 
@@ -301,6 +307,7 @@ on the "why" per the project's `CLAUDE.md` convention. Final push
 to `origin feature/install-cuda`.
 
 **exit criteria:**
+
 - All lints + all unit + integration tests green.
 - `git push origin feature/install-cuda` succeeds.
 - PR body draft ready (targeting `main`, referencing issue #81).
@@ -326,6 +333,7 @@ idempotency of `apply_patch`, (g) confidence that README changes
 match the new flag surface exactly.
 
 **exit criteria:**
+
 - Review doc signs off with a green status, or lists blockers to
   address before PR merges.
 
@@ -344,14 +352,14 @@ match the new flag surface exactly.
 
 ## risks and mitigations
 
-| risk                                          | likelihood | impact | mitigation                                                                                    |
-| :-------------------------------------------- | :--------- | :----- | :-------------------------------------------------------------------------------------------- |
-| tomlkit round-trip drops non-ASCII chars      | low        | med    | integration test asserts SHA-256 equality after install/uninstall round-trip                  |
-| `apply_patch` destroys user formatting        | med        | high   | unit test asserts user comments + ordering preserved; tomlkit is explicitly designed for this |
-| `uv sync --reinstall-package torch` fails     | med        | low    | `--sync` is opt-in; failure becomes a warning, not a blocker                                  |
-| Non-TTY UX surprise (CI hangs)                | low        | high   | refuse to prompt when stdin is not a TTY; require explicit flag                               |
-| Installing breaks rag's own dev environment   | low        | high   | smoke test: run `install` against rag's own pyproject and verify idempotency (already canonical) |
-| `diagnose_torch` classification wrong         | low        | high   | 4 explicit unit test cases pinning each input combination                                     |
+| risk                                        | likelihood | impact | mitigation                                                                                       |
+| :------------------------------------------ | :--------- | :----- | :----------------------------------------------------------------------------------------------- |
+| tomlkit round-trip drops non-ASCII chars    | low        | med    | integration test asserts SHA-256 equality after install/uninstall round-trip                     |
+| `apply_patch` destroys user formatting      | med        | high   | unit test asserts user comments + ordering preserved; tomlkit is explicitly designed for this    |
+| `uv sync --reinstall-package torch` fails   | med        | low    | `--sync` is opt-in; failure becomes a warning, not a blocker                                     |
+| Non-TTY UX surprise (CI hangs)              | low        | high   | refuse to prompt when stdin is not a TTY; require explicit flag                                  |
+| Installing breaks rag's own dev environment | low        | high   | smoke test: run `install` against rag's own pyproject and verify idempotency (already canonical) |
+| `diagnose_torch` classification wrong       | low        | high   | 4 explicit unit test cases pinning each input combination                                        |
 
 ## approval
 

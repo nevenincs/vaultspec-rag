@@ -1,12 +1,12 @@
 ---
 tags:
-  - "#exec"
-  - "#install-cuda"
+  - '#exec'
+  - '#install-cuda'
 date: 2026-04-22
 related:
-  - "[[2026-04-22-install-cuda-phase1-summary-exec]]"
-  - "[[2026-04-22-install-cuda-adr]]"
-  - "[[2026-04-22-install-cuda-plan]]"
+  - '[[2026-04-22-install-cuda-phase1-summary-exec]]'
+  - '[[2026-04-22-install-cuda-adr]]'
+  - '[[2026-04-22-install-cuda-plan]]'
 ---
 
 # install-cuda phase-1 code review
@@ -117,12 +117,12 @@ Verdict: **safe**.
 
 ## flag surface review
 
-| flag                | defaults | behaviour                                                              |
-| :------------------ | :------- | :--------------------------------------------------------------------- |
-| `--torch-config`    | on       | Run the torch-config step.                                             |
-| `--no-torch-config` | off      | Skip entirely (`action="disabled"`).                                   |
-| `--yes`/`-y`        | off      | Skip confirmation prompt. Required in non-TTY contexts.                |
-| `--sync`            | off      | After a successful patch, run `uv sync --reinstall-package torch`.     |
+| flag                | defaults | behaviour                                                          |
+| :------------------ | :------- | :----------------------------------------------------------------- |
+| `--torch-config`    | on       | Run the torch-config step.                                         |
+| `--no-torch-config` | off      | Skip entirely (`action="disabled"`).                               |
+| `--yes`/`-y`        | off      | Skip confirmation prompt. Required in non-TTY contexts.            |
+| `--sync`            | off      | After a successful patch, run `uv sync --reinstall-package torch`. |
 
 No conflicts with existing `install`/`uninstall` flags. Uninstall
 gets a reserved `--yes`/`-y` for CLI symmetry (currently no prompt
@@ -142,13 +142,13 @@ Verdict: **aligned**.
 
 ## risks flagged at plan time — status
 
-| risk                                          | outcome                                                                 |
-| :-------------------------------------------- | :---------------------------------------------------------------------- |
-| tomlkit drops non-ASCII chars                 | n/a (round-trip test passes; tomlkit is ASCII-clean by design)          |
-| `apply_patch` destroys user formatting        | verified false (`test_apply_preserves_user_comments`)                   |
-| `uv sync` fails                               | fenced: `check=False`, becomes warning                                  |
-| Non-TTY UX surprise                           | CLI reads `sys.stdin.isatty()` → passes `confirm=None` → "skipped-non-tty" |
-| `diagnose_torch` classification wrong         | pinned by parametrized tests                                            |
+| risk                                   | outcome                                                                    |
+| :------------------------------------- | :------------------------------------------------------------------------- |
+| tomlkit drops non-ASCII chars          | n/a (round-trip test passes; tomlkit is ASCII-clean by design)             |
+| `apply_patch` destroys user formatting | verified false (`test_apply_preserves_user_comments`)                      |
+| `uv sync` fails                        | fenced: `check=False`, becomes warning                                     |
+| Non-TTY UX surprise                    | CLI reads `sys.stdin.isatty()` → passes `confirm=None` → "skipped-non-tty" |
+| `diagnose_torch` classification wrong  | pinned by parametrized tests                                               |
 
 ## sign-off
 
