@@ -17,7 +17,7 @@ related:
 CPU-only torch wheel from PyPI. rag's own `[tool.uv.sources]` pin
 to the cu130 index does not propagate to consumers (uv scopes
 sources to the project that declares them — see
-[[2026-04-22-install-cuda-research]]). The CLI then prints
+`[[2026-04-22-install-cuda-research]]`). The CLI then prints
 `Error: No CUDA GPU detected` on a machine with a working GPU, with
 no in-product remediation.
 
@@ -33,8 +33,8 @@ Two decisions required:
 ## considerations
 
 **Companion delegation contract.** The ecosystem ADR
-([[2026-04-06-ecosystem-integration-adr]]) and the install ADR
-([[2026-04-12-vaultspec-rag-install-adr]]) require that rag never
+(`[[2026-04-06-ecosystem-integration-adr]]`) and the install ADR
+(`[[2026-04-12-vaultspec-rag-install-adr]]`) require that rag never
 directly mutates **shared** repository files that core owns
 (`.gitignore`, `.gitattributes`, `.mcp.json`). `pyproject.toml` is
 neither rag's nor core's — it is **user-owned**. Precedent from the

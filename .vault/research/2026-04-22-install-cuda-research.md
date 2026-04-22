@@ -179,7 +179,7 @@ The issue asks for:
 No existing rag `install` flag conflicts with either. Core's
 `cmd_install` does not have these (install there is non-interactive
 today), so we do not breach the 100%-alignment rule in the prior ADR
-([[2026-04-12-vaultspec-rag-install-adr]]) — we add flags rag
+(`[[2026-04-12-vaultspec-rag-install-adr]]`) — we add flags rag
 requires that have no core analogue, which the prior ADR already
 allows for rag-specific scope (precedent: `--remove-data`).
 
@@ -260,9 +260,9 @@ inside it, so all call-sites inherit the new messages automatically
 
 ## related prior work
 
-- [[2026-04-12-vaultspec-rag-install-adr]] — install command
+- `[[2026-04-12-vaultspec-rag-install-adr]]` — install command
   architecture; this feature extends it.
-- [[2026-04-06-ecosystem-integration-adr]] — companion delegation
+- `[[2026-04-06-ecosystem-integration-adr]]` — companion delegation
   model. rag **does not** modify shared files core owns. The
   consumer's `pyproject.toml` is **user-owned**, not core-owned —
   editing it is within rag's scope, but only with an explicit

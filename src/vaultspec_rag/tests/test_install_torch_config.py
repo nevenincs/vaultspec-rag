@@ -20,6 +20,8 @@ from vaultspec_rag.commands import install_run, uninstall_run
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 PROJECT_ONLY = (
     "[project]\n"

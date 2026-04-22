@@ -4,7 +4,7 @@ tags:
   - "#install-cuda"
 date: 2026-04-22
 related:
-  - "[[2026-04-22-install-cuda-phase1-summary]]"
+  - "[[2026-04-22-install-cuda-phase1-summary-exec]]"
   - "[[2026-04-22-install-cuda-adr]]"
   - "[[2026-04-22-install-cuda-plan]]"
 ---
@@ -26,7 +26,7 @@ Files under review:
 
 ## adherence to prior ADRs
 
-**[[2026-04-12-vaultspec-rag-install-adr]]** — install/uninstall
+**`[[2026-04-12-vaultspec-rag-install-adr]]`** — install/uninstall
 layering. Verdict: **adhered**.
 
 - Orchestration stays in `commands.py`; Typer wrappers in `cli.py`
@@ -40,7 +40,7 @@ layering. Verdict: **adhered**.
   `.mcp.json`, or provider dirs — only the user's `pyproject.toml`,
   which the ADR established as user-owned (consent-gated).
 
-**[[2026-04-06-ecosystem-integration-adr]]** — companion
+**`[[2026-04-06-ecosystem-integration-adr]]`** — companion
 delegation contract. Verdict: **adhered**.
 
 - rag never modifies files core owns; the consumer `pyproject.toml`

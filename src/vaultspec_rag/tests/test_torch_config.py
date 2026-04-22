@@ -18,6 +18,8 @@ from vaultspec_rag import torch_config as tc
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 PROJECT_ONLY = (
     '[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = ["requests"]\n'
@@ -239,8 +241,9 @@ def test_diagnose_torch(
 
 def test_manual_snippet_is_valid_toml() -> None:
     snippet = tc.manual_snippet()
-    # Parses without error and yields our canonical shape.
-    doc = tomlkit.parse(snippet)
+    # Parses without error and yields our canonical shape. unwrap() drops
+    # the tomlkit Item wrappers so nested subscription type-checks cleanly.
+    doc = tomlkit.parse(snippet).unwrap()
     assert doc["tool"]["uv"]["index"][0]["name"] == tc.CU130_INDEX_NAME
     assert doc["tool"]["uv"]["index"][0]["url"] == tc.CU130_INDEX_URL
     assert doc["tool"]["uv"]["sources"]["torch"][0]["index"] == tc.CU130_INDEX_NAME

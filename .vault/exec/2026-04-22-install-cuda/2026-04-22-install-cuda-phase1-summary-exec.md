@@ -13,7 +13,7 @@ related:
 
 ## scope
 
-Implements [[2026-04-22-install-cuda-adr]] per [[2026-04-22-install-cuda-plan]].
+Implements `[[2026-04-22-install-cuda-adr]]` per `[[2026-04-22-install-cuda-plan]]`.
 Resolves [github issue #81](https://github.com/wgergely/vaultspec-rag/issues/81).
 
 ## artefacts landed

@@ -13,7 +13,7 @@ related:
 
 ## summary
 
-Implements [[2026-04-22-install-cuda-adr]]. Scope:
+Implements `[[2026-04-22-install-cuda-adr]]`. Scope:
 
 - New module `src/vaultspec_rag/torch_config.py`.
 - Extend `install_run` / `uninstall_run` in `commands.py`.
@@ -308,7 +308,7 @@ to `origin feature/install-cuda`.
 **step record + phase summary:**
 `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task9.md`
 and
-`.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-summary.md`
+`.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-summary-exec.md`
 
 ## step 10 — code review artefact
 
@@ -316,7 +316,7 @@ and
 audit doc since the skill is not wired as a slash command in this
 harness).
 
-**file:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-code-review.md`
+**file:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-code-review-exec.md`
 
 Structured review covering: (a) adherence to prior install ADR,
 (b) companion-delegation compliance (we do edit user's pyproject,
@@ -358,6 +358,6 @@ match the new flag surface exactly.
 **Awaiting user approval before proceeding to step 1.**
 
 Per the project's execution convention
-([[2026-04-12-vaultspec-rag-install-adr]] and CLAUDE.md mandate
+(`[[2026-04-12-vaultspec-rag-install-adr]]` and CLAUDE.md mandate
 "The user must approve plans before execution proceeds"), no code
 changes land until this plan is approved.
