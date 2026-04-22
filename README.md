@@ -27,9 +27,34 @@ ______________________________________________________________________
 
 ```bash
 uv add vaultspec-rag
+uv run vaultspec-rag install
 ```
 
-This pulls in vaultspec-core and all GPU dependencies.
+The first command pulls in vaultspec-core and all GPU dependencies. The second seeds vaultspec-rag's bundled rule/MCP files into the workspace **and** patches your `pyproject.toml` with the cu130 torch index so `uv` resolves the CUDA torch wheel on Linux and Windows (macOS is left on PyPI torch). You'll be prompted before the `pyproject.toml` edit; pass `--yes` to skip the prompt (required in non-TTY contexts) or `--no-torch-config` to opt out. Add `--sync` to run `uv sync --reinstall-package torch` automatically after the patch.
+
+After `install`, run `vaultspec-rag --version` and then `vaultspec-rag index` as usual.
+
+#### Manual cu130 configuration
+
+If you'd rather configure the cu130 torch index by hand (air-gapped environments, custom resolvers), add this to your `pyproject.toml`:
+
+```toml
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+```
+
+then run `uv sync --reinstall-package torch`. `[tool.uv.sources]` declarations in a dependency's own `pyproject.toml` do not propagate to consumers, which is why this step is necessary.
+
+#### Troubleshooting: "PyTorch was installed without CUDA support"
+
+If `vaultspec-rag index` reports the CPU-only wheel on a machine with a GPU, `uv` resolved `torch` from PyPI (which only ships CPU wheels on Linux/Windows) because the cu130 index isn't yet configured. Run `vaultspec-rag install` — or apply the manual snippet above — and `uv sync --reinstall-package torch`. The `No CUDA GPU detected` error is now reserved for the genuinely GPU-less case (driver missing, headless VM without a device, etc.).
 
 ### Verify
 
