@@ -212,11 +212,17 @@ def _source_match(entry: InlineTable | dict) -> str:
     return "conflict"
 
 
-def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
-    """Inspect the loaded doc and return (state, conflicts)."""
+def _classify_indices(
+    doc: TOMLDocument,
+) -> tuple[bool | None, bool, list[str]]:
+    """Classify the ``[[tool.uv.index]]`` section.
+
+    Returns a tuple ``(canonical_seen, conflict_seen, conflicts)``
+    where ``canonical_seen`` is ``None`` when the user's TOML has a
+    shape we refuse to touch (single-table ``[tool.uv.index]``) —
+    the caller should short-circuit to ``CUSTOMISED``.
+    """
     conflicts: list[str] = []
-    index_canonical = False
-    index_conflict = False
 
     # `[tool.uv.index]` (single table) is a valid TOML structure but
     # incompatible with our array-of-tables mutations. Probe the raw
@@ -229,8 +235,10 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
             "[tool.uv.index] is a single table, not an array-of-tables; "
             "rag's apply_patch expects [[tool.uv.index]]"
         )
-        return TorchConfigState.CUSTOMISED, conflicts
+        return None, False, conflicts
 
+    canonical_seen = False
+    conflict_seen = False
     indices = _indices(doc)
     if indices is not None:
         for entry in indices:
@@ -238,60 +246,92 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
                 continue
             m = _index_match(entry)
             if m == "canonical":
-                index_canonical = True
+                canonical_seen = True
             elif m == "conflict":
-                index_conflict = True
+                conflict_seen = True
                 conflicts.append(
                     f"[[tool.uv.index]] '{CU130_INDEX_NAME}' "
                     f"exists with non-canonical url/explicit"
                 )
+    return canonical_seen, conflict_seen, conflicts
 
+
+def _classify_sources(
+    doc: TOMLDocument,
+) -> tuple[bool | None, bool, list[str]]:
+    """Classify the ``[tool.uv.sources]`` ``torch`` entry.
+
+    Return convention mirrors :func:`_classify_indices`: a
+    ``canonical_seen`` value of ``None`` signals an unsupported
+    user shape (scalar or standard-table form), and the caller must
+    short-circuit to ``CUSTOMISED``.
+    """
+    conflicts: list[str] = []
     torch_srcs = _torch_sources(doc)
+    if torch_srcs is None:
+        return False, False, conflicts
 
-    source_canonical = False
-    source_conflict = False
+    # Scalar at `tool.uv.sources.torch` (string, int, bool, …) is
+    # syntactically legal TOML but semantically nonsense for uv.
+    # Treat as CUSTOMISED so apply_patch refuses before the
+    # mutation helpers inherit a value they cannot recurse into.
+    if not isinstance(torch_srcs, InlineTable | Table | list | dict):
+        conflicts.append(
+            f"[tool.uv.sources] torch is a "
+            f"{type(torch_srcs).__name__}, not an array or table"
+        )
+        return None, False, conflicts
 
-    if torch_srcs is not None:
-        # Scalar at `tool.uv.sources.torch` (string, int, bool, …) is
-        # syntactically legal TOML but semantically nonsense for uv.
-        # Treat as CUSTOMISED so apply_patch refuses before the
-        # mutation helpers inherit a value they cannot recurse into.
-        if not isinstance(torch_srcs, InlineTable | Table | list | dict):
+    # `[tool.uv.sources.torch]` (standard table, e.g. a git source
+    # spelled as its own section) cannot be promoted into a TOML
+    # array — arrays can only hold inline tables. Treat as
+    # CUSTOMISED so apply never tries to rewrite it.
+    if isinstance(torch_srcs, Table) and not isinstance(torch_srcs, InlineTable | list):
+        conflicts.append(
+            "[tool.uv.sources.torch] is a standard table; "
+            "rag's apply_patch expects an inline-table array"
+        )
+        return None, False, conflicts
+
+    canonical_seen = False
+    conflict_seen = False
+    # torch source may be a single inline table or a list of them.
+    if isinstance(torch_srcs, list):
+        entries: list = list(torch_srcs)
+    else:
+        entries = [torch_srcs]
+    for entry in entries:
+        if not isinstance(entry, InlineTable | Table | dict):
+            continue
+        m = _source_match(entry)
+        if m == "canonical":
+            canonical_seen = True
+        elif m == "conflict":
+            conflict_seen = True
             conflicts.append(
-                f"[tool.uv.sources] torch is a "
-                f"{type(torch_srcs).__name__}, not an array or table"
+                f"[tool.uv.sources] torch references "
+                f"'{CU130_INDEX_NAME}' with non-canonical marker/extras"
             )
-            return TorchConfigState.CUSTOMISED, conflicts
-        # `[tool.uv.sources.torch]` (standard table, e.g. a git source
-        # spelled as its own section) cannot be promoted into a TOML
-        # array — arrays can only hold inline tables. Treat as
-        # CUSTOMISED so apply never tries to rewrite it.
-        if isinstance(torch_srcs, Table) and not isinstance(
-            torch_srcs, InlineTable | list
-        ):
-            conflicts.append(
-                "[tool.uv.sources.torch] is a standard table; "
-                "rag's apply_patch expects an inline-table array"
-            )
-            return TorchConfigState.CUSTOMISED, conflicts
-        # torch source may be a single inline table or a list of them.
-        if isinstance(torch_srcs, list):
-            entries: list = list(torch_srcs)
-        else:
-            entries = [torch_srcs]
-        for entry in entries:
-            if not isinstance(entry, InlineTable | Table | dict):
-                continue
-            m = _source_match(entry)
-            if m == "canonical":
-                source_canonical = True
-            elif m == "conflict":
-                source_conflict = True
-                conflicts.append(
-                    f"[tool.uv.sources] torch references "
-                    f"'{CU130_INDEX_NAME}' with non-canonical marker/extras"
-                )
+    return canonical_seen, conflict_seen, conflicts
 
+
+def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
+    """Inspect the loaded doc and return (state, conflicts).
+
+    Delegates the per-section classification to
+    :func:`_classify_indices` and :func:`_classify_sources`, then
+    combines their verdicts into a single ``TorchConfigState``.
+    """
+    index_canonical, index_conflict, index_conflicts = _classify_indices(doc)
+    if index_canonical is None:
+        # Short-circuit on an unsupported user shape at [[tool.uv.index]].
+        return TorchConfigState.CUSTOMISED, index_conflicts
+
+    source_canonical, source_conflict, source_conflicts = _classify_sources(doc)
+    if source_canonical is None:
+        return TorchConfigState.CUSTOMISED, source_conflicts
+
+    conflicts = index_conflicts + source_conflicts
     if index_conflict or source_conflict:
         return TorchConfigState.CUSTOMISED, conflicts
     if index_canonical and source_canonical:
@@ -448,19 +488,31 @@ def diagnose_torch(cuda: str | None, available: bool) -> TorchDiagnosis:
 # ---------------------------------------------------------------------------
 
 
+def _get_or_create_tool_uv(doc: TOMLDocument) -> Table:
+    """Return the writable ``[tool.uv]`` table, creating it if absent.
+
+    Extracted so :func:`_ensure_tool_uv_index` and
+    :func:`_ensure_torch_source` share a single source of truth for
+    how the ``[tool]`` → ``[tool.uv]`` hierarchy is materialised.
+    Raises if either level exists but isn't a table (refuses to
+    silently clobber a user-owned key).
+    """
+    tool = doc.setdefault("tool", tomlkit.table())
+    if not isinstance(tool, Table):
+        raise TypeError("pyproject.toml [tool] is not a table")
+    uv = tool.setdefault("uv", tomlkit.table())
+    if not isinstance(uv, Table):
+        raise TypeError("pyproject.toml [tool.uv] is not a table")
+    return uv
+
+
 def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
     """Append ``[[tool.uv.index]]`` with the canonical cu130 entry.
 
     Creates ``[tool]`` and ``[tool.uv]`` if absent. Appends to the
     existing array-of-tables if one is present.
     """
-    tool = doc.setdefault("tool", tomlkit.table())
-    if not isinstance(tool, Table | dict):  # defensive
-        raise TypeError("pyproject.toml [tool] is not a table")
-    uv = tool.setdefault("uv", tomlkit.table())
-    if not isinstance(uv, Table | dict):
-        raise TypeError("pyproject.toml [tool.uv] is not a table")
-
+    uv = _get_or_create_tool_uv(doc)
     existing = uv.get("index")
     entry = tomlkit.table()
     entry["name"] = CU130_INDEX_NAME
@@ -487,10 +539,9 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
 
 def _ensure_torch_source(doc: TOMLDocument) -> None:
     """Ensure ``[tool.uv.sources]`` has a cu130 torch entry."""
-    tool = doc.setdefault("tool", tomlkit.table())
-    uv = tool.setdefault("uv", tomlkit.table())
+    uv = _get_or_create_tool_uv(doc)
     sources = uv.setdefault("sources", tomlkit.table())
-    if not isinstance(sources, Table | dict):
+    if not isinstance(sources, Table):
         raise TypeError("pyproject.toml [tool.uv.sources] is not a table")
 
     inline = tomlkit.inline_table()
