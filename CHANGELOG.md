@@ -9,6 +9,23 @@
 - New `list_projects` and `evict_project` MCP admin tools plus `vaultspec-rag service projects list|evict` CLI subcommands ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
 - `DaemonRotatingFileHandler` with re-`dup2` of fds 1/2 on rollover installed in `mcp_server.main()`; `service.log` is now bounded by the new `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES` / `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` knobs ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
 
+## [0.2.3](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.2...vaultspec-rag-v0.2.3) (2026-04-22)
+
+
+### Features
+
+* **install:** configure cu130 torch and actionable CPU-torch errors ([#81](https://github.com/wgergely/vaultspec-rag/issues/81)) ([6e090f4](https://github.com/wgergely/vaultspec-rag/commit/6e090f474094ef272ebcd8a0748533cd5f9cce13))
+* **install:** configure cu130 torch index and actionable CPU-torch errors ([971b75c](https://github.com/wgergely/vaultspec-rag/commit/971b75cd22dc2ac1aa3ec0e01b3e8dd41c1a7120))
+
+
+### Bug Fixes
+
+* **#68:** vault indexer memory + wall-clock — failure-safe streaming rebuild ([e3b6d84](https://github.com/wgergely/vaultspec-rag/commit/e3b6d848dd44fe7480a195b052bc4fddde4cbb27))
+* **indexer:** iteration 10 polish — dead branch, type hints, docstrings ([7739f46](https://github.com/wgergely/vaultspec-rag/commit/7739f4608f4054feabe539ff920a3ddd99a2719a))
+* **memory:** iteration 6 audit — concurrent reindex lock + observability ([1036085](https://github.com/wgergely/vaultspec-rag/commit/1036085f53825299f5e6fd9a2daaad76801278fc))
+* **perf:** iteration 9 — env overrides, clean=True schema reset, broader except ([debeb02](https://github.com/wgergely/vaultspec-rag/commit/debeb02a505154d2b87a8a6f981784e9c9c577ce))
+* **perf:** wall-clock — sort by length, smaller encode batch, max_seq cap ([0a7f22e](https://github.com/wgergely/vaultspec-rag/commit/0a7f22e033f682af0f82032c3a5cdafcc8f5b767))
+
 ## [0.2.2](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.1...vaultspec-rag-v0.2.2) (2026-04-12)
 
 
