@@ -139,6 +139,41 @@ def test_detect_state_customised_single_table_index(tmp_path: Path) -> None:
     assert any("single table" in c for c in report.conflicts)
 
 
+def test_detect_state_customised_scalar_torch_source(tmp_path: Path) -> None:
+    """User wrote `torch = "some-string"` — legal TOML, nonsense for
+    uv. Classifier must flag CUSTOMISED so apply_patch refuses before
+    the mutation helpers crash on a non-dict value.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        PROJECT_ONLY + '\n[tool.uv.sources]\ntorch = "pinned-string"\n',
+    )
+    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
+    report = tc.apply_patch(p)
+    assert report.action == "conflict"
+    assert any("not an array or table" in c for c in report.conflicts)
+
+
+def test_remove_drops_empty_tool_uv_after_full_uninstall(tmp_path: Path) -> None:
+    """After apply → remove, no orphaned [tool.uv.sources] / [tool.uv]
+    / [tool] sections remain when those tables were introduced by us.
+    Regression guard for the cascading-cleanup fix in
+    :func:`_drop_torch_source`.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(p, PROJECT_ONLY)
+    tc.apply_patch(p)
+    tc.remove_patch(p)
+    after = p.read_text(encoding="utf-8")
+    # None of these section headers should survive the round trip.
+    assert "[tool.uv.sources]" not in after
+    assert "[[tool.uv.index]]" not in after
+    assert "[tool.uv]" not in after
+    # And the file still reparses cleanly.
+    tomlkit.parse(after)
+
+
 def test_detect_state_customised_standard_table_torch_source(tmp_path: Path) -> None:
     """User wrote `[tool.uv.sources.torch]` (standard table section)
     rather than an inline-table array. Classifier must flag this as

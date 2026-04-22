@@ -231,6 +231,16 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     source_conflict = False
 
     if torch_srcs is not None:
+        # Scalar at `tool.uv.sources.torch` (string, int, bool, …) is
+        # syntactically legal TOML but semantically nonsense for uv.
+        # Treat as CUSTOMISED so apply_patch refuses before the
+        # mutation helpers inherit a value they cannot recurse into.
+        if not isinstance(torch_srcs, InlineTable | Table | list | dict):
+            conflicts.append(
+                f"[tool.uv.sources] torch is a "
+                f"{type(torch_srcs).__name__}, not an array or table"
+            )
+            return TorchConfigState.CUSTOMISED, conflicts
         # `[tool.uv.sources.torch]` (standard table, e.g. a git source
         # spelled as its own section) cannot be promoted into a TOML
         # array — arrays can only hold inline tables. Treat as
@@ -518,7 +528,15 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
 
 
 def _drop_torch_source(doc: TOMLDocument) -> None:
-    """Remove the canonical cu130 torch entry from ``[tool.uv.sources]``."""
+    """Remove the canonical cu130 torch entry from ``[tool.uv.sources]``.
+
+    Always runs the end-of-function cleanup that drops empty
+    ``sources`` / ``uv`` / ``tool`` tables, even when ``torch`` was
+    never present or was a single-entry deletion. This matters after
+    :func:`_drop_cu130_index` has already removed the index table —
+    both callers run in sequence and the consumer file should end up
+    without orphaned empty sections.
+    """
     uv = _tool_uv(doc)
     if uv is None:
         return
@@ -526,28 +544,29 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     if not isinstance(sources, Table | dict):
         return
     torch_entry = sources.get("torch")
-    if torch_entry is None:
-        return
 
-    if isinstance(torch_entry, InlineTable | dict) and not isinstance(
-        torch_entry, list
-    ):
-        if _source_match(torch_entry) == "canonical":
-            del sources["torch"]
-        return
+    if torch_entry is not None:
+        if isinstance(torch_entry, InlineTable | dict) and not isinstance(
+            torch_entry, list
+        ):
+            if _source_match(torch_entry) == "canonical":
+                del sources["torch"]
+        elif isinstance(torch_entry, list):
+            # Array-of-inline-tables form. Iterate backwards and pop
+            # in-place to preserve inline comments and formatting on
+            # non-canonical entries; rebuilding the array from a
+            # kept list would strip that trivia.
+            for i in range(len(torch_entry) - 1, -1, -1):
+                e = torch_entry[i]
+                if isinstance(e, InlineTable | dict) and (
+                    _source_match(e) == "canonical"
+                ):
+                    torch_entry.pop(i)
+            if len(torch_entry) == 0:
+                del sources["torch"]
 
-    # Array-of-inline-tables form. Iterate backwards and pop in-place
-    # to preserve inline comments and formatting on non-canonical
-    # entries; rebuilding the array from a kept list would strip that
-    # trivia.
-    for i in range(len(torch_entry) - 1, -1, -1):
-        e = torch_entry[i]
-        if isinstance(e, InlineTable | dict) and _source_match(e) == "canonical":
-            torch_entry.pop(i)
-    if len(torch_entry) == 0:
-        del sources["torch"]
-
-    # If sources table is now empty, drop it. Same for [tool.uv] and [tool].
+    # Cleanup cascades: always try to drop empty parent tables so a
+    # full uninstall (index + torch) leaves no orphaned sections.
     if not sources:
         del uv["sources"]
     if not uv:
