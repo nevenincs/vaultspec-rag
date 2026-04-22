@@ -203,6 +203,16 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     index_canonical = False
     index_conflict = False
 
+    # `[tool.uv.index]` (single table) is a valid TOML structure but
+    # incompatible with our array-of-tables mutations. Treat it as
+    # CUSTOMISED so apply_patch refuses; we never overwrite it.
+    if indices is not None and not isinstance(indices, AoT | list):
+        conflicts.append(
+            "[tool.uv.index] is a single table, not an array-of-tables; "
+            "rag's apply_patch expects [[tool.uv.index]]"
+        )
+        return TorchConfigState.CUSTOMISED, conflicts
+
     if indices is not None:
         for entry in indices:
             if not isinstance(entry, Table | InlineTable | dict):
@@ -221,6 +231,18 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     source_conflict = False
 
     if torch_srcs is not None:
+        # `[tool.uv.sources.torch]` (standard table, e.g. a git source
+        # spelled as its own section) cannot be promoted into a TOML
+        # array — arrays can only hold inline tables. Treat as
+        # CUSTOMISED so apply never tries to rewrite it.
+        if isinstance(torch_srcs, Table) and not isinstance(
+            torch_srcs, InlineTable | list
+        ):
+            conflicts.append(
+                "[tool.uv.sources.torch] is a standard table; "
+                "rag's apply_patch expects an inline-table array"
+            )
+            return TorchConfigState.CUSTOMISED, conflicts
         # torch source may be a single inline table or a list of them.
         if isinstance(torch_srcs, list):
             entries: list = list(torch_srcs)
@@ -418,9 +440,18 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
         aot = tomlkit.aot()
         aot.append(entry)
         uv["index"] = aot
-    else:
-        # existing is already an AoT; append our entry to the end.
-        existing.append(entry)
+        return
+
+    # Defensive: _classify already rejects single-table forms as
+    # CUSTOMISED so apply_patch never reaches this function in that
+    # case. Guard anyway — silently-wrong mutation is the worst
+    # outcome for a user-owned file.
+    if not isinstance(existing, AoT | list):
+        raise TypeError(
+            "pyproject.toml [tool.uv.index] is not an array-of-tables; "
+            "refuse to mutate to avoid producing invalid TOML"
+        )
+    existing.append(entry)
 
 
 def _ensure_torch_source(doc: TOMLDocument) -> None:
@@ -447,7 +478,17 @@ def _ensure_torch_source(doc: TOMLDocument) -> None:
         current.append(inline)
         return
 
-    # Existing single inline-table form → promote to array.
+    # Promotion: existing single inline-table → array of two inline
+    # tables. Only valid when `current` is an InlineTable; a standard
+    # Table (e.g. ``[tool.uv.sources.torch]`` section form) cannot be
+    # nested inside a TOML array. _classify already rejects that
+    # shape as CUSTOMISED; guard anyway for defence-in-depth.
+    if not isinstance(current, InlineTable):
+        raise TypeError(
+            "pyproject.toml [tool.uv.sources] torch is a standard "
+            "table; refuse to promote into an inline-table array "
+            "(would produce invalid TOML)"
+        )
     arr = tomlkit.array()
     arr.append(current)
     arr.append(inline)

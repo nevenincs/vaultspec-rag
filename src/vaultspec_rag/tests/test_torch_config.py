@@ -121,6 +121,43 @@ def test_detect_state_customised_extra_keys(tmp_path: Path) -> None:
     assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
 
 
+def test_detect_state_customised_single_table_index(tmp_path: Path) -> None:
+    """User wrote `[tool.uv.index]` (single table) instead of the
+    array-of-tables form. Classifier must flag this as CUSTOMISED so
+    apply_patch refuses, avoiding an AttributeError on ``.append()``.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        PROJECT_ONLY + "\n[tool.uv.index]\n"
+        'name = "private"\n'
+        'url = "https://private.example.com/simple"\n',
+    )
+    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
+    report = tc.apply_patch(p)
+    assert report.action == "conflict"
+    assert any("single table" in c for c in report.conflicts)
+
+
+def test_detect_state_customised_standard_table_torch_source(tmp_path: Path) -> None:
+    """User wrote `[tool.uv.sources.torch]` (standard table section)
+    rather than an inline-table array. Classifier must flag this as
+    CUSTOMISED so apply_patch refuses, avoiding an invalid-TOML
+    promotion into an array.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        PROJECT_ONLY + "\n[tool.uv.sources.torch]\n"
+        'git = "https://github.com/pytorch/pytorch"\n'
+        'rev = "main"\n',
+    )
+    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
+    report = tc.apply_patch(p)
+    assert report.action == "conflict"
+    assert any("standard table" in c for c in report.conflicts)
+
+
 # ---------------------------------------------------------------------------
 # apply_patch
 # ---------------------------------------------------------------------------
