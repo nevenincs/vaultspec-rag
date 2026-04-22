@@ -562,37 +562,42 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     if uv is None:
         return
     sources = uv.get("sources")
-    if not isinstance(sources, Table | dict):
-        return
-    torch_entry = sources.get("torch")
 
-    if torch_entry is not None:
-        if isinstance(torch_entry, InlineTable | dict) and not isinstance(
-            torch_entry, list
-        ):
-            if _source_match(torch_entry) == "canonical":
-                del sources["torch"]
-        elif isinstance(torch_entry, list):
-            # Array-of-inline-tables form. Iterate backwards and pop
-            # in-place to preserve inline comments and formatting on
-            # non-canonical entries; rebuilding the array from a
-            # kept list would strip that trivia.
-            for i in range(len(torch_entry) - 1, -1, -1):
-                e = torch_entry[i]
-                if isinstance(e, InlineTable | dict) and (
-                    _source_match(e) == "canonical"
-                ):
-                    torch_entry.pop(i)
-            if len(torch_entry) == 0:
-                del sources["torch"]
+    # Process the torch entry only when sources is present and
+    # shaped as a table. The early-return anti-pattern is avoided:
+    # even when sources is absent, the cleanup cascade below must
+    # run so that an empty ``[tool.uv]`` left behind by
+    # :func:`_drop_cu130_index` gets dropped.
+    if isinstance(sources, Table):
+        torch_entry = sources.get("torch")
+        if torch_entry is not None:
+            if isinstance(torch_entry, InlineTable | dict) and not isinstance(
+                torch_entry, list
+            ):
+                if _source_match(torch_entry) == "canonical":
+                    del sources["torch"]
+            elif isinstance(torch_entry, list):
+                # Array-of-inline-tables form. Iterate backwards and
+                # pop in-place to preserve inline comments and
+                # formatting on non-canonical entries; rebuilding
+                # the array from a kept list would strip that trivia.
+                for i in range(len(torch_entry) - 1, -1, -1):
+                    e = torch_entry[i]
+                    if isinstance(e, InlineTable | dict) and (
+                        _source_match(e) == "canonical"
+                    ):
+                        torch_entry.pop(i)
+                if len(torch_entry) == 0:
+                    del sources["torch"]
+
+        if not sources:
+            del uv["sources"]
 
     # Cleanup cascades: always try to drop empty parent tables so a
     # full uninstall (index + torch) leaves no orphaned sections.
-    if not sources:
-        del uv["sources"]
     if not uv:
         tool = doc.get("tool")
-        if isinstance(tool, Table | dict):
+        if isinstance(tool, Table):
             del tool["uv"]
             if not tool:
                 del doc["tool"]

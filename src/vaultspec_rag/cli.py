@@ -2381,7 +2381,11 @@ def _render_install_report(report: Any) -> None:
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
     for conflict in getattr(report, "torch_config_conflicts", []):
-        console.print(f"  [red]conflict:[/] {conflict}")
+        # Conflict strings may contain `[[tool.uv.index]]` which Rich
+        # would parse as markup; disable markup for the user-supplied
+        # portion so brackets render verbatim.
+        console.print("  [red]conflict:[/] ", end="")
+        console.print(conflict, markup=False, highlight=False)
     tsync = getattr(report, "torch_sync_action", "skipped")
     if tsync not in ("skipped",):
         t_colour = {"succeeded": "green", "failed": "red"}.get(tsync, "yellow")
@@ -2417,7 +2421,11 @@ def _render_uninstall_report(report: Any) -> None:
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
     for conflict in getattr(report, "torch_config_conflicts", []):
-        console.print(f"  [yellow]conflict:[/] {conflict}")
+        # Conflict strings may contain `[[tool.uv.index]]` which Rich
+        # would parse as markup; disable markup for the user-supplied
+        # portion so brackets render verbatim.
+        console.print("  [yellow]conflict:[/] ", end="")
+        console.print(conflict, markup=False, highlight=False)
     for warning in report.warnings:
         console.print(f"[yellow]warning:[/] {warning}")
 
