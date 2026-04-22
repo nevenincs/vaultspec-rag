@@ -414,11 +414,17 @@ def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
         return
 
     report.torch_sync_action = "failed"
-    tail = (proc.stderr or "").strip().splitlines()[-5:]
-    report.warnings.append(
-        "uv sync --reinstall-package torch exited with code "
-        f"{proc.returncode}; last stderr lines: {tail!r}"
-    )
+    stderr = (proc.stderr or "").strip()
+    if stderr:
+        tail = "\n".join(stderr.splitlines()[-5:])
+        report.warnings.append(
+            f"uv sync --reinstall-package torch exited with code "
+            f"{proc.returncode}; last stderr lines:\n{tail}"
+        )
+    else:
+        report.warnings.append(
+            f"uv sync --reinstall-package torch exited with code {proc.returncode}"
+        )
 
 
 def _rollback_seeded(rules_dir: Path, seeded: list[str], report: InstallReport) -> None:
