@@ -484,7 +484,11 @@ def uninstall_run(
     Returns:
         :class:`UninstallReport` with the structured result.
     """
-    del assume_yes  # reserved for future prompts; no current effect.
+    # assume_yes is reserved for future prompts; uninstall currently
+    # has no prompt to bypass. Suppress the unused-argument lint
+    # without ``del`` — keeping the parameter in the public signature
+    # so callers don't churn when the future behaviour lands.
+    _ = assume_yes
     skip = skip or set()
 
     # Default-safe: refuse to mutate without --force, return preview.

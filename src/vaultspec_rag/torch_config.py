@@ -171,7 +171,7 @@ def _index_match(entry: Table | InlineTable | dict) -> str:
         return ""
     url = entry.get("url")
     explicit = entry.get("explicit", False)
-    if url == CU130_INDEX_URL and bool(explicit) is True:
+    if url == CU130_INDEX_URL and bool(explicit):
         return "canonical"
     return "conflict"
 
