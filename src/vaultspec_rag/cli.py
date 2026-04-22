@@ -56,24 +56,60 @@ console = Console(legacy_windows=False)
 
 
 def _handle_gpu_error(exc: Exception) -> None:
-    """Print a user-friendly message for GPU/torch errors and exit.
+    """Print an actionable message for torch / CUDA failures and exit.
+
+    Distinguishes three failure states so the remediation hint matches
+    the actual problem:
+
+    - torch not installed at all (``ImportError``)
+    - torch installed without CUDA support — the CPU-only PyPI wheel
+      (``torch.version.cuda is None``)
+    - torch built with CUDA but no GPU visible — driver or hardware
+      issue (``torch.version.cuda`` set, ``is_available()`` False)
 
     Args:
-        exc: The caught exception (ImportError or RuntimeError).
+        exc: The caught exception (``ImportError`` or ``RuntimeError``).
 
     Raises:
         typer.Exit: Always exits with code 1.
-
     """
+    from .torch_config import TorchDiagnosis, diagnose_torch, manual_snippet
+
+    diagnosis: TorchDiagnosis
     if isinstance(exc, ImportError):
+        diagnosis = TorchDiagnosis.NO_TORCH
+    else:
+        try:
+            import torch
+
+            diagnosis = diagnose_torch(torch.version.cuda, torch.cuda.is_available())
+        except Exception:
+            diagnosis = TorchDiagnosis.NO_TORCH
+
+    if diagnosis == TorchDiagnosis.NO_TORCH:
         console.print(
-            "[bold red]Error:[/] GPU dependencies not installed.\n"
-            "Run: [cyan]uv pip install sentence-transformers torch[/]",
+            "[bold red]Error:[/] PyTorch is not installed.\n\n"
+            "  [cyan]uv add vaultspec-rag && uv run vaultspec-rag install[/] "
+            "configures the cu130 torch index and installs the GPU build.",
         )
-    elif "CUDA" in str(exc) or "cuda" in str(exc):
+    elif diagnosis == TorchDiagnosis.CPU_ONLY:
+        console.print(
+            "[bold red]Error:[/] PyTorch was installed without CUDA support "
+            "(CPU-only wheel). Your GPU is fine.\n\n"
+            "  [cyan]uv run vaultspec-rag install[/] patches your "
+            "pyproject.toml with the cu130 torch index. After patching, "
+            "rerun [cyan]uv sync --reinstall-package torch[/].\n\n"
+            "  Or configure manually by adding this to your pyproject.toml:",
+        )
+        # Rich interprets ``[[tool.uv.index]]`` as markup; emit the
+        # snippet with markup disabled so brackets render verbatim.
+        console.print(manual_snippet(), markup=False, highlight=False)
+    elif diagnosis == TorchDiagnosis.NO_GPU:
         console.print(
             "[bold red]Error:[/] No CUDA GPU detected.\n"
-            "vaultspec-rag requires a CUDA-capable NVIDIA GPU.",
+            "  PyTorch is built with CUDA support, but no CUDA device "
+            "is available. Check your NVIDIA driver and CUDA runtime "
+            "installation.",
         )
     else:
         console.print(f"[bold red]Error:[/] {exc}")
@@ -1650,8 +1686,7 @@ def service_warmup() -> None:
         raise typer.Exit(code=1) from None
 
     if not torch.cuda.is_available():
-        console.print("[bold red]Error:[/] No CUDA GPU detected.")
-        raise typer.Exit(code=1) from None
+        _handle_gpu_error(RuntimeError("CUDA runtime unavailable"))
 
     try:
         from huggingface_hub import snapshot_download, try_to_load_from_cache
@@ -2113,6 +2148,28 @@ def handle_install(
             help="Skip a component (repeatable).",
         ),
     ] = None,
+    configure_torch: Annotated[
+        bool,
+        typer.Option(
+            "--torch-config/--no-torch-config",
+            help="Patch pyproject.toml with the cu130 torch index.",
+        ),
+    ] = True,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Skip confirmation prompts (required for non-TTY runs).",
+        ),
+    ] = False,
+    sync_after: Annotated[
+        bool,
+        typer.Option(
+            "--sync",
+            help="Run `uv sync --reinstall-package torch` after patching.",
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output result as JSON."),
@@ -2132,6 +2189,10 @@ def handle_install(
     rag has no provider concept of its own — propagation flows
     through core's existing per-provider sync.
     """
+    import sys as _sys
+
+    from rich.prompt import Confirm
+
     from .commands import install_run
 
     # Honour the global ``--target`` from the root callback. Click
@@ -2140,6 +2201,15 @@ def handle_install(
     # the path entirely if we only read the local ``target``.
     effective_target = target or _global_target(ctx)
 
+    def _confirm(prompt: str) -> bool:
+        return Confirm.ask(prompt, default=True, console=console)
+
+    # Non-TTY detection lives at the CLI edge: only interactive TTYs
+    # can produce meaningful confirmation answers. In CI / pipes,
+    # leaving confirm=None forces the "skipped-non-tty" branch, which
+    # instructs the user to pass --yes or --no-torch-config.
+    confirm_fn = _confirm if _sys.stdin.isatty() else None
+
     try:
         report = install_run(
             path=effective_target,
@@ -2147,6 +2217,10 @@ def handle_install(
             dry_run=dry_run,
             force=force,
             skip=set(skip or []),
+            configure_torch=configure_torch,
+            assume_yes=yes,
+            sync_after=sync_after,
+            confirm=confirm_fn,
         )
     except Exception as exc:
         console.print(f"[bold red]install failed:[/] {exc}")
@@ -2200,6 +2274,14 @@ def handle_uninstall(
             help="Skip a component (repeatable).",
         ),
     ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Skip confirmation prompts (reserved for forward compat).",
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output result as JSON."),
@@ -2230,6 +2312,7 @@ def handle_uninstall(
             dry_run=dry_run,
             force=force,
             skip=set(skip or []),
+            assume_yes=yes,
         )
     except Exception as exc:
         console.print(f"[bold red]uninstall failed:[/] {exc}")
@@ -2285,6 +2368,24 @@ def _render_install_report(report: Any) -> None:
             f"core sync: [green]+{sync_added}[/] "
             f"[yellow]~{sync_updated}[/] [red]-{sync_pruned}[/]"
         )
+    tc_action = getattr(report, "torch_config_action", "skipped")
+    tc_colour = {
+        "applied": "green",
+        "already": "cyan",
+        "dry_run": "yellow",
+        "disabled": "dim",
+        "declined": "yellow",
+        "conflict": "red",
+        "absent": "yellow",
+        "skipped-non-tty": "yellow",
+    }.get(tc_action, "white")
+    console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    for conflict in getattr(report, "torch_config_conflicts", []):
+        console.print(f"  [red]conflict:[/] {conflict}")
+    tsync = getattr(report, "torch_sync_action", "skipped")
+    if tsync not in ("skipped",):
+        t_colour = {"succeeded": "green", "failed": "red"}.get(tsync, "yellow")
+        console.print(f"uv sync --reinstall-package torch: [{t_colour}]{tsync}[/]")
     for warning in report.warnings:
         console.print(f"[yellow]warning:[/] {warning}")
 
@@ -2307,6 +2408,16 @@ def _render_uninstall_report(report: Any) -> None:
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
         console.print(f"core sync pruned: [red]-{sync_pruned}[/]")
+    tc_action = getattr(report, "torch_config_action", "skipped")
+    tc_colour = {
+        "removed": "green",
+        "absent": "dim",
+        "dry_run": "yellow",
+        "skipped": "yellow",
+    }.get(tc_action, "white")
+    console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    for conflict in getattr(report, "torch_config_conflicts", []):
+        console.print(f"  [yellow]conflict:[/] {conflict}")
     for warning in report.warnings:
         console.print(f"[yellow]warning:[/] {warning}")
 

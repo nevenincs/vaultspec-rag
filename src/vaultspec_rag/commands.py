@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,7 +36,10 @@ from vaultspec_core.config.workspace import resolve_workspace
 from vaultspec_core.core.commands import sync_provider
 from vaultspec_core.core.types import init_paths
 
+from . import torch_config
 from .builtins import seed_builtins
+
+ConfirmFn = Callable[[str], bool]
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,9 @@ class InstallReport:
     seeded: list[str] = field(default_factory=list)
     sync_results: list[Any] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    torch_config_action: str = "skipped"
+    torch_config_conflicts: list[str] = field(default_factory=list)
+    torch_sync_action: str = "skipped"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +87,9 @@ class InstallReport:
             "sync_updated": sum(getattr(r, "updated", 0) for r in self.sync_results),
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
             "warnings": list(self.warnings),
+            "torch_config_action": self.torch_config_action,
+            "torch_config_conflicts": list(self.torch_config_conflicts),
+            "torch_sync_action": self.torch_sync_action,
         }
 
 
@@ -102,6 +113,8 @@ class UninstallReport:
     data_removed: bool = False
     sync_results: list[Any] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    torch_config_action: str = "skipped"
+    torch_config_conflicts: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +124,8 @@ class UninstallReport:
             "data_removed": self.data_removed,
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
             "warnings": list(self.warnings),
+            "torch_config_action": self.torch_config_action,
+            "torch_config_conflicts": list(self.torch_config_conflicts),
         }
 
 
@@ -176,6 +191,10 @@ def install_run(
     dry_run: bool = False,
     force: bool = False,
     skip: set[str] | None = None,
+    configure_torch: bool = True,
+    assume_yes: bool = False,
+    sync_after: bool = False,
+    confirm: ConfirmFn | None = None,
 ) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
@@ -183,6 +202,13 @@ def install_run(
     needs, seeds rag's bundled rule and MCP source files into
     ``.vaultspec/rules/``, then invokes core's ``sync_provider`` to
     propagate the new sources into ``.mcp.json`` and provider dirs.
+
+    When ``configure_torch`` is True (the default), also patches the
+    consumer's ``pyproject.toml`` with the canonical cu130 torch index
+    and source pin. This step is gated by an interactive confirmation
+    prompt (bypassed with ``assume_yes=True``). In non-TTY contexts
+    without ``assume_yes``, the step is skipped with a warning that
+    names the ``--yes`` / ``--no-torch-config`` flags.
 
     Args:
         path: Workspace target. Defaults to current working directory.
@@ -192,6 +218,16 @@ def install_run(
             ``sync_provider`` where it maps to ``prune=True`` for the
             reconciling sync resources.
         skip: Components to skip (passed through to ``sync_provider``).
+        configure_torch: When True, patch ``pyproject.toml`` with the
+            cu130 torch config block.
+        assume_yes: Skip the interactive confirmation prompt.
+        sync_after: After a successful torch-config patch, shell out
+            to ``uv sync --reinstall-package torch``. Off by default.
+        confirm: Optional callback for the confirmation prompt. The
+            CLI wires this to Rich's ``Confirm.ask``; tests and
+            programmatic callers can pass their own. When ``None`` the
+            step is non-interactive and falls through to the
+            ``assume_yes`` gate.
 
     Returns:
         :class:`InstallReport` with the structured result.
@@ -250,7 +286,139 @@ def install_run(
                 f"uninstall --force to clean up)"
             )
 
+    _run_torch_config_install(
+        target=target,
+        report=report,
+        dry_run=dry_run,
+        configure_torch=configure_torch,
+        assume_yes=assume_yes,
+        sync_after=sync_after,
+        confirm=confirm,
+    )
+
     return report
+
+
+def _run_torch_config_install(
+    *,
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    configure_torch: bool,
+    assume_yes: bool,
+    sync_after: bool,
+    confirm: ConfirmFn | None,
+) -> None:
+    """Apply the cu130 torch-config patch to the consumer pyproject.
+
+    Decisions are recorded on ``report``; never raises. See
+    :mod:`vaultspec_rag.torch_config` for the matching predicate.
+    """
+    if not configure_torch:
+        report.torch_config_action = "disabled"
+        return
+
+    pyproject = target / "pyproject.toml"
+    state = torch_config.detect_state(pyproject)
+
+    if state == torch_config.TorchConfigState.NO_PROJECT_FILE:
+        report.torch_config_action = "absent"
+        report.warnings.append(
+            f"no pyproject.toml at {pyproject}; skipped torch-config patch"
+        )
+        return
+    if state == torch_config.TorchConfigState.CANONICAL:
+        report.torch_config_action = "already"
+        return
+    if state == torch_config.TorchConfigState.CUSTOMISED:
+        # Detect returns no conflicts on CUSTOMISED; run apply to get
+        # the structured conflict list. apply_patch will not mutate.
+        report_patch = torch_config.apply_patch(pyproject)
+        report.torch_config_action = "conflict"
+        report.torch_config_conflicts = list(report_patch.conflicts)
+        report.warnings.append(
+            "pyproject.toml has a non-canonical cu130 block; "
+            "skipping patch — resolve manually or run with different flags"
+        )
+        return
+
+    # state is MISSING.
+    if dry_run:
+        report.torch_config_action = "dry_run"
+        return
+
+    if not assume_yes:
+        if confirm is None:
+            # Non-interactive caller (or programmatic use without a
+            # prompt hook). Refuse to guess — name the opt-in flags.
+            report.torch_config_action = "skipped-non-tty"
+            report.warnings.append(
+                "torch-config patch requires confirmation — pass --yes to "
+                "apply, or --no-torch-config to opt out. See "
+                "pyproject.toml shape in `vaultspec-rag install --help`."
+            )
+            return
+        try:
+            approved = confirm(
+                f"Patch {pyproject} with the cu130 torch index? "
+                f"This lets uv resolve the CUDA torch wheel."
+            )
+        except (KeyboardInterrupt, EOFError):
+            report.torch_config_action = "declined"
+            report.warnings.append("torch-config patch declined by user")
+            return
+        if not approved:
+            report.torch_config_action = "declined"
+            return
+
+    patch_report = torch_config.apply_patch(pyproject)
+    report.torch_config_action = patch_report.action
+    report.torch_config_conflicts = list(patch_report.conflicts)
+
+    if patch_report.action != "applied":
+        return
+
+    if sync_after:
+        _run_uv_sync_torch(target=target, report=report)
+
+
+def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
+    """Shell out to ``uv sync --reinstall-package torch``.
+
+    Non-fatal: failures are recorded as warnings, never raised. Runs
+    with ``check=False`` so we can surface uv's own stderr in the
+    report without a Python traceback.
+    """
+    try:
+        proc = subprocess.run(
+            ["uv", "sync", "--reinstall-package", "torch"],
+            cwd=str(target),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        report.torch_sync_action = "uv-not-found"
+        report.warnings.append(
+            "--sync requested but `uv` is not on PATH; "
+            "run `uv sync --reinstall-package torch` manually"
+        )
+        return
+    except OSError as exc:
+        report.torch_sync_action = "error"
+        report.warnings.append(f"uv sync failed to launch: {exc}")
+        return
+
+    if proc.returncode == 0:
+        report.torch_sync_action = "succeeded"
+        return
+
+    report.torch_sync_action = "failed"
+    tail = (proc.stderr or "").strip().splitlines()[-5:]
+    report.warnings.append(
+        "uv sync --reinstall-package torch exited with code "
+        f"{proc.returncode}; last stderr lines: {tail!r}"
+    )
 
 
 def _rollback_seeded(rules_dir: Path, seeded: list[str], report: InstallReport) -> None:
@@ -278,6 +446,7 @@ def uninstall_run(
     dry_run: bool = False,
     force: bool = False,
     skip: set[str] | None = None,
+    assume_yes: bool = False,
 ) -> UninstallReport:
     """Remove vaultspec-rag enrollment from a workspace.
 
@@ -300,10 +469,16 @@ def uninstall_run(
             preview. Also passed through to ``sync_provider`` to enable
             orphan pruning during propagation.
         skip: Components to skip (passed through to ``sync_provider``).
+        assume_yes: Present for CLI symmetry with ``install``. Uninstall
+            is already a destructive-by-intent operation (it always
+            attempts symmetric reversal of install), so this flag
+            currently has no prompt to bypass; it is accepted for
+            forward compatibility.
 
     Returns:
         :class:`UninstallReport` with the structured result.
     """
+    del assume_yes  # reserved for future prompts; no current effect.
     skip = skip or set()
 
     # Default-safe: refuse to mutate without --force, return preview.
@@ -323,6 +498,10 @@ def uninstall_run(
 
     if not (target / ".vaultspec").is_dir():
         report.warnings.append(f"no .vaultspec/ at {target}; nothing to uninstall")
+        # Even when .vaultspec is gone, the consumer's pyproject.toml
+        # may still carry rag's torch-config block. Attempt symmetric
+        # removal so the workspace lands in a clean state.
+        _run_torch_config_uninstall(target=target, report=report, dry_run=dry_run)
         return report
 
     rules_dir = target / ".vaultspec" / "rules"
@@ -370,6 +549,8 @@ def uninstall_run(
                 logger.error("sync_provider failed during uninstall: %s", exc)
                 report.warnings.append(f"core sync failed: {exc}")
 
+    _run_torch_config_uninstall(target=target, report=report, dry_run=dry_run)
+
     if remove_data:
         data_dir = target / ".vault" / "data"
         # Symlink containment guard: rag must NEVER follow a symlink
@@ -404,6 +585,49 @@ def uninstall_run(
                 report.data_removed = True
 
     return report
+
+
+def _run_torch_config_uninstall(
+    *,
+    target: Path,
+    report: UninstallReport,
+    dry_run: bool,
+) -> None:
+    """Remove the cu130 torch-config block from the consumer pyproject.
+
+    Always attempts symmetric reversal — silent no-op when state is
+    MISSING or NO_PROJECT_FILE. CUSTOMISED entries are left alone
+    with a warning.
+    """
+    pyproject = target / "pyproject.toml"
+    state = torch_config.detect_state(pyproject)
+
+    if state == torch_config.TorchConfigState.NO_PROJECT_FILE:
+        report.torch_config_action = "absent"
+        return
+    if state == torch_config.TorchConfigState.MISSING:
+        report.torch_config_action = "absent"
+        return
+    if state == torch_config.TorchConfigState.CUSTOMISED:
+        # Surface conflicts via a dry-run-style call.
+        patch_report = torch_config.remove_patch(pyproject) if not dry_run else None
+        report.torch_config_action = "skipped"
+        if patch_report is not None:
+            report.torch_config_conflicts = list(patch_report.conflicts)
+        report.warnings.append(
+            "pyproject.toml has a non-canonical cu130 block; "
+            "skipping removal — resolve manually"
+        )
+        return
+
+    # state is CANONICAL.
+    if dry_run:
+        report.torch_config_action = "dry_run"
+        return
+
+    patch_report = torch_config.remove_patch(pyproject)
+    report.torch_config_action = patch_report.action
+    report.torch_config_conflicts = list(patch_report.conflicts)
 
 
 def _rmtree_safe_onexc(_func, path, exc) -> None:

@@ -31,6 +31,7 @@ dependencies = [
     "pathspec>=0.12",
     "watchfiles>=1.0.0",
     "psutil>=6.0.0",
+    "tomlkit>=0.13",
 ]
 description = "GPU-accelerated RAG module for vaultspec vault search"
 keywords = [
