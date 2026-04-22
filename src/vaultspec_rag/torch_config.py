@@ -24,11 +24,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import tomlkit
 from tomlkit import TOMLDocument
-from tomlkit.items import AoT, Array, InlineTable, Table
+from tomlkit.items import AoT, InlineTable, Table
 from vaultspec_core.core.helpers import atomic_write
 
 if TYPE_CHECKING:
@@ -126,36 +126,54 @@ def _load(pyproject: Path) -> TOMLDocument | None:
 
 
 def _tool_uv(doc: TOMLDocument) -> Table | None:
-    """Return the ``[tool.uv]`` table, or None."""
+    """Return the ``[tool.uv]`` table, or None.
+
+    Narrowed strictly to :class:`tomlkit.items.Table` — raw ``dict``
+    doesn't surface from tomlkit's parsed document, and requiring it
+    lets the type-checker narrow without a ``type: ignore``.
+    """
     tool = doc.get("tool")
-    if not isinstance(tool, Table | dict):
+    if not isinstance(tool, Table):
         return None
     uv = tool.get("uv")
-    if not isinstance(uv, Table | dict):
+    if not isinstance(uv, Table):
         return None
-    return uv  # type: ignore[return-value]
+    return uv
 
 
-def _indices(doc: TOMLDocument) -> AoT | list | None:
-    """Return the ``[[tool.uv.index]]`` array-of-tables, or None."""
+def _indices(doc: TOMLDocument) -> AoT | None:
+    """Return the ``[[tool.uv.index]]`` array-of-tables, or None.
+
+    Returns None if the key is absent OR if it exists but is not an
+    AoT. Callers (apply/remove helpers) rely on AoT-specific methods
+    like ``.append()`` and item-index ``.pop()``; returning only AoT
+    keeps the downstream contract narrow. The CUSTOMISED-classifier
+    in :func:`_classify` catches non-AoT shapes separately via a
+    direct ``uv.get("index")`` probe.
+    """
     uv = _tool_uv(doc)
     if uv is None:
         return None
     idx = uv.get("index")
-    if idx is None:
+    if not isinstance(idx, AoT):
         return None
-    return idx  # type: ignore[return-value]
+    return idx
 
 
-def _torch_sources(doc: TOMLDocument) -> Array | list | None:
-    """Return the ``torch`` entry under ``[tool.uv.sources]``, or None."""
+def _torch_sources(doc: TOMLDocument) -> Any:
+    """Return the ``torch`` entry under ``[tool.uv.sources]``, or None.
+
+    Returns whatever tomlkit has at that key so the caller can
+    classify unusual shapes (scalar, standard Table, inline-table
+    array, or missing). Strictly-typed callers downcast as needed.
+    """
     uv = _tool_uv(doc)
     if uv is None:
         return None
     sources = uv.get("sources")
-    if not isinstance(sources, Table | dict):
+    if not isinstance(sources, Table):
         return None
-    return sources.get("torch")  # type: ignore[return-value]
+    return sources.get("torch")
 
 
 def _index_match(entry: Table | InlineTable | dict) -> str:
@@ -196,23 +214,24 @@ def _source_match(entry: InlineTable | dict) -> str:
 
 def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     """Inspect the loaded doc and return (state, conflicts)."""
-    indices = _indices(doc)
-    torch_srcs = _torch_sources(doc)
-
     conflicts: list[str] = []
     index_canonical = False
     index_conflict = False
 
     # `[tool.uv.index]` (single table) is a valid TOML structure but
-    # incompatible with our array-of-tables mutations. Treat it as
-    # CUSTOMISED so apply_patch refuses; we never overwrite it.
-    if indices is not None and not isinstance(indices, AoT | list):
+    # incompatible with our array-of-tables mutations. Probe the raw
+    # key directly — ``_indices()`` narrows to AoT only, so we can't
+    # use its return value to detect this shape.
+    uv = _tool_uv(doc)
+    raw_index = uv.get("index") if uv is not None else None
+    if raw_index is not None and not isinstance(raw_index, AoT):
         conflicts.append(
             "[tool.uv.index] is a single table, not an array-of-tables; "
             "rag's apply_patch expects [[tool.uv.index]]"
         )
         return TorchConfigState.CUSTOMISED, conflicts
 
+    indices = _indices(doc)
     if indices is not None:
         for entry in indices:
             if not isinstance(entry, Table | InlineTable | dict):
@@ -226,6 +245,8 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
                     f"[[tool.uv.index]] '{CU130_INDEX_NAME}' "
                     f"exists with non-canonical url/explicit"
                 )
+
+    torch_srcs = _torch_sources(doc)
 
     source_canonical = False
     source_conflict = False

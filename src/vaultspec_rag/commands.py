@@ -311,15 +311,26 @@ def _run_torch_config_install(
 ) -> None:
     """Apply the cu130 torch-config patch to the consumer pyproject.
 
-    Decisions are recorded on ``report``; never raises. See
-    :mod:`vaultspec_rag.torch_config` for the matching predicate.
+    Decisions are recorded on ``report``. The body converts the
+    raise-paths from :mod:`vaultspec_rag.torch_config`
+    (``tomlkit.exceptions.ParseError`` on corrupt TOML, ``OSError``
+    from the atomic write) into non-fatal warnings so install's
+    overall contract matches the ``sync_provider`` handling above.
+
+    See :mod:`vaultspec_rag.torch_config` for the matching predicate.
     """
     if not configure_torch:
         report.torch_config_action = "disabled"
         return
 
     pyproject = target / "pyproject.toml"
-    state = torch_config.detect_state(pyproject)
+    try:
+        state = torch_config.detect_state(pyproject)
+    except Exception as exc:
+        logger.error("torch_config.detect_state failed: %s", exc)
+        report.torch_config_action = "error"
+        report.warnings.append(f"torch-config inspect failed: {exc}")
+        return
 
     if state == torch_config.TorchConfigState.NO_PROJECT_FILE:
         report.torch_config_action = "absent"
@@ -333,7 +344,13 @@ def _run_torch_config_install(
     if state == torch_config.TorchConfigState.CUSTOMISED:
         # Detect returns no conflicts on CUSTOMISED; run apply to get
         # the structured conflict list. apply_patch will not mutate.
-        report_patch = torch_config.apply_patch(pyproject)
+        try:
+            report_patch = torch_config.apply_patch(pyproject)
+        except Exception as exc:
+            logger.error("torch_config.apply_patch failed on CUSTOMISED: %s", exc)
+            report.torch_config_action = "error"
+            report.warnings.append(f"torch-config inspect failed: {exc}")
+            return
         report.torch_config_action = "conflict"
         report.torch_config_conflicts = list(report_patch.conflicts)
         report.warnings.append(
@@ -371,7 +388,13 @@ def _run_torch_config_install(
             report.torch_config_action = "declined"
             return
 
-    patch_report = torch_config.apply_patch(pyproject)
+    try:
+        patch_report = torch_config.apply_patch(pyproject)
+    except Exception as exc:
+        logger.error("torch_config.apply_patch failed: %s", exc)
+        report.torch_config_action = "error"
+        report.warnings.append(f"torch-config write failed: {exc}")
+        return
     report.torch_config_action = patch_report.action
     report.torch_config_conflicts = list(patch_report.conflicts)
 
@@ -607,10 +630,18 @@ def _run_torch_config_uninstall(
 
     Always attempts symmetric reversal — silent no-op when state is
     MISSING or NO_PROJECT_FILE. CUSTOMISED entries are left alone
-    with a warning.
+    with a warning. Parse / write errors from
+    :mod:`vaultspec_rag.torch_config` are captured as non-fatal
+    warnings, mirroring the install-side contract.
     """
     pyproject = target / "pyproject.toml"
-    state = torch_config.detect_state(pyproject)
+    try:
+        state = torch_config.detect_state(pyproject)
+    except Exception as exc:
+        logger.error("torch_config.detect_state failed: %s", exc)
+        report.torch_config_action = "error"
+        report.warnings.append(f"torch-config inspect failed: {exc}")
+        return
 
     if state == torch_config.TorchConfigState.NO_PROJECT_FILE:
         report.torch_config_action = "absent"
@@ -623,7 +654,13 @@ def _run_torch_config_uninstall(
         # before any write and returns the conflict list. Call it in
         # both dry-run and wet modes so the report is symmetric with
         # the install side (which calls apply_patch unconditionally).
-        patch_report = torch_config.remove_patch(pyproject)
+        try:
+            patch_report = torch_config.remove_patch(pyproject)
+        except Exception as exc:
+            logger.error("torch_config.remove_patch failed on CUSTOMISED: %s", exc)
+            report.torch_config_action = "error"
+            report.warnings.append(f"torch-config inspect failed: {exc}")
+            return
         report.torch_config_action = "skipped"
         report.torch_config_conflicts = list(patch_report.conflicts)
         report.warnings.append(
@@ -637,7 +674,13 @@ def _run_torch_config_uninstall(
         report.torch_config_action = "dry_run"
         return
 
-    patch_report = torch_config.remove_patch(pyproject)
+    try:
+        patch_report = torch_config.remove_patch(pyproject)
+    except Exception as exc:
+        logger.error("torch_config.remove_patch failed: %s", exc)
+        report.torch_config_action = "error"
+        report.warnings.append(f"torch-config write failed: {exc}")
+        return
     report.torch_config_action = patch_report.action
     report.torch_config_conflicts = list(patch_report.conflicts)
 
