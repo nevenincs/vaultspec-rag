@@ -89,6 +89,42 @@ def _cpu_only_message() -> str:
     )
 
 
+def _no_torch_message() -> str:
+    """Return the NO_TORCH remediation copy as a Rich-markup string.
+
+    Extracted so the rendered output is testable without monkey-
+    patching ``_handle_gpu_error``. TEST-11.
+    """
+    return (
+        "[bold red]Error:[/] PyTorch is not installed.\n\n"
+        "  [cyan]uv add vaultspec-rag && uv run vaultspec-rag install[/] "
+        "configures the cu130 torch index and installs the GPU build."
+    )
+
+
+def _no_gpu_message() -> str:
+    """Return the NO_GPU remediation copy as a Rich-markup string.
+
+    Extracted so the rendered output is testable without monkey-
+    patching ``_handle_gpu_error``. TEST-04.
+    """
+    return (
+        "[bold red]Error:[/] No CUDA GPU detected.\n"
+        "  PyTorch is built with CUDA support, but no CUDA device "
+        "is available.\n\n"
+        "  Quick checks:\n"
+        "    1. [cyan]nvidia-smi[/] - confirms the driver sees the GPU. "
+        "If this fails, install/repair the NVIDIA driver.\n"
+        '    2. [cyan]python -c "import torch; print(torch.version.cuda)"[/] '
+        "- prints the CUDA version torch was built against. Your "
+        "driver must support at least this CUDA major.\n"
+        "    3. WSL/Docker users: confirm GPU passthrough is enabled "
+        "([cyan]--gpus all[/] for docker, GPU support enabled in WSL2). "
+        "A GPU visible to the host is not automatically visible inside "
+        "the container/VM."
+    )
+
+
 def _handle_gpu_error(exc: Exception) -> None:
     """Print an actionable message for torch / CUDA failures and exit.
 
@@ -121,32 +157,14 @@ def _handle_gpu_error(exc: Exception) -> None:
             diagnosis = TorchDiagnosis.NO_TORCH
 
     if diagnosis == TorchDiagnosis.NO_TORCH:
-        console.print(
-            "[bold red]Error:[/] PyTorch is not installed.\n\n"
-            "  [cyan]uv add vaultspec-rag && uv run vaultspec-rag install[/] "
-            "configures the cu130 torch index and installs the GPU build.",
-        )
+        console.print(_no_torch_message())
     elif diagnosis == TorchDiagnosis.CPU_ONLY:
         console.print(_cpu_only_message(), markup=True)
         # Rich interprets ``[[tool.uv.index]]`` as markup; emit the
         # snippet with markup disabled so brackets render verbatim.
         console.print(manual_snippet(), markup=False, highlight=False)
     elif diagnosis == TorchDiagnosis.NO_GPU:
-        console.print(
-            "[bold red]Error:[/] No CUDA GPU detected.\n"
-            "  PyTorch is built with CUDA support, but no CUDA device "
-            "is available.\n\n"
-            "  Quick checks:\n"
-            "    1. [cyan]nvidia-smi[/] — confirms the driver sees the GPU. "
-            "If this fails, install/repair the NVIDIA driver.\n"
-            '    2. [cyan]python -c "import torch; print(torch.version.cuda)"[/] '
-            "— prints the CUDA version torch was built against. Your "
-            "driver must support at least this CUDA major.\n"
-            "    3. WSL/Docker users: confirm GPU passthrough is enabled "
-            "([cyan]--gpus all[/] for docker, GPU support enabled in WSL2). "
-            "A GPU visible to the host is not automatically visible inside "
-            "the container/VM.",
-        )
+        console.print(_no_gpu_message())
     else:
         console.print(f"[bold red]Error:[/] {exc}")
     raise typer.Exit(code=1)
@@ -2482,11 +2500,14 @@ def _render_install_report(report: Any) -> None:
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Conflict strings may contain `[[tool.uv.index]]` which Rich
-        # would parse as markup; disable markup for the user-supplied
-        # portion so brackets render verbatim.
-        console.print("  [red]conflict:[/] ", end="")
-        console.print(conflict, markup=False, highlight=False)
+        # Assemble the prefix and body as a single ``Text`` so Rich's
+        # word-wrapper can honour the leading two-space indent across
+        # wrapped continuation lines. Also keeps literal ``[…]``
+        # tokens in ``conflict`` verbatim — ``Text.assemble`` does not
+        # parse markup. CLI-05.
+        from rich.text import Text
+
+        console.print(Text.assemble("  ", ("conflict: ", "red"), conflict))
     tsync = getattr(report, "torch_sync_action", "skipped")
     if tsync not in ("skipped",):
         t_colour = {"succeeded": "green", "failed": "red"}.get(tsync, "yellow")
@@ -2529,11 +2550,11 @@ def _render_uninstall_report(report: Any) -> None:
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Conflict strings may contain `[[tool.uv.index]]` which Rich
-        # would parse as markup; disable markup for the user-supplied
-        # portion so brackets render verbatim.
-        console.print("  [yellow]conflict:[/] ", end="")
-        console.print(conflict, markup=False, highlight=False)
+        # Same Text.assemble treatment as the install side — see
+        # CLI-05 in _render_install_report for the rationale.
+        from rich.text import Text
+
+        console.print(Text.assemble("  ", ("conflict: ", "yellow"), conflict))
     for warning in report.warnings:
         # Same markup-leak guard as _render_install_report; see comment
         # there for the rationale.

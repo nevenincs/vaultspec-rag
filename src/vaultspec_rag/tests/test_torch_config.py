@@ -731,6 +731,169 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
     tomlkit.parse(after)
 
 
+def test_has_direct_torch_dep_multi_group_optional_dependencies(tmp_path: Path) -> None:
+    """TEST-05 regression: when ``[project.optional-dependencies]``
+    has multiple groups and torch lives in the SECOND group (not the
+    first), the iteration must keep going. A future refactor that
+    early-returned on first group would silently miss this.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\n'
+        "\n[project.optional-dependencies]\n"
+        'gpu = ["triton"]\n'
+        'cuda = ["torch>=2.4", "tensorboard"]\n',
+    )
+    found, location = tc.has_direct_torch_dep(p)
+    assert found is True
+    assert location == "[project.optional-dependencies].cuda"
+
+
+def test_has_direct_torch_dep_multi_group_dependency_groups(tmp_path: Path) -> None:
+    """TEST-05 regression: same shape for PEP 735 ``[dependency-groups]``."""
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\n'
+        "\n[dependency-groups]\n"
+        'lint = ["ruff"]\n'
+        'gpu = ["triton", "torch>=2.4"]\n',
+    )
+    found, location = tc.has_direct_torch_dep(p)
+    assert found is True
+    assert location == "[dependency-groups].gpu"
+
+
+def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
+    """TEST-06 regression: ``apply_patch`` against a scattered
+    ``[tool.uv.*]`` shape must produce TOML that re-parses cleanly
+    AND lands canonical cu130 keys at the documented dotted paths.
+    The existing scattered test relies on ``detect_state`` returning
+    CANONICAL — which transitively re-parses, but a future refactor
+    that moved the reparse-guard out of ``apply_patch`` could pass
+    those tests while emitting subtly broken TOML. Pin the contract.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        "[project]\n"
+        'name = "demo"\n'
+        'version = "0.1.0"\n'
+        'dependencies = ["vaultspec-rag", "torch>=2.4"]\n'
+        "\n[tool.uv]\noverride-dependencies = []\n"
+        "\n[tool.ruff]\nline-length = 120\n"
+        "\n[tool.pytest.ini_options]\n"
+        'testpaths = ["tests"]\n',
+    )
+    rep = tc.apply_patch(p)
+    assert rep.action == "applied"
+    after = p.read_text(encoding="utf-8")
+    # Re-parse the post-apply bytes directly, then assert cu130 keys
+    # land at the documented dotted paths.
+    parsed = tomlkit.parse(after).unwrap()
+    indices = parsed["tool"]["uv"]["index"]
+    assert any(
+        e.get("name") == "pytorch-cu130"
+        and e.get("url") == "https://download.pytorch.org/whl/cu130"
+        and e.get("explicit") is True
+        for e in indices
+    )
+    sources = parsed["tool"]["uv"]["sources"]["torch"]
+    assert any(
+        e.get("index") == "pytorch-cu130"
+        and e.get("marker") == "sys_platform == 'linux' or sys_platform == 'win32'"
+        for e in sources
+    )
+
+
+def test_apply_inline_array_index_conflict_message(tmp_path: Path) -> None:
+    """TOML-03 regression: when the user wrote ``index = [{...}]`` (inline-
+    array dotted-key form), the conflict message must describe the
+    actual shape (an inline array), not say "single table". Distinct
+    error text guides the user toward the right fix.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\n'
+        "\n[tool.uv]\n"
+        "index = [{name = 'foo', url = 'https://example.com/simple'}]\n",
+    )
+    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
+    rep = tc.apply_patch(p)
+    assert rep.action == "conflict"
+    # Message must mention "inline array" — not "single table".
+    assert any("inline array" in c for c in rep.conflicts), rep.conflicts
+    assert not any("single table" in c for c in rep.conflicts), rep.conflicts
+
+
+def test_apply_appended_index_block_has_trailing_blank_line(tmp_path: Path) -> None:
+    """TOML-04 regression: when apply appends to an existing
+    ``[[tool.uv.index]]`` AoT and the consumer file has more
+    top-level sections after it, the new block must carry a trailing
+    blank line. Without that, the ``explicit = true`` line lands
+    flush against the next section header — readable TOML but a
+    noisy git diff.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\ndependencies = ["torch>=2.4"]\n'
+        "\n[[tool.uv.index]]\n"
+        'name = "pypi-mirror"\n'
+        'url = "https://example.com/simple"\n'
+        "explicit = false\n"
+        "\n[tool.something]\n"
+        'foo = "bar"\n',
+    )
+    tc.apply_patch(p)
+    out = p.read_text(encoding="utf-8")
+    # The appended cu130 block must NOT collapse into the following
+    # ``[tool.something]`` header.
+    assert "explicit = true\n[tool.something]" not in out, out
+
+
+def test_remove_orphan_canonical_index_only(tmp_path: Path) -> None:
+    """TOML-02 regression: a half-applied state with only the
+    canonical ``[[tool.uv.index]]`` (no source pin) used to classify
+    as CUSTOMISED and uninstall left the orphan rag-named entry
+    behind. Now uninstall recognises it as half-applied and removes it.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\n'
+        "\n[[tool.uv.index]]\n"
+        'name = "pytorch-cu130"\n'
+        'url = "https://download.pytorch.org/whl/cu130"\n'
+        "explicit = true\n",
+    )
+    rep = tc.remove_patch(p)
+    assert rep.action == "removed"
+    after = p.read_text(encoding="utf-8")
+    assert "pytorch-cu130" not in after
+    tomlkit.parse(after)
+
+
+def test_remove_orphan_canonical_source_only(tmp_path: Path) -> None:
+    """Symmetric pair of the index-only orphan: when only the source
+    pin is present (no canonical index), uninstall must remove it.
+    """
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\n'
+        "\n[tool.uv.sources]\n"
+        'torch = [{index = "pytorch-cu130", '
+        "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"}]\n",
+    )
+    rep = tc.remove_patch(p)
+    assert rep.action == "removed"
+    after = p.read_text(encoding="utf-8")
+    assert "pytorch-cu130" not in after
+
+
 def test_apply_with_existing_user_index(tmp_path: Path) -> None:
     """User has their own ``[[tool.uv.index]]`` entry. Apply must
     *append* to the existing AoT, not replace it.

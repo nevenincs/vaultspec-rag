@@ -233,7 +233,20 @@ block runs:
 1. If `NO_PROJECT_FILE`: warn, skip.
 1. If `sync_after` is True and the patch was applied,
    `subprocess.run(["uv", "sync", "--reinstall-package", "torch"], cwd=target, check=True)`. Errors surface as non-fatal
-   warnings on the report.
+   warnings on the report. **Stream priority:** on a non-zero exit,
+   surface the last 5 lines of stderr in the warning. If stderr is
+   empty, fall back to stdout — uv writes resolution failures to
+   stderr most of the time, but `--locked` mismatches and lockfile-
+   conflict renderings can land on stdout. (DRIFT-07.)
+1. **Confirm-callback exception contract.** The `confirm` callback
+   is wrapped in a broad exception handler by design.
+   `KeyboardInterrupt` and `EOFError` (including `click.Abort`
+   instances whose cause/context chain includes `EOFError` — Rich
+   on Windows wraps stdin EOF as `click.Abort`) surface specific
+   warnings; any other exception folds into the `declined` action
+   with a typed warning naming the exception class. This guarantees
+   torch-config remains a non-fatal step regardless of the prompt
+   implementation. (DRIFT-06.)
 
 `InstallReport` gains two fields:
 

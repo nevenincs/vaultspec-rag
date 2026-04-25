@@ -185,6 +185,12 @@ class TestInstallTorchConfig:
     ) -> None:
         """KeyboardInterrupt is a genuine user signal and must remain
         labelled as 'declined' — distinct from the new EOF branch.
+
+        TEST-09 regression: assert the warning BODY is the
+        KeyboardInterrupt-specific text, not the EOF copy. Pinning
+        only the action label would let a future refactor copy-paste
+        EOF prose into this branch and pass tests while regressing
+        the user-facing distinction.
         """
 
         def interrupt_confirm(_prompt: str) -> bool:
@@ -196,6 +202,13 @@ class TestInstallTorchConfig:
             confirm=interrupt_confirm,
         )
         assert report.torch_config_action == "declined"
+        # Warning body matches the KeyboardInterrupt-specific text and
+        # does NOT mention --yes / --force (that's the EOF branch's
+        # copy and the skipped-non-tty branch's copy).
+        assert any("declined by user" in w for w in report.warnings)
+        assert not any("non-interactive stdin" in w for w in report.warnings), (
+            report.warnings
+        )
 
     def test_install_warns_when_torch_not_a_direct_dep(
         self, consumer_workspace: Path
@@ -594,6 +607,104 @@ class TestInstallTorchConfigFollowups:
         assert not any("direct dependency" in w for w in third.warnings)
 
 
+class TestErrorBranches:
+    """TEST-07/08 coverage: ``_run_torch_config_install`` and
+    ``_run_torch_config_uninstall`` each have ``except Exception``
+    blocks that set ``torch_config_action="error"``. Drive each path
+    with a corrupt pyproject so the warning prefix is asserted; a
+    future refactor that swallowed the exception or conflated the
+    "inspect failed" / "write failed" prefixes would fail loudly.
+    """
+
+    def test_install_corrupt_pyproject_records_error(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(
+            "[project\nname =", encoding="utf-8"
+        )  # malformed
+        report = install_run(path=ws, assume_yes=True)
+        assert report.torch_config_action == "error"
+        assert any("torch-config inspect failed" in w for w in report.warnings), (
+            report.warnings
+        )
+
+    def test_uninstall_corrupt_pyproject_records_error(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".vaultspec").mkdir()
+        (ws / "pyproject.toml").write_text("[project\nname =", encoding="utf-8")
+        report = uninstall_run(path=ws, force=True)
+        assert report.torch_config_action == "error"
+        assert any("torch-config inspect failed" in w for w in report.warnings), (
+            report.warnings
+        )
+
+
+class TestSyncSilentDrop:
+    """INSTALL-04 regression: ``--sync`` without an applied patch must
+    surface a warning so the user's explicit flag isn't silently
+    dropped.
+    """
+
+    def test_sync_with_no_torch_config_warns(self, consumer_workspace: Path) -> None:
+        report = install_run(
+            path=consumer_workspace,
+            configure_torch=False,
+            sync_after=True,
+            assume_yes=True,
+        )
+        assert report.torch_config_action == "disabled"
+        assert report.torch_sync_action == "skipped"
+        assert any("--sync requested but skipped" in w for w in report.warnings), (
+            report.warnings
+        )
+
+    def test_sync_with_dry_run_warns(self, consumer_workspace: Path) -> None:
+        report = install_run(
+            path=consumer_workspace,
+            sync_after=True,
+            dry_run=True,
+        )
+        assert any("--sync requested but skipped" in w for w in report.warnings), (
+            report.warnings
+        )
+
+    def test_sync_with_already_canonical_warns(self, consumer_workspace: Path) -> None:
+        # First run lands the canonical block.
+        install_run(path=consumer_workspace, assume_yes=True)
+        # Second run with --sync should warn that sync was dropped
+        # because torch_config_action is now "already".
+        report = install_run(
+            path=consumer_workspace,
+            sync_after=True,
+            assume_yes=True,
+        )
+        assert report.torch_config_action == "already"
+        assert any("--sync requested but skipped" in w for w in report.warnings), (
+            report.warnings
+        )
+
+
+class TestDeclinedWarning:
+    """INSTALL-07 regression: the ``declined`` branch must emit a
+    warning for symmetry with every other not-applied-by-user-choice
+    branch.
+    """
+
+    def test_declined_emits_warning(self, consumer_workspace: Path) -> None:
+        report = install_run(
+            path=consumer_workspace,
+            assume_yes=False,
+            confirm=lambda _prompt: False,
+        )
+        assert report.torch_config_action == "declined"
+        # Warning fires AND names the bypass flags.
+        assert any(
+            "declined" in w and ("--yes" in w or "--force" in w)
+            for w in report.warnings
+        ), report.warnings
+
+
 class TestUvSyncTorchBranches:
     """TEST-01 coverage: pin every branch of the uv-sync result
     classifier. Tests target the pure helper
@@ -703,7 +814,10 @@ class TestUvSyncTorchBranches:
 class TestManualSnippetBytes:
     """TEST-02 coverage: pin the bytes ``manual_snippet()`` emits so a
     future copy edit cannot silently desync README, error messages,
-    and runtime output.
+    and runtime output. Post-TOML-01 the cu130 portion is generated by
+    the same writer ``apply_patch`` uses, so byte-equality with the
+    actual install output is structural — this test pins the *appended
+    educational comment block* and the leading-newline contract.
     """
 
     def test_manual_snippet_byte_for_byte(self) -> None:
@@ -715,11 +829,41 @@ class TestManualSnippetBytes:
             "explicit = true\n"
             "\n"
             "[tool.uv.sources]\n"
-            'torch = [{ index = "pytorch-cu130", '
-            "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\" }]\n"
+            "torch = [\n"
+            '    {index = "pytorch-cu130", '
+            "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
+            "]\n"
             "\n"
             "# uv ignores [tool.uv.sources] for purely-transitive deps.\n"
             "# Add torch as a direct dep too, e.g. in [project].dependencies\n"
             '# or [dependency-groups].dev:  "torch>=2.4"\n'
         )
         assert tc.manual_snippet() == expected
+
+    def test_manual_snippet_cu130_portion_matches_apply_output(
+        self, tmp_path: Path
+    ) -> None:
+        """TOML-01 regression: the cu130 portion of ``manual_snippet``
+        must be byte-equal to what ``apply_patch`` writes into a
+        previously-MISSING pyproject. This is the structural guarantee
+        the docstring promises and the README's manual snippet relies
+        on.
+        """
+        p = tmp_path / "pyproject.toml"
+        # Apply against an empty body (no [project], no [tool]) so the
+        # output is purely the cu130 block plus tomlkit's trailing LF.
+        p.write_bytes(b"")
+        tc.apply_patch(p)
+        applied = p.read_text(encoding="utf-8")
+        snippet = tc.manual_snippet()
+        # The snippet starts with a leading newline (so it can be
+        # appended to an existing file). Strip that for comparison.
+        snippet_cu130 = snippet[1:]
+        # The snippet then has the cu130 block followed by the
+        # educational comment block. The cu130 block is the prefix
+        # that should match the apply output.
+        assert snippet_cu130.startswith(applied), (
+            f"cu130 prefix mismatch:\n"
+            f"snippet[1:] starts: {snippet_cu130[:200]!r}\n"
+            f"applied:           {applied[:200]!r}"
+        )

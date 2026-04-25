@@ -451,6 +451,73 @@ class TestCpuOnlyMessageRendering:
         assert "\\" not in out, out
 
 
+class TestNoGpuMessageRendering:
+    """TEST-04 regression: NO_GPU message must render its three
+    bullets verbatim through Rich. Symmetric guard with
+    TestCpuOnlyMessageRendering.
+    """
+
+    @staticmethod
+    def _render() -> str:
+        import io
+
+        from rich.console import Console
+
+        from vaultspec_rag.cli import _no_gpu_message
+
+        buf = io.StringIO()
+        Console(file=buf, force_terminal=False, color_system=None, width=120).print(
+            _no_gpu_message()
+        )
+        return buf.getvalue()
+
+    def test_renders_nvidia_smi_check(self) -> None:
+        out = self._render()
+        assert "nvidia-smi" in out
+
+    def test_renders_torch_version_cuda_check(self) -> None:
+        out = self._render()
+        assert "torch.version.cuda" in out
+
+    def test_renders_wsl_docker_caveat(self) -> None:
+        out = self._render()
+        assert "WSL" in out or "Docker" in out
+        assert "--gpus all" in out
+
+    def test_no_stray_backslashes(self) -> None:
+        out = self._render()
+        assert "\\" not in out, out
+
+
+class TestNoTorchMessageRendering:
+    """TEST-11 regression: NO_TORCH message must render its single
+    actionable ``uv add`` command line cleanly.
+    """
+
+    @staticmethod
+    def _render() -> str:
+        import io
+
+        from rich.console import Console
+
+        from vaultspec_rag.cli import _no_torch_message
+
+        buf = io.StringIO()
+        Console(file=buf, force_terminal=False, color_system=None, width=120).print(
+            _no_torch_message()
+        )
+        return buf.getvalue()
+
+    def test_renders_uv_add_command(self) -> None:
+        out = self._render()
+        assert "uv add vaultspec-rag" in out
+        assert "vaultspec-rag install" in out
+
+    def test_no_stray_backslashes(self) -> None:
+        out = self._render()
+        assert "\\" not in out, out
+
+
 class TestRenderInstallReport:
     """CLI-01 regression: the install/uninstall warning loop must NOT
     parse warning bodies as Rich markup. The transitive-dep warning

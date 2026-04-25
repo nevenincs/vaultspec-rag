@@ -133,20 +133,22 @@ class UninstallReport:
 def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:
     """Resolve the install target to an absolute workspace path.
 
-    When ``bootstrap`` is True, this also pre-creates the bare minimum
+    When ``bootstrap`` is True, this pre-creates the bare minimum
     directories core's ``resolve_workspace`` requires (``target/``,
-    ``.vault/``, ``.vaultspec/``) and bootstraps core's runtime context
-    via ``init_paths``. The latter is required by ``sync_provider`` —
-    it reads the active context to locate ``.vaultspec/`` and
-    ``.mcp.json``.
+    ``.vault/``, ``.vaultspec/``). It does NOT call
+    :func:`vaultspec_core.core.types.init_paths` — that's deferred to
+    the ``sync_provider`` call site via :func:`_init_core_context`.
 
-    When ``bootstrap`` is False (dry-run path), only the path itself is
-    resolved and no filesystem mutation occurs. The caller must avoid
-    calling ``sync_provider`` since core's context is not initialised.
+    Why deferred: ``init_paths`` materialises core's
+    ``.vaultspec/providers.json`` manifest as a side effect, which a
+    later ``vaultspec-core install`` interprets as "already
+    installed" and refuses to proceed without ``--upgrade`` /
+    ``--force``. That contradicts rag's companion-package contract
+    (rag is independent of core; both should cohabit cleanly without
+    one blocking the other). COHAB-01.
 
-    rag is fully self-sufficient: this bootstrap step is what allows
-    install to run in a completely empty directory without requiring
-    the user to call ``vaultspec-core install`` first.
+    When ``bootstrap`` is False (dry-run path), only the path itself
+    is resolved and no filesystem mutation occurs.
     """
     target = (path or Path.cwd()).resolve()
     if not bootstrap:
@@ -154,9 +156,17 @@ def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:
     target.mkdir(parents=True, exist_ok=True)
     (target / ".vault").mkdir(exist_ok=True)
     (target / ".vaultspec").mkdir(exist_ok=True)
+    return target
+
+
+def _init_core_context(target: Path) -> None:
+    """Initialise core's runtime context just before a ``sync_provider``
+    call. Scoped here (instead of in :func:`_resolve_target`) so the
+    manifest write is paired 1:1 with an actual core API invocation —
+    rag never seeds a manifest just for being instantiated. COHAB-01.
+    """
     layout = resolve_workspace(target_override=target)
     init_paths(layout)
-    return target
 
 
 def _exception_caused_by(exc: BaseException, target_type: type) -> bool:
@@ -281,10 +291,10 @@ def install_run(
             rel for rel in bundled if not (rules_dir / rel).exists() or force or upgrade
         ]
 
-    # sync_provider can only be called once core's runtime context has
-    # been bootstrapped via init_paths, which only happens on the
-    # non-dry-run resolve path. Dry-run reports list the planned
-    # propagation as a warning instead of trying to compute it.
+    # sync_provider needs core's runtime context. Initialise it here
+    # (instead of in _resolve_target) so the manifest write is paired
+    # 1:1 with an actual sync invocation — see COHAB-01 fix in
+    # _init_core_context. Dry-run skips both the init and the sync.
     if dry_run:
         report.warnings.append(
             "dry-run: core sync_provider not invoked (would propagate "
@@ -292,19 +302,25 @@ def install_run(
         )
     elif "core" not in skip:
         try:
-            report.sync_results = sync_provider(
-                "all",
-                dry_run=False,
-                force=force,
-                skip=skip,
-            )
+            _init_core_context(target)
         except Exception as exc:
-            logger.error("sync_provider failed during install: %s", exc)
-            report.warnings.append(
-                f"core sync failed: {exc} "
-                f"(seeded files left in place; re-run install or "
-                f"uninstall --force to clean up)"
-            )
+            logger.error("workspace context bootstrap failed: %s", exc)
+            report.warnings.append(f"workspace bootstrap failed: {exc}")
+        else:
+            try:
+                report.sync_results = sync_provider(
+                    "all",
+                    dry_run=False,
+                    force=force,
+                    skip=skip,
+                )
+            except Exception as exc:
+                logger.error("sync_provider failed during install: %s", exc)
+                report.warnings.append(
+                    f"core sync failed: {exc} "
+                    f"(seeded files left in place; re-run install or "
+                    f"uninstall --force to clean up)"
+                )
 
     _run_torch_config_install(
         target=target,
@@ -316,6 +332,22 @@ def install_run(
         sync_after=sync_after,
         confirm=confirm,
     )
+
+    # INSTALL-04: ``--sync`` is gated by ``patch_report.action ==
+    # "applied"`` inside ``_run_torch_config_install``. Any path that
+    # leaves torch-config in a non-applied state (disabled / dry_run /
+    # declined / customised / conflict / already / skipped-non-tty /
+    # skipped-eof / error) silently drops the sync. Surface a warning
+    # so the user knows their explicit ``--sync`` request did not run.
+    # ``torch_sync_action == "skipped"`` is the post-init default
+    # untouched by ``_run_uv_sync_torch``.
+    if sync_after and report.torch_sync_action == "skipped":
+        report.warnings.append(
+            f"--sync requested but skipped: torch-config step did not apply "
+            f"(torch_config_action={report.torch_config_action}). Run "
+            f"`uv sync --reinstall-package torch` manually if you still want "
+            f"to refresh the torch wheel."
+        )
 
     return report
 
@@ -473,7 +505,19 @@ def _run_torch_config_install(
             )
             return
         if not approved:
+            # INSTALL-07: keep the decline branch consistent with every
+            # other "skipped" variant — emit a one-line warning naming
+            # the bypass flags so programmatic consumers iterating
+            # ``report.warnings`` get a signal, not just renderer-side
+            # colour. The other not-applied-by-user-choice branches
+            # (KeyboardInterrupt, EOFError, skipped-non-tty) already do
+            # this; declined was the asymmetric outlier.
             report.torch_config_action = TorchConfigAction.DECLINED
+            report.warnings.append(
+                "torch-config patch declined; "
+                "re-run with --yes or --force to apply, "
+                "or --no-torch-config to opt out."
+            )
             return
 
     try:
@@ -527,8 +571,8 @@ def _maybe_warn_transitive_dep(
         f"{prefix}torch-config patched, but `torch` is not a direct dependency "
         "of this project. uv ignores [tool.uv.sources] for purely "
         "transitive packages, so the cu130 pin will not take effect. "
-        "Add `torch>=2.4` to [project].dependencies or "
-        "[dependency-groups].dev, then run "
+        f"Add `torch>={torch_config.TORCH_MIN_VERSION}` to "
+        "[project].dependencies or [dependency-groups].dev, then run "
         "`uv lock --refresh-package torch && uv sync`."
     )
 
@@ -732,10 +776,10 @@ def uninstall_run(
     elif "core" not in skip:
         # sync_provider needs core's runtime context. Only bootstrap
         # it now (after we've confirmed .vaultspec/ exists), so we
-        # never create workspace state during uninstall.
+        # never create workspace state during uninstall. Same scoped-
+        # init pattern as install (see COHAB-01).
         try:
-            layout = resolve_workspace(target_override=target)
-            init_paths(layout)
+            _init_core_context(target)
         except Exception as exc:
             logger.error("workspace context bootstrap failed: %s", exc)
             report.warnings.append(f"workspace bootstrap failed: {exc}")
