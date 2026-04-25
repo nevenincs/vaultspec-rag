@@ -32,11 +32,13 @@ uv run vaultspec-rag install
 
 The first command pulls in vaultspec-core and all GPU dependencies. The second seeds vaultspec-rag's bundled rule/MCP files into the workspace **and** patches your `pyproject.toml` with the cu130 torch index so `uv` resolves the CUDA torch wheel on Linux and Windows (macOS is left on PyPI torch). You'll be prompted before the `pyproject.toml` edit; pass `--yes` to skip the prompt (required in non-TTY contexts) or `--no-torch-config` to opt out. Add `--sync` to run `uv sync --reinstall-package torch` automatically after the patch.
 
+Flag precedence: `--no-torch-config` always wins (the patch is not applied regardless of `--force` / `--yes`). `--force` is the user's blanket opt-in — it implies `--yes` for the torch-config prompt. On a non-TTY without `--yes` or `--force`, the patch is skipped with a warning and the command exits non-zero (code 2) so CI fails loudly. The default for the interactive prompt is **no**: hitting Enter without typing declines.
+
 After `install`, run `vaultspec-rag --version` and then `vaultspec-rag index` as usual.
 
 #### Manual cu130 configuration
 
-If you'd rather configure the cu130 torch index by hand (air-gapped environments, custom resolvers), add this to your `pyproject.toml`:
+If you'd rather configure the cu130 torch index by hand (air-gapped environments, custom resolvers), add the following to your `pyproject.toml`. These bytes are byte-equal to what `vaultspec-rag install` writes and what the CPU-only error message displays, so all three surfaces stay in lockstep:
 
 ```toml
 [[tool.uv.index]]
@@ -45,16 +47,33 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-torch = [
-    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+
+# uv ignores [tool.uv.sources] for purely-transitive deps.
+# Add torch as a direct dep too, e.g. in [project].dependencies
+# or [dependency-groups].dev:  "torch>=2.4"
+```
+
+The trailing comment is significant: `uv` silently ignores `[tool.uv.sources]` entries for purely-transitive packages, so the source pin only takes effect once `torch` appears in your own dependency lists. Add it to either `[project].dependencies` or `[dependency-groups].dev`:
+
+```toml
+[dependency-groups]
+dev = [
+    "torch>=2.4",
 ]
 ```
 
-then run `uv sync --reinstall-package torch`. `[tool.uv.sources]` declarations in a dependency's own `pyproject.toml` do not propagate to consumers, which is why this step is necessary.
+Then run `uv lock --refresh-package torch && uv sync`. The lockfile entry for `torch` should show `source = { registry = "https://download.pytorch.org/whl/cu130" }` (not `pypi.org/simple`); if it still resolves from PyPI, the direct-dep step was missed. `[tool.uv.sources]` declarations in a dependency's own `pyproject.toml` do not propagate to consumers, which is why this step is necessary.
 
 #### Troubleshooting: "PyTorch was installed without CUDA support"
 
-If `vaultspec-rag index` reports the CPU-only wheel on a machine with a GPU, `uv` resolved `torch` from PyPI (which only ships CPU wheels on Linux/Windows) because the cu130 index isn't yet configured. Run `vaultspec-rag install` — or apply the manual snippet above — and `uv sync --reinstall-package torch`. The `No CUDA GPU detected` error is now reserved for the genuinely GPU-less case (driver missing, headless VM without a device, etc.).
+If `vaultspec-rag index` reports the CPU-only wheel on a machine with a GPU, `uv` resolved `torch` from PyPI (which only ships CPU wheels on Linux/Windows). There are three failure modes that all surface the same error; check them in order:
+
+- **Patch isn't applied.** Run `vaultspec-rag install` (or paste the manual snippet above), then `uv sync --reinstall-package torch`.
+- **Patch is applied but `torch` is not a direct dep.** uv ignores `[tool.uv.sources]` for purely-transitive packages, so the cu130 pin is a no-op until you add `torch>=2.4` to `[project].dependencies` or `[dependency-groups].dev` (see the Manual section above). After adding it, run `uv lock --refresh-package torch && uv sync`.
+- **Patch is applied, `torch` is a direct dep, but resolution still picks the cpu wheel.** Your `uv.lock` is stale. Run `uv lock --refresh-package torch && uv sync` to force a re-resolve. Inspect `uv.lock` afterwards: the `torch` entry should read `source = { registry = "https://download.pytorch.org/whl/cu130" }`.
+
+The `No CUDA GPU detected` error is reserved for the genuinely GPU-less case (driver missing, headless VM without a device, etc.).
 
 ### Verify
 

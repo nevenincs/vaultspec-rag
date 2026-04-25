@@ -55,6 +55,40 @@ from .workspace import WorkspaceError, WorkspaceLayout, resolve_workspace  # noq
 console = Console(legacy_windows=False)
 
 
+def _cpu_only_message() -> str:
+    """Return the CPU_ONLY remediation copy as a Rich-markup string.
+
+    Extracted so the rendered output is testable without monkey-patching
+    :func:`_handle_gpu_error`. ``markup=True`` makes Rich parse
+    ``[name]...[/name]`` as markup, so every literal ``[`` in TOML keys
+    must be backslash-escaped (``\\[``). Closing ``]`` outside a tag
+    context is already literal and must NOT be escaped — Rich passes
+    ``\\]`` through verbatim and leaves a stray backslash in the
+    rendered output.
+    """
+    return (
+        "[bold red]Error:[/] PyTorch was installed without CUDA support "
+        "(CPU-only wheel). Your GPU is fine.\n\n"
+        "  [cyan]uv run vaultspec-rag install[/] patches your "
+        "pyproject.toml with the cu130 torch index. After patching, "
+        "rerun [cyan]uv sync --reinstall-package torch[/].\n\n"
+        "  If install has already run and you are still here, verify:\n"
+        "    1. [cyan]pyproject.toml[/] has \\[\\[tool.uv.index]] "
+        '[cyan]name = "pytorch-cu130"[/] and '
+        "[cyan]\\[tool.uv.sources][/] torch = ...\n"
+        "    2. [cyan]uv.lock[/] has a torch entry with "
+        "[cyan]source = "
+        '{ registry = "https://download.pytorch.org/whl/cu130" }[/] '
+        "(not pypi.org/simple)\n"
+        "    3. If the lockfile still points at PyPI, [cyan]torch[/] must be "
+        "a direct dependency. Add [cyan]torch>=2.4[/] to "
+        "[cyan]\\[project].dependencies[/] or "
+        "[cyan]\\[dependency-groups].dev[/], "
+        "then run [cyan]uv lock --refresh-package torch && uv sync[/].\n\n"
+        "  Or configure manually by adding this to your pyproject.toml:"
+    )
+
+
 def _handle_gpu_error(exc: Exception) -> None:
     """Print an actionable message for torch / CUDA failures and exit.
 
@@ -93,14 +127,7 @@ def _handle_gpu_error(exc: Exception) -> None:
             "configures the cu130 torch index and installs the GPU build.",
         )
     elif diagnosis == TorchDiagnosis.CPU_ONLY:
-        console.print(
-            "[bold red]Error:[/] PyTorch was installed without CUDA support "
-            "(CPU-only wheel). Your GPU is fine.\n\n"
-            "  [cyan]uv run vaultspec-rag install[/] patches your "
-            "pyproject.toml with the cu130 torch index. After patching, "
-            "rerun [cyan]uv sync --reinstall-package torch[/].\n\n"
-            "  Or configure manually by adding this to your pyproject.toml:",
-        )
+        console.print(_cpu_only_message(), markup=True)
         # Rich interprets ``[[tool.uv.index]]`` as markup; emit the
         # snippet with markup disabled so brackets render verbatim.
         console.print(manual_snippet(), markup=False, highlight=False)
@@ -108,8 +135,17 @@ def _handle_gpu_error(exc: Exception) -> None:
         console.print(
             "[bold red]Error:[/] No CUDA GPU detected.\n"
             "  PyTorch is built with CUDA support, but no CUDA device "
-            "is available. Check your NVIDIA driver and CUDA runtime "
-            "installation.",
+            "is available.\n\n"
+            "  Quick checks:\n"
+            "    1. [cyan]nvidia-smi[/] — confirms the driver sees the GPU. "
+            "If this fails, install/repair the NVIDIA driver.\n"
+            '    2. [cyan]python -c "import torch; print(torch.version.cuda)"[/] '
+            "— prints the CUDA version torch was built against. Your "
+            "driver must support at least this CUDA major.\n"
+            "    3. WSL/Docker users: confirm GPU passthrough is enabled "
+            "([cyan]--gpus all[/] for docker, GPU support enabled in WSL2). "
+            "A GPU visible to the host is not automatically visible inside "
+            "the container/VM.",
         )
     else:
         console.print(f"[bold red]Error:[/] {exc}")
@@ -2118,6 +2154,9 @@ def handle_install(
             "--target",
             "-t",
             help="Workspace path (default: current working directory).",
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
         ),
     ] = None,
     upgrade: Annotated[
@@ -2138,7 +2177,11 @@ def handle_install(
         bool,
         typer.Option(
             "--force",
-            help="Override contents if already installed.",
+            help=(
+                "Override existing files. Also bypasses the torch-config "
+                "confirmation prompt (implies --yes for that step). "
+                "--no-torch-config still wins."
+            ),
         ),
     ] = False,
     skip: Annotated[
@@ -2152,7 +2195,10 @@ def handle_install(
         bool,
         typer.Option(
             "--torch-config/--no-torch-config",
-            help="Patch pyproject.toml with the cu130 torch index.",
+            help=(
+                "Patch pyproject.toml with the cu130 torch index. "
+                "--no-torch-config takes precedence over --force / --yes."
+            ),
         ),
     ] = True,
     yes: Annotated[
@@ -2160,14 +2206,21 @@ def handle_install(
         typer.Option(
             "--yes",
             "-y",
-            help="Skip confirmation prompts (required for non-TTY runs).",
+            help=(
+                "Skip the torch-config confirmation prompt (required on "
+                "non-TTY runs). --no-torch-config opts out without "
+                "applying."
+            ),
         ),
     ] = False,
     sync_after: Annotated[
         bool,
         typer.Option(
             "--sync",
-            help="Run `uv sync --reinstall-package torch` after patching.",
+            help=(
+                "Run `uv sync --reinstall-package torch` after the patch "
+                "lands. Silently no-ops when the patch step did not apply."
+            ),
         ),
     ] = False,
     json_output: Annotated[
@@ -2183,6 +2236,27 @@ def handle_install(
     workspace is created if it does not yet exist; rag is fully
     self-sufficient and does not require core to have run install
     first.
+
+    Torch-config gating (highest precedence first):
+
+    - ``--no-torch-config`` always wins. The patch is not applied
+      regardless of any other flag, and ``torch_config_action`` is
+      reported as ``disabled``.
+    - On a non-TTY without ``--yes`` or ``--force``, the patch is
+      skipped with a warning naming the bypass flags.
+      ``torch_config_action`` is ``skipped-non-tty`` and the command
+      exits with a non-zero code so CI fails loudly.
+    - ``--yes`` and ``--force`` both bypass the confirmation prompt.
+      They differ elsewhere: ``--force`` also re-seeds bundled files
+      and prunes orphaned sync state.
+    - On a TTY without ``--yes`` / ``--force``, the user is prompted.
+      Pressing Enter declines (default-no) — pass ``--yes`` to say
+      yes to all confirmations in one shot.
+    - The command exits non-zero (code 2) when torch-config terminates
+      in ``error``, ``skipped-eof``, or ``skipped-non-tty``. Other
+      non-applied terminal states (``declined``, ``conflict``,
+      ``absent``, ``disabled``) exit 0 because they reflect user
+      intent or expected workspace state.
 
     Flag names mirror ``vaultspec-core install`` exactly. The
     positional ``provider`` argument core takes is omitted because
@@ -2202,7 +2276,11 @@ def handle_install(
     effective_target = target or _global_target(ctx)
 
     def _confirm(prompt: str) -> bool:
-        return Confirm.ask(prompt, default=True, console=console)
+        # Default-no on a destructive write — pressing Enter on the
+        # ``Patch <pyproject>?`` prompt without reading it must NOT
+        # mutate the user's pyproject. Users who want to bypass the
+        # prompt can pass ``--yes`` or ``--force``. CLI3-04.
+        return Confirm.ask(prompt, default=False, console=console)
 
     # Non-TTY detection lives at the CLI edge: only interactive TTYs
     # can produce meaningful confirmation answers. In CI / pipes,
@@ -2230,9 +2308,27 @@ def handle_install(
         import json as _json
 
         console.print_json(_json.dumps(report.to_dict(), default=str))
-        return
+    else:
+        _render_install_report(report)
 
-    _render_install_report(report)
+    # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
+    # wanted but couldn't be applied"). The configure_torch=True path
+    # ended in an outcome the user clearly did not opt into — surface
+    # it via a non-zero exit so CI consumers fail loudly instead of
+    # reading "torch-config: skipped-eof" buried in stdout.
+    #
+    # ``DECLINED`` is the user's own answer to a prompt — keep that 0.
+    # ``CONFLICT`` is by-definition the user's own customised state —
+    # keep that 0 too (the warning is the signal). ``ABSENT`` and
+    # ``DISABLED`` are intentional opt-outs; both 0.
+    from .torch_config import TorchConfigAction
+
+    if configure_torch and report.torch_config_action in {
+        TorchConfigAction.ERROR,
+        TorchConfigAction.SKIPPED_EOF,
+        TorchConfigAction.SKIPPED_NON_TTY,
+    }:
+        raise typer.Exit(code=2)
 
 
 @app.command("uninstall")
@@ -2244,6 +2340,9 @@ def handle_uninstall(
             "--target",
             "-t",
             help="Workspace path (default: current working directory).",
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
         ),
     ] = None,
     remove_data: Annotated[
@@ -2377,7 +2476,9 @@ def _render_install_report(report: Any) -> None:
         "declined": "yellow",
         "conflict": "red",
         "absent": "yellow",
+        "error": "red",
         "skipped-non-tty": "yellow",
+        "skipped-eof": "yellow",
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
     for conflict in getattr(report, "torch_config_conflicts", []):
@@ -2391,7 +2492,13 @@ def _render_install_report(report: Any) -> None:
         t_colour = {"succeeded": "green", "failed": "red"}.get(tsync, "yellow")
         console.print(f"uv sync --reinstall-package torch: [{t_colour}]{tsync}[/]")
     for warning in report.warnings:
-        console.print(f"[yellow]warning:[/] {warning}")
+        # Warnings carry user-pyproject-derived strings (literal TOML
+        # keys like ``[tool.uv.sources]``, raw exception messages,
+        # tails of uv stderr) — Rich would parse those as markup tags
+        # and silently drop the bracketed tokens. Render the prefix
+        # with markup, then the body verbatim.
+        console.print("[yellow]warning:[/] ", end="")
+        console.print(warning, markup=False, highlight=False)
 
 
 def _render_uninstall_report(report: Any) -> None:
@@ -2418,6 +2525,7 @@ def _render_uninstall_report(report: Any) -> None:
         "absent": "dim",
         "dry_run": "yellow",
         "skipped": "yellow",
+        "error": "red",
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
     for conflict in getattr(report, "torch_config_conflicts", []):
@@ -2427,7 +2535,10 @@ def _render_uninstall_report(report: Any) -> None:
         console.print("  [yellow]conflict:[/] ", end="")
         console.print(conflict, markup=False, highlight=False)
     for warning in report.warnings:
-        console.print(f"[yellow]warning:[/] {warning}")
+        # Same markup-leak guard as _render_install_report; see comment
+        # there for the rationale.
+        console.print("[yellow]warning:[/] ", end="")
+        console.print(warning, markup=False, highlight=False)
 
 
 if __name__ == "__main__":

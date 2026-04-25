@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import os
 import typing
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 from typer.testing import CliRunner
 
 from vaultspec_rag.cli import (
@@ -23,6 +20,7 @@ from vaultspec_rag.cli import (
     app,
 )
 from vaultspec_rag.config import EnvVar
+from vaultspec_rag.torch_config import TorchConfigAction
 
 pytestmark = [pytest.mark.unit]
 
@@ -401,3 +399,317 @@ class TestServiceProjectsCli:
             ],
         )
         assert result.exit_code == 3
+
+
+class TestCpuOnlyMessageRendering:
+    """Regression guard for Rich-markup escaping in the CPU_ONLY copy.
+
+    The CPU_ONLY remediation message uses ``markup=True`` to colourise
+    hints and embeds literal TOML keys (``[[tool.uv.index]]``,
+    ``[tool.uv.sources]``, ``[project].dependencies``,
+    ``[dependency-groups].dev``). Each opening ``[`` must be
+    backslash-escaped so Rich does not parse the TOML keys as markup
+    tags. This test renders the actual message via Rich and asserts the
+    user-visible bytes — without it, a future copy edit can silently
+    break the snippet shown to a user already looking at the wrong
+    wheel.
+    """
+
+    @staticmethod
+    def _render() -> str:
+        import io
+
+        from rich.console import Console
+
+        from vaultspec_rag.cli import _cpu_only_message
+
+        buf = io.StringIO()
+        Console(file=buf, force_terminal=False, color_system=None, width=120).print(
+            _cpu_only_message(), markup=True
+        )
+        return buf.getvalue()
+
+    def test_renders_double_brackets_for_aot(self) -> None:
+        out = self._render()
+        assert "[[tool.uv.index]]" in out, out
+
+    def test_renders_single_brackets_for_section(self) -> None:
+        out = self._render()
+        assert "[tool.uv.sources]" in out, out
+
+    def test_renders_project_and_groups_keys(self) -> None:
+        out = self._render()
+        assert "[project].dependencies" in out, out
+        assert "[dependency-groups].dev" in out, out
+
+    def test_no_stray_backslashes_in_rendered_output(self) -> None:
+        """Rich passes ``\\]`` through verbatim — only ``[`` is escapable.
+        A stray backslash in the rendered text means a future edit
+        overcorrected and put ``\\]`` somewhere it should not be.
+        """
+        out = self._render()
+        assert "\\" not in out, out
+
+
+class TestRenderInstallReport:
+    """CLI-01 regression: the install/uninstall warning loop must NOT
+    parse warning bodies as Rich markup. The transitive-dep warning
+    embeds literal ``[tool.uv.sources]``, ``[project].dependencies``,
+    and ``[dependency-groups].dev``; uv stderr tails embed raw
+    ``[…]`` tokens; raw exception messages embed ``[tool]`` strings
+    from the historic OutOfOrderTableProxy bug. Rendering any of these
+    via ``markup=True`` silently drops the bracketed substrings — a
+    direct repeat of the bug Gemini caught for the CPU_ONLY copy, in
+    a different channel.
+    """
+
+    @staticmethod
+    def _render(report: object) -> str:
+        import io
+
+        from rich.console import Console
+
+        from vaultspec_rag import cli as cli_mod
+
+        buf = io.StringIO()
+        original = cli_mod.console
+        cli_mod.console = Console(
+            file=buf, force_terminal=False, color_system=None, width=200
+        )
+        try:
+            cli_mod._render_install_report(report)
+        finally:
+            cli_mod.console = original
+        return buf.getvalue()
+
+    def test_warning_with_literal_toml_keys_preserved(self) -> None:
+        from vaultspec_rag.commands import InstallReport
+
+        warning = (
+            "torch-config patched, but `torch` is not a direct dependency. "
+            "uv ignores [tool.uv.sources] for purely transitive packages, "
+            "so the cu130 pin will not take effect. "
+            "Add `torch>=2.4` to [project].dependencies or "
+            "[dependency-groups].dev."
+        )
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.APPLIED,
+            warnings=[warning],
+        )
+        out = self._render(report)
+        # All three TOML key tokens must survive the render.
+        assert "[tool.uv.sources]" in out, out
+        assert "[project].dependencies" in out, out
+        assert "[dependency-groups].dev" in out, out
+
+    def test_warning_with_uv_stderr_tail_preserved(self) -> None:
+        """Realistic shape: uv stderr embedded in a warning body via
+        the new INSTALL-03 tail. ``[project]`` and ``[tool]`` tokens
+        in uv's own error rendering must survive.
+        """
+        from vaultspec_rag.commands import InstallReport
+
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.APPLIED,
+            warnings=[
+                "uv sync --reinstall-package torch exited with code 1; "
+                "last stderr lines:\n"
+                "error: Failed to resolve [project] root\n"
+                "error: see [tool.uv] config"
+            ],
+        )
+        out = self._render(report)
+        assert "[project]" in out
+        assert "[tool.uv]" in out
+
+    def test_conflict_with_aot_token_preserved(self) -> None:
+        """Conflict surface (already had its own markup-off treatment
+        before this PR — guard it now with a rendering test so a
+        future maintainer cannot accidentally collapse the two-line
+        treatment back into a single ``f"... {conflict}"`` print).
+        """
+        from vaultspec_rag.commands import InstallReport
+
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.CONFLICT,
+            torch_config_conflicts=[
+                '[[tool.uv.index]] entry name="pytorch-cu130" url-mismatch'
+            ],
+        )
+        out = self._render(report)
+        assert "[[tool.uv.index]]" in out
+        assert 'name="pytorch-cu130"' in out
+
+    def test_skipped_eof_action_renders_yellow(self) -> None:
+        """TEST-12 regression: the new ``skipped-eof`` action label
+        must reach the colour map. A regression that dropped it would
+        render the label in default-white instead of yellow.
+        """
+        from vaultspec_rag.commands import InstallReport
+
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.SKIPPED_EOF,
+        )
+        out = self._render(report)
+        # Action token survives.
+        assert "skipped-eof" in out
+
+
+class TestRenderUninstallReport:
+    """Symmetric guard rail for the uninstall renderer."""
+
+    @staticmethod
+    def _render(report: object) -> str:
+        import io
+
+        from rich.console import Console
+
+        from vaultspec_rag import cli as cli_mod
+
+        buf = io.StringIO()
+        original = cli_mod.console
+        cli_mod.console = Console(
+            file=buf, force_terminal=False, color_system=None, width=200
+        )
+        try:
+            cli_mod._render_uninstall_report(report)
+        finally:
+            cli_mod.console = original
+        return buf.getvalue()
+
+    def test_warning_with_literal_toml_keys_preserved(self) -> None:
+        from vaultspec_rag.commands import UninstallReport
+
+        report = UninstallReport(
+            action="uninstall",
+            target=Path("."),
+            warnings=[
+                "no .vaultspec/ at /tmp/foo; "
+                "torch-config block in [tool.uv.sources] left intact"
+            ],
+        )
+        out = self._render(report)
+        assert "[tool.uv.sources]" in out
+
+    def test_error_action_renders(self) -> None:
+        """INSTALL-08 follow-up: uninstall now has ``error`` in its
+        colour map. Just verify the label reaches the renderer.
+        """
+        from vaultspec_rag.commands import UninstallReport
+
+        report = UninstallReport(
+            action="uninstall",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.ERROR,
+        )
+        out = self._render(report)
+        assert "error" in out
+
+
+class TestInstallExitCodes:
+    """CLI3-01 regression: install exits non-zero on the torch-config
+    terminal states the user did not opt into. Issue #83 finding 3
+    "Bonus" item.
+    """
+
+    @staticmethod
+    def _make_pyproject(tmp_path: Path, body: str) -> Path:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(body, encoding="utf-8", newline="")
+        return ws
+
+    def test_install_exit_zero_on_applied(self, tmp_path: Path) -> None:
+        ws = self._make_pyproject(
+            tmp_path,
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag", "torch>=2.4"]\n',
+        )
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+        assert result.exit_code == 0, result.output
+
+    def test_install_exit_nonzero_on_skipped_non_tty(self, tmp_path: Path) -> None:
+        """Non-TTY without ``--yes`` / ``--force``: torch-config skipped,
+        exit code 2 so CI fails loudly.
+        """
+        ws = self._make_pyproject(
+            tmp_path,
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n',
+        )
+        # CliRunner's stdin is not a TTY, so confirm_fn=None — emulates
+        # the non-interactive harness path.
+        result = runner.invoke(app, ["install", "--target", str(ws)])
+        assert result.exit_code == 2, result.output
+
+    def test_install_exit_nonzero_on_error(self, tmp_path: Path) -> None:
+        """Corrupt pyproject → torch_config_action=TorchConfigAction.ERROR → exit 2."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(
+            "[project\nname = ", encoding="utf-8"
+        )  # malformed
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+        assert result.exit_code == 2, result.output
+
+    def test_install_exit_zero_on_conflict(self, tmp_path: Path) -> None:
+        """CUSTOMISED block — user-state, not a runtime failure.
+        Conflict exits 0; the warning is the signal, not the exit code.
+        """
+        ws = self._make_pyproject(
+            tmp_path,
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n'
+            "\n[[tool.uv.index]]\n"
+            'name = "pytorch-cu130"\n'
+            'url = "https://download.pytorch.org/whl/cu121"\n'  # wrong url
+            "explicit = true\n",
+        )
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+        assert result.exit_code == 0, result.output
+
+    def test_install_exit_zero_when_no_torch_config(self, tmp_path: Path) -> None:
+        """``--no-torch-config`` opts out — exits 0 even on a non-TTY."""
+        ws = self._make_pyproject(
+            tmp_path,
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n',
+        )
+        result = runner.invoke(
+            app, ["install", "--target", str(ws), "--no-torch-config"]
+        )
+        assert result.exit_code == 0, result.output
+
+
+class TestInstallTargetValidation:
+    """CLI3-02 regression: per-command ``--target`` must reject
+    regular files (matching the global ``--target`` validator).
+    """
+
+    def test_per_command_target_rejects_file(self, tmp_path: Path) -> None:
+        """Pointing ``install --target`` at a regular file used to slip
+        past validation; now correctly rejected by typer's
+        ``file_okay=False``.
+        """
+        f = tmp_path / "not-a-dir.txt"
+        f.write_text("hi", encoding="utf-8")
+        result = runner.invoke(app, ["install", "--target", str(f)])
+        assert result.exit_code != 0, result.output
+        assert "is a file" in result.output or "directory" in result.output.lower()
+
+    def test_per_command_target_accepts_dir(self, tmp_path: Path) -> None:
+        """Negative pair: a real directory still validates."""
+        d = tmp_path / "real-dir"
+        d.mkdir()
+        result = runner.invoke(
+            app, ["install", "--target", str(d), "--no-torch-config"]
+        )
+        assert result.exit_code == 0, result.output

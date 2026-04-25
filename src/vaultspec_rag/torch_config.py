@@ -27,9 +27,32 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final
 
 import tomlkit
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from tomlkit import TOMLDocument
+from tomlkit.container import OutOfOrderTableProxy
 from tomlkit.items import AoT, InlineTable, Table
 from vaultspec_core.core.helpers import atomic_write
+
+# tomlkit returns ``OutOfOrderTableProxy`` for any ``[tool.X]`` whose
+# child tables (``[tool.X.Y]``, ``[tool.X.Z]``) are interleaved with
+# unrelated sections — the dominant pyproject.toml shape (e.g.
+# ``[tool.uv]``, ``[tool.ruff]``, ``[tool.uv.sources]`` interspersed).
+# It implements the same Mapping API we exercise (``get``, ``setdefault``,
+# ``__setitem__``, ``__delitem__``, ``__bool__``) but does not subclass
+# ``Table``. ``InlineTable`` is the third shape (``sources = { ... }``
+# inline form) the reader can encounter at the same surfaces. All
+# three expose the same Mapping API; a plain ``isinstance(x, Table)``
+# check rejects the others and forces apply / detect onto the wrong
+# code path. Treat all three as table-like throughout the module.
+#
+# ``_TABLE_LIKE_TYPES`` is a plain tuple (no ``Final[tuple[type, ...]]``
+# annotation) so static type-checkers (ty/pyright) narrow ``x`` to
+# ``Table | OutOfOrderTableProxy | InlineTable`` after
+# ``isinstance(x, _TABLE_LIKE_TYPES)``. The matching ``TableLike``
+# alias is the union form for return types and parameter annotations.
+TableLike = Table | OutOfOrderTableProxy | InlineTable
+_TABLE_LIKE_TYPES = (Table, OutOfOrderTableProxy, InlineTable)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,11 +64,13 @@ __all__ = [
     "CU130_INDEX_URL",
     "CU130_MARKER",
     "PatchReport",
+    "TorchConfigAction",
     "TorchConfigState",
     "TorchDiagnosis",
     "apply_patch",
     "detect_state",
     "diagnose_torch",
+    "has_direct_torch_dep",
     "manual_snippet",
     "preview_patch",
     "remove_patch",
@@ -75,21 +100,66 @@ class TorchDiagnosis(StrEnum):
     WORKING = "working"
 
 
+class TorchConfigAction(StrEnum):
+    """Closed set of action strings emitted on the install / uninstall
+    report's ``torch_config_action`` field.
+
+    The set was historically an open string surface; round-2 audit
+    surfaced a JSON-contract gap (the ADR documented 5 values but the
+    code emitted 13). Pinning the vocabulary to a ``StrEnum`` makes
+    the contract self-documenting and lets static type-checkers catch
+    typos. ``StrEnum`` members compare equal to their string value,
+    so existing consumers that filter on ``"applied"`` keep working.
+
+    Values:
+        APPLIED: cu130 block was just written.
+        ALREADY: pyproject is already canonical; nothing to write.
+        CONFLICT: a non-canonical cu130 block exists; refused to mutate.
+        ABSENT: no pyproject.toml at the target.
+        REMOVED: cu130 block was just removed (uninstall side only).
+        DISABLED: ``configure_torch=False`` opted out.
+        DRY_RUN: dry-run preview, no write.
+        DECLINED: user declined the prompt (or a custom confirm hook
+            raised an exception we converted to a decline).
+        SKIPPED: torch-config step did nothing this run; the report
+            field's default before the orchestrator updates it.
+        SKIPPED_NON_TTY: non-interactive caller without a confirm hook.
+        SKIPPED_EOF: confirmation prompt hit end-of-stream (CI / pipe).
+        ERROR: parse or write failure during inspect / patch.
+    """
+
+    APPLIED = "applied"
+    ALREADY = "already"
+    CONFLICT = "conflict"
+    ABSENT = "absent"
+    REMOVED = "removed"
+    DISABLED = "disabled"
+    DRY_RUN = "dry_run"
+    DECLINED = "declined"
+    SKIPPED = "skipped"
+    SKIPPED_NON_TTY = "skipped-non-tty"
+    SKIPPED_EOF = "skipped-eof"
+    ERROR = "error"
+
+
 @dataclass
 class PatchReport:
     """Structured outcome of an apply / remove pass.
 
     Attributes:
-        action: One of ``"applied"``, ``"skipped"``, ``"conflict"``,
-            ``"absent"``, ``"already"``, ``"removed"``.
+        action: A :class:`TorchConfigAction` member describing the
+            outcome (``APPLIED``, ``ALREADY``, ``CONFLICT``,
+            ``ABSENT``, ``REMOVED``, or ``SKIPPED`` as the default).
+            Subclasses ``str``, so legacy consumers comparing with
+            string literals (``action == "applied"``) keep working.
         path: The pyproject.toml inspected.
         conflicts: Human-readable descriptions of conflicting keys
-            when ``action == "conflict"``.
+            when ``action == TorchConfigAction.CONFLICT``.
         preview: The TOML snippet that would be (or was) written,
             for dry-run / display purposes.
     """
 
-    action: str
+    action: TorchConfigAction
     path: Path
     conflicts: list[str] = field(default_factory=list)
     preview: str = ""
@@ -99,7 +169,10 @@ def manual_snippet() -> str:
     """Return the canonical cu130 block as a copy-pasteable string.
 
     Assembled from the three module constants so this string and the
-    shape ``apply_patch`` writes can never drift.
+    shape ``apply_patch`` writes can never drift. Includes a comment
+    spelling out the direct-dependency requirement uv enforces — the
+    source pin is silently ignored when ``torch`` only enters the
+    resolution as a transitive dep of ``vaultspec-rag``.
     """
     return (
         "\n"
@@ -111,32 +184,67 @@ def manual_snippet() -> str:
         "[tool.uv.sources]\n"
         f'torch = [{{ index = "{CU130_INDEX_NAME}", '
         f'marker = "{CU130_MARKER}" }}]\n'
+        "\n"
+        "# uv ignores [tool.uv.sources] for purely-transitive deps.\n"
+        "# Add torch as a direct dep too, e.g. in [project].dependencies\n"
+        '# or [dependency-groups].dev:  "torch>=2.4"\n'
     )
 
 
+def _detect_crlf(pyproject: Path) -> bool:
+    """Return True when ``pyproject`` uses CRLF line endings on disk.
+
+    Sniffs the raw bytes (not the decoded text) so the answer is the
+    real on-disk encoding, immune to ``newline=`` translation. A
+    Windows pyproject with ``\\r\\n`` line endings should round-trip
+    through apply / remove without losing them — ``tomlkit.dumps``
+    always emits LF, so the writer must restore the original
+    convention before the atomic write or the user gets a noisy
+    git diff that touches every existing line on the very first
+    install.
+    """
+    try:
+        return b"\r\n" in pyproject.read_bytes()
+    except OSError:
+        return False
+
+
 def _load(pyproject: Path) -> TOMLDocument | None:
-    """Load and parse the pyproject.toml, or return None if absent."""
+    """Load and parse the pyproject.toml, or return None if absent.
+
+    Reads with ``utf-8-sig`` so a leading UTF-8 BOM (``U+FEFF``) is
+    transparently stripped. Files saved from Notepad / "UTF-8 with BOM"
+    in VS Code / git on Windows with certain ``core.autocrlf`` settings
+    can carry a BOM that tomlkit's parser rejects as an empty bare
+    key. ``tomllib`` (stdlib) accepts the BOM; tomlkit does not. The
+    ``-sig`` codec is forgiving for files without a BOM, so the change
+    is upward-compatible: every file that previously parsed continues
+    to parse unchanged.
+    """
     if not pyproject.is_file():
         return None
     try:
-        return tomlkit.parse(pyproject.read_text(encoding="utf-8"))
+        return tomlkit.parse(pyproject.read_text(encoding="utf-8-sig"))
     except Exception as exc:
         logger.warning("pyproject.toml parse failed at %s: %s", pyproject, exc)
         raise
 
 
-def _tool_uv(doc: TOMLDocument) -> Table | None:
+def _tool_uv(doc: TOMLDocument) -> TableLike | None:
     """Return the ``[tool.uv]`` table, or None.
 
-    Narrowed strictly to :class:`tomlkit.items.Table` — raw ``dict``
-    doesn't surface from tomlkit's parsed document, and requiring it
-    lets the type-checker narrow without a ``type: ignore``.
+    Narrowed to either :class:`tomlkit.items.Table` or
+    :class:`tomlkit.container.OutOfOrderTableProxy`. tomlkit returns
+    the proxy whenever ``[tool.uv]`` and ``[tool.uv.sources]`` (or
+    ``[[tool.uv.index]]``) are interleaved with non-uv sections — the
+    dominant ``[tool.*]`` layout in real-world pyprojects. Both expose
+    the same Mapping surface we touch.
     """
     tool = doc.get("tool")
-    if not isinstance(tool, Table):
+    if not isinstance(tool, _TABLE_LIKE_TYPES):
         return None
     uv = tool.get("uv")
-    if not isinstance(uv, Table):
+    if not isinstance(uv, _TABLE_LIKE_TYPES):
         return None
     return uv
 
@@ -166,12 +274,18 @@ def _torch_sources(doc: TOMLDocument) -> Any:
     Returns whatever tomlkit has at that key so the caller can
     classify unusual shapes (scalar, standard Table, inline-table
     array, or missing). Strictly-typed callers downcast as needed.
+
+    ``sources`` may be either the standard-table form (``[tool.uv.sources]``
+    + line of keys), the proxy form when interleaved with non-uv
+    sections, OR the inline-table form (``sources = { torch = [...] }``)
+    that tomlkit returns as :class:`tomlkit.items.InlineTable`. All
+    three expose the ``.get(key)`` Mapping surface we exercise here.
     """
     uv = _tool_uv(doc)
     if uv is None:
         return None
     sources = uv.get("sources")
-    if not isinstance(sources, Table):
+    if not isinstance(sources, _TABLE_LIKE_TYPES):
         return None
     return sources.get("torch")
 
@@ -396,29 +510,41 @@ def apply_patch(pyproject: Path) -> PatchReport:
     Preserves all user comments, key ordering, and whitespace in the
     rest of the document via tomlkit's round-trip semantics.
     """
-    report = PatchReport(action="skipped", path=pyproject)
+    report = PatchReport(action=TorchConfigAction.SKIPPED, path=pyproject)
     doc = _load(pyproject)
     if doc is None:
-        report.action = "absent"
+        report.action = TorchConfigAction.ABSENT
         return report
 
     state, conflicts = _classify(doc)
     if state == TorchConfigState.CANONICAL:
-        report.action = "already"
+        report.action = TorchConfigAction.ALREADY
         return report
     if state == TorchConfigState.CUSTOMISED:
-        report.action = "conflict"
+        report.action = TorchConfigAction.CONFLICT
         report.conflicts = conflicts
         return report
 
     # MISSING → write.
+    uses_crlf = _detect_crlf(pyproject)
+    original_bytes = pyproject.read_bytes()
     _ensure_tool_uv_index(doc)
     _ensure_torch_source(doc)
     new_text = tomlkit.dumps(doc)
     # Reparse to confirm validity before the write crosses the FS boundary.
     tomlkit.parse(new_text)
+    if uses_crlf:
+        # tomlkit emits LF; restore the file's original CRLF so the
+        # diff stays minimal. tomlkit's parser accepts both endings,
+        # so the validation reparse above still applies.
+        new_text = new_text.replace("\n", "\r\n")
+    # Preserve the file's original trailing-newline shape so both
+    # apply and remove are EOF-neutral. Necessary for the ADR's
+    # symmetric-mirror byte-equality promise (apply→remove leaves the
+    # file byte-identical to the pre-apply content). BEHAV-01.
+    new_text = _match_trailing_newline(original_bytes, new_text, uses_crlf=uses_crlf)
     atomic_write(pyproject, new_text)
-    report.action = "applied"
+    report.action = TorchConfigAction.APPLIED
     report.preview = manual_snippet()
     return report
 
@@ -436,29 +562,267 @@ def remove_patch(pyproject: Path) -> PatchReport:
     After removal, the file should reparse as valid TOML and all
     user-owned content outside the cu130 block is preserved.
     """
-    report = PatchReport(action="skipped", path=pyproject)
+    report = PatchReport(action=TorchConfigAction.SKIPPED, path=pyproject)
     doc = _load(pyproject)
     if doc is None:
-        report.action = "absent"
+        report.action = TorchConfigAction.ABSENT
         return report
 
     state, conflicts = _classify(doc)
     if state == TorchConfigState.MISSING:
-        report.action = "absent"
+        report.action = TorchConfigAction.ABSENT
         return report
     if state == TorchConfigState.CUSTOMISED:
-        report.action = "skipped"
+        report.action = TorchConfigAction.SKIPPED
         report.conflicts = conflicts
         return report
 
-    # CANONICAL → remove.
+    # CANONICAL → remove. Capture the trailing-newline shape pre-read
+    # so the symmetric-mirror promise (apply→remove leaves the file
+    # byte-identical to the pre-apply content) holds — tomlkit's
+    # ``dumps`` always emits a single trailing LF, which can append
+    # one extra byte if the original ended without one. BEHAV-01.
+    uses_crlf = _detect_crlf(pyproject)
+    original_bytes = pyproject.read_bytes()
     _drop_cu130_index(doc)
     _drop_torch_source(doc)
     new_text = tomlkit.dumps(doc)
     tomlkit.parse(new_text)
+    if uses_crlf:
+        new_text = new_text.replace("\n", "\r\n")
+    new_text = _match_trailing_newline(original_bytes, new_text, uses_crlf=uses_crlf)
     atomic_write(pyproject, new_text)
-    report.action = "removed"
+    report.action = TorchConfigAction.REMOVED
     return report
+
+
+def _match_trailing_newline(
+    original_bytes: bytes, new_text: str, *, uses_crlf: bool
+) -> str:
+    """Restore the original file's trailing-newline shape on ``new_text``.
+
+    tomlkit's ``dumps`` always emits exactly one trailing LF.
+    Real-world pyproject files vary: some end with LF, some with two
+    LFs (POSIX convention with a blank final line), some with no
+    trailing newline at all. Without this normalisation, ``apply →
+    remove`` would silently shift the file's terminator shape,
+    breaking the ADR's "symmetric mirror — leaves the file byte-
+    identical to its pre-apply content" promise.
+    """
+    eol = "\r\n" if uses_crlf else "\n"
+    eol_bytes = b"\r\n" if uses_crlf else b"\n"
+
+    # Count the trailing-newline run on the original (in the chosen
+    # eol). Compare with the trailing-newline run on tomlkit's output.
+    def _count_trailing(buf: bytes, sep: bytes) -> int:
+        n = 0
+        while buf.endswith(sep):
+            n += 1
+            buf = buf[: -len(sep)]
+        return n
+
+    original_trail = _count_trailing(original_bytes, eol_bytes)
+    new_bytes = new_text.encode("utf-8")
+    current_trail = _count_trailing(new_bytes, eol_bytes)
+    if current_trail == original_trail:
+        return new_text
+    # Surgically strip exactly the EOL run tomlkit emitted, then append
+    # the original count. ``rstrip("\r\n")`` would over-strip any
+    # adjacent CR/LF chars that aren't part of the trailing run; using
+    # the counted slice keeps any non-newline trailing whitespace
+    # intact (rare in TOML but cheap to preserve).
+    stripped = new_text[: -current_trail * len(eol)] if current_trail > 0 else new_text
+    return stripped + eol * original_trail
+
+
+def _is_torch_requirement(req: object) -> bool:
+    """Return True if ``req`` (a PEP 508 entry) names ``torch``.
+
+    Delegates name extraction to :class:`packaging.requirements.Requirement`,
+    which is the spec-compliant PEP 508 parser used throughout the
+    Python packaging stack (pip / uv / hatch / poetry-core all share
+    it). The parser handles extras (``torch[extra]``), version
+    specifiers (``torch>=2.4``, ``torch (>=2.4)``), URL form
+    (``torch @ https://...``), and PEP 508 markers
+    (``torch ; sys_platform == 'linux'``) without the manual
+    boundary-splitting that earlier versions of this predicate used.
+
+    Names are compared after :func:`packaging.utils.canonicalize_name`
+    so PEP 503/PEP 508 normalisation rules apply: case, ``-`` / ``_``
+    / ``.`` separators all collapse to a single canonical form.
+
+    Non-string inputs return False (tomlkit can yield dict-form
+    entries, integers, comments — the predicate must stay total).
+    Inputs that are syntactically invalid PEP 508 also return False
+    rather than raising.
+    """
+    if not isinstance(req, str):
+        return False
+    text = req.strip()
+    if not text:
+        return False
+    try:
+        parsed = Requirement(text)
+    except InvalidRequirement:
+        return False
+    return canonicalize_name(parsed.name) == "torch"
+
+
+def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, Any]]:
+    """Yield ``(label, sequence)`` for every direct-dependency surface.
+
+    Covers the four common shapes a consumer can declare torch in:
+
+    - ``[project].dependencies`` (PEP 621)
+    - ``[project].optional-dependencies.*`` (PEP 621 extras)
+    - ``[dependency-groups].*`` (PEP 735)
+    - ``[tool.uv].dev-dependencies`` (uv's pre-PEP-735 dev-deps shape,
+      still present on many existing projects)
+
+    Plus the two non-PEP-621 build backends rag's users actually run
+    into:
+
+    - Poetry: ``[tool.poetry.dependencies]`` /
+      ``[tool.poetry.group.*.dependencies]`` (Mapping[name → spec]).
+      We synthesise a list of the *names* so ``_is_torch_requirement``
+      matches them — the spec strings are not PEP 508 in Poetry.
+    - PDM: ``[tool.pdm.dev-dependencies]`` (Mapping[group → list[str]]),
+      same shape as PEP 735.
+
+    Without these branches a Poetry/PDM user with ``torch`` correctly
+    declared still triggers the "not a direct dep" warning, and the
+    suggested fix (``add to [project].dependencies``) would break their
+    build.
+    """
+    found: list[tuple[str, Any]] = []
+    project = doc.get("project")
+    # ``project`` is normally a standard table; ``optional-dependencies``
+    # and ``dependency-groups`` may be expressed as inline tables
+    # (``optional-dependencies = { gpu = [...] }``), which tomlkit returns
+    # as :class:`tomlkit.items.InlineTable`. All three shapes expose the
+    # ``.get(key)`` / ``.items()`` Mapping surface we exercise here.
+    if isinstance(project, _TABLE_LIKE_TYPES):
+        deps = project.get("dependencies")
+        if isinstance(deps, list):
+            found.append(("[project].dependencies", deps))
+        optional = project.get("optional-dependencies")
+        if isinstance(optional, _TABLE_LIKE_TYPES):
+            for name, group in optional.items():
+                if isinstance(group, list):
+                    found.append((f"[project.optional-dependencies].{name}", group))
+    groups = doc.get("dependency-groups")
+    if isinstance(groups, _TABLE_LIKE_TYPES):
+        for name, group in groups.items():
+            if isinstance(group, list):
+                found.append((f"[dependency-groups].{name}", group))
+
+    tool = doc.get("tool")
+    if not isinstance(tool, _TABLE_LIKE_TYPES):
+        return found
+
+    uv = tool.get("uv")
+    if isinstance(uv, _TABLE_LIKE_TYPES):
+        uv_dev = uv.get("dev-dependencies")
+        if isinstance(uv_dev, list):
+            found.append(("[tool.uv].dev-dependencies", uv_dev))
+
+    poetry = tool.get("poetry")
+    if isinstance(poetry, _TABLE_LIKE_TYPES):
+        # Poetry's ``[tool.poetry.dependencies]`` is ``Mapping[name → spec]``.
+        # The keys are bare package names; we synthesise a list of those
+        # so ``_is_torch_requirement`` ("torch") matches.
+        pdeps = poetry.get("dependencies")
+        if isinstance(pdeps, _TABLE_LIKE_TYPES):
+            found.append(("[tool.poetry.dependencies]", list(pdeps.keys())))
+        # Pre-1.2 Poetry expressed dev deps as ``[tool.poetry.dev-dependencies]``.
+        # Poetry 1.2+ moved them under ``[tool.poetry.group.dev.dependencies]``
+        # but the legacy section is still produced by older `poetry add`
+        # invocations and still on countless deployed pyprojects.
+        pdev = poetry.get("dev-dependencies")
+        if isinstance(pdev, _TABLE_LIKE_TYPES):
+            found.append(("[tool.poetry.dev-dependencies]", list(pdev.keys())))
+        pgroups = poetry.get("group")
+        if isinstance(pgroups, _TABLE_LIKE_TYPES):
+            for gname, gtable in pgroups.items():
+                if not isinstance(gtable, _TABLE_LIKE_TYPES):
+                    continue
+                gdeps = gtable.get("dependencies")
+                if isinstance(gdeps, _TABLE_LIKE_TYPES):
+                    found.append(
+                        (
+                            f"[tool.poetry.group.{gname}.dependencies]",
+                            list(gdeps.keys()),
+                        )
+                    )
+
+    pdm = tool.get("pdm")
+    if isinstance(pdm, _TABLE_LIKE_TYPES):
+        # PDM ``[tool.pdm.dev-dependencies]`` is ``Mapping[group → list[str]]``,
+        # same shape as PEP 735 ``[dependency-groups]``.
+        pdm_dev = pdm.get("dev-dependencies")
+        if isinstance(pdm_dev, _TABLE_LIKE_TYPES):
+            for gname, gdeps in pdm_dev.items():
+                if isinstance(gdeps, list):
+                    found.append((f"[tool.pdm.dev-dependencies].{gname}", gdeps))
+
+    hatch = tool.get("hatch")
+    if isinstance(hatch, _TABLE_LIKE_TYPES):
+        # Hatch envs (``[tool.hatch.envs.<env>]``) carry per-environment
+        # dependency lists. Two surfaces are common in real projects:
+        # ``dependencies`` / ``extra-dependencies`` as PEP 508 lists,
+        # and the legacy ``[tool.hatch.envs.<env>.dependencies]`` table
+        # form (``Mapping[name → spec]``, same shape as Poetry deps).
+        # Both must be checked so a Hatch user with torch declared
+        # doesn't trigger the "not a direct dep" warning.
+        envs = hatch.get("envs")
+        if isinstance(envs, _TABLE_LIKE_TYPES):
+            for ename, etable in envs.items():
+                if not isinstance(etable, _TABLE_LIKE_TYPES):
+                    continue
+                for key in ("dependencies", "extra-dependencies"):
+                    edeps = etable.get(key)
+                    if isinstance(edeps, list):
+                        found.append((f"[tool.hatch.envs.{ename}].{key}", edeps))
+                    elif isinstance(edeps, _TABLE_LIKE_TYPES):
+                        found.append(
+                            (
+                                f"[tool.hatch.envs.{ename}.{key}]",
+                                list(edeps.keys()),
+                            )
+                        )
+    return found
+
+
+def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
+    """Return ``(present, location)`` for a direct ``torch`` dependency.
+
+    uv silently ignores ``[tool.uv.sources]`` entries for purely-
+    transitive packages. The cu130 source pin therefore only takes
+    effect once ``torch`` appears as a direct dep of the consumer
+    project. This helper lets the install flow surface a warning when
+    the patch will be a no-op.
+
+    Args:
+        pyproject: Path to the consumer's ``pyproject.toml``.
+
+    Returns:
+        ``(True, "<location>")`` when torch is found as a direct dep,
+        with ``location`` naming the dotted-key path of the table or
+        list that contained the entry. ``(False, "")`` when absent or
+        when the file cannot be parsed (the install flow already
+        surfaces parse errors elsewhere).
+    """
+    try:
+        doc = _load(pyproject)
+    except Exception:
+        return False, ""
+    if doc is None:
+        return False, ""
+    for label, deps in _iter_dep_lists(doc):
+        for entry in deps:
+            if _is_torch_requirement(entry):
+                return True, label
+    return False, ""
 
 
 def diagnose_torch(cuda: str | None, available: bool) -> TorchDiagnosis:
@@ -488,7 +852,7 @@ def diagnose_torch(cuda: str | None, available: bool) -> TorchDiagnosis:
 # ---------------------------------------------------------------------------
 
 
-def _get_or_create_tool_uv(doc: TOMLDocument) -> Table:
+def _get_or_create_tool_uv(doc: TOMLDocument) -> TableLike:
     """Return the writable ``[tool.uv]`` table, creating it if absent.
 
     Extracted so :func:`_ensure_tool_uv_index` and
@@ -496,12 +860,18 @@ def _get_or_create_tool_uv(doc: TOMLDocument) -> Table:
     how the ``[tool]`` → ``[tool.uv]`` hierarchy is materialised.
     Raises if either level exists but isn't a table (refuses to
     silently clobber a user-owned key).
+
+    Accepts both :class:`tomlkit.items.Table` and
+    :class:`tomlkit.container.OutOfOrderTableProxy`. Both expose the
+    Mapping API we exercise here (``setdefault`` / ``__setitem__``);
+    the proxy is what tomlkit returns whenever ``[tool.X]`` sub-tables
+    are interleaved with unrelated sections.
     """
     tool = doc.setdefault("tool", tomlkit.table())
-    if not isinstance(tool, Table):
+    if not isinstance(tool, _TABLE_LIKE_TYPES):
         raise TypeError("pyproject.toml [tool] is not a table")
     uv = tool.setdefault("uv", tomlkit.table())
-    if not isinstance(uv, Table):
+    if not isinstance(uv, _TABLE_LIKE_TYPES):
         raise TypeError("pyproject.toml [tool.uv] is not a table")
     return uv
 
@@ -538,10 +908,17 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
 
 
 def _ensure_torch_source(doc: TOMLDocument) -> None:
-    """Ensure ``[tool.uv.sources]`` has a cu130 torch entry."""
+    """Ensure ``[tool.uv.sources]`` has a cu130 torch entry.
+
+    Accepts ``InlineTable`` symmetric with :func:`_torch_sources` and
+    :func:`_drop_torch_source`. Without it, a project that wrote
+    ``sources = { … }`` inline classifies as MISSING via the inline-
+    aware detector, then crashes here with TypeError when apply tries
+    to mutate.
+    """
     uv = _get_or_create_tool_uv(doc)
     sources = uv.setdefault("sources", tomlkit.table())
-    if not isinstance(sources, Table):
+    if not isinstance(sources, _TABLE_LIKE_TYPES):
         raise TypeError("pyproject.toml [tool.uv.sources] is not a table")
 
     inline = tomlkit.inline_table()
@@ -579,7 +956,13 @@ def _ensure_torch_source(doc: TOMLDocument) -> None:
 
 
 def _drop_cu130_index(doc: TOMLDocument) -> None:
-    """Remove the canonical cu130 entry from ``[[tool.uv.index]]``."""
+    """Remove the canonical cu130 entry from ``[[tool.uv.index]]``.
+
+    OutOfOrderTableProxy quirk applies here too: re-fetch ``uv`` via
+    :func:`_tool_uv` immediately before ``del uv["index"]`` instead of
+    holding a stale reference, so a freshly-constructed proxy carries
+    consistent internal table positions.
+    """
     indices = _indices(doc)
     if indices is None:
         return
@@ -608,6 +991,13 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     :func:`_drop_cu130_index` has already removed the index table —
     both callers run in sequence and the consumer file should end up
     without orphaned empty sections.
+
+    OutOfOrderTableProxy quirk: tomlkit's proxy memoises the position
+    of the underlying tables on construction; a ``__delitem__`` on it
+    invalidates those positions and a second ``__delitem__`` against
+    the SAME proxy can raise ``IndexError``. We work around it by
+    re-fetching the proxy from its parent before each cascade-stage
+    deletion (``del uv["sources"]`` → re-fetch → ``del tool["uv"]``).
     """
     uv = _tool_uv(doc)
     if uv is None:
@@ -618,8 +1008,11 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     # shaped as a table. The early-return anti-pattern is avoided:
     # even when sources is absent, the cleanup cascade below must
     # run so that an empty ``[tool.uv]`` left behind by
-    # :func:`_drop_cu130_index` gets dropped.
-    if isinstance(sources, Table):
+    # :func:`_drop_cu130_index` gets dropped. ``InlineTable`` covers
+    # the ``sources = { torch = [...] }`` inline form symmetric with
+    # :func:`_torch_sources` so remove honours every detect-classified
+    # CANONICAL shape.
+    if isinstance(sources, _TABLE_LIKE_TYPES):
         torch_entry = sources.get("torch")
         if torch_entry is not None:
             if isinstance(torch_entry, InlineTable | dict) and not isinstance(
@@ -642,13 +1035,22 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
                     del sources["torch"]
 
         if not sources:
-            del uv["sources"]
+            # Re-fetch ``uv`` before the cascade-stage delete —
+            # ``_drop_cu130_index`` may have already mutated this same
+            # proxy via ``del uv["index"]``. See the OutOfOrderTableProxy
+            # note in this function's docstring.
+            uv = _tool_uv(doc)
+            if uv is not None:
+                del uv["sources"]
 
     # Cleanup cascades: always try to drop empty parent tables so a
     # full uninstall (index + torch) leaves no orphaned sections.
-    if not uv:
+    # Re-fetch ``uv`` again so the emptiness check runs on a fresh
+    # proxy with consistent internal state.
+    uv = _tool_uv(doc)
+    if uv is not None and not uv:
         tool = doc.get("tool")
-        if isinstance(tool, Table):
+        if isinstance(tool, _TABLE_LIKE_TYPES):
             del tool["uv"]
             if not tool:
                 del doc["tool"]

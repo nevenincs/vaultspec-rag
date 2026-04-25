@@ -50,6 +50,19 @@ This ADR follows the same rule for the torch-config block. The
 match predicate for uninstall is the same one install uses for
 idempotency: remove iff the entry has rag's canonical shape.
 
+**Exception — uninstall on a non-rag target.** When `.vaultspec/`
+is absent at the uninstall target, rag has no evidence the canonical
+block in `pyproject.toml` belongs to a previous rag install: the
+target may be a sibling project that happens to use cu130, or a
+dir where the user pasted the README snippet manually. Mutating
+that file is a data-loss surprise rather than symmetric reversal.
+The torch-config sweep therefore demotes to a dry-run preview on
+that path regardless of `--force`, leaves the canonical block in
+place, and surfaces the report so the user can act manually if they
+want. This is an intentional asymmetry of the symmetric-mirror
+contract; the post-#86 round-1 audit (INSTALL-01) caught the
+data-loss bug and this ADR clause documents the fix.
+
 **Layer separation.** The install ADR routed orchestration through
 `src/vaultspec_rag/commands.py` and kept `cli.py` as thin Typer
 wrappers. This ADR preserves that: torch-config logic lives in a

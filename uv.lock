@@ -2410,6 +2410,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "mcp" },
+    { name = "packaging" },
     { name = "pathspec" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -2472,6 +2473,7 @@ requires-dist = [
     { name = "mdformat", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "mdformat-frontmatter", marker = "extra == 'dev'", specifier = ">=2.0.10" },
     { name = "mdformat-gfm", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "packaging", specifier = ">=24.0" },
     { name = "pathspec", specifier = ">=0.12" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.3.2" },
