@@ -26,13 +26,6 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Whitelist .vaultspec/lib
-!/.vaultspec/lib/
-!/.vaultspec/lib/**
-.vaultspec/lib/**/__pycache__/
-.vaultspec/lib/**/*.pyc
-.vaultspec/providers.json
-
 # Auto-generated temp files
 .vaultspec/.tmp/
 tmp/
@@ -159,8 +152,11 @@ tmp-ref/
 .vault/.trash/
 .vault/data/
 .vault/logs/
-.vaultspec/
+.vaultspec/*.lock
 .vaultspec/_snapshots/
+/.gitignore.lock
+/.mcp.json.lock
+/.pre-commit-config.yaml.lock
 AGENTS.md
 CLAUDE.md
 GEMINI.md
