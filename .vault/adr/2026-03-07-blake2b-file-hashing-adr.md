@@ -37,16 +37,16 @@ def content_hash(path: Path) -> str:
 
 Three algorithms were evaluated:
 
-| Algorithm | Throughput | Stdlib? | Dependency           |
-| --------- | ---------- | ------- | -------------------- |
-| xxh64     | ~19 GB/s   | No      | pip `xxhash` (C ext) |
-| blake2b   | ~1 GB/s    | **Yes** | None                 |
-| sha256    | ~0.3 GB/s  | Yes     | None                 |
+| Algorithm | Throughput | Stdlib? | Dependency            |
+| --------- | ---------- | ------- | --------------------- |
+| xxh64     | ~19 GB/s   | No      | PyPI `xxhash` (C ext) |
+| blake2b   | ~1 GB/s    | **Yes** | None                  |
+| sha256    | ~0.3 GB/s  | Yes     | None                  |
 
 Key considerations:
 
-1. **No new dependency.** blake2b is in stdlib. xxhash requires pip install
-   and is a C extension with no pure-Python fallback.
+1. **No new dependency.** blake2b is in stdlib. xxhash requires an external
+   PyPI dependency and is a C extension with no pure-Python fallback.
 
 1. **Fast enough.** Our vault has 213 markdown files (~1-50 KB each). At
    1 GB/s, hashing the entire corpus takes \<10ms. The 5.6x speedup of

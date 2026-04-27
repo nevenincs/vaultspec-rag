@@ -1899,8 +1899,8 @@ Is xxHash meaningfully faster? What are the tradeoffs?
 
 | Algorithm | Throughput (GB/s) | Relative | Stdlib?             | Collision risk  |
 | --------- | ----------------- | -------- | ------------------- | --------------- |
-| xxh64     | ~19.4             | **65x**  | No (pip `xxhash`)   | 2^-64 per pair  |
-| xxh128    | ~18.0             | 60x      | No (pip `xxhash`)   | 2^-128 per pair |
+| xxh64     | ~19.4             | **65x**  | No (PyPI `xxhash`)  | 2^-64 per pair  |
+| xxh128    | ~18.0             | 60x      | No (PyPI `xxhash`)  | 2^-128 per pair |
 | blake2b   | ~1.0              | 3.3x     | **Yes** (`hashlib`) | Cryptographic   |
 | sha256    | ~0.3              | 1x       | **Yes** (`hashlib`) | Cryptographic   |
 
@@ -1924,8 +1924,8 @@ against adversaries) are irrelevant for change detection.
 
 ### Is xxhash available in stdlib?
 
-**No.** `xxhash` requires `pip install xxhash`. It's a C extension with
-no pure-Python fallback. This adds a dependency.
+**No.** `xxhash` is an external PyPI package (e.g. `uv add xxhash`). It's
+a C extension with no pure-Python fallback. This adds a dependency.
 
 ### The stdlib alternative: hashlib.blake2b
 
@@ -1952,7 +1952,7 @@ with optimal block sizes. No need to manually loop with `read(8192)`.
 
 **Use `hashlib.blake2b` via `file_digest()`.** Reasoning:
 
-1. **No new dependency.** blake2b is in stdlib. xxhash requires pip install.
+1. **No new dependency.** blake2b is in stdlib. xxhash needs an external PyPI install.
 1. **Fast enough.** At ~1 GB/s, hashing 213 markdown files (typical vault,
    ~1-10 KB each) takes \<1ms total. The 5.6x speedup of xxhash saves
    microseconds — irrelevant.

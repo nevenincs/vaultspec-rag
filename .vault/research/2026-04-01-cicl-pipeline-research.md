@@ -20,7 +20,7 @@ The vaultspec-core project has a mature 5-workflow CI/CD:
 
 - **ci.yml** — 5 parallel jobs on every push to main and PRs: workflow-lint
   (actionlint), lint-and-type (ruff, ty, taplo, lychee, pymarkdown), tests
-  (pytest -m unit), vault-audit, dependency-audit (pip-audit). Uses
+  (pytest -m unit), vault-audit, dependency-audit (uv audit). Uses
   concurrency groups to cancel in-progress runs.
 
 - **release-please.yml** — Runs on main pushes. Uses

@@ -42,7 +42,7 @@ vaultspec-core blocks both CI and publishing.
 - `ci.yml` — 4 jobs triggered on push to main + PRs:
   workflow-lint (actionlint), lint-and-type (ruff, ty, taplo via direct
   `uv run` commands), tests (`uv run pytest -m unit`), dependency-audit
-  (pip-audit). Concurrency groups cancel in-progress runs.
+  (uv audit). Concurrency groups cancel in-progress runs.
 
 - `release-please.yml` — `googleapis/release-please-action@v4` on
   main pushes. Python release-type, conventional commits drive version

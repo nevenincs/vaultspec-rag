@@ -76,8 +76,8 @@ is used by poetry, pdm, and astral's own uv writer. Adding it as a
 runtime dep is one line. Alternatives (regex, ast-like hand-rolled
 parser) are categorically wrong for user files and rejected.
 
-**Scope boundary.** rag is uv-first. This ADR does not add pip,
-poetry, or pdm compatibility shims. If the consumer project has no
+**Scope boundary.** rag is uv-first. This ADR does not add legacy
+installer, poetry, or pdm compatibility shims. If the consumer project has no
 `pyproject.toml` (or has one with no `[project]` table), the
 torch-config step warns and skips — it does not create or upgrade
 the file. Users of other tools are directed at the manual snippet

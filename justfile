@@ -28,7 +28,7 @@ prod *args='':
 #    deps      dependency management (sync, upgrade, lock)
 #    lint      read-only static analysis (ruff, ty, taplo, mdformat, lychee, ...)
 #    fix       auto-fix everything fixable (python, toml, vault)
-#    audit     supply-chain / security checks (pip-audit)
+#    audit     supply-chain / security checks (uv audit)
 #    test      pytest
 #    build     uv build
 #    precommit pre-commit hook management (install, upgrade, run)
@@ -187,14 +187,7 @@ _dev-fix target='all':
 _dev-audit target:
   case "{{target}}" in \
     deps) \
-      tmp="${TMPDIR:-${TEMP:-/tmp}}/vaultspec-pip-audit-$$.txt"; \
-      trap 'rm -f "$tmp"' EXIT; \
-      uv export --locked --group dev \
-        --no-emit-project --no-hashes \
-        --no-emit-package torch \
-        --no-emit-package vaultspec-core \
-        --output-file "$tmp"; \
-      uv run pip-audit --strict -r "$tmp" ;; \
+      uv audit --locked --preview-features audit ;; \
     *) \
       echo "unknown dev audit target: {{target}}" >&2; \
       echo "  targets: deps" >&2; \

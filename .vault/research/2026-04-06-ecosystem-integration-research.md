@@ -142,7 +142,7 @@ env var > `_RAG_DEFAULTS`.
 
 **RAG has no `install` command.** It relies on:
 
-1. Python package installation (`uv pip install vaultspec-rag`)
+1. Python package installation (`uv add vaultspec-rag`)
 1. Pre-existing vaultspec workspace (`.vault/` and `.vaultspec/` must exist)
 1. Workspace validation via `resolve_workspace()` in `workspace.py`
 

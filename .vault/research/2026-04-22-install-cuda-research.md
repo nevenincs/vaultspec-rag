@@ -288,7 +288,7 @@ inside it, so all call-sites inherit the new messages automatically
 ## out of scope
 
 - A `[gpu]` optional extra (cannot work; cu wheels not on PyPI).
-- Pip / poetry / pdm compatibility shims (rag is uv-first per
+- Legacy installer / poetry / pdm compatibility shims (rag is uv-first per
   existing conventions).
 - A `--torch-index URL` override flag (tracked as follow-up).
 - macOS torch-config (the marker leaves macOS alone; macOS users

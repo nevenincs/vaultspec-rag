@@ -68,7 +68,6 @@ dev = [
     "pytest-durations>=1.0.0",
     "ruff>=0.15.2",
     "ty>=0.0.15",
-    "pip-audit>=2.9.0",
     "prek>=0.3.2",
     "identify>=2.0.0",
     "mdformat>=1.0.0",
@@ -83,7 +82,6 @@ dev = [
     "mdformat>=1.0.0",
     "mdformat-frontmatter>=2.0.10",
     "mdformat-gfm>=1.0.0",
-    "pip-audit>=2.9.0",
     "prek>=0.3.2",
     "pymarkdownlnt>=0.9.0",
     "pytest>=9.0.3",
@@ -96,7 +94,7 @@ dev = [
 ]
 
 [tool.uv]
-# Pin transitive deps up to non-vulnerable versions. pip-audit flags
+# Pin transitive deps up to non-vulnerable versions. `uv audit` flags
 # python-multipart<0.0.26 (CVE-2026-40347) via `mcp`. constraint-dependencies
 # forces the resolver to pick a fixed release without us taking a direct dep.
 constraint-dependencies = [

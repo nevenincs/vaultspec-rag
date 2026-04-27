@@ -692,9 +692,9 @@ def _is_torch_requirement(req: object) -> bool:
     """Return True if ``req`` (a PEP 508 entry) names ``torch``.
 
     Delegates name extraction to :class:`packaging.requirements.Requirement`,
-    which is the spec-compliant PEP 508 parser used throughout the
-    Python packaging stack (pip / uv / hatch / poetry-core all share
-    it). The parser handles extras (``torch[extra]``), version
+    which is the spec-compliant PEP 508 parser shared across the modern
+    Python packaging toolchain (uv, hatch, poetry-core). The parser
+    handles extras (``torch[extra]``), version
     specifiers (``torch>=2.4``, ``torch (>=2.4)``), URL form
     (``torch @ https://...``), and PEP 508 markers
     (``torch ; sys_platform == 'linux'``) without the manual

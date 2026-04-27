@@ -49,7 +49,7 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
      cancel-in-progress: true. Jobs: workflow-lint (actionlint docker),
      lint-and-type (ruff check, ty check, taplo lint via direct `uv run`),
      tests (`uv run pytest -m unit --timeout=60`), dependency-audit
-     (`uvx pip-audit` — ephemeral, no dev dep needed). Triggers: push to
+     (`uv audit --locked` — built-in, no extra tooling needed). Triggers: push to
      main, pull_request, workflow_dispatch.
   1. Create `.github/workflows/release-please.yml` — permissions:
      contents: write, pull-requests: write. Concurrency: release-please,

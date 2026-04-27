@@ -102,7 +102,7 @@ self._dense_model = SentenceTransformer(
 
 ### R10-m1: `flash_attention_2` probe uses `import flash_attn` but `model_kwargs` key is `"attn_implementation"` (Minor)
 
-The probe at line 174 imports `flash_attn` to check if the package is installed. This is correct -- `flash_attn` is the pip package name. The `model_kwargs` key `"attn_implementation"` is the HuggingFace Transformers config key, not the package name. These are correctly different things. No issue.
+The probe at line 174 imports `flash_attn` to check if the package is installed. This is correct -- `flash_attn` is the PyPI distribution name. The `model_kwargs` key `"attn_implementation"` is the HuggingFace Transformers config key, not the package name. These are correctly different things. No issue.
 
 **Verdict: PASS (false alarm on initial read).**
 
