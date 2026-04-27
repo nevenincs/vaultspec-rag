@@ -54,15 +54,14 @@ def _check_rag_deps() -> None:
     except ImportError:
         raise ImportError(
             "GPU RAG dependencies not installed. "
-            "Run: uv pip install sentence-transformers torch",
+            "Run: uv sync (then `vaultspec-rag install` for CUDA torch wheels).",
         ) from None
 
     try:
         import sentence_transformers  # noqa: F401
     except ImportError:
         raise ImportError(
-            "sentence-transformers not installed. "
-            "Run: uv pip install sentence-transformers>=5.0",
+            "sentence-transformers not installed. Run: uv sync",
         ) from None
 
 
@@ -258,7 +257,7 @@ class EmbeddingModel:
         logger.info(
             "Dense model loaded in %.2fs (max_seq_length=%d)",
             time.perf_counter() - t0,
-            int(self._dense_model.max_seq_length),
+            int(max_seq_len),
         )
 
         t0 = time.perf_counter()
