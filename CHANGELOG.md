@@ -9,6 +9,15 @@
 - New `list_projects` and `evict_project` MCP admin tools plus `vaultspec-rag service projects list|evict` CLI subcommands ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
 - `DaemonRotatingFileHandler` with re-`dup2` of fds 1/2 on rollover installed in `mcp_server.main()`; `service.log` is now bounded by the new `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES` / `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` knobs ([#45](https://github.com/wgergely/vaultspec-rag/pull/45))
 
+## [0.2.4](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.3...vaultspec-rag-v0.2.4) (2026-04-25)
+
+
+### Bug Fixes
+
+* **deps:** pin tree-sitter-language-pack &lt;1.6.2 and drop project board workflow ([#85](https://github.com/wgergely/vaultspec-rag/issues/85)) ([e4f8229](https://github.com/wgergely/vaultspec-rag/commit/e4f8229aa13b0178dbdac170dd9563d93d432e25))
+* **install:** close all PR-[#86](https://github.com/wgergely/vaultspec-rag/issues/86) deferred audit findings ([#89](https://github.com/wgergely/vaultspec-rag/issues/89)) ([#90](https://github.com/wgergely/vaultspec-rag/issues/90)) ([72c6196](https://github.com/wgergely/vaultspec-rag/commit/72c61962e1b2b220e473d18974d38f60d607c25d))
+* **install:** handle scattered [tool.*] pyprojects, real-world TOML edge cases, exit codes ([#83](https://github.com/wgergely/vaultspec-rag/issues/83), [#84](https://github.com/wgergely/vaultspec-rag/issues/84)) ([#86](https://github.com/wgergely/vaultspec-rag/issues/86)) ([0ca2aaf](https://github.com/wgergely/vaultspec-rag/commit/0ca2aafcf05ca6af554979c85b903d4afdee8329))
+
 ## [0.2.3](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.2...vaultspec-rag-v0.2.3) (2026-04-22)
 
 
