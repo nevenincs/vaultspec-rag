@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.6](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.5...vaultspec-rag-v0.2.6) (2026-04-28)
+
+### Bug Fixes
+
+- **deps:** bump vaultspec-core 0.1.14 → 0.1.16 (raises floor to `>=0.1.16`) to pick up the upstream fix for [vaultspec-core#85](https://github.com/wgergely/vaultspec-core/issues/85), which moves `yaml.add_representer(_LiteralStr, ...)` out of module top level into a lazy, lock-guarded `_ensure_literal_representer()`. Importing `vaultspec_core` (and therefore `vaultspec_rag`) no longer hard-crashes when PyYAML is partially broken — e.g. a venv with `yaml/__init__.py` deleted. Verified locally with the full unit suite (477 passed) and the actual fragility probe (CLI `--version` survives a deleted `yaml/__init__.py`) ([d5617a3](https://github.com/wgergely/vaultspec-rag/commit/d5617a3))
+
+### Documentation
+
+- **changelog:** drop the stale `## Unreleased` section that linked to a nonexistent PR #45; the work it described actually shipped in 0.2.1 via PRs #18 / #19 / #71 and was already credited there by release-please ([bb90689](https://github.com/wgergely/vaultspec-rag/commit/bb90689))
+
 ## [0.2.5](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.4...vaultspec-rag-v0.2.5) (2026-04-27)
 
 ### Miscellaneous
