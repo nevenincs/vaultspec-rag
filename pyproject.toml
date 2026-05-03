@@ -151,6 +151,7 @@ markers = [
     "quality: precision/recall and document coverage tests",
     "robustness: edge case and error handling tests",
     "timeout: timeout in seconds for individual tests",
+    "xdist_group: pytest-xdist scheduling group",
 ]
 testpaths = ["src/vaultspec_rag/tests"]
 timeout = 300
