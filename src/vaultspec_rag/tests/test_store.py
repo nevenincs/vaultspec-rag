@@ -129,6 +129,24 @@ class TestStoreLocalWarnings:
         messages = [str(item.message) for item in caught]
         assert not any("Payload indexes have no effect" in msg for msg in messages)
 
+    def test_large_local_collection_warning_is_suppressed(self):
+        from vaultspec_rag.store import _suppress_local_qdrant_warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with _suppress_local_qdrant_warnings():
+                warnings.warn(
+                    "Local mode is not recommended for collections with more than "
+                    "20,000 points. Current collection contains 20032 points. "
+                    "Consider using Qdrant in Docker or Qdrant Cloud for better "
+                    "performance with large datasets.",
+                    UserWarning,
+                    stacklevel=1,
+                )
+
+        messages = [str(item.message) for item in caught]
+        assert not any("Local mode is not recommended" in msg for msg in messages)
+
 
 class TestBuildCodeFilter:
     """Tests for _build_code_filter."""
