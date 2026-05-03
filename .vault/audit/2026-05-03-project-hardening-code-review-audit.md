@@ -27,3 +27,7 @@ The watcher accepted both `graph_cache` and a legacy `searcher` parameter, then 
 LOCAL-003 | LOW | Search concurrency contract follow-up review found no blocking issues
 
 Reviewed the concurrency-contract documentation and the runtime surfaces added in `capabilities.py`, `mcp_server.py`, `cli.py`, `store.py`, and the focused tests. The contract now consistently states that concurrent search is accepted, same-project local Qdrant access serializes inside one process, cross-project slots can proceed independently, and local storage remains exclusive across processes. Focused ruff, mdformat, targeted MCP/CLI tests, and the unit marker passed.
+
+LOCAL-004 | MEDIUM | GitHub Actions workflows still used Node 20 action majors
+
+The successful 0.2.7 publish run emitted GitHub Actions warnings that `actions/checkout@v4`, `actions/upload-artifact@v4`, and `actions/download-artifact@v4` run on Node 20 and will be forced forward by GitHub in 2026. Fixed by updating workflow references to current Node-24-ready release tags: `actions/checkout@v6.0.2`, `actions/upload-artifact@v7.0.1`, and `actions/download-artifact@v8.0.1`. Verified the current action releases through the GitHub API and ran `actionlint`.
