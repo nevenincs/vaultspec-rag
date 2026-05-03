@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
-    from .search import VaultSearcher
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +102,9 @@ async def watch_and_reindex(
     vault_indexer: VaultIndexer,
     code_indexer: CodebaseIndexer,
     stop_event: asyncio.Event,
+    graph_cache: GraphCache,
     debounce: int = 2000,
     cooldown: float = 30.0,
-    searcher: VaultSearcher | None = None,
-    graph_cache: GraphCache | None = None,
 ) -> None:
     """Watch for file changes and trigger incremental re-indexing.
 
@@ -128,11 +126,8 @@ async def watch_and_reindex(
             before processing.
         cooldown: Seconds to suppress re-index triggers after a
             completed run.
-        searcher: Optional VaultSearcher (deprecated, kept for
-            backward compatibility).
-        graph_cache: Optional GraphCache to invalidate after a
-            successful vault reindex.  Preferred over the legacy
-            ``searcher._graph_built_at`` poke.
+        graph_cache: GraphCache to invalidate after a successful vault
+            reindex.
 
     Raises:
         This coroutine does not propagate exceptions from indexing.
@@ -188,10 +183,7 @@ async def watch_and_reindex(
                             reporter=NullProgressReporter()
                         ),
                     )
-                    if graph_cache is not None:
-                        graph_cache.invalidate()
-                    elif searcher is not None:
-                        searcher._graph_built_at = 0.0
+                    graph_cache.invalidate()
                     _last_vault_index = time.monotonic()
                     logger.info(
                         "Vault re-index complete: +%d /%d -%d (%dms)",

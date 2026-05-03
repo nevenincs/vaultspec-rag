@@ -19,3 +19,11 @@ Gemini flagged that `use_safetensors=False` weakens the default model-loading pa
 LOCAL-001 | LOW | Targeted post-fix review found no additional blocking issues
 
 Reviewed the modified `EmbeddingModel.__init__` path and new regression tests after the Gemini fixes. The constructor arguments now preserve Qwen text-tokenizer behavior, avoid forcing pickle weights, and keep the prior warning suppression mechanism. Targeted lint, type checking, whitespace checks, and regression tests passed.
+
+LOCAL-002 | LOW | Watcher graph invalidation retained a legacy private-field fallback
+
+The watcher accepted both `graph_cache` and a legacy `searcher` parameter, then fell back to mutating `searcher._graph_built_at`. This contradicted the current service graph contract and the clean-code constraint. Fixed by making `graph_cache.invalidate()` the only watcher invalidation path, removing the `searcher` parameter, and updating the regression test to reject the old private searcher path.
+
+LOCAL-003 | LOW | Search concurrency contract follow-up review found no blocking issues
+
+Reviewed the concurrency-contract documentation and the runtime surfaces added in `capabilities.py`, `mcp_server.py`, `cli.py`, `store.py`, and the focused tests. The contract now consistently states that concurrent search is accepted, same-project local Qdrant access serializes inside one process, cross-project slots can proceed independently, and local storage remains exclusive across processes. Focused ruff, mdformat, targeted MCP/CLI tests, and the unit marker passed.

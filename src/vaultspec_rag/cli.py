@@ -44,6 +44,7 @@ from rich.table import Table
 
 load_dotenv()
 
+from .capabilities import backend_capabilities_dict  # noqa: E402
 from .config import EnvVar  # noqa: E402
 from .embeddings import EmbeddingModel  # noqa: E402
 from .indexer import CodebaseIndexer, VaultIndexer  # noqa: E402
@@ -53,6 +54,56 @@ from .store import VaultStore, VaultStoreLockedError  # noqa: E402
 from .workspace import WorkspaceError, WorkspaceLayout, resolve_workspace  # noqa: E402
 
 console = Console(legacy_windows=False)
+
+
+def _capability_value(caps: dict[str, object], key: str) -> str:
+    """Return a capability value as display text."""
+    value = caps.get(key, "unknown")
+    return str(value)
+
+
+def _add_backend_contract_rows(
+    table: Table,
+    caps: dict[str, object] | None = None,
+) -> None:
+    """Add backend concurrency contract rows to a Rich table."""
+    data = caps if caps is not None else backend_capabilities_dict()
+    table.add_row(
+        "Search Concurrency",
+        (
+            "supported; same-project local backend access "
+            f"{_capability_value(data, 'same_project_search_strategy')}"
+        ),
+    )
+    table.add_row(
+        "Cross-project Search",
+        _capability_value(data, "cross_project_search_strategy"),
+    )
+    table.add_row(
+        "Storage Process Model",
+        (
+            f"{_capability_value(data, 'local_storage_process_model')} "
+            "local Qdrant process"
+        ),
+    )
+
+
+def _display_mcp_error(payload: dict[str, object]) -> None:
+    """Render a structured MCP error returned by the service fast path."""
+    error = str(payload.get("error", "mcp_error"))
+    message = str(payload.get("message", "MCP service returned an error."))
+    console.print(f"[bold red]Error:[/] {message}")
+    console.print(f"[dim]code={error}[/]")
+    db_path = payload.get("db_path")
+    if db_path:
+        console.print(f"[dim]db_path={db_path}[/]")
+    caps = payload.get("backend_capabilities")
+    if isinstance(caps, dict):
+        table = Table(title="Backend Contract", show_header=False, padding=(0, 2))
+        table.add_column("Key", style="bold")
+        table.add_column("Value")
+        _add_backend_contract_rows(table, cast("dict[str, object]", caps))
+        console.print(table)
 
 
 def _cpu_only_message() -> str:
@@ -194,6 +245,9 @@ def _open_vault_store(target: Path) -> VaultStore:
             "is currently in use by another process.\n\n"
             "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
             "or file watcher is likely running against this workspace.\n\n"
+            "  Local-file-backed RAG storage cannot be opened by multiple "
+            "processes at once. For concurrent agent searches, route every "
+            "request through one running [cyan]vaultspec-rag[/] service.\n\n"
             "  To resolve, do one of the following:\n"
             "    1. Wait for the other process to finish.\n"
             "    2. Stop the running server:\n"
@@ -908,7 +962,7 @@ def _try_mcp_search(
     top_k: int,
     port: int,
     project_root: str,
-) -> list[dict[str, object]] | None:
+) -> list[dict[str, object]] | dict[str, object] | None:
     """Search via a running MCP server over HTTP.
 
     Uses ``asyncio.run()`` which is safe here because Typer
@@ -925,8 +979,10 @@ def _try_mcp_search(
             project, so every tool call must carry this value.
 
     Returns:
-        List of result dicts on success, or None if the server
-        is unavailable or an error occurs.
+        List of result dicts on success, a structured MCP error
+        dict if the service rejected the call, or None if the
+        server is unavailable or an unstructured transport error
+        occurs.
 
     """
     import asyncio
@@ -934,7 +990,7 @@ def _try_mcp_search(
     tool_map = {"vault": "search_vault", "code": "search_codebase"}
     tool_name = tool_map.get(search_type, "search_vault")
 
-    async def _call() -> list[dict[str, object]] | None:
+    async def _call() -> list[dict[str, object]] | dict[str, object] | None:
         try:
             import json
 
@@ -960,6 +1016,8 @@ def _try_mcp_search(
                     first = result.content[0]
                     if isinstance(first, TextContent):
                         data = json.loads(first.text)
+                        if data.get("ok") is False:
+                            return data
                         return data.get("results", [])
                 return []
         except Exception:
@@ -1079,6 +1137,9 @@ def handle_search(
             str(target),
         )
         if mcp_results is not None:
+            if isinstance(mcp_results, dict):
+                _display_mcp_error(mcp_results)
+                raise typer.Exit(code=1)
             if not mcp_results:
                 console.print(
                     f"[yellow]No {search_type} results found for:[/] "
@@ -1177,6 +1238,7 @@ def handle_status(ctx: typer.Context) -> None:
         table.add_row("Vault Documents", f"[green]{vault_count}[/]")
         table.add_row("Codebase Chunks", f"[green]{code_count}[/]")
         table.add_row("Target Directory", f"[cyan]{target}[/]")
+        _add_backend_contract_rows(table)
         console.print(table)
     finally:
         store.close()
@@ -1778,12 +1840,12 @@ def service_status() -> None:
         table.add_row("Health", health.get("status", "unknown"))
         table.add_row("CUDA", str(health.get("cuda", "unknown")))
         table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
-        projects = health.get("projects", [])
-        table.add_row("Projects", str(len(projects)))
-        for p in projects:
-            table.add_row("", str(p))
+        table.add_row("Projects", str(health.get("project_count", "unknown")))
         uptime = health.get("uptime_s", 0.0)
         table.add_row("Uptime", f"{uptime:.0f}s")
+        caps = health.get("backend_capabilities")
+        if isinstance(caps, dict):
+            _add_backend_contract_rows(table, cast("dict[str, object]", caps))
     else:
         table.add_row("Health", "[yellow]unreachable[/]")
 

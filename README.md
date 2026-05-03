@@ -102,6 +102,21 @@ vaultspec-rag search "architecture decision"
 vaultspec-rag search --type code "error handling"
 ```
 
+### Search concurrency contract
+
+The local backend is `qdrant-local`. Its runtime contract is:
+concurrent search accepted: `true`; same-project search strategy:
+`serialized`; cross-project search strategy: `parallel`; storage
+process model: `exclusive`.
+
+Concurrent search accepted means requests may overlap safely, while
+local Qdrant access for the same project is serialized inside the
+process. Do not open the same local Qdrant storage from multiple
+`vaultspec-rag` processes. A second opener reports lock contention and
+directs callers to route concurrent work through one resident service.
+CLI `status`, `server service status`, MCP search responses, index
+status responses, and health payloads expose the same backend contract.
+
 ______________________________________________________________________
 
 ## Using the MCP server
@@ -109,6 +124,10 @@ ______________________________________________________________________
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server gives AI assistants direct access to vault and codebase search. It runs in two transport modes with different project-resolution rules.
 
 **stdio mode** -- one process per project. The MCP client launches `vaultspec-search-mcp` as a subprocess, scoped to a single workspace via `VAULTSPEC_RAG_ROOT`. Use this for Claude Desktop, Claude Code, and similar single-project AI tools.
+
+Local storage is process-exclusive, so avoid launching multiple stdio
+MCP processes against the same project root. For concurrent clients on
+one project, route requests through a single HTTP service.
 
 ```json
 {
@@ -124,6 +143,10 @@ The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server gives
 ```
 
 **HTTP mode** -- one daemon, many projects. Start `vaultspec-rag server service start` as a background daemon, then connect any MCP client to `http://127.0.0.1:8766/mcp`. The daemon has no default project; every tool call must include `project_root`. Use this to share one GPU-loaded service across workspaces.
+
+Project slots are isolated by root and share one loaded model plus the
+GPU lock. Different roots can initialize and proceed concurrently;
+same-root local backend access still serializes around Qdrant.
 
 See the [MCP integration reference](./src/vaultspec_rag/README.md#mcp-integration) for the full tool list, both modes' contracts, and choosing between them.
 

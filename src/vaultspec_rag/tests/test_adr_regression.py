@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import typing
-from pathlib import Path
 
 import pytest
 
@@ -363,29 +362,24 @@ class TestCliMcpFastPath:
 
 
 class TestWatcherGraphInvalidation:
-    """Watcher must accept a searcher parameter to invalidate graph cache."""
+    """Watcher must use the graph cache contract for invalidation."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_watch_and_reindex_has_searcher_param(self):
-        import ast
-        import importlib.util
+    def test_watch_and_reindex_requires_graph_cache(self):
+        import inspect
 
-        spec = importlib.util.find_spec("vaultspec_rag.watcher")
-        assert spec is not None and spec.origin is not None
-        tree = ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.AsyncFunctionDef)
-                and node.name == "watch_and_reindex"
-            ):
-                param_names = [arg.arg for arg in node.args.args]
-                assert "searcher" in param_names, (
-                    "watch_and_reindex must accept a 'searcher' parameter "
-                    "so the watcher can invalidate the graph cache after vault reindex"
-                )
-                return
-        pytest.fail("watch_and_reindex function not found in watcher.py")
+        from vaultspec_rag.watcher import watch_and_reindex
+
+        signature = inspect.signature(watch_and_reindex)
+        assert "graph_cache" in signature.parameters, (
+            "watch_and_reindex must accept the project GraphCache so the watcher "
+            "can invalidate graph data after vault reindex"
+        )
+        assert "searcher" not in signature.parameters, (
+            "watch_and_reindex must not retain the old private searcher "
+            "invalidation path"
+        )
 
 
 class TestAtomicMetaWrite:

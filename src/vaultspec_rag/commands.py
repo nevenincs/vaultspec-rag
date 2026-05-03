@@ -928,9 +928,9 @@ def _rmtree_safe_onexc(_func, path, exc) -> None:
 
     Defensive secondary guard against the case where a symlink is
     encountered inside ``.vault/data/`` after the top-level
-    ``is_symlink`` check has already passed. ``onerror`` was
-    deprecated in 3.12; ``onexc`` receives the exception instance
-    directly instead of an ``exc_info`` tuple.
+    ``is_symlink`` check has already passed. Python 3.12+ ``onexc``
+    receives the exception instance directly instead of an
+    ``exc_info`` tuple.
     """
     p = Path(path)
     if p.is_symlink():

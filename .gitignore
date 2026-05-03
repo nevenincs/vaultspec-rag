@@ -148,6 +148,7 @@ tmp-ref/
 .vault/.trash/
 .vault/data/
 .vault/logs/
+.vaultspec/
 .vaultspec/*.lock
 .vaultspec/_snapshots/
 /.gitignore.lock

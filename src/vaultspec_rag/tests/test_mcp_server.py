@@ -11,6 +11,7 @@ import pytest
 
 from vaultspec_rag.config import EnvVar
 from vaultspec_rag.mcp_server import (
+    BackendCapabilities,
     HealthResponse,
     IndexResponse,
     IndexStatus,
@@ -164,10 +165,28 @@ class TestPydanticModels:
         )
         assert len(resp.results) == 1
         assert "1 result" in resp.summary
+        assert resp.backend_capabilities.backend == "qdrant-local"
+        assert resp.backend_capabilities.concurrent_search_supported is True
+        assert resp.backend_capabilities.same_project_search_strategy == "serialized"
+        assert resp.backend_capabilities.cross_project_search_strategy == "parallel"
+        assert resp.backend_capabilities.local_storage_process_model == "exclusive"
 
     def test_search_response_empty(self):
         resp = SearchResponse(results=[], summary="No results")
         assert len(resp.results) == 0
+        assert resp.backend_capabilities.concurrent_search_supported is True
+
+    def test_backend_capabilities_serializes_to_tool_schema(self):
+        caps = BackendCapabilities()
+        data = caps.model_dump()
+
+        assert data == {
+            "backend": "qdrant-local",
+            "concurrent_search_supported": True,
+            "same_project_search_strategy": "serialized",
+            "cross_project_search_strategy": "parallel",
+            "local_storage_process_model": "exclusive",
+        }
 
     def test_index_status(self):
         status = IndexStatus(
@@ -179,6 +198,7 @@ class TestPydanticModels:
         assert status.vault_count == 100
         assert status.code_count == 500
         assert status.target_dir == "/tmp/workspace"
+        assert status.backend_capabilities.concurrent_search_supported is True
 
     def test_index_response(self):
         resp = IndexResponse(
@@ -228,6 +248,7 @@ class TestPydanticModels:
         assert resp.models_loaded is True
         assert resp.project_count == 1
         assert resp.uptime_s == 42.5
+        assert resp.backend_capabilities.concurrent_search_supported is True
 
     def test_health_response_defaults(self):
         resp = HealthResponse(
@@ -237,6 +258,7 @@ class TestPydanticModels:
         )
         assert resp.project_count == 0
         assert resp.uptime_s == 0.0
+        assert resp.backend_capabilities.same_project_search_strategy == "serialized"
 
 
 class TestPathTraversalValidation:
@@ -597,6 +619,10 @@ class TestHealthHandler:
         assert "models_loaded" in data
         assert "project_count" in data
         assert "uptime_s" in data
+        assert data["backend_capabilities"]["concurrent_search_supported"] is True
+        assert (
+            data["backend_capabilities"]["same_project_search_strategy"] == "serialized"
+        )
 
     def test_health_status_reflects_model_state(self):
         """Without models loaded, status should not be 'ready'.
@@ -768,6 +794,26 @@ class TestRegistryFullErrorShape:
         assert result["max_projects"] == _registry.max_projects
         assert isinstance(result["busy_projects"], list)
         assert result["message"]  # non-empty message
+
+    def test_local_store_locked_error_dict_shape(self, tmp_path) -> None:
+        """Local Qdrant lock contention returns an actionable MCP payload."""
+        from vaultspec_rag.mcp_server import _local_store_locked_error_dict
+        from vaultspec_rag.store import VaultStoreLockedError
+
+        db_path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
+        exc = VaultStoreLockedError(str(db_path))
+        result = _local_store_locked_error_dict(exc)
+
+        assert result["ok"] is False
+        assert result["error"] == "local_store_locked"
+        assert result["db_path"] == str(db_path)
+        caps = result["backend_capabilities"]
+        assert caps["backend"] == "qdrant-local"
+        assert caps["concurrent_search_supported"] is True
+        assert caps["same_project_search_strategy"] == "serialized"
+        assert caps["cross_project_search_strategy"] == "parallel"
+        assert caps["local_storage_process_model"] == "exclusive"
+        assert "resident vaultspec-rag service" in result["message"]
 
     def test_ensure_watcher_uses_peek_project(self, tmp_path) -> None:
         """_ensure_watcher must not bump ref_count on the slot.

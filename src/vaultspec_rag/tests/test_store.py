@@ -6,7 +6,10 @@ Tests updated for Qdrant-backed store (replacing LanceDB).
 
 from __future__ import annotations
 
+import threading
+import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -146,6 +149,188 @@ class TestStoreLocalWarnings:
 
         messages = [str(item.message) for item in caught]
         assert not any("Local mode is not recommended" in msg for msg in messages)
+
+
+class TestStoreLocalClientSerialization:
+    """Real local-Qdrant client calls serialize on the store client lock."""
+
+    def _assert_call_waits_for_store_lock(self, tmp_path, store_call, expected) -> None:
+        from vaultspec_rag.store import VaultStore
+
+        store = VaultStore(tmp_path)
+        acquired = False
+        released = False
+        try:
+            store.ensure_table()
+            store.ensure_code_table()
+            acquired = store._client_lock.acquire(timeout=5)
+            assert acquired
+
+            started = threading.Event()
+            finished = threading.Event()
+            errors: list[BaseException] = []
+
+            def worker() -> None:
+                started.set()
+                try:
+                    result = store_call(store)
+                    assert result == expected
+                except BaseException as exc:  # pragma: no cover - reported below
+                    errors.append(exc)
+                finally:
+                    finished.set()
+
+            thread = threading.Thread(target=worker, name="store-search-lock-test")
+            thread.start()
+
+            assert started.wait(timeout=5), "search worker did not start"
+            time.sleep(0.25)
+            assert thread.is_alive(), "search completed while store lock was held"
+            assert not finished.is_set()
+
+            store._client_lock.release()
+            released = True
+            thread.join(timeout=30)
+
+            assert not thread.is_alive(), "search worker did not finish"
+            assert errors == []
+        finally:
+            if acquired and not released:
+                store._client_lock.release()
+            store.close()
+
+    def test_vault_hybrid_search_waits_for_store_lock(self, tmp_path):
+        from vaultspec_rag.store import EMBEDDING_DIM
+
+        self._assert_call_waits_for_store_lock(
+            tmp_path,
+            lambda store: store.hybrid_search(
+                query_vector=[0.0] * EMBEDDING_DIM,
+                query_text="anything",
+                limit=1,
+            ),
+            [],
+        )
+
+    def test_codebase_hybrid_search_waits_for_store_lock(self, tmp_path):
+        from vaultspec_rag.store import EMBEDDING_DIM
+
+        self._assert_call_waits_for_store_lock(
+            tmp_path,
+            lambda store: store.hybrid_search_codebase(
+                query_vector=[0.0] * EMBEDDING_DIM,
+                query_text="anything",
+                limit=1,
+            ),
+            [],
+        )
+
+    def test_count_waits_for_store_lock(self, tmp_path):
+        self._assert_call_waits_for_store_lock(
+            tmp_path,
+            lambda store: store.count(),
+            0,
+        )
+
+    @staticmethod
+    def _dense_vector(dim: int, active_index: int = 0) -> list[float]:
+        vector = [0.0] * dim
+        vector[active_index % dim] = 1.0
+        return vector
+
+    def _seed_searchable_points(self, store, dim: int) -> None:
+        from vaultspec_rag.store import CodeChunk, VaultDocument
+
+        store.upsert_documents(
+            [
+                VaultDocument(
+                    id=f"parallel-doc-{idx}",
+                    path=f".vault/adr/parallel-doc-{idx}.md",
+                    doc_type="adr",
+                    feature="parallel-search",
+                    date="2026-05-03",
+                    tags=["search", "parallel"],
+                    related=[],
+                    title=f"Parallel search ADR {idx}",
+                    content=(
+                        "Local Qdrant searches are serialized per store "
+                        f"while request threads continue safely {idx}."
+                    ),
+                    vector=self._dense_vector(dim, idx),
+                )
+                for idx in range(6)
+            ],
+        )
+        store.upsert_code_chunks(
+            [
+                CodeChunk(
+                    id=f"parallel-chunk-{idx}",
+                    path=f"src/parallel_{idx}.py",
+                    language="python",
+                    content=(
+                        "def search_parallel():\n"
+                        "    return 'serialized local qdrant client'\n"
+                    ),
+                    line_start=1,
+                    line_end=2,
+                    node_type="function_definition",
+                    function_name="search_parallel",
+                    class_name=None,
+                    vector=self._dense_vector(dim, idx),
+                )
+                for idx in range(6)
+            ],
+        )
+
+    def test_parallel_hybrid_searches_complete_without_qdrant_errors(self, tmp_path):
+        from vaultspec_rag.store import VaultStore
+
+        dim = 8
+        worker_count = 8
+        iterations = 10
+        query_vector = self._dense_vector(dim)
+        store = VaultStore(tmp_path, embedding_dim=dim)
+        try:
+            self._seed_searchable_points(store, dim)
+            barrier = threading.Barrier(worker_count)
+
+            def worker(worker_id: int) -> dict[str, int]:
+                barrier.wait(timeout=10)
+                counts = {"vault": 0, "code": 0}
+                for iteration in range(iterations):
+                    if (worker_id + iteration) % 2 == 0:
+                        rows = store.hybrid_search(
+                            query_vector=query_vector,
+                            query_text="parallel local qdrant search",
+                            filters={"feature": "parallel-search"},
+                            limit=3,
+                        )
+                        assert rows
+                        assert all(row["feature"] == "parallel-search" for row in rows)
+                        counts["vault"] += len(rows)
+                    else:
+                        rows = store.hybrid_search_codebase(
+                            query_vector=query_vector,
+                            query_text="parallel local qdrant code search",
+                            filters={"language": "python"},
+                            limit=3,
+                        )
+                        assert rows
+                        assert all(row["language"] == "python" for row in rows)
+                        counts["code"] += len(rows)
+                return counts
+
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(worker, worker_id)
+                    for worker_id in range(worker_count)
+                ]
+                results = [future.result(timeout=60) for future in futures]
+
+            assert sum(item["vault"] for item in results) > 0
+            assert sum(item["code"] for item in results) > 0
+        finally:
+            store.close()
 
 
 class TestBuildCodeFilter:

@@ -61,6 +61,16 @@ vaultspec-rag search --port 8766 "your query"
 vaultspec-rag index --port 8766
 ```
 
+Ad-hoc mode owns the local `qdrant-local` storage in the current
+process. Because the storage process model is `exclusive`, a second
+`vaultspec-rag` process cannot open the same local Qdrant directory;
+lock contention is reported with guidance to use one resident service.
+
+Service-delegated mode sends `project_root` to the HTTP MCP service on
+every delegated call. If the service is unavailable, `search --port`
+warns and falls back to ad-hoc mode. Structured lock contention renders
+the backend contract table and exits instead of retrying unsafely.
+
 Use ad-hoc for one-off tasks or environments where a persistent process isn't practical. Use service-delegated for active development. It keeps one shared daemon across projects and returns results near-instantly.
 
 For AI tools that speak MCP directly (Claude Desktop, Claude Code), see [MCP integration](#mcp-integration). The same daemon serves them, with different project-resolution rules per transport.
@@ -74,6 +84,21 @@ Three interfaces expose the same underlying engine: the CLI (`vaultspec-rag`), t
 The CLI runs indexing and search in-process by default. Pass `--port` to delegate to a running MCP service over HTTP. If the service is unreachable, the CLI falls back to in-process execution.
 
 The MCP server wraps the engine behind tool endpoints, accepting connections from any MCP-compatible client. The Python API is the underlying facade -- call `index()`, `search_vault()`, and `search_codebase()` directly.
+
+### Backend capability contract
+
+| Capability                    | Value          |
+| ----------------------------- | -------------- |
+| Backend                       | `qdrant-local` |
+| Concurrent search accepted    | `true`         |
+| Same-project search strategy  | `serialized`   |
+| Cross-project search strategy | `parallel`     |
+| Storage process model         | `exclusive`    |
+
+Concurrent search support means requests can be accepted concurrently.
+It does not mean same-project Qdrant access runs fully in parallel;
+vault and code hybrid searches serialize the local backend portion
+inside the process.
 
 ### GPU model lifecycle
 
@@ -90,6 +115,10 @@ A shared lock serializes GPU operations. CUDA is mandatory -- the system raises 
 The MCP service manages isolated per-project slots. Each slot contains its own Qdrant store, indexers, searcher, and relationship graph cache. All slots share the single `EmbeddingModel` instance.
 
 MCP tools accept a `project_root` parameter to target a specific project. Different projects initialize in parallel under per-root locks.
+
+Different project roots can initialize and proceed concurrently under
+isolated project slots. Same-root local backend access still serializes.
+All project slots share one `EmbeddingModel` instance and the GPU lock.
 
 ### File watching
 
@@ -121,7 +150,7 @@ vaultspec-rag
     └── service
         ├── start      Spawn background daemon (HTTP, default port 8766)
         ├── stop       Stop the background service
-        ├── status     Show daemon health and connected projects
+        ├── status     Show daemon health and backend capabilities
         ├── warmup     Pre-download model weights to HuggingFace cache
         └── projects
             ├── list   Show per-project slot table (idle, refs, last access)
@@ -137,6 +166,10 @@ vaultspec-rag
 The `index` and `search` commands accept a `--port` flag. When set, the CLI delegates to a running MCP service over HTTP instead of loading GPU models in-process. If the service is unavailable, the CLI falls back to in-process operation with a warning.
 
 Loading the embedding models takes several seconds on a cold start. Point `--port` at a running `server service` instance to skip that overhead entirely.
+
+When a delegated search receives structured local-store lock contention
+from the service, the CLI renders the backend contract table and exits
+instead of falling back into another unsafe local open.
 
 ## Configuration
 
@@ -193,8 +226,9 @@ The HTTP service exposes a `/health` endpoint returning JSON:
 - `status` -- `ready` (models loaded), `degraded` (started but models failed), or `error` (not started)
 - `cuda` -- boolean indicating GPU availability
 - `models_loaded` -- boolean indicating whether all three models initialized
-- `project_count` -- number of connected projects
+- `project_count` -- number of registered project slots
 - `uptime_s` -- seconds since startup
+- `backend_capabilities` -- backend name, search concurrency contract, cross-project strategy, and storage process model
 
 Check health from the CLI with `vaultspec-rag server service status`.
 
@@ -211,7 +245,7 @@ The daemon bounds its in-memory per-project state in two dimensions. Each reacha
 - **Idle TTL.** A slot with `ref_count == 0` that has not been accessed for at least `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` (default 1800, i.e. 30 minutes) is evicted opportunistically the next time any request touches the registry. Set the env var to `0` to disable.
 - **LRU cap.** At most `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS` slots (default 16) live concurrently. Admitting a new slot at the cap evicts the least-recently-accessed idle slot. If every slot is busy, the MCP tool returns a structured `{"ok": false, "error": "registry_full", "busy_projects": [...]}` response and the caller should retry. Set to `0` to disable.
 
-Inspect and evict slots via `vaultspec-rag service projects list` and `vaultspec-rag service projects evict <root>`. The `list` command renders a Rich table (`Root`, `Idle`, `Refs`, `Last access`) plus a footer summarizing `{used}/{max}` slots and the idle TTL. The `evict` command exits `0` on success, `1` if the slot is busy, `2` if the root is unknown, and `3` if the service is unreachable. Both commands accept `--port` to target a specific daemon.
+Inspect and evict slots via `vaultspec-rag server service projects list` and `vaultspec-rag server service projects evict <root>`. The `list` command renders a Rich table (`Root`, `Idle`, `Refs`, `Last access`) plus a footer summarizing `{used}/{max}` slots and the idle TTL. The `evict` command exits `0` on success, `1` if the slot is busy, `2` if the root is unknown, and `3` if the service is unreachable. Both commands accept `--port` to target a specific daemon.
 
 ### Log rotation
 
@@ -259,6 +293,10 @@ The MCP client launches `vaultspec-search-mcp` as a subprocess, one process per 
 - The `vault://{doc_id}` resource returns full document content.
 - Suitable for Claude Desktop, Claude Code, or any client that spawns one MCP server per workspace.
 
+Local storage remains process-exclusive. Use one stdio process per
+project root; route concurrent clients for the same project through
+HTTP mode.
+
 Configure a Claude Desktop client like this:
 
 ```json
@@ -281,6 +319,10 @@ The server runs as a persistent daemon at `http://127.0.0.1:{port}/mcp` and serv
 - `project_root` is **required** on every tool call. Omitting it raises `ValueError: project_root is required in HTTP service mode -- the multi-tenant service has no default project`.
 - The `vault://{doc_id}` resource is **not available** -- use `search_vault` or `get_code_file` with an explicit `project_root` instead.
 - Suitable for shared services across multiple workspaces or CI environments.
+
+HTTP mode has no default project. Every tool call must include
+`project_root`; stdio mode is the only transport that falls back to
+`VAULTSPEC_RAG_ROOT` or cwd.
 
 Start the daemon and connect a client:
 

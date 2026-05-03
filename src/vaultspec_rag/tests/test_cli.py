@@ -10,6 +10,8 @@ import pytest
 from typer.testing import CliRunner
 
 from vaultspec_rag.cli import (
+    _add_backend_contract_rows,
+    _display_mcp_error,
     _display_search_results,
     _health_probe,
     _is_our_service,
@@ -258,6 +260,56 @@ class TestMcpFastPath:
             "vault",
         )
 
+    def test_backend_contract_rows_render(self):
+        """Backend contract rows render stable concurrency wording."""
+        from rich.table import Table
+
+        table = Table(show_header=False)
+        table.add_column("Key")
+        table.add_column("Value")
+
+        _add_backend_contract_rows(
+            table,
+            {
+                "same_project_search_strategy": "serialized",
+                "cross_project_search_strategy": "parallel",
+                "local_storage_process_model": "exclusive",
+            },
+        )
+
+        from io import StringIO
+
+        from rich.console import Console
+
+        out = StringIO()
+        Console(file=out, force_terminal=False, width=120).print(table)
+        rendered = out.getvalue()
+        assert "Search Concurrency" in rendered
+        assert "supported; same-project local backend access serialized" in rendered
+        assert "Storage Process Model" in rendered
+
+    def test_display_mcp_lock_error_renders_contract(self, capsys):
+        """Structured local-store errors show remediation and backend contract."""
+        _display_mcp_error(
+            {
+                "ok": False,
+                "error": "local_store_locked",
+                "message": "Route concurrent searches through one service.",
+                "db_path": "/tmp/qdrant",
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                    "cross_project_search_strategy": "parallel",
+                    "local_storage_process_model": "exclusive",
+                },
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "Route concurrent searches through one service." in out
+        assert "local_store_locked" in out
+        assert "same-project local backend access" in out
+        assert "serialized" in out
+
 
 class TestServiceDaemonHelpers:
     """Tests for the service daemon helper functions."""
@@ -412,6 +464,56 @@ class TestServiceDaemonHelpers:
         finally:
             server.server_close()
             t.join(timeout=5)
+
+    def test_service_status_renders_health_contract(self, tmp_path: Path):
+        """service status renders project_count and backend capabilities."""
+        import http.server
+        import json
+        import threading
+
+        class _HealthHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "status": "ready",
+                            "cuda": True,
+                            "models_loaded": True,
+                            "project_count": 3,
+                            "uptime_s": 12.0,
+                            "backend_capabilities": {
+                                "same_project_search_strategy": "serialized",
+                                "cross_project_search_strategy": "parallel",
+                                "local_storage_process_model": "exclusive",
+                            },
+                        },
+                    ).encode("utf-8"),
+                )
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.handle_request, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            result = runner.invoke(app, ["server", "service", "status"])
+
+            assert result.exit_code == 0
+            assert "Projects" in result.output
+            assert "3" in result.output
+            assert "Search Concurrency" in result.output
+            assert "Cross-project Search" in result.output
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            server.server_close()
+            thread.join(timeout=5)
 
 
 def _find_free_port() -> int:
