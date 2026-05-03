@@ -222,7 +222,8 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 - `vaultspec-rag index --type vault` indexes vault documents. One document maps to one index entry.
 - `vaultspec-rag index --type code` indexes source files. Tree-sitter handles structural chunking when grammars are available; text splitting serves as the fallback. Supported languages include Python, Rust, TypeScript, JavaScript, Go, Java, C/C++, C#, Ruby, and Kotlin.
 - `vaultspec-rag index` (default `--type all`) indexes both.
-- Add `--clean` to drop and recreate the index from scratch.
+- Add `--rebuild` to `index` to drop the selected collections before re-indexing.
+- Use `vaultspec-rag clean [vault|code|all] --yes` to drop and recreate selected Qdrant collections and clear matching metadata sidecars without loading embeddings, scanning files, or indexing. Without `--yes`/`-y`, `clean` prompts for confirmation.
 - Incremental indexing (the default) uses blake2b content hashing to detect changes.
 - `--dry-run` lists files that would be indexed without writing anything (codebase only).
 

@@ -89,6 +89,8 @@ vaultspec-rag indexes two sources: **vault** (`.vault/` documents) and **code** 
 vaultspec-rag index                          # both
 vaultspec-rag index --type vault             # vault only
 vaultspec-rag index --type code              # code only
+vaultspec-rag index --rebuild                # drop selected collections, then re-index
+vaultspec-rag clean all --yes                # wipe index data without re-indexing
 
 vaultspec-rag search "architecture decision"
 vaultspec-rag search --type code "error handling"

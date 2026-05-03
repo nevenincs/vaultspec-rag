@@ -89,8 +89,8 @@ class TestCLIIndex:
         assert "Indexing Summary" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_clean_flag_works(self, cli_vault):
-        """``vaultspec-rag index --type vault --clean`` exits zero."""
+    def test_index_rebuild_flag_works(self, cli_vault):
+        """``vaultspec-rag index --type vault --rebuild`` exits zero."""
         root = str(cli_vault)
         result = _run_cli(
             "--target",
@@ -98,7 +98,7 @@ class TestCLIIndex:
             "index",
             "--type",
             "vault",
-            "--clean",
+            "--rebuild",
             cwd=root,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"

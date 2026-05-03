@@ -264,7 +264,10 @@ class EmbeddingModel:
         self._sparse_model = SparseEncoder(
             sparse_name,
             device="cuda",
-            model_kwargs={"torch_dtype": torch.float16},
+            model_kwargs={
+                "torch_dtype": torch.float16,
+                "use_safetensors": False,
+            },
         )
         # Do NOT override the sparse model's max_seq_length: SPLADE
         # is BERT-based and has max_position_embeddings=512. Setting

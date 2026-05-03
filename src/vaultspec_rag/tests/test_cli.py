@@ -38,6 +38,7 @@ class TestMainHelp:
     def test_help_lists_commands(self):
         result = runner.invoke(app, ["--help"])
         assert "index" in result.output
+        assert "clean" in result.output
         assert "search" in result.output
         assert "status" in result.output
         assert "test" in result.output
@@ -103,6 +104,78 @@ class TestWorkspaceRequired:
             ["--target", "/nonexistent/path", "status"],
         )
         assert result.exit_code != 0
+
+
+class TestCleanCommand:
+    """Tests for the wipe-only ``clean`` command."""
+
+    @staticmethod
+    def _workspace(tmp_path: Path) -> Path:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        return tmp_path
+
+    def test_clean_help_renders(self):
+        result = runner.invoke(app, ["clean", "--help"])
+        assert result.exit_code == 0
+        assert "wipe" in result.output.lower()
+
+    def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
+        from vaultspec_rag.config import get_config
+        from vaultspec_rag.store import VaultStore
+
+        root = self._workspace(tmp_path)
+        cfg = get_config()
+        data_dir = root / cfg.data_dir
+        data_dir.mkdir(parents=True)
+        (data_dir / cfg.index_metadata_file).write_text('{"x": "y"}', encoding="utf-8")
+        (data_dir / cfg.code_index_metadata_file).write_text(
+            '{"src/app.py": "hash"}',
+            encoding="utf-8",
+        )
+
+        store = VaultStore(root)
+        try:
+            store.ensure_table()
+            store.ensure_code_table()
+        finally:
+            store.close()
+
+        result = runner.invoke(app, ["--target", str(root), "clean", "all", "--yes"])
+        assert result.exit_code == 0, result.output
+        assert "Clean Summary" in result.output
+
+        store = VaultStore(root)
+        try:
+            assert store.count() == 0
+            assert store.count_code() == 0
+        finally:
+            store.close()
+        assert not (data_dir / cfg.index_metadata_file).exists()
+        assert not (data_dir / cfg.code_index_metadata_file).exists()
+
+
+class TestIndexRebuild:
+    """Tests for the drop-and-reindex flag."""
+
+    def test_index_rebuild_parses_with_dry_run(self, tmp_path: Path):
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--rebuild",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "files would be indexed" in result.output
 
 
 class TestServerCommands:

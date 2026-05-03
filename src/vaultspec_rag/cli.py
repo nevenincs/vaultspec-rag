@@ -434,11 +434,11 @@ def handle_index(
         str | None,
         typer.Option("--model", help="Override the embedding model name."),
     ] = None,
-    clean: Annotated[
+    rebuild: Annotated[
         bool,
         typer.Option(
-            "--clean",
-            help="Delete the existing index before starting.",
+            "--rebuild",
+            help="Drop the selected index collections before re-indexing.",
         ),
     ] = False,
     port: Annotated[
@@ -474,7 +474,7 @@ def handle_index(
         index_type: What to index: ``vault``, ``code``, or
             ``all``.
         model: Override the default embedding model name.
-        clean: Delete the existing index before rebuilding.
+        rebuild: Drop the selected index collections before re-indexing.
         port: Port of a running MCP server for fast-path
             delegation.
         dry_run: List files that would be indexed without
@@ -519,14 +519,14 @@ def handle_index(
         if do_vault:
             v_data = _try_mcp_reindex(
                 "reindex_vault",
-                clean,
+                rebuild,
                 port,
                 str(target),
             )
         if do_code:
             c_data = _try_mcp_reindex(
                 "reindex_codebase",
-                clean,
+                rebuild,
                 port,
                 str(target),
             )
@@ -593,7 +593,7 @@ def handle_index(
 
         reporter.phase_start("open store", 1)
         store = _open_vault_store(target)
-        if clean:
+        if rebuild:
             store.close()
             if store.db_path.exists():
                 try:
@@ -629,7 +629,7 @@ def handle_index(
                 assert v_indexer is not None
                 v_res = (
                     v_indexer.full_index(clean=True, reporter=reporter)
-                    if clean
+                    if rebuild
                     else v_indexer.incremental_index(reporter=reporter)
                 )
 
@@ -637,7 +637,7 @@ def handle_index(
                 assert c_indexer is not None
                 c_res = (
                     c_indexer.full_index(clean=True, reporter=reporter)
-                    if clean
+                    if rebuild
                     else c_indexer.incremental_index(reporter=reporter)
                 )
         finally:
@@ -669,6 +669,77 @@ def handle_index(
             str(c_res.total),
             f"{c_res.duration_ms}ms",
         )
+    console.print(table)
+
+
+@app.command("clean")
+def handle_clean(
+    ctx: typer.Context,
+    clean_type: Annotated[
+        Literal["vault", "code", "all"],
+        typer.Argument(
+            help="What to wipe: 'vault' (docs), 'code' (source), or 'all'.",
+            show_default=True,
+        ),
+    ] = "all",
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Confirm the destructive wipe without prompting.",
+        ),
+    ] = False,
+) -> None:
+    """Drop selected index collections without re-indexing.
+
+    This command does not load embedding models, walk the vault, scan
+    the codebase, or touch GPUs. It drops and re-creates the selected
+    Qdrant collections and clears the matching metadata sidecar files.
+    """
+    state: CLIState = ctx.obj
+    target = state.target
+    if not yes:
+        confirmed = typer.confirm(
+            f"Delete {clean_type} RAG index data for {target}?",
+            default=False,
+        )
+        if not confirmed:
+            console.print("[yellow]Clean cancelled.[/]")
+            raise typer.Exit(code=1)
+
+    from .config import get_config
+
+    cfg = get_config()
+    store = _open_vault_store(target)
+    try:
+        do_vault = clean_type in ("vault", "all")
+        do_code = clean_type in ("code", "all")
+        if do_vault:
+            store.drop_table()
+            store.ensure_table()
+        if do_code:
+            store.drop_code_table()
+            store.ensure_code_table()
+    finally:
+        store.close()
+
+    data_dir = target / cfg.data_dir
+    cleared: list[str] = []
+    if clean_type in ("vault", "all"):
+        meta = data_dir / cfg.index_metadata_file
+        meta.unlink(missing_ok=True)
+        cleared.append("Vault")
+    if clean_type in ("code", "all"):
+        meta = data_dir / cfg.code_index_metadata_file
+        meta.unlink(missing_ok=True)
+        cleared.append("Codebase")
+
+    table = Table(title="Clean Summary", show_header=True)
+    table.add_column("Source", style="bold")
+    table.add_column("Status", style="green")
+    for source in cleared:
+        table.add_row(source, "empty")
     console.print(table)
 
 
@@ -1743,7 +1814,7 @@ def service_warmup() -> None:
         _handle_gpu_error(RuntimeError("CUDA runtime unavailable"))
 
     try:
-        from huggingface_hub import snapshot_download, try_to_load_from_cache
+        from huggingface_hub import HfFolder, snapshot_download, try_to_load_from_cache
     except ImportError:
         console.print("[bold red]Error:[/] huggingface_hub is not installed.")
         raise typer.Exit(code=1) from None
@@ -1763,6 +1834,16 @@ def service_warmup() -> None:
     table.add_column("Model", style="bold")
     table.add_column("Repo", style="cyan")
     table.add_column("Status")
+
+    token = HfFolder.get_token()
+    if token:
+        table.add_row("HuggingFace auth", "token", "[green]configured[/]")
+    else:
+        table.add_row(
+            "HuggingFace auth",
+            "token",
+            "[yellow]missing[/]: run huggingface-cli login if downloads fail",
+        )
 
     for label, repo_id in models:
         # Check if already cached
