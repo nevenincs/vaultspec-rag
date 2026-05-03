@@ -76,6 +76,8 @@ class InstallReport:
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
+    torch_direct_dep_action: str = "skipped"
+    torch_direct_dep_location: str = ""
     torch_sync_action: str = "skipped"
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +92,8 @@ class InstallReport:
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),
+            "torch_direct_dep_action": self.torch_direct_dep_action,
+            "torch_direct_dep_location": self.torch_direct_dep_location,
             "torch_sync_action": self.torch_sync_action,
         }
 
@@ -116,6 +120,8 @@ class UninstallReport:
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
+    torch_direct_dep_action: str = "skipped"
+    torch_direct_dep_location: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +133,8 @@ class UninstallReport:
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),
+            "torch_direct_dep_action": self.torch_direct_dep_action,
+            "torch_direct_dep_location": self.torch_direct_dep_location,
         }
 
 
@@ -332,6 +340,8 @@ def install_run(
         sync_after=sync_after,
         confirm=confirm,
     )
+    if not dry_run:
+        _maybe_warn_hf_auth(report)
 
     # INSTALL-04: ``--sync`` is gated by ``patch_report.action ==
     # "applied"`` inside ``_run_torch_config_install``. Any path that
@@ -344,12 +354,33 @@ def install_run(
     if sync_after and report.torch_sync_action == "skipped":
         report.warnings.append(
             f"--sync requested but skipped: torch-config step did not apply "
-            f"(torch_config_action={report.torch_config_action}). Run "
-            f"`uv sync --reinstall-package torch` manually if you still want "
-            f"to refresh the torch wheel."
+            f"and torch direct-dep step did not run "
+            f"(torch_config_action={report.torch_config_action}, "
+            f"torch_direct_dep_action={report.torch_direct_dep_action}). Run "
+            f"`uv sync --reinstall-package torch` manually after resolving "
+            f"the reported torch configuration issue."
         )
 
     return report
+
+
+def _maybe_warn_hf_auth(report: InstallReport) -> None:
+    """Warn when HuggingFace credentials are not configured locally."""
+    try:
+        from huggingface_hub import get_token
+    except ImportError:
+        report.warnings.append(
+            "huggingface_hub is not installed; install dependencies before "
+            "downloading embedding models."
+        )
+        return
+
+    if get_token():
+        return
+    report.warnings.append(
+        "HuggingFace token not found. Run `huggingface-cli login` before "
+        "model warmup, indexing, or search if model downloads require auth."
+    )
 
 
 def _run_torch_config_install(
@@ -394,12 +425,9 @@ def _run_torch_config_install(
         return
     if state == torch_config.TorchConfigState.CANONICAL:
         report.torch_config_action = TorchConfigAction.ALREADY
-        # Idempotent re-runs still need the transitive-dep diagnostic —
-        # the fix is required every run, not just on the first write.
-        # Without this, a user who ran install once, never added torch
-        # as a direct dep, and runs install again gets "already" with
-        # no warning even though resolution still pulls cpu-torch.
-        _maybe_warn_transitive_dep(pyproject, report)
+        _ensure_torch_direct_dep(pyproject, report)
+        if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
+            _run_uv_sync_torch(target=target, report=report)
         return
     if state == torch_config.TorchConfigState.CUSTOMISED:
         # Detect returns no conflicts on CUSTOMISED; run apply to get
@@ -422,10 +450,12 @@ def _run_torch_config_install(
     # state is MISSING.
     if dry_run:
         report.torch_config_action = TorchConfigAction.DRY_RUN
-        # Surface the transitive-dep preview during dry-run too, so the
-        # most actionable warning is not hidden behind the wet-run gate.
-        # Otherwise the "preview" misleads: clean preview, then surprise.
-        _maybe_warn_transitive_dep(pyproject, report, dry_run=True)
+        if not torch_config.has_direct_torch_dep(pyproject)[0]:
+            report.warnings.append(
+                "(dry-run preview) torch-config would add "
+                f"direct dependency `{torch_config.DIRECT_TORCH_REQUIREMENT}` to "
+                "[project].dependencies so uv applies the cu130 source pin."
+            )
         return
 
     # ``--force`` is the user's blanket opt-in for destructive intent
@@ -533,48 +563,30 @@ def _run_torch_config_install(
     if patch_report.action != "applied":
         return
 
-    # The patch landed; the workspace is now in CANONICAL state. Surface
-    # the same transitive-dep diagnostic the CANONICAL short-circuit
-    # surfaces, so the warning fires regardless of whether bytes were
-    # written today.
-    _maybe_warn_transitive_dep(pyproject, report)
+    # The patch landed; the workspace is now in CANONICAL state. Ensure
+    # torch is also a direct dependency so uv actually applies the source pin.
+    _ensure_torch_direct_dep(pyproject, report)
 
-    if sync_after:
+    if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
         _run_uv_sync_torch(target=target, report=report)
 
 
-def _maybe_warn_transitive_dep(
-    pyproject: Path, report: InstallReport, *, dry_run: bool = False
-) -> None:
-    """Append the transitive-dep warning when ``torch`` is not a direct dep.
-
-    uv silently ignores ``[tool.uv.sources]`` for purely-transitive
-    packages, so the cu130 pin is a no-op when ``torch`` only enters
-    resolution via ``vaultspec-rag``'s ``Requires-Dist``. The check
-    must fire on every wet-run path that leaves the workspace in a
-    canonical state (fresh apply AND idempotent re-run) and on dry-run
-    previews of MISSING — otherwise the warning hides behind paths
-    the user hits more often than first install.
-
-    Args:
-        pyproject: Path to the consumer's ``pyproject.toml``.
-        report: The install report to mutate.
-        dry_run: When True, prefix the warning with "(dry-run preview)"
-            so the user knows the diagnostic reflects what the wet run
-            would do, not state on disk after the call.
-    """
-    direct, _location = torch_config.has_direct_torch_dep(pyproject)
-    if direct:
-        return
-    prefix = "(dry-run preview) " if dry_run else ""
-    report.warnings.append(
-        f"{prefix}torch-config patched, but `torch` is not a direct dependency "
-        "of this project. uv ignores [tool.uv.sources] for purely "
-        "transitive packages, so the cu130 pin will not take effect. "
-        f"Add `torch>={torch_config.TORCH_MIN_VERSION}` to "
-        "[project].dependencies or [dependency-groups].dev, then run "
-        "`uv lock --refresh-package torch && uv sync`."
-    )
+def _ensure_torch_direct_dep(pyproject: Path, report: InstallReport) -> None:
+    """Make the direct ``torch`` dependency match the cu130 source pin."""
+    dep_report = torch_config.ensure_direct_torch_dep(pyproject)
+    report.torch_direct_dep_action = dep_report.action
+    report.torch_direct_dep_location = dep_report.location
+    report.torch_config_conflicts.extend(dep_report.conflicts)
+    if dep_report.action == "applied":
+        report.warnings.append(
+            f"added direct dependency `{torch_config.DIRECT_TORCH_REQUIREMENT}` to "
+            f"{dep_report.location} so uv applies the cu130 torch source pin."
+        )
+    elif dep_report.action == "conflict":
+        report.warnings.append(
+            "torch-config patched, but vaultspec-rag could not add the direct "
+            "torch dependency automatically; resolve pyproject.toml manually."
+        )
 
 
 def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
@@ -885,6 +897,7 @@ def _run_torch_config_uninstall(
     # state is CANONICAL.
     if dry_run:
         report.torch_config_action = TorchConfigAction.DRY_RUN
+        report.torch_direct_dep_action = "dry_run"
         return
 
     try:
@@ -896,6 +909,17 @@ def _run_torch_config_uninstall(
         return
     report.torch_config_action = patch_report.action
     report.torch_config_conflicts = list(patch_report.conflicts)
+    if patch_report.action == TorchConfigAction.REMOVED:
+        dep_report = torch_config.remove_managed_direct_torch_dep(pyproject)
+        report.torch_direct_dep_action = dep_report.action
+        report.torch_direct_dep_location = dep_report.location
+        report.torch_config_conflicts.extend(dep_report.conflicts)
+        if dep_report.action == "removed":
+            report.warnings.append(
+                "removed vaultspec-rag managed "
+                f"`{torch_config.DIRECT_TORCH_REQUIREMENT}` from "
+                f"{dep_report.location}."
+            )
 
 
 def _rmtree_safe_onexc(_func, path, exc) -> None:

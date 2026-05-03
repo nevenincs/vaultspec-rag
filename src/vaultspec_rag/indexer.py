@@ -165,22 +165,27 @@ class TextSplitter:
 
             if not seps:
                 # Force split by length if no separators left
+                step = max(1, self.chunk_size - self.chunk_overlap)
                 return [
                     remaining_text[i : i + self.chunk_size]
-                    for i in range(
-                        0,
-                        len(remaining_text),
-                        self.chunk_size - self.chunk_overlap,
-                    )
+                    for i in range(0, len(remaining_text), step)
                 ]
 
             separator = seps[0]
+            if separator == "":
+                step = max(1, self.chunk_size - self.chunk_overlap)
+                return [
+                    remaining_text[i : i + self.chunk_size]
+                    for i in range(0, len(remaining_text), step)
+                ]
             splits = remaining_text.split(separator)
 
             final_chunks = []
             current_chunk = ""
 
             for s in splits:
+                if not s:
+                    continue
                 if not current_chunk:
                     current_chunk = s
                 elif len(current_chunk) + len(separator) + len(s) <= self.chunk_size:
@@ -1451,6 +1456,8 @@ class CodebaseIndexer:
             # Always exclude these directories.
             ".venv/",
             ".git/",
+            ".vault/",
+            ".vaultspec/",
             "node_modules/",
             "__pycache__/",
             f"{cfg.data_dir}/",

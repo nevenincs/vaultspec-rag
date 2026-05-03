@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -31,6 +32,11 @@ pytestmark = [pytest.mark.unit]
 def _run(coro):
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
+
+
+@asynccontextmanager
+async def _empty_lifespan(_app):
+    yield
 
 
 class TestToolRegistration:
@@ -574,17 +580,13 @@ class TestHealthHandler:
 
     def test_health_handler_returns_json(self):
         """health_handler returns a JSONResponse with expected keys."""
-        from starlette.testclient import TestClient
-
-        async def _lifespan(app):
-            yield
-
         from starlette.applications import Starlette
         from starlette.routing import Route
+        from starlette.testclient import TestClient
 
         app = Starlette(
             routes=[Route("/health", health_handler)],
-            lifespan=_lifespan,
+            lifespan=_empty_lifespan,
         )
         client = TestClient(app)
         resp = client.get("/health")
@@ -602,13 +604,9 @@ class TestHealthHandler:
         Swaps in a fresh, model-less registry for the duration of the
         test and restores the original in finally.
         """
-        from starlette.testclient import TestClient
-
-        async def _lifespan(app):
-            yield
-
         from starlette.applications import Starlette
         from starlette.routing import Route
+        from starlette.testclient import TestClient
 
         import vaultspec_rag.mcp_server as mod
         from vaultspec_rag.service import ServiceRegistry
@@ -622,7 +620,7 @@ class TestHealthHandler:
 
             app = Starlette(
                 routes=[Route("/health", health_handler)],
-                lifespan=_lifespan,
+                lifespan=_empty_lifespan,
             )
             client = TestClient(app)
             resp = client.get("/health")
@@ -639,17 +637,13 @@ class TestHealthInfoReduction:
 
     def test_health_no_project_paths(self):
         """Health response must not contain absolute project paths."""
-        from starlette.testclient import TestClient
-
-        async def _lifespan(app):
-            yield
-
         from starlette.applications import Starlette
         from starlette.routing import Route
+        from starlette.testclient import TestClient
 
         app = Starlette(
             routes=[Route("/health", health_handler)],
-            lifespan=_lifespan,
+            lifespan=_empty_lifespan,
         )
         client = TestClient(app)
         data = client.get("/health").json()
@@ -659,17 +653,13 @@ class TestHealthInfoReduction:
 
     def test_health_no_gpu_name(self):
         """Health response must not contain GPU device name."""
-        from starlette.testclient import TestClient
-
-        async def _lifespan(app):
-            yield
-
         from starlette.applications import Starlette
         from starlette.routing import Route
+        from starlette.testclient import TestClient
 
         app = Starlette(
             routes=[Route("/health", health_handler)],
-            lifespan=_lifespan,
+            lifespan=_empty_lifespan,
         )
         client = TestClient(app)
         data = client.get("/health").json()

@@ -39,7 +39,14 @@ def _run_script(name: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         elif name == "vaultspec-rag":
             module = "vaultspec_rag.cli"
         cmd = [sys.executable, "-m", module, *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
 
 
 def check_import() -> None:

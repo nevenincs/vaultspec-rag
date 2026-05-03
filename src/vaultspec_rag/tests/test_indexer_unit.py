@@ -660,6 +660,25 @@ class TestCodeChunkMetadataFields:
             assert chunk.class_name is None
 
 
+class TestTextSplitterRobustness:
+    """Regression coverage for text splitter leaf splitting."""
+
+    def test_empty_separator_forces_length_split(self):
+        from vaultspec_rag.indexer import TextSplitter
+
+        splitter = TextSplitter(chunk_size=5, chunk_overlap=0, language="text")
+        chunks = splitter.split_text("abcdefghijk")
+        assert chunks == ["abcde", "fghij", "k"]
+
+    def test_overlap_cannot_create_zero_step(self):
+        from vaultspec_rag.indexer import TextSplitter
+
+        splitter = TextSplitter(chunk_size=5, chunk_overlap=5, language="text")
+        chunks = splitter.split_text("abcdefgh")
+        assert chunks[0] == "abcde"
+        assert all(len(chunk) <= 5 for chunk in chunks)
+
+
 class TestGitignoreNegationPatterns:
     """R9-M4: Negation patterns in subdirectory .gitignore files must keep
     the ! prefix at the start, not prepend the directory before it."""
@@ -1019,6 +1038,35 @@ class TestR10MinorAnchoredPattern:
         rel_paths = {str(p.relative_to(root)).replace("\\", "/") for p in paths}
         assert "sub/main.py" in rel_paths
         assert "sub/build/out.py" not in rel_paths
+
+
+class TestCodebaseInternalDirectoryExclusions:
+    """Codebase indexing must not index vaultspec internal document trees."""
+
+    def test_scan_codebase_excludes_vault_and_vaultspec(self, tmp_path: Path):
+        from vaultspec_rag.indexer import CodebaseIndexer
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("TODO = True\n", encoding="utf-8")
+        (tmp_path / ".vault" / "adr").mkdir(parents=True)
+        (tmp_path / ".vault" / "adr" / "todo.md").write_text(
+            "# TODO\n",
+            encoding="utf-8",
+        )
+        (tmp_path / ".vaultspec" / "rules").mkdir(parents=True)
+        (tmp_path / ".vaultspec" / "rules" / "todo.md").write_text(
+            "# TODO\n",
+            encoding="utf-8",
+        )
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        paths = indexer._scan_codebase()
+        rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
+
+        assert rel_paths == {"src/app.py"}
 
 
 class TestR10MinorBufferFunctionName:

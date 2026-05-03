@@ -169,6 +169,68 @@ class TestQwen3NoDocumentPrompt:
         )
 
 
+class TestEmbeddingModelLoadArguments:
+    """Regression coverage for model constructor arguments."""
+
+    @staticmethod
+    def _load_ast():
+        import ast
+        import inspect
+        import textwrap
+
+        from vaultspec_rag.embeddings import EmbeddingModel
+
+        source = textwrap.dedent(inspect.getsource(EmbeddingModel.__init__))
+        return ast.parse(source)
+
+    @staticmethod
+    def _call_kwargs(tree, call_name: str) -> dict[str, object]:
+        import ast
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name) and node.func.id == call_name:
+                return {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+        raise AssertionError(f"{call_name} call not found")
+
+    def test_dense_text_model_uses_tokenizer_kwargs(self):
+        import ast
+
+        kwargs = self._call_kwargs(self._load_ast(), "SentenceTransformer")
+        assert "tokenizer_kwargs" in kwargs
+        assert "processor_kwargs" not in kwargs
+
+        tokenizer_kwargs = kwargs["tokenizer_kwargs"]
+        assert isinstance(tokenizer_kwargs, ast.Dict)
+        assert any(
+            isinstance(key, ast.Constant)
+            and key.value == "padding_side"
+            and isinstance(value, ast.Constant)
+            and value.value == "left"
+            for key, value in zip(
+                tokenizer_kwargs.keys,
+                tokenizer_kwargs.values,
+                strict=True,
+            )
+        )
+
+    def test_sparse_model_does_not_force_pickle_weights(self):
+        import ast
+
+        kwargs = self._call_kwargs(self._load_ast(), "SparseEncoder")
+        model_kwargs = kwargs["model_kwargs"]
+        assert isinstance(model_kwargs, ast.Dict)
+
+        keys = [
+            key.value
+            for key in model_kwargs.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+        assert "torch_dtype" in keys
+        assert "use_safetensors" not in keys
+
+
 class TestThreadingLock:
     """ADR: mcp_server and api use threading locks for initialization.
 

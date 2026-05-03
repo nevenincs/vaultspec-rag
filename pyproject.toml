@@ -36,10 +36,14 @@ dependencies = [
 ]
 description = "GPU-accelerated RAG module for vaultspec vault search"
 keywords = [
+    "cuda",
     "embeddings",
     "gpu",
     "mcp",
+    "qdrant",
     "rag",
+    "semantic-search",
+    "sentence-transformers",
     "vaultspec",
     "vector-search",
 ]
@@ -124,6 +128,8 @@ packages = ["src/vaultspec_rag"]
 [tool.hatch.build.targets.sdist.force-include]
 ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = ".vaultspec/rules/rules/vaultspec-rag.builtin.md"
 ".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = ".vaultspec/rules/mcps/vaultspec-rag.builtin.json"
+"assets/logo.png" = "assets/logo.png"
+"assets/logo.svg" = "assets/logo.svg"
 
 [tool.hatch.build.targets.wheel.force-include]
 ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
@@ -145,6 +151,7 @@ markers = [
     "quality: precision/recall and document coverage tests",
     "robustness: edge case and error handling tests",
     "timeout: timeout in seconds for individual tests",
+    "xdist_group: pytest-xdist scheduling group",
 ]
 testpaths = ["src/vaultspec_rag/tests"]
 timeout = 300
@@ -181,4 +188,3 @@ known-first-party = ["vaultspec_rag"]
 [tool.ty.environment]
 python-version = "3.13"
 root = [".", "src"]
-

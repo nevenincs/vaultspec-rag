@@ -45,6 +45,7 @@ class EnvVar(StrEnum):
     # the string literal lives in exactly one place.
     HF_HOME = "HF_HOME"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
+    DISABLE_SAFETENSORS_CONVERSION = "DISABLE_SAFETENSORS_CONVERSION"
 
 
 # Mapping from _RAG_DEFAULTS key → EnvVar member for env override lookup.

@@ -211,6 +211,7 @@ class EmbeddingModel:
             if hasattr(cfg, "sparse_model") and cfg.sparse_model
             else self.SPARSE_MODEL_NAME
         )
+        os.environ.setdefault(EnvVar.DISABLE_SAFETENSORS_CONVERSION, "1")
 
         logger.info(
             "HF cache: %s",
