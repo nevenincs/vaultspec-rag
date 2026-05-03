@@ -13,6 +13,7 @@ import contextlib
 import json
 import threading
 import time
+import urllib.request
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -351,30 +352,26 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
                 time.sleep(0.05)
             assert rotated_1.exists(), "rollover never happened"
 
-            # 3: record active size at rollover boundary.
-            size_at_rollover = log_path.stat().st_size
-
-            # 4-5: drive 5 more searches carrying a unique marker.
+            # 3-5: drive one lightweight access-log record carrying
+            # a unique marker.  If this record itself crosses the
+            # threshold, the handler must rotate first and still bind
+            # stdout/stderr to the newly active log.
             marker = "POSTROLLOVER_MARKER_abc123xyz"
-            for j in range(5):
-                _run(
-                    _call_tool(
-                        port,
-                        "search_vault",
-                        {
-                            "query": f"{marker} {j}",
-                            "top_k": 1,
-                            "project_root": str(proj),
-                        },
-                    ),
-                )
-            time.sleep(0.5)
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health?marker={marker}",
+                timeout=5,
+            ) as resp:
+                assert resp.status == 200
 
-            # 6: active file grew.
-            assert log_path.stat().st_size > size_at_rollover
+            deadline = time.monotonic() + 2.0
+            active_bytes = b""
+            while time.monotonic() < deadline:
+                active_bytes = log_path.read_bytes()
+                if marker.encode() in active_bytes:
+                    break
+                time.sleep(0.1)
 
-            # 7: marker appears in active file, NOT in .1 backup.
-            active_bytes = log_path.read_bytes()
+            # 6: marker appears in active file, NOT in .1 backup.
             rotated_bytes = rotated_1.read_bytes()
             assert marker.encode() in active_bytes
             assert marker.encode() not in rotated_bytes
@@ -403,18 +400,29 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
             def _hammer(proj: Path) -> None:
                 with contextlib.suppress(Exception):
                     _run(
-                        _call_tool(
-                            port,
-                            "search_vault",
-                            {
-                                "query": "drain test",
-                                "top_k": 3,
-                                "project_root": str(proj),
-                            },
+                        asyncio.wait_for(
+                            _call_tool(
+                                port,
+                                "search_vault",
+                                {
+                                    "query": "drain test",
+                                    "top_k": 3,
+                                    "project_root": str(proj),
+                                },
+                            ),
+                            timeout=8.0,
                         ),
                     )
 
-            threads = [threading.Thread(target=_hammer, args=(p,)) for p in projects]
+            threads = [
+                threading.Thread(
+                    target=_hammer,
+                    args=(p,),
+                    daemon=True,
+                    name=f"drain-hammer-{i}",
+                )
+                for i, p in enumerate(projects)
+            ]
             for t in threads:
                 t.start()
             # Immediately request termination.
@@ -425,7 +433,9 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
             # 5s drain + 2s grace + teardown epsilon.
             assert elapsed < 10.0, f"shutdown took {elapsed:.1f}s"
             for t in threads:
-                t.join(timeout=5)
+                t.join(timeout=10)
+            alive = [t.name for t in threads if t.is_alive()]
+            assert not alive, f"client load threads did not exit: {alive}"
             # service.json must be cleaned up.
             assert not (tmp_path / "service.json").exists()
         finally:

@@ -99,6 +99,46 @@ def test_daemon_rotating_handler_do_rollover_re_dups_stdio(tmp_path: Path) -> No
         _restore_root_handlers(saved_root)
 
 
+def test_daemon_rotating_handler_rolls_when_active_file_is_pinned(
+    tmp_path: Path,
+) -> None:
+    """Rollover succeeds even when another real file handle pins the log."""
+    log_path = tmp_path / "service.log"
+    saved_root = _clear_root_handlers()
+    try:
+        handler = DaemonRotatingFileHandler(
+            str(log_path),
+            maxBytes=64,
+            backupCount=2,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        root = logging.getLogger()
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+
+        logging.getLogger("test").warning("before rollover")
+        handler.flush()
+
+        with log_path.open("a", encoding="utf-8") as pinned:
+            pinned.write("pinned handle\n")
+            pinned.flush()
+            handler.doRollover()
+
+        logging.getLogger("test").warning("__AFTER_PINNED_ROLLOVER__")
+        handler.flush()
+
+        active = log_path.read_text(encoding="utf-8")
+        rotated_path = log_path.with_name(log_path.name + ".1")
+        assert rotated_path.exists(), "Expected a rotated backup file"
+        rotated = rotated_path.read_text(encoding="utf-8")
+
+        assert "__AFTER_PINNED_ROLLOVER__" in active
+        assert "before rollover" in rotated
+    finally:
+        _restore_root_handlers(saved_root)
+
+
 def test_install_attaches_to_root_logger_is_idempotent(tmp_path: Path) -> None:
     """First call attaches exactly one handler; second call leaves count at one."""
     log_path = tmp_path / "service.log"

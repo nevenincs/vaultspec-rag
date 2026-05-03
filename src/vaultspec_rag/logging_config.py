@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import shutil
 from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING, override
 
@@ -158,9 +159,13 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
                 os.close(devnull_fd)
             try:
                 super().doRollover()
+            except PermissionError:
+                if os.name != "nt":
+                    self._rebind_fds_to_basefile()
+                    raise
+                self._copytruncate_rollover()
             except Exception:
                 self._rebind_fds_to_basefile()
-                logger.exception("DaemonRotatingFileHandler.doRollover failed")
                 raise
             # ``self.stream is None`` is the expected state when
             # ``delay=True`` is configured: the parent class defers the
@@ -176,6 +181,40 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
             os.dup2(fd, 2)
         finally:
             self.release()
+
+    def _copytruncate_rollover(self) -> None:
+        """Rotate by copying and truncating when Windows blocks rename.
+
+        Some Windows handles inherited by the detached service can keep
+        the active log path non-renamable even after fds 1 and 2 are
+        redirected.  In that case, preserve the normal bounded-backup
+        contract by shifting existing backups, copying the active file
+        into ``.1``, and truncating the active file in place.
+        """
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+
+        if self.backupCount > 0:
+            for i in range(self.backupCount - 1, 0, -1):
+                src = self.rotation_filename(f"{self.baseFilename}.{i}")
+                dst = self.rotation_filename(f"{self.baseFilename}.{i + 1}")
+                if os.path.exists(src):
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    os.replace(src, dst)
+
+            first_backup = self.rotation_filename(f"{self.baseFilename}.1")
+            if os.path.exists(first_backup):
+                os.remove(first_backup)
+            if os.path.exists(self.baseFilename):
+                shutil.copyfile(self.baseFilename, first_backup)
+
+        with open(self.baseFilename, "w", encoding=self.encoding):
+            pass
+
+        if not self.delay:
+            self.stream = self._open()
 
     def _rebind_fds_to_basefile(self) -> None:
         """Best-effort: re-``dup2`` fds 1 and 2 onto ``self.baseFilename``.

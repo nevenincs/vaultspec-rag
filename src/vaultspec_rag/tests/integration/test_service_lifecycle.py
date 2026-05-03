@@ -89,7 +89,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
 
 
 @pytest.mark.subprocess_gpu
-def test_stale_pid_recovery(request: pytest.FixtureRequest, tmp_path: Path) -> None:
+def test_stale_pid_recovery(tmp_path: Path) -> None:
     """Service start recovers from a stale PID in the status file."""
     with _service_env(tmp_path):
         port = _get_ephemeral_port()
@@ -103,34 +103,31 @@ def test_stale_pid_recovery(request: pytest.FixtureRequest, tmp_path: Path) -> N
         }
         status_path.write_text(json.dumps(stale_data), encoding="utf-8")
 
-        # Register a defensive finalizer that reads the PID from the
-        # status file at teardown time — guarantees cleanup even if
-        # assertions below fail before we know the PID.
-        def _cleanup_from_status() -> None:
-            st = _read_service_status()
-            if st is not None:
-                _terminate_pid(int(st["pid"]))
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "service", "start", "--port", str(port)],
+                env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+            )
 
-        request.addfinalizer(_cleanup_from_status)
+            # The command should have started a fresh service
+            new_status = _read_service_status()
+            assert new_status is not None, (
+                f"Expected new status file after stale recovery, got None. "
+                f"CLI output: {result.stdout!r}"
+            )
+            new_pid = int(new_status["pid"])
+            assert new_pid != 99999
+            assert _is_pid_alive(new_pid)
 
-        result = runner.invoke(
-            app,
-            ["server", "service", "start", "--port", str(port)],
-            env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
-        )
-
-        # The command should have started a fresh service
-        new_status = _read_service_status()
-        assert new_status is not None, (
-            f"Expected new status file after stale recovery, got None. "
-            f"CLI output: {result.stdout!r}"
-        )
-        new_pid = int(new_status["pid"])
-        assert new_pid != 99999
-        assert _is_pid_alive(new_pid)
-
-        health = _poll_health(port)
-        assert health["status"] == "ready"
+            health = _poll_health(port)
+            assert health["status"] == "ready"
+        finally:
+            status = _read_service_status()
+            if status is not None:
+                pid = int(status["pid"])
+                _terminate_pid(pid)
+                _wait_for_exit(pid)
 
 
 @pytest.mark.subprocess_gpu

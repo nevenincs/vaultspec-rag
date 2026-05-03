@@ -193,23 +193,23 @@ class TestEmbeddingModelLoadArguments:
                 return {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
         raise AssertionError(f"{call_name} call not found")
 
-    def test_dense_text_model_uses_tokenizer_kwargs(self):
+    def test_dense_text_model_uses_processor_kwargs(self):
         import ast
 
         kwargs = self._call_kwargs(self._load_ast(), "SentenceTransformer")
-        assert "tokenizer_kwargs" in kwargs
-        assert "processor_kwargs" not in kwargs
+        assert "processor_kwargs" in kwargs
+        assert "tokenizer_kwargs" not in kwargs
 
-        tokenizer_kwargs = kwargs["tokenizer_kwargs"]
-        assert isinstance(tokenizer_kwargs, ast.Dict)
+        processor_kwargs = kwargs["processor_kwargs"]
+        assert isinstance(processor_kwargs, ast.Dict)
         assert any(
             isinstance(key, ast.Constant)
             and key.value == "padding_side"
             and isinstance(value, ast.Constant)
             and value.value == "left"
             for key, value in zip(
-                tokenizer_kwargs.keys,
-                tokenizer_kwargs.values,
+                processor_kwargs.keys,
+                processor_kwargs.values,
                 strict=True,
             )
         )
