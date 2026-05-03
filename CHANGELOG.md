@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.7...vaultspec-rag-v0.2.8) (2026-05-03)
+
+
+### Bug Fixes
+
+* remove dense model deprecation and harden GPU subprocess tests ([87982aa](https://github.com/wgergely/vaultspec-rag/commit/87982aa8e73696fd69b2607586216c080088ce8d))
+
 ## [0.2.7](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.6...vaultspec-rag-v0.2.7) (2026-05-03)
 
 
