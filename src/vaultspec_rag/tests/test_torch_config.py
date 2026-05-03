@@ -608,6 +608,73 @@ def test_has_direct_torch_dep_absent(tmp_path: Path) -> None:
     assert location == ""
 
 
+def test_ensure_direct_torch_dep_adds_project_dependency(tmp_path: Path) -> None:
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\ndependencies = ["vaultspec-rag"]\n',
+    )
+
+    report = tc.ensure_direct_torch_dep(p)
+
+    assert report.action == "applied"
+    assert report.location == "[project].dependencies"
+    after = p.read_text(encoding="utf-8")
+    assert '"torch>=2.4"' in after
+    assert "managed-torch-direct-dependency = true" in after
+    found, location = tc.has_direct_torch_dep(p)
+    assert found is True
+    assert location == "[project].dependencies"
+
+
+def test_ensure_direct_torch_dep_is_noop_when_present(tmp_path: Path) -> None:
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\ndependencies = ["vaultspec-rag", "torch>=2.4"]\n',
+    )
+    before = p.read_bytes()
+
+    report = tc.ensure_direct_torch_dep(p)
+
+    assert report.action == "already"
+    assert report.location == "[project].dependencies"
+    assert p.read_bytes() == before
+    assert "managed-torch-direct-dependency" not in p.read_text(encoding="utf-8")
+
+
+def test_remove_managed_direct_torch_dep_removes_only_owned_entry(
+    tmp_path: Path,
+) -> None:
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\ndependencies = ["vaultspec-rag"]\n',
+    )
+    tc.ensure_direct_torch_dep(p)
+
+    report = tc.remove_managed_direct_torch_dep(p)
+
+    assert report.action == "removed"
+    after = p.read_text(encoding="utf-8")
+    assert '"torch>=2.4"' not in after
+    assert "managed-torch-direct-dependency" not in after
+
+
+def test_remove_managed_direct_torch_dep_preserves_user_entry(tmp_path: Path) -> None:
+    p = tmp_path / "pyproject.toml"
+    _write(
+        p,
+        '[project]\nname = "demo"\ndependencies = ["vaultspec-rag", "torch>=2.4"]\n',
+    )
+    before = p.read_bytes()
+
+    report = tc.remove_managed_direct_torch_dep(p)
+
+    assert report.action == "skipped"
+    assert p.read_bytes() == before
+
+
 def test_has_direct_torch_dep_no_project_file(tmp_path: Path) -> None:
     """Missing pyproject yields ``(False, "")`` — not an exception."""
     found, location = tc.has_direct_torch_dep(tmp_path / "missing.toml")

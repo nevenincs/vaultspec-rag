@@ -70,21 +70,23 @@ def _cpu_only_message() -> str:
         "[bold red]Error:[/] PyTorch was installed without CUDA support "
         "(CPU-only wheel). Your GPU is fine.\n\n"
         "  [cyan]uv run vaultspec-rag install[/] patches your "
-        "pyproject.toml with the cu130 torch index. After patching, "
+        "pyproject.toml with the cu130 torch index and adds "
+        "[cyan]torch>=2.4[/] as a direct dependency when needed. After "
+        "patching, "
         "rerun [cyan]uv sync --reinstall-package torch[/].\n\n"
         "  If install has already run and you are still here, verify:\n"
         "    1. [cyan]pyproject.toml[/] has \\[\\[tool.uv.index]] "
         '[cyan]name = "pytorch-cu130"[/] and '
         "[cyan]\\[tool.uv.sources][/] torch = ...\n"
-        "    2. [cyan]uv.lock[/] has a torch entry with "
+        "    2. [cyan]pyproject.toml[/] has [cyan]torch>=2.4[/] as "
+        "a direct dependency in [cyan]\\[project].dependencies[/] "
+        "or [cyan]\\[dependency-groups].dev[/]\n"
+        "    3. [cyan]uv.lock[/] has a torch entry with "
         "[cyan]source = "
         '{ registry = "https://download.pytorch.org/whl/cu130" }[/] '
         "(not pypi.org/simple)\n"
-        "    3. If the lockfile still points at PyPI, [cyan]torch[/] must be "
-        "a direct dependency. Add [cyan]torch>=2.4[/] to "
-        "[cyan]\\[project].dependencies[/] or "
-        "[cyan]\\[dependency-groups].dev[/], "
-        "then run [cyan]uv lock --refresh-package torch && uv sync[/].\n\n"
+        "    4. If the lockfile still points at PyPI, rerun "
+        "[cyan]uv lock --refresh-package torch && uv sync[/].\n\n"
         "  Or configure manually by adding this to your pyproject.toml:"
     )
 
@@ -2580,6 +2582,18 @@ def _render_install_report(report: Any) -> None:
         "skipped-eof": "yellow",
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    td_action = getattr(report, "torch_direct_dep_action", "skipped")
+    if td_action not in ("skipped",):
+        td_colour = {
+            "applied": "green",
+            "already": "cyan",
+            "dry_run": "yellow",
+            "conflict": "red",
+            "absent": "yellow",
+        }.get(td_action, "white")
+        td_location = getattr(report, "torch_direct_dep_location", "")
+        suffix = f" ({td_location})" if td_location else ""
+        console.print(f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}")
     for conflict in getattr(report, "torch_config_conflicts", []):
         # Assemble the prefix and body as a single ``Text`` so Rich's
         # word-wrapper can honour the leading two-space indent across
@@ -2630,6 +2644,17 @@ def _render_uninstall_report(report: Any) -> None:
         "error": "red",
     }.get(tc_action, "white")
     console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    td_action = getattr(report, "torch_direct_dep_action", "skipped")
+    if td_action not in ("skipped",):
+        td_colour = {
+            "removed": "green",
+            "dry_run": "yellow",
+            "conflict": "red",
+            "absent": "dim",
+        }.get(td_action, "white")
+        td_location = getattr(report, "torch_direct_dep_location", "")
+        suffix = f" ({td_location})" if td_location else ""
+        console.print(f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}")
     for conflict in getattr(report, "torch_config_conflicts", []):
         # Same Text.assemble treatment as the install side — see
         # CLI-05 in _render_install_report for the rationale.

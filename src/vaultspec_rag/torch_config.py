@@ -63,7 +63,9 @@ __all__ = [
     "CU130_INDEX_NAME",
     "CU130_INDEX_URL",
     "CU130_MARKER",
+    "DIRECT_TORCH_REQUIREMENT",
     "TORCH_MIN_VERSION",
+    "DirectTorchDepReport",
     "PatchReport",
     "TorchConfigAction",
     "TorchConfigState",
@@ -71,9 +73,11 @@ __all__ = [
     "apply_patch",
     "detect_state",
     "diagnose_torch",
+    "ensure_direct_torch_dep",
     "has_direct_torch_dep",
     "manual_snippet",
     "preview_patch",
+    "remove_managed_direct_torch_dep",
     "remove_patch",
 ]
 
@@ -87,6 +91,8 @@ CU130_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
 # direct-dep example. Extracting the value as a single constant keeps
 # the three surfaces in lockstep when PyTorch drops a major version.
 TORCH_MIN_VERSION: Final[str] = "2.4"
+DIRECT_TORCH_REQUIREMENT: Final[str] = f"torch>={TORCH_MIN_VERSION}"
+_MANAGED_DIRECT_DEP_KEY: Final[str] = "managed-torch-direct-dependency"
 
 
 class TorchConfigState(StrEnum):
@@ -172,6 +178,16 @@ class PatchReport:
     preview: str = ""
 
 
+@dataclass
+class DirectTorchDepReport:
+    """Structured outcome of managing the direct ``torch`` dependency."""
+
+    action: str
+    path: Path
+    location: str = ""
+    conflicts: list[str] = field(default_factory=list)
+
+
 def manual_snippet() -> str:
     """Return the canonical cu130 block as a copy-pasteable string.
 
@@ -195,7 +211,7 @@ _SNIPPET_DIRECT_DEP_COMMENT: Final[str] = (
     "\n"
     "# uv ignores [tool.uv.sources] for purely-transitive deps.\n"
     f"# Add torch as a direct dep too, e.g. in [project].dependencies\n"
-    f'# or [dependency-groups].dev:  "torch>={TORCH_MIN_VERSION}"\n'
+    f'# or [dependency-groups].dev:  "{DIRECT_TORCH_REQUIREMENT}"\n'
 )
 
 
@@ -876,6 +892,127 @@ def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
             if _is_torch_requirement(entry):
                 return True, label
     return False, ""
+
+
+def _tool_vaultspec_rag(doc: TOMLDocument) -> TableLike | None:
+    tool = doc.get("tool")
+    if not isinstance(tool, _TABLE_LIKE_TYPES):
+        return None
+    rag = tool.get("vaultspec-rag")
+    if not isinstance(rag, _TABLE_LIKE_TYPES):
+        return None
+    return rag
+
+
+def _set_managed_direct_dep_marker(doc: TOMLDocument) -> None:
+    tool = doc.setdefault("tool", tomlkit.table())
+    if not isinstance(tool, _TABLE_LIKE_TYPES):
+        raise TypeError("pyproject.toml [tool] is not a table")
+    rag = tool.setdefault("vaultspec-rag", tomlkit.table())
+    if not isinstance(rag, _TABLE_LIKE_TYPES):
+        raise TypeError("pyproject.toml [tool.vaultspec-rag] is not a table")
+    rag[_MANAGED_DIRECT_DEP_KEY] = True
+
+
+def _clear_managed_direct_dep_marker(doc: TOMLDocument) -> None:
+    rag = _tool_vaultspec_rag(doc)
+    if rag is not None and _MANAGED_DIRECT_DEP_KEY in rag:
+        del rag[_MANAGED_DIRECT_DEP_KEY]
+
+
+def _managed_direct_dep_marker(doc: TOMLDocument) -> bool:
+    rag = _tool_vaultspec_rag(doc)
+    return bool(rag is not None and rag.get(_MANAGED_DIRECT_DEP_KEY) is True)
+
+
+def _project_dependencies(doc: TOMLDocument) -> tuple[list | None, str, list[str]]:
+    project = doc.setdefault("project", tomlkit.table())
+    if not isinstance(project, _TABLE_LIKE_TYPES):
+        return None, "", ["[project] is not a table"]
+    deps = project.get("dependencies")
+    if deps is None:
+        deps = tomlkit.array()
+        project["dependencies"] = deps
+    if not isinstance(deps, list):
+        return None, "", ["[project].dependencies is not an array"]
+    return deps, "[project].dependencies", []
+
+
+def _write_doc_preserving_shape(pyproject: Path, doc: TOMLDocument) -> None:
+    uses_crlf = _detect_crlf(pyproject)
+    original_bytes = pyproject.read_bytes()
+    new_text = tomlkit.dumps(doc)
+    tomlkit.parse(new_text)
+    if uses_crlf:
+        new_text = new_text.replace("\n", "\r\n")
+    new_text = _match_trailing_newline(original_bytes, new_text, uses_crlf=uses_crlf)
+    atomic_write(pyproject, new_text)
+
+
+def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
+    """Ensure the consumer pyproject declares ``torch`` directly.
+
+    uv applies ``[tool.uv.sources]`` only to direct dependencies. When
+    rag writes the CUDA source pin, it must also ensure ``torch`` is
+    present in the consumer's dependency graph, otherwise the pin is a
+    no-op and uv keeps resolving the CPU wheel from PyPI.
+    """
+    report = DirectTorchDepReport(action="skipped", path=pyproject)
+    doc = _load(pyproject)
+    if doc is None:
+        report.action = "absent"
+        return report
+
+    direct, location = has_direct_torch_dep(pyproject)
+    if direct:
+        report.action = "already"
+        report.location = location
+        return report
+
+    deps, location, conflicts = _project_dependencies(doc)
+    if deps is None:
+        report.action = "conflict"
+        report.conflicts = conflicts
+        return report
+
+    deps.append(DIRECT_TORCH_REQUIREMENT)
+    _set_managed_direct_dep_marker(doc)
+    _write_doc_preserving_shape(pyproject, doc)
+    report.action = "applied"
+    report.location = location
+    return report
+
+
+def remove_managed_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
+    """Remove the direct ``torch`` dependency only when rag added it."""
+    report = DirectTorchDepReport(action="skipped", path=pyproject)
+    doc = _load(pyproject)
+    if doc is None:
+        report.action = "absent"
+        return report
+    if not _managed_direct_dep_marker(doc):
+        return report
+
+    deps, location, conflicts = _project_dependencies(doc)
+    if deps is None:
+        report.action = "conflict"
+        report.conflicts = conflicts
+        return report
+
+    for index, entry in enumerate(list(deps)):
+        if entry == DIRECT_TORCH_REQUIREMENT:
+            deps.pop(index)
+            _clear_managed_direct_dep_marker(doc)
+            _write_doc_preserving_shape(pyproject, doc)
+            report.action = "removed"
+            report.location = location
+            return report
+
+    _clear_managed_direct_dep_marker(doc)
+    _write_doc_preserving_shape(pyproject, doc)
+    report.action = "absent"
+    report.location = location
+    return report
 
 
 def diagnose_torch(cuda: str | None, available: bool) -> TorchDiagnosis:

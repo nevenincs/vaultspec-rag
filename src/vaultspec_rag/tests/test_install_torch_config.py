@@ -244,18 +244,17 @@ class TestInstallTorchConfig:
             report.warnings
         )
 
-    def test_install_warns_when_torch_not_a_direct_dep(
+    def test_install_adds_torch_when_not_a_direct_dep(
         self, consumer_workspace: Path
     ) -> None:
-        """Issue #83 finding 4: uv ignores [tool.uv.sources] for purely-
-        transitive deps. The patch lands but is a no-op for resolution
-        unless torch is also a direct dep. Surface a warning naming
-        the canonical fix.
-        """
-        # consumer_workspace has only ``vaultspec-rag`` in deps, so torch
-        # is purely transitive.
+        """Issue #94: the install auto-fix must make the cu130 pin effective."""
         report = install_run(path=consumer_workspace, assume_yes=True)
         assert report.torch_config_action == "applied"
+        assert report.torch_direct_dep_action == "applied"
+        assert report.torch_direct_dep_location == "[project].dependencies"
+        pyproject = (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
+        assert '"torch>=2.4"' in pyproject
+        assert "managed-torch-direct-dependency = true" in pyproject
         assert any(
             "direct dependency" in w.lower() and "torch" in w.lower()
             for w in report.warnings
@@ -277,6 +276,7 @@ class TestInstallTorchConfig:
         )
         report = install_run(path=ws, assume_yes=True)
         assert report.torch_config_action == "applied"
+        assert report.torch_direct_dep_action == "already"
         assert not any("direct dependency" in w.lower() for w in report.warnings), (
             report.warnings
         )
@@ -349,9 +349,13 @@ class TestUninstallTorchConfig:
         install_run(path=consumer_workspace, assume_yes=True)
         report = uninstall_run(path=consumer_workspace, force=True)
         assert report.torch_config_action == "removed"
+        assert report.torch_direct_dep_action == "removed"
         assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
             tc.TorchConfigState.MISSING
         )
+        pyproject = (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
+        assert '"torch>=2.4"' not in pyproject
+        assert "managed-torch-direct-dependency" not in pyproject
 
     def test_uninstall_round_trip_preserves_project_table(
         self, consumer_workspace: Path
@@ -574,24 +578,16 @@ class TestInstallTorchConfigFollowups:
         assert any("non-interactive stdin" in w for w in report.warnings)
         assert any("--yes" in w or "--force" in w for w in report.warnings)
 
-    def test_install_transitive_warning_fires_on_idempotent_rerun(
+    def test_install_direct_dep_is_idempotent_on_rerun(
         self, consumer_workspace: Path
     ) -> None:
-        """INSTALL-05 regression: the transitive-dep warning is the
-        most actionable diagnostic rag emits. Without it, a user who
-        ran install once, never fixed their direct deps, and re-runs
-        gets ``torch_config_action="already"`` with no warnings —
-        even though the fix is needed every run.
-        """
-        # First install lays down the canonical block.
+        """INSTALL-05/#94: reruns must keep the effective torch state."""
         first = install_run(path=consumer_workspace, assume_yes=True)
         assert first.torch_config_action == "applied"
-        assert any("direct dependency" in w for w in first.warnings)
-        # Second install hits the CANONICAL short-circuit; warning
-        # must still fire because torch is still purely transitive.
+        assert first.torch_direct_dep_action == "applied"
         second = install_run(path=consumer_workspace, assume_yes=True)
         assert second.torch_config_action == "already"
-        assert any("direct dependency" in w for w in second.warnings), second.warnings
+        assert second.torch_direct_dep_action == "already"
 
     def test_install_transitive_warning_fires_on_dry_run(
         self, consumer_workspace: Path
@@ -629,10 +625,12 @@ class TestInstallTorchConfigFollowups:
         )
         first = install_run(path=ws, assume_yes=True)
         assert first.torch_config_action == "applied"
+        assert first.torch_direct_dep_action == "already"
         assert not any("direct dependency" in w for w in first.warnings)
         # Idempotent re-run: still no warning.
         second = install_run(path=ws, assume_yes=True)
         assert second.torch_config_action == "already"
+        assert second.torch_direct_dep_action == "already"
         assert not any("direct dependency" in w for w in second.warnings)
         # Dry-run on a missing-direct-dep path was tested elsewhere;
         # here the path is CANONICAL on dry-run, so no warning either.
@@ -703,17 +701,51 @@ class TestSyncSilentDrop:
             report.warnings
         )
 
-    def test_sync_with_already_canonical_warns(self, consumer_workspace: Path) -> None:
+    def test_sync_with_already_canonical_runs_when_torch_dep_is_ready(
+        self, consumer_workspace: Path, tmp_path: Path
+    ) -> None:
         # First run lands the canonical block.
         install_run(path=consumer_workspace, assume_yes=True)
-        # Second run with --sync should warn that sync was dropped
-        # because torch_config_action is now "already".
+        import os
+
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(empty_dir)
+        # Second run with --sync should attempt sync because the torch config
+        # and direct dependency are already in an effective state.
+        try:
+            report = install_run(
+                path=consumer_workspace,
+                sync_after=True,
+                assume_yes=True,
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert report.torch_config_action == "already"
+        assert report.torch_direct_dep_action == "already"
+        assert report.torch_sync_action == "uv-not-found"
+        assert not any("--sync requested but skipped" in w for w in report.warnings), (
+            report.warnings
+        )
+
+    def test_sync_with_customised_config_warns(self, tmp_path: Path) -> None:
+        ws = tmp_path / "customised"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(
+            PROJECT_ONLY + "\n[[tool.uv.index]]\n"
+            'name = "pytorch-cu130"\n'
+            'url = "https://download.pytorch.org/whl/cu121"\n'
+            "explicit = true\n",
+            encoding="utf-8",
+            newline="",
+        )
         report = install_run(
-            path=consumer_workspace,
+            path=ws,
             sync_after=True,
             assume_yes=True,
         )
-        assert report.torch_config_action == "already"
+        assert report.torch_config_action == "conflict"
         assert any("--sync requested but skipped" in w for w in report.warnings), (
             report.warnings
         )
