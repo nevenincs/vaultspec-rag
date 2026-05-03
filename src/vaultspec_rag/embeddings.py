@@ -238,7 +238,7 @@ class EmbeddingModel:
         self._dense_model = SentenceTransformer(
             dense_name,
             model_kwargs=model_kwargs,
-            processor_kwargs={"padding_side": "left"},
+            tokenizer_kwargs={"padding_side": "left"},
         )
         # Cap the model's advertised max sequence length so the
         # tokenizer truncates aggressively and the model never
@@ -265,10 +265,7 @@ class EmbeddingModel:
         self._sparse_model = SparseEncoder(
             sparse_name,
             device="cuda",
-            model_kwargs={
-                "torch_dtype": torch.float16,
-                "use_safetensors": False,
-            },
+            model_kwargs={"torch_dtype": torch.float16},
         )
         # Do NOT override the sparse model's max_seq_length: SPLADE
         # is BERT-based and has max_position_embeddings=512. Setting
