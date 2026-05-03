@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.7](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.6...vaultspec-rag-v0.2.7) (2026-05-03)
+
+
+### Bug Fixes
+
+* **cli:** split rebuild from index clean ([af86b08](https://github.com/wgergely/vaultspec-rag/commit/af86b081e822f637f6988dd48dc91329baeb5160))
+* **index:** keep vault docs out of code search ([1fffa8a](https://github.com/wgergely/vaultspec-rag/commit/1fffa8a389188d05e42354cee715e7576601f168))
+* **install:** add direct torch dependency ([7ee10a3](https://github.com/wgergely/vaultspec-rag/commit/7ee10a34df4a476a513af903036d46ad35f7ec88))
+* **install:** surface missing hf auth ([357fe88](https://github.com/wgergely/vaultspec-rag/commit/357fe881e01a58afb1d8212f62b9d7203efd4545))
+* **runtime:** address embedding review findings ([931ba06](https://github.com/wgergely/vaultspec-rag/commit/931ba06f8f6af780eb83461fdd957719ac7bf31d))
+* **runtime:** silence noisy local model warnings ([0de6346](https://github.com/wgergely/vaultspec-rag/commit/0de63461567d84ff003f62d970798a74c9392e50))
+
 ## [0.2.6](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.5...vaultspec-rag-v0.2.6) (2026-04-28)
 
 ### Bug Fixes
