@@ -211,6 +211,7 @@ class EmbeddingModel:
             if hasattr(cfg, "sparse_model") and cfg.sparse_model
             else self.SPARSE_MODEL_NAME
         )
+        os.environ.setdefault(EnvVar.DISABLE_SAFETENSORS_CONVERSION, "1")
 
         logger.info(
             "HF cache: %s",
@@ -237,7 +238,7 @@ class EmbeddingModel:
         self._dense_model = SentenceTransformer(
             dense_name,
             model_kwargs=model_kwargs,
-            tokenizer_kwargs={"padding_side": "left"},
+            processor_kwargs={"padding_side": "left"},
         )
         # Cap the model's advertised max sequence length so the
         # tokenizer truncates aggressively and the model never

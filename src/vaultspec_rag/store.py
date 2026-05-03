@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -40,6 +42,23 @@ class VaultStoreLockedError(RuntimeError):
 
 
 EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
+
+
+@contextmanager
+def _suppress_local_qdrant_warnings():
+    """Suppress Qdrant local-mode warnings that are not actionable per call."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*Payload indexes have no effect in the local Qdrant.*",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=".*Local mode is not recommended for collections with more than.*",
+            category=UserWarning,
+        )
+        yield
 
 
 def _check_rag_deps() -> None:
@@ -166,7 +185,10 @@ class VaultStore:
         self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
         self.db_path.mkdir(parents=True, exist_ok=True)
         try:
-            self._client: QdrantClient | None = _QdrantClient(path=str(self.db_path))
+            with _suppress_local_qdrant_warnings():
+                self._client: QdrantClient | None = _QdrantClient(
+                    path=str(self.db_path),
+                )
         except RuntimeError as exc:
             if "already accessed by another instance" in str(exc):
                 raise VaultStoreLockedError(str(self.db_path)) from exc
@@ -268,11 +290,12 @@ class VaultStore:
         self._ensure_collection(self.TABLE_NAME)
 
         for fname in ("doc_type", "feature", "date", "tags"):
-            self.client.create_payload_index(
-                collection_name=self.TABLE_NAME,
-                field_name=fname,
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.TABLE_NAME,
+                    field_name=fname,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
         self._vault_ensured = True
 
     def ensure_code_table(self) -> None:
@@ -289,16 +312,18 @@ class VaultStore:
         self._ensure_collection(self.CODE_TABLE_NAME)
 
         for fname in ("path", "language", "function_name", "class_name"):
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.CODE_TABLE_NAME,
+                    field_name=fname,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+        with _suppress_local_qdrant_warnings():
             self.client.create_payload_index(
                 collection_name=self.CODE_TABLE_NAME,
-                field_name=fname,
-                field_schema=models.PayloadSchemaType.KEYWORD,
+                field_name="line_start",
+                field_schema=models.PayloadSchemaType.INTEGER,
             )
-        self.client.create_payload_index(
-            collection_name=self.CODE_TABLE_NAME,
-            field_name="line_start",
-            field_schema=models.PayloadSchemaType.INTEGER,
-        )
         self._code_ensured = True
 
     def upsert_documents(self, docs: list[VaultDocument]) -> None:

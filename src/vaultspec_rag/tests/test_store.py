@@ -6,6 +6,8 @@ Tests updated for Qdrant-backed store (replacing LanceDB).
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 pytestmark = [pytest.mark.unit]
@@ -107,6 +109,25 @@ class TestStoreHelpers:
         assert cond.key == "tags"
         assert isinstance(cond.match, models.MatchAny)
         assert cond.match.any == ["auth"]
+
+
+class TestStoreLocalWarnings:
+    """Qdrant local-mode warning handling."""
+
+    def test_payload_index_warning_is_suppressed(self, tmp_path):
+        from vaultspec_rag.store import VaultStore
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            store = VaultStore(tmp_path)
+            try:
+                store.ensure_table()
+                store.ensure_code_table()
+            finally:
+                store.close()
+
+        messages = [str(item.message) for item in caught]
+        assert not any("Payload indexes have no effect" in msg for msg in messages)
 
 
 class TestBuildCodeFilter:
