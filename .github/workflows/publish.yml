@@ -1,6 +1,9 @@
 name: Publish
 
 on:
+  push:
+    tags:
+      - "vaultspec-rag-v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -23,7 +26,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -50,7 +53,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7

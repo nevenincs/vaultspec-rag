@@ -1,6 +1,7 @@
 # vaultspec-rag
 
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue.svg)](./pyproject.toml)
+[![PyPI](https://img.shields.io/pypi/v/vaultspec-rag)](https://pypi.org/project/vaultspec-rag/)
 [![CI](https://github.com/wgergely/vaultspec-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/wgergely/vaultspec-rag/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-vaultspec--search--mcp-informational)](./src/vaultspec_rag/README.md#mcp-integration)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)

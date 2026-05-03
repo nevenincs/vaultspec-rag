@@ -36,10 +36,14 @@ dependencies = [
 ]
 description = "GPU-accelerated RAG module for vaultspec vault search"
 keywords = [
+    "cuda",
     "embeddings",
     "gpu",
     "mcp",
+    "qdrant",
     "rag",
+    "semantic-search",
+    "sentence-transformers",
     "vaultspec",
     "vector-search",
 ]
@@ -181,4 +185,3 @@ known-first-party = ["vaultspec_rag"]
 [tool.ty.environment]
 python-version = "3.13"
 root = [".", "src"]
-
