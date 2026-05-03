@@ -332,6 +332,8 @@ def install_run(
         sync_after=sync_after,
         confirm=confirm,
     )
+    if not dry_run:
+        _maybe_warn_hf_auth(report)
 
     # INSTALL-04: ``--sync`` is gated by ``patch_report.action ==
     # "applied"`` inside ``_run_torch_config_install``. Any path that
@@ -350,6 +352,25 @@ def install_run(
         )
 
     return report
+
+
+def _maybe_warn_hf_auth(report: InstallReport) -> None:
+    """Warn when HuggingFace credentials are not configured locally."""
+    try:
+        from huggingface_hub import get_token
+    except ImportError:
+        report.warnings.append(
+            "huggingface_hub is not installed; install dependencies before "
+            "downloading embedding models."
+        )
+        return
+
+    if get_token():
+        return
+    report.warnings.append(
+        "HuggingFace token not found. Run `huggingface-cli login` before "
+        "model warmup, indexing, or search if model downloads require auth."
+    )
 
 
 def _run_torch_config_install(

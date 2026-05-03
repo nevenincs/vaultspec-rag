@@ -1814,7 +1814,7 @@ def service_warmup() -> None:
         _handle_gpu_error(RuntimeError("CUDA runtime unavailable"))
 
     try:
-        from huggingface_hub import HfFolder, snapshot_download, try_to_load_from_cache
+        from huggingface_hub import get_token, snapshot_download, try_to_load_from_cache
     except ImportError:
         console.print("[bold red]Error:[/] huggingface_hub is not installed.")
         raise typer.Exit(code=1) from None
@@ -1835,7 +1835,7 @@ def service_warmup() -> None:
     table.add_column("Repo", style="cyan")
     table.add_column("Status")
 
-    token = HfFolder.get_token()
+    token = get_token()
     if token:
         table.add_row("HuggingFace auth", "token", "[green]configured[/]")
     else:

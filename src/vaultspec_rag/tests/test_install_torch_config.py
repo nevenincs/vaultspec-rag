@@ -9,6 +9,10 @@ trigger the ``sync_after`` subprocess path.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -138,6 +142,36 @@ class TestInstallTorchConfig:
         assert d["torch_config_action"] == "applied"
         assert "torch_config_conflicts" in d
         assert d["torch_sync_action"] == "skipped"
+
+    def test_install_warns_when_hf_token_missing(
+        self, consumer_workspace: Path, tmp_path: Path
+    ) -> None:
+        env = {
+            **os.environ,
+            "HF_HOME": str(tmp_path / "empty-hf-home"),
+        }
+        env.pop("HF_TOKEN", None)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    "from pathlib import Path; "
+                    "from vaultspec_rag.commands import install_run; "
+                    "report = install_run(path=Path(r'"
+                    + str(consumer_workspace)
+                    + "'), assume_yes=True); "
+                    "print(json.dumps(report.to_dict()))"
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+            env=env,
+        )
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        assert any("HuggingFace token not found" in w for w in payload["warnings"])
 
     def test_install_force_implies_assume_yes_for_torch_config(
         self, consumer_workspace: Path
