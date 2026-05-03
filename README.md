@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="vaultspec-rag logo" width="160">
+</p>
+
 # vaultspec-rag
 
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue.svg)](./pyproject.toml)

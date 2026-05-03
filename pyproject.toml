@@ -128,6 +128,8 @@ packages = ["src/vaultspec_rag"]
 [tool.hatch.build.targets.sdist.force-include]
 ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = ".vaultspec/rules/rules/vaultspec-rag.builtin.md"
 ".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = ".vaultspec/rules/mcps/vaultspec-rag.builtin.json"
+"assets/logo.png" = "assets/logo.png"
+"assets/logo.svg" = "assets/logo.svg"
 
 [tool.hatch.build.targets.wheel.force-include]
 ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
