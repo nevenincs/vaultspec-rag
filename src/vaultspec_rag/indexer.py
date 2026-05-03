@@ -1456,6 +1456,8 @@ class CodebaseIndexer:
             # Always exclude these directories.
             ".venv/",
             ".git/",
+            ".vault/",
+            ".vaultspec/",
             "node_modules/",
             "__pycache__/",
             f"{cfg.data_dir}/",

@@ -168,6 +168,8 @@ The tool also respects two third-party environment variables. Set `HF_HOME` to c
 
 Place a `.vaultragignore` file at the project root to exclude files from codebase indexing. It uses gitignore syntax via `pathspec`. Patterns merge with CLI `--exclude` flags.
 
+Codebase indexing always excludes vaultspec internal directories, including `.vault/` and `.vaultspec/`. Vault documents remain available through vault indexing and `--type vault`; they are not mixed into `--type code` results.
+
 This file operates independently from `.gitignore` -- both apply with OR logic. The indexer skips any file excluded by either spec.
 
 ## Service management

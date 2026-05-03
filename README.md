@@ -88,7 +88,7 @@ vaultspec-rag --version
 
 ### Index and search
 
-vaultspec-rag indexes two sources: **vault** (`.vault/` documents) and **code** (project source files).
+vaultspec-rag indexes two sources: **vault** (`.vault/` documents) and **code** (project source files). Code indexing excludes vaultspec internal directories such as `.vault/` and `.vaultspec/`, so `--type code` only searches project source content.
 
 ```bash
 vaultspec-rag index                          # both
