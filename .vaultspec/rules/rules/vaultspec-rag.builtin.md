@@ -39,6 +39,8 @@ search <query> [--type vault|code] [--max-results N=10] [--no-truncate]
        [--port N] [--allow-fallback] [--verbose]
                              Code filters: --language --path --node-type
                              --function-name --class-name
+                             Code path globs (post-query fnmatch, repeatable):
+                             --include-path PATTERN, --exclude-path PATTERN
                              Vault filters: --doc-type --feature --date --tag
                              Or use in-query tokens: type:adr feature:auth
                              path:src/foo lang:python func:main class:Engine
@@ -80,11 +82,12 @@ The `vaultspec-search-mcp` server exposes the following tools:
   semantic search across vault documents. Filters mirror the CLI
   `--doc-type`/`--feature`/`--date`/`--tag` flags. Returns ranked
   results with scores and metadata.
-- `search_codebase(query, top_k, language?, path?, node_type?, function_name?, class_name?, project_root?)` —
+- `search_codebase(query, top_k, language?, path?, node_type?, function_name?, class_name?, include_paths?, exclude_paths?, project_root?)` —
   semantic search across indexed source code. Filters mirror the CLI
   `--language` / `--path` / `--node-type` / `--function-name` /
-  `--class-name` flags. All filters are exact KEYWORD match against
-  Qdrant payload fields.
+  `--class-name` (exact KEYWORD) plus `--include-path` /
+  `--exclude-path` (`list[str]`, fnmatch glob, applied post-query
+  against the POSIX-normalised project-relative path).
 - `get_index_status(project_root)` — returns index statistics, document
   counts, and GPU hardware info.
 - `get_code_file(path, project_root)` — retrieve full source file content

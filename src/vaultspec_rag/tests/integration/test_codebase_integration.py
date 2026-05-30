@@ -148,6 +148,70 @@ class TestCodebaseSearch:
         assert all(r.source == "codebase" for r in results)
 
     @pytest.mark.timeout(120)
+    def test_search_codebase_exclude_path_glob(self, code_project):
+        """--exclude-path drops matching files post-query."""
+        from vaultspec_rag import VaultSearcher
+
+        # Add a second file under tests/ that would otherwise rank high
+        # for the query, so we can prove exclude really prunes.
+        tests_dir = code_project["src_dir"].parent / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+
+        searcher = VaultSearcher(
+            code_project["root"],
+            code_project["model"],
+            code_project["store"],
+        )
+
+        # Without exclude: tests/ paths should appear in the candidate set.
+        unfiltered = searcher.search_codebase("calculator add", top_k=10)
+        unfiltered_paths = {r.path for r in unfiltered}
+        assert any(p.startswith("tests/") for p in unfiltered_paths), (
+            f"Expected a tests/ hit in the unfiltered set, got: {unfiltered_paths}"
+        )
+
+        # With exclude: every tests/ path must be gone.
+        filtered = searcher.search_codebase(
+            "calculator add",
+            top_k=10,
+            exclude_paths=["tests/**"],
+        )
+        filtered_paths = {r.path for r in filtered}
+        assert not any(p.startswith("tests/") for p in filtered_paths), (
+            f"tests/ paths leaked past --exclude-path: {filtered_paths}"
+        )
+
+    @pytest.mark.timeout(120)
+    def test_search_codebase_include_path_glob(self, code_project):
+        """--include-path keeps only matching files post-query."""
+        from vaultspec_rag import VaultSearcher
+
+        tests_dir = code_project["src_dir"].parent / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+
+        searcher = VaultSearcher(
+            code_project["root"],
+            code_project["model"],
+            code_project["store"],
+        )
+
+        results = searcher.search_codebase(
+            "calculator",
+            top_k=10,
+            include_paths=["src/**"],
+        )
+        paths = {r.path for r in results}
+        # Every survivor must start with src/.
+        for p in paths:
+            assert p.startswith("src/"), (
+                f"include_paths=['src/**'] kept non-src/ path: {p}"
+            )
+
+    @pytest.mark.timeout(120)
     def test_search_codebase_with_language_filter(self, code_project):
         from vaultspec_rag import VaultSearcher
 

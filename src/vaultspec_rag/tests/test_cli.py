@@ -365,6 +365,79 @@ class TestMcpFastPath:
         # No live service → ConnectionRefused → None.
         assert result is None
 
+    def test_include_path_with_vault_returns_usage_error(self):
+        """--include-path is a code filter; --type vault must error."""
+        result = _try_mcp_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            include_paths=["src/foo/**"],
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--include-path" in str(result.get("message", ""))
+
+    def test_exclude_path_with_vault_returns_usage_error(self):
+        """--exclude-path with --type vault errors out symmetrically."""
+        result = _try_mcp_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            exclude_paths=["locales/*.yml"],
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--exclude-path" in str(result.get("message", ""))
+
+    def test_glob_filters_with_code_attempt_call(self):
+        """--include-path/--exclude-path with --type code reach the call path."""
+        result = _try_mcp_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            include_paths=["src/**"],
+            exclude_paths=["tests/**"],
+        )
+        assert result is None
+
+    def test_search_cmd_rejects_include_path_with_vault(self):
+        """CLI: --include-path + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--include-path",
+                "src/**",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_exclude_path_with_vault(self):
+        """CLI: --exclude-path + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--exclude-path",
+                "locales/*.yml",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
         result = _try_mcp_search(

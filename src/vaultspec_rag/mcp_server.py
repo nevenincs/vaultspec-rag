@@ -663,6 +663,8 @@ async def search_codebase(
     node_type: str | None = None,
     function_name: str | None = None,
     class_name: str | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
     project_root: str | None = None,
 ) -> SearchResponse | dict[str, Any]:
     """Search the source codebase for relevant functions, classes, or logic.
@@ -678,6 +680,15 @@ async def search_codebase(
             ``"function_definition"``).
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
+        include_paths: Optional fnmatch glob patterns kept by a
+            post-query Python filter (e.g.
+            ``["src/foo/**"]``). Operates against the
+            POSIX-normalised project-relative path. Useful for
+            restricting results to a subtree.
+        exclude_paths: Optional fnmatch glob patterns dropped by a
+            post-query Python filter (e.g.
+            ``["locales/*.yml", "tests/**"]``). Useful for
+            pruning crowding paths.
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
@@ -712,6 +723,8 @@ async def search_codebase(
                     node_type=node_type,
                     function_name=function_name,
                     class_name=class_name,
+                    include_paths=include_paths,
+                    exclude_paths=exclude_paths,
                 )
                 items = [
                     SearchResultItem.model_validate(r, from_attributes=True)

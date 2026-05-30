@@ -152,6 +152,8 @@ def search_codebase(
     node_type: str | None = None,
     function_name: str | None = None,
     class_name: str | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
 ) -> list[SearchResult]:
     """Search the source codebase.
 
@@ -166,6 +168,11 @@ def search_codebase(
         node_type: Optional AST node type filter.
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
+        include_paths: Optional fnmatch glob patterns kept by
+            post-query filter (e.g. ``['src/foo/**']``).
+        exclude_paths: Optional fnmatch glob patterns dropped by
+            post-query filter (e.g. ``['locales/*.yml',
+            'tests/**']``).
 
     Returns:
         Ranked list of SearchResult objects.
@@ -180,6 +187,8 @@ def search_codebase(
             node_type=node_type,
             function_name=function_name,
             class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
         )
 
 

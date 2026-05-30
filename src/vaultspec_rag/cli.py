@@ -1036,6 +1036,8 @@ def _try_mcp_search(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
 ) -> list[dict[str, object]] | dict[str, object] | None:
     """Search via a running MCP server over HTTP.
 
@@ -1088,6 +1090,7 @@ def _try_mcp_search(
     }
     code_supplied = any(v is not None for v in code_filters.values())
     vault_supplied = any(v is not None for v in vault_filters.values())
+    glob_supplied = bool(include_paths) or bool(exclude_paths)
     if code_supplied and search_type != "code":
         offending = sorted(k for k, v in code_filters.items() if v is not None)
         return {
@@ -1107,6 +1110,21 @@ def _try_mcp_search(
             "message": (
                 "vault-search filters "
                 f"({', '.join(offending)}) require --type vault; "
+                f"got --type {search_type}."
+            ),
+        }
+    if glob_supplied and search_type != "code":
+        offending = []
+        if include_paths:
+            offending.append("--include-path")
+        if exclude_paths:
+            offending.append("--exclude-path")
+        return {
+            "ok": False,
+            "error": "invalid_filter_for_search_type",
+            "message": (
+                "path-glob filters "
+                f"({', '.join(offending)}) require --type code; "
                 f"got --type {search_type}."
             ),
         }
@@ -1130,6 +1148,10 @@ def _try_mcp_search(
             for key, value in code_filters.items():
                 if value is not None:
                     payload[key] = value
+            if include_paths:
+                payload["include_paths"] = list(include_paths)
+            if exclude_paths:
+                payload["exclude_paths"] = list(exclude_paths)
         elif search_type == "vault":
             for key, value in vault_filters.items():
                 if value is not None:
@@ -1282,6 +1304,28 @@ def handle_search(
             ),
         ),
     ] = None,
+    include_paths: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--include-path",
+            help=(
+                "Code-search filter: repeatable fnmatch glob; "
+                "keep results whose project-relative path matches "
+                "at least one pattern. Use with --type code."
+            ),
+        ),
+    ] = None,
+    exclude_paths: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude-path",
+            help=(
+                "Code-search filter: repeatable fnmatch glob; "
+                "drop results whose project-relative path matches "
+                "any pattern. Use with --type code."
+            ),
+        ),
+    ] = None,
     node_type: Annotated[
         str | None,
         typer.Option(
@@ -1384,6 +1428,12 @@ def handle_search(
         max_results: Maximum number of results to return.
         language: Code-search filter for programming language.
         path: Code-search filter for exact project-relative file path.
+        include_paths: Repeatable fnmatch globs; results whose
+            project-relative path matches at least one pattern are
+            kept (post-query filter, code search only).
+        exclude_paths: Repeatable fnmatch globs; results whose
+            project-relative path matches any pattern are dropped
+            (post-query filter, code search only).
         node_type: Code-search filter for AST node type.
         function_name: Code-search filter for function/method name.
         class_name: Code-search filter for class/struct name.
@@ -1423,6 +1473,7 @@ def handle_search(
     )
     code_filters_supplied = any(v is not None for _, v in code_filter_fields)
     vault_filters_supplied = any(v is not None for _, v in vault_filter_fields)
+    glob_filters_supplied = bool(include_paths) or bool(exclude_paths)
     if code_filters_supplied and search_type != "code":
         offending = sorted(
             name for name, value in code_filter_fields if value is not None
@@ -1443,6 +1494,18 @@ def handle_search(
             + f") require --type vault; got --type {search_type}.[/]"
         )
         raise typer.Exit(code=2)
+    if glob_filters_supplied and search_type != "code":
+        offending = []
+        if include_paths:
+            offending.append("--include-path")
+        if exclude_paths:
+            offending.append("--exclude-path")
+        console.print(
+            "[red]path-glob filters ("
+            + ", ".join(offending)
+            + f") require --type code; got --type {search_type}.[/]"
+        )
+        raise typer.Exit(code=2)
 
     if port is not None:
         mcp_results = _try_mcp_search(
@@ -1460,6 +1523,8 @@ def handle_search(
             feature=feature,
             date=date,
             tag=tag,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
         )
         if mcp_results is not None:
             if isinstance(mcp_results, dict):
@@ -1504,6 +1569,8 @@ def handle_search(
                     node_type=node_type,
                     function_name=function_name,
                     class_name=class_name,
+                    include_paths=include_paths,
+                    exclude_paths=exclude_paths,
                 )
             else:
                 results = searcher.search_vault(

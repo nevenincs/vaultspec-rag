@@ -106,6 +106,14 @@ vaultspec-rag search "architecture decision"
 vaultspec-rag search --type code "error handling" --language python
 vaultspec-rag search --type vault "auth refactor" --doc-type adr --feature auth
 
+# Path globs for code search. Both flags are repeatable, fnmatch syntax,
+# applied post-query against the project-relative POSIX path. Useful when
+# i18n YAMLs or test docstrings crowd out production code in the top-k.
+vaultspec-rag search --type code "ledger archive" \
+  --exclude-path 'locales/*.yml' --exclude-path 'tests/**'
+vaultspec-rag search --type code "auth handler" \
+  --include-path 'src/app/**'
+
 # --port <N> delegates to a running RAG service (recommended for
 # concurrent agents). On unreachable port, the CLI now hard-fails with
 # remediation instead of silently spawning a local model + Qdrant lock.

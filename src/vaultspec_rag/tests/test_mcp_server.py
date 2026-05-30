@@ -101,6 +101,26 @@ class TestToolRegistration:
         # And the original four code filters stay exposed.
         assert {"language", "node_type", "function_name", "class_name"}.issubset(params)
 
+    def test_search_codebase_exposes_glob_params(self):
+        """search_codebase must expose include_paths/exclude_paths list[str]."""
+        tools = _run(mcp.list_tools())
+        sc = next(t for t in tools if t.name == "search_codebase")
+        properties = sc.inputSchema.get("properties", {})
+        assert "include_paths" in properties
+        assert "exclude_paths" in properties
+        # FastMCP renders list[str] | None as anyOf [array, null]; accept
+        # either that or a direct array schema for forward compatibility.
+        for key in ("include_paths", "exclude_paths"):
+            schema = properties[key]
+            if "anyOf" in schema:
+                array_branch = next(
+                    b for b in schema["anyOf"] if b.get("type") == "array"
+                )
+                assert array_branch["items"]["type"] == "string"
+            else:
+                assert schema.get("type") == "array"
+                assert schema["items"]["type"] == "string"
+
 
 class TestPromptRegistration:
     """Verify prompts are registered."""

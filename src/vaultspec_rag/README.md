@@ -266,7 +266,7 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 ## Searching
 
 - `vaultspec-rag search "query" --type vault` searches vault documents (default). Filters: `--doc-type`, `--feature`, `--date`, `--tag`. (`--type` is the source switch and cannot be reused for the vault doc-type filter; `--doc-type` mirrors `--node-type`.)
-- `vaultspec-rag search "query" --type code` searches source code. Filters: `--language`, `--path` (exact project-relative path), `--node-type`, `--function-name`, `--class-name`.
+- `vaultspec-rag search "query" --type code` searches source code. Filters: `--language`, `--path` (exact KEYWORD), `--include-path PATTERN` and `--exclude-path PATTERN` (both repeatable, fnmatch glob, post-query), `--node-type`, `--function-name`, `--class-name`. Path globs operate against the POSIX-normalised project-relative path; the indexer normalises separators at write time on every platform, so `'src/**'` works the same on Windows and POSIX. When either glob is supplied, the over-fetch ceiling rises (10x top-k) to compensate for aggressive exclusion.
 - Embed filters directly in the query string with tokens: `type:adr`, `feature:auth`, `lang:python`, `path:src/foo.py`, `func:main`, `class:Engine`, `date:2026-03`, `nodetype:function_definition`, `tag:auth`. Tokens and flags are interchangeable for the same underlying filter; flags are the documented surface.
 - Default `--max-results` is 10 (raised from 5 to mitigate top-k crowding).
 - `--no-truncate` disables the 120-character snippet truncation in the results table so sibling files with long paths stay distinguishable.
@@ -283,16 +283,16 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 
 The MCP server exposes six tools:
 
-| Tool               | Purpose                                                                                               |
-| ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `search_vault`     | Search vault documents. Filters: `doc_type`, `feature`, `date`, `tag` (all KEYWORD exact)             |
-| `search_codebase`  | Search source code. Filters: `language`, `path`, `node_type`, `function_name`, `class_name` (KEYWORD) |
-| `reindex_vault`    | Re-index vault (incremental or clean)                                                                 |
-| `reindex_codebase` | Re-index codebase (incremental or clean)                                                              |
-| `get_index_status` | Return index stats and GPU status                                                                     |
-| `get_code_file`    | Retrieve full source file content                                                                     |
-| `list_projects`    | Enumerate projects warm in the registry                                                               |
-| `evict_project`    | Drop a project's models + Qdrant lock from the registry                                               |
+| Tool               | Purpose                                                                                                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search_vault`     | Search vault documents. Filters: `doc_type`, `feature`, `date`, `tag` (all KEYWORD exact)                                                                                         |
+| `search_codebase`  | Search source code. Filters: `language`, `path`, `node_type`, `function_name`, `class_name` (KEYWORD exact), plus `include_paths`/`exclude_paths` (list[str], fnmatch post-query) |
+| `reindex_vault`    | Re-index vault (incremental or clean)                                                                                                                                             |
+| `reindex_codebase` | Re-index codebase (incremental or clean)                                                                                                                                          |
+| `get_index_status` | Return index stats and GPU status                                                                                                                                                 |
+| `get_code_file`    | Retrieve full source file content                                                                                                                                                 |
+| `list_projects`    | Enumerate projects warm in the registry                                                                                                                                           |
+| `evict_project`    | Drop a project's models + Qdrant lock from the registry                                                                                                                           |
 
 The server runs in one of two transport modes, and the rules for the `project_root` parameter differ between them.
 
@@ -353,14 +353,14 @@ See [Service management](#service-management) for daemon lifecycle details.
 
 The `vaultspec_rag` package exports a facade in `vaultspec_rag.api`:
 
-| Function                                                                                                                      | Purpose                                           |
-| ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `index(root_dir, *, full=False)`                                                                                              | Index vault documents                             |
-| `index_codebase(root_dir, *, full=False)`                                                                                     | Index source files                                |
-| `search_vault(root_dir, query, *, top_k=5, doc_type=None, feature=None, date=None, tag=None)`                                 | Search vault                                      |
-| `search_codebase(root_dir, query, *, top_k=5, language=None, path=None, node_type=None, function_name=None, class_name=None)` | Search code                                       |
-| `list_documents(root_dir, doc_type=None)`                                                                                     | List indexed documents                            |
-| `get_related(root_dir, doc_id)`                                                                                               | Get graph relationships (outgoing/incoming links) |
+| Function                                                                                                                                                              | Purpose                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `index(root_dir, *, full=False)`                                                                                                                                      | Index vault documents                             |
+| `index_codebase(root_dir, *, full=False)`                                                                                                                             | Index source files                                |
+| `search_vault(root_dir, query, *, top_k=5, doc_type=None, feature=None, date=None, tag=None)`                                                                         | Search vault                                      |
+| `search_codebase(root_dir, query, *, top_k=5, language=None, path=None, node_type=None, function_name=None, class_name=None, include_paths=None, exclude_paths=None)` | Search code                                       |
+| `list_documents(root_dir, doc_type=None)`                                                                                                                             | List indexed documents                            |
+| `get_related(root_dir, doc_id)`                                                                                                                                       | Get graph relationships (outgoing/incoming links) |
 
 All functions accept a `root_dir: Path` and manage a thread-safe singleton engine internally. The engine loads GPU models on first call.
 

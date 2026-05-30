@@ -5,6 +5,7 @@ Implements query parsing, hybrid search, and graph-aware re-ranking.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import re
 import threading
@@ -12,6 +13,13 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+
+# When --include-path / --exclude-path are active the post-query
+# fnmatch filter may discard the majority of candidates. Overfetch
+# aggressively so top_k is still satisfied for common glob shapes.
+# Module-level constant so it can be tuned later without changing
+# the call site. See cli-path-glob ADR.
+_GLOB_FETCH_MULTIPLIER = 10
 
 if TYPE_CHECKING:
     import pathlib
@@ -501,6 +509,8 @@ class VaultSearcher:
         node_type: str | None = None,
         function_name: str | None = None,
         class_name: str | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
     ) -> list[SearchResult]:
         """Search codebase using pre-encoded dense and sparse vectors.
 
@@ -517,6 +527,13 @@ class VaultSearcher:
             node_type: Optional AST node type filter.
             function_name: Optional function/method name filter.
             class_name: Optional class/struct name filter.
+            include_paths: Optional fnmatch glob list; a result is
+                kept only when at least one pattern matches its
+                project-relative path. Patterns are normalised so
+                Windows-style backslashes work transparently.
+            exclude_paths: Optional fnmatch glob list; a result is
+                dropped when any pattern matches its
+                project-relative path.
 
         Returns:
             Ranked list of codebase SearchResult instances.
@@ -537,7 +554,22 @@ class VaultSearcher:
         if class_name is not None:
             store_filters["class_name"] = class_name
 
-        fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        # Normalise caller patterns once. The codebase indexer stores
+        # POSIX paths on every platform (indexer.py:1600 replaces
+        # backslashes), so glob matching is consistent if patterns
+        # carry the same convention.
+        include_norm = (
+            [p.replace("\\", "/") for p in include_paths] if include_paths else []
+        )
+        exclude_norm = (
+            [p.replace("\\", "/") for p in exclude_paths] if exclude_paths else []
+        )
+        has_glob_filter = bool(include_norm or exclude_norm)
+
+        if has_glob_filter:
+            fetch_limit = max(top_k * _GLOB_FETCH_MULTIPLIER, 50)
+        else:
+            fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
         raw_results = self.store.hybrid_search_codebase(
             query_vector=query_vector,
             query_text=query_text,
@@ -545,6 +577,24 @@ class VaultSearcher:
             limit=fetch_limit,
             sparse_vector=sparse_vector,
         )
+
+        # Post-query glob filter. Runs before SearchResult / rerank
+        # so the CrossEncoder cost is proportional to the survivors,
+        # not the over-fetched raw set.
+        if has_glob_filter:
+            filtered: list[dict] = []
+            for r in raw_results:
+                path_value = str(r.get("path", ""))
+                if include_norm and not any(
+                    fnmatch.fnmatch(path_value, pat) for pat in include_norm
+                ):
+                    continue
+                if exclude_norm and any(
+                    fnmatch.fnmatch(path_value, pat) for pat in exclude_norm
+                ):
+                    continue
+                filtered.append(r)
+            raw_results = filtered
 
         results = []
         for r in raw_results:
@@ -641,6 +691,8 @@ class VaultSearcher:
         node_type: str | None = None,
         function_name: str | None = None,
         class_name: str | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
     ) -> list[SearchResult]:
         """Search only the source codebase.
 
@@ -653,6 +705,12 @@ class VaultSearcher:
             node_type: Optional AST node type filter.
             function_name: Optional function/method name filter.
             class_name: Optional class/struct name filter.
+            include_paths: Optional fnmatch glob patterns; results
+                whose project-relative path matches at least one
+                pattern are kept (post-query Python filter).
+            exclude_paths: Optional fnmatch glob patterns; results
+                whose project-relative path matches any pattern
+                are dropped (post-query Python filter).
 
         Returns:
             Ranked list of codebase SearchResult instances.
@@ -669,4 +727,6 @@ class VaultSearcher:
             node_type=node_type,
             function_name=function_name,
             class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
         )
