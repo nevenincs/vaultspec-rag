@@ -279,6 +279,16 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 - If the service is unreachable on the given port, the CLI now **hard-fails** with remediation instead of silently spawning a local model load and grabbing the Qdrant lock (issue #110). Opt back into the legacy silent fallback with `--allow-fallback` — single-agent use only.
 - Pass `--verbose` to re-enable HuggingFace tqdm progress bars during in-process model load / encode. Off by default so the results table stays script-friendly.
 
+### Service lifecycle (`vaultspec-rag server service status`)
+
+`status` gathers every signal before rendering — `service.json` present, PID alive, port listening, heartbeat fresh — and reports each as its own row plus a derived `State`. No more "silently pick one source of truth" verdict (issue #113). Exit codes:
+
+- `0` — `running` (all signals green).
+- `3` — `stopped` (no `service.json`).
+- `4` — `crashed (PID dead)` / `crashed (port silent)` / `crashed (heartbeat stale)` / `crashed (PID reused)`. Scripts can branch on `4` for "known-bad state" without parsing the prose.
+
+The daemon writes `last_heartbeat` into `service.json` every 15 seconds (atomic rewrite). The CLI flags the file stale when the age exceeds 60 seconds — long enough to tolerate three missed beats, short enough to catch a SIGKILL'd daemon before the next `--port` call lands in unsafe fallback territory. Daemon shutdown — clean stop, SIGTERM, SIGINT, atexit — unlinks the file and logs a structured `service.lifecycle event=shutdown reason=...` entry at WARNING level so the line is visible at the default log threshold.
+
 ## MCP integration
 
 The MCP server exposes six tools:

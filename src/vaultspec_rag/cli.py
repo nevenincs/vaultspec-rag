@@ -1955,6 +1955,52 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+# Mirrored from mcp_server._HEARTBEAT_STALENESS_SECONDS — kept as a
+# local constant so cli.py does not import mcp_server (which would
+# pull in FastMCP + heavy deps at CLI startup time). Bump both in
+# lockstep if the contract changes.
+_HEARTBEAT_STALENESS_SECONDS = 60
+
+
+def _port_is_listening(port: int) -> bool:
+    """Return True when ``127.0.0.1:port`` accepts a TCP connection.
+
+    Cheaper than ``_health_probe`` (no HTTP round-trip, no JSON
+    parsing) and answers the "is anything listening" question that
+    ``service status`` needs to distinguish "PID alive but socket
+    silent" from "PID alive and serving".
+    """
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1.0)
+    try:
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+    finally:
+        sock.close()
+
+
+def _heartbeat_age_seconds(status: dict[str, Any]) -> float | None:
+    """Compute seconds since the daemon's last heartbeat write.
+
+    Returns ``None`` when the field is missing (pre-upgrade
+    ``service.json`` or daemon that crashed before its first tick) or
+    when the timestamp is unparseable. Callers treat ``None`` as
+    "no heartbeat data" rather than "fresh".
+    """
+    raw = status.get("last_heartbeat")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - ts
+    return delta.total_seconds()
+
+
 def _health_probe(port: int) -> dict[str, Any] | None:
     """Probe the service health endpoint via HTTP GET.
 
@@ -2215,13 +2261,18 @@ def service_stop() -> None:
 def service_status() -> None:
     """Display the current status of the background RAG service.
 
-    Reads the status file from ``~/.vaultspec-rag/service.json``, checks if
-    the stored PID belongs to an active vaultspec-rag process, probes the
-    HTTP health endpoint (``/health``) to retrieve realtime metrics (uptime,
-    CUDA status, models loaded, projects indexed), and displays a Rich table
-    with process state, port, startup time, and health details. Returns
-    appropriate status messages for stopped, stale, unreachable, or healthy
-    service instances.
+    Gathers four signals before rendering — ``service.json`` present,
+    PID alive, port listening, heartbeat fresh — and surfaces each as
+    its own row plus a derived ``State`` row. Avoids the previous
+    "pick one source of truth" behaviour where conflicting signals
+    rendered as a misleading verdict (issue #113).
+
+    Exit codes:
+      - 0: ``running`` (all signals green).
+      - 3: ``stopped`` (no ``service.json``).
+      - 4: ``divergent`` or ``crashed-*`` (file present but at least
+        one signal contradicts the others). Lets scripts branch on
+        "known-bad state" without parsing the prose.
     """
     status = _read_service_status()
     table = Table(title="Service Status", show_header=False, padding=(0, 2))
@@ -2229,26 +2280,70 @@ def service_status() -> None:
     table.add_column("Value")
 
     if status is None:
+        table.add_row("Service JSON", "[red]missing[/]")
         table.add_row("State", "[red]stopped[/]")
         console.print(table)
-        return
+        raise typer.Exit(code=3)
 
     pid = int(status["pid"])
     port = int(status["port"])
     started_at = status.get("started_at", "unknown")
 
-    if not _is_our_service(pid):
-        _status_file().unlink(missing_ok=True)
-        table.add_row("State", "[red]stopped[/] (stale PID cleaned)")
-        console.print(table)
-        return
+    # Gather every signal first; render once at the end.
+    pid_alive = _is_pid_alive(pid)
+    pid_is_ours = _is_our_service(pid) if pid_alive else False
+    port_listening = _port_is_listening(port) if pid_alive else False
+    heartbeat_age = _heartbeat_age_seconds(status)
 
-    table.add_row("State", "[green]running[/]")
+    table.add_row("Service JSON", "[green]present[/]")
     table.add_row("PID", str(pid))
     table.add_row("Port", str(port))
     table.add_row("Started", started_at)
+    table.add_row(
+        "PID Alive",
+        "[green]yes[/]" if pid_alive else "[red]no[/]",
+    )
+    table.add_row(
+        "PID Matches Service",
+        "[green]yes[/]" if pid_is_ours else "[red]no[/]" if pid_alive else "n/a",
+    )
+    table.add_row(
+        "Port Listening",
+        "[green]yes[/]" if port_listening else "[red]no[/]" if pid_alive else "n/a",
+    )
+    if heartbeat_age is None:
+        table.add_row("Heartbeat", "[yellow]absent[/]")
+        heartbeat_stale = pid_alive  # no heartbeat from a live daemon is suspicious
+    else:
+        heartbeat_stale = heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
+        colour = "red" if heartbeat_stale else "green"
+        table.add_row(
+            "Heartbeat",
+            f"[{colour}]{heartbeat_age:.0f}s ago[/]",
+        )
 
-    health = _health_probe(port)
+    # State derivation: clean / known-bad mapping.
+    state_label: str
+    exit_code: int
+    if not pid_alive:
+        state_label = "[red]crashed (PID dead, stale service.json cleaned)[/]"
+        _status_file().unlink(missing_ok=True)
+        exit_code = 4
+    elif not pid_is_ours:
+        state_label = "[red]crashed (PID reused by unrelated process)[/]"
+        exit_code = 4
+    elif not port_listening:
+        state_label = "[red]crashed (port silent)[/]"
+        exit_code = 4
+    elif heartbeat_stale:
+        state_label = "[red]crashed (heartbeat stale)[/]"
+        exit_code = 4
+    else:
+        state_label = "[green]running[/]"
+        exit_code = 0
+    table.add_row("State", state_label)
+
+    health = _health_probe(port) if port_listening else None
     if health is not None:
         table.add_row("Health", health.get("status", "unknown"))
         table.add_row("CUDA", str(health.get("cuda", "unknown")))
@@ -2259,10 +2354,12 @@ def service_status() -> None:
         caps = health.get("backend_capabilities")
         if isinstance(caps, dict):
             _add_backend_contract_rows(table, cast("dict[str, object]", caps))
-    else:
+    elif port_listening:
         table.add_row("Health", "[yellow]unreachable[/]")
 
     console.print(table)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 # --- Model prefetch (warmup) ---

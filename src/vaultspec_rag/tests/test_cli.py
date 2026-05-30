@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import typing
 from pathlib import Path
@@ -213,9 +214,122 @@ class TestServerCommands:
         assert "not running" in result.output.lower() or "No service" in result.output
 
     def test_service_status_no_status_file(self):
+        """No status file → exit 3 (stopped), per Wave 2 contract (#113)."""
         result = runner.invoke(app, ["server", "service", "status"])
-        assert result.exit_code == 0
+        assert result.exit_code == 3
         assert "stopped" in result.output.lower()
+
+
+class TestServiceLifecycleHelpers:
+    """Wave 2 (#113): _port_is_listening + _heartbeat_age_seconds."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_port_is_listening_true_for_open_socket(self):
+        """A socket bound and listening locally is reported as listening."""
+        import socket
+
+        from vaultspec_rag.cli import _port_is_listening
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+        try:
+            assert _port_is_listening(port) is True
+        finally:
+            sock.close()
+
+    def test_port_is_listening_false_for_closed_port(self):
+        """An unbound ephemeral port returns False without raising."""
+        import socket
+
+        from vaultspec_rag.cli import _port_is_listening
+
+        # Bind to find a free port, then close so it's unbound.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        assert _port_is_listening(port) is False
+
+    def test_heartbeat_age_missing_field(self):
+        """No last_heartbeat → None (caller treats as 'no data')."""
+        from vaultspec_rag.cli import _heartbeat_age_seconds
+
+        assert _heartbeat_age_seconds({"pid": 1, "port": 2}) is None
+
+    def test_heartbeat_age_malformed_timestamp(self):
+        """Unparseable timestamp → None, no exception."""
+        from vaultspec_rag.cli import _heartbeat_age_seconds
+
+        assert _heartbeat_age_seconds({"last_heartbeat": "not-a-date"}) is None
+
+    def test_heartbeat_age_fresh(self):
+        """Just-written heartbeat → near-zero seconds."""
+        from datetime import UTC, datetime
+
+        from vaultspec_rag.cli import _heartbeat_age_seconds
+
+        ts = datetime.now(UTC).isoformat(timespec="seconds")
+        age = _heartbeat_age_seconds({"last_heartbeat": ts})
+        assert age is not None
+        assert 0 <= age < 5
+
+    def test_heartbeat_age_stale(self):
+        """Old heartbeat → seconds matching the synthesized delta."""
+        from datetime import UTC, datetime, timedelta
+
+        from vaultspec_rag.cli import _heartbeat_age_seconds
+
+        old = (datetime.now(UTC) - timedelta(seconds=120)).isoformat(
+            timespec="seconds",
+        )
+        age = _heartbeat_age_seconds({"last_heartbeat": old})
+        assert age is not None
+        assert 115 < age < 125
+
+    def test_heartbeat_age_naive_timestamp_assumed_utc(self):
+        """Pre-3.13-style naive ISO timestamps must not crash."""
+        from datetime import UTC, datetime, timedelta
+
+        from vaultspec_rag.cli import _heartbeat_age_seconds
+
+        old = (
+            (datetime.now(UTC) - timedelta(seconds=10))
+            .replace(
+                tzinfo=None,
+            )
+            .isoformat(timespec="seconds")
+        )
+        age = _heartbeat_age_seconds({"last_heartbeat": old})
+        assert age is not None
+        assert 8 < age < 15
+
+    def test_service_status_stale_heartbeat_exits_4(self, tmp_path: Path):
+        """File present + PID alive + heartbeat stale → exit 4."""
+        from datetime import UTC, datetime, timedelta
+
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=1)  # port 1 unbound
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            # 5 minutes old: well past the 60s staleness threshold.
+            data["last_heartbeat"] = (
+                datetime.now(UTC) - timedelta(seconds=300)
+            ).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "service", "status"])
+            assert result.exit_code == 4
+            # Port 1 likely yields "crashed (port silent)" first because
+            # port-not-listening is checked before heartbeat staleness in
+            # the State derivation. Either message is acceptable; the
+            # contract being tested is the non-zero exit code.
+            assert "crashed" in result.output.lower()
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
 
 class TestMcpFastPath:
@@ -846,7 +960,11 @@ class TestServiceDaemonHelpers:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_stale_pid(self, tmp_path: Path):
-        """service_status with a dead PID shows stale cleanup message."""
+        """service_status with a dead PID exits 4 and cleans the file.
+
+        Per Wave 2 contract (#113), divergent/crashed states exit 4
+        so scripts can branch on "known-bad" without parsing prose.
+        """
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=99999999, port=8766)
@@ -854,10 +972,9 @@ class TestServiceDaemonHelpers:
             assert sf.exists()
 
             result = runner.invoke(app, ["server", "service", "status"])
-            assert result.exit_code == 0
-            assert (
-                "stale" in result.output.lower() or "cleaned" in result.output.lower()
-            )
+            assert result.exit_code == 4
+            lower = result.output.lower()
+            assert "crashed" in lower or "stale" in lower
             assert not sf.exists()
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
@@ -925,11 +1042,26 @@ class TestServiceDaemonHelpers:
 
         server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
         port = server.server_address[1]
-        thread = threading.Thread(target=server.handle_request, daemon=True)
+        # Wave 2 (#113): service_status calls _port_is_listening first
+        # (one TCP connect that the HTTPServer accepts but cannot satisfy
+        # with HTTP). Use serve_forever so multiple incoming connections
+        # are handled — the listening probe plus the /health probe.
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
+            # Wave 2 contract (#113): a healthy running service writes
+            # last_heartbeat to service.json. Without it the divergence
+            # check correctly flags "absent + PID alive" as crashed.
+            # Inject a fresh heartbeat to model a running daemon.
             _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
             result = runner.invoke(app, ["server", "service", "status"])
 
             assert result.exit_code == 0
@@ -938,6 +1070,8 @@ class TestServiceDaemonHelpers:
             assert "Search Concurrency" in result.output
             assert "Cross-project Search" in result.output
         finally:
+            server.shutdown()
+            server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
             server.server_close()
             thread.join(timeout=5)

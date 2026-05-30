@@ -62,7 +62,12 @@ server mcp stop              Stop the MCP server
 server mcp status            Show MCP server status
 server service start         Start the HTTP RAG service
 server service stop          Stop the HTTP RAG service
-server service status        Show service status
+server service status        Show service status. Exit codes: 0 running,
+                             3 stopped (no service.json), 4 crashed or
+                             divergent (file present but PID dead, port
+                             silent, heartbeat stale, or PID reused).
+                             Daemon writes last_heartbeat every 15s;
+                             stale threshold 60s.
 server service warmup        Pre-load GPU models without serving
 ```
 

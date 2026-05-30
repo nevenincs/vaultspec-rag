@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -864,3 +865,119 @@ class TestRegistryFullErrorShape:
         source = inspect.getsource(mcp_server._ensure_watcher)
         assert "_registry.peek_project" in source
         assert "_registry.get_project" not in source
+
+
+class TestDaemonLifecycleHelpers:
+    """Wave 2 (#113): _lifecycle_log + _heartbeat_tick_sync + cleanup."""
+
+    def test_lifecycle_log_emits_warning_with_structured_format(
+        self,
+        caplog,
+    ) -> None:
+        from vaultspec_rag.mcp_server import _lifecycle_log
+
+        with caplog.at_level("WARNING", logger="vaultspec_rag.mcp_server"):
+            _lifecycle_log("startup", pid=42, port=8766)
+
+        records = [r for r in caplog.records if r.name == "vaultspec_rag.mcp_server"]
+        assert records, "lifecycle log did not surface on the expected logger"
+        rec = records[-1]
+        assert rec.levelname == "WARNING"
+        rendered = rec.getMessage()
+        assert "service.lifecycle" in rendered
+        assert "event=startup" in rendered
+        assert "pid=42" in rendered
+        assert "port=8766" in rendered
+
+    def test_heartbeat_tick_sync_no_status_file(self, tmp_path, monkeypatch) -> None:
+        """Missing service.json → no-op (no exception, no file created)."""
+        from vaultspec_rag import mcp_server
+
+        monkeypatch.setattr(
+            mcp_server,
+            "_status_file_path",
+            lambda: tmp_path / "service.json",
+        )
+        # Should not raise and should not create the file.
+        mcp_server._heartbeat_tick_sync()
+        assert not (tmp_path / "service.json").exists()
+
+    def test_heartbeat_tick_sync_writes_last_heartbeat(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        """Existing service.json gets last_heartbeat merged in atomically."""
+        from datetime import UTC, datetime
+
+        from vaultspec_rag import mcp_server
+
+        sf = tmp_path / "service.json"
+        sf.write_text(
+            json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
+
+        mcp_server._heartbeat_tick_sync()
+
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        assert data["pid"] == 1
+        assert data["port"] == 2
+        assert data["started_at"] == "x"
+        assert "last_heartbeat" in data
+        # Parses as a valid ISO-8601 timestamp.
+        ts = datetime.fromisoformat(data["last_heartbeat"])
+        assert ts.tzinfo is not None
+        delta = (datetime.now(UTC) - ts).total_seconds()
+        assert -1 < delta < 5
+
+    def test_unlink_status_file_silently_missing_is_noop(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        """Calling cleanup with no file does not raise."""
+        from vaultspec_rag import mcp_server
+
+        monkeypatch.setattr(
+            mcp_server,
+            "_status_file_path",
+            lambda: tmp_path / "nope.json",
+        )
+        mcp_server._unlink_status_file_silently()  # no exception
+
+    def test_record_shutdown_is_idempotent(
+        self,
+        tmp_path,
+        monkeypatch,
+        caplog,
+    ) -> None:
+        """First call wins; subsequent calls do not log or unlink twice."""
+        from vaultspec_rag import mcp_server
+
+        sf = tmp_path / "service.json"
+        sf.write_text(json.dumps({"pid": 1, "port": 2}), encoding="utf-8")
+        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
+        # Reset the module-level guard so this test is isolated.
+        monkeypatch.setattr(mcp_server, "_shutdown_recorded", False)
+
+        with caplog.at_level("WARNING", logger="vaultspec_rag.mcp_server"):
+            mcp_server._record_shutdown("test-first")
+            assert not sf.exists()
+            mcp_server._record_shutdown("test-second")
+
+        first = [
+            r
+            for r in caplog.records
+            if r.name == "vaultspec_rag.mcp_server"
+            and "reason=test-first" in r.getMessage()
+        ]
+        second = [
+            r
+            for r in caplog.records
+            if r.name == "vaultspec_rag.mcp_server"
+            and "reason=test-second" in r.getMessage()
+        ]
+        assert first, "first shutdown should log"
+        assert not second, "second shutdown should be suppressed"

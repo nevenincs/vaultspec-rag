@@ -12,12 +12,16 @@ alongside the MCP transport at ``/mcp``.
 from __future__ import annotations
 
 import asyncio
+import atexit
+import contextlib
 import fnmatch
+import json
 import logging
 import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +51,16 @@ _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
+
+# Heartbeat contract for issue #113. The daemon writes
+# ``last_heartbeat`` to service.json every _HEARTBEAT_INTERVAL_SECONDS
+# so ``vaultspec-rag server service status`` can detect a stale file
+# (process killed without running atexit / signal handlers — SIGKILL,
+# OOM, kernel panic). The CLI flags the file stale when the age
+# exceeds _HEARTBEAT_STALENESS_SECONDS. Four beats per minute tolerates
+# up to three missed beats before the verdict flips to "crashed".
+_HEARTBEAT_INTERVAL_SECONDS = 15
+_HEARTBEAT_STALENESS_SECONDS = 60
 
 
 def _resolve_log_path() -> Path:
@@ -134,6 +148,150 @@ def _default_root() -> Path:
     return _validate_vault_root(root)
 
 
+# -- lifecycle helpers ------------------------------------------------------
+
+
+def _status_file_path() -> Path:
+    """Resolve the same ``service.json`` path the CLI parent writes.
+
+    The CLI ``cli._status_file()`` builds this path from
+    ``cfg.status_dir``; the daemon mirrors that resolution so it can
+    own end-of-life cleanup without cross-importing from cli.
+    """
+    from .config import get_config
+
+    cfg = get_config()
+    return Path(cfg.status_dir).expanduser() / "service.json"
+
+
+def _lifecycle_log(event: str, **kv: object) -> None:
+    """Emit a structured lifecycle entry at WARNING level.
+
+    WARNING (not INFO) because ``VAULTSPEC_RAG_LOG_LEVEL`` defaults to
+    WARNING, so INFO lines are silent by default. Operators see the
+    lifecycle without opt-in.
+
+    Args:
+        event: Short identifier (``startup`` / ``shutdown``).
+        **kv: Extra key=value fields rendered space-separated for
+            greppability.
+    """
+    parts = [f"event={event}"]
+    parts.extend(f"{k}={v}" for k, v in kv.items())
+    logger.warning("service.lifecycle %s", " ".join(parts))
+
+
+def _unlink_status_file_silently() -> None:
+    """Best-effort unlink of service.json; ignores missing/locked.
+
+    Called from atexit, signal handlers, and the lifespan finally
+    block. Idempotent because any of those code paths may have
+    already removed the file.
+    """
+    path = _status_file_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning(
+            "service.lifecycle event=cleanup_failed path=%s error=%s",
+            path,
+            exc,
+        )
+
+
+def _heartbeat_tick_sync() -> None:
+    """Synchronous heartbeat write — atomic via .tmp + os.replace.
+
+    Reads the current service.json, merges ``last_heartbeat`` (ISO-8601
+    UTC, second resolution), writes through a tmp file. Called from
+    inside ``asyncio.to_thread`` so file I/O does not block the event
+    loop.
+
+    Exits silently when service.json is missing (the CLI parent may
+    have unlinked it during ``server service stop`` — the heartbeat
+    loop will exit on the next tick).
+    """
+    path = _status_file_path()
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(str(tmp), str(path))
+
+
+async def _heartbeat_loop() -> None:
+    """Periodic heartbeat task; cancelled in the lifespan finally.
+
+    Sleeps ``_HEARTBEAT_INTERVAL_SECONDS`` between ticks. Tolerates
+    transient write failures so an I/O blip never crashes the
+    service; the next tick retries.
+    """
+    while True:
+        try:
+            await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+            await asyncio.to_thread(_heartbeat_tick_sync)
+        except asyncio.CancelledError:
+            return
+        except Exception:  # heartbeat must never crash the service
+            logger.warning(
+                "service.lifecycle event=heartbeat_failed",
+                exc_info=True,
+            )
+
+
+_shutdown_hooks_installed = False
+_shutdown_recorded = False
+
+
+def _record_shutdown(reason: str, **kv: object) -> None:
+    """Log + unlink once; subsequent calls are no-ops.
+
+    atexit, the signal handler, and the lifespan finally block may
+    all fire in sequence. The first one wins.
+    """
+    global _shutdown_recorded
+    if _shutdown_recorded:
+        return
+    _shutdown_recorded = True
+    _lifecycle_log("shutdown", reason=reason, **kv)
+    _unlink_status_file_silently()
+
+
+def _install_daemon_shutdown_hooks() -> None:
+    """Register atexit cleanup once per process.
+
+    SIGTERM/SIGINT are intentionally NOT overridden — uvicorn already
+    installs its own graceful-shutdown handler for those signals that
+    triggers the lifespan ``finally`` block (which calls
+    ``_record_shutdown("clean")``). Overriding here breaks that
+    cooperation: a manual signal handler re-raising via
+    ``os.kill(SIG_DFL)`` exits the process before logging buffers
+    flush, so the lifecycle log line never lands on disk.
+
+    atexit covers the cases uvicorn doesn't (fatal exception during
+    startup, ``sys.exit`` from inside the request path). SIGKILL /
+    OOM remain unreachable by design; the heartbeat staleness check
+    in ``service status`` is the safety net for those.
+
+    Idempotent: a second call is a no-op.
+    """
+    global _shutdown_hooks_installed
+    if _shutdown_hooks_installed:
+        return
+    _shutdown_hooks_installed = True
+
+    atexit.register(lambda: _record_shutdown("atexit"))
+
+
 # -- lifespan ---------------------------------------------------------------
 
 
@@ -142,8 +300,10 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     """Eagerly load GPU models before accepting connections.
 
     Startup loads the shared ``EmbeddingModel`` with per-stage
-    timing logs.  Shutdown closes all project stores and releases
-    GPU memory.
+    timing logs, registers daemon-owned shutdown hooks, and starts
+    the heartbeat task.  Shutdown cancels the heartbeat, closes
+    all project stores, releases GPU memory, and unlinks
+    ``service.json``.
 
     Args:
         _app: The Starlette application instance (unused but
@@ -152,8 +312,9 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     Yields:
         Control to the running application.
     """
-    global _start_time
+    global _start_time, _shutdown_recorded
     _start_time = time.monotonic()
+    _shutdown_recorded = False
 
     t_total = time.perf_counter()
 
@@ -173,6 +334,23 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
 
     logger.info("Service startup complete in %.2fs", time.perf_counter() - t_total)
 
+    # Daemon now owns end-of-life cleanup. The CLI parent created
+    # service.json; the daemon's hooks remove it on exit so a stale
+    # file never misleads ``service status`` (issue #113).
+    _install_daemon_shutdown_hooks()
+    _lifecycle_log("startup", pid=os.getpid())
+
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
+    # First heartbeat right away so a freshly started service is
+    # immediately distinguishable from a stale CLI-only write.
+    try:
+        await asyncio.to_thread(_heartbeat_tick_sync)
+    except Exception:
+        logger.warning(
+            "service.lifecycle event=heartbeat_initial_failed",
+            exc_info=True,
+        )
+
     # Start the MCP session manager.  Starlette's Mount does NOT
     # propagate lifespan to sub-apps, so the streamable_http_app's
     # own lifespan never fires.  Running it here ensures the session
@@ -181,11 +359,15 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
         try:
             yield
         finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await heartbeat_task
             # Cancel watchers BEFORE closing stores to prevent
             # incremental_index() running against a closed store.
             _stop_all_watchers()
             _registry.close_all()
             logger.info("Service shutdown complete")
+            _record_shutdown("clean")
 
 
 # -- health endpoint --------------------------------------------------------
