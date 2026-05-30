@@ -96,11 +96,27 @@ vaultspec-rag index                          # both
 vaultspec-rag index --type vault             # vault only
 vaultspec-rag index --type code              # code only
 vaultspec-rag index --rebuild                # drop selected collections, then re-index
-vaultspec-rag clean all --yes                # wipe index data without re-indexing
+vaultspec-rag clean all --yes                # wipe index data (target REQUIRED since 0.2.9)
 
+# Search — default --max-results=10. Vault filters: --doc-type / --feature
+# / --date / --tag. Code filters: --language / --path / --node-type /
+# --function-name / --class-name. (Or embed tokens directly in the query:
+# `type:adr`, `path:src/foo.py`, etc.)
 vaultspec-rag search "architecture decision"
-vaultspec-rag search --type code "error handling"
+vaultspec-rag search --type code "error handling" --language python
+vaultspec-rag search --type vault "auth refactor" --doc-type adr --feature auth
+
+# --port <N> delegates to a running RAG service (recommended for
+# concurrent agents). On unreachable port, the CLI now hard-fails with
+# remediation instead of silently spawning a local model + Qdrant lock.
+# Opt in to the legacy silent fallback with --allow-fallback (single-agent
+# use only). Pass --verbose to re-enable HF tqdm progress bars.
+vaultspec-rag search "foo" --port 8766
+vaultspec-rag search "foo" --port 8766 --allow-fallback
 ```
+
+The results-table title carries `(via MCP)` or `(via in-process)` so
+the execution path is never ambiguous.
 
 ### Search concurrency contract
 

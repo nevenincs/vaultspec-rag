@@ -85,6 +85,22 @@ class TestToolRegistration:
                     f"Tool {tool.name} missing project_root parameter"
                 )
 
+    def test_search_vault_exposes_filter_params(self):
+        """search_vault must expose doc_type/feature/date/tag explicit params."""
+        tools = _run(mcp.list_tools())
+        sv = next(t for t in tools if t.name == "search_vault")
+        params = set(sv.inputSchema.get("properties", {}).keys())
+        assert {"doc_type", "feature", "date", "tag"}.issubset(params)
+
+    def test_search_codebase_exposes_path_param(self):
+        """search_codebase must expose path as an explicit filter param."""
+        tools = _run(mcp.list_tools())
+        sc = next(t for t in tools if t.name == "search_codebase")
+        params = set(sc.inputSchema.get("properties", {}).keys())
+        assert "path" in params
+        # And the original four code filters stay exposed.
+        assert {"language", "node_type", "function_name", "class_name"}.issubset(params)
+
 
 class TestPromptRegistration:
     """Verify prompts are registered."""

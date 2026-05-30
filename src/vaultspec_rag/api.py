@@ -111,6 +111,10 @@ def search_vault(
     query: str,
     *,
     top_k: int = 5,
+    doc_type: str | None = None,
+    feature: str | None = None,
+    date: str | None = None,
+    tag: str | None = None,
 ) -> list[SearchResult]:
     """Search the documentation vault.
 
@@ -118,13 +122,24 @@ def search_vault(
         root_dir: Workspace root directory.
         query: Natural language search query.
         top_k: Number of results to return.
+        doc_type: Optional vault doc-type filter (e.g. ``'adr'``).
+        feature: Optional feature-tag filter.
+        date: Optional ISO date filter.
+        tag: Optional free-form tag filter.
 
     Returns:
         Ranked list of SearchResult objects.
     """
     root = _resolve(root_dir)
     with get_registry().lease(root) as slot:
-        return slot.searcher.search_vault(query, top_k=top_k)
+        return slot.searcher.search_vault(
+            query,
+            top_k=top_k,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+        )
 
 
 def search_codebase(
@@ -133,6 +148,7 @@ def search_codebase(
     *,
     top_k: int = 5,
     language: str | None = None,
+    path: str | None = None,
     node_type: str | None = None,
     function_name: str | None = None,
     class_name: str | None = None,
@@ -145,6 +161,8 @@ def search_codebase(
         top_k: Number of results to return.
         language: Optional language filter (e.g., ``'python'``,
             ``'rust'``).
+        path: Optional exact-match path filter (KEYWORD payload
+            index).
         node_type: Optional AST node type filter.
         function_name: Optional function/method name filter.
         class_name: Optional class/struct name filter.
@@ -158,6 +176,7 @@ def search_codebase(
             query,
             top_k=top_k,
             language=language,
+            path=path,
             node_type=node_type,
             function_name=function_name,
             class_name=class_name,

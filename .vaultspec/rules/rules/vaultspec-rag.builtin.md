@@ -31,10 +31,26 @@ environments.
 Search and indexing:
 
 ```
-index                        Index vault docs and/or codebase
-search <query>               Semantic search (vault, codebase, or all)
-status                       Show index status and GPU info
+index [--type vault|code|all] [--rebuild] [--port N] [--allow-fallback] [--verbose]
+                             Index vault docs and/or codebase. --port delegates to
+                             a running service; on dead port, the CLI hard-fails
+                             unless --allow-fallback is set.
+search <query> [--type vault|code] [--max-results N=10] [--no-truncate]
+       [--port N] [--allow-fallback] [--verbose]
+                             Code filters: --language --path --node-type
+                             --function-name --class-name
+                             Vault filters: --doc-type --feature --date --tag
+                             Or use in-query tokens: type:adr feature:auth
+                             path:src/foo lang:python func:main class:Engine
+                             date:2026-03 tag:auth nodetype:function_definition
+status                       Show index status and GPU info.
 ```
+
+Path indicator: search results table title is suffixed `(via MCP)` when
+delegated, `(via in-process)` when the local fallback ran. Default
+`--max-results` is 10 (raised from 5 to mitigate top-k crowding).
+`clean` requires an explicit target since 0.2.9 — `vaultspec-rag clean`
+without an argument errors out instead of wiping everything.
 
 Server management:
 
@@ -60,11 +76,15 @@ test [PYTEST_ARGS...]        Run the test suite
 
 The `vaultspec-search-mcp` server exposes the following tools:
 
-- `search_vault(query, top_k, project_root)` — semantic search across
-  vault documents. Returns ranked results with scores and metadata.
-- `search_codebase(query, top_k, language, node_type, function_name, class_name, project_root)` —
-  semantic search across indexed source code. Supports language,
-  AST node type, function name, and class name filters.
+- `search_vault(query, top_k, doc_type?, feature?, date?, tag?, project_root?)` —
+  semantic search across vault documents. Filters mirror the CLI
+  `--doc-type`/`--feature`/`--date`/`--tag` flags. Returns ranked
+  results with scores and metadata.
+- `search_codebase(query, top_k, language?, path?, node_type?, function_name?, class_name?, project_root?)` —
+  semantic search across indexed source code. Filters mirror the CLI
+  `--language` / `--path` / `--node-type` / `--function-name` /
+  `--class-name` flags. All filters are exact KEYWORD match against
+  Qdrant payload fields.
 - `get_index_status(project_root)` — returns index statistics, document
   counts, and GPU hardware info.
 - `get_code_file(path, project_root)` — retrieve full source file content

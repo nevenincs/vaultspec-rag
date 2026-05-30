@@ -323,7 +323,18 @@ class VaultStore:
 
             self._ensure_collection(self.CODE_TABLE_NAME)
 
-            for fname in ("path", "language", "function_name", "class_name"):
+            # ``node_type`` is added to the KEYWORD index set so the
+            # MCP `search_codebase(node_type=...)` filter does not fall
+            # back to a linear scan on remote Qdrant deployments. Local
+            # mode already returned correct results without the index;
+            # this is purely a perf-on-remote completeness fix.
+            for fname in (
+                "path",
+                "language",
+                "function_name",
+                "class_name",
+                "node_type",
+            ):
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
                         collection_name=self.CODE_TABLE_NAME,

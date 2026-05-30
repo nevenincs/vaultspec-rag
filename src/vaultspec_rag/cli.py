@@ -518,12 +518,32 @@ def handle_index(
             help="Ad-hoc exclusion pattern (repeatable, gitignore syntax).",
         ),
     ] = None,
+    allow_fallback: Annotated[
+        bool,
+        typer.Option(
+            "--allow-fallback",
+            help=(
+                "When --port is given but the service is unreachable, "
+                "silently fall back to in-process indexing. Defaults "
+                "off; the CLI hard-fails with remediation instead, to "
+                "avoid re-entering the Qdrant lock that the resident "
+                "service is meant to own."
+            ),
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Re-enable HuggingFace tqdm progress bars.",
+        ),
+    ] = False,
 ) -> None:
     """Index vault documents and/or codebase chunks.
 
     When ``--port`` is given, delegates to a running MCP server
-    via ``_try_mcp_reindex``. Falls back to in-process indexing
-    if the server is unavailable.
+    via ``_try_mcp_reindex``. On dead/unreachable port, hard-fails
+    with remediation unless ``--allow-fallback`` is set.
 
     Args:
         ctx: Typer context carrying ``CLIState``.
@@ -537,11 +557,17 @@ def handle_index(
             actually indexing.  Codebase only.
         exclude: Ad-hoc exclusion patterns (gitignore syntax,
             repeatable).  Combined with ``.vaultragignore``.
+        allow_fallback: Opt in to silent in-process fallback when
+            ``--port`` is unreachable.
+        verbose: Re-enable HuggingFace tqdm progress bars.
 
     Raises:
-        typer.Exit: On GPU errors or locked index files.
+        typer.Exit: On GPU errors, locked index files, or
+            unreachable ``--port`` without ``--allow-fallback``.
 
     """
+    if not verbose:
+        _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
 
@@ -587,6 +613,19 @@ def handle_index(
                 str(target),
             )
 
+        # Surface structured errors (live service, broken tool) instead
+        # of silently relaning. _try_mcp_reindex now returns:
+        #   None  -> connection refused (service down)
+        #   dict  -> either a successful summary or {"ok": False, ...}
+        for label, data in (("vault", v_data), ("codebase", c_data)):
+            if isinstance(data, dict) and data.get("ok") is False:
+                console.print(
+                    f"[red]MCP reindex_{label} reported an error; "
+                    f"refusing to silently fall back.[/]",
+                )
+                _display_mcp_error(data)
+                raise typer.Exit(code=1)
+
         if v_data is not None or c_data is not None:
             table = Table(
                 title="Indexing Summary (via MCP)",
@@ -631,8 +670,12 @@ def handle_index(
             console.print(table)
             return
 
+        if not allow_fallback:
+            _display_port_unreachable_error(port, command="indexing")
+            raise typer.Exit(code=1)
         console.print(
-            "[yellow]MCP server unavailable, falling back to in-process indexing...[/]",
+            "[yellow]MCP server unavailable, falling back to in-process "
+            "indexing (--allow-fallback set)...[/]",
         )
 
     from .progress import RichProgressReporter
@@ -700,7 +743,7 @@ def handle_index(
             store.close()
 
     # Summary table
-    table = Table(title="Indexing Summary", show_header=True)
+    table = Table(title="Indexing Summary (via in-process)", show_header=True)
     table.add_column("Source", style="bold")
     table.add_column("Added", style="green", justify="right")
     table.add_column("Updated", style="yellow", justify="right")
@@ -734,10 +777,13 @@ def handle_clean(
     clean_type: Annotated[
         Literal["vault", "code", "all"],
         typer.Argument(
-            help="What to wipe: 'vault' (docs), 'code' (source), or 'all'.",
-            show_default=True,
+            help=(
+                "What to wipe (REQUIRED): 'vault' (docs), 'code' "
+                "(source), or 'all'. No default — the previous "
+                "destructive 'all' default was a footgun (issue #111)."
+            ),
         ),
-    ] = "all",
+    ],
     yes: Annotated[
         bool,
         typer.Option(
@@ -824,41 +870,96 @@ def _try_mcp_reindex(
     import asyncio
 
     async def _call() -> dict[str, object] | None:
-        try:
-            import json
+        import json
 
-            from mcp.client.session import ClientSession
-            from mcp.client.streamable_http import (
-                streamable_http_client,
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import (
+            streamable_http_client,
+        )
+        from mcp.types import TextContent
+
+        # Trailing slash avoids a 307 redirect from the Starlette
+        # Mount("/mcp") wrapping the inner app at "/" (issue #110 polish).
+        url = f"http://127.0.0.1:{port}/mcp/"
+        async with (
+            streamable_http_client(url) as (
+                read,
+                write,
+                _,
+            ),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool(
+                tool_name,
+                {"clean": clean, "project_root": project_root},
             )
-            from mcp.types import TextContent
-
-            url = f"http://127.0.0.1:{port}/mcp"
-            async with (
-                streamable_http_client(url) as (
-                    read,
-                    write,
-                    _,
-                ),
-                ClientSession(read, write) as session,
-            ):
-                await session.initialize()
-                result = await session.call_tool(
-                    tool_name,
-                    {"clean": clean, "project_root": project_root},
-                )
-                if result.content:
-                    first = result.content[0]
-                    if isinstance(first, TextContent):
-                        return json.loads(first.text)
-                return {}
-        except Exception:
-            return None
+            if result.content:
+                first = result.content[0]
+                if isinstance(first, TextContent):
+                    return json.loads(first.text)
+            return {}
 
     try:
         return asyncio.run(_call())
-    except Exception:
-        return None
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            return None
+        return {
+            "ok": False,
+            "error": "mcp_call_failed",
+            "message": (
+                f"MCP reindex tool {tool_name!r} on port {port} failed: "
+                f"{exc.__class__.__name__}: {exc}"
+            ),
+        }
+
+
+def _is_connection_refused(exc: BaseException) -> bool:
+    """Walk an exception chain looking for a connect-refused signal.
+
+    Used by every ``_try_mcp_*`` helper to discriminate "service
+    unreachable" (connection refused → caller treats as fast-path
+    unavailable) from "tool error" (live service, broken tool → caller
+    surfaces the structured error instead of silently relaning).
+    """
+    import errno
+
+    refused_errnos = {
+        errno.ECONNREFUSED,
+        getattr(errno, "WSAECONNREFUSED", 10061),
+    }
+    httpx_refused_types: tuple[type[BaseException], ...]
+    try:
+        from httpx import ConnectError, ConnectTimeout, ReadError
+
+        httpx_refused_types = (ConnectError, ConnectTimeout, ReadError)
+    except ImportError:  # pragma: no cover - httpx is a hard dep but stay defensive
+        httpx_refused_types = ()
+
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ConnectionRefusedError):
+            return True
+        if (
+            isinstance(current, OSError)
+            and getattr(current, "errno", None) in refused_errnos
+        ):
+            return True
+        if httpx_refused_types and isinstance(current, httpx_refused_types):
+            return True
+        if current.__cause__ is not None:
+            stack.append(current.__cause__)
+        if current.__context__ is not None:
+            stack.append(current.__context__)
+        if isinstance(current, BaseExceptionGroup):
+            stack.extend(current.exceptions)
+    return False
 
 
 def _try_mcp_admin(
@@ -887,45 +988,6 @@ def _try_mcp_admin(
         return None
 
     import asyncio
-    import errno
-
-    refused_errnos = {
-        errno.ECONNREFUSED,
-        getattr(errno, "WSAECONNREFUSED", 10061),
-    }
-    httpx_refused_types: tuple[type[BaseException], ...]
-    try:
-        from httpx import ConnectError, ConnectTimeout, ReadError
-
-        httpx_refused_types = (ConnectError, ConnectTimeout, ReadError)
-    except ImportError:  # pragma: no cover - httpx is a hard dep but stay defensive
-        httpx_refused_types = ()
-
-    def _is_connection_refused(exc: BaseException) -> bool:
-        """Walk an exception chain looking for a connect-refused signal."""
-        seen: set[int] = set()
-        stack: list[BaseException] = [exc]
-        while stack:
-            current = stack.pop()
-            if id(current) in seen:
-                continue
-            seen.add(id(current))
-            if isinstance(current, ConnectionRefusedError):
-                return True
-            if (
-                isinstance(current, OSError)
-                and getattr(current, "errno", None) in refused_errnos
-            ):
-                return True
-            if httpx_refused_types and isinstance(current, httpx_refused_types):
-                return True
-            if current.__cause__ is not None:
-                stack.append(current.__cause__)
-            if current.__context__ is not None:
-                stack.append(current.__context__)
-            if isinstance(current, BaseExceptionGroup):
-                stack.extend(current.exceptions)
-        return False
 
     async def _call() -> dict[str, object] | None:
         import json
@@ -934,7 +996,9 @@ def _try_mcp_admin(
         from mcp.client.streamable_http import streamable_http_client
         from mcp.types import TextContent
 
-        url = f"http://127.0.0.1:{port}/mcp"
+        # Trailing slash avoids a 307 redirect from the Starlette
+        # Mount("/mcp") wrapping the inner app at "/" (issue #110 polish).
+        url = f"http://127.0.0.1:{port}/mcp/"
         async with (
             streamable_http_client(url) as (read, write, _),
             ClientSession(read, write) as session,
@@ -962,6 +1026,16 @@ def _try_mcp_search(
     top_k: int,
     port: int,
     project_root: str,
+    *,
+    language: str | None = None,
+    path: str | None = None,
+    node_type: str | None = None,
+    function_name: str | None = None,
+    class_name: str | None = None,
+    doc_type: str | None = None,
+    feature: str | None = None,
+    date: str | None = None,
+    tag: str | None = None,
 ) -> list[dict[str, object]] | dict[str, object] | None:
     """Search via a running MCP server over HTTP.
 
@@ -977,6 +1051,15 @@ def _try_mcp_search(
         project_root: Absolute path to the target project. The
             HTTP service is multi-tenant and has no default
             project, so every tool call must carry this value.
+        language: Code-search filter — programming language.
+        path: Code-search filter — exact project-relative path.
+        node_type: Code-search filter — AST node type.
+        function_name: Code-search filter — function/method name.
+        class_name: Code-search filter — class/struct name.
+        doc_type: Vault-search filter — vault doc type.
+        feature: Vault-search filter — feature tag.
+        date: Vault-search filter — exact ISO date.
+        tag: Vault-search filter — free-form tag.
 
     Returns:
         List of result dicts on success, a structured MCP error
@@ -990,48 +1073,108 @@ def _try_mcp_search(
     tool_map = {"vault": "search_vault", "code": "search_codebase"}
     tool_name = tool_map.get(search_type, "search_vault")
 
+    code_filters = {
+        "language": language,
+        "path": path,
+        "node_type": node_type,
+        "function_name": function_name,
+        "class_name": class_name,
+    }
+    vault_filters = {
+        "doc_type": doc_type,
+        "feature": feature,
+        "date": date,
+        "tag": tag,
+    }
+    code_supplied = any(v is not None for v in code_filters.values())
+    vault_supplied = any(v is not None for v in vault_filters.values())
+    if code_supplied and search_type != "code":
+        offending = sorted(k for k, v in code_filters.items() if v is not None)
+        return {
+            "ok": False,
+            "error": "invalid_filter_for_search_type",
+            "message": (
+                "code-search filters "
+                f"({', '.join(offending)}) require --type code; "
+                f"got --type {search_type}."
+            ),
+        }
+    if vault_supplied and search_type != "vault":
+        offending = sorted(k for k, v in vault_filters.items() if v is not None)
+        return {
+            "ok": False,
+            "error": "invalid_filter_for_search_type",
+            "message": (
+                "vault-search filters "
+                f"({', '.join(offending)}) require --type vault; "
+                f"got --type {search_type}."
+            ),
+        }
+
     async def _call() -> list[dict[str, object]] | dict[str, object] | None:
-        try:
-            import json
+        import json
 
-            from mcp.client.session import ClientSession
-            from mcp.client.streamable_http import streamable_http_client
-            from mcp.types import TextContent
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.types import TextContent
 
-            url = f"http://127.0.0.1:{port}/mcp"
-            async with (
-                streamable_http_client(url) as (read, write, _),
-                ClientSession(read, write) as session,
-            ):
-                await session.initialize()
-                result = await session.call_tool(
-                    tool_name,
-                    {
-                        "query": query,
-                        "top_k": top_k,
-                        "project_root": project_root,
-                    },
-                )
-                if result.content:
-                    first = result.content[0]
-                    if isinstance(first, TextContent):
-                        data = json.loads(first.text)
-                        if data.get("ok") is False:
-                            return data
-                        return data.get("results", [])
-                return []
-        except Exception:
-            return None
+        # Trailing slash avoids a 307 redirect from the Starlette
+        # Mount("/mcp") wrapping the inner app at "/" (issue #110 polish).
+        url = f"http://127.0.0.1:{port}/mcp/"
+        payload: dict[str, object] = {
+            "query": query,
+            "top_k": top_k,
+            "project_root": project_root,
+        }
+        if search_type == "code":
+            for key, value in code_filters.items():
+                if value is not None:
+                    payload[key] = value
+        elif search_type == "vault":
+            for key, value in vault_filters.items():
+                if value is not None:
+                    payload[key] = value
+        async with (
+            streamable_http_client(url) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool(
+                tool_name,
+                payload,
+            )
+            if result.content:
+                first = result.content[0]
+                if isinstance(first, TextContent):
+                    data = json.loads(first.text)
+                    if data.get("ok") is False:
+                        return data
+                    return data.get("results", [])
+            return []
 
     try:
         return asyncio.run(_call())
-    except Exception:
-        return None
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            return None
+        # Live-but-broken: surface a structured error so the caller
+        # does not silently relane to the unsafe in-process path.
+        return {
+            "ok": False,
+            "error": "mcp_call_failed",
+            "message": (
+                f"MCP search tool {tool_name!r} on port {port} failed: "
+                f"{exc.__class__.__name__}: {exc}"
+            ),
+        }
 
 
 def _display_search_results(
     results: list[dict[str, object]],
     search_type: str,
+    via: Literal["mcp", "in-process"] = "mcp",
+    *,
+    no_truncate: bool = False,
 ) -> None:
     """Display MCP search results as a Rich table.
 
@@ -1040,15 +1183,22 @@ def _display_search_results(
             ``snippet``, and optional ``line_start`` keys.
         search_type: Label for the table title (e.g.
             ``vault``, ``code``, ``all``).
+        via: Path indicator suffixed to the table title so users
+            can tell whether the fast-path service answered or the
+            in-process fallback did.
+        no_truncate: Bypass the 120-character snippet truncation
+            so sibling files with long paths stay distinguishable.
 
     """
-    table = Table(title=f"Search Results: {search_type}", box=None)
+    suffix = "(via MCP)" if via == "mcp" else "(via in-process)"
+    table = Table(title=f"Search Results: {search_type} {suffix}", box=None)
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("Location", style="green")
     table.add_column("Snippet", style="white")
 
     for r in results:
-        snippet = str(r.get("snippet", "")).replace("\n", " ")[:120]
+        snippet_raw = str(r.get("snippet", "")).replace("\n", " ")
+        snippet = snippet_raw if no_truncate else snippet_raw[:120]
         location = str(r.get("path", ""))
         line_start = r.get("line_start")
         if line_start:
@@ -1058,6 +1208,40 @@ def _display_search_results(
         table.add_row(f"{score:.2f}", location, snippet)
 
     console.print(table)
+
+
+def _suppress_hf_progress() -> None:
+    """Silence HuggingFace and sentence-transformers tqdm bars.
+
+    The CLI's in-process path loads SentenceTransformer + SparseEncoder
+    + CrossEncoder; their default tqdm output pollutes stdout. Set
+    before model construction so the env reaches every downstream
+    import.
+    """
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
+
+def _display_port_unreachable_error(port: int, *, command: str) -> None:
+    """Render the standard remediation when ``--port`` is dead.
+
+    Mirrors the lock-error UX so users see consistent guidance whether
+    the resident service refused the connection or refused parallel
+    access. The CLI used to silently fall back to in-process here; that
+    behaviour is now opt-in via ``--allow-fallback``.
+    """
+    console.print(
+        f"[bold red]MCP service on port {port} is unreachable.[/]\n"
+        f"[white]The CLI will not silently fall back to in-process "
+        f"{command} because that would acquire the Qdrant lock and "
+        f"strand any other agent waiting on the resident service.[/]\n"
+        f"[bold]Remediation:[/]\n"
+        f"  1. Check status:  vaultspec-rag server service status\n"
+        f"  2. Start service: vaultspec-rag server service start\n"
+        f"  3. Or opt in to in-process fallback: re-run with "
+        f"--allow-fallback (single-agent use only).",
+    )
 
 
 @app.command("search")
@@ -1074,59 +1258,191 @@ def handle_search(
     ] = "vault",
     max_results: Annotated[
         int,
-        typer.Option("--max-results", help="Maximum number of results to return."),
-    ] = 5,
+        typer.Option(
+            "--max-results",
+            help=(
+                "Maximum number of results to return. Default bumped "
+                "from 5 to 10 to mitigate top-k crowding (issue #108)."
+            ),
+        ),
+    ] = 10,
     language: Annotated[
         str | None,
         typer.Option(
             "--language",
-            help="Language filter for code search.",
+            help="Code-search filter: programming language (e.g. 'python').",
+        ),
+    ] = None,
+    path: Annotated[
+        str | None,
+        typer.Option(
+            "--path",
+            help=(
+                "Code-search filter: exact project-relative file path (KEYWORD match)."
+            ),
         ),
     ] = None,
     node_type: Annotated[
         str | None,
         typer.Option(
             "--node-type",
-            help="AST node type filter.",
+            help="Code-search filter: AST node type.",
         ),
     ] = None,
     function_name: Annotated[
         str | None,
-        typer.Option("--function-name", help="Function/method name filter."),
+        typer.Option(
+            "--function-name",
+            help="Code-search filter: function/method name.",
+        ),
     ] = None,
     class_name: Annotated[
         str | None,
-        typer.Option("--class-name", help="Class/struct name filter."),
+        typer.Option(
+            "--class-name",
+            help="Code-search filter: class/struct name.",
+        ),
     ] = None,
+    doc_type: Annotated[
+        str | None,
+        typer.Option(
+            "--doc-type",
+            help=("Vault-search filter: vault doc type (e.g. 'adr', 'plan')."),
+        ),
+    ] = None,
+    feature: Annotated[
+        str | None,
+        typer.Option(
+            "--feature",
+            help="Vault-search filter: feature tag (kebab-case).",
+        ),
+    ] = None,
+    date: Annotated[
+        str | None,
+        typer.Option(
+            "--date",
+            help="Vault-search filter: exact ISO date (yyyy-mm-dd).",
+        ),
+    ] = None,
+    tag: Annotated[
+        str | None,
+        typer.Option(
+            "--tag",
+            help="Vault-search filter: free-form tag (without #).",
+        ),
+    ] = None,
+    no_truncate: Annotated[
+        bool,
+        typer.Option(
+            "--no-truncate",
+            help=(
+                "Disable the 120-character snippet truncation in the "
+                "results table so sibling files with long paths stay "
+                "distinguishable."
+            ),
+        ),
+    ] = False,
     port: Annotated[
         int | None,
         typer.Option("--port", help="Port of running MCP server (fast path)."),
     ] = None,
+    allow_fallback: Annotated[
+        bool,
+        typer.Option(
+            "--allow-fallback",
+            help=(
+                "When --port is given but the service is unreachable, "
+                "silently fall back to in-process search. Defaults off: "
+                "the CLI hard-fails with remediation instead, to avoid "
+                "re-entering the Qdrant lock that the resident service "
+                "is meant to own."
+            ),
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help=(
+                "Re-enable HuggingFace tqdm progress bars during "
+                "in-process model load and encode. Off by default to "
+                "keep search output script-friendly."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Search for relevant context in documentation or code.
 
     When ``--port`` is given, delegates to a running MCP server.
-    Falls back to in-process search if the server is unavailable.
+    On dead/unreachable port, hard-fails with remediation unless
+    ``--allow-fallback`` is set.
 
     Args:
         ctx: Typer context carrying ``CLIState``.
         query: The search query text.
         search_type: Search source: ``vault`` or ``code``.
         max_results: Maximum number of results to return.
-        language: Language filter for code search.
-        node_type: AST node type filter for code search.
-        function_name: Function/method name filter for code
-            search.
-        class_name: Class/struct name filter for code search.
+        language: Code-search filter for programming language.
+        path: Code-search filter for exact project-relative file path.
+        node_type: Code-search filter for AST node type.
+        function_name: Code-search filter for function/method name.
+        class_name: Code-search filter for class/struct name.
+        doc_type: Vault-search filter for vault doc type.
+        feature: Vault-search filter for feature tag.
+        date: Vault-search filter for exact ISO date.
+        tag: Vault-search filter for free-form tag.
         port: Port of a running MCP server for fast-path
             delegation.
+        allow_fallback: Opt in to silent in-process fallback when
+            ``--port`` is unreachable.
+        verbose: Re-enable HuggingFace tqdm progress bars.
 
     Raises:
-        typer.Exit: On GPU initialization errors.
+        typer.Exit: On GPU initialization errors, filter/search-type
+            mismatch, or unreachable ``--port`` without
+            ``--allow-fallback``.
 
     """
+    if not verbose:
+        _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
+
+    code_filter_fields = (
+        ("language", language),
+        ("path", path),
+        ("node_type", node_type),
+        ("function_name", function_name),
+        ("class_name", class_name),
+    )
+    vault_filter_fields = (
+        ("doc_type", doc_type),
+        ("feature", feature),
+        ("date", date),
+        ("tag", tag),
+    )
+    code_filters_supplied = any(v is not None for _, v in code_filter_fields)
+    vault_filters_supplied = any(v is not None for _, v in vault_filter_fields)
+    if code_filters_supplied and search_type != "code":
+        offending = sorted(
+            name for name, value in code_filter_fields if value is not None
+        )
+        console.print(
+            "[red]code-search filters ("
+            + ", ".join(offending)
+            + f") require --type code; got --type {search_type}.[/]"
+        )
+        raise typer.Exit(code=2)
+    if vault_filters_supplied and search_type != "vault":
+        offending = sorted(
+            name for name, value in vault_filter_fields if value is not None
+        )
+        console.print(
+            "[red]vault-search filters ("
+            + ", ".join(offending)
+            + f") require --type vault; got --type {search_type}.[/]"
+        )
+        raise typer.Exit(code=2)
 
     if port is not None:
         mcp_results = _try_mcp_search(
@@ -1135,6 +1451,15 @@ def handle_search(
             max_results,
             port,
             str(target),
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
         )
         if mcp_results is not None:
             if isinstance(mcp_results, dict):
@@ -1146,10 +1471,19 @@ def handle_search(
                     f"[italic]{query}[/]",
                 )
                 return
-            _display_search_results(mcp_results, search_type)
+            _display_search_results(
+                mcp_results,
+                search_type,
+                via="mcp",
+                no_truncate=no_truncate,
+            )
             return
+        if not allow_fallback:
+            _display_port_unreachable_error(port, command="search")
+            raise typer.Exit(code=1)
         console.print(
-            "[yellow]MCP server unavailable, falling back to in-process search...[/]",
+            "[yellow]MCP server unavailable, falling back to in-process "
+            "search (--allow-fallback set)...[/]",
         )
 
     store = _open_vault_store(target)
@@ -1166,12 +1500,20 @@ def handle_search(
                     query,
                     top_k=max_results,
                     language=language,
+                    path=path,
                     node_type=node_type,
                     function_name=function_name,
                     class_name=class_name,
                 )
             else:
-                results = searcher.search_vault(query, top_k=max_results)
+                results = searcher.search_vault(
+                    query,
+                    top_k=max_results,
+                    doc_type=doc_type,
+                    feature=feature,
+                    date=date,
+                    tag=tag,
+                )
     finally:
         store.close()
 
@@ -1181,13 +1523,17 @@ def handle_search(
         )
         return
 
-    table = Table(title=f"Search Results: {search_type}", box=None)
+    table = Table(
+        title=f"Search Results: {search_type} (via in-process)",
+        box=None,
+    )
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("Location", style="green")
     table.add_column("Snippet", style="white")
 
     for r in results:
-        snippet = r.snippet.replace("\n", " ")[:120]
+        snippet_raw = r.snippet.replace("\n", " ")
+        snippet = snippet_raw if no_truncate else snippet_raw[:120]
         location = r.path
         if r.line_start:
             location += f":{r.line_start}"

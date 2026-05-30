@@ -238,6 +238,360 @@ class TestMcpFastPath:
         result = _try_mcp_search("test query", "invalid", 5, 1, "/tmp/proj")
         assert result is None
 
+    def test_code_filters_with_vault_returns_usage_error(self):
+        """Filter kwargs with --type vault yield a structured usage error."""
+        result = _try_mcp_search(
+            "test query",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            function_name="foo",
+        )
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "function_name" in str(result.get("message", ""))
+
+    def test_code_filters_with_all_returns_usage_error(self):
+        """search_type='all' is also incompatible with code-only filters."""
+        result = _try_mcp_search(
+            "q",
+            "all",
+            5,
+            1,
+            "/tmp/proj",
+            language="python",
+            class_name="Foo",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        msg = str(result.get("message", ""))
+        assert "language" in msg and "class_name" in msg
+
+    def test_code_filters_unset_dont_short_circuit(self):
+        """All filters None must not trigger the usage error path."""
+        # No service running on port 1 → expect transport None, NOT usage-error dict.
+        result = _try_mcp_search("q", "vault", 5, 1, "/tmp/proj")
+        assert result is None
+
+    def test_code_filters_with_code_attempts_call(self):
+        """Filters paired with --type code reach the call path; no service → None."""
+        result = _try_mcp_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            language="python",
+            function_name="foo",
+        )
+        # No live service → transport failure → None (not a usage-error dict).
+        assert result is None
+
+    def test_search_cmd_rejects_filter_with_vault(self):
+        """The CLI ``search`` command refuses filter flags when --type vault."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--function-name",
+                "foo",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_vault_filter_with_code(self):
+        """Vault filters with --type code error explicitly."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--feature",
+                "auth",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type vault" in result.output
+
+    def test_path_filter_with_vault_returns_usage_error(self):
+        """--path is a code filter; pairing it with vault must error."""
+        result = _try_mcp_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            path="src/foo.py",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "path" in str(result.get("message", ""))
+
+    def test_vault_filter_with_code_returns_usage_error(self):
+        """doc_type/feature/date/tag with --type code must error."""
+        result = _try_mcp_search(
+            "test",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            doc_type="adr",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "doc_type" in str(result.get("message", ""))
+
+    def test_vault_filters_with_code_attempt_call(self):
+        """doc_type/feature/date/tag with --type vault reach the call path."""
+        result = _try_mcp_search(
+            "q",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            doc_type="adr",
+            feature="auth",
+            date="2026-05-28",
+            tag="auth",
+        )
+        # No live service → ConnectionRefused → None.
+        assert result is None
+
+    def test_path_filter_with_code_attempts_call(self):
+        """--path with --type code reaches the call path."""
+        result = _try_mcp_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            path="src/foo.py",
+        )
+        assert result is None
+
+    def test_live_but_broken_returns_structured_error(self, monkeypatch):
+        """Non-connection-refused exception yields ok=False dict, not None.
+
+        Without this discrimination the caller would treat a
+        live-but-broken service the same as a dead one and silently
+        relane to the unsafe in-process path. The fix preserves the
+        ``None`` -> dead-service semantic for ConnectionRefused only.
+        """
+        import asyncio
+
+        from vaultspec_rag import cli as cli_mod
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("synthetic live-but-broken tool failure")
+
+        monkeypatch.setattr(asyncio, "run", _boom)
+
+        result = cli_mod._try_mcp_search(
+            "q",
+            "code",
+            5,
+            8766,
+            "/tmp/proj",
+        )
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "mcp_call_failed"
+        assert "synthetic live-but-broken" in str(result.get("message", ""))
+
+    def test_live_but_broken_reindex_returns_structured_error(self, monkeypatch):
+        """Same discrimination for _try_mcp_reindex."""
+        import asyncio
+
+        from vaultspec_rag import cli as cli_mod
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("tool unavailable")
+
+        monkeypatch.setattr(asyncio, "run", _boom)
+
+        result = cli_mod._try_mcp_reindex(
+            "reindex_vault",
+            False,
+            8766,
+            "/tmp/proj",
+        )
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "mcp_call_failed"
+
+    def test_connection_refused_still_returns_none(self, monkeypatch):
+        """Explicit ConnectionRefusedError must keep the dead-service path."""
+        import asyncio
+
+        from vaultspec_rag import cli as cli_mod
+
+        def _refuse(*_args, **_kwargs):
+            raise ConnectionRefusedError("port closed")
+
+        monkeypatch.setattr(asyncio, "run", _refuse)
+
+        result = cli_mod._try_mcp_search(
+            "q",
+            "code",
+            5,
+            8766,
+            "/tmp/proj",
+        )
+        assert result is None
+
+
+class TestSearchSafetyContract:
+    """Wave 1B: fail-hard fast path + path indicator + tqdm suppression."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_search_port_dead_default_fails_hard(self, tmp_path):
+        """--port unreachable + no --allow-fallback exits non-zero."""
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--port",
+                "1",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "unreachable" in result.output.lower()
+        assert "allow-fallback" in result.output.lower()
+
+    def test_search_port_dead_with_allow_fallback_prints_warning(self, tmp_path):
+        """--allow-fallback emits the legacy fallthrough warning."""
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--port",
+                "1",
+                "--allow-fallback",
+            ],
+        )
+        normalized = " ".join(result.output.split())
+        assert "--allow-fallback set" in normalized
+
+    def test_search_results_via_mcp_indicator(self):
+        """via='mcp' renders '(via MCP)' in the table title."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        out = StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "vaultspec_rag.cli.console",
+                Console(file=out, force_terminal=False, width=400),
+            )
+            _display_search_results(
+                [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
+                "code",
+                via="mcp",
+            )
+        rendered = " ".join(out.getvalue().split())
+        assert "(via MCP)" in rendered
+
+    def test_search_results_via_in_process_indicator(self):
+        """via='in-process' renders '(via in-process)' in the title."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        out = StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "vaultspec_rag.cli.console",
+                Console(file=out, force_terminal=False, width=400),
+            )
+            _display_search_results(
+                [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
+                "code",
+                via="in-process",
+            )
+        rendered = " ".join(out.getvalue().split())
+        assert "(via in-process)" in rendered
+
+    def test_suppress_hf_progress_sets_env(self, monkeypatch):
+        """_suppress_hf_progress sets the HF env vars idempotently."""
+        from vaultspec_rag.cli import _suppress_hf_progress
+
+        monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
+        _suppress_hf_progress()
+        assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
+        assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
+
+
+class TestCleanRequiredTarget:
+    """Wave 1C: clean target is required (no default)."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_clean_no_target_errors(self, tmp_path):
+        """`vaultspec-rag clean` without a target exits non-zero."""
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "clean"],
+        )
+        # Typer surfaces missing required argument with exit code 2
+        # and "Missing argument" in stderr.
+        assert result.exit_code != 0
+
+
+class TestNoTruncateFlag:
+    """Wave 1C: --no-truncate bypasses snippet truncation."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def _render(self, snippet: str, no_truncate: bool) -> str:
+        from io import StringIO
+
+        from rich.console import Console
+
+        out = StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "vaultspec_rag.cli.console",
+                Console(file=out, force_terminal=False, width=400),
+            )
+            _display_search_results(
+                [{"path": "foo.py", "score": 0.9, "snippet": snippet}],
+                "code",
+                via="mcp",
+                no_truncate=no_truncate,
+            )
+        # Strip Rich wrapping whitespace before substring matching.
+        return "".join(out.getvalue().split())
+
+    def test_no_truncate_keeps_full_snippet(self):
+        """no_truncate=True renders the snippet untruncated."""
+        rendered = self._render("a" * 300, no_truncate=True)
+        assert "a" * 250 in rendered
+
+    def test_default_truncates_at_120(self):
+        """Default behaviour caps the snippet at 120 chars."""
+        rendered = self._render("a" * 300, no_truncate=False)
+        # 300 chars truncated to 120 — a 200-a run cannot appear.
+        assert "a" * 200 not in rendered
+
     def test_display_empty_results(self):
         """Empty results list renders without raising."""
         _display_search_results([], "vault")

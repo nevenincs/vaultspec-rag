@@ -587,14 +587,24 @@ def _resolve_root(project_root: str | None) -> Path:
 async def search_vault(
     query: str,
     top_k: int = 5,
+    doc_type: str | None = None,
+    feature: str | None = None,
+    date: str | None = None,
+    tag: str | None = None,
     project_root: str | None = None,
 ) -> SearchResponse | dict[str, Any]:
     """Search the documentation vault for relevant ADRs, plans, and research.
 
     Args:
         query: Natural language search string (supports
-            type:adr, feature:name, etc.).
+            type:adr, feature:name, etc. as inline tokens).
         top_k: Number of results to return.
+        doc_type: Optional vault doc-type filter (e.g. ``'adr'``,
+            ``'plan'``). Equivalent to the ``type:`` query token.
+        feature: Optional feature-tag filter (kebab-case).
+        date: Optional exact ISO-date filter.
+        tag: Optional free-form tag filter (matches against the
+            ``tags`` payload array).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
@@ -617,7 +627,14 @@ async def search_vault(
         try:
             with _registry.lease(root) as slot:
                 logger.info("Searching vault for: %s", query)
-                results = slot.searcher.search_vault(query, top_k=top_k)
+                results = slot.searcher.search_vault(
+                    query,
+                    top_k=top_k,
+                    doc_type=doc_type,
+                    feature=feature,
+                    date=date,
+                    tag=tag,
+                )
                 items = [
                     SearchResultItem.model_validate(r, from_attributes=True)
                     for r in results
@@ -642,6 +659,7 @@ async def search_codebase(
     query: str,
     top_k: int = 5,
     language: str | None = None,
+    path: str | None = None,
     node_type: str | None = None,
     function_name: str | None = None,
     class_name: str | None = None,
@@ -654,6 +672,8 @@ async def search_codebase(
         top_k: Number of chunks to return.
         language: Optional language filter (e.g.,
             ``"python"``, ``"rust"``).
+        path: Optional exact-match path filter against the
+            project-relative file path payload.
         node_type: Optional AST node type filter (e.g.,
             ``"function_definition"``).
         function_name: Optional function/method name filter.
@@ -688,6 +708,7 @@ async def search_codebase(
                     query,
                     top_k=top_k,
                     language=language,
+                    path=path,
                     node_type=node_type,
                     function_name=function_name,
                     class_name=class_name,
