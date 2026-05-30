@@ -126,6 +126,17 @@ vaultspec-rag search "foo" --port 8766 --allow-fallback
 The results-table title carries `(via MCP)` or `(via in-process)` so
 the execution path is never ambiguous.
 
+Every command also supports `--json` for structured output. The
+envelope is `{"ok": bool, "command": str, "data" | "error" + "message"}`
+so consumers branch on `ok` first; exit codes match the table-mode
+contract.
+
+```bash
+vaultspec-rag status --json | jq '.data.vault_documents'
+vaultspec-rag server service status --json | jq '.data.state'
+vaultspec-rag search "auth" --type code --json | jq '.data.results[0]'
+```
+
 ### Search concurrency contract
 
 The local backend is `qdrant-local`. Its runtime contract is:

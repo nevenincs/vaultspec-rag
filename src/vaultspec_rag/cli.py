@@ -88,10 +88,91 @@ def _add_backend_contract_rows(
     )
 
 
-def _display_mcp_error(payload: dict[str, object]) -> None:
-    """Render a structured MCP error returned by the service fast path."""
+def _emit_json(
+    ok: bool,
+    command: str,
+    *,
+    data: object | None = None,
+    error: str | None = None,
+    message: str | None = None,
+    **extra: object,
+) -> None:
+    """Write one envelope-wrapped JSON document to stdout.
+
+    The envelope is `{"ok": bool, "command": str, "data" | "error" +
+    "message", **extra}`. Issue #112: every `--json` invocation
+    emits exactly one document. We bypass the Rich ``console``
+    entirely so no formatting bytes leak — ``json.dumps`` plus
+    one trailing newline, written directly to ``sys.stdout``.
+    """
+    envelope: dict[str, object] = {"ok": ok, "command": command}
+    if data is not None:
+        envelope["data"] = data
+    if error is not None:
+        envelope["error"] = error
+    if message is not None:
+        envelope["message"] = message
+    envelope.update(extra)
+    sys.stdout.write(json.dumps(envelope, default=str) + "\n")
+    sys.stdout.flush()
+
+
+def _emit_json_error_and_exit(
+    command: str,
+    error: str,
+    message: str,
+    code: int,
+    **extra: object,
+) -> None:
+    """Emit an `{"ok": false, ...}` envelope, then raise `typer.Exit`.
+
+    Centralises the JSON error path so every command's failure
+    branches converge on one shape. Used by the new `--json` wiring
+    on every CLI command and by the JSON-mode branches of
+    ``_display_mcp_error`` / ``_display_port_unreachable_error``.
+    """
+    _emit_json(
+        False,
+        command,
+        error=error,
+        message=message,
+        **extra,
+    )
+    raise typer.Exit(code=code)
+
+
+def _display_mcp_error(
+    payload: dict[str, object],
+    *,
+    json_mode: bool = False,
+    command: str = "mcp",
+    exit_code: int = 1,
+) -> None:
+    """Render a structured MCP error returned by the service fast path.
+
+    When ``json_mode`` is True the helper emits the envelope and
+    raises ``typer.Exit(exit_code)`` so callers don't have to thread
+    the exit themselves. The Rich path retains its original behaviour
+    (no exit; caller decides).
+    """
     error = str(payload.get("error", "mcp_error"))
     message = str(payload.get("message", "MCP service returned an error."))
+    if json_mode:
+        extra: dict[str, object] = {}
+        db_path = payload.get("db_path")
+        if db_path is not None:
+            extra["db_path"] = db_path
+        caps = payload.get("backend_capabilities")
+        if isinstance(caps, dict):
+            extra["backend_capabilities"] = caps
+        _emit_json_error_and_exit(
+            command,
+            error,
+            message,
+            exit_code,
+            **extra,
+        )
+        return
     console.print(f"[bold red]Error:[/] {message}")
     console.print(f"[dim]code={error}[/]")
     db_path = payload.get("db_path")
@@ -223,11 +304,23 @@ def _handle_gpu_error(exc: Exception) -> None:
     raise typer.Exit(code=1)
 
 
-def _open_vault_store(target: Path) -> VaultStore:
+def _open_vault_store(
+    target: Path,
+    *,
+    json_mode: bool = False,
+    command: str = "cli",
+) -> VaultStore:
     """Open a VaultStore, translating lock errors into a friendly CLI exit.
 
     Args:
         target: Workspace root directory.
+        json_mode: When True, emit a ``local_store_locked`` envelope
+            and ``typer.Exit(1)`` instead of the Rich prose path. Wave 2
+            (#112) — every command's ``--json`` flag threads through
+            here so the lock-error UX never corrupts the JSON stream.
+        command: Envelope ``command`` field; defaults to ``"cli"`` for
+            call sites that have not been wired to a specific command
+            name yet.
 
     Returns:
         An open VaultStore instance.
@@ -240,6 +333,24 @@ def _open_vault_store(target: Path) -> VaultStore:
     try:
         return VaultStore(target)
     except VaultStoreLockedError as exc:
+        if json_mode:
+            _emit_json_error_and_exit(
+                command,
+                "local_store_locked",
+                (
+                    f"The vault index at {exc.db_path} is currently in "
+                    "use by another process. Stop the resident "
+                    "service / MCP server, or route through one running "
+                    "vaultspec-rag service for concurrent access."
+                ),
+                1,
+                db_path=str(exc.db_path),
+                remediation=[
+                    "Wait for the other process to finish.",
+                    "vaultspec-rag server service stop",
+                    "vaultspec-rag server mcp stop",
+                ],
+            )
         console.print(
             f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
             "is currently in use by another process.\n\n"
@@ -538,6 +649,19 @@ def handle_index(
             help="Re-enable HuggingFace tqdm progress bars.",
         ),
     ] = False,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one JSON envelope to stdout instead of a Rich "
+                "table. Wraps per-source summaries in "
+                '{"ok": true, "command": "index", "data": '
+                '{"sources": [...]}}. Use this for agent / CI '
+                "consumption (#112)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Index vault documents and/or codebase chunks.
 
@@ -575,6 +699,13 @@ def handle_index(
     # Must come before --port MCP delegation (D9).
     if dry_run:
         if index_type not in ("code", "all"):
+            if json_mode:
+                _emit_json_error_and_exit(
+                    "index",
+                    "dry_run_requires_code",
+                    "--dry-run only applies to codebase indexing.",
+                    2,
+                )
             console.print("[yellow]--dry-run only applies to codebase indexing.[/]")
             return
         # Bypass __init__ to avoid loading GPU model and Qdrant store;
@@ -583,13 +714,24 @@ def handle_index(
         c_indexer.root_dir = target
         c_indexer._extra_excludes = exclude or []
         files = c_indexer.scan_files()
+        if json_mode:
+            _emit_json(
+                True,
+                "index",
+                data={
+                    "dry_run": True,
+                    "count": len(files),
+                    "files": [str(f.relative_to(target)) for f in sorted(files)],
+                },
+            )
+            return
         console.print(f"[bold]{len(files)}[/] files would be indexed:")
         for f in sorted(files):
             console.print(f"  {f.relative_to(target)}")
         return
 
     if port is not None:
-        if exclude:
+        if exclude and not json_mode:
             console.print(
                 "[yellow]--exclude is ignored when delegating to MCP server.[/]",
             )
@@ -619,64 +761,76 @@ def handle_index(
         #   dict  -> either a successful summary or {"ok": False, ...}
         for label, data in (("vault", v_data), ("codebase", c_data)):
             if isinstance(data, dict) and data.get("ok") is False:
-                console.print(
-                    f"[red]MCP reindex_{label} reported an error; "
-                    f"refusing to silently fall back.[/]",
-                )
-                _display_mcp_error(data)
+                if not json_mode:
+                    console.print(
+                        f"[red]MCP reindex_{label} reported an error; "
+                        f"refusing to silently fall back.[/]",
+                    )
+                _display_mcp_error(data, json_mode=json_mode, command="index")
                 raise typer.Exit(code=1)
 
         if v_data is not None or c_data is not None:
-            table = Table(
-                title="Indexing Summary (via MCP)",
-                show_header=True,
-            )
+
+            def _row(label: str, data: dict[str, object]) -> dict[str, object]:
+                def _i(key: str) -> int:
+                    raw = data.get(key, 0)
+                    return int(raw) if isinstance(raw, int | float | str) else 0
+
+                return {
+                    "source": label,
+                    "added": _i("added"),
+                    "updated": _i("updated"),
+                    "removed": _i("removed"),
+                    "total": _i("total"),
+                    "duration_ms": _i("duration_ms"),
+                }
+
+            sources: list[dict[str, object]] = []
+            if v_data:
+                sources.append(_row("vault", v_data))
+            if c_data:
+                sources.append(_row("codebase", c_data))
+            if json_mode:
+                _emit_json(
+                    True,
+                    "index",
+                    data={"via": "mcp", "sources": sources},
+                )
+                return
+
+            table = Table(title="Indexing Summary (via MCP)", show_header=True)
             table.add_column("Source", style="bold")
             table.add_column("Added", style="green", justify="right")
-            table.add_column(
-                "Updated",
-                style="yellow",
-                justify="right",
-            )
-            table.add_column(
-                "Removed",
-                style="red",
-                justify="right",
-            )
-            table.add_column(
-                "Total",
-                style="cyan",
-                justify="right",
-            )
+            table.add_column("Updated", style="yellow", justify="right")
+            table.add_column("Removed", style="red", justify="right")
+            table.add_column("Total", style="cyan", justify="right")
             table.add_column("Time", justify="right")
-            if v_data:
+            for row in sources:
+                src_value = row["source"]
+                label = src_value.capitalize() if isinstance(src_value, str) else ""
                 table.add_row(
-                    "Vault",
-                    str(v_data.get("added", 0)),
-                    str(v_data.get("updated", 0)),
-                    str(v_data.get("removed", 0)),
-                    str(v_data.get("total", 0)),
-                    f"{v_data.get('duration_ms', 0)}ms",
-                )
-            if c_data:
-                table.add_row(
-                    "Codebase",
-                    str(c_data.get("added", 0)),
-                    str(c_data.get("updated", 0)),
-                    str(c_data.get("removed", 0)),
-                    str(c_data.get("total", 0)),
-                    f"{c_data.get('duration_ms', 0)}ms",
+                    label,
+                    str(row["added"]),
+                    str(row["updated"]),
+                    str(row["removed"]),
+                    str(row["total"]),
+                    f"{row['duration_ms']}ms",
                 )
             console.print(table)
             return
 
         if not allow_fallback:
-            _display_port_unreachable_error(port, command="indexing")
+            _display_port_unreachable_error(
+                port,
+                command="indexing",
+                json_mode=json_mode,
+            )
             raise typer.Exit(code=1)
-        console.print(
-            "[yellow]MCP server unavailable, falling back to in-process "
-            "indexing (--allow-fallback set)...[/]",
-        )
+        if not json_mode:
+            console.print(
+                "[yellow]MCP server unavailable, falling back to in-process "
+                "indexing (--allow-fallback set)...[/]",
+            )
 
     from .progress import RichProgressReporter
 
@@ -691,20 +845,30 @@ def handle_index(
         reporter.phase_end()
 
         reporter.phase_start("open store", 1)
-        store = _open_vault_store(target)
+        store = _open_vault_store(target, json_mode=json_mode, command="index")
         if rebuild:
             store.close()
             if store.db_path.exists():
                 try:
                     shutil.rmtree(store.db_path)
                 except PermissionError as e:
+                    if json_mode:
+                        _emit_json_error_and_exit(
+                            "index",
+                            "rebuild_locked",
+                            (
+                                "Cannot delete index — a file is locked "
+                                f"by another process: {e}"
+                            ),
+                            1,
+                        )
                     console.print(
                         f"[bold red]Error:[/] Cannot delete index — a file is locked "
                         f"by another process.\n{e}\n"
                         "Close any other processes using the index and retry.",
                     )
                     raise typer.Exit(code=1) from None
-            store = _open_vault_store(target)
+            store = _open_vault_store(target, json_mode=json_mode, command="index")
         reporter.advance(1)
         reporter.phase_end()
 
@@ -742,6 +906,38 @@ def handle_index(
         finally:
             store.close()
 
+    in_process_sources: list[dict[str, object]] = []
+    if v_res is not None:
+        in_process_sources.append(
+            {
+                "source": "vault",
+                "added": v_res.added,
+                "updated": v_res.updated,
+                "removed": v_res.removed,
+                "total": v_res.total,
+                "duration_ms": v_res.duration_ms,
+            }
+        )
+    if c_res is not None:
+        in_process_sources.append(
+            {
+                "source": "codebase",
+                "added": c_res.added,
+                "updated": c_res.updated,
+                "removed": c_res.removed,
+                "total": c_res.total,
+                "duration_ms": c_res.duration_ms,
+            }
+        )
+
+    if json_mode:
+        _emit_json(
+            True,
+            "index",
+            data={"via": "in-process", "sources": in_process_sources},
+        )
+        return
+
     # Summary table
     table = Table(title="Indexing Summary (via in-process)", show_header=True)
     table.add_column("Source", style="bold")
@@ -750,23 +946,16 @@ def handle_index(
     table.add_column("Removed", style="red", justify="right")
     table.add_column("Total", style="cyan", justify="right")
     table.add_column("Time", justify="right")
-    if v_res is not None:
+    for row in in_process_sources:
+        src_value = row["source"]
+        label = src_value.capitalize() if isinstance(src_value, str) else ""
         table.add_row(
-            "Vault",
-            str(v_res.added),
-            str(v_res.updated),
-            str(v_res.removed),
-            str(v_res.total),
-            f"{v_res.duration_ms}ms",
-        )
-    if c_res is not None:
-        table.add_row(
-            "Codebase",
-            str(c_res.added),
-            str(c_res.updated),
-            str(c_res.removed),
-            str(c_res.total),
-            f"{c_res.duration_ms}ms",
+            label,
+            str(row["added"]),
+            str(row["updated"]),
+            str(row["removed"]),
+            str(row["total"]),
+            f"{row['duration_ms']}ms",
         )
     console.print(table)
 
@@ -792,6 +981,17 @@ def handle_clean(
             help="Confirm the destructive wipe without prompting.",
         ),
     ] = False,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one JSON envelope to stdout instead of a Rich "
+                "table. Requires --yes (no interactive confirm) so "
+                "the JSON stream stays uncorrupted."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Drop selected index collections without re-indexing.
 
@@ -801,6 +1001,14 @@ def handle_clean(
     """
     state: CLIState = ctx.obj
     target = state.target
+    if json_mode and not yes:
+        _emit_json_error_and_exit(
+            "clean",
+            "json_requires_yes",
+            "--json requires --yes; the interactive confirm would "
+            "corrupt the JSON stream on stdin.",
+            2,
+        )
     if not yes:
         confirmed = typer.confirm(
             f"Delete {clean_type} RAG index data for {target}?",
@@ -813,7 +1021,7 @@ def handle_clean(
     from .config import get_config
 
     cfg = get_config()
-    store = _open_vault_store(target)
+    store = _open_vault_store(target, json_mode=json_mode, command="clean")
     try:
         do_vault = clean_type in ("vault", "all")
         do_code = clean_type in ("code", "all")
@@ -836,6 +1044,17 @@ def handle_clean(
         meta = data_dir / cfg.code_index_metadata_file
         meta.unlink(missing_ok=True)
         cleared.append("Codebase")
+
+    if json_mode:
+        _emit_json(
+            True,
+            "clean",
+            data={
+                "clean_type": clean_type,
+                "cleared": [s.lower() for s in cleared],
+            },
+        )
+        return
 
     table = Table(title="Clean Summary", show_header=True)
     table.add_column("Source", style="bold")
@@ -1245,14 +1464,41 @@ def _suppress_hf_progress() -> None:
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 
-def _display_port_unreachable_error(port: int, *, command: str) -> None:
+def _display_port_unreachable_error(
+    port: int,
+    *,
+    command: str,
+    json_mode: bool = False,
+) -> None:
     """Render the standard remediation when ``--port`` is dead.
 
     Mirrors the lock-error UX so users see consistent guidance whether
     the resident service refused the connection or refused parallel
     access. The CLI used to silently fall back to in-process here; that
     behaviour is now opt-in via ``--allow-fallback``.
+
+    When ``json_mode`` is True the helper emits a ``port_unreachable``
+    envelope and exits with code 1; the prose path is unchanged.
     """
+    if json_mode:
+        _emit_json_error_and_exit(
+            command,
+            "port_unreachable",
+            (
+                f"MCP service on port {port} is unreachable. "
+                f"The CLI will not silently fall back to in-process "
+                f"{command}; start the service or re-run with "
+                f"--allow-fallback (single-agent use only)."
+            ),
+            1,
+            port=port,
+            remediation=[
+                "vaultspec-rag server service status",
+                "vaultspec-rag server service start",
+                "rerun with --allow-fallback (single-agent only)",
+            ],
+        )
+        return
     console.print(
         f"[bold red]MCP service on port {port} is unreachable.[/]\n"
         f"[white]The CLI will not silently fall back to in-process "
@@ -1414,6 +1660,20 @@ def handle_search(
             ),
         ),
     ] = False,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one JSON envelope to stdout instead of a Rich "
+                "table. Wraps results in "
+                '{"ok": true, "command": "search", "data": '
+                '{"results": [...]}}; errors use the matching '
+                '{"ok": false, "error", "message"} shape. Use this '
+                "for agent / CI consumption (#112)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Search for relevant context in documentation or code.
 
@@ -1474,38 +1734,42 @@ def handle_search(
     code_filters_supplied = any(v is not None for _, v in code_filter_fields)
     vault_filters_supplied = any(v is not None for _, v in vault_filter_fields)
     glob_filters_supplied = bool(include_paths) or bool(exclude_paths)
+
+    def _emit_filter_mismatch(filter_kind: str, offending: list[str]) -> None:
+        flag_list = ", ".join(offending)
+        msg = (
+            f"{filter_kind}-search filters ({flag_list}) require "
+            f"--type {filter_kind}; got --type {search_type}."
+        )
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "invalid_filter_for_search_type",
+                msg,
+                2,
+                filter_kind=filter_kind,
+                offending=offending,
+            )
+        console.print(f"[red]{msg}[/]")
+        raise typer.Exit(code=2)
+
     if code_filters_supplied and search_type != "code":
-        offending = sorted(
-            name for name, value in code_filter_fields if value is not None
+        _emit_filter_mismatch(
+            "code",
+            sorted(name for name, value in code_filter_fields if value is not None),
         )
-        console.print(
-            "[red]code-search filters ("
-            + ", ".join(offending)
-            + f") require --type code; got --type {search_type}.[/]"
-        )
-        raise typer.Exit(code=2)
     if vault_filters_supplied and search_type != "vault":
-        offending = sorted(
-            name for name, value in vault_filter_fields if value is not None
+        _emit_filter_mismatch(
+            "vault",
+            sorted(name for name, value in vault_filter_fields if value is not None),
         )
-        console.print(
-            "[red]vault-search filters ("
-            + ", ".join(offending)
-            + f") require --type vault; got --type {search_type}.[/]"
-        )
-        raise typer.Exit(code=2)
     if glob_filters_supplied and search_type != "code":
         offending = []
         if include_paths:
             offending.append("--include-path")
         if exclude_paths:
             offending.append("--exclude-path")
-        console.print(
-            "[red]path-glob filters ("
-            + ", ".join(offending)
-            + f") require --type code; got --type {search_type}.[/]"
-        )
-        raise typer.Exit(code=2)
+        _emit_filter_mismatch("code", offending)
 
     if port is not None:
         mcp_results = _try_mcp_search(
@@ -1528,8 +1792,26 @@ def handle_search(
         )
         if mcp_results is not None:
             if isinstance(mcp_results, dict):
-                _display_mcp_error(mcp_results)
+                _display_mcp_error(
+                    mcp_results,
+                    json_mode=json_mode,
+                    command="search",
+                )
+                # Rich path falls through to its own exit; JSON path
+                # exited inside _display_mcp_error.
                 raise typer.Exit(code=1)
+            if json_mode:
+                _emit_json(
+                    True,
+                    "search",
+                    data={
+                        "query": query,
+                        "search_type": search_type,
+                        "via": "mcp",
+                        "results": list(mcp_results),
+                    },
+                )
+                return
             if not mcp_results:
                 console.print(
                     f"[yellow]No {search_type} results found for:[/] "
@@ -1544,16 +1826,26 @@ def handle_search(
             )
             return
         if not allow_fallback:
-            _display_port_unreachable_error(port, command="search")
+            _display_port_unreachable_error(
+                port,
+                command="search",
+                json_mode=json_mode,
+            )
             raise typer.Exit(code=1)
-        console.print(
-            "[yellow]MCP server unavailable, falling back to in-process "
-            "search (--allow-fallback set)...[/]",
-        )
+        if not json_mode:
+            console.print(
+                "[yellow]MCP server unavailable, falling back to in-process "
+                "search (--allow-fallback set)...[/]",
+            )
 
-    store = _open_vault_store(target)
+    store = _open_vault_store(target, json_mode=json_mode, command="search")
     try:
-        with console.status(f"[bold green]Searching {search_type}..."):
+        status_ctx = (
+            contextlib.nullcontext()
+            if json_mode
+            else console.status(f"[bold green]Searching {search_type}...")
+        )
+        with status_ctx:
             try:
                 model = EmbeddingModel()
             except (ImportError, RuntimeError) as e:
@@ -1584,6 +1876,21 @@ def handle_search(
     finally:
         store.close()
 
+    if json_mode:
+        from dataclasses import asdict
+
+        _emit_json(
+            True,
+            "search",
+            data={
+                "query": query,
+                "search_type": search_type,
+                "via": "in-process",
+                "results": [asdict(r) for r in results],
+            },
+        )
+        return
+
     if not results:
         console.print(
             f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
@@ -1610,11 +1917,24 @@ def handle_search(
 
 
 @app.command("status")
-def handle_status(ctx: typer.Context) -> None:
+def handle_status(
+    ctx: typer.Context,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one JSON envelope to stdout instead of a Rich "
+                "table. Mirrors the MCP get_index_status response."
+            ),
+        ),
+    ] = False,
+) -> None:
     """Show RAG engine status, storage metrics, and GPU info.
 
     Args:
         ctx: Typer context carrying ``CLIState``.
+        json_mode: Emit a JSON envelope to stdout for agent/CI use.
 
     Raises:
         typer.Exit: On missing GPU dependencies.
@@ -1628,33 +1948,56 @@ def handle_status(ctx: typer.Context) -> None:
     except ImportError as e:
         _handle_gpu_error(e)
 
-    # GPU info
-    if torch.cuda.is_available():
+    cuda_available = torch.cuda.is_available()
+    if cuda_available:
         gpu_name = torch.cuda.get_device_name(0)
         props = torch.cuda.get_device_properties(0)
         vram_mb = props.total_memory // (1024 * 1024)
-        gpu_status = f"[green]cuda[/] - {gpu_name} ({vram_mb} MB VRAM)"
     else:
-        gpu_status = "[red]No CUDA GPU available[/]"
+        gpu_name = None
+        vram_mb = 0
 
     # Store metrics
-    store = _open_vault_store(target)
+    store = _open_vault_store(target, json_mode=json_mode, command="status")
     try:
         vault_count = store.count()
         code_count = store.count_code()
-
-        table = Table(title="RAG Engine Status", show_header=False, padding=(0, 2))
-        table.add_column("Key", style="bold")
-        table.add_column("Value")
-        table.add_row("Device", gpu_status)
-        table.add_row("Storage Path", f"[cyan]{store.db_path}[/]")
-        table.add_row("Vault Documents", f"[green]{vault_count}[/]")
-        table.add_row("Codebase Chunks", f"[green]{code_count}[/]")
-        table.add_row("Target Directory", f"[cyan]{target}[/]")
-        _add_backend_contract_rows(table)
-        console.print(table)
+        storage_path = str(store.db_path)
     finally:
         store.close()
+
+    if json_mode:
+        _emit_json(
+            True,
+            "status",
+            data={
+                "cuda": cuda_available,
+                "gpu_name": gpu_name,
+                "vram_mb": vram_mb,
+                "storage_path": storage_path,
+                "vault_documents": vault_count,
+                "codebase_chunks": code_count,
+                "target_dir": str(target),
+                "backend_capabilities": backend_capabilities_dict(),
+            },
+        )
+        return
+
+    gpu_status = (
+        f"[green]cuda[/] - {gpu_name} ({vram_mb} MB VRAM)"
+        if cuda_available
+        else "[red]No CUDA GPU available[/]"
+    )
+    table = Table(title="RAG Engine Status", show_header=False, padding=(0, 2))
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    table.add_row("Device", gpu_status)
+    table.add_row("Storage Path", f"[cyan]{storage_path}[/]")
+    table.add_row("Vault Documents", f"[green]{vault_count}[/]")
+    table.add_row("Codebase Chunks", f"[green]{code_count}[/]")
+    table.add_row("Target Directory", f"[cyan]{target}[/]")
+    _add_backend_contract_rows(table)
+    console.print(table)
 
 
 # --- MCP Server Commands ---
@@ -2258,7 +2601,19 @@ def service_stop() -> None:
 
 
 @service_app.command("status")
-def service_status() -> None:
+def service_status(
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one JSON envelope to stdout instead of a Rich "
+                "table. Preserves exit codes 0 (running) / 3 (stopped) "
+                "/ 4 (crashed-* or divergent)."
+            ),
+        ),
+    ] = False,
+) -> None:
     """Display the current status of the background RAG service.
 
     Gathers four signals before rendering — ``service.json`` present,
@@ -2275,11 +2630,20 @@ def service_status() -> None:
         "known-bad state" without parsing the prose.
     """
     status = _read_service_status()
-    table = Table(title="Service Status", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
 
     if status is None:
+        if json_mode:
+            _emit_json(
+                False,
+                "service.status",
+                error="stopped",
+                message="No service.json — service is not running.",
+                data={"service_json_present": False, "state": "stopped"},
+            )
+            raise typer.Exit(code=3)
+        table = Table(title="Service Status", show_header=False, padding=(0, 2))
+        table.add_column("Key", style="bold")
+        table.add_column("Value")
         table.add_row("Service JSON", "[red]missing[/]")
         table.add_row("State", "[red]stopped[/]")
         console.print(table)
@@ -2294,7 +2658,72 @@ def service_status() -> None:
     pid_is_ours = _is_our_service(pid) if pid_alive else False
     port_listening = _port_is_listening(port) if pid_alive else False
     heartbeat_age = _heartbeat_age_seconds(status)
+    heartbeat_stale = (
+        pid_alive
+        if heartbeat_age is None
+        else heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
+    )
 
+    # State derivation: clean / known-bad mapping.
+    state: str
+    state_label: str
+    exit_code: int
+    if not pid_alive:
+        state = "crashed_pid_dead"
+        state_label = "[red]crashed (PID dead, stale service.json cleaned)[/]"
+        _status_file().unlink(missing_ok=True)
+        exit_code = 4
+    elif not pid_is_ours:
+        state = "crashed_pid_reused"
+        state_label = "[red]crashed (PID reused by unrelated process)[/]"
+        exit_code = 4
+    elif not port_listening:
+        state = "crashed_port_silent"
+        state_label = "[red]crashed (port silent)[/]"
+        exit_code = 4
+    elif heartbeat_stale:
+        state = "crashed_heartbeat_stale"
+        state_label = "[red]crashed (heartbeat stale)[/]"
+        exit_code = 4
+    else:
+        state = "running"
+        state_label = "[green]running[/]"
+        exit_code = 0
+
+    health = _health_probe(port) if port_listening else None
+
+    if json_mode:
+        payload: dict[str, object] = {
+            "service_json_present": True,
+            "pid": pid,
+            "port": port,
+            "started_at": started_at,
+            "pid_alive": pid_alive,
+            "pid_matches_service": pid_is_ours,
+            "port_listening": port_listening,
+            "heartbeat_age_seconds": heartbeat_age,
+            "heartbeat_stale": heartbeat_stale,
+            "state": state,
+        }
+        if isinstance(health, dict):
+            payload["health"] = health
+        _emit_json(
+            exit_code == 0,
+            "service.status",
+            data=payload,
+            **(
+                {"error": state, "message": f"Service state: {state}"}
+                if exit_code != 0
+                else {}
+            ),
+        )
+        if exit_code != 0:
+            raise typer.Exit(code=exit_code)
+        return
+
+    table = Table(title="Service Status", show_header=False, padding=(0, 2))
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
     table.add_row("Service JSON", "[green]present[/]")
     table.add_row("PID", str(pid))
     table.add_row("Port", str(port))
@@ -2313,38 +2742,15 @@ def service_status() -> None:
     )
     if heartbeat_age is None:
         table.add_row("Heartbeat", "[yellow]absent[/]")
-        heartbeat_stale = pid_alive  # no heartbeat from a live daemon is suspicious
     else:
-        heartbeat_stale = heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
         colour = "red" if heartbeat_stale else "green"
         table.add_row(
             "Heartbeat",
             f"[{colour}]{heartbeat_age:.0f}s ago[/]",
         )
-
-    # State derivation: clean / known-bad mapping.
-    state_label: str
-    exit_code: int
-    if not pid_alive:
-        state_label = "[red]crashed (PID dead, stale service.json cleaned)[/]"
-        _status_file().unlink(missing_ok=True)
-        exit_code = 4
-    elif not pid_is_ours:
-        state_label = "[red]crashed (PID reused by unrelated process)[/]"
-        exit_code = 4
-    elif not port_listening:
-        state_label = "[red]crashed (port silent)[/]"
-        exit_code = 4
-    elif heartbeat_stale:
-        state_label = "[red]crashed (heartbeat stale)[/]"
-        exit_code = 4
-    else:
-        state_label = "[green]running[/]"
-        exit_code = 0
     table.add_row("State", state_label)
 
-    health = _health_probe(port) if port_listening else None
-    if health is not None:
+    if isinstance(health, dict):
         table.add_row("Health", health.get("status", "unknown"))
         table.add_row("CUDA", str(health.get("cuda", "unknown")))
         table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
@@ -2499,11 +2905,26 @@ def service_projects_list(
         int | None,
         typer.Option("--port", help="MCP port (defaults to running service)."),
     ] = None,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit one JSON envelope to stdout instead of a Rich table.",
+        ),
+    ] = False,
 ) -> None:
     """List active project slots on a running RAG service."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_mcp_admin("list_projects", {}, resolved_port)
     if result is None:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "service.projects.list",
+                "service_not_running",
+                "Service is not running. Start it with "
+                "`vaultspec-rag server service start`.",
+                3,
+            )
         console.print(
             "[red]Service is not running.[/] "
             "Start it with [bold]vaultspec-rag server service start[/].",
@@ -2516,6 +2937,18 @@ def service_projects_list(
     )
     max_projects = result.get("max_projects", 0)
     idle_ttl = result.get("idle_ttl_seconds", 0)
+
+    if json_mode:
+        _emit_json(
+            True,
+            "service.projects.list",
+            data={
+                "projects": projects,
+                "max_projects": max_projects,
+                "idle_ttl_seconds": idle_ttl,
+            },
+        )
+        return
 
     if not projects:
         console.print(
@@ -2554,6 +2987,13 @@ def service_projects_evict(
         int | None,
         typer.Option("--port", help="MCP port (defaults to running service)."),
     ] = None,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit one JSON envelope to stdout instead of prose.",
+        ),
+    ] = False,
 ) -> None:
     """Evict a project slot on a running RAG service."""
     resolved_port = port if port is not None else _default_service_port()
@@ -2563,6 +3003,15 @@ def service_projects_evict(
         resolved_port,
     )
     if result is None:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "service.projects.evict",
+                "service_not_running",
+                "Service is not running. Start it with "
+                "`vaultspec-rag server service start`.",
+                3,
+                root=root,
+            )
         console.print(
             "[red]Service is not running.[/] "
             "Start it with [bold]vaultspec-rag server service start[/].",
@@ -2571,6 +3020,26 @@ def service_projects_evict(
 
     reason = str(result.get("reason", ""))
     evicted = bool(result.get("evicted", False))
+
+    if json_mode:
+        if evicted:
+            _emit_json(
+                True,
+                "service.projects.evict",
+                data={"evicted": True, "reason": reason or "ok", "root": root},
+            )
+            raise typer.Exit(0)
+        exit_code = 1 if reason == "busy" else 2 if reason == "not_found" else 1
+        _emit_json_error_and_exit(
+            "service.projects.evict",
+            reason or "unexpected_response",
+            f"Eviction failed for {root}: reason={reason or 'unknown'}.",
+            exit_code,
+            root=root,
+            evicted=False,
+            raw_response=result,
+        )
+
     if evicted:
         console.print(f"[green]Evicted[/] project slot: {root}")
         raise typer.Exit(0)

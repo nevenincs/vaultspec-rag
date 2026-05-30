@@ -279,6 +279,28 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 - If the service is unreachable on the given port, the CLI now **hard-fails** with remediation instead of silently spawning a local model load and grabbing the Qdrant lock (issue #110). Opt back into the legacy silent fallback with `--allow-fallback` — single-agent use only.
 - Pass `--verbose` to re-enable HuggingFace tqdm progress bars during in-process model load / encode. Off by default so the results table stays script-friendly.
 
+### `--json` output mode
+
+Every command supports `--json` and emits exactly one envelope document on stdout (Wave 2 #112). The envelope is
+
+```
+{"ok": true,  "command": "<name>", "data": <payload>}
+{"ok": false, "command": "<name>", "error": "<code>", "message": "<prose>"}
+```
+
+so consumers branch on `ok` first, then on `command` / `error`. Exit codes match the table-mode contract (`0` success, `1`/`2`/`3`/`4` per command). Payload shapes mirror the MCP Pydantic models where they exist (`SearchResultItem`, `IndexResponse`, `IndexStatus`, `HealthResponse`, `BackendCapabilities`).
+
+```bash
+vaultspec-rag status --json | jq '.data.vault_documents'
+vaultspec-rag search "auth handler" --type code --json \
+  | jq '.data.results[0].path'
+vaultspec-rag index --type code --port 8766 --json \
+  | jq '.data.sources[] | select(.source == "codebase")'
+vaultspec-rag server service status --json | jq '.data.state'
+```
+
+`vaultspec-rag clean ... --json` requires `--yes` (the interactive confirm would corrupt stdin). HuggingFace tqdm bars and Rich status spinners are suppressed automatically when `--json` is set, so the stream stays pure JSON.
+
 ### Service lifecycle (`vaultspec-rag server service status`)
 
 `status` gathers every signal before rendering — `service.json` present, PID alive, port listening, heartbeat fresh — and reports each as its own row plus a derived `State`. No more "silently pick one source of truth" verdict (issue #113). Exit codes:

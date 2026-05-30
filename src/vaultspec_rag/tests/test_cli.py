@@ -1516,3 +1516,148 @@ class TestInstallTargetValidation:
             app, ["install", "--target", str(d), "--no-torch-config"]
         )
         assert result.exit_code == 0, result.output
+
+
+class TestJsonOutputMode:
+    """Wave 2 (#112): every command supports --json envelope output."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    @staticmethod
+    def _parse_envelope(output: str) -> dict[str, typing.Any]:
+        """Parse the single JSON document a --json invocation should emit."""
+        stripped = output.strip()
+        # Tolerate platform-specific trailing whitespace; the contract is
+        # one JSON document per invocation.
+        return typing.cast("dict[str, typing.Any]", json.loads(stripped))
+
+    def test_search_json_filter_mismatch_envelope(self):
+        """Filter on wrong --type yields ok=false envelope with exit 2."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--function-name",
+                "foo",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 2
+        env = self._parse_envelope(result.output)
+        assert env["ok"] is False
+        assert env["command"] == "search"
+        assert env["error"] == "invalid_filter_for_search_type"
+        assert "function_name" in env["message"]
+
+    def test_search_json_glob_with_vault_envelope(self):
+        """Glob + --type vault yields the same envelope shape."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--include-path",
+                "src/**",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 2
+        env = self._parse_envelope(result.output)
+        assert env["ok"] is False
+        assert env["error"] == "invalid_filter_for_search_type"
+
+    def test_search_json_port_unreachable_envelope(self, tmp_path):
+        """--port unreachable yields port_unreachable envelope, exit 1."""
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--port",
+                "1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 1
+        env = self._parse_envelope(result.output)
+        assert env["ok"] is False
+        assert env["error"] == "port_unreachable"
+        assert env["port"] == 1
+        assert "remediation" in env
+
+    def test_service_status_json_stopped_envelope(self):
+        """No service.json: exit 3 + ok=false envelope with error=stopped."""
+        result = runner.invoke(
+            app,
+            ["server", "service", "status", "--json"],
+        )
+        assert result.exit_code == 3
+        env = self._parse_envelope(result.output)
+        assert env["ok"] is False
+        assert env["command"] == "service.status"
+        assert env["error"] == "stopped"
+        assert env["data"]["service_json_present"] is False
+
+    def test_service_status_json_crashed_envelope(self, tmp_path: Path):
+        """File present + dead PID: exit 4 + ok=false + state=crashed_*."""
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=99999999, port=8766)
+            result = runner.invoke(app, ["server", "service", "status", "--json"])
+            assert result.exit_code == 4
+            env = self._parse_envelope(result.output)
+            assert env["ok"] is False
+            assert env["command"] == "service.status"
+            assert env["data"]["state"].startswith("crashed_")
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+    def test_clean_json_requires_yes(self, tmp_path: Path):
+        """--json without --yes yields json_requires_yes envelope, exit 2."""
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "clean", "vault", "--json"],
+        )
+        assert result.exit_code == 2
+        env = self._parse_envelope(result.output)
+        assert env["ok"] is False
+        assert env["error"] == "json_requires_yes"
+
+    def test_envelope_is_pure_stdout_no_rich_bytes(self, tmp_path):
+        """Output is a single parseable JSON document, no Rich box chars."""
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--function-name",
+                "foo",  # forces fast usage-error branch
+                "--json",
+            ],
+        )
+        # Trim a possible single trailing newline.
+        text = result.output.rstrip("\n")
+        # The Rich box-drawing block ─ │ ┌ ┐ └ ┘ must not appear in --json
+        # mode; an envelope is plain ASCII JSON.
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in text, (
+                f"Rich box-drawing leaked into --json stdout: {forbidden!r}"
+            )
+        # Exactly one JSON document.
+        env = json.loads(text)
+        assert env["ok"] is False

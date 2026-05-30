@@ -54,6 +54,10 @@ delegated, `(via in-process)` when the local fallback ran. Default
 `clean` requires an explicit target since 0.2.9 — `vaultspec-rag clean`
 without an argument errors out instead of wiping everything.
 
+Every command supports `--json` for structured stdout. Envelope:
+`{"ok": bool, "command": str, "data" | "error" + "message"}`.
+`clean --json` requires `--yes`. Exit codes match table-mode.
+
 Server management:
 
 ```
