@@ -100,6 +100,42 @@ class TestCodebaseFullIndex:
 
         assert first_count == second_count
 
+    @pytest.mark.timeout(180)
+    def test_rebuild_vault_preserves_code_collection(self, code_project):
+        """Wave 2 (#115): drop_table on vault must not touch code chunks.
+
+        Pre-#115, the in-process rebuild branch did
+        ``shutil.rmtree(store.db_path)`` on the shared Qdrant directory,
+        so ``--rebuild --type vault`` silently destroyed the code
+        collection too. The scoped-drop fix uses ``store.drop_table()``
+        / ``store.drop_code_table()`` so each scope is independent.
+        """
+        from vaultspec_rag import VaultIndexer
+
+        store = code_project["store"]
+        model = code_project["model"]
+        root = code_project["root"]
+
+        # Seed both collections.
+        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_count_before = store.count_code()
+        assert code_count_before > 0, "test prelude must produce code chunks"
+
+        vault_indexer = VaultIndexer(root, model, store)
+        # Vault may be empty for this fixture; ensure_table still works.
+        store.ensure_table()
+
+        # Simulate the post-#115 scoped rebuild: drop ONLY vault.
+        store.drop_table()
+        store.ensure_table()
+        vault_indexer.full_index(clean=True, reporter=NullProgressReporter())
+
+        # Code collection must survive untouched.
+        assert store.count_code() == code_count_before, (
+            "scoped vault rebuild leaked into the code collection — "
+            "the shutil.rmtree regression is back"
+        )
+
 
 class TestCodebaseIncrementalIndex:
     """Tests for CodebaseIndexer.incremental_index."""

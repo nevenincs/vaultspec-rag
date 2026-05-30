@@ -180,6 +180,65 @@ class TestIndexRebuild:
         assert result.exit_code == 0, result.output
         assert "files would be indexed" in result.output
 
+    def test_index_rebuild_without_explicit_type_exits_2(self, tmp_path: Path):
+        """Wave 2 (#115): --rebuild without --type is rejected.
+
+        The audit found --rebuild silently inherited --type all from the
+        default and the in-process branch destroyed both collections.
+        Require explicit --type when --rebuild is set; bare `index` stays
+        frictionless.
+        """
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--rebuild"],
+        )
+        assert result.exit_code == 2
+        assert "explicit --type" in result.output
+
+    def test_index_rebuild_without_explicit_type_json_envelope(
+        self,
+        tmp_path: Path,
+    ):
+        """The same guard surfaces a rebuild_requires_explicit_type envelope."""
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--rebuild", "--json"],
+        )
+        assert result.exit_code == 2
+        env = json.loads(result.output.strip())
+        assert env["ok"] is False
+        assert env["command"] == "index"
+        assert env["error"] == "rebuild_requires_explicit_type"
+        # Remediation lists the three valid forms.
+        rem = env["remediation"]
+        assert any("--type vault" in r for r in rem)
+        assert any("--type code" in r for r in rem)
+        assert any("--type all" in r for r in rem)
+
+    def test_index_bare_invocation_still_works(self, tmp_path: Path):
+        """Bare `vaultspec-rag index` (no --rebuild) keeps the all default.
+
+        Cannot fully exercise the indexers without a GPU + corpus, but the
+        guard must not fire on this canonical quick-start invocation. We
+        invoke with --dry-run (codebase-only path that short-circuits
+        before the guard) to confirm the daily-driver pattern lands in
+        the dry-run branch and does not hit the guard.
+        """
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--dry-run"],
+        )
+        # Dry-run with default --type all picks up code only and exits
+        # cleanly. The new --rebuild guard must NOT have been triggered.
+        assert "explicit --type" not in result.output
+        assert result.exit_code == 0, result.output
+
 
 class TestServerCommands:
     """Tests for server subcommand group."""

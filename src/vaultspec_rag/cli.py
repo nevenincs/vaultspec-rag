@@ -16,7 +16,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -730,6 +729,47 @@ def handle_index(
             console.print(f"  {f.relative_to(target)}")
         return
 
+    # Wave 2 #115 — `--rebuild` is destructive; the `--type all`
+    # default would silently destroy both collections. Require an
+    # explicit `--type` whenever `--rebuild` is set, but keep bare
+    # `vaultspec-rag index` (incremental, idempotent) frictionless.
+    # See .vault/adr/2026-05-30-cli-index-default-adr.md.
+    if rebuild:
+        try:
+            from click.core import ParameterSource
+
+            param_source = ctx.get_parameter_source("index_type")
+            type_is_explicit = param_source is not ParameterSource.DEFAULT
+        except (ImportError, AttributeError, LookupError):
+            # Defensive fallback — if the click API is unavailable on
+            # an exotic typer version, treat default as explicit so
+            # we never spuriously block a previously-working flow.
+            type_is_explicit = True
+        if not type_is_explicit:
+            remediation = [
+                "vaultspec-rag index --rebuild --type vault",
+                "vaultspec-rag index --rebuild --type code",
+                "vaultspec-rag index --rebuild --type all",
+            ]
+            msg = (
+                "--rebuild is destructive; pass an explicit --type "
+                "(vault|code|all) so the scope is unambiguous. The "
+                "previous behaviour silently inherited --type all "
+                "from the default and dropped both collections."
+            )
+            if json_mode:
+                _emit_json_error_and_exit(
+                    "index",
+                    "rebuild_requires_explicit_type",
+                    msg,
+                    2,
+                    remediation=remediation,
+                )
+            console.print(f"[red]{msg}[/]")
+            for line in remediation:
+                console.print(f"  [cyan]{line}[/]")
+            raise typer.Exit(code=2)
+
     if port is not None:
         if exclude and not json_mode:
             console.print(
@@ -847,28 +887,37 @@ def handle_index(
         reporter.phase_start("open store", 1)
         store = _open_vault_store(target, json_mode=json_mode, command="index")
         if rebuild:
-            store.close()
-            if store.db_path.exists():
-                try:
-                    shutil.rmtree(store.db_path)
-                except PermissionError as e:
-                    if json_mode:
-                        _emit_json_error_and_exit(
-                            "index",
-                            "rebuild_locked",
-                            (
-                                "Cannot delete index — a file is locked "
-                                f"by another process: {e}"
-                            ),
-                            1,
-                        )
-                    console.print(
-                        f"[bold red]Error:[/] Cannot delete index — a file is locked "
-                        f"by another process.\n{e}\n"
-                        "Close any other processes using the index and retry.",
+            # Wave 2 #115 — scope the rebuild to the selected
+            # collection. The old whole-directory shutil.rmtree
+            # silently destroyed both collections even on
+            # `--rebuild --type vault`; use the collection-scoped
+            # store API instead. Mirrors `handle_clean` (#111).
+            do_vault = index_type in ("vault", "all")
+            do_code = index_type in ("code", "all")
+            try:
+                if do_vault:
+                    store.drop_table()
+                    store.ensure_table()
+                if do_code:
+                    store.drop_code_table()
+                    store.ensure_code_table()
+            except VaultStoreLockedError as exc:
+                if json_mode:
+                    _emit_json_error_and_exit(
+                        "index",
+                        "rebuild_locked",
+                        (
+                            f"Cannot drop the {index_type} collection — "
+                            f"another process holds the lock: {exc}"
+                        ),
+                        1,
                     )
-                    raise typer.Exit(code=1) from None
-            store = _open_vault_store(target, json_mode=json_mode, command="index")
+                console.print(
+                    f"[bold red]Error:[/] Cannot drop the {index_type} "
+                    f"collection — another process holds the lock.\n{exc}\n"
+                    "Close any other processes using the index and retry.",
+                )
+                raise typer.Exit(code=1) from None
         reporter.advance(1)
         reporter.phase_end()
 

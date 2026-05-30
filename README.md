@@ -95,7 +95,8 @@ vaultspec-rag indexes two sources: **vault** (`.vault/` documents) and **code** 
 vaultspec-rag index                          # both
 vaultspec-rag index --type vault             # vault only
 vaultspec-rag index --type code              # code only
-vaultspec-rag index --rebuild                # drop selected collections, then re-index
+vaultspec-rag index --rebuild --type all     # drop+rebuild both collections (--type REQUIRED with --rebuild)
+vaultspec-rag index --rebuild --type vault   # drop+rebuild vault only; code collection untouched
 vaultspec-rag clean all --yes                # wipe index data (target REQUIRED since 0.2.9)
 
 # Search — default --max-results=10. Vault filters: --doc-type / --feature

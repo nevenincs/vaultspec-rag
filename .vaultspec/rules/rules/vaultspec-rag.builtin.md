@@ -34,7 +34,10 @@ Search and indexing:
 index [--type vault|code|all] [--rebuild] [--port N] [--allow-fallback] [--verbose]
                              Index vault docs and/or codebase. --port delegates to
                              a running service; on dead port, the CLI hard-fails
-                             unless --allow-fallback is set.
+                             unless --allow-fallback is set. --rebuild REQUIRES
+                             an explicit --type since 0.3.0 (#115); bare `index`
+                             stays incremental + safe. --rebuild --type X is now
+                             scoped to X (was: whole-directory rmtree).
 search <query> [--type vault|code] [--max-results N=10] [--no-truncate]
        [--port N] [--allow-fallback] [--verbose]
                              Code filters: --language --path --node-type
