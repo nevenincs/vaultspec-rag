@@ -1,18 +1,20 @@
 # vaultspec-rag
 
-vaultspec-rag is a command-line tool that finds files in your project by what they mean, not by what they say. It runs entirely on your machine and needs an NVIDIA GPU.
+vaultspec-rag is the semantic-search companion to vaultspec-core, providing retrieval-augmented generation (RAG) over your vault of markdown notes and your source code. Semantic search matches on meaning, not on exact words. A query for "how do we authenticate users" finds a note titled "login flow," which a keyword search would miss.
 
-## Hardware prerequisites
+vaultspec-rag is a companion to [vaultspec-core](https://github.com/wgergely/vaultspec-core). vaultspec-core manages the `.vault/` directory of markdown notes and decisions; vaultspec-rag indexes that vault and your source code so you can search both by meaning. Without a vaultspec-core workspace, vaultspec-rag has nothing to search.
 
-- NVIDIA GPU with CUDA support
-- About 3 GB of free VRAM
+## Requirements
+
+- Python 3.13 or newer
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- An NVIDIA GPU with CUDA
+- About 3 GB of free GPU memory
 - Linux or Windows
 
-vaultspec-rag has no CPU fallback. Without a CUDA-capable GPU it exits with an error.
+macOS, AMD GPUs, and Apple Silicon are not supported.
 
 ## Install
-
-Run these three commands in your project:
 
 ```sh
 uv add vaultspec-rag
@@ -20,23 +22,21 @@ uv run vaultspec-rag install
 uv sync
 ```
 
-The `install` command patches your `pyproject.toml` to use the CUDA build of PyTorch.
+The `install` command prepares your project for the GPU build of PyTorch.
 
 ## First search
 
-Index your project, then ask a question in plain English:
-
 ```sh
 uv run vaultspec-rag index
-uv run vaultspec-rag search "how authentication works"
+uv run vaultspec-rag search "your question here"
 ```
 
-The first index pass downloads model weights and takes a few minutes. Subsequent runs are incremental.
+`index` builds the local search index from your vault and code. `search` returns ranked results in your terminal.
 
 ## Documentation
 
-Full documentation lives in the [GitHub docs tree](https://github.com/wgergely/vaultspec-rag/tree/main/docs): a tutorial for first-time setup, how-to guides for common tasks, a CLI and MCP reference, and explanations of the architecture.
+The [GitHub docs tree](https://github.com/wgergely/vaultspec-rag/tree/main/docs) contains a getting-started walkthrough, daily-use guides, CLI and configuration reference, and an architecture explanation.
 
-## Support and help
+## Support
 
-Report bugs on the [GitHub issue tracker](https://github.com/wgergely/vaultspec-rag/issues). Include the vaultspec-rag version, your operating system, your GPU model, the command you ran, and the full stderr output.
+Report issues on the [GitHub issue tracker](https://github.com/wgergely/vaultspec-rag/issues). A useful bug report includes the vaultspec-rag version, your operating system, your GPU model, the exact command you ran, and the full stderr output.
