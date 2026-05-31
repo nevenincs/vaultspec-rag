@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -42,6 +43,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 from .capabilities import backend_capabilities_dict  # noqa: E402
 from .config import EnvVar  # noqa: E402
@@ -2189,6 +2192,41 @@ def _log_file() -> Path:
     return _status_dir() / cfg.log_file
 
 
+def _append_lifecycle_shutdown_log(reason: str, **kv: object) -> None:
+    """Append a ``service.lifecycle``-style shutdown line to the rotating log.
+
+    Used on Windows only — the daemon's atexit handler does not fire
+    under ``TerminateProcess``, so the CLI parent emits a mirror line
+    itself after a successful stop. Matches the daemon-side
+    :func:`mcp_server._lifecycle_log` format so grep queries cover
+    both code paths (daemon-emitted ``service.lifecycle`` and
+    CLI-emitted ``cli.lifecycle``).
+
+    Never raises: the shutdown path must complete even if the log
+    file is missing or unwritable. Failures are logged at DEBUG so
+    the suppression is observable.
+
+    Args:
+        reason: Short identifier (e.g. ``"cli_terminate"``).
+        **kv: Extra key=value pairs (e.g. ``pid=...``,
+            ``platform=...``) rendered space-separated.
+    """
+    path = _log_file()
+    ts = datetime.now(UTC).isoformat(timespec="seconds")
+    parts = ["event=shutdown", f"reason={reason}"]
+    parts.extend(f"{k}={v}" for k, v in kv.items())
+    line = f"{ts} WARNING  cli.lifecycle {' '.join(parts)}\n"
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except OSError as exc:
+        # The shutdown path must complete even if the log file is
+        # missing or unwritable. Per the no-swallow rule, the
+        # exception is debug-logged so the suppression stays
+        # observable.
+        logger.debug("lifecycle log append failed: %s", exc, exc_info=True)
+
+
 def _write_service_status(pid: int, port: int) -> None:
     """Write service status to the global status file.
 
@@ -2640,6 +2678,19 @@ def service_stop() -> None:
         time.sleep(0.1)
 
     _status_file().unlink(missing_ok=True)
+    if sys.platform == "win32":
+        # On Windows, os.kill(SIGTERM) is TerminateProcess so the
+        # daemon's atexit handler and lifespan ``finally`` never
+        # fire. POSIX flows through uvicorn's signal handler →
+        # lifespan finally → ``_record_shutdown("clean")`` which
+        # emits ``service.lifecycle event=shutdown reason=clean``.
+        # The CLI parent emits a mirror line here so Windows
+        # operators get the same audit trail.
+        _append_lifecycle_shutdown_log(
+            "cli_terminate",
+            pid=pid,
+            platform="win32",
+        )
     console.print(
         Panel(
             f"Service stopped (PID {pid}).",

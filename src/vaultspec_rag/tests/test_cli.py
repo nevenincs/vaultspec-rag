@@ -911,6 +911,149 @@ class TestNoTruncateFlag:
         assert "serialized" in out
 
 
+class TestWinShutdownLog:
+    """Wave 3 (#123): CLI appends a lifecycle shutdown line on win32.
+
+    The daemon's atexit / lifespan ``finally`` never fire under
+    Windows ``TerminateProcess`` (which is what ``os.kill(SIGTERM)``
+    becomes on win32). The CLI parent emits a mirror line so the
+    audit trail stays uniform with POSIX.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_append_writes_expected_format(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        from vaultspec_rag import cli
+
+        log_path = tmp_path / "service.log"
+        monkeypatch.setattr(cli, "_log_file", lambda: log_path)
+
+        cli._append_lifecycle_shutdown_log(
+            "cli_terminate",
+            pid=123,
+            platform="win32",
+        )
+
+        content = log_path.read_text(encoding="utf-8")
+        lines = content.splitlines()
+        assert len(lines) == 1
+        line = lines[0]
+        assert "WARNING  cli.lifecycle" in line
+        assert "event=shutdown" in line
+        assert "reason=cli_terminate" in line
+        assert "pid=123" in line
+        assert "platform=win32" in line
+
+    def test_append_oserror_is_suppressed_and_debug_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        caplog,
+    ):
+        """OSError on the append must NOT crash the shutdown path.
+
+        No-swallow rule: the helper must debug-log the exception so
+        the suppression is observable.
+        """
+        from vaultspec_rag import cli
+
+        missing_dir = tmp_path / "nonexistent" / "service.log"
+        monkeypatch.setattr(cli, "_log_file", lambda: missing_dir)
+
+        with caplog.at_level("DEBUG", logger="vaultspec_rag.cli"):
+            cli._append_lifecycle_shutdown_log("cli_terminate", pid=42)
+
+        # No exception escapes; the debug line is present.
+        debug_records = [
+            r
+            for r in caplog.records
+            if r.name == "vaultspec_rag.cli"
+            and "lifecycle log append failed" in r.getMessage()
+        ]
+        assert debug_records, (
+            "OSError on append must be debug-logged per the no-swallow rule"
+        )
+        # The log file was never created (the parent directory does
+        # not exist) — confirms the exception path was exercised.
+        assert not missing_dir.exists()
+
+    def test_service_stop_emits_log_on_win32(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        """End-to-end: ``server service stop`` on win32 appends the line."""
+        from vaultspec_rag import cli
+
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        log_path = status_dir / "service.log"
+
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        try:
+            # Set up a status file pointing at the current process so
+            # _is_our_service returns True for the test.
+            _write_service_status(pid=os.getpid(), port=18999)
+
+            # Treat the current process as the service so service_stop
+            # walks past the validation guard, into the stubbed termination,
+            # the unlink, and the new log-append branch we want to exercise.
+            monkeypatch.setattr(cli, "_is_our_service", lambda _pid: True)
+            monkeypatch.setattr(cli, "_terminate_pid", lambda _pid: None)
+            # The post-terminate poll iterates until _is_pid_alive returns
+            # False; stub False so the wait collapses immediately.
+            monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
+            monkeypatch.setattr(cli.sys, "platform", "win32")
+
+            result = runner.invoke(app, ["server", "service", "stop"])
+            assert result.exit_code == 0, result.output
+            assert log_path.exists(), (
+                f"Expected CLI to create {log_path}; result: {result.output}"
+            )
+
+            content = log_path.read_text(encoding="utf-8")
+            assert "event=shutdown" in content
+            assert "reason=cli_terminate" in content
+            assert f"pid={os.getpid()}" in content
+            assert "platform=win32" in content
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+    def test_service_stop_skips_log_on_posix(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        """POSIX path keeps the daemon-side lifecycle finally as source of truth."""
+        from vaultspec_rag import cli
+
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        log_path = status_dir / "service.log"
+
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        try:
+            _write_service_status(pid=os.getpid(), port=18999)
+            monkeypatch.setattr(cli, "_is_our_service", lambda _pid: True)
+            monkeypatch.setattr(cli, "_terminate_pid", lambda _pid: None)
+            monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
+            monkeypatch.setattr(cli.sys, "platform", "linux")
+
+            result = runner.invoke(app, ["server", "service", "stop"])
+            assert result.exit_code == 0, result.output
+
+            # No CLI-emitted line on POSIX.
+            assert not log_path.exists(), (
+                "POSIX must rely on the daemon's own shutdown log line"
+            )
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+
 class TestServiceDaemonHelpers:
     """Tests for the service daemon helper functions."""
 
