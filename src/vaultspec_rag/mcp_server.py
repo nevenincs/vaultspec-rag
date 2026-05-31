@@ -20,6 +20,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,13 +53,23 @@ _watcher_lock = threading.Lock()
 _start_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
 
-# Heartbeat contract for issue #113. The daemon writes
-# ``last_heartbeat`` to service.json every _HEARTBEAT_INTERVAL_SECONDS
-# so ``vaultspec-rag server service status`` can detect a stale file
-# (process killed without running atexit / signal handlers — SIGKILL,
-# OOM, kernel panic). The CLI flags the file stale when the age
-# exceeds _HEARTBEAT_STALENESS_SECONDS. Four beats per minute tolerates
-# up to three missed beats before the verdict flips to "crashed".
+# Per-process identity token. Generated once in ``service_lifespan``
+# startup, written into ``service.json`` via the first heartbeat
+# tick, and returned from ``/health``. The CLI's ``_is_our_service``
+# compares the file's recorded value against the live ``/health``
+# response — mismatch reports the responding process is not the
+# daemon named in ``service.json`` (gh #124 + #125: closes
+# PID-reuse false-positives and unrelated-HTTP-server-on-port).
+_SERVICE_TOKEN: str = ""
+
+# Heartbeat contract. The daemon writes ``last_heartbeat`` to
+# service.json every _HEARTBEAT_INTERVAL_SECONDS so
+# ``vaultspec-rag server service status`` can detect a stale file
+# (process killed without running atexit / signal handlers —
+# SIGKILL, OOM, kernel panic). The CLI flags the file stale when
+# the age exceeds _HEARTBEAT_STALENESS_SECONDS. Four beats per
+# minute tolerates up to three missed beats before the verdict
+# flips to "crashed".
 _HEARTBEAT_INTERVAL_SECONDS = 15
 _HEARTBEAT_STALENESS_SECONDS = 60
 
@@ -218,11 +229,32 @@ def _heartbeat_tick_sync() -> None:
         return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        # Read failures are best-effort: the CLI parent wrote the
+        # file; the daemon's tick is additive. Debug-log so the
+        # swallow stays observable (no-swallow rule).
+        logger.debug(
+            "heartbeat tick: failed to read %s: %s",
+            path,
+            exc,
+            exc_info=True,
+        )
         return
     if not isinstance(data, dict):
+        logger.debug(
+            "heartbeat tick: %s did not deserialise to dict (got %r)",
+            path,
+            type(data).__name__,
+        )
         return
     data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+    # Per-process identity token. Empty during the narrow window
+    # between module import and service_lifespan startup; the guard
+    # prevents an in-flight zero-value overwrite of a token written
+    # by a previous daemon process that crashed without unlinking
+    # service.json.
+    if _SERVICE_TOKEN:
+        data["service_token"] = _SERVICE_TOKEN
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
     os.replace(str(tmp), str(path))
@@ -312,9 +344,14 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     Yields:
         Control to the running application.
     """
-    global _start_time, _shutdown_recorded
+    global _start_time, _shutdown_recorded, _SERVICE_TOKEN
     _start_time = time.monotonic()
     _shutdown_recorded = False
+    # Generate the per-process identity token before the first
+    # heartbeat tick fires (which would otherwise persist an empty
+    # token into service.json). The token round-trips through
+    # /health for CLI-side identity verification (gh #124/#125).
+    _SERVICE_TOKEN = uuid.uuid4().hex
 
     t_total = time.perf_counter()
 
@@ -410,6 +447,11 @@ async def health_handler(_request: Request) -> object:
             "project_count": reg_health["project_count"],
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
+            # Per-process identity token. Mirrors the value written
+            # to service.json. The CLI compares the two to detect
+            # PID-reuse and unrelated-HTTP-server-on-port collisions
+            # (gh #124, #125).
+            "service_token": _SERVICE_TOKEN,
         },
     )
 
@@ -644,6 +686,10 @@ class HealthResponse(BaseModel):
         uptime_s: Seconds since service startup.
         backend_capabilities: Search concurrency and local storage
             process-model contract.
+        service_token: Per-process identity token mirroring the
+            value written into ``service.json``. The CLI compares
+            the two to detect PID-reuse and
+            unrelated-HTTP-server-on-port collisions.
     """
 
     status: str = Field(description="Service state")
@@ -660,6 +706,15 @@ class HealthResponse(BaseModel):
     backend_capabilities: BackendCapabilities = Field(
         default_factory=BackendCapabilities,
         description="Backend concurrency capabilities for agent orchestration",
+    )
+    service_token: str = Field(
+        default="",
+        description=(
+            "Per-process identity token. Empty for pre-upgrade "
+            "daemons; non-empty for daemons running this version. "
+            "CLI matches against the value in service.json to "
+            "detect PID-reuse / unrelated-server collisions."
+        ),
     )
 
 

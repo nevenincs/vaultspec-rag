@@ -295,6 +295,21 @@ class TestPydanticModels:
             models_loaded=False,
         )
         assert resp.project_count == 0
+        # service_token is opt-in (default empty so pre-upgrade
+        # serialisation stays identical).
+        assert resp.service_token == ""
+
+    def test_health_response_includes_service_token(self):
+        """Wave 3 (#124/#125): /health round-trips the identity token."""
+        resp = HealthResponse(
+            status="ready",
+            cuda=True,
+            models_loaded=True,
+            service_token="abc123",
+        )
+        assert resp.service_token == "abc123"
+        # The token must serialise — consumers parse the JSON payload.
+        assert resp.model_dump()["service_token"] == "abc123"
         assert resp.uptime_s == 0.0
         assert resp.backend_capabilities.same_project_search_strategy == "serialized"
 
@@ -1002,6 +1017,64 @@ class TestDaemonLifecycleHelpers:
         assert ts.tzinfo is not None
         delta = (datetime.now(UTC) - ts).total_seconds()
         assert -1 < delta < 5
+
+    def test_heartbeat_tick_sync_merges_service_token(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        """Wave 3 (#124/#125): non-empty _SERVICE_TOKEN gets written.
+
+        Empty token (initial state before service_lifespan fires) is
+        skipped so a stale token from a previous daemon does not get
+        overwritten with empty.
+        """
+        from vaultspec_rag import mcp_server
+
+        sf = tmp_path / "service.json"
+        sf.write_text(
+            json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
+        monkeypatch.setattr(mcp_server, "_SERVICE_TOKEN", "deadbeef" * 4)
+
+        mcp_server._heartbeat_tick_sync()
+
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        assert data["service_token"] == "deadbeef" * 4
+
+    def test_heartbeat_tick_sync_skips_empty_token(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        """Empty _SERVICE_TOKEN must not overwrite an existing token."""
+        from vaultspec_rag import mcp_server
+
+        sf = tmp_path / "service.json"
+        # Simulate a service.json that already has a token (e.g.
+        # written by a previous tick that fired before this guard
+        # check was introduced).
+        sf.write_text(
+            json.dumps(
+                {
+                    "pid": 1,
+                    "port": 2,
+                    "started_at": "x",
+                    "service_token": "previous-token",
+                },
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
+        monkeypatch.setattr(mcp_server, "_SERVICE_TOKEN", "")
+
+        mcp_server._heartbeat_tick_sync()
+
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        # Token preserved — empty token guard prevents the overwrite.
+        assert data["service_token"] == "previous-token"
 
     def test_unlink_status_file_silently_missing_is_noop(
         self,

@@ -1002,7 +1002,7 @@ class TestWinShutdownLog:
             # Treat the current process as the service so service_stop
             # walks past the validation guard, into the stubbed termination,
             # the unlink, and the new log-append branch we want to exercise.
-            monkeypatch.setattr(cli, "_is_our_service", lambda _pid: True)
+            monkeypatch.setattr(cli, "_is_our_service", lambda *_a, **_kw: True)
             monkeypatch.setattr(cli, "_terminate_pid", lambda _pid: None)
             # The post-terminate poll iterates until _is_pid_alive returns
             # False; stub False so the wait collapses immediately.
@@ -1038,7 +1038,7 @@ class TestWinShutdownLog:
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
             _write_service_status(pid=os.getpid(), port=18999)
-            monkeypatch.setattr(cli, "_is_our_service", lambda _pid: True)
+            monkeypatch.setattr(cli, "_is_our_service", lambda *_a, **_kw: True)
             monkeypatch.setattr(cli, "_terminate_pid", lambda _pid: None)
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "linux")
@@ -1052,6 +1052,97 @@ class TestWinShutdownLog:
             )
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+
+
+class TestServiceTokenIdentity:
+    """Wave 3 (#124 + #125): per-process service_token round-trip.
+
+    Daemon writes a uuid4 token into service.json + returns it from
+    /health. The CLI compares both — mismatch reports a recycled-PID
+    or unrelated-HTTP-server scenario instead of trusting a stale
+    truth-lying executable-name check.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_token_match_returns_true(self, monkeypatch):
+        from vaultspec_rag import cli
+
+        monkeypatch.setattr(
+            cli,
+            "_health_probe",
+            lambda _port: {"service_token": "abc"},
+        )
+        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        assert cli._is_our_service(123, port=8766, expected_token="abc")
+
+    def test_token_mismatch_returns_false(self, monkeypatch):
+        from vaultspec_rag import cli
+
+        monkeypatch.setattr(
+            cli,
+            "_health_probe",
+            lambda _port: {"service_token": "abc"},
+        )
+        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        # Token mismatch is authoritative — return False regardless of
+        # whether the executable-name check would have passed.
+        assert not cli._is_our_service(123, port=8766, expected_token="xyz")
+
+    def test_token_absent_in_response_falls_back(self, monkeypatch, caplog):
+        """Pre-upgrade daemon (no token in response) → exe-name fallback."""
+        from vaultspec_rag import cli
+
+        monkeypatch.setattr(cli, "_health_probe", lambda _port: {})
+        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        # On Windows the exe-name check inspects the running pytest
+        # process (always "python") so this hits the True branch.
+        # No-swallow rule: the fallback must debug-log.
+        with caplog.at_level("DEBUG", logger="vaultspec_rag.cli"):
+            result = cli._is_our_service(
+                os.getpid(),
+                port=8766,
+                expected_token="abc",
+            )
+        # Result True or False is platform-dependent; the contract
+        # under test is the debug log line.
+        assert any(
+            "service_token absent" in r.getMessage()
+            for r in caplog.records
+            if r.name == "vaultspec_rag.cli"
+        ), "token-absent fallback must debug-log per the no-swallow rule"
+        # Sanity: a result was returned (didn't raise).
+        assert isinstance(result, bool)
+
+    def test_no_token_in_status_skips_token_check(self, monkeypatch):
+        """No expected_token (pre-upgrade service.json) → exe-name only."""
+        from vaultspec_rag import cli
+
+        probe_called = {"n": 0}
+
+        def _probe(_port):
+            probe_called["n"] += 1
+            return {"service_token": "irrelevant"}
+
+        monkeypatch.setattr(cli, "_health_probe", _probe)
+        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        # No expected_token → don't probe.
+        cli._is_our_service(os.getpid(), port=8766, expected_token=None)
+        assert probe_called["n"] == 0
+
+    def test_health_probe_failure_falls_back(self, monkeypatch):
+        """Network failure on /health → exe-name fallback, no exception."""
+        from vaultspec_rag import cli
+
+        monkeypatch.setattr(cli, "_health_probe", lambda _port: None)
+        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        # Should fall back without raising.
+        result = cli._is_our_service(
+            os.getpid(),
+            port=8766,
+            expected_token="abc",
+        )
+        assert isinstance(result, bool)
 
 
 class TestServiceDaemonHelpers:

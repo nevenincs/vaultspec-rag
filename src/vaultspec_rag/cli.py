@@ -2305,23 +2305,69 @@ def _is_pid_alive(pid: int) -> bool:
     return True
 
 
-def _is_our_service(pid: int) -> bool:
-    """Check if PID belongs to a vaultspec-rag MCP server process.
+def _is_our_service(
+    pid: int,
+    port: int | None = None,
+    expected_token: str | None = None,
+) -> bool:
+    """Check if PID belongs to the daemon currently named in ``service.json``.
 
-    On Windows, uses ``QueryFullProcessImageNameW`` via ctypes to
-    verify the process executable contains ``"python"``.  On Unix,
-    inspects ``/proc/{pid}/cmdline`` for the module name.  Falls
-    back to basic PID liveness when verification is unavailable.
+    Primary identity check (``port`` + ``expected_token`` supplied):
+    probes ``/health`` on the port, compares ``service_token`` to
+    ``expected_token``. Mismatch → False (positively not ours); match
+    → True (positively ours); token-absent in the response → falls
+    back to the executable-name check (pre-upgrade daemon, or an
+    unrelated HTTP server returning 200 without a token).
+
+    Fallback identity check (no port/token supplied, or
+    token-absent in the response): on Windows uses
+    ``QueryFullProcessImageNameW`` via ctypes to verify the process
+    executable contains ``"python"``; on Unix inspects
+    ``/proc/{pid}/cmdline`` for the module name; falls back to basic
+    PID liveness when verification is unavailable.
 
     Args:
         pid: Process ID to verify.
+        port: TCP port to probe ``/health`` on. When ``None``, only
+            the fallback executable-name check runs.
+        expected_token: Token value from ``service.json`` to match
+            against the ``/health`` response. When ``None``, only
+            the fallback check runs.
 
     Returns:
-        True if the process appears to be a vaultspec-rag service.
+        True if the process appears to be the daemon named in
+        ``service.json``.
 
     """
     if not _is_pid_alive(pid):
         return False
+
+    # Primary check: token round-trip via /health. Gated on both
+    # port and expected_token being non-empty; the CLI passes
+    # status.get("service_token") which is None for pre-upgrade
+    # daemons and falsy for daemons whose first heartbeat tick has
+    # not landed yet.
+    if port is not None and expected_token:
+        probe = _health_probe(port)
+        if probe is not None:
+            response_token = probe.get("service_token")
+            if isinstance(response_token, str) and response_token:
+                # Both sides reported a token — the comparison is
+                # authoritative regardless of outcome.
+                return response_token == expected_token
+            # Probe answered but with no token (pre-upgrade daemon,
+            # or unrelated server returning 200). Fall back to the
+            # executable-name path. Debug-log per the no-swallow
+            # rule so the fallback is observable.
+            logger.debug(
+                "service_token absent on /health for pid=%d port=%d; "
+                "falling back to executable-name check",
+                pid,
+                port,
+            )
+        # probe is None: connection failed. Fall back to exe-name
+        # check (the daemon may be alive but port-bound late).
+
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -2341,8 +2387,16 @@ def _is_our_service(pid: int) -> bool:
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
         return "vaultspec_rag" in cmdline
-    except (OSError, ValueError):
-        return True  # fallback to basic liveness on non-procfs systems
+    except (OSError, ValueError) as exc:
+        # Non-procfs systems (BSD, macOS without /proc) — fall back
+        # to PID-alive trust. Debug-log per the no-swallow rule.
+        logger.debug(
+            "cmdline read failed for pid=%d: %s; falling back to PID-alive trust",
+            pid,
+            exc,
+            exc_info=True,
+        )
+        return True
 
 
 def _port_is_available(port: int) -> bool:
@@ -2450,8 +2504,22 @@ def _health_probe(port: int) -> dict[str, Any] | None:
         with opener.open(url, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        # HTTP errors mean the server answered but unhealthy — surface
+        # the structured shape so callers can render the http code.
         return {"status": "error", "http_code": exc.code}
-    except Exception:
+    except Exception as exc:
+        # Connection failures (no server, bad SSL, timeout, malformed
+        # JSON) yield None so callers can render "unreachable". The
+        # broad catch is intentional because urllib raises many
+        # distinct exception classes here; the debug log keeps the
+        # swallow observable per the no-swallow rule. The narrower
+        # codebase-wide sweep is filed as gh #130.
+        logger.debug(
+            "health probe failed for port=%d: %s",
+            port,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -2566,7 +2634,13 @@ def service_start(
     if status is not None:
         existing_pid = int(status["pid"])
         existing_port = int(status["port"])
-        if _is_our_service(existing_pid):
+        existing_token = status.get("service_token")
+        existing_token_str = existing_token if isinstance(existing_token, str) else None
+        if _is_our_service(
+            existing_pid,
+            port=existing_port,
+            expected_token=existing_token_str,
+        ):
             health = _health_probe(existing_port)
             if health is not None:
                 console.print(
@@ -2658,7 +2732,10 @@ def service_stop() -> None:
         return
 
     pid = int(status["pid"])
-    if not _is_our_service(pid):
+    port = int(status["port"])
+    raw_token = status.get("service_token")
+    expected_token = raw_token if isinstance(raw_token, str) else None
+    if not _is_our_service(pid, port=port, expected_token=expected_token):
         _status_file().unlink(missing_ok=True)
         console.print(
             Panel(
@@ -2754,8 +2831,14 @@ def service_status(
     started_at = status.get("started_at", "unknown")
 
     # Gather every signal first; render once at the end.
+    raw_token = status.get("service_token")
+    expected_token = raw_token if isinstance(raw_token, str) and raw_token else None
     pid_alive = _is_pid_alive(pid)
-    pid_is_ours = _is_our_service(pid) if pid_alive else False
+    pid_is_ours = (
+        _is_our_service(pid, port=port, expected_token=expected_token)
+        if pid_alive
+        else False
+    )
     port_listening = _port_is_listening(port) if pid_alive else False
     heartbeat_age = _heartbeat_age_seconds(status)
     heartbeat_stale = (
@@ -2763,6 +2846,22 @@ def service_status(
         if heartbeat_age is None
         else heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
     )
+    # Token-match is reported as a separate signal so divergences
+    # (PID alive + port listening + heartbeat fresh + token absent)
+    # surface explicitly. None = not checked (pre-upgrade status
+    # file or pid dead); True = matched; False = mismatched.
+    if expected_token is None or not pid_alive:
+        token_match: bool | None = None
+    else:
+        probe_for_token = _health_probe(port) if port_listening else None
+        if probe_for_token is not None and isinstance(
+            probe_for_token.get("service_token"),
+            str,
+        ):
+            response_token = probe_for_token["service_token"]
+            token_match = bool(response_token) and response_token == expected_token
+        else:
+            token_match = None
 
     # State derivation: clean / known-bad mapping.
     state: str
@@ -2803,6 +2902,7 @@ def service_status(
             "port_listening": port_listening,
             "heartbeat_age_seconds": heartbeat_age,
             "heartbeat_stale": heartbeat_stale,
+            "service_token_match": token_match,
             "state": state,
         }
         if isinstance(health, dict):
@@ -2836,6 +2936,13 @@ def service_status(
         "PID Matches Service",
         "[green]yes[/]" if pid_is_ours else "[red]no[/]" if pid_alive else "n/a",
     )
+    if token_match is None:
+        token_label = "[yellow]n/a[/]"
+    elif token_match:
+        token_label = "[green]yes[/]"
+    else:
+        token_label = "[red]no[/]"
+    table.add_row("Service Token Match", token_label)
     table.add_row(
         "Port Listening",
         "[green]yes[/]" if port_listening else "[red]no[/]" if pid_alive else "n/a",
