@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import threading
+import typing
 from contextlib import asynccontextmanager
 
 import pytest
@@ -865,6 +866,76 @@ class TestRegistryFullErrorShape:
         source = inspect.getsource(mcp_server._ensure_watcher)
         assert "_registry.peek_project" in source
         assert "_registry.get_project" not in source
+
+
+class TestMcpPathRewrite:
+    """Bare ``/mcp`` is rewritten to ``/mcp/`` in-process — no 307 hop."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_main_uses_path_rewriting_wrapper(self):
+        """Regression guard: main() must hand the wrapper to uvicorn.run.
+
+        Without the wrapper, Starlette's ``Mount("/mcp")`` issues a 307
+        redirect on the bare path, costing every MCP call a round-trip
+        and breaking the documented client URL. The function-source
+        check is cheap, stable, and survives refactors that keep the
+        wrapper-passing intent.
+        """
+        import inspect
+
+        from vaultspec_rag import mcp_server
+
+        source = inspect.getsource(mcp_server.main)
+        assert "_mcp_no_redirect" in source, (
+            "main() lost the path-rewriting wrapper; /mcp will 307-redirect"
+        )
+        # The wrapper must actually be what's handed to uvicorn — not
+        # just defined and ignored.
+        assert "uvicorn.run(\n                _mcp_no_redirect" in source
+
+    def test_path_rewrite_logic(self):
+        """The ASGI rewrite promotes bare /mcp to /mcp/, leaves other paths."""
+        captured: dict[str, dict[str, object]] = {}
+
+        async def _stub_app(scope, _receive, _send):
+            captured["scope"] = scope
+
+        async def _wrapper(scope, receive, send):
+            if scope["type"] == "http" and scope.get("path") == "/mcp":
+                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
+            await _stub_app(scope, receive, send)
+
+        # Bare /mcp gets rewritten.
+        asyncio.run(
+            _wrapper(
+                {"type": "http", "path": "/mcp", "raw_path": b"/mcp"},
+                lambda: None,
+                lambda _m: None,
+            ),
+        )
+        assert captured["scope"]["path"] == "/mcp/"
+        assert captured["scope"]["raw_path"] == b"/mcp/"
+
+        # /mcp/ passes through unchanged.
+        asyncio.run(
+            _wrapper(
+                {"type": "http", "path": "/mcp/", "raw_path": b"/mcp/"},
+                lambda: None,
+                lambda _m: None,
+            ),
+        )
+        assert captured["scope"]["path"] == "/mcp/"
+
+        # /health passes through unchanged.
+        asyncio.run(
+            _wrapper(
+                {"type": "http", "path": "/health", "raw_path": b"/health"},
+                lambda: None,
+                lambda _m: None,
+            ),
+        )
+        assert captured["scope"]["path"] == "/health"
 
 
 class TestDaemonLifecycleHelpers:
