@@ -744,11 +744,12 @@ def handle_index(
     # `vaultspec-rag index` (incremental, idempotent) frictionless.
     if rebuild:
         try:
-            from click.core import ParameterSource
-
             param_source = ctx.get_parameter_source("index_type")
-            type_is_explicit = param_source is not ParameterSource.DEFAULT
-        except (ImportError, AttributeError, LookupError) as exc:
+            # click 8.3+ / typer 0.26+ may vendor ParameterSource
+            # such that neither ``is`` nor ``==`` works across
+            # imports; compare by enum ``.name`` which is stable.
+            type_is_explicit = getattr(param_source, "name", "") != "DEFAULT"
+        except (AttributeError, LookupError) as exc:
             # Defensive fallback — if the click API is unavailable
             # on an exotic typer version, treat default as explicit
             # so we never spuriously block a previously-working flow.

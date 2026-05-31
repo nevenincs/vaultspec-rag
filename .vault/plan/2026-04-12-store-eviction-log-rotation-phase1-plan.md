@@ -9,12 +9,6 @@ related:
   - '[[2026-04-02-service-graph-adr]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `store-eviction-log-rotation` `phase-1` plan | (**status:** `approved`)
 
 Reviewer trail: Reviewed by: 2 parallel reviewers (code-fit/integration risk, tests/mandate compliance), 2026-04-12; all critical and major findings addressed. Plan status: Approved.

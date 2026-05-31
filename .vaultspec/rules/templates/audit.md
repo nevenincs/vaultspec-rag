@@ -1,21 +1,20 @@
 ---
-# REQUIRED TAGS (minimum 2): one directory tag + one feature tag
-# DIRECTORY TAGS: #adr #audit #exec #plan #reference #research
-# Directory tag (hardcoded - DO NOT CHANGE - based on .vault/audit/ location)
-# Feature tag (replace {feature} with your feature name, e.g., #editor-demo)
-# Additional tags may be appended below the required pair
 tags:
   - '#audit'
   - '#{feature}'
-# ISO date format (e.g., 2026-02-06)
 date: '{yyyy-mm-dd}'
-# Related documents as quoted wiki-links
-# (e.g., "[[2026-02-04-feature-research]]")
 related: []
 ---
 
-<!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
-     outside the YAML frontmatter above -->
+<!-- FRONTMATTER RULES:
+     tags: one directory tag (hardcoded #audit) and one feature tag.
+     Replace {feature} with a kebab-case feature tag, e.g. #foo-bar.
+     Additional tags may be appended below the required pair.
+
+     Related: use wiki-links as '[[YYYY-MM-DD-foo-bar]]'.
+
+     DO NOT add frontmatter fields
+     outside the frontmatter. -->
 
 <!-- LINK RULES:
      - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
@@ -36,3 +35,31 @@ related: []
 ## Recommendations
 
 <!-- Actionable recommendations -->
+
+## Codification candidates
+
+<!-- Findings that satisfy the three durability criteria
+(cross-session, constraint-shaped, project-bound) and should be
+promoted into project-shared rules under `.vaultspec/rules/rules/`
+(the directory the CLI's `vaultspec-core spec rules add` writes to today; the
+planned `--scope project` flag will move authored rules under
+`.vaultspec/rules/rules/project/`).
+
+Each candidate names the finding it derives from, the proposed
+rule slug (kebab-case, naming the constraint's subject not the
+failure), and a one-sentence statement of the rule.
+
+Most audits produce zero codification candidates. Some produce one.
+Only the rare framework-wide-pattern audit produces several. If
+none of the findings above meet the bar, state that explicitly and
+move on -- an empty Codification candidates section is a positive
+signal, not a failure. -->
+
+<!-- Example:
+
+- **Source:** finding S04 (destructive verbs lack preview).
+  **Rule slug:** `destructive-verbs-need-dry-run`.
+  **Rule:** Every CLI verb that writes or removes state must
+  accept `--dry-run` and emit a usable preview before applying.
+
+-->

@@ -1,22 +1,24 @@
 ---
-# REQUIRED TAGS (minimum 2): one directory tag + one feature tag
-# DIRECTORY TAGS: #adr #audit #exec #plan #reference #research
-# Directory tag (hardcoded - DO NOT CHANGE - based on .vault/exec/ location)
-# Feature tag (replace {feature} with your feature name, e.g., #editor-demo)
-# Additional tags may be appended below the required pair
 tags:
   - '#exec'
   - '#{feature}'
-# ISO date format (e.g., 2026-02-06)
 date: '{yyyy-mm-dd}'
-# Related documents as quoted wiki-links - MUST link to parent PLAN
-# (e.g., "[[2026-02-04-feature-plan]]")
+step_id: '{step_id}'
 related:
-  - '[[{yyyy-mm-dd-*-plan}]]'
+  - '[[{plan_stem}]]'
 ---
 
-<!-- DO NOT add 'Related:', 'tags:', 'date:', or other frontmatter fields
-     outside the YAML frontmatter above -->
+<!-- FRONTMATTER RULES:
+     tags: one directory tag (hardcoded #exec) and one feature tag.
+     Replace {feature} with a kebab-case feature tag, e.g. #foo-bar.
+     Additional tags may be appended below the required pair.
+     step_id is the originating Step's canonical identifier, e.g. S01.
+
+     Related: use wiki-links as '[[YYYY-MM-DD-foo-bar-plan]]' and link the
+     parent plan.
+
+     DO NOT add frontmatter fields
+     outside the frontmatter. -->
 
 <!-- LINK RULES:
      - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
@@ -24,18 +26,20 @@ related:
      - NEVER reference file paths in the body. If you must name a source file,
        class, or function, use inline backtick code: `src/module.py`. -->
 
-# `{feature}` `{phase}` `{step}`
+<!-- STEP RECORD:
+     This file represents one Step from the originating plan. Identified
+     by its canonical leaf identifier (S##) and ancestor display path. -->
 
-Brief summary of work done.
+# {heading}
 
-- Modified: `{file1}`
-- Created: `{file2}`
+{scope_block}
 
 ## Description
 
-Detailed description of implementation details.
+<!-- Succint line-by-line list of steps executed. Use imperative language, mirroring git commit summary lines. -->
 
-## Tests
+## Outcome
 
-Brief description of tests and validation results.
-Link any audit reports related to `{phase}` or `{step}`.
+## Notes
+
+<!-- Incidents. Data loss. Difficulties (;persistent failiures. Skipped work. Scafolds left in code. Failiures. -->

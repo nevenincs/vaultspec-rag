@@ -9,12 +9,6 @@ related:
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `store-eviction-log-rotation` adr: `bounded-multi-tenant-service` | (**status:** `accepted`)
 
 Review trail: Reviewed by: 2 parallel reviewers (concurrency/lifecycle, Windows-IO/CLI), 2026-04-12; all critical and major findings addressed.

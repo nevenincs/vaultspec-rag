@@ -9,10 +9,6 @@ related:
   - '[[2026-04-05-service-lifecycle-tests-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] only in frontmatter.
-     - Inline code for file/class/function names. -->
-
 # `store-eviction-log-rotation` research: beta gates #45
 
 Phase-1 research for issue #45. The service-graph ADR explicitly deferred two
