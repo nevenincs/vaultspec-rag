@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.10](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.9...vaultspec-rag-v0.2.10) (2026-05-31)
+
+
+### Miscellaneous
+
+* cut 0.2.10 with docs overhaul and core 0.1.20 dep bump ([246614f](https://github.com/wgergely/vaultspec-rag/commit/246614fcd47dcee048667d1ebe5a880f675c8537))
+
 ## [0.2.9](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.8...vaultspec-rag-v0.2.9) (2026-05-31)
 
 ### Breaking changes
