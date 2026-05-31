@@ -65,7 +65,8 @@ def _is_vault_change(path: Path, vault_dir: Path) -> bool:
     """
     try:
         path.relative_to(vault_dir)
-    except ValueError:
+    except ValueError as exc:
+        logger.debug("watcher: %s not under vault dir %s: %s", path, vault_dir, exc)
         return False
     return path.suffix in _VAULT_EXTENSIONS
 
@@ -87,11 +88,24 @@ def _is_code_change(path: Path, root_dir: Path, vault_dir: Path) -> bool:
     try:
         path.relative_to(vault_dir)
         return False  # Inside vault — not a code change
-    except ValueError:
-        pass
+    except ValueError as exc:
+        # Expected when path is outside vault — fall through to
+        # the root-dir check below.
+        logger.debug(
+            "watcher code-path: %s not under vault %s: %s",
+            path,
+            vault_dir,
+            exc,
+        )
     try:
         path.relative_to(root_dir)
-    except ValueError:
+    except ValueError as exc:
+        logger.debug(
+            "watcher code-path: %s not under root %s: %s",
+            path,
+            root_dir,
+            exc,
+        )
         return False
     return True
 

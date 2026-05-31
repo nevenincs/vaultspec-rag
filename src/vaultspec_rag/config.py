@@ -6,12 +6,15 @@ VaultSpecConfig is missing RAG-specific attributes.
 
 from __future__ import annotations
 
+import logging
 import os
 from enum import StrEnum
 from typing import Any, ClassVar
 
 from vaultspec_core.config import VaultSpecConfig as BaseConfig
 from vaultspec_core.config import get_config as get_base_config
+
+logger = logging.getLogger(__name__)
 
 
 class EnvVar(StrEnum):
@@ -164,8 +167,15 @@ class VaultSpecConfigWrapper:
             # 1. CLI override via base config
             try:
                 return getattr(self._base, name)
-            except AttributeError:
-                pass
+            except AttributeError as exc:
+                # Base config doesn't carry RAG-specific knob; fall
+                # through to env var, then to module default. Debug
+                # so the swallow stays observable.
+                logger.debug(
+                    "config attr %s not on base; fall through: %s",
+                    name,
+                    exc,
+                )
 
             # 2. Env var override
             env_key = _ENV_OVERRIDE_MAP.get(name)

@@ -300,7 +300,7 @@ class TestPydanticModels:
         assert resp.service_token == ""
 
     def test_health_response_includes_service_token(self):
-        """Wave 3 (#124/#125): /health round-trips the identity token."""
+        """/health round-trips the identity token."""
         resp = HealthResponse(
             status="ready",
             cuda=True,
@@ -954,7 +954,7 @@ class TestMcpPathRewrite:
 
 
 class TestDaemonLifecycleHelpers:
-    """Wave 2 (#113): _lifecycle_log + _heartbeat_tick_sync + cleanup."""
+    """_lifecycle_log + _heartbeat_tick_sync + cleanup helpers."""
 
     def test_lifecycle_log_emits_warning_with_structured_format(
         self,
@@ -1023,7 +1023,7 @@ class TestDaemonLifecycleHelpers:
         tmp_path,
         monkeypatch,
     ) -> None:
-        """Wave 3 (#124/#125): non-empty _SERVICE_TOKEN gets written.
+        """Non-empty _SERVICE_TOKEN gets written into the heartbeat.
 
         Empty token (initial state before service_lifespan fires) is
         skipped so a stale token from a previous daemon does not get

@@ -115,11 +115,12 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
             return 0
         try:
             return os.fstat(self.stream.fileno()).st_size
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            logger.debug("log fstat fell through to tell(): %s", exc)
         try:
             return self.stream.tell()
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            logger.debug("log tell() fell through to 0: %s", exc)
             return 0
 
     @override
@@ -230,7 +231,12 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
                 os.O_WRONLY | os.O_APPEND | os.O_CREAT,
                 0o644,
             )
-        except OSError:
+        except OSError as exc:
+            logger.debug(
+                "fd rebind: log open(%s) failed: %s",
+                self.baseFilename,
+                exc,
+            )
             return
         try:
             with contextlib.suppress(OSError):

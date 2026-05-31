@@ -181,7 +181,7 @@ class TestIndexRebuild:
         assert "files would be indexed" in result.output
 
     def test_index_rebuild_without_explicit_type_exits_2(self, tmp_path: Path):
-        """Wave 2 (#115): --rebuild without --type is rejected.
+        """--rebuild without --type is rejected.
 
         The audit found --rebuild silently inherited --type all from the
         default and the in-process branch destroyed both collections.
@@ -273,14 +273,14 @@ class TestServerCommands:
         assert "not running" in result.output.lower() or "No service" in result.output
 
     def test_service_status_no_status_file(self):
-        """No status file → exit 3 (stopped), per Wave 2 contract (#113)."""
+        """No status file → exit 3 (stopped)."""
         result = runner.invoke(app, ["server", "service", "status"])
         assert result.exit_code == 3
         assert "stopped" in result.output.lower()
 
 
 class TestServiceLifecycleHelpers:
-    """Wave 2 (#113): _port_is_listening + _heartbeat_age_seconds."""
+    """_port_is_listening + _heartbeat_age_seconds helpers."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
@@ -783,7 +783,7 @@ class TestMcpFastPath:
 
 
 class TestSearchSafetyContract:
-    """Wave 1B: fail-hard fast path + path indicator + tqdm suppression."""
+    """Fail-hard fast path + path indicator + tqdm suppression."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
@@ -875,7 +875,7 @@ class TestSearchSafetyContract:
 
 
 class TestCleanRequiredTarget:
-    """Wave 1C: clean target is required (no default)."""
+    """Clean target is required (no default)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
@@ -891,7 +891,7 @@ class TestCleanRequiredTarget:
 
 
 class TestNoTruncateFlag:
-    """Wave 1C: --no-truncate bypasses snippet truncation."""
+    """--no-truncate bypasses snippet truncation."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
@@ -1000,7 +1000,7 @@ class TestNoTruncateFlag:
 
 
 class TestWinShutdownLog:
-    """Wave 3 (#123): CLI appends a lifecycle shutdown line on win32.
+    """CLI appends a lifecycle shutdown line on win32.
 
     The daemon's atexit / lifespan ``finally`` never fire under
     Windows ``TerminateProcess`` (which is what ``os.kill(SIGTERM)``
@@ -1143,7 +1143,7 @@ class TestWinShutdownLog:
 
 
 class TestServiceTokenIdentity:
-    """Wave 3 (#124 + #125): per-process service_token round-trip.
+    """Per-process service_token round-trip.
 
     Daemon writes a uuid4 token into service.json + returns it from
     /health. The CLI compares both — mismatch reports a recycled-PID
@@ -1343,8 +1343,8 @@ class TestServiceDaemonHelpers:
     def test_service_status_stale_pid(self, tmp_path: Path):
         """service_status with a dead PID exits 4 and cleans the file.
 
-        Per Wave 2 contract (#113), divergent/crashed states exit 4
-        so scripts can branch on "known-bad" without parsing prose.
+        Divergent/crashed states exit 4 so scripts can branch on
+        "known-bad" without parsing prose.
         """
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
@@ -1423,17 +1423,18 @@ class TestServiceDaemonHelpers:
 
         server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
         port = server.server_address[1]
-        # Wave 2 (#113): service_status calls _port_is_listening first
-        # (one TCP connect that the HTTPServer accepts but cannot satisfy
-        # with HTTP). Use serve_forever so multiple incoming connections
-        # are handled — the listening probe plus the /health probe.
+        # service_status calls _port_is_listening first (one TCP
+        # connect that the HTTPServer accepts but cannot satisfy
+        # with HTTP). Use serve_forever so multiple incoming
+        # connections are handled — the listening probe plus
+        # the /health probe.
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
-            # Wave 2 contract (#113): a healthy running service writes
-            # last_heartbeat to service.json. Without it the divergence
-            # check correctly flags "absent + PID alive" as crashed.
+            # A healthy running service writes last_heartbeat to
+            # service.json. Without it the divergence check
+            # correctly flags "absent + PID alive" as crashed.
             # Inject a fresh heartbeat to model a running daemon.
             _write_service_status(pid=os.getpid(), port=port)
             sf = tmp_path / "service.json"
@@ -1900,7 +1901,7 @@ class TestInstallTargetValidation:
 
 
 class TestJsonOutputMode:
-    """Wave 2 (#112): every command supports --json envelope output."""
+    """Every command supports --json envelope output."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 

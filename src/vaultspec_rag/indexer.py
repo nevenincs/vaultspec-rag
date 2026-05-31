@@ -364,7 +364,8 @@ def _is_binary(path: pathlib.Path, sample_size: int = 8192) -> bool:
     """Return True if the file appears to be binary (contains null bytes)."""
     try:
         chunk = path.read_bytes()[:sample_size]
-    except OSError:
+    except OSError as exc:
+        logger.debug("binary probe read failed for %s: %s", path, exc)
         return True
     return b"\x00" in chunk
 
@@ -746,7 +747,13 @@ def prepare_document(
     docs_dir = root_dir / get_config().docs_dir
     try:
         rel_path = str(path.relative_to(docs_dir)).replace("\\", "/")
-    except ValueError:
+    except ValueError as exc:
+        logger.debug(
+            "relative_to(%s) failed for %s: %s; using basename",
+            docs_dir,
+            path,
+            exc,
+        )
         rel_path = path.name
 
     title = _extract_title(body)
@@ -783,7 +790,8 @@ def _release_cuda_cache() -> None:
     """
     try:
         import torch
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("torch unavailable; CUDA cache flush skipped: %s", exc)
         return
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -1227,7 +1235,13 @@ class VaultIndexer:
             if doc_type is not None:
                 try:
                     rel = str(path.relative_to(docs_dir)).replace("\\", "/")
-                except ValueError:
+                except ValueError as exc:
+                    logger.debug(
+                        "relative_to(%s) failed for %s: %s; using basename",
+                        docs_dir,
+                        path,
+                        exc,
+                    )
                     rel = path.name
                 doc_id = rel.rsplit(".", 1)[0] if "." in rel else rel
                 current_docs[doc_id] = path
@@ -1369,7 +1383,13 @@ class VaultIndexer:
             return {}
         try:
             return json.loads(self._meta_path.read_text(encoding="utf-8"))
-        except (KeyError, ValueError, OSError):
+        except (KeyError, ValueError, OSError) as exc:
+            logger.debug(
+                "vault meta %s unreadable; treating as empty: %s",
+                self._meta_path,
+                exc,
+                exc_info=True,
+            )
             return {}
 
 
@@ -1465,7 +1485,8 @@ class CodebaseIndexer:
         for gitignore in self.root_dir.rglob(".gitignore"):
             try:
                 lines = gitignore.read_text(encoding="utf-8").splitlines()
-            except OSError:
+            except OSError as exc:
+                logger.debug("gitignore %s unreadable; skipping: %s", gitignore, exc)
                 continue
             rel_dir = gitignore.parent.relative_to(self.root_dir)
             for line in lines:
@@ -1508,8 +1529,12 @@ class CodebaseIndexer:
                     for line in lines
                     if line.strip() and not line.strip().startswith("#")
                 )
-            except OSError:
-                pass  # silently ignore unreadable file
+            except OSError as exc:
+                logger.debug(
+                    ".vaultragignore at %s unreadable; using --exclude only: %s",
+                    ignore_file,
+                    exc,
+                )
         patterns.extend(self._extra_excludes)
         if not patterns:
             return None
@@ -2064,5 +2089,11 @@ class CodebaseIndexer:
             return {}
         try:
             return json.loads(self._meta_path.read_text(encoding="utf-8"))
-        except (KeyError, ValueError, OSError):
+        except (KeyError, ValueError, OSError) as exc:
+            logger.debug(
+                "codebase meta %s unreadable; treating as empty: %s",
+                self._meta_path,
+                exc,
+                exc_info=True,
+            )
             return {}

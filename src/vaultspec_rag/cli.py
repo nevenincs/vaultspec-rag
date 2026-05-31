@@ -102,10 +102,10 @@ def _emit_json(
     """Write one envelope-wrapped JSON document to stdout.
 
     The envelope is `{"ok": bool, "command": str, "data" | "error" +
-    "message", **extra}`. Issue #112: every `--json` invocation
-    emits exactly one document. We bypass the Rich ``console``
-    entirely so no formatting bytes leak — ``json.dumps`` plus
-    one trailing newline, written directly to ``sys.stdout``.
+    "message", **extra}`. Every ``--json`` invocation emits exactly
+    one document. We bypass the Rich ``console`` entirely so no
+    formatting bytes leak — ``json.dumps`` plus one trailing
+    newline, written directly to ``sys.stdout``.
     """
     envelope: dict[str, object] = {"ok": ok, "command": command}
     if data is not None:
@@ -289,7 +289,13 @@ def _handle_gpu_error(exc: Exception) -> None:
             import torch
 
             diagnosis = diagnose_torch(torch.version.cuda, torch.cuda.is_available())
-        except Exception:
+        except Exception as exc:
+            # Broad except: torch import succeeded but probing the
+            # CUDA state failed in an unexpected way (driver
+            # mismatch, opaque ABI error). Treat as "no torch" for
+            # diagnosis purposes; debug-log so the swallow stays
+            # observable per the no-swallow rule.
+            logger.debug("torch CUDA diagnosis failed: %s", exc, exc_info=True)
             diagnosis = TorchDiagnosis.NO_TORCH
 
     if diagnosis == TorchDiagnosis.NO_TORCH:
@@ -317,9 +323,9 @@ def _open_vault_store(
     Args:
         target: Workspace root directory.
         json_mode: When True, emit a ``local_store_locked`` envelope
-            and ``typer.Exit(1)`` instead of the Rich prose path. Wave 2
-            (#112) — every command's ``--json`` flag threads through
-            here so the lock-error UX never corrupts the JSON stream.
+            and ``typer.Exit(1)`` instead of the Rich prose path —
+            every command's ``--json`` flag threads through here so
+            the lock-error UX never corrupts the JSON stream.
         command: Envelope ``command`` field; defaults to ``"cli"`` for
             call sites that have not been wired to a specific command
             name yet.
@@ -660,7 +666,7 @@ def handle_index(
                 "table. Wraps per-source summaries in "
                 '{"ok": true, "command": "index", "data": '
                 '{"sources": [...]}}. Use this for agent / CI '
-                "consumption (#112)."
+                "consumption."
             ),
         ),
     ] = False,
@@ -732,21 +738,21 @@ def handle_index(
             console.print(f"  {f.relative_to(target)}")
         return
 
-    # Wave 2 #115 — `--rebuild` is destructive; the `--type all`
-    # default would silently destroy both collections. Require an
-    # explicit `--type` whenever `--rebuild` is set, but keep bare
+    # `--rebuild` is destructive; the `--type all` default would
+    # silently destroy both collections. Require an explicit
+    # `--type` whenever `--rebuild` is set, but keep bare
     # `vaultspec-rag index` (incremental, idempotent) frictionless.
-    # See .vault/adr/2026-05-30-cli-index-default-adr.md.
     if rebuild:
         try:
             from click.core import ParameterSource
 
             param_source = ctx.get_parameter_source("index_type")
             type_is_explicit = param_source is not ParameterSource.DEFAULT
-        except (ImportError, AttributeError, LookupError):
-            # Defensive fallback — if the click API is unavailable on
-            # an exotic typer version, treat default as explicit so
-            # we never spuriously block a previously-working flow.
+        except (ImportError, AttributeError, LookupError) as exc:
+            # Defensive fallback — if the click API is unavailable
+            # on an exotic typer version, treat default as explicit
+            # so we never spuriously block a previously-working flow.
+            logger.debug("click ParameterSource probe failed: %s", exc, exc_info=True)
             type_is_explicit = True
         if not type_is_explicit:
             remediation = [
@@ -890,11 +896,10 @@ def handle_index(
         reporter.phase_start("open store", 1)
         store = _open_vault_store(target, json_mode=json_mode, command="index")
         if rebuild:
-            # Wave 2 #115 — scope the rebuild to the selected
-            # collection. The old whole-directory shutil.rmtree
-            # silently destroyed both collections even on
-            # `--rebuild --type vault`; use the collection-scoped
-            # store API instead. Mirrors `handle_clean` (#111).
+            # Scope the rebuild to the selected collection. A
+            # whole-directory rmtree would destroy both collections
+            # even on `--rebuild --type vault`; use the
+            # collection-scoped store API instead.
             do_vault = index_type in ("vault", "all")
             do_code = index_type in ("code", "all")
             try:
@@ -1020,8 +1025,8 @@ def handle_clean(
         typer.Argument(
             help=(
                 "What to wipe (REQUIRED): 'vault' (docs), 'code' "
-                "(source), or 'all'. No default — the previous "
-                "destructive 'all' default was a footgun (issue #111)."
+                "(source), or 'all'. No default — a destructive "
+                "'all' default would be a footgun."
             ),
         ),
     ],
@@ -1150,7 +1155,7 @@ def _try_mcp_reindex(
         from mcp.types import TextContent
 
         # Trailing slash avoids a 307 redirect from the Starlette
-        # Mount("/mcp") wrapping the inner app at "/" (issue #110 polish).
+        # Mount("/mcp") wrapping the inner app at "/".
         url = f"http://127.0.0.1:{port}/mcp/"
         async with (
             streamable_http_client(url) as (
@@ -1175,6 +1180,12 @@ def _try_mcp_reindex(
         return asyncio.run(_call())
     except Exception as exc:
         if _is_connection_refused(exc):
+            logger.debug(
+                "MCP reindex %s on port %s: connection refused (%s)",
+                tool_name,
+                port,
+                exc,
+            )
             return None
         return {
             "ok": False,
@@ -1268,7 +1279,7 @@ def _try_mcp_admin(
         from mcp.types import TextContent
 
         # Trailing slash avoids a 307 redirect from the Starlette
-        # Mount("/mcp") wrapping the inner app at "/" (issue #110 polish).
+        # Mount("/mcp") wrapping the inner app at "/".
         url = f"http://127.0.0.1:{port}/mcp/"
         async with (
             streamable_http_client(url) as (read, write, _),
@@ -1286,8 +1297,18 @@ def _try_mcp_admin(
         return asyncio.run(_call())
     except Exception as exc:
         if _is_connection_refused(exc):
+            logger.debug(
+                "MCP admin call on port %s: connection refused (%s)",
+                port,
+                exc,
+            )
             return None
         # Any other failure is a live-service-but-broken-tool case.
+        logger.debug(
+            "MCP admin call on port %s raised non-refused exception",
+            port,
+            exc_info=True,
+        )
         return {}
 
 
@@ -1426,7 +1447,7 @@ def _try_mcp_search(
         from mcp.types import TextContent
 
         # Trailing slash avoids a 307 redirect from the Starlette
-        # Mount("/mcp") wrapping the inner app at "/" (issue #110 polish).
+        # Mount("/mcp") wrapping the inner app at "/".
         url = f"http://127.0.0.1:{port}/mcp/"
         payload: dict[str, object] = {
             "query": query,
@@ -1471,6 +1492,12 @@ def _try_mcp_search(
         return asyncio.run(_call())
     except Exception as exc:
         if _is_connection_refused(exc):
+            logger.debug(
+                "MCP search %s on port %s: connection refused (%s)",
+                tool_name,
+                port,
+                exc,
+            )
             return None
         # Live-but-broken: surface a structured error so the caller
         # does not silently relane to the unsafe in-process path.
@@ -1603,8 +1630,8 @@ def handle_search(
         typer.Option(
             "--max-results",
             help=(
-                "Maximum number of results to return. Default bumped "
-                "from 5 to 10 to mitigate top-k crowding (issue #108)."
+                "Maximum number of results to return. Default 10 "
+                "to mitigate top-k crowding by near-duplicate chunks."
             ),
         ),
     ] = 10,
@@ -1766,7 +1793,7 @@ def handle_search(
                 '{"ok": true, "command": "search", "data": '
                 '{"results": [...]}}; errors use the matching '
                 '{"ok": false, "error", "message"} shape. Use this '
-                "for agent / CI consumption (#112)."
+                "for agent / CI consumption."
             ),
         ),
     ] = False,
@@ -2331,7 +2358,8 @@ def _read_service_status() -> dict[str, Any] | None:
         if not isinstance(data, dict) or "pid" not in data or "port" not in data:
             return None
         return data
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("service status file %s unreadable: %s", sf, exc, exc_info=True)
         return None
 
 
@@ -2367,9 +2395,13 @@ def _is_pid_alive(pid: int) -> bool:
             kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
+    except ProcessLookupError as exc:
+        logger.debug("pid %s not running: %s", pid, exc)
         return False
-    except PermissionError:
+    except PermissionError as exc:
+        # Permission denied means the process exists but isn't
+        # owned by us — still "alive" for liveness purposes.
+        logger.debug("pid %s alive but signal denied: %s", pid, exc)
         return True
     return True
 
@@ -2488,7 +2520,8 @@ def _port_is_available(port: int) -> bool:
         try:
             s.bind(("127.0.0.1", port))
             return True
-        except OSError:
+        except OSError as exc:
+            logger.debug("port %d not bindable: %s", port, exc)
             return False
 
 
@@ -2546,7 +2579,8 @@ def _heartbeat_age_seconds(status: dict[str, Any]) -> float | None:
         return None
     try:
         ts = datetime.fromisoformat(raw)
-    except ValueError:
+    except ValueError as exc:
+        logger.debug("last_heartbeat %r unparseable: %s", raw, exc)
         return None
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
@@ -2866,7 +2900,7 @@ def service_status(
     PID alive, port listening, heartbeat fresh — and surfaces each as
     its own row plus a derived ``State`` row. Avoids the previous
     "pick one source of truth" behaviour where conflicting signals
-    rendered as a misleading verdict (issue #113).
+    rendered as a misleading verdict.
 
     Exit codes:
       - 0: ``running`` (all signals green).
@@ -3162,7 +3196,12 @@ def _default_service_port() -> int | None:
     """
     try:
         data = _read_service_status()
-    except Exception:
+    except Exception as exc:
+        # Broad except: status-file reads must never block the
+        # command path; failures fall through to the exit-3
+        # "service down" envelope. Debug-log so the swallow stays
+        # observable.
+        logger.debug("status read raised: %s", exc, exc_info=True)
         return None
     if not data:
         return None
@@ -3171,7 +3210,8 @@ def _default_service_port() -> int | None:
         return port
     try:
         return int(port) if port is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("status port %r not coercible: %s", port, exc)
         return None
 
 
@@ -3427,7 +3467,8 @@ def handle_benchmark(
                 if torch.cuda.is_available()
                 else 0.0
             )
-        except ImportError:
+        except ImportError as exc:
+            logger.debug("torch unavailable for GPU report: %s", exc)
             gpu = "N/A"
             vram_mb = 0.0
 

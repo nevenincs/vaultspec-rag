@@ -102,13 +102,13 @@ class TestCodebaseFullIndex:
 
     @pytest.mark.timeout(180)
     def test_rebuild_vault_preserves_code_collection(self, code_project):
-        """Wave 2 (#115): drop_table on vault must not touch code chunks.
+        """drop_table on vault must not touch code chunks.
 
-        Pre-#115, the in-process rebuild branch did
-        ``shutil.rmtree(store.db_path)`` on the shared Qdrant directory,
-        so ``--rebuild --type vault`` silently destroyed the code
-        collection too. The scoped-drop fix uses ``store.drop_table()``
-        / ``store.drop_code_table()`` so each scope is independent.
+        A whole-directory rmtree on the shared Qdrant path would
+        silently destroy the code collection on
+        ``--rebuild --type vault``. The scoped-drop path uses
+        ``store.drop_table()`` / ``store.drop_code_table()`` so
+        each collection is independent.
         """
         from vaultspec_rag import VaultIndexer
 
@@ -125,7 +125,7 @@ class TestCodebaseFullIndex:
         # Vault may be empty for this fixture; ensure_table still works.
         store.ensure_table()
 
-        # Simulate the post-#115 scoped rebuild: drop ONLY vault.
+        # Simulate the scoped rebuild: drop ONLY vault.
         store.drop_table()
         store.ensure_table()
         vault_indexer.full_index(clean=True, reporter=NullProgressReporter())

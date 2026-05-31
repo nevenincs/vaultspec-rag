@@ -229,7 +229,8 @@ def _detect_crlf(pyproject: Path) -> bool:
     """
     try:
         return b"\r\n" in pyproject.read_bytes()
-    except OSError:
+    except OSError as exc:
+        logger.debug("pyproject %s unreadable for CRLF probe: %s", pyproject, exc)
         return False
 
 
@@ -732,7 +733,8 @@ def _is_torch_requirement(req: object) -> bool:
         return False
     try:
         parsed = Requirement(text)
-    except InvalidRequirement:
+    except InvalidRequirement as exc:
+        logger.debug("dep %r unparseable as PEP 508: %s", text, exc)
         return False
     return canonicalize_name(parsed.name) == "torch"
 
@@ -883,7 +885,11 @@ def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
     """
     try:
         doc = _load(pyproject)
-    except Exception:
+    except Exception as exc:
+        # Broad except: install flow surfaces parse errors elsewhere
+        # via a dedicated diagnostic. Here we only need a
+        # boolean answer; debug-log so the swallow stays observable.
+        logger.debug("torch-config _load(%s) failed: %s", pyproject, exc, exc_info=True)
         return False, ""
     if doc is None:
         return False, ""

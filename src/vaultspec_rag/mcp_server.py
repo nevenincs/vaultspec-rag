@@ -202,8 +202,9 @@ def _unlink_status_file_silently() -> None:
     path = _status_file_path()
     try:
         path.unlink()
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as exc:
+        # Already-removed is the expected idempotent case.
+        logger.debug("service.json already gone at %s: %s", path, exc)
     except OSError as exc:
         logger.warning(
             "service.lifecycle event=cleanup_failed path=%s error=%s",
@@ -373,7 +374,7 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
 
     # Daemon now owns end-of-life cleanup. The CLI parent created
     # service.json; the daemon's hooks remove it on exit so a stale
-    # file never misleads ``service status`` (issue #113).
+    # file never misleads ``service status``.
     _install_daemon_shutdown_hooks()
     _lifecycle_log("startup", pid=os.getpid())
 
@@ -426,7 +427,8 @@ async def health_handler(_request: Request) -> object:
         import torch
 
         cuda = torch.cuda.is_available()
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("torch unavailable for /health: %s", exc)
         cuda = False
 
     reg_health = _registry.health()
@@ -1024,7 +1026,10 @@ async def get_index_status(
                         if torch.cuda.is_available()
                         else 0.0
                     )
-                except ImportError:
+                except ImportError as exc:
+                    logger.debug(
+                        "torch unavailable for index_status VRAM probe: %s", exc
+                    )
                     vram_gb = 0.0
                 return IndexStatus(
                     vault_count=slot.store.count(),
