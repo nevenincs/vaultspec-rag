@@ -1,68 +1,76 @@
 # Releasing vaultspec-rag
 
-This document describes how vaultspec-rag is versioned, tagged, and published
-to PyPI. Publishing is deliberately a two-step, human-in-the-loop process so
-that no release ships without an explicit decision.
+How vaultspec-rag is versioned, tagged, and published to PyPI. The pipeline
+is fully automated once you merge the release PR; this document explains
+what happens at each step and how to recover when something stalls.
 
 ## Overview
 
-- **Versioning** is managed by [release-please]. It watches conventional
-  commits on `main` and opens a release PR (title `chore(main): release vaultspec-rag <version>`) that bumps `pyproject.toml`,
-  `.release-please-manifest.json`, and `CHANGELOG.md`.
-- **Tagging and GitHub release creation** happen automatically when the
-  release PR is merged.
-- **Building and publishing to PyPI** happens via the `Publish` workflow,
-  which is `workflow_dispatch`-only. A human runs it after confirming the
-  release looks correct.
+Three GitHub Actions workflows cooperate to ship a release:
 
-The `Publish` workflow is **not** wired to `on: release`. GitHub's documented
-limitation is that events produced by the default `GITHUB_TOKEN` (including
-releases opened by release-please) do not trigger downstream workflows. Manual
-dispatch avoids that trap and keeps publish authority explicit.
+- **release-please.yml** reads conventional commits on `main`, opens a
+  release PR (titled `chore(main): release vaultspec-rag <version>`), and
+  keeps `pyproject.toml`, `.release-please-manifest.json`, `CHANGELOG.md`,
+  and `uv.lock` in sync on that PR.
+- When you merge the release PR, release-please creates the git tag
+  (`vaultspec-rag-v<version>`) and a matching GitHub Release.
+- **publish.yml** runs automatically when either trigger fires: the new
+  tag pushed to `main`, or release-please dispatching the workflow after
+  it creates the release. The workflow builds the wheel and sdist, smoke
+  tests both artefacts, and uploads to PyPI via trusted publishing.
+
+The only human step is merging the release PR. Manual dispatch of the
+Publish workflow exists as a recovery option (see Troubleshooting).
+
+## CI gates
+
+The release PR cannot be merged until these required checks pass:
+
+- **Workflow Lint** - actionlint over every workflow file.
+- **Lint, Type, Config, Link, and Markdown Checks** - ruff, ty, taplo,
+  lychee, mdformat.
+- **Tests** - the unit suite.
+- **Vault Audit** - `vaultspec-core vault check all`.
+- **Dependency Audit** - `uv audit` for known CVEs.
+
+The GPU integration suite (`gpu-integration.yml`) runs on a self-hosted
+runner and is informational; it does not gate the merge.
 
 ## One-time setup: PyPI trusted publisher
 
-Before the very first publish, the PyPI project must have a trusted publisher
-configured. Until then, `uv publish` will fail with an OIDC error.
+Done once for `vaultspec-rag`. The PyPI project is already claimed; no
+action needed for normal releases. Repeat the steps below only if you
+fork the project or rotate the publisher configuration.
 
-Because the project does not yet exist on PyPI, use PyPI's *pending publisher*
-flow:
-
-1. Log in to <https://pypi.org/manage/account/publishing/>.
-1. Under **Add a new pending publisher**, fill in:
+1. Sign in to <https://pypi.org/manage/account/publishing/>.
+1. Under **Add a new pending publisher** (or **Manage** for an existing
+   project), enter:
    - PyPI Project Name: `vaultspec-rag`
    - Owner: `wgergely`
    - Repository name: `vaultspec-rag`
    - Workflow name: `publish.yml`
    - Environment name: `pypi`
-1. Save. The first successful upload from this workflow will claim the
-   project.
+1. Save. The next upload from this workflow will use the publisher.
 
 The `publish-pypi` job already declares `environment: pypi` and
-`permissions: id-token: write`, so no repo-side changes are needed and no
-secrets are stored anywhere.
+`permissions: id-token: write`. No repo secrets are stored.
 
 ## Cutting a release
 
 1. **Merge feature work** to `main` using conventional commit messages
-   (`feat:`, `fix:`, `perf:`, etc.). release-please reads these to compute
-   the next version.
-1. **Review the release PR** that release-please opens. Check the proposed
-   version bump and the generated changelog. Merge when happy.
-1. Merging the release PR creates the git tag (`vaultspec-rag-v<version>`)
-   and a matching GitHub Release.
+   (`feat:`, `fix:`, `perf:`). release-please uses these to compute the
+   next version and the changelog.
 
-## Publishing to PyPI
+1. **Wait for the release PR** that release-please opens. The PR body
+   shows the proposed version and the generated changelog. release-please
+   also pushes a fresh `uv lock` to the PR branch so the lockfile stays
+   aligned with the bump.
 
-1. Open <https://github.com/wgergely/vaultspec-rag/actions/workflows/publish.yml>.
+1. **Review and merge** the release PR. Merging triggers three automatic
+   actions: the git tag is created, a GitHub Release is published, and
+   the Publish workflow starts.
 
-1. Click **Run workflow**. Provide the tag (for example
-   `vaultspec-rag-v0.2.0a0`) and dispatch.
-
-1. The workflow builds the wheel and sdist, runs the smoke test against both
-   artifacts, and then uploads to PyPI via trusted publishing.
-
-1. Verify the upload:
+1. **Verify the upload** once the Publish workflow completes:
 
    ```sh
    curl -s https://pypi.org/pypi/vaultspec-rag/json | jq .info.version
@@ -71,17 +79,26 @@ secrets are stored anywhere.
 
 ## Troubleshooting
 
-- **`uv publish` fails with an OIDC error** — the PyPI trusted publisher is
-  missing or misconfigured. Recheck the workflow name (`publish.yml`) and
-  environment (`pypi`).
-- **The workflow cannot be dispatched** — it must live on the default branch
-  for GitHub to list it under **Run workflow**. If you added it on a feature
-  branch, it will only be dispatchable from that branch.
-- **Version in `pyproject.toml` does not match the tag** — release-please
-  overwrites `pyproject.toml`, `.release-please-manifest.json`, and
-  `CHANGELOG.md` in its release PR. If these drift (for example from a manual
-  version bump), sync them by updating `.release-please-manifest.json` to
-  match `pyproject.toml` and letting release-please reconcile on the next
-  merge.
+- **Publish workflow did not run.** Confirm the release-please job
+  finished cleanly on `main` and that the tag exists on origin. If both
+  are present, dispatch Publish manually:
 
-[release-please]: https://github.com/googleapis/release-please
+  1. Open
+     <https://github.com/wgergely/vaultspec-rag/actions/workflows/publish.yml>.
+  1. Click **Run workflow**, supply the tag (for example
+     `vaultspec-rag-v0.2.9`), and run.
+
+- **`uv publish` fails with an OIDC error.** The PyPI trusted publisher
+  is missing or misconfigured. Recheck the workflow name (`publish.yml`)
+  and environment (`pypi`) under the project's publishing settings.
+
+- **The workflow cannot be dispatched from the Actions UI.** It must
+  live on the default branch for GitHub to list it. If you added it on
+  a feature branch, it is only dispatchable from that branch.
+
+- **Version in `pyproject.toml` does not match the latest tag.**
+  release-please rewrites `pyproject.toml`,
+  `.release-please-manifest.json`, and `CHANGELOG.md` on every release
+  PR. If they drift after a manual bump, update
+  `.release-please-manifest.json` to match `pyproject.toml`, push the
+  fix, and let release-please reconcile on the next merge.

@@ -40,7 +40,7 @@ vaultspec-rag index
 vaultspec-rag search "your query"
 ```
 
-`index` builds embeddings for both vault documents and source code. `search` queries the vault by default, returning the top 5 results as a table with Score, Location, and Snippet columns.
+`index` builds embeddings for both vault documents and source code. `search` queries the vault by default and returns the top 10 results as a table with Score, Location, and Snippet columns. Override the count with `--max-results`.
 
 ## Usage modes
 
@@ -67,8 +67,10 @@ process. Because the storage process model is `exclusive`, a second
 lock contention is reported with guidance to use one resident service.
 
 Service-delegated mode sends `project_root` to the HTTP MCP service on
-every delegated call. If the service is unavailable, `search --port`
-warns and falls back to ad-hoc mode. Structured lock contention renders
+every delegated call. If the service is unreachable, `search --port`
+hard-fails with remediation steps so the CLI never silently acquires
+the Qdrant lock and strands the resident daemon. Pass `--allow-fallback`
+to opt in to in-process execution. Structured lock contention renders
 the backend contract table and exits instead of retrying unsafely.
 
 Use ad-hoc for one-off tasks or environments where a persistent process isn't practical. Use service-delegated for active development. It keeps one shared daemon across projects and returns results near-instantly.
@@ -81,7 +83,7 @@ For AI tools that speak MCP directly (Claude Desktop, Claude Code), see [MCP int
 
 Three interfaces expose the same underlying engine: the CLI (`vaultspec-rag`), the MCP server (`vaultspec-search-mcp`), and the Python API (`vaultspec_rag.api`).
 
-The CLI runs indexing and search in-process by default. Pass `--port` to delegate to a running MCP service over HTTP. If the service is unreachable, the CLI falls back to in-process execution.
+The CLI runs indexing and search in-process by default. Pass `--port` to delegate to a running MCP service over HTTP. If the service is unreachable, the CLI hard-fails with remediation; add `--allow-fallback` to opt in to in-process execution instead.
 
 The MCP server wraps the engine behind tool endpoints, accepting connections from any MCP-compatible client. The Python API is the underlying facade -- call `index()`, `search_vault()`, and `search_codebase()` directly.
 
@@ -163,7 +165,7 @@ vaultspec-rag
 
 ### The `--port` fast path
 
-The `index` and `search` commands accept a `--port` flag. When set, the CLI delegates to a running MCP service over HTTP instead of loading GPU models in-process. If the service is unavailable, the CLI falls back to in-process operation with a warning.
+The `index` and `search` commands accept a `--port` flag. When set, the CLI delegates to a running MCP service over HTTP instead of loading GPU models in-process. If the service is unreachable, the CLI hard-fails with remediation steps; add `--allow-fallback` to opt in to in-process execution.
 
 Loading the embedding models takes several seconds on a cold start. Point `--port` at a running `server service` instance to skip that overhead entirely.
 
@@ -258,7 +260,9 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 - `vaultspec-rag index --type vault` indexes vault documents. One document maps to one index entry.
 - `vaultspec-rag index --type code` indexes source files. Tree-sitter handles structural chunking when grammars are available; text splitting serves as the fallback. Supported languages include Python, Rust, TypeScript, JavaScript, Go, Java, C/C++, C#, Ruby, and Kotlin.
 - `vaultspec-rag index` (default `--type all`) indexes both.
-- Add `--rebuild` to `index` to drop the selected collection before re-indexing. Since 0.3.0 (#115), `--rebuild` requires an explicit `--type` (`vault` | `code` | `all`) — the previous behaviour silently inherited `--type all` from the default and the in-process rebuild branch destroyed both collections regardless of the `--type` value. `--rebuild --type vault` and `--rebuild --type code` now leave the sibling collection intact.
+- `--rebuild` drops the selected collection before re-indexing. It requires
+  an explicit `--type` (`vault`, `code`, or `all`). `--rebuild --type vault`
+  and `--rebuild --type code` leave the sibling collection intact.
 - Use `vaultspec-rag clean {vault|code|all} --yes` to drop and recreate selected Qdrant collections and clear matching metadata sidecars without loading embeddings, scanning files, or indexing. The target is **required** (no default) since 0.2.9 to prevent accidental full wipes; without `--yes`/`-y`, `clean` still prompts for confirmation.
 - Incremental indexing (the default) uses blake2b content hashing to detect changes.
 - `--dry-run` lists files that would be indexed without writing anything (codebase only).
@@ -276,12 +280,15 @@ Index vault documents (markdown in `.vault/`) or codebase source files, or both.
 ### --port fast path (recommended for concurrent agents)
 
 - Pass `--port <N>` to delegate the call to a running RAG service (see `vaultspec-rag server service start`). The service owns the Qdrant lock and shares GPU warm-up across callers; the fast path is the safe path.
-- If the service is unreachable on the given port, the CLI now **hard-fails** with remediation instead of silently spawning a local model load and grabbing the Qdrant lock (issue #110). Opt back into the legacy silent fallback with `--allow-fallback` — single-agent use only.
+- If the service is unreachable on the given port, the CLI hard-fails
+  with remediation instead of silently spawning a local model load and
+  grabbing the Qdrant lock. Opt back into in-process execution with
+  `--allow-fallback` (single-agent use only).
 - Pass `--verbose` to re-enable HuggingFace tqdm progress bars during in-process model load / encode. Off by default so the results table stays script-friendly.
 
 ### `--json` output mode
 
-Every command supports `--json` and emits exactly one envelope document on stdout (Wave 2 #112). The envelope is
+Every command supports `--json` and emits exactly one envelope document on stdout. The envelope is
 
 ```
 {"ok": true,  "command": "<name>", "data": <payload>}
@@ -303,7 +310,7 @@ vaultspec-rag server service status --json | jq '.data.state'
 
 ### Service lifecycle (`vaultspec-rag server service status`)
 
-`status` gathers every signal before rendering — `service.json` present, PID alive, port listening, heartbeat fresh — and reports each as its own row plus a derived `State`. No more "silently pick one source of truth" verdict (issue #113). Exit codes:
+`status` gathers every signal before rendering - `service.json` present, PID alive, port listening, heartbeat fresh - and reports each as its own row plus a derived `State`. The previous "pick one source of truth" verdict could mislead when signals disagreed; this version surfaces the divergence. Exit codes:
 
 - `0` — `running` (all signals green).
 - `3` — `stopped` (no `service.json`).
@@ -313,7 +320,7 @@ The daemon writes `last_heartbeat` into `service.json` every 15 seconds (atomic 
 
 ## MCP integration
 
-The MCP server exposes six tools:
+The MCP server exposes eight tools:
 
 | Tool               | Purpose                                                                                                                                                                           |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -2,41 +2,60 @@
 
 ## [0.2.9](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.8...vaultspec-rag-v0.2.9) (2026-05-31)
 
+### Breaking changes
+
+0.2.9 tightens four CLI contracts. Each change has a clear remediation that
+the CLI prints at runtime, but consumers running these commands in scripts
+should update their invocations:
+
+- **`vaultspec-rag clean` now requires an explicit target.** Pass `vault`,
+  `code`, or `all`. The previous default of `all` was a footgun
+  ([#111](https://github.com/wgergely/vaultspec-rag/issues/111)).
+- **`vaultspec-rag search --port` hard-fails when the service is unreachable.**
+  Add `--allow-fallback` to opt in to in-process execution. The previous
+  silent fallback could acquire the Qdrant lock and strand a resident
+  service ([#107](https://github.com/wgergely/vaultspec-rag/issues/107),
+  [#110](https://github.com/wgergely/vaultspec-rag/issues/110)).
+- **`vaultspec-rag index --rebuild` now requires an explicit `--type`.**
+  Pass `vault`, `code`, or `all`. The previous default of `all` could
+  silently destroy both collections on `--rebuild --type vault`
+  ([#115](https://github.com/wgergely/vaultspec-rag/issues/115)).
+- **`vaultspec-rag search --max-results` default changed from 5 to 10.**
+  This mitigates top-k crowding by near-duplicate chunks. Pass an explicit
+  `--max-results 5` to restore the prior behaviour
+  ([#108](https://github.com/wgergely/vaultspec-rag/issues/108)).
 
 ### Features
 
-* **cli:** --json envelope output across every command ([#112](https://github.com/wgergely/vaultspec-rag/issues/112)) ([bdf47ba](https://github.com/wgergely/vaultspec-rag/commit/bdf47ba5f47787484257c3d0ecdff6ce4df60017))
-* CLI-MCP-backend parity bundle + safety contract ([#107](https://github.com/wgergely/vaultspec-rag/issues/107), [#110](https://github.com/wgergely/vaultspec-rag/issues/110) partial, [#111](https://github.com/wgergely/vaultspec-rag/issues/111)) ([f9749af](https://github.com/wgergely/vaultspec-rag/commit/f9749afcdd5d51960b4a03e355706888248c8347))
-* **cli:** [#123](https://github.com/wgergely/vaultspec-rag/issues/123) windows-only shutdown log mirror ([05392df](https://github.com/wgergely/vaultspec-rag/commit/05392df490da3b7bc0bc635d32e1cb2c546a9f8e))
-* **cli:** index --rebuild requires --type, scope drop to collection ([#115](https://github.com/wgergely/vaultspec-rag/issues/115)) ([b19ae1f](https://github.com/wgergely/vaultspec-rag/commit/b19ae1f2c17cb1d9292ff9c7e64697fb1bc813c6))
-* **search:** --dedup-locales + --prefer prod/tests/docs ([#121](https://github.com/wgergely/vaultspec-rag/issues/121), [#122](https://github.com/wgergely/vaultspec-rag/issues/122)) ([#134](https://github.com/wgergely/vaultspec-rag/issues/134)) ([60e9a69](https://github.com/wgergely/vaultspec-rag/commit/60e9a69078ea98203abe4c8d4a4116402a8a9612))
-* **search:** --include-path / --exclude-path post-query glob filter ([#114](https://github.com/wgergely/vaultspec-rag/issues/114)) ([9e74343](https://github.com/wgergely/vaultspec-rag/commit/9e74343353a23a4e0490cb0e5bbca9c5f370a1df))
-* **service:** daemon-side lifecycle + status divergence + log entries ([#113](https://github.com/wgergely/vaultspec-rag/issues/113)) ([3e1d656](https://github.com/wgergely/vaultspec-rag/commit/3e1d65632fe0a6e64b3dcf8a3de3a559c0043ef9))
-* **service:** identity-verifying service_token round-trip ([#124](https://github.com/wgergely/vaultspec-rag/issues/124), [#125](https://github.com/wgergely/vaultspec-rag/issues/125)) ([bdb72b5](https://github.com/wgergely/vaultspec-rag/commit/bdb72b56088ddad365eb2cf9c08e532dbc8df198))
-
+- **cli:** --json envelope output across every command ([#112](https://github.com/wgergely/vaultspec-rag/issues/112)) ([bdf47ba](https://github.com/wgergely/vaultspec-rag/commit/bdf47ba5f47787484257c3d0ecdff6ce4df60017))
+- CLI-MCP-backend parity bundle + safety contract ([#107](https://github.com/wgergely/vaultspec-rag/issues/107), [#110](https://github.com/wgergely/vaultspec-rag/issues/110) partial, [#111](https://github.com/wgergely/vaultspec-rag/issues/111)) ([f9749af](https://github.com/wgergely/vaultspec-rag/commit/f9749afcdd5d51960b4a03e355706888248c8347))
+- **cli:** [#123](https://github.com/wgergely/vaultspec-rag/issues/123) windows-only shutdown log mirror ([05392df](https://github.com/wgergely/vaultspec-rag/commit/05392df490da3b7bc0bc635d32e1cb2c546a9f8e))
+- **cli:** index --rebuild requires --type, scope drop to collection ([#115](https://github.com/wgergely/vaultspec-rag/issues/115)) ([b19ae1f](https://github.com/wgergely/vaultspec-rag/commit/b19ae1f2c17cb1d9292ff9c7e64697fb1bc813c6))
+- **search:** --dedup-locales + --prefer prod/tests/docs ([#121](https://github.com/wgergely/vaultspec-rag/issues/121), [#122](https://github.com/wgergely/vaultspec-rag/issues/122)) ([#134](https://github.com/wgergely/vaultspec-rag/issues/134)) ([60e9a69](https://github.com/wgergely/vaultspec-rag/commit/60e9a69078ea98203abe4c8d4a4116402a8a9612))
+- **search:** --include-path / --exclude-path post-query glob filter ([#114](https://github.com/wgergely/vaultspec-rag/issues/114)) ([9e74343](https://github.com/wgergely/vaultspec-rag/commit/9e74343353a23a4e0490cb0e5bbca9c5f370a1df))
+- **service:** daemon-side lifecycle + status divergence + log entries ([#113](https://github.com/wgergely/vaultspec-rag/issues/113)) ([3e1d656](https://github.com/wgergely/vaultspec-rag/commit/3e1d65632fe0a6e64b3dcf8a3de3a559c0043ef9))
+- **service:** identity-verifying service_token round-trip ([#124](https://github.com/wgergely/vaultspec-rag/issues/124), [#125](https://github.com/wgergely/vaultspec-rag/issues/125)) ([bdb72b5](https://github.com/wgergely/vaultspec-rag/commit/bdb72b56088ddad365eb2cf9c08e532dbc8df198))
 
 ### Bug Fixes
 
-* **mcp:** server-side ASGI rewrite eliminates /mcp 307 redirect ([#126](https://github.com/wgergely/vaultspec-rag/issues/126)) ([41d23e4](https://github.com/wgergely/vaultspec-rag/commit/41d23e46ae9dcec033cea2fb5a1d6284593e0817))
+- **mcp:** server-side ASGI rewrite eliminates /mcp 307 redirect ([#126](https://github.com/wgergely/vaultspec-rag/issues/126)) ([41d23e4](https://github.com/wgergely/vaultspec-rag/commit/41d23e46ae9dcec033cea2fb5a1d6284593e0817))
 
 ## [0.2.8](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.7...vaultspec-rag-v0.2.8) (2026-05-03)
 
-
 ### Bug Fixes
 
-* remove dense model deprecation and harden GPU subprocess tests ([87982aa](https://github.com/wgergely/vaultspec-rag/commit/87982aa8e73696fd69b2607586216c080088ce8d))
+- remove dense model deprecation and harden GPU subprocess tests ([87982aa](https://github.com/wgergely/vaultspec-rag/commit/87982aa8e73696fd69b2607586216c080088ce8d))
 
 ## [0.2.7](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.6...vaultspec-rag-v0.2.7) (2026-05-03)
 
-
 ### Bug Fixes
 
-* **cli:** split rebuild from index clean ([af86b08](https://github.com/wgergely/vaultspec-rag/commit/af86b081e822f637f6988dd48dc91329baeb5160))
-* **index:** keep vault docs out of code search ([1fffa8a](https://github.com/wgergely/vaultspec-rag/commit/1fffa8a389188d05e42354cee715e7576601f168))
-* **install:** add direct torch dependency ([7ee10a3](https://github.com/wgergely/vaultspec-rag/commit/7ee10a34df4a476a513af903036d46ad35f7ec88))
-* **install:** surface missing hf auth ([357fe88](https://github.com/wgergely/vaultspec-rag/commit/357fe881e01a58afb1d8212f62b9d7203efd4545))
-* **runtime:** address embedding review findings ([931ba06](https://github.com/wgergely/vaultspec-rag/commit/931ba06f8f6af780eb83461fdd957719ac7bf31d))
-* **runtime:** silence noisy local model warnings ([0de6346](https://github.com/wgergely/vaultspec-rag/commit/0de63461567d84ff003f62d970798a74c9392e50))
+- **cli:** split rebuild from index clean ([af86b08](https://github.com/wgergely/vaultspec-rag/commit/af86b081e822f637f6988dd48dc91329baeb5160))
+- **index:** keep vault docs out of code search ([1fffa8a](https://github.com/wgergely/vaultspec-rag/commit/1fffa8a389188d05e42354cee715e7576601f168))
+- **install:** add direct torch dependency ([7ee10a3](https://github.com/wgergely/vaultspec-rag/commit/7ee10a34df4a476a513af903036d46ad35f7ec88))
+- **install:** surface missing hf auth ([357fe88](https://github.com/wgergely/vaultspec-rag/commit/357fe881e01a58afb1d8212f62b9d7203efd4545))
+- **runtime:** address embedding review findings ([931ba06](https://github.com/wgergely/vaultspec-rag/commit/931ba06f8f6af780eb83461fdd957719ac7bf31d))
+- **runtime:** silence noisy local model warnings ([0de6346](https://github.com/wgergely/vaultspec-rag/commit/0de63461567d84ff003f62d970798a74c9392e50))
 
 ## [0.2.6](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.5...vaultspec-rag-v0.2.6) (2026-04-28)
 
