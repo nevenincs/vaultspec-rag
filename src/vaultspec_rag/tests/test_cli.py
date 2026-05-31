@@ -611,6 +611,94 @@ class TestMcpFastPath:
         assert result.exit_code == 2
         assert "require --type code" in result.output
 
+    def test_dedup_locales_with_vault_returns_usage_error(self):
+        """--dedup-locales is a code-only post-process flag."""
+        result = _try_mcp_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            dedup_locales=True,
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--dedup-locales" in str(result.get("message", ""))
+
+    def test_prefer_with_vault_returns_usage_error(self):
+        """--prefer is a code-only post-process flag."""
+        result = _try_mcp_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            prefer="prod",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--prefer" in str(result.get("message", ""))
+
+    def test_postproc_flags_with_code_attempt_call(self):
+        """dedup_locales/prefer with --type code reach the call path."""
+        result = _try_mcp_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            dedup_locales=True,
+            prefer="tests",
+        )
+        assert result is None
+
+    def test_search_cmd_rejects_dedup_locales_with_vault(self):
+        """CLI: --dedup-locales + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--dedup-locales",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_prefer_with_vault(self):
+        """CLI: --prefer + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--prefer",
+                "prod",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_invalid_prefer_value(self):
+        """CLI: --prefer must be prod|tests|docs."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--prefer",
+                "bogus",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "must be one of" in result.output
+
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
         result = _try_mcp_search(

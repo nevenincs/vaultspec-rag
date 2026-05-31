@@ -237,3 +237,147 @@ class TestParseVaultMetadataUnit:
         assert metadata.tags == ["#research", "#dispatch"]
         assert metadata.date == "2026-02-07"
         assert "fake: frontmatter" in body
+
+
+class TestLocaleVariantKey:
+    """Locale stem detection for --dedup-locales (#121)."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_shape_a_lang_basename(self):
+        """``locales/en.yml`` + ``locales/es.yml`` share a key."""
+        from vaultspec_rag.search import _locale_variant_key
+
+        a = _locale_variant_key("locales/en.yml")
+        b = _locale_variant_key("locales/es.yml")
+        assert a is not None
+        assert a == b
+
+    def test_shape_b_lang_directory(self):
+        """``i18n/en/messages.po`` + ``i18n/es/messages.po`` share a key."""
+        from vaultspec_rag.search import _locale_variant_key
+
+        a = _locale_variant_key("i18n/en/messages.po")
+        b = _locale_variant_key("i18n/es/messages.po")
+        assert a is not None
+        assert a == b
+
+    def test_shape_c_dotted_lang(self):
+        """``messages.en.po`` + ``messages.es.po`` share a key."""
+        from vaultspec_rag.search import _locale_variant_key
+
+        a = _locale_variant_key("messages.en.po")
+        b = _locale_variant_key("messages.es.po")
+        assert a is not None
+        assert a == b
+
+    def test_non_locale_path_returns_none(self):
+        """``src/foo.py`` is not a locale variant."""
+        from vaultspec_rag.search import _locale_variant_key
+
+        assert _locale_variant_key("src/foo.py") is None
+        assert _locale_variant_key("README.md") is None
+        assert _locale_variant_key("docs/intro.md") is None
+
+    def test_extension_must_be_in_allow_list(self):
+        """``locales/en.py`` is not a locale file (wrong ext)."""
+        from vaultspec_rag.search import _locale_variant_key
+
+        assert _locale_variant_key("locales/en.py") is None
+
+    def test_lang_code_must_be_two_letters(self):
+        """``locales/eng.yml`` doesn't match the 2-letter rule."""
+        from vaultspec_rag.search import _locale_variant_key
+
+        assert _locale_variant_key("locales/eng.yml") is None
+
+
+class TestClassifyChunkType:
+    """Chunk-type classifier for --prefer (#122)."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_tests_precedence_over_docs(self):
+        """``tests/docs/foo.py`` is tests (precedence rule)."""
+        from vaultspec_rag.search import _classify_chunk_type
+
+        assert _classify_chunk_type("tests/docs/foo.py") == "tests"
+
+    def test_test_prefix_python(self):
+        from vaultspec_rag.search import _classify_chunk_type
+
+        assert _classify_chunk_type("test_foo.py") == "tests"
+        assert _classify_chunk_type("src/pkg/test_bar.py") == "tests"
+
+    def test_test_suffix_python(self):
+        from vaultspec_rag.search import _classify_chunk_type
+
+        assert _classify_chunk_type("foo_test.py") == "tests"
+
+    def test_specs_directory(self):
+        from vaultspec_rag.search import _classify_chunk_type
+
+        assert _classify_chunk_type("spec/parser_spec.rb") == "tests"
+
+    def test_docs_directory(self):
+        from vaultspec_rag.search import _classify_chunk_type
+
+        assert _classify_chunk_type("docs/intro.md") == "docs"
+        assert _classify_chunk_type("README.md") == "docs"
+        assert _classify_chunk_type("guide.rst") == "docs"
+
+    def test_prod_default(self):
+        from vaultspec_rag.search import _classify_chunk_type
+
+        assert _classify_chunk_type("src/pkg/module.py") == "prod"
+        assert _classify_chunk_type("lib/util.rs") == "prod"
+
+
+class TestCollapseLocaleVariants:
+    """Post-rerank locale dedup helper (#121)."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def _mk(self, path: str, score: float) -> SearchResult:
+        return SearchResult(
+            id=path,
+            path=path,
+            title=path,
+            score=score,
+            snippet="body",
+            source="codebase",
+        )
+
+    def test_near_tie_variants_collapse(self):
+        """Two same-key results within window collapse to the winner."""
+        from vaultspec_rag.search import _collapse_locale_variants
+
+        winner = self._mk("locales/en.yml", 0.90)
+        loser = self._mk("locales/es.yml", 0.88)
+        out = _collapse_locale_variants([winner, loser])
+        assert len(out) == 1
+        assert out[0].path == "locales/en.yml"
+        assert "locale variants" in out[0].snippet
+
+    def test_wide_gap_variants_survive(self):
+        """Same-key results outside the window stay separate."""
+        from vaultspec_rag.search import _collapse_locale_variants
+
+        a = self._mk("locales/en.yml", 0.90)
+        b = self._mk("locales/es.yml", 0.50)
+        out = _collapse_locale_variants([a, b])
+        assert len(out) == 2
+
+    def test_non_locale_passes_through(self):
+        """Non-locale paths are never touched."""
+        from vaultspec_rag.search import _collapse_locale_variants
+
+        a = self._mk("src/foo.py", 0.95)
+        b = self._mk("src/bar.py", 0.94)
+        out = _collapse_locale_variants([a, b])
+        assert len(out) == 2
+
+    def test_empty_input(self):
+        from vaultspec_rag.search import _collapse_locale_variants
+
+        assert _collapse_locale_variants([]) == []

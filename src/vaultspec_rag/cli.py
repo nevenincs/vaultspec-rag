@@ -1309,6 +1309,8 @@ def _try_mcp_search(
     tag: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
+    dedup_locales: bool = False,
+    prefer: str | None = None,
 ) -> list[dict[str, object]] | dict[str, object] | None:
     """Search via a running MCP server over HTTP.
 
@@ -1362,6 +1364,7 @@ def _try_mcp_search(
     code_supplied = any(v is not None for v in code_filters.values())
     vault_supplied = any(v is not None for v in vault_filters.values())
     glob_supplied = bool(include_paths) or bool(exclude_paths)
+    postproc_supplied = bool(dedup_locales) or prefer is not None
     if code_supplied and search_type != "code":
         offending = sorted(k for k, v in code_filters.items() if v is not None)
         return {
@@ -1399,6 +1402,21 @@ def _try_mcp_search(
                 f"got --type {search_type}."
             ),
         }
+    if postproc_supplied and search_type != "code":
+        offending = []
+        if dedup_locales:
+            offending.append("--dedup-locales")
+        if prefer is not None:
+            offending.append("--prefer")
+        return {
+            "ok": False,
+            "error": "invalid_filter_for_search_type",
+            "message": (
+                "post-process flags "
+                f"({', '.join(offending)}) require --type code; "
+                f"got --type {search_type}."
+            ),
+        }
 
     async def _call() -> list[dict[str, object]] | dict[str, object] | None:
         import json
@@ -1423,6 +1441,10 @@ def _try_mcp_search(
                 payload["include_paths"] = list(include_paths)
             if exclude_paths:
                 payload["exclude_paths"] = list(exclude_paths)
+            if dedup_locales:
+                payload["dedup_locales"] = True
+            if prefer is not None:
+                payload["prefer"] = prefer
         elif search_type == "vault":
             for key, value in vault_filters.items():
                 if value is not None:
@@ -1624,6 +1646,28 @@ def handle_search(
             ),
         ),
     ] = None,
+    dedup_locales: Annotated[
+        bool,
+        typer.Option(
+            "--dedup-locales",
+            help=(
+                "Code-search post-process: collapse near-tie locale "
+                "variants (e.g. locales/{en,es}.yml) into one canonical "
+                "result. Use with --type code (#121)."
+            ),
+        ),
+    ] = False,
+    prefer: Annotated[
+        str | None,
+        typer.Option(
+            "--prefer",
+            help=(
+                "Code-search post-process: nudge results matching the "
+                "given category up (and others down) after rerank. One "
+                "of 'prod', 'tests', 'docs'. Use with --type code (#122)."
+            ),
+        ),
+    ] = None,
     node_type: Annotated[
         str | None,
         typer.Option(
@@ -1786,6 +1830,20 @@ def handle_search(
     code_filters_supplied = any(v is not None for _, v in code_filter_fields)
     vault_filters_supplied = any(v is not None for _, v in vault_filter_fields)
     glob_filters_supplied = bool(include_paths) or bool(exclude_paths)
+    postproc_supplied = bool(dedup_locales) or prefer is not None
+
+    if prefer is not None and prefer not in {"prod", "tests", "docs"}:
+        msg = f"--prefer must be one of 'prod', 'tests', 'docs'; got {prefer!r}."
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "invalid_prefer_value",
+                msg,
+                2,
+                value=prefer,
+            )
+        console.print(f"[red]{msg}[/]")
+        raise typer.Exit(code=2)
 
     def _emit_filter_mismatch(filter_kind: str, offending: list[str]) -> None:
         flag_list = ", ".join(offending)
@@ -1822,6 +1880,13 @@ def handle_search(
         if exclude_paths:
             offending.append("--exclude-path")
         _emit_filter_mismatch("code", offending)
+    if postproc_supplied and search_type != "code":
+        offending = []
+        if dedup_locales:
+            offending.append("--dedup-locales")
+        if prefer is not None:
+            offending.append("--prefer")
+        _emit_filter_mismatch("code", offending)
 
     if port is not None:
         mcp_results = _try_mcp_search(
@@ -1841,6 +1906,8 @@ def handle_search(
             tag=tag,
             include_paths=include_paths,
             exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
         )
         if mcp_results is not None:
             if isinstance(mcp_results, dict):
@@ -1915,6 +1982,8 @@ def handle_search(
                     class_name=class_name,
                     include_paths=include_paths,
                     exclude_paths=exclude_paths,
+                    dedup_locales=dedup_locales,
+                    prefer=prefer,
                 )
             else:
                 results = searcher.search_vault(

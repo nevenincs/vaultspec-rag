@@ -902,6 +902,8 @@ async def search_codebase(
     class_name: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
+    dedup_locales: bool = False,
+    prefer: str | None = None,
     project_root: str | None = None,
 ) -> SearchResponse | dict[str, Any]:
     """Search the source codebase for relevant functions, classes, or logic.
@@ -926,6 +928,12 @@ async def search_codebase(
             post-query Python filter (e.g.
             ``["locales/*.yml", "tests/**"]``). Useful for
             pruning crowding paths.
+        dedup_locales: When True, collapse near-tie locale variants
+            (e.g. ``locales/{en,es}.yml``) into a single canonical
+            result after rerank. Opt-in; defaults to False.
+        prefer: Optional ``"prod" | "tests" | "docs"``. Applies a
+            small +/- score nudge to the matching category after
+            rerank. Opt-in; defaults to None (no nudge).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
@@ -962,6 +970,8 @@ async def search_codebase(
                     class_name=class_name,
                     include_paths=include_paths,
                     exclude_paths=exclude_paths,
+                    dedup_locales=dedup_locales,
+                    prefer=prefer,
                 )
                 items = [
                     SearchResultItem.model_validate(r, from_attributes=True)

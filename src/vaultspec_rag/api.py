@@ -154,6 +154,8 @@ def search_codebase(
     class_name: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
+    dedup_locales: bool = False,
+    prefer: str | None = None,
 ) -> list[SearchResult]:
     """Search the source codebase.
 
@@ -173,6 +175,11 @@ def search_codebase(
         exclude_paths: Optional fnmatch glob patterns dropped by
             post-query filter (e.g. ``['locales/*.yml',
             'tests/**']``).
+        dedup_locales: When True, collapse near-tie locale variants
+            into a single canonical result. Opt-in.
+        prefer: Optional ``"prod" | "tests" | "docs"`` — applies a
+            small +/- score nudge to the matching category after
+            rerank. Opt-in.
 
     Returns:
         Ranked list of SearchResult objects.
@@ -189,6 +196,8 @@ def search_codebase(
             class_name=class_name,
             include_paths=include_paths,
             exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
         )
 
 
