@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.9](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.8...vaultspec-rag-v0.2.9) (2026-05-31)
+
+
+### Features
+
+* **cli:** --json envelope output across every command ([#112](https://github.com/wgergely/vaultspec-rag/issues/112)) ([bdf47ba](https://github.com/wgergely/vaultspec-rag/commit/bdf47ba5f47787484257c3d0ecdff6ce4df60017))
+* CLI-MCP-backend parity bundle + safety contract ([#107](https://github.com/wgergely/vaultspec-rag/issues/107), [#110](https://github.com/wgergely/vaultspec-rag/issues/110) partial, [#111](https://github.com/wgergely/vaultspec-rag/issues/111)) ([f9749af](https://github.com/wgergely/vaultspec-rag/commit/f9749afcdd5d51960b4a03e355706888248c8347))
+* **cli:** [#123](https://github.com/wgergely/vaultspec-rag/issues/123) windows-only shutdown log mirror ([05392df](https://github.com/wgergely/vaultspec-rag/commit/05392df490da3b7bc0bc635d32e1cb2c546a9f8e))
+* **cli:** index --rebuild requires --type, scope drop to collection ([#115](https://github.com/wgergely/vaultspec-rag/issues/115)) ([b19ae1f](https://github.com/wgergely/vaultspec-rag/commit/b19ae1f2c17cb1d9292ff9c7e64697fb1bc813c6))
+* **search:** --dedup-locales + --prefer prod/tests/docs ([#121](https://github.com/wgergely/vaultspec-rag/issues/121), [#122](https://github.com/wgergely/vaultspec-rag/issues/122)) ([#134](https://github.com/wgergely/vaultspec-rag/issues/134)) ([60e9a69](https://github.com/wgergely/vaultspec-rag/commit/60e9a69078ea98203abe4c8d4a4116402a8a9612))
+* **search:** --include-path / --exclude-path post-query glob filter ([#114](https://github.com/wgergely/vaultspec-rag/issues/114)) ([9e74343](https://github.com/wgergely/vaultspec-rag/commit/9e74343353a23a4e0490cb0e5bbca9c5f370a1df))
+* **service:** daemon-side lifecycle + status divergence + log entries ([#113](https://github.com/wgergely/vaultspec-rag/issues/113)) ([3e1d656](https://github.com/wgergely/vaultspec-rag/commit/3e1d65632fe0a6e64b3dcf8a3de3a559c0043ef9))
+* **service:** identity-verifying service_token round-trip ([#124](https://github.com/wgergely/vaultspec-rag/issues/124), [#125](https://github.com/wgergely/vaultspec-rag/issues/125)) ([bdb72b5](https://github.com/wgergely/vaultspec-rag/commit/bdb72b56088ddad365eb2cf9c08e532dbc8df198))
+
+
+### Bug Fixes
+
+* **mcp:** server-side ASGI rewrite eliminates /mcp 307 redirect ([#126](https://github.com/wgergely/vaultspec-rag/issues/126)) ([41d23e4](https://github.com/wgergely/vaultspec-rag/commit/41d23e46ae9dcec033cea2fb5a1d6284593e0817))
+
 ## [0.2.8](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.7...vaultspec-rag-v0.2.8) (2026-05-03)
 
 
