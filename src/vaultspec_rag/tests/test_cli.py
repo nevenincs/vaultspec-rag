@@ -2042,3 +2042,129 @@ class TestJsonOutputMode:
         # Exactly one JSON document.
         env = json.loads(text)
         assert env["ok"] is False
+
+
+class TestTqdmSuppression:
+    """gh #128: prove tqdm progress-bar bytes never leak to stdout."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_help_subprocess_stdout_has_no_bare_carriage_return(self):
+        """Importing the package + emitting --help leaks no bare ``\\r``.
+
+        tqdm rewrites lines via bare ``\\r`` (NOT ``\\r\\n``). A
+        clean ``--help`` run proves no import-time side-effect
+        (e.g. a stray ``tqdm.write`` in a third-party constructor)
+        reaches the user's terminal. Windows ``\\r\\n`` line
+        endings are normalised before the check so the assertion
+        is platform-independent.
+        """
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "vaultspec_rag", "--help"],
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"--help exited {result.returncode}; stderr={result.stderr!r}"
+        )
+        normalised = result.stdout.replace(b"\r\n", b"\n")
+        assert b"\r" not in normalised, (
+            "bare carriage-return bytes leaked into --help stdout — "
+            "a tqdm-like progress writer is escaping suppression"
+        )
+
+
+class TestJsonStdoutPurityAcrossCommands:
+    """gh #128: ``--json`` envelope is parseable + Rich-free everywhere."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    # (id, argv-after-binary, expected_exit_code_predicate)
+    _SCENARIOS: typing.ClassVar = [
+        # service status with no daemon — exit 3, ok=false envelope
+        ("service-status-stopped", ["server", "service", "status", "--json"]),
+        # search filter mismatch — exit 2, ok=false envelope
+        (
+            "search-filter-mismatch",
+            [
+                "search",
+                "x",
+                "--type",
+                "vault",
+                # Literal pattern with no glob meta-chars to avoid
+                # Windows argv-globbing surprises in subprocess.
+                "--include-path",
+                "nonexistent/file.py",
+                "--json",
+            ],
+        ),
+        # search port unreachable — exit 1, ok=false envelope
+        (
+            "search-port-unreachable",
+            ["search", "x", "--port", "1", "--json"],
+        ),
+    ]
+
+    _FORBIDDEN_CHARS: typing.ClassVar = (
+        "─",
+        "│",
+        "┌",
+        "┐",
+        "└",
+        "┘",
+        "╭",
+        "╮",
+        "╰",
+        "╯",
+    )
+
+    @pytest.mark.parametrize(
+        ("scenario_id", "argv"),
+        _SCENARIOS,
+        ids=[s[0] for s in _SCENARIOS],
+    )
+    def test_envelope_is_pure_json(self, scenario_id, argv, tmp_path):
+        """Every --json invocation: parseable JSON, no Rich glyphs, no ANSI."""
+        import subprocess
+        import sys
+
+        (tmp_path / ".vaultspec").mkdir()
+        (tmp_path / ".vault").mkdir()
+        full_argv = [
+            sys.executable,
+            "-m",
+            "vaultspec_rag",
+            "--target",
+            str(tmp_path),
+            *argv,
+        ]
+        result = subprocess.run(
+            full_argv,
+            capture_output=True,
+            check=False,
+            env={
+                **os.environ,
+                "NO_COLOR": "1",
+                "FORCE_COLOR": "0",
+            },
+        )
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        text = stdout.strip()
+        assert text, (
+            f"{scenario_id}: empty stdout — exit={result.returncode} "
+            f"stderr={result.stderr!r}"
+        )
+        # ANSI escape sequences (`\x1b[`) must not appear.
+        assert "\x1b[" not in text, (
+            f"{scenario_id}: ANSI escape leaked into --json stdout"
+        )
+        for forbidden in self._FORBIDDEN_CHARS:
+            assert forbidden not in text, (
+                f"{scenario_id}: Rich box char {forbidden!r} leaked into --json stdout"
+            )
+        # The contract is one JSON document per invocation.
+        env = json.loads(text)
+        assert "ok" in env, f"{scenario_id}: envelope missing 'ok' key"

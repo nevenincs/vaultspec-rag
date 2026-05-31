@@ -11,6 +11,19 @@ on:
       - "uv.lock"
       - "src/vaultspec_rag/**"
       - "conftest.py"
+  # gh #128: gate every PR on the integration suite. Fork PRs
+  # cannot access secrets.HF_TOKEN — those runs will fail at the
+  # HF auth step; acceptable for this solo-maintained repo and
+  # surfaces the constraint to external contributors explicitly.
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/gpu-integration.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/vaultspec_rag/**"
+      - "conftest.py"
 
 permissions:
   contents: read
