@@ -60,7 +60,7 @@ Split the cli.py monolith into a package; preserve Typer app nesting and 24 exte
 
 Split mcp_server.py into a package; preserve the FastMCP mcp global, tool registration, and the :main entry point.
 
-- [ ] `P06.S06` - Split into a package preserving the FastMCP mcp global, tool registration, and the main entry point, then verify full suite + ruff + ty green; `src/vaultspec_rag/mcp_server.py`.
+- [x] `P06.S06` - Split into a package preserving the FastMCP mcp global, tool registration, and the main entry point, then verify full suite + ruff + ty green; `src/vaultspec_rag/mcp_server.py`.
 
 ## Parallelization
 
