@@ -57,12 +57,16 @@ class TestToolRegistration:
             "reindex_codebase",
             "list_projects",
             "evict_project",
+            "get_watcher_state",
+            "start_watcher",
+            "stop_watcher",
+            "reconfigure_watcher",
         }
         assert expected == tool_names
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 8
+        assert len(tools) == 12
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())
