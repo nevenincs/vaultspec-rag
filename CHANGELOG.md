@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.12](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.11...vaultspec-rag-v0.2.12) (2026-06-01)
+
+
+### Bug Fixes
+
+* correct false claims in the bundled builtin rule (+docs truthfulness) ([66fc9c0](https://github.com/wgergely/vaultspec-rag/commit/66fc9c06e2dba284ae693e6fc039daaa174afe29))
+
 ## [0.2.11](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.10...vaultspec-rag-v0.2.11) (2026-06-01)
 
 
