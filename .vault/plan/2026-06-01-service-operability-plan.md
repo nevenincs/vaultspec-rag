@@ -59,8 +59,8 @@ Add watcher config keys to the config layer with env coercion and explicit-over-
 
 Thread config-derived debounce and cooldown into the running watcher and gate auto-start on watch_enabled.
 
-- [ ] `P02.S04` - Guard \_ensure_watcher on watch_enabled and pass config debounce and cooldown into watch_and_reindex; `src/vaultspec_rag/mcp_server.py`.
-- [ ] `P02.S05` - Add an integration test that watch_enabled false yields a pull-only service and that custom debounce and cooldown propagate; `src/vaultspec_rag/tests/integration/test_watcher_config.py`.
+- [x] `P02.S04` - Guard \_ensure_watcher on watch_enabled and pass config debounce and cooldown into watch_and_reindex; `src/vaultspec_rag/mcp_server.py`.
+- [x] `P02.S05` - Add an integration test that watch_enabled false yields a pull-only service and that custom debounce and cooldown propagate; `src/vaultspec_rag/tests/integration/test_watcher_config.py`.
 
 ### Phase `P03` - startup CLI flags and env translation
 

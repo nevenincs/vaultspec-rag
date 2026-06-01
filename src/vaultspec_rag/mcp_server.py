@@ -474,6 +474,13 @@ def _ensure_watcher(root: Path) -> None:
     Args:
         root: Project root directory to watch.
     """
+    from .config import get_config
+
+    cfg = get_config()
+    # watch_enabled is the sole opt-out: when disabled the service is
+    # pull-only and no watcher is ever started.
+    if not cfg.watch_enabled:
+        return
     root = root.resolve()
     if root in _watcher_tasks:
         return
@@ -499,6 +506,8 @@ def _ensure_watcher(root: Path) -> None:
                 code_indexer=slot.code_indexer,
                 stop_event=stop_event,
                 graph_cache=slot.graph_cache,
+                debounce=int(cfg.watch_debounce_ms),
+                cooldown=float(cfg.watch_cooldown_s),
             ),
         )
         _watcher_tasks[root] = task
