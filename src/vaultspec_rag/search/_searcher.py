@@ -1,203 +1,30 @@
-"""Retrieval pipeline for vault semantic search.
+"""The VaultSearcher orchestration class for hybrid search.
 
-Implements query parsing, hybrid search, and graph-aware re-ranking.
+Owns the stateful search pipeline: query encoding (Qwen3 dense + SPLADE
+sparse), Qdrant hybrid search with RRF fusion, optional CrossEncoder
+reranking, and graph-aware score boosts. Holds the GPU lock, the lazily
+loaded reranker, and the TTL-cached VaultGraph.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import logging
-import re
 import threading
 import time
 from contextlib import nullcontext
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-# When --include-path / --exclude-path are active the post-query
-# fnmatch filter may discard the majority of candidates. Overfetch
-# aggressively so top_k is still satisfied for common glob shapes.
-# Module-level constant so it can be tuned later without changing
-# the call site. See cli-path-glob ADR.
-_GLOB_FETCH_MULTIPLIER = 10
-
-# Locale-variant dedup window. Two results whose paths share a
-# locale stem AND whose scores are within this window collapse to
-# the highest-scoring one. Tight enough that genuinely-different
-# translations stay separate; loose enough that the same string in
-# en/es/ca/hu collapses. See search-postprocess ADR.
-_LOCALE_DEDUP_SCORE_WINDOW = 0.10
-
-# --prefer prod/tests/docs score nudge magnitude. Roughly one
-# rank-gap in a typical top-k — re-orders ties without making
-# off-category results jump rank.
-_PREFER_SCORE_NUDGE = 0.05
-
-# Path-extension/regex constants for locale detection.
-_LOCALE_FILE_EXTS: frozenset[str] = frozenset(
-    {
-        "yml",
-        "yaml",
-        "json",
-        "po",
-        "properties",
-        "ini",
-        "toml",
-    }
+from ._models import ParsedQuery, SearchResult
+from ._parsing import parse_query
+from ._postprocess import (
+    _GLOB_FETCH_MULTIPLIER,
+    _PREFER_CATEGORIES,
+    _PREFER_SCORE_NUDGE,
+    _classify_chunk_type,
+    _collapse_locale_variants,
 )
-_LOCALE_CODE_RE = re.compile(r"^[a-z]{2}$")
-
-# Chunk-type classifier. Order = precedence (tests > docs > prod).
-# Implemented as segment / basename / extension checks instead of
-# fnmatch globs because ``fnmatch`` lacks ``**`` and would require
-# enumerating each tree depth explicitly.
-_TESTS_DIR_NAMES: frozenset[str] = frozenset({"tests", "test", "spec", "__tests__"})
-_TESTS_BASENAME_PATTERNS: tuple[str, ...] = ("test_*", "*_test.*", "*_spec.*")
-_DOCS_DIR_NAMES: frozenset[str] = frozenset({"docs", "doc"})
-_DOCS_BASENAME_PATTERNS: tuple[str, ...] = ("readme*", "changelog*")
-_DOCS_FILE_EXTS: frozenset[str] = frozenset({"md", "rst", "adoc"})
-_PREFER_CATEGORIES: tuple[str, ...] = ("prod", "tests", "docs")
-
-
-def _locale_variant_key(path: str) -> str | None:
-    """Return a stem shared across locale variants, ``None`` otherwise.
-
-    Recognised shapes:
-
-    - ``<dir>/<lang>.<ext>``       — e.g. ``locales/en.yml``
-    - ``<dir>/<lang>/<name>.<ext>`` — e.g. ``i18n/en/messages.po``
-    - ``<name>.<lang>.<ext>``      — e.g. ``messages.en.po``
-
-    where ``<ext>`` is in ``_LOCALE_FILE_EXTS`` and ``<lang>`` is a
-    2-letter ISO 639 code (matched via ``_LOCALE_CODE_RE``).
-
-    Two results with the same returned key are candidate locale
-    variants of each other and collapse during dedup when their
-    scores are within ``_LOCALE_DEDUP_SCORE_WINDOW``.
-
-    Pure function — no I/O, no realistic exception surface.
-    """
-    parts = path.rsplit(".", 1)
-    if len(parts) != 2:
-        return None
-    stem, ext = parts
-    if ext.lower() not in _LOCALE_FILE_EXTS:
-        return None
-    segments = stem.split("/")
-    if not segments:
-        return None
-    last = segments[-1]
-    # Shape A: ``.../<lang>.<ext>`` — e.g. ``locales/en.yml``.
-    # Key is the parent directory.
-    if _LOCALE_CODE_RE.match(last):
-        return "/".join(segments[:-1]) + f"/*.{ext}"
-    # Shape B: ``.../<lang>/<name>.<ext>`` — e.g. ``i18n/en/messages.po``.
-    # Key is the grandparent directory plus the filename.
-    if len(segments) >= 2 and _LOCALE_CODE_RE.match(segments[-2]):
-        return "/".join(segments[:-2]) + f"/*/{last}.{ext}"
-    # Shape C: ``<name>.<lang>.<ext>`` — e.g. ``messages.en.po``.
-    name_parts = last.rsplit(".", 1)
-    if len(name_parts) == 2 and _LOCALE_CODE_RE.match(name_parts[1]):
-        return "/".join(segments[:-1]) + f"/{name_parts[0]}.*.{ext}"
-    return None
-
-
-def _classify_chunk_type(path: str) -> Literal["prod", "tests", "docs"]:
-    """Classify a project-relative ``path`` for --prefer score nudging.
-
-    Precedence: ``tests`` > ``docs`` > ``prod``. A file under
-    ``tests/docs/`` is reported as ``tests`` because the user's
-    intent when running tests is the dominant signal.
-
-    Pure function — no I/O, no realistic exception surface.
-    """
-    segments = path.split("/")
-    basename = segments[-1].lower() if segments else ""
-
-    if any(seg in _TESTS_DIR_NAMES for seg in segments[:-1]):
-        return "tests"
-    if any(fnmatch.fnmatch(basename, pat) for pat in _TESTS_BASENAME_PATTERNS):
-        return "tests"
-
-    if any(seg in _DOCS_DIR_NAMES for seg in segments[:-1]):
-        return "docs"
-    if any(fnmatch.fnmatch(basename, pat) for pat in _DOCS_BASENAME_PATTERNS):
-        return "docs"
-    ext = basename.rsplit(".", 1)[-1] if "." in basename else ""
-    if ext in _DOCS_FILE_EXTS:
-        return "docs"
-
-    return "prod"
-
-
-def _collapse_locale_variants(
-    results: list[SearchResult],
-) -> list[SearchResult]:
-    """Collapse near-tie locale-variant paths to the highest scorer.
-
-    Groups results by ``_locale_variant_key(result.path)`` —
-    non-locale paths and singletons pass through unchanged. Within
-    each group, the highest-scoring result is the canonical
-    winner; lower-scoring results within
-    ``_LOCALE_DEDUP_SCORE_WINDOW`` of the winner collapse into it
-    (their paths are recorded for transparency). Results outside
-    the window survive — they're treated as genuinely different
-    content that happens to share a locale stem.
-
-    Order preserved: the canonical result keeps the winner's
-    original index in the input list so the overall ranking is
-    not destabilised. Pure function; no I/O.
-    """
-    if not results:
-        return results
-
-    grouped: dict[str, list[int]] = {}
-    for index, result in enumerate(results):
-        key = _locale_variant_key(result.path)
-        if key is None:
-            continue
-        grouped.setdefault(key, []).append(index)
-
-    if not grouped:
-        return results
-
-    drop: set[int] = set()
-    collapsed_variants: dict[int, list[str]] = {}
-    for indices in grouped.values():
-        if len(indices) < 2:
-            continue
-        # Highest-scoring entry wins. Stable sort on (-score,
-        # original_index) keeps ranking deterministic for ties.
-        ranked = sorted(
-            indices,
-            key=lambda idx: (-results[idx].score, idx),
-        )
-        winner = ranked[0]
-        winner_score = results[winner].score
-        collapsed_paths: list[str] = []
-        for other in ranked[1:]:
-            if winner_score - results[other].score <= _LOCALE_DEDUP_SCORE_WINDOW:
-                drop.add(other)
-                collapsed_paths.append(results[other].path)
-        if collapsed_paths:
-            collapsed_variants[winner] = collapsed_paths
-
-    if not drop:
-        return results
-
-    out: list[SearchResult] = []
-    for index, result in enumerate(results):
-        if index in drop:
-            continue
-        if index in collapsed_variants:
-            # Annotate the surviving snippet so the consumer sees
-            # which locale variants collapsed into this entry.
-            variants = ", ".join(collapsed_variants[index])
-            tag = f" [locale variants: {variants}]"
-            result.snippet = (result.snippet + tag) if result.snippet else tag.lstrip()
-        out.append(result)
-    return out
-
+from ._rerank import rerank_with_graph
 
 if TYPE_CHECKING:
     import pathlib
@@ -206,203 +33,10 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
     from vaultspec_core.graph import VaultGraph
 
-    from .embeddings import EmbeddingModel, SparseResult
-    from .store import VaultStore
+    from ..embeddings import EmbeddingModel, SparseResult
+    from ..store import VaultStore
 
 logger = logging.getLogger(__name__)
-
-__all__ = [
-    "ParsedQuery",
-    "SearchResult",
-    "VaultSearcher",
-    "parse_query",
-    "rerank_with_graph",
-]
-
-# Filter token patterns: type:adr, feature:rag, date:2026-02,
-# tag:#research, lang:python, path:src/,
-# func:encode, class:Foo, nodetype:function_definition
-_FILTER_PATTERN = re.compile(
-    r"\b(type|feature|date|tag|lang|path|func|class|nodetype):(\S+)",
-)
-
-_FILTER_KEY_MAP = {
-    "type": "doc_type",
-    "feature": "feature",
-    "date": "date",
-    "lang": "language",
-    "path": "path",
-    "func": "function_name",
-    "class": "class_name",
-    "nodetype": "node_type",
-}
-
-
-@dataclass
-class ParsedQuery:
-    """A parsed search query with extracted metadata filters.
-
-    Holds the natural-language query text after filter tokens have been
-    stripped, together with the structured filters extracted from those
-    tokens.
-
-    Attributes:
-        text: Natural-language query text with filter tokens removed.
-        filters: Mapping of canonical filter keys (e.g. ``"doc_type"``,
-            ``"feature"``, ``"date"``) to their string values, extracted
-            from tokens like ``type:adr`` or ``feature:rag``.
-    """
-
-    text: str
-    filters: dict[str, str]
-
-
-@dataclass
-class SearchResult:
-    """A single search result from vault or codebase.
-
-    Represents a ranked document or code chunk returned by hybrid search,
-    with metadata fields that vary by source collection.
-
-    Attributes:
-        id: Unique document or chunk identifier (e.g. ``"adr/overview"``
-            for vault, a blake2b hash for codebase chunks).
-        path: File path relative to the project root.
-        title: Human-readable title or heading of the result.
-        score: Final relevance score after reranking and normalization.
-        snippet: Text excerpt from the matching document or code chunk.
-        source: Origin collection, either ``"vault"`` or ``"codebase"``.
-        doc_type: Vault document type (e.g. ``"adr"``, ``"plan"``).
-            Empty string when not applicable.
-        feature: Feature tag associated with the document (e.g.
-            ``"editor-demo"``).  Empty string when not applicable.
-        date: ISO-8601 date string from vault frontmatter.  Empty string
-            when not applicable.
-        language: Programming language of the source file (codebase
-            results only).  Empty string when not applicable.
-        line_start: Starting line number in the source file (codebase
-            results only).
-        line_end: Ending line number in the source file (codebase
-            results only).
-        node_type: Tree-sitter node type (e.g.
-            ``"function_definition"``).  Codebase results only.
-        function_name: Name of the enclosing function, if any.  Codebase
-            results only.
-        class_name: Name of the enclosing class, if any.  Codebase
-            results only.
-    """
-
-    id: str
-    path: str
-    title: str
-    score: float
-    snippet: str
-    source: Literal["vault", "codebase"]
-    doc_type: str = ""
-    feature: str = ""
-    date: str = ""
-    language: str = ""
-    line_start: int | None = None
-    line_end: int | None = None
-    node_type: str | None = None
-    function_name: str | None = None
-    class_name: str | None = None
-
-
-def parse_query(raw_query: str) -> ParsedQuery:
-    """Parse a raw query string into text and metadata filters.
-
-    Extracts structured filter tokens (e.g. ``type:adr``,
-    ``feature:rag``) from the query and returns the remaining
-    natural-language text alongside the parsed filters.
-
-    Args:
-        raw_query: Raw query string, possibly containing filter
-            tokens such as ``type:adr`` or ``date:2026-02``.
-
-    Returns:
-        ParsedQuery with the cleaned text and extracted filters.
-    """
-    filters: dict[str, str] = {}
-
-    for match in _FILTER_PATTERN.finditer(raw_query):
-        key = match.group(1)
-        value = match.group(2)
-
-        if key == "tag":
-            filters["tag"] = value.lstrip("#")
-        elif key in _FILTER_KEY_MAP:
-            filters[_FILTER_KEY_MAP[key]] = value
-
-    text = _FILTER_PATTERN.sub("", raw_query).strip()
-    text = re.sub(r"\s+", " ", text)
-
-    return ParsedQuery(text=text, filters=filters)
-
-
-def rerank_with_graph(
-    results: list[SearchResult],
-    root_dir: pathlib.Path,
-    query: ParsedQuery,
-    graph: VaultGraph | None = None,
-) -> list[SearchResult]:
-    """Apply graph-aware score boosts to vault search results.
-
-    Boosts vault results based on in-link count (up to +100%)
-    and neighbor feature-tag matches (+15%).  Codebase results
-    pass through unmodified.  The combined list is re-sorted by
-    score descending.
-
-    Args:
-        results: Mixed vault/codebase results to rerank.
-        root_dir: Project root used to build a VaultGraph when
-            *graph* is ``None``.
-        query: Parsed query; its ``feature`` filter drives the
-            neighbor-feature boost.
-        graph: Pre-built graph.  When ``None``, a new VaultGraph
-            is constructed from *root_dir*.
-
-    Returns:
-        Re-sorted list of SearchResult with updated scores.
-    """
-    vault_results = [r for r in results if r.source == "vault"]
-    code_results = [r for r in results if r.source == "codebase"]
-
-    if not vault_results:
-        return results
-
-    if graph is None:
-        from vaultspec_core.graph import VaultGraph as _VaultGraph
-
-        try:
-            graph = _VaultGraph(root_dir)
-        except Exception as e:
-            logger.error("Graph build failed: %s", e)
-            return results
-
-    for result in vault_results:
-        node = graph.nodes.get(result.id)
-        if node is None:
-            continue
-
-        in_link_count = len(node.in_links)
-        result.score *= 1 + 0.1 * min(in_link_count, 10)
-
-        feature_filter = query.filters.get("feature")
-        if feature_filter:
-            feature_tag = f"#{feature_filter}"
-            neighbor_has_feature = False
-            for neighbor_name in node.out_links | node.in_links:
-                neighbor = graph.nodes.get(neighbor_name)
-                if neighbor and feature_tag in neighbor.tags:
-                    neighbor_has_feature = True
-                    break
-            if neighbor_has_feature:
-                result.score *= 1.15
-
-    all_results = vault_results + code_results
-    all_results.sort(key=lambda r: r.score, reverse=True)
-    return all_results
 
 
 class VaultSearcher:
@@ -450,7 +84,7 @@ class VaultSearcher:
                 When ``None``, the searcher loads its own on first
                 use.
         """
-        from .config import get_config
+        from ..config import get_config
 
         cfg = get_config()
         if graph_ttl_seconds is None:
@@ -536,7 +170,7 @@ class VaultSearcher:
             return results[:top_k]
         import torch
 
-        from .config import get_config
+        from ..config import get_config
 
         reranker = self._get_reranker()
         pairs = [(query, r.snippet) for r in results]

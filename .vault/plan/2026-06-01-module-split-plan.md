@@ -42,7 +42,7 @@ Split torch_config.py into a package; pure functions, no module state.
 
 Split search.py into a package; VaultSearcher plus orthogonal pure helpers.
 
-- [ ] `P03.S03` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/search.py`.
+- [x] `P03.S03` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/search.py`.
 
 ### Phase `P04` - split indexer.py
 
