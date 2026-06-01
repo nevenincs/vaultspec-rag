@@ -100,10 +100,18 @@ def main(port: int | None = None) -> None:
         # rewrite the request path before routing instead — an ASGI
         # wrapper that promotes "/mcp" to "/mcp/" in-process. Both
         # URLs now land directly on the inner app, with no redirect.
+        from ._routes import ROUTES as READ_ONLY_ROUTES
+
+        # ``/health`` stays UNGATED (registered here, not in
+        # ``_routes``); the P03 read-only routes (e.g. token-gated
+        # ``/logs``) register from ``_routes.ROUTES`` on this same inner
+        # app. No ASGI wrappers — Starlette ``Route``s only
+        # (server-mcp-route + service-observability ADRs).
         app = Starlette(
             routes=[
                 Mount("/mcp", app=mcp_http_app),
                 Route("/health", health_handler),
+                *READ_ONLY_ROUTES,
             ],
             lifespan=service_lifespan,
         )

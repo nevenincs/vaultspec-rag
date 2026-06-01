@@ -95,12 +95,14 @@ from ._render import (
     _render_uninstall_report,
 )
 from ._search import _suppress_hf_progress, handle_search
+from ._service_info import service_info
 from ._service_lifecycle import (
     service_start,
     service_status,
     service_stop,
     service_warmup,
 )
+from ._service_logs import service_logs
 from ._service_projects import service_projects_evict, service_projects_list
 from ._service_status import (
     _append_lifecycle_shutdown_log,
@@ -177,6 +179,8 @@ __all__ = [
     "mcp_stop",
     "server_app",
     "service_app",
+    "service_info",
+    "service_logs",
     "service_projects_app",
     "service_projects_evict",
     "service_projects_list",

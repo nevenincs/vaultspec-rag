@@ -171,6 +171,77 @@ async def stop_watcher(root: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
+    """Return a consolidated read-only snapshot of the service's state.
+
+    A Tier-1 observability read (``service-observability`` ADR): one
+    structured document that mirrors state the service already holds —
+    per-source index counts + GPU/device (reusing ``get_index_status``
+    logic), the project slot table (reusing ``list_projects`` data), and
+    a watcher rollup (reusing ``get_watcher_state`` data). Read-only; no
+    control. Surfaced verbatim by ``server service info``.
+
+    Args:
+        project_root: Optional project root for the index/GPU section.
+            Defaults to ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio
+            only); required in HTTP service mode. The projects and
+            watcher sections are registry-wide and ignore this value.
+
+    Returns:
+        Dict with keys:
+
+        - ``index`` — the ``get_index_status`` payload (vault/code
+          counts, storage path, target dir, GPU VRAM) or a structured
+          error dict when the registry is full.
+        - ``projects`` — the ``list_projects`` payload (slot list,
+          ``max_projects``, ``idle_ttl_seconds``).
+        - ``watcher`` — the ``get_watcher_state`` rollup (enable flag,
+          debounce/cooldown, watched roots).
+    """
+    from ._tools import get_index_status
+
+    index = await get_index_status(project_root=project_root)
+    projects = await list_projects(project_root=project_root)
+    watcher = await get_watcher_state(project_root=project_root)
+
+    index_data: dict[str, Any] = (
+        index if isinstance(index, dict) else index.model_dump()
+    )
+    return {
+        "index": index_data,
+        "projects": projects,
+        "watcher": watcher,
+    }
+
+
+@mcp.tool()
+async def get_logs(lines: int = 200) -> dict[str, Any]:
+    """Return the last *lines* of the rotated service log.
+
+    A Tier-2a observability read (``service-observability`` ADR) with
+    parity to the read-only ``GET /logs`` HTTP route: both call the
+    shared :func:`~vaultspec_rag.logging_config.read_service_log` reader
+    that spans the rotated set (``service.log`` + ``.log.1..N``) oldest
+    -first, newest last, tolerant of a file vanishing mid-rollover. File
+    I/O runs on a worker thread.
+
+    Args:
+        lines: Maximum number of trailing lines to return (default
+            200). Values ``<= 0`` yield an empty list.
+
+    Returns:
+        Dict with key ``lines`` — the list of log lines (without
+        trailing newlines), oldest-first.
+    """
+    from ..logging_config import read_service_log
+
+    def _run() -> dict[str, Any]:
+        return {"lines": read_service_log(lines)}
+
+    return await _run_in_thread(_run)
+
+
+@mcp.tool()
 async def reconfigure_watcher(
     root: str,
     debounce_ms: int | None = None,

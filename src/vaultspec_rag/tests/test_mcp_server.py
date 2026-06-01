@@ -61,12 +61,14 @@ class TestToolRegistration:
             "start_watcher",
             "stop_watcher",
             "reconfigure_watcher",
+            "get_service_state",
+            "get_logs",
         }
         assert expected == tool_names
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 12
+        assert len(tools) == 14
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())

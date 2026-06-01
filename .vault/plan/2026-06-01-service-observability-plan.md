@@ -39,20 +39,20 @@ Add a thread-safe bounded in-flight activity registry to the mcp_server package 
 
 Add get_service_state MCP tool and a matching CLI subcommand exposing index counts, GPU, projects, and watcher rollup.
 
-- [ ] `P02.S05` - Add the get_service_state MCP tool (index counts + GPU + projects + watcher rollup); `src/vaultspec_rag/mcp_server/_admin_tools.py`.
-- [ ] `P02.S06` - Add the server service info CLI subcommand over the \_try_mcp_admin seam; `src/vaultspec_rag/cli/_service_info.py`.
-- [ ] `P02.S07` - Add get_service_state MCP + CLI parity tests; `src/vaultspec_rag/tests/integration/test_service_state.py`.
+- [x] `P02.S05` - Add the get_service_state MCP tool (index counts + GPU + projects + watcher rollup); `src/vaultspec_rag/mcp_server/_admin_tools.py`.
+- [x] `P02.S06` - Add the server service info CLI subcommand over the \_try_mcp_admin seam; `src/vaultspec_rag/cli/_service_info.py`.
+- [x] `P02.S07` - Add get_service_state MCP + CLI parity tests; `src/vaultspec_rag/tests/integration/test_service_state.py`.
 
 ### Phase `P03` - tier 2a logs (tool + CLI + HTTP)
 
 Add a rotated-log reader, a get_logs MCP tool, a server service logs CLI subcommand, and a token-gated read-only GET /logs HTTP route.
 
-- [ ] `P03.S08` - Add the rotated-log reader spanning service.log + .log.N tolerant of mid-rollover; `src/vaultspec_rag/logging_config.py`.
-- [ ] `P03.S09` - Add the read-only HTTP routes module + loopback/service_token bearer token-check helper; `src/vaultspec_rag/mcp_server/_routes.py`.
-- [ ] `P03.S10` - Register the GET /logs route on the inner Starlette app; `src/vaultspec_rag/mcp_server/_main.py`.
-- [ ] `P03.S11` - Add the get_logs MCP tool; `src/vaultspec_rag/mcp_server/_admin_tools.py`.
-- [ ] `P03.S12` - Add the server service logs CLI subcommand; `src/vaultspec_rag/cli/_service_logs.py`.
-- [ ] `P03.S13` - Add logs reader unit tests + GET /logs gating + MCP/CLI parity tests; `src/vaultspec_rag/tests/integration/test_service_logs.py`.
+- [x] `P03.S08` - Add the rotated-log reader spanning service.log + .log.N tolerant of mid-rollover; `src/vaultspec_rag/logging_config.py`.
+- [x] `P03.S09` - Add the read-only HTTP routes module + loopback/service_token bearer token-check helper; `src/vaultspec_rag/mcp_server/_routes.py`.
+- [x] `P03.S10` - Register the GET /logs route on the inner Starlette app; `src/vaultspec_rag/mcp_server/_main.py`.
+- [x] `P03.S11` - Add the get_logs MCP tool; `src/vaultspec_rag/mcp_server/_admin_tools.py`.
+- [x] `P03.S12` - Add the server service logs CLI subcommand; `src/vaultspec_rag/cli/_service_logs.py`.
+- [x] `P03.S13` - Add logs reader unit tests + GET /logs gating + MCP/CLI parity tests; `src/vaultspec_rag/tests/integration/test_service_logs.py`.
 
 ### Phase `P04` - tier 2b jobs exposure (CLI+MCP+HTTP)
 

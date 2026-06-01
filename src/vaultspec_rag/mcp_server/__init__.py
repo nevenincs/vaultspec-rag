@@ -53,6 +53,8 @@ from . import _jobs
 #    the decorator registration against ``mcp``.
 from ._admin_tools import (
     evict_project,
+    get_logs,
+    get_service_state,
     get_watcher_state,
     list_projects,
     reconfigure_watcher,
@@ -170,6 +172,8 @@ __all__ = [
     "evict_project",
     "get_code_file",
     "get_index_status",
+    "get_logs",
+    "get_service_state",
     "get_vault_document",
     "get_watcher_state",
     "health_handler",

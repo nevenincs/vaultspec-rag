@@ -14,23 +14,103 @@ import logging
 import os
 import shutil
 from logging.handlers import RotatingFileHandler
-from typing import TYPE_CHECKING, override
+from pathlib import Path
+from typing import override
 
 from vaultspec_core.logging_config import configure_logging as _core_configure_logging
 from vaultspec_core.logging_config import get_console, reset_logging
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 __all__ = [
     "DaemonRotatingFileHandler",
     "configure_logging",
     "get_console",
     "install_daemon_log_rotation",
+    "read_service_log",
     "reset_logging",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_status_dir(status_dir: Path | None) -> Path:
+    """Resolve the service status directory for the log reader.
+
+    Mirrors the CLI's ``_status_dir`` / the daemon's
+    ``_resolve_log_path`` resolution (``cfg.status_dir`` with env-var
+    and CLI overrides) so the reader walks the same directory the
+    daemon rotates into. An explicit *status_dir* (used by tests)
+    short-circuits config resolution.
+    """
+    if status_dir is not None:
+        return status_dir
+    from .config import get_config
+
+    cfg = get_config()
+    return Path(cfg.status_dir).expanduser()
+
+
+def read_service_log(lines: int, status_dir: Path | None = None) -> list[str]:
+    """Return the last *lines* log lines spanning the rotated set.
+
+    The daemon's :class:`DaemonRotatingFileHandler` rotates
+    ``service.log`` into ``service.log.1``, ``service.log.2``, … with
+    the highest-numbered backup being the oldest. This reader walks the
+    set oldest-first (``service.log.N`` … ``service.log.1`` …
+    ``service.log``) so the concatenated stream is chronological —
+    newest lines last — then returns the final *lines* entries.
+
+    The walk is tolerant of a backup file vanishing mid-rollover: a
+    file that disappears (or otherwise fails to read) between the
+    existence probe and the read is logged at DEBUG and skipped, so a
+    concurrent rotation never crashes the reader.
+
+    Args:
+        lines: Maximum number of trailing lines to return. Values
+            ``<= 0`` yield an empty list.
+        status_dir: Optional explicit status directory. Defaults to the
+            resolved ``cfg.status_dir`` (env/CLI overrides honoured).
+
+    Returns:
+        Up to *lines* log lines (without trailing newlines),
+        oldest-first, newest last.
+    """
+    if lines <= 0:
+        return []
+
+    base = _resolve_status_dir(status_dir)
+    from .config import get_config
+
+    log_name = get_config().log_file
+    base_log = base / log_name
+
+    # Highest backup index is the oldest; walk N..1 then the live file
+    # so the concatenated stream is chronological (oldest-first).
+    backups: list[Path] = []
+    index = 1
+    while True:
+        candidate = base / f"{log_name}.{index}"
+        if not candidate.exists():
+            break
+        backups.append(candidate)
+        index += 1
+
+    ordered = [*reversed(backups), base_log]
+
+    collected: list[str] = []
+    for path in ordered:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError as exc:
+            # The file vanished between the existence probe above and
+            # this read — a rotation raced us. Skip and continue.
+            logger.debug("read_service_log: %s vanished mid-read: %s", path, exc)
+            continue
+        except OSError as exc:
+            logger.debug("read_service_log: %s unreadable: %s", path, exc)
+            continue
+        collected.extend(text.splitlines())
+
+    return collected[-lines:]
 
 
 def configure_logging(
