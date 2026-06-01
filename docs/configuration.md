@@ -33,6 +33,9 @@ Every `VAULTSPEC_RAG_*` variable recognised by the loader, taken verbatim from t
 | `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` | integer | `8`                       | Inner sub-batch size passed to `SentenceTransformer.encode()`   | none                                  |
 | `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`    | integer | `2048`                    | Hard cap on sequence length advertised to the model             | none                                  |
 | `VAULTSPEC_RAG_MAX_EMBED_CHARS`             | integer | `8000`                    | Character cap applied to each text before encoding              | none                                  |
+| `VAULTSPEC_RAG_WATCH_ENABLED`               | boolean | `1` (on)                  | Filesystem auto-reindex watcher on/off (`0` = pull-only)        | `--watch` / `--no-watch`              |
+| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS`           | integer | `2000`                    | Debounce window coalescing change events before reindex (ms)    | `--watch-debounce-ms`                 |
+| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`            | float   | `30`                      | Per-source re-index cooldown after a completed run (s)          | `--watch-cooldown-s`                  |
 
 ## Examples
 

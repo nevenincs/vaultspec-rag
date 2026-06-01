@@ -148,6 +148,50 @@ Service-status divergent/crashed states (file present, signals disagree) surface
 
 See [cli.md](cli.md) for per-command exit-code lists.
 
+## Automatic re-indexing (the filesystem watcher)
+
+The background service (see [service-mode.md](service-mode.md)) runs a
+filesystem watcher that **re-indexes incrementally on file change**, so a
+long-lived service keeps its index fresh without a cron job or manual reindex.
+It is enabled by default.
+
+What it watches: `.vault/` documents and tracked source files under the project
+root. Changes are coalesced over a debounce window, and each source (vault vs
+code) has an independent cooldown so a burst of edits triggers at most one
+reindex per cooldown.
+
+Configure it at `service start`, or via environment for headless/containerised
+deployments:
+
+```bash
+# Pull-only service: no watcher, index only when you ask.
+vaultspec-rag server service start --no-watch
+# or: VAULTSPEC_RAG_WATCH_ENABLED=0 vaultspec-rag server service start
+
+# Tune responsiveness (defaults: debounce 2000 ms, cooldown 30 s).
+vaultspec-rag server service start --watch-debounce-ms 500 --watch-cooldown-s 10
+```
+
+`--watch-enabled` is the only off switch. `0` for debounce or cooldown means
+"no delay", **not** "disabled". Flags left unset do not clobber an operator-set
+`VAULTSPEC_RAG_WATCH*` env var. See [configuration.md](configuration.md) for
+the full env list.
+
+Inspect and control the watcher on a running service (both reachable from the
+CLI and the matching MCP tools):
+
+```bash
+vaultspec-rag server service watcher status            # config + watched roots
+vaultspec-rag server service watcher start  <root>     # eager start one root
+vaultspec-rag server service watcher stop   <root>     # pull-only for one root
+vaultspec-rag server service watcher reconfigure <root> \
+    --debounce-ms 1000 --cooldown-s 15                 # restart with new tuning
+```
+
+Each supports `--json` and follows the standard envelope and exit codes (`3`
+when the service is not running). Prefer `watcher status` over guessing whether
+the index is current.
+
 ## Need help?
 
 See the [Support](../README.md#support-and-help) section of the repo README.

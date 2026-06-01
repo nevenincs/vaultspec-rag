@@ -83,10 +83,10 @@ Expose watcher start, stop, reconfigure, and state via MCP tools and matching CL
 
 Update the builtin rule directives (per #145) and the two readmes for the new watcher config and control surface, and add a maintenance check that guards the rule against drifting behind shipped behaviour.
 
-- [ ] `P05.S13` - Rewrite the watcher and auto-reindex directives in the builtin rule as imperative DO and DO NOT, inverting the obsolete manual-reindex instruction, then sync; `.vaultspec/rules/rules/vaultspec-rag.builtin.md`.
-- [ ] `P05.S14` - Document watcher config keys, env vars, flags, and subcommands in the top-level readme; `README.md`.
-- [ ] `P05.S15` - Document the same watcher config and control surface in the package readme; `src/vaultspec_rag/README.md`.
-- [ ] `P05.S16` - Add a maintenance check asserting the builtin rule carries the required auto-reindex and opt-out directive tokens; `src/vaultspec_rag/tests/test_builtin_rule_directives.py`.
+- [x] `P05.S13` - Rewrite the watcher and auto-reindex directives in the builtin rule as imperative DO and DO NOT, inverting the obsolete manual-reindex instruction, then sync; `.vaultspec/rules/rules/vaultspec-rag.builtin.md`.
+- [x] `P05.S14` - Document watcher config keys, env vars, flags, and subcommands in the top-level readme; `README.md`.
+- [x] `P05.S15` - Document the same watcher config and control surface in the package readme; `src/vaultspec_rag/README.md`.
+- [x] `P05.S16` - Add a maintenance check asserting the builtin rule carries the required auto-reindex and opt-out directive tokens; `src/vaultspec_rag/tests/test_builtin_rule_directives.py`.
 
 ## Parallelization
 
