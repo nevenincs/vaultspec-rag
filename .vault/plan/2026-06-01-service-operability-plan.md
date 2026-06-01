@@ -66,9 +66,9 @@ Thread config-derived debounce and cooldown into the running watcher and gate au
 
 Add watcher flags to service start and translate operator-set flags into VAULTSPEC_RAG_WATCH env before the daemon is spawned.
 
-- [ ] `P03.S06` - Add the watch, no-watch, watch-debounce-ms, and watch-cooldown-s options to service start; `src/vaultspec_rag/cli.py`.
-- [ ] `P03.S07` - Translate non-default watcher flags into VAULTSPEC_RAG_WATCH env on the child env in \_spawn_service; `src/vaultspec_rag/cli.py`.
-- [ ] `P03.S08` - Add tests for flag-to-env translation via parameter source and preserved JSON envelope and exit codes; `src/vaultspec_rag/tests/test_cli_service_watch.py`.
+- [x] `P03.S06` - Add the watch, no-watch, watch-debounce-ms, and watch-cooldown-s options to service start; `src/vaultspec_rag/cli.py`.
+- [x] `P03.S07` - Translate non-default watcher flags into VAULTSPEC_RAG_WATCH env on the child env in \_spawn_service; `src/vaultspec_rag/cli.py`.
+- [x] `P03.S08` - Add tests for flag-to-env translation via parameter source and preserved JSON envelope and exit codes; `src/vaultspec_rag/tests/test_cli_service_watch.py`.
 
 ### Phase `P04` - runtime control parity (MCP tools and CLI subcommands)
 

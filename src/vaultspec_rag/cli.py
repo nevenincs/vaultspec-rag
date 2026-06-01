@@ -2627,24 +2627,68 @@ def _health_probe(port: int) -> dict[str, Any] | None:
         return None
 
 
-def _spawn_service(port: int, log_path: Path) -> int:
-    """Spawn the MCP server as a detached background process.
+def _service_child_env(
+    watch: bool | None = None,
+    watch_debounce_ms: int | None = None,
+    watch_cooldown_s: float | None = None,
+) -> dict[str, str]:
+    """Build the environment for the detached daemon process.
+
+    The daemon inherits configuration only through the environment (it
+    parses no argv beyond ``--port``), so watcher flags passed to
+    ``service start`` are translated into ``VAULTSPEC_RAG_WATCH*`` here.
+    A flag left unset (``None``) is not written, so an operator-set env
+    var of the same name survives untouched.
 
     Args:
-        port: TCP port for the HTTP server.
-        log_path: File path for stdout/stderr redirection.
+        watch: Tri-state watcher toggle; ``None`` leaves it unset.
+        watch_debounce_ms: Debounce override in ms; ``None`` leaves it unset.
+        watch_cooldown_s: Cooldown override in s; ``None`` leaves it unset.
 
     Returns:
-        PID of the spawned process.
-
+        The child-process environment mapping.
     """
-    cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
     # Strip VAULTSPEC_RAG_ROOT from the daemon env — the HTTP service is
     # multi-tenant and must not fall back to a baked-in project root.
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.
     _excluded = str(EnvVar.RAG_ROOT).upper()
     env = {k: v for k, v in os.environ.items() if k.upper() != _excluded}
+    if watch is not None:
+        env[EnvVar.WATCH_ENABLED.value] = "1" if watch else "0"
+    if watch_debounce_ms is not None:
+        env[EnvVar.WATCH_DEBOUNCE_MS.value] = str(watch_debounce_ms)
+    if watch_cooldown_s is not None:
+        env[EnvVar.WATCH_COOLDOWN_S.value] = str(watch_cooldown_s)
+    return env
+
+
+def _spawn_service(
+    port: int,
+    log_path: Path,
+    watch: bool | None = None,
+    watch_debounce_ms: int | None = None,
+    watch_cooldown_s: float | None = None,
+) -> int:
+    """Spawn the MCP server as a detached background process.
+
+    Args:
+        port: TCP port for the HTTP server.
+        log_path: File path for stdout/stderr redirection.
+        watch: Optional watcher enable/disable forwarded to the daemon env.
+        watch_debounce_ms: Optional debounce override forwarded to the env.
+        watch_cooldown_s: Optional cooldown override forwarded to the env.
+
+    Returns:
+        PID of the spawned process.
+
+    """
+    cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
+    env = _service_child_env(
+        watch=watch,
+        watch_debounce_ms=watch_debounce_ms,
+        watch_cooldown_s=watch_cooldown_s,
+    )
     log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
     if sys.platform == "win32":
         proc = subprocess.Popen(
@@ -2708,6 +2752,28 @@ def service_start(
             envvar=EnvVar.PORT,
         ),
     ] = 8766,
+    watch: Annotated[
+        bool | None,
+        typer.Option(
+            "--watch/--no-watch",
+            help="Enable or disable filesystem auto-reindex (default: enabled). "
+            "Unset leaves VAULTSPEC_RAG_WATCH_ENABLED untouched.",
+        ),
+    ] = None,
+    watch_debounce_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--watch-debounce-ms",
+            help="Watcher debounce window in milliseconds (default 2000).",
+        ),
+    ] = None,
+    watch_cooldown_s: Annotated[
+        float | None,
+        typer.Option(
+            "--watch-cooldown-s",
+            help="Per-source re-index cooldown in seconds (default 30).",
+        ),
+    ] = None,
 ) -> None:
     """Start the background RAG service as a detached process.
 
@@ -2761,7 +2827,13 @@ def service_start(
 
     log_path = _log_file()
     t0 = time.perf_counter()
-    pid = _spawn_service(port, log_path)
+    pid = _spawn_service(
+        port,
+        log_path,
+        watch=watch,
+        watch_debounce_ms=watch_debounce_ms,
+        watch_cooldown_s=watch_cooldown_s,
+    )
     _write_service_status(pid, port)
 
     # Poll health with exponential backoff
