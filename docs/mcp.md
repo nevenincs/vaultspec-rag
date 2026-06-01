@@ -59,7 +59,7 @@ The HTTP service is multi-tenant and refuses tool calls that do not include a `p
 
 ## Confirm the assistant sees the tools
 
-In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` server. In Claude Code, run `/mcp` and check that `vaultspec-rag` appears in the connected-servers list. A connected server publishes eight tools covering search, indexing, status, and project management. For the full parameter list, see [cli.md](cli.md); the same tools surface there.
+In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` server. In Claude Code, run `/mcp` and check that `vaultspec-rag` appears in the connected-servers list. A connected server publishes fifteen tools covering search, indexing, status, project management, watcher control, and service observability. Beyond the search and indexing tools, this includes filesystem-watcher control (`get_watcher_state`, `start_watcher`, `stop_watcher`, `reconfigure_watcher`) and service observability (`get_service_state`, `get_logs`, `get_jobs`). For the full parameter list, see [cli.md](cli.md); the same tools surface there.
 
 For a smoke test, ask the assistant a question that requires retrieval, for example "find the ADR about caching", and confirm it cites vault hits in the response.
 

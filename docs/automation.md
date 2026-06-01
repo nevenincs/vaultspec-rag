@@ -172,8 +172,10 @@ vaultspec-rag server service start --no-watch
 vaultspec-rag server service start --watch-debounce-ms 500 --watch-cooldown-s 10
 ```
 
-`--watch-enabled` is the only off switch. `0` for debounce or cooldown means
-"no delay", **not** "disabled". Flags left unset do not clobber an operator-set
+`--no-watch` (or `VAULTSPEC_RAG_WATCH_ENABLED=0`) is the only off switch;
+`--watch-debounce-ms`/`--watch-cooldown-s` tune but never disable. `0` for
+debounce or cooldown means "no delay", **not** "disabled". Flags left unset do
+not clobber an operator-set
 `VAULTSPEC_RAG_WATCH*` env var. See [configuration.md](configuration.md) for
 the full env list.
 

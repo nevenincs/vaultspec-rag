@@ -54,7 +54,7 @@ index [--type vault|code|all] [--rebuild] [--port N] [--allow-fallback] [--verbo
                              Index vault docs and/or codebase. --port delegates to
                              a running service; on dead port, the CLI hard-fails
                              unless --allow-fallback is set. --rebuild REQUIRES
-                             an explicit --type since 0.3.0 (#115); bare `index`
+                             an explicit --type since 0.2.9 (#115); bare `index`
                              stays incremental + safe. --rebuild --type X is now
                              scoped to X (was: whole-directory rmtree).
 search <query> [--type vault|code] [--max-results N=10] [--no-truncate]
@@ -148,6 +148,10 @@ The `vaultspec-search-mcp` server exposes the following tools:
   Incremental by default; `clean=true` drops and rebuilds.
 - `reindex_codebase(clean, project_root)` — re-index source code.
   Incremental by default; `clean=true` drops and rebuilds.
+- `list_projects()` — list active project slots (root, idle, refs);
+  mirrors `server service projects list`.
+- `evict_project(root)` — evict a project's resident slot; mirrors
+  `server service projects evict`.
 - `get_watcher_state(project_root?)` — report watcher config
   (`watch_enabled`, `debounce_ms`, `cooldown_s`) and watched roots.
 - `start_watcher(root)` — eagerly start the watcher for a root
