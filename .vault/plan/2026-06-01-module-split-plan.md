@@ -36,7 +36,7 @@ Split commands.py into a commands/ package re-exporting the verbatim public surf
 
 Split torch_config.py into a package; pure functions, no module state.
 
-- [ ] `P02.S02` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/torch_config.py`.
+- [x] `P02.S02` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/torch_config.py`.
 
 ### Phase `P03` - split search.py
 
