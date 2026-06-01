@@ -12,7 +12,7 @@ the hot path and the buffer is bounded so it can never grow unbounded
 All access is guarded by a module-level :class:`threading.Lock`. The buffer is
 a :class:`collections.deque` with ``maxlen`` so the oldest record is evicted
 once the cap is reached. Records are mutated in place on finish (looked up by
-their stable ``id``); :func:`snapshot` returns deep-copied dicts newest-first
+their stable ``id``); :func:`snapshot` returns copied dicts newest-first
 so callers cannot observe or mutate live state.
 """
 

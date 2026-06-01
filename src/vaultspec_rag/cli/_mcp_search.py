@@ -147,8 +147,9 @@ def _try_mcp_admin(
     the raw dict so the caller can render the structured error).
 
     Args:
-        tool_name: Name of the MCP tool (``list_projects`` or
-            ``evict_project``).
+        tool_name: Name of the admin/observability MCP tool to call
+            (e.g. ``list_projects``, ``get_service_state``, ``get_logs``,
+            ``get_jobs``, or a watcher-control tool).
         args: Keyword arguments forwarded to the tool.
         port: TCP port of the running MCP server.  If ``None``, the
             helper returns ``None`` immediately.

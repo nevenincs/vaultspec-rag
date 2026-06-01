@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
+import sys
 import threading
 import typing
 from contextlib import asynccontextmanager
@@ -40,6 +42,28 @@ def _run(coro):
 @asynccontextmanager
 async def _empty_lifespan(_app):
     yield
+
+
+class TestPackageEntryPoint:
+    """Guard the ``python -m vaultspec_rag.mcp_server`` daemon-spawn path.
+
+    The service daemon is launched as ``python -m vaultspec_rag.mcp_server
+    --port N``. When ``mcp_server`` became a package, the ``-m`` invocation
+    required a ``__main__`` module; without it the daemon never starts and
+    every subprocess service-lifecycle test fails. ``--help`` is free (no
+    GPU/model load), so this is a fast, real subprocess check.
+    """
+
+    def test_python_dash_m_help_runs(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "vaultspec_rag.mcp_server", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "--port" in result.stdout
 
 
 class TestToolRegistration:
