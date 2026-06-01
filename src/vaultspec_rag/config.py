@@ -43,6 +43,10 @@ class EnvVar(StrEnum):
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
     EMBEDDING_MAX_SEQ_LENGTH = "VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH"
     MAX_EMBED_CHARS = "VAULTSPEC_RAG_MAX_EMBED_CHARS"
+    # Filesystem-watcher / auto-reindex knobs (#143/#144).
+    WATCH_ENABLED = "VAULTSPEC_RAG_WATCH_ENABLED"
+    WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
+    WATCH_COOLDOWN_S = "VAULTSPEC_RAG_WATCH_COOLDOWN_S"
 
     # Third-party env vars referenced in the codebase — defined here so
     # the string literal lives in exactly one place.
@@ -72,6 +76,10 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_encode_batch_size": EnvVar.EMBEDDING_ENCODE_BATCH_SIZE,
     "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
     "max_embed_chars": EnvVar.MAX_EMBED_CHARS,
+    # Filesystem-watcher / auto-reindex knobs (#143/#144).
+    "watch_enabled": EnvVar.WATCH_ENABLED,
+    "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
+    "watch_cooldown_s": EnvVar.WATCH_COOLDOWN_S,
 }
 
 
@@ -132,6 +140,14 @@ class VaultSpecConfigWrapper:
         "service_max_projects": 16,
         "service_log_max_bytes": 10485760,
         "service_log_backup_count": 5,
+        # Filesystem-watcher / auto-reindex knobs (#143/#144). The
+        # resident service auto-reindexes on file change; ``watch_enabled``
+        # is the sole opt-out (``False`` => pull-only service). The
+        # ``debounce_ms`` and ``cooldown_s`` knobs tune responsiveness;
+        # ``0`` means "no delay", not "disabled".
+        "watch_enabled": True,
+        "watch_debounce_ms": 2000,
+        "watch_cooldown_s": 30.0,
     }
 
     def __init__(self, base: BaseConfig) -> None:

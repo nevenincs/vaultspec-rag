@@ -51,9 +51,9 @@ authorising ADR and research through the `related` frontmatter.
 
 Add watcher config keys to the config layer with env coercion and explicit-over-env-over-default precedence.
 
-- [ ] `P01.S01` - Add watch_enabled, watch_debounce_ms, and watch_cooldown_s to the RAG defaults; `src/vaultspec_rag/config.py`.
-- [ ] `P01.S02` - Add the three VAULTSPEC_RAG_WATCH env members and override-map entries; `src/vaultspec_rag/config.py`.
-- [ ] `P01.S03` - Add unit tests for watcher-config precedence and bool, int, and float coercion including WATCH_ENABLED false parsing; `src/vaultspec_rag/tests/test_config.py`.
+- [x] `P01.S01` - Add watch_enabled, watch_debounce_ms, and watch_cooldown_s to the RAG defaults; `src/vaultspec_rag/config.py`.
+- [x] `P01.S02` - Add the three VAULTSPEC_RAG_WATCH env members and override-map entries; `src/vaultspec_rag/config.py`.
+- [x] `P01.S03` - Add unit tests for watcher-config precedence and bool, int, and float coercion including WATCH_ENABLED false parsing; `src/vaultspec_rag/tests/test_config.py`.
 
 ### Phase `P02` - wire config into the watcher and add the enable guard
 
