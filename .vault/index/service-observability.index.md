@@ -6,6 +6,7 @@ tags:
 date: '2026-06-01'
 related:
   - '[[2026-06-01-service-observability-adr]]'
+  - '[[2026-06-01-service-observability-plan]]'
   - '[[2026-06-01-service-observability-research]]'
 ---
 
@@ -18,6 +19,10 @@ Auto-generated index of all documents tagged with `#service-observability`.
 ### adr
 
 - `2026-06-01-service-observability-adr` - `service-observability` adr: server state surface — read-only HTTP + CLI/MCP parity (#142) | (**status:** `accepted`)
+
+### plan
+
+- `2026-06-01-service-observability-plan` - `service-observability` `server state surface: status, logs, jobs, metrics (#142)` plan
 
 ### research
 
