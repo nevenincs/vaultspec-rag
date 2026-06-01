@@ -30,10 +30,10 @@ and ty passing; every read lands on both CLI and MCP.
 
 Add a thread-safe bounded in-flight activity registry to the mcp_server package and record start/finish from the reindex tool and watcher paths.
 
-- [ ] `P01.S01` - Add the thread-safe bounded in-flight activity registry (records id/source/trigger/phase/timestamps); `src/vaultspec_rag/mcp_server/_jobs.py`.
-- [ ] `P01.S02` - Record activity start/finish in the reindex tool paths; `src/vaultspec_rag/mcp_server/_tools.py`.
-- [ ] `P01.S03` - Record activity start/finish in the watcher reindex path; `src/vaultspec_rag/watcher.py`.
-- [ ] `P01.S04` - Add registry unit + GPU integration tests (entries appear/finish, bounded, concurrency); `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
+- [x] `P01.S01` - Add the thread-safe bounded in-flight activity registry (records id/source/trigger/phase/timestamps); `src/vaultspec_rag/mcp_server/_jobs.py`.
+- [x] `P01.S02` - Record activity start/finish in the reindex tool paths; `src/vaultspec_rag/mcp_server/_tools.py`.
+- [x] `P01.S03` - Record activity start/finish in the watcher reindex path; `src/vaultspec_rag/watcher.py`.
+- [x] `P01.S04` - Add registry unit + GPU integration tests (entries appear/finish, bounded, concurrency); `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
 
 ### Phase `P02` - tier 1 consolidated service state (CLI+MCP)
 

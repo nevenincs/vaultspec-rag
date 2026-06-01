@@ -44,6 +44,11 @@ from __future__ import annotations
 # import keeps resolving.
 from ..capabilities import BackendCapabilities
 
+# 2a. Leaf helper imported as a submodule (not by-name): the in-flight
+#     jobs registry. The reindex tools and watcher write through
+#     ``_jobs.record_*`` and tests reach it via ``mcp_server._jobs``.
+from . import _jobs
+
 # 3. Tool / resource / prompt submodules — their import side effect is
 #    the decorator registration against ``mcp``.
 from ._admin_tools import (
@@ -141,6 +146,7 @@ __all__ = [
     "_http_mode",
     "_install_daemon_shutdown_hooks",
     "_is_sensitive_path",
+    "_jobs",
     "_lifecycle_log",
     "_local_store_locked_error_dict",
     "_record_shutdown",

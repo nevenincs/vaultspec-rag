@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import Change, awatch
 
+from .mcp_server import _jobs
 from .progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -191,6 +192,7 @@ async def watch_and_reindex(
                 logger.info(
                     "Vault changes detected, triggering incremental re-index...",
                 )
+                job_id = _jobs.record_start("vault", "watcher")
                 try:
                     result = await _run_in_thread(
                         lambda: vault_indexer.incremental_index(
@@ -199,6 +201,13 @@ async def watch_and_reindex(
                     )
                     graph_cache.invalidate()
                     _last_vault_index = time.monotonic()
+                    _jobs.record_finish(
+                        job_id,
+                        result=(
+                            f"+{result.added} /{result.updated} "
+                            f"-{result.removed} ({result.duration_ms}ms)"
+                        ),
+                    )
                     logger.info(
                         "Vault re-index complete: +%d /%d -%d (%dms)",
                         result.added,
@@ -206,7 +215,8 @@ async def watch_and_reindex(
                         result.removed,
                         result.duration_ms,
                     )
-                except Exception:
+                except Exception as exc:
+                    _jobs.record_finish(job_id, error=str(exc))
                     logger.exception("Vault re-index failed")
 
         if code_changed:
@@ -219,6 +229,7 @@ async def watch_and_reindex(
                 logger.info(
                     "Code changes detected, triggering incremental re-index...",
                 )
+                job_id = _jobs.record_start("code", "watcher")
                 try:
                     result = await _run_in_thread(
                         lambda: code_indexer.incremental_index(
@@ -226,6 +237,13 @@ async def watch_and_reindex(
                         ),
                     )
                     _last_code_index = time.monotonic()
+                    _jobs.record_finish(
+                        job_id,
+                        result=(
+                            f"+{result.added} /{result.updated} "
+                            f"-{result.removed} ({result.duration_ms}ms)"
+                        ),
+                    )
                     logger.info(
                         "Code re-index complete: +%d /%d -%d (%dms)",
                         result.added,
@@ -233,7 +251,8 @@ async def watch_and_reindex(
                         result.removed,
                         result.duration_ms,
                     )
-                except Exception:
+                except Exception as exc:
+                    _jobs.record_finish(job_id, error=str(exc))
                     logger.exception("Code re-index failed")
 
     logger.info("Filesystem watcher stopped.")

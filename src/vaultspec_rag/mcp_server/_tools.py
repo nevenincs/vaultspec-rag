@@ -19,6 +19,7 @@ import vaultspec_rag.mcp_server as _m
 from ..progress import NullProgressReporter
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
+from . import _jobs
 from ._models import IndexResponse, IndexStatus, SearchResponse, SearchResultItem
 from ._state import mcp
 from ._utils import (
@@ -334,14 +335,26 @@ async def reindex_vault(
             with _m._registry.lease(root) as slot:
                 mode = "full" if clean else "incremental"
                 logger.info("Starting %s vault re-index...", mode)
-                if clean:
-                    result = slot.vault_indexer.full_index(
-                        clean=True, reporter=NullProgressReporter()
-                    )
-                else:
-                    result = slot.vault_indexer.incremental_index(
-                        reporter=NullProgressReporter()
-                    )
+                job_id = _jobs.record_start("vault", "tool")
+                try:
+                    if clean:
+                        result = slot.vault_indexer.full_index(
+                            clean=True, reporter=NullProgressReporter()
+                        )
+                    else:
+                        result = slot.vault_indexer.incremental_index(
+                            reporter=NullProgressReporter()
+                        )
+                except Exception as exc:
+                    _jobs.record_finish(job_id, error=str(exc))
+                    raise
+                _jobs.record_finish(
+                    job_id,
+                    result=(
+                        f"+{result.added} /{result.updated} "
+                        f"-{result.removed} ({result.duration_ms}ms)"
+                    ),
+                )
                 slot.graph_cache.invalidate()
                 return IndexResponse(
                     total=result.total,
@@ -394,14 +407,26 @@ async def reindex_codebase(
             with _m._registry.lease(root) as slot:
                 mode = "full" if clean else "incremental"
                 logger.info("Starting %s codebase re-index...", mode)
-                if clean:
-                    result = slot.code_indexer.full_index(
-                        clean=True, reporter=NullProgressReporter()
-                    )
-                else:
-                    result = slot.code_indexer.incremental_index(
-                        reporter=NullProgressReporter()
-                    )
+                job_id = _jobs.record_start("code", "tool")
+                try:
+                    if clean:
+                        result = slot.code_indexer.full_index(
+                            clean=True, reporter=NullProgressReporter()
+                        )
+                    else:
+                        result = slot.code_indexer.incremental_index(
+                            reporter=NullProgressReporter()
+                        )
+                except Exception as exc:
+                    _jobs.record_finish(job_id, error=str(exc))
+                    raise
+                _jobs.record_finish(
+                    job_id,
+                    result=(
+                        f"+{result.added} /{result.updated} "
+                        f"-{result.removed} ({result.duration_ms}ms)"
+                    ),
+                )
                 return IndexResponse(
                     total=result.total,
                     added=result.added,
