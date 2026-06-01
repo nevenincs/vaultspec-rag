@@ -54,7 +54,7 @@ Split indexer.py into a package; VaultIndexer/CodebaseIndexer with shared AST co
 
 Split the cli.py monolith into a package; preserve Typer app nesting and 24 external symbols.
 
-- [ ] `P05.S05` - Split into a package preserving Typer app nesting and all external symbols, then verify full suite + ruff + ty green; `src/vaultspec_rag/cli.py`.
+- [x] `P05.S05` - Split into a package preserving Typer app nesting and all external symbols, then verify full suite + ruff + ty green; `src/vaultspec_rag/cli.py`.
 
 ### Phase `P06` - split mcp_server.py
 
