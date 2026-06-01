@@ -48,7 +48,7 @@ Split search.py into a package; VaultSearcher plus orthogonal pure helpers.
 
 Split indexer.py into a package; VaultIndexer/CodebaseIndexer with shared AST constants.
 
-- [ ] `P04.S04` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/indexer.py`.
+- [x] `P04.S04` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/indexer.py`.
 
 ### Phase `P05` - split cli.py
 
