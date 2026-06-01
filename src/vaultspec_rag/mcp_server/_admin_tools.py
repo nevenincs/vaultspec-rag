@@ -17,6 +17,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.mcp_server as _m
 
+from . import _jobs
 from ._state import mcp
 
 
@@ -239,6 +240,33 @@ async def get_logs(lines: int = 200) -> dict[str, Any]:
         return {"lines": read_service_log(lines)}
 
     return await _run_in_thread(_run)
+
+
+@mcp.tool()
+async def get_jobs(limit: int | None = None) -> dict[str, Any]:
+    """Return recent index/reindex activity from the in-flight registry.
+
+    A Tier-2b observability read (``service-observability`` ADR) with
+    parity to the read-only ``GET /jobs`` HTTP route: both read the
+    shared bounded :mod:`._jobs` registry written inline by the reindex
+    tool paths (``trigger="tool"``) and the watcher reindex loop
+    (``trigger="watcher"``). No background thread or reaper; the buffer
+    is bounded so it cannot grow unbounded.
+
+    Args:
+        limit: Optional cap on the number of records returned (newest
+            first). ``None`` returns the full snapshot (bounded by the
+            registry cap). Non-positive values return an empty list.
+
+    Returns:
+        Dict with key ``jobs`` — a newest-first list of activity record
+        dicts (``id``, ``source``, ``trigger``, ``phase``,
+        ``started_at``, ``finished_at``, ``result``).
+    """
+    records = _jobs.snapshot()
+    if limit is not None:
+        records = records[:limit] if limit > 0 else []
+    return {"jobs": records}
 
 
 @mcp.tool()

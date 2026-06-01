@@ -96,6 +96,7 @@ from ._render import (
 )
 from ._search import _suppress_hf_progress, handle_search
 from ._service_info import service_info
+from ._service_jobs import service_jobs
 from ._service_lifecycle import (
     service_start,
     service_status,
@@ -180,6 +181,7 @@ __all__ = [
     "server_app",
     "service_app",
     "service_info",
+    "service_jobs",
     "service_logs",
     "service_projects_app",
     "service_projects_evict",

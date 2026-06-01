@@ -28,6 +28,7 @@ from starlette.routing import Route
 import vaultspec_rag.mcp_server as _m
 
 from ..logging_config import read_service_log
+from . import _jobs
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -129,7 +130,73 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     return PlainTextResponse(body)
 
 
+def _clamp_limit(raw: str | None) -> int | None:
+    """Parse the ``?limit=`` query parameter; ``None`` when absent/invalid.
+
+    Returns ``None`` (no cap) when the parameter is missing or
+    non-integer, so the full bounded snapshot is returned.
+    """
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+async def jobs_route(request: Request) -> JSONResponse:
+    """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
+
+    Returns the newest-first :mod:`._jobs` registry snapshot as JSON —
+    parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
+    the registry. An optional ``?limit=N`` query parameter caps the
+    number of returned records (newest first).
+
+    Args:
+        request: The incoming Starlette request.
+
+    Returns:
+        A ``JSONResponse`` of ``{"jobs": [...]}`` , or the
+        ``require_token`` 401 ``JSONResponse``.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    records = _jobs.snapshot()
+    limit = _clamp_limit(request.query_params.get("limit"))
+    if limit is not None:
+        records = records[:limit] if limit > 0 else []
+    return JSONResponse({"jobs": records})
+
+
+async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:
+    """Token-gated read-only ``GET /metrics`` in Prometheus text format.
+
+    Emits the ``0.0.4`` text exposition format produced inline by
+    :func:`~vaultspec_rag.mcp_server.render_prometheus` (counters/gauges
+    incremented by the search/reindex tool paths; GPU memory read
+    on-demand at scrape time). No background collector thread, no
+    ``prometheus_client`` dependency. Read-only.
+
+    Args:
+        request: The incoming Starlette request.
+
+    Returns:
+        A ``PlainTextResponse`` with the Prometheus exposition text, or
+        the ``require_token`` 401 ``JSONResponse``.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    return PlainTextResponse(
+        _m.render_prometheus(),
+        media_type="text/plain; version=0.0.4",
+    )
+
+
 # Routes mounted by ``_main`` on the inner Starlette app. Read-only only.
 ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),
+    Route("/jobs", jobs_route, methods=["GET"]),
+    Route("/metrics", metrics_route, methods=["GET"]),
 ]

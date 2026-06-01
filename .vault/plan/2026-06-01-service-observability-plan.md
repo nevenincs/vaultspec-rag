@@ -58,17 +58,17 @@ Add a rotated-log reader, a get_logs MCP tool, a server service logs CLI subcomm
 
 Expose the in-flight registry via a get_jobs MCP tool, a server service jobs CLI subcommand, and an optional token-gated GET /jobs route.
 
-- [ ] `P04.S14` - Add the get_jobs MCP tool and the GET /jobs JSON route; `src/vaultspec_rag/mcp_server/_admin_tools.py`.
-- [ ] `P04.S15` - Add the server service jobs CLI subcommand; `src/vaultspec_rag/cli/_service_jobs.py`.
-- [ ] `P04.S16` - Add jobs exposure MCP/CLI parity + route gating tests; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
+- [x] `P04.S14` - Add the get_jobs MCP tool and the GET /jobs JSON route; `src/vaultspec_rag/mcp_server/_admin_tools.py`.
+- [x] `P04.S15` - Add the server service jobs CLI subcommand; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `P04.S16` - Add jobs exposure MCP/CLI parity + route gating tests; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
 
 ### Phase `P05` - tier 3 metrics
 
 Add inline counters/gauges in package state and a token-gated read-only GET /metrics Prometheus-text route, with no background collector thread.
 
-- [ ] `P05.S17` - Add inline counters/gauges to package state, incremented by search/reindex paths; `src/vaultspec_rag/mcp_server/_state.py`.
-- [ ] `P05.S18` - Register the token-gated GET /metrics Prometheus-text route emitted directly; `src/vaultspec_rag/mcp_server/_routes.py`.
-- [ ] `P05.S19` - Add metrics counter + /metrics format + gating tests; `src/vaultspec_rag/tests/integration/test_service_metrics.py`.
+- [x] `P05.S17` - Add inline counters/gauges to package state, incremented by search/reindex paths; `src/vaultspec_rag/mcp_server/_state.py`.
+- [x] `P05.S18` - Register the token-gated GET /metrics Prometheus-text route emitted directly; `src/vaultspec_rag/mcp_server/_routes.py`.
+- [x] `P05.S19` - Add metrics counter + /metrics format + gating tests; `src/vaultspec_rag/tests/integration/test_service_metrics.py`.
 
 ### Phase `P06` - docs parity
 

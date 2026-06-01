@@ -10,6 +10,7 @@ alias so a test rebind of ``_registry`` is observed.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -97,7 +98,10 @@ async def search_vault(
         except VaultStoreLockedError as exc:
             return _m._local_store_locked_error_dict(exc)
 
+    started = time.perf_counter()
     result = await _run_in_thread(_run)
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", time.perf_counter() - started)
     if isinstance(result, SearchResponse):
         _m._ensure_watcher(root)
     return result
@@ -198,7 +202,10 @@ async def search_codebase(
         except VaultStoreLockedError as exc:
             return _m._local_store_locked_error_dict(exc)
 
+    started = time.perf_counter()
     result = await _run_in_thread(_run)
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", time.perf_counter() - started)
     if isinstance(result, SearchResponse):
         _m._ensure_watcher(root)
     return result
@@ -367,7 +374,10 @@ async def reindex_vault(
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
 
+    started = time.perf_counter()
     result = await _run_in_thread(_run)
+    _m.incr("reindex_total")
+    _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
     if isinstance(result, IndexResponse):
         _m._ensure_watcher(root)
     return result
@@ -438,7 +448,10 @@ async def reindex_codebase(
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
 
+    started = time.perf_counter()
     result = await _run_in_thread(_run)
+    _m.incr("reindex_total")
+    _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
     if isinstance(result, IndexResponse):
         _m._ensure_watcher(root)
     return result
