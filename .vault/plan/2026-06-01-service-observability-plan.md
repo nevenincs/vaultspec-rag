@@ -74,8 +74,8 @@ Add inline counters/gauges in package state and a token-gated read-only GET /met
 
 Document the new tools, subcommands, HTTP routes, and gating in the builtin rule (synced) and the docs tree.
 
-- [ ] `P06.S20` - Document the new tools/subcommands/routes + gating in the builtin rule, then sync; `.vaultspec/rules/rules/vaultspec-rag.builtin.md`.
-- [ ] `P06.S21` - Document the new CLI subcommands + HTTP routes + env/gating in the docs tree; `docs/cli.md`.
+- [x] `P06.S20` - Document the new tools/subcommands/routes + gating in the builtin rule, then sync; `.vaultspec/rules/rules/vaultspec-rag.builtin.md`.
+- [x] `P06.S21` - Document the new CLI subcommands + HTTP routes + env/gating in the docs tree; `docs/cli.md`.
 
 ## Parallelization
 

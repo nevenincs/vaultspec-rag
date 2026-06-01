@@ -101,12 +101,22 @@ server service status        Show service status. Exit codes: 0 running,
                              stale threshold 60s.
 server service warmup        Pre-load GPU models without serving
 server service projects list|evict   Inspect / evict project slots.
+server service info          Consolidated state: index counts + GPU + projects
+                             + watcher rollup (get_service_state).
+server service logs [--lines N]      Tail the service log (rotated-set aware).
+server service jobs [--limit N]      Recent + in-flight index/reindex activity.
 server service watcher status        Show watcher config + watched roots.
 server service watcher start <root>  Eagerly watch a root (no-op if disabled).
 server service watcher stop <root>   Stop watching a root (pull-only for it).
 server service watcher reconfigure <root> [--debounce-ms N] [--cooldown-s S]
                              Restart a root's watcher with new tuning.
 ```
+
+Read-only HTTP routes on the running service (loopback-bound). `GET /health`
+is ungated; `GET /logs?lines=N` (text), `GET /jobs` (JSON), and `GET /metrics`
+(Prometheus text) require the `service_token` as a bearer
+(`Authorization: Bearer <token>`, found in `service.json` / `/health`). These
+are monitoring surfaces, not an auth boundary — keep the service on loopback.
 
 Development:
 
@@ -145,6 +155,11 @@ The `vaultspec-search-mcp` server exposes the following tools:
 - `stop_watcher(root)` — stop watching a root (pull-only for it).
 - `reconfigure_watcher(root, debounce_ms?, cooldown_s?)` — restart a
   root's watcher with new tuning (stop + restart).
+- `get_service_state(project_root?)` — consolidated read: per-source index
+  counts, GPU/device, project slots, and a watcher rollup.
+- `get_logs(lines?)` — tail of the service log across the rotated set.
+- `get_jobs(limit?)` — recent and in-flight index/reindex activity from the
+  in-flight registry.
 
 Resource: `vault://{doc_id}` — retrieve full vault document content by
 stem ID (e.g., `vault://adr/gpu-only-rag-stack`).
