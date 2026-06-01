@@ -461,7 +461,12 @@ async def health_handler(_request: Request) -> object:
 # -- watcher -----------------------------------------------------------------
 
 
-def _ensure_watcher(root: Path) -> None:
+def _ensure_watcher(
+    root: Path,
+    *,
+    debounce_ms: int | None = None,
+    cooldown_s: float | None = None,
+) -> bool:
     """Launch a filesystem watcher for *root* as a background asyncio task.
 
     Safe to call repeatedly — starts at most one watcher per root.
@@ -473,29 +478,53 @@ def _ensure_watcher(root: Path) -> None:
 
     Args:
         root: Project root directory to watch.
+        debounce_ms: Optional debounce override (ms); falls back to
+            ``cfg.watch_debounce_ms`` when ``None``.
+        cooldown_s: Optional cooldown override (s); falls back to
+            ``cfg.watch_cooldown_s`` when ``None``.
+
+    Returns:
+        ``True`` if a watcher is running for *root* on return (newly
+        started or already present); ``False`` if watching is disabled
+        or the service is shutting down.
     """
     from .config import get_config
 
     cfg = get_config()
     # watch_enabled is the sole opt-out: when disabled the service is
-    # pull-only and no watcher is ever started.
+    # pull-only and no watcher is ever started — including explicit
+    # start/reconfigure requests.
     if not cfg.watch_enabled:
-        return
+        return False
     root = root.resolve()
     if root in _watcher_tasks:
-        return
+        return True
     # Resolve the project slot OUTSIDE the lock — peek_project() has
     # its own per-root locking and can take 50-200ms on cold start.
     # Holding _watcher_lock during that would block the event loop.
     slot = _registry.peek_project(root)
     with _watcher_lock:
         if root in _watcher_tasks:
-            return
+            return True
         if _registry._shutting_down:
-            return
+            return False
 
         from .watcher import watch_and_reindex
 
+        debounce = (
+            int(debounce_ms)
+            if debounce_ms is not None
+            else int(
+                cfg.watch_debounce_ms,
+            )
+        )
+        cooldown = (
+            float(cooldown_s)
+            if cooldown_s is not None
+            else float(
+                cfg.watch_cooldown_s,
+            )
+        )
         stop_event = asyncio.Event()
         vault_dir = root / ".vault"
         task = asyncio.create_task(
@@ -506,13 +535,14 @@ def _ensure_watcher(root: Path) -> None:
                 code_indexer=slot.code_indexer,
                 stop_event=stop_event,
                 graph_cache=slot.graph_cache,
-                debounce=int(cfg.watch_debounce_ms),
-                cooldown=float(cfg.watch_cooldown_s),
+                debounce=debounce,
+                cooldown=cooldown,
             ),
         )
         _watcher_tasks[root] = task
         _watcher_stops[root] = stop_event
         logger.info("Filesystem watcher started for %s", root)
+    return True
 
 
 def _stop_watcher(root: Path) -> None:
@@ -1294,6 +1324,125 @@ async def evict_project(root: str) -> dict[str, Any]:
         return {"evicted": evicted, "reason": reason}
 
     return await _run_in_thread(_run)
+
+
+@mcp.tool()
+async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
+    """Report filesystem-watcher configuration and running state.
+
+    Runs on the event loop (reads watcher bookkeeping directly); does
+    not touch the GPU, so it is not dispatched to a worker thread.
+
+    Args:
+        project_root: Optional root; when given, a ``running`` boolean
+            for that resolved root is included.
+
+    Returns:
+        Dict with ``watch_enabled`` (bool), ``debounce_ms`` (int),
+        ``cooldown_s`` (float), and ``watching`` (list of resolved
+        root paths with a live watcher). When *project_root* is given,
+        also ``running`` (bool) for that root.
+    """
+    from .config import get_config
+
+    cfg = get_config()
+    with _watcher_lock:
+        watching = [str(r) for r in _watcher_tasks]
+    state: dict[str, Any] = {
+        "watch_enabled": bool(cfg.watch_enabled),
+        "debounce_ms": int(cfg.watch_debounce_ms),
+        "cooldown_s": float(cfg.watch_cooldown_s),
+        "watching": watching,
+    }
+    if project_root is not None:
+        state["running"] = str(Path(project_root).resolve()) in watching
+    return state
+
+
+@mcp.tool()
+async def start_watcher(root: str) -> dict[str, Any]:
+    """Eagerly start the filesystem watcher for *root*.
+
+    Honours the ``watch_enabled`` opt-out: when watching is disabled
+    the service stays pull-only and no watcher is started.
+
+    Args:
+        root: Workspace root directory (resolved internally).
+
+    Returns:
+        Dict with ``root``, ``started`` (bool — running on return), and
+        ``watch_enabled`` (bool).
+    """
+    from .config import get_config
+
+    target = Path(root).resolve()
+    started = _ensure_watcher(target)
+    return {
+        "root": str(target),
+        "started": bool(started),
+        "watch_enabled": bool(get_config().watch_enabled),
+    }
+
+
+@mcp.tool()
+async def stop_watcher(root: str) -> dict[str, Any]:
+    """Stop the filesystem watcher for *root* (pull-only for that root).
+
+    Args:
+        root: Workspace root directory (resolved internally).
+
+    Returns:
+        Dict with ``root`` and ``stopped`` (bool — whether a watcher was
+        running and has now been stopped).
+    """
+    target = Path(root).resolve()
+    with _watcher_lock:
+        was_running = target in _watcher_tasks
+    _stop_watcher(target)
+    return {"root": str(target), "stopped": bool(was_running)}
+
+
+@mcp.tool()
+async def reconfigure_watcher(
+    root: str,
+    debounce_ms: int | None = None,
+    cooldown_s: float | None = None,
+) -> dict[str, Any]:
+    """Restart *root*'s watcher with new tuning values.
+
+    ``awatch`` fixes its debounce at construction, so reconfiguration
+    is a stop-then-restart. Values left ``None`` fall back to the
+    resolved config defaults. Honours the ``watch_enabled`` opt-out.
+
+    Args:
+        root: Workspace root directory (resolved internally).
+        debounce_ms: New debounce window (ms); ``None`` uses config.
+        cooldown_s: New per-source cooldown (s); ``None`` uses config.
+
+    Returns:
+        Dict with ``root``, ``restarted`` (bool), and the effective
+        ``debounce_ms`` / ``cooldown_s`` in force after the restart.
+    """
+    from .config import get_config
+
+    target = Path(root).resolve()
+    _stop_watcher(target)
+    restarted = _ensure_watcher(
+        target,
+        debounce_ms=debounce_ms,
+        cooldown_s=cooldown_s,
+    )
+    cfg = get_config()
+    return {
+        "root": str(target),
+        "restarted": bool(restarted),
+        "debounce_ms": int(debounce_ms)
+        if debounce_ms is not None
+        else int(cfg.watch_debounce_ms),
+        "cooldown_s": float(cooldown_s)
+        if cooldown_s is not None
+        else float(cfg.watch_cooldown_s),
+    }
 
 
 # -- Resources ---------------------------------------------------------------

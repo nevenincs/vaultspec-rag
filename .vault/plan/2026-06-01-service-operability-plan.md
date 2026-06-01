@@ -74,10 +74,10 @@ Add watcher flags to service start and translate operator-set flags into VAULTSP
 
 Expose watcher start, stop, reconfigure, and state via MCP tools and matching CLI subcommands over the existing MCP-client seam.
 
-- [ ] `P04.S09` - Add start_watcher, stop_watcher, reconfigure_watcher, and get_watcher_state MCP tools reusing the watcher internals; `src/vaultspec_rag/mcp_server.py`.
-- [ ] `P04.S10` - Add the server watcher subcommand group driving the daemon over the \_try_mcp_admin seam; `src/vaultspec_rag/cli.py`.
-- [ ] `P04.S11` - Add integration tests for the four watcher MCP tools including reconfigure restart semantics; `src/vaultspec_rag/tests/integration/test_watcher_control.py`.
-- [ ] `P04.S12` - Add CLI parity tests for the server watcher subcommands including disabled pull-only state reporting; `src/vaultspec_rag/tests/test_cli_watcher.py`.
+- [x] `P04.S09` - Add start_watcher, stop_watcher, reconfigure_watcher, and get_watcher_state MCP tools reusing the watcher internals; `src/vaultspec_rag/mcp_server.py`.
+- [x] `P04.S10` - Add the server watcher subcommand group driving the daemon over the \_try_mcp_admin seam; `src/vaultspec_rag/cli.py`.
+- [x] `P04.S11` - Add integration tests for the four watcher MCP tools including reconfigure restart semantics; `src/vaultspec_rag/tests/integration/test_watcher_control.py`.
+- [x] `P04.S12` - Add CLI parity tests for the server watcher subcommands including disabled pull-only state reporting; `src/vaultspec_rag/tests/test_cli_watcher.py`.
 
 ### Phase `P05` - docs parity
 
