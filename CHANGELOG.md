@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.11](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.10...vaultspec-rag-v0.2.11) (2026-06-01)
+
+
+### Features
+
+* **service-observability:** P01 in-flight activity registry ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([bb6c898](https://github.com/wgergely/vaultspec-rag/commit/bb6c898bcc72b8f206dd094919c6581c95a64f2b))
+* **service-observability:** P02 consolidated status + P03 logs (CLI/MCP/HTTP) ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([ae33966](https://github.com/wgergely/vaultspec-rag/commit/ae33966e3035be0d98d2530f3c8138b85a9544bf))
+* **service-observability:** P04 jobs exposure + P05 metrics ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([3cc9da7](https://github.com/wgergely/vaultspec-rag/commit/3cc9da76e1c8f4b395b52e179f8bb6759433a546))
+* service-operability cluster ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)/[#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)/[#145](https://github.com/wgergely/vaultspec-rag/issues/145)) + monolith modularization ([8120747](https://github.com/wgergely/vaultspec-rag/commit/8120747f1c0b2a9dd3f2438c36e79118d78374a6))
+* **service-operability:** P01 watcher config keys ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)) ([1d4fe2c](https://github.com/wgergely/vaultspec-rag/commit/1d4fe2c0434afd5249e4946c5363fa8061c5a8d8))
+* **service-operability:** P02 wire watcher config + enable guard ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)) ([691cddb](https://github.com/wgergely/vaultspec-rag/commit/691cddb7b0e333d460f29cf2e9945a59eddacccf))
+* **service-operability:** P03 service-start watcher flags + env translation ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)) ([40d8718](https://github.com/wgergely/vaultspec-rag/commit/40d8718868480011ffe5f2c393a8d3c8bf0a7d3e))
+* **service-operability:** P04 watcher runtime control parity (CLI&lt;-&gt;MCP) ([89bdd66](https://github.com/wgergely/vaultspec-rag/commit/89bdd66a6b335c659880821fd1216bb3f5b55fd9))
+
+
+### Bug Fixes
+
+* **mcp:** restore python -m vaultspec_rag.mcp_server entry point after package split ([bf3b2ed](https://github.com/wgergely/vaultspec-rag/commit/bf3b2edd57962fda32e89848fdcd1b12c81b2d48))
+
 ## [0.2.10](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.9...vaultspec-rag-v0.2.10) (2026-05-31)
 
 
