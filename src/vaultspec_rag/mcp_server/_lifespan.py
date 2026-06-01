@@ -1,0 +1,160 @@
+"""Service lifespan and the raw ``/health`` endpoint.
+
+Split out of the original ``mcp_server.py`` monolith per the
+``2026-06-01-module-split-adr``. ``service_lifespan`` reassigns the
+process-wide ``_start_time`` / ``_SERVICE_TOKEN`` on the package
+namespace so ``health_handler`` (and tests that rebind ``_registry`` /
+``_start_time``) observe the live values through the package alias.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import os
+import time
+import uuid
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+from anyio.to_thread import run_sync as _run_in_thread
+
+import vaultspec_rag.mcp_server as _m
+
+from ..capabilities import backend_capabilities_dict
+from ._state import mcp
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+
+logger = logging.getLogger("vaultspec_rag.mcp_server")
+
+
+@asynccontextmanager
+async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
+    """Eagerly load GPU models before accepting connections.
+
+    Startup loads the shared ``EmbeddingModel`` with per-stage
+    timing logs, registers daemon-owned shutdown hooks, and starts
+    the heartbeat task.  Shutdown cancels the heartbeat, closes
+    all project stores, releases GPU memory, and unlinks
+    ``service.json``.
+
+    Args:
+        _app: The Starlette application instance (unused but
+            required by the lifespan protocol).
+
+    Yields:
+        Control to the running application.
+    """
+    _m._start_time = time.monotonic()
+    _m._shutdown_recorded = False
+    # Generate the per-process identity token before the first
+    # heartbeat tick fires (which would otherwise persist an empty
+    # token into service.json). The token round-trips through
+    # /health for CLI-side identity verification (gh #124/#125).
+    _m._SERVICE_TOKEN = uuid.uuid4().hex
+
+    t_total = time.perf_counter()
+
+    # HF cache status
+    from ..config import EnvVar
+
+    hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
+    logger.info("HF cache: %s", hf_home)
+
+    # Wire watcher lifecycle into registry so close_project() stops watchers
+    _m._registry._on_close_project = _m._stop_watcher
+
+    # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
+    t0 = time.perf_counter()
+    await _run_in_thread(_m._registry.load_model)
+    logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
+
+    logger.info("Service startup complete in %.2fs", time.perf_counter() - t_total)
+
+    # Daemon now owns end-of-life cleanup. The CLI parent created
+    # service.json; the daemon's hooks remove it on exit so a stale
+    # file never misleads ``service status``.
+    _m._install_daemon_shutdown_hooks()
+    _m._lifecycle_log("startup", pid=os.getpid())
+
+    heartbeat_task = asyncio.create_task(_m._heartbeat_loop())
+    # First heartbeat right away so a freshly started service is
+    # immediately distinguishable from a stale CLI-only write.
+    try:
+        await asyncio.to_thread(_m._heartbeat_tick_sync)
+    except Exception:
+        logger.warning(
+            "service.lifecycle event=heartbeat_initial_failed",
+            exc_info=True,
+        )
+
+    # Start the MCP session manager.  Starlette's Mount does NOT
+    # propagate lifespan to sub-apps, so the streamable_http_app's
+    # own lifespan never fires.  Running it here ensures the session
+    # manager's task group is active before the first /mcp request.
+    async with mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await heartbeat_task
+            # Cancel watchers BEFORE closing stores to prevent
+            # incremental_index() running against a closed store.
+            _m._stop_all_watchers()
+            _m._registry.close_all()
+            logger.info("Service shutdown complete")
+            _m._record_shutdown("clean")
+
+
+async def health_handler(_request: Request) -> object:
+    """Return service health as JSON.
+
+    Args:
+        _request: The incoming Starlette request.
+
+    Returns:
+        A ``JSONResponse`` with status, CUDA availability,
+        model state, connected projects, and uptime.
+    """
+    from starlette.responses import JSONResponse
+
+    try:
+        import torch
+
+        cuda = torch.cuda.is_available()
+    except ImportError as exc:
+        logger.debug("torch unavailable for /health: %s", exc)
+        cuda = False
+
+    reg_health = _m._registry.health()
+    uptime = time.monotonic() - _m._start_time if _m._start_time > 0 else 0.0
+
+    if reg_health["model_loaded"]:
+        status = "ready"
+    elif _m._start_time > 0:
+        status = "degraded"
+    else:
+        status = "error"
+
+    return JSONResponse(
+        {
+            "status": status,
+            "cuda": cuda,
+            "models_loaded": reg_health["model_loaded"],
+            "project_count": reg_health["project_count"],
+            "uptime_s": round(uptime, 2),
+            "backend_capabilities": backend_capabilities_dict(),
+            # Per-process identity token. Mirrors the value written
+            # to service.json. The CLI compares the two to detect
+            # PID-reuse and unrelated-HTTP-server-on-port collisions
+            # (gh #124, #125).
+            "service_token": _m._SERVICE_TOKEN,
+        },
+    )

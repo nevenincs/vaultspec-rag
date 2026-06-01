@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -181,16 +182,29 @@ def test_service_status_running(
 
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
+        # Write service.json BEFORE the daemon finishes starting, mirroring
+        # the production `service start` ordering (spawn -> write -> wait).
+        # The daemon's initial heartbeat tick (fired after model load, inside
+        # the lifespan) then finds the file and writes ``last_heartbeat``,
+        # so status reports "running" rather than "crashed (heartbeat stale)".
+        _write_service_status(pid, port)
         _poll_health(port)
 
-        _write_service_status(pid, port)
-
-        result = runner.invoke(
-            app,
-            ["server", "service", "status"],
-            env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
-        )
-        output = result.stdout or ""
+        # Poll status until the daemon's heartbeat lands (the initial tick
+        # races with model load); the loop heartbeat interval is 15s, so allow
+        # margin. This asserts the steady-state "running", not a startup blip.
+        deadline = time.monotonic() + 30.0
+        output = ""
+        while time.monotonic() < deadline:
+            result = runner.invoke(
+                app,
+                ["server", "service", "status"],
+                env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+            )
+            output = result.stdout or ""
+            if "running" in output.lower():
+                break
+            time.sleep(1.0)
         assert str(port) in output, f"Expected port {port} in output: {output!r}"
         assert "running" in output.lower(), f"Expected 'running' in output: {output!r}"
 

@@ -12,6 +12,25 @@ Both packages share the same workspace (`.vault/`, `.vaultspec/`) but
 operate independently: core handles structured vault CRUD and health
 checks, RAG handles semantic search and retrieval.
 
+## Auto-reindex (DO / DO NOT)
+
+The resident HTTP service runs a filesystem watcher that incrementally
+re-indexes on change. Default is **on**.
+
+- **DO NOT manually reindex during normal work.** The running service watches
+  `.vault/` docs and tracked source and re-indexes incrementally; manual
+  reindex is redundant and competes for the single-writer GPU/Qdrant path.
+- **DO use `--no-watch` (or `VAULTSPEC_RAG_WATCH_ENABLED=0`)** to make the
+  service pull-only when you want manual or externally-scheduled indexing.
+- **DO check watcher state before assuming staleness:** run
+  `vaultspec-rag server service watcher status` (or the `get_watcher_state`
+  MCP tool) instead of guessing whether the index is current.
+- **DO tune, don't disable, for noise:** raise `--watch-debounce-ms` /
+  `--watch-cooldown-s` rather than turning the watcher off. `0` on either knob
+  means "no delay", not "disabled" — only `watch_enabled=false` disables.
+- **DO reindex explicitly only** for a first-time index, after `--no-watch`, or
+  to force a clean rebuild (`reindex_*(clean=true)`).
+
 ## When to use RAG vs Core
 
 - **Use `vaultspec-rag search`** (CLI) or `search_vault`/`search_codebase`
@@ -67,7 +86,12 @@ Server management:
 server mcp start             Start the MCP server (stdio)
 server mcp stop              Stop the MCP server
 server mcp status            Show MCP server status
-server service start         Start the HTTP RAG service
+server service start [--watch/--no-watch] [--watch-debounce-ms N]
+                     [--watch-cooldown-s S]
+                             Start the HTTP RAG service. Watcher flags are
+                             translated to VAULTSPEC_RAG_WATCH* env on the
+                             daemon (it inherits only env). Unset flags leave
+                             any operator-set env untouched.
 server service stop          Stop the HTTP RAG service
 server service status        Show service status. Exit codes: 0 running,
                              3 stopped (no service.json), 4 crashed or
@@ -76,7 +100,23 @@ server service status        Show service status. Exit codes: 0 running,
                              Daemon writes last_heartbeat every 15s;
                              stale threshold 60s.
 server service warmup        Pre-load GPU models without serving
+server service projects list|evict   Inspect / evict project slots.
+server service info          Consolidated state: index counts + GPU + projects
+                             + watcher rollup (get_service_state).
+server service logs [--lines N]      Tail the service log (rotated-set aware).
+server service jobs [--limit N]      Recent + in-flight index/reindex activity.
+server service watcher status        Show watcher config + watched roots.
+server service watcher start <root>  Eagerly watch a root (no-op if disabled).
+server service watcher stop <root>   Stop watching a root (pull-only for it).
+server service watcher reconfigure <root> [--debounce-ms N] [--cooldown-s S]
+                             Restart a root's watcher with new tuning.
 ```
+
+Read-only HTTP routes on the running service (loopback-bound). `GET /health`
+is ungated; `GET /logs?lines=N` (text), `GET /jobs` (JSON), and `GET /metrics`
+(Prometheus text) require the `service_token` as a bearer
+(`Authorization: Bearer <token>`, found in `service.json` / `/health`). These
+are monitoring surfaces, not an auth boundary — keep the service on loopback.
 
 Development:
 
@@ -108,6 +148,18 @@ The `vaultspec-search-mcp` server exposes the following tools:
   Incremental by default; `clean=true` drops and rebuilds.
 - `reindex_codebase(clean, project_root)` — re-index source code.
   Incremental by default; `clean=true` drops and rebuilds.
+- `get_watcher_state(project_root?)` — report watcher config
+  (`watch_enabled`, `debounce_ms`, `cooldown_s`) and watched roots.
+- `start_watcher(root)` — eagerly start the watcher for a root
+  (no-op when `watch_enabled` is false).
+- `stop_watcher(root)` — stop watching a root (pull-only for it).
+- `reconfigure_watcher(root, debounce_ms?, cooldown_s?)` — restart a
+  root's watcher with new tuning (stop + restart).
+- `get_service_state(project_root?)` — consolidated read: per-source index
+  counts, GPU/device, project slots, and a watcher rollup.
+- `get_logs(lines?)` — tail of the service log across the rotated set.
+- `get_jobs(limit?)` — recent and in-flight index/reindex activity from the
+  in-flight registry.
 
 Resource: `vault://{doc_id}` — retrieve full vault document content by
 stem ID (e.g., `vault://adr/gpu-only-rag-stack`).
@@ -137,3 +189,8 @@ RAG-specific configuration uses the `VAULTSPEC_RAG_` prefix:
 - `VAULTSPEC_RAG_DATA_DIR` — override data directory location
 - `VAULTSPEC_RAG_PORT` — HTTP server port (default: 8766)
 - `VAULTSPEC_RAG_LOG_LEVEL` — logging verbosity
+- `VAULTSPEC_RAG_WATCH_ENABLED` — auto-reindex on/off (default: `1`; set
+  `0` for a pull-only service)
+- `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` — watcher debounce window (default: 2000)
+- `VAULTSPEC_RAG_WATCH_COOLDOWN_S` — per-source re-index cooldown
+  (default: 30)

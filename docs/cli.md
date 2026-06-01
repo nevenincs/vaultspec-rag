@@ -26,6 +26,13 @@ Unfamiliar terms in flag descriptions are defined in the [glossary](glossary.md)
 - [server service warmup](#server-service-warmup)
 - [server service projects list](#server-service-projects-list)
 - [server service projects evict](#server-service-projects-evict)
+- [server service watcher status](#server-service-watcher-status)
+- [server service watcher start](#server-service-watcher-start)
+- [server service watcher stop](#server-service-watcher-stop)
+- [server service watcher reconfigure](#server-service-watcher-reconfigure)
+- [server service info](#server-service-info)
+- [server service logs](#server-service-logs)
+- [server service jobs](#server-service-jobs)
 - [install](#install)
 - [uninstall](#uninstall)
 - [benchmark](#benchmark)
@@ -152,10 +159,17 @@ Exit codes: `0` clean shutdown; `1` startup failure.
 
 Start the background RAG service as a detached process. Spawns the MCP server on the given port, polls `/health` with exponential backoff until ready, and writes a status file to `~/.vaultspec-rag/service.json`.
 
-| Flag     | Default                          | Description                     |
-| -------- | -------------------------------- | ------------------------------- |
-| `--port` | `8766` (or `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.  |
-| `--help` | off                              | Show the help message and exit. |
+| Flag                  | Default                          | Description                                                                              |
+| --------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `--port`              | `8766` (or `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                           |
+| `--watch/--no-watch`  | unset                            | Enable/disable the auto-reindex watcher. Unset leaves `VAULTSPEC_RAG_WATCH_ENABLED` env. |
+| `--watch-debounce-ms` | unset (`2000`)                   | Watcher debounce window in milliseconds.                                                 |
+| `--watch-cooldown-s`  | unset (`30`)                     | Per-source re-index cooldown in seconds.                                                 |
+| `--help`              | off                              | Show the help message and exit.                                                          |
+
+The daemon inherits configuration only through the environment, so each set
+watcher flag is translated to its `VAULTSPEC_RAG_WATCH*` variable on the child
+process before spawn. See [automation.md](automation.md#automatic-re-indexing-the-filesystem-watcher).
 
 Exit codes: `0` service ready; `1` failure to start or health-check timeout.
 
@@ -219,6 +233,104 @@ Positional argument: `ROOT` (required) - project root to evict.
 | `--help` | off                  | Show the help message and exit.                    |
 
 Exit codes: `0` evicted or no-op; `1` service unreachable or eviction failure.
+
+## server service watcher status
+
+Show the auto-reindex watcher's configuration and the roots it is currently watching.
+
+| Flag     | Default              | Description                                               |
+| -------- | -------------------- | --------------------------------------------------------- |
+| `--port` | running service port | MCP port.                                                 |
+| `--json` | off                  | Emit one JSON envelope to stdout instead of a Rich table. |
+| `--help` | off                  | Show the help message and exit.                           |
+
+Reports `watch_enabled`, `debounce_ms`, `cooldown_s`, and the watched roots. Exit codes: `0` success; `3` service not running.
+
+## server service watcher start
+
+Eagerly start the watcher for a project root. No-op (reports `started=false`) when auto-reindex is disabled.
+
+Positional argument: `ROOT` (required) - project root to watch.
+
+| Flag     | Default              | Description                                        |
+| -------- | -------------------- | -------------------------------------------------- |
+| `--port` | running service port | MCP port.                                          |
+| `--json` | off                  | Emit one JSON envelope to stdout instead of prose. |
+| `--help` | off                  | Show the help message and exit.                    |
+
+Exit codes: `0` request handled; `3` service not running.
+
+## server service watcher stop
+
+Stop the watcher for a project root, leaving it pull-only.
+
+Positional argument: `ROOT` (required) - project root to stop watching.
+
+| Flag     | Default              | Description                                        |
+| -------- | -------------------- | -------------------------------------------------- |
+| `--port` | running service port | MCP port.                                          |
+| `--json` | off                  | Emit one JSON envelope to stdout instead of prose. |
+| `--help` | off                  | Show the help message and exit.                    |
+
+Exit codes: `0` request handled; `3` service not running.
+
+## server service watcher reconfigure
+
+Restart a root's watcher with new tuning values (debounce is fixed at watch construction, so reconfiguration is a stop-then-restart).
+
+Positional argument: `ROOT` (required) - project root to reconfigure.
+
+| Flag            | Default              | Description                                        |
+| --------------- | -------------------- | -------------------------------------------------- |
+| `--debounce-ms` | config default       | New debounce window in milliseconds.               |
+| `--cooldown-s`  | config default       | New per-source cooldown in seconds.                |
+| `--port`        | running service port | MCP port.                                          |
+| `--json`        | off                  | Emit one JSON envelope to stdout instead of prose. |
+| `--help`        | off                  | Show the help message and exit.                    |
+
+Exit codes: `0` request handled; `3` service not running.
+
+## server service info
+
+Consolidated read-only state of the running service: per-source index counts, GPU/device, active project slots, and a watcher rollup (parity with the `get_service_state` MCP tool).
+
+| Flag     | Default              | Description                                               |
+| -------- | -------------------- | --------------------------------------------------------- |
+| `--port` | running service port | MCP port.                                                 |
+| `--json` | off                  | Emit one JSON envelope to stdout instead of a Rich table. |
+| `--help` | off                  | Show the help message and exit.                           |
+
+Exit codes: `0` success; `3` service not running.
+
+## server service logs
+
+Tail the service log. The reader spans the rotated set (`service.log`, `service.log.1`, …) and is tolerant of mid-rollover races. Parity with the `get_logs` MCP tool and the read-only `GET /logs` HTTP route.
+
+| Flag      | Default              | Description                                        |
+| --------- | -------------------- | -------------------------------------------------- |
+| `--lines` | `200`                | Number of trailing lines to return.                |
+| `--port`  | running service port | MCP port.                                          |
+| `--json`  | off                  | Emit one JSON envelope to stdout instead of prose. |
+| `--help`  | off                  | Show the help message and exit.                    |
+
+Exit codes: `0` success; `3` service not running.
+
+## server service jobs
+
+Show recent and in-flight index/reindex activity from the service's in-flight registry (source, trigger, phase, timestamps). Parity with the `get_jobs` MCP tool and the read-only `GET /jobs` HTTP route.
+
+| Flag      | Default              | Description                                          |
+| --------- | -------------------- | ---------------------------------------------------- |
+| `--limit` | all                  | Cap the number of (newest-first) records returned.   |
+| `--port`  | running service port | MCP port.                                            |
+| `--json`  | off                  | Emit one JSON envelope to stdout instead of a table. |
+| `--help`  | off                  | Show the help message and exit.                      |
+
+Exit codes: `0` success; `3` service not running.
+
+## HTTP monitoring routes
+
+The running service exposes read-only HTTP routes on its loopback port. `GET /health` is ungated. `GET /logs?lines=N` (text), `GET /jobs` (JSON), and `GET /metrics` (Prometheus text) require the `service_token` as a bearer (`Authorization: Bearer <token>`); the token is in `service.json` and `/health`. These are monitoring surfaces, not an authentication boundary — keep the service loopback-bound.
 
 ## install
 
