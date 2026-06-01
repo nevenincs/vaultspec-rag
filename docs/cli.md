@@ -403,7 +403,7 @@ Exit codes: pytest's own exit code is propagated.
 
 ## MCP tools
 
-The eight tools below are exposed by both the stdio and HTTP MCP transports. Parameters match the corresponding CLI flags where the surfaces overlap. `project_root` is required in HTTP service mode and optional in stdio mode (where it defaults to `VAULTSPEC_RAG_ROOT` or the current working directory). See [mcp.md](mcp.md) for client setup.
+The fifteen tools below are exposed by both the stdio and HTTP MCP transports. Parameters match the corresponding CLI flags where the surfaces overlap. `project_root` is required in HTTP service mode and optional in stdio mode (where it defaults to `VAULTSPEC_RAG_ROOT` or the current working directory). See [mcp.md](mcp.md) for client setup.
 
 ### search_vault
 
@@ -542,6 +542,98 @@ Returns:
 
 - `evicted` (boolean): true when the slot was dropped.
 - `reason` (string): one of `forced`, `busy` (slot still has active refs), or `not_found` (no slot for that root).
+
+### get_watcher_state
+
+Report the filesystem-watcher configuration (`watch_enabled`, `debounce_ms`, `cooldown_s`) and which roots currently have a live watcher. Mirrors `server service watcher` on the CLI.
+
+| Name           | Type   | Default | Description                            |
+| -------------- | ------ | ------- | -------------------------------------- |
+| `project_root` | string | `null`  | Workspace root; required in HTTP mode. |
+
+Returns:
+
+- `watch_enabled`: whether auto-reindex is enabled.
+- `debounce_ms`: debounce window in milliseconds.
+- `cooldown_s`: per-source cooldown in seconds.
+- `roots`: list of roots with a live watcher.
+
+### start_watcher
+
+Eagerly start the filesystem watcher for a root. No-op (reports `started=false`) when auto-reindex is disabled. Mirrors `server service watcher start` on the CLI.
+
+| Name   | Type   | Default  | Description                                    |
+| ------ | ------ | -------- | ---------------------------------------------- |
+| `root` | string | required | Workspace root directory; resolved internally. |
+
+Returns:
+
+- `started` (boolean): true when the watcher was started; false when auto-reindex is disabled.
+
+### stop_watcher
+
+Stop the filesystem watcher for a root, leaving that root pull-only. Mirrors `server service watcher stop` on the CLI.
+
+| Name   | Type   | Default  | Description                                    |
+| ------ | ------ | -------- | ---------------------------------------------- |
+| `root` | string | required | Workspace root directory; resolved internally. |
+
+Returns:
+
+- `stopped` (boolean): true when the watcher was stopped.
+
+### reconfigure_watcher
+
+Restart a root's filesystem watcher with new tuning (stop, then restart). Mirrors `server service watcher reconfigure` on the CLI.
+
+| Name          | Type    | Default  | Description                                    |
+| ------------- | ------- | -------- | ---------------------------------------------- |
+| `root`        | string  | required | Workspace root directory; resolved internally. |
+| `debounce_ms` | integer | `null`   | New debounce window in milliseconds.           |
+| `cooldown_s`  | number  | `null`   | New per-source cooldown in seconds.            |
+
+Returns:
+
+- `restarted` (boolean): true when the watcher was restarted with the new tuning.
+
+### get_service_state
+
+Consolidated read of the running service: per-source index counts, GPU/device info, project slots, and a watcher rollup. Mirrors `server service info` on the CLI.
+
+| Name           | Type   | Default | Description                            |
+| -------------- | ------ | ------- | -------------------------------------- |
+| `project_root` | string | `null`  | Workspace root; required in HTTP mode. |
+
+Returns:
+
+- `index`: per-source index counts (vault and codebase).
+- `device`: GPU/device information.
+- `projects`: active project slot snapshots.
+- `watcher`: watcher configuration and live-root rollup.
+
+### get_logs
+
+Return the tail of the service log across the rotated log set. Mirrors `server service logs` on the CLI.
+
+| Name    | Type    | Default | Description                             |
+| ------- | ------- | ------- | --------------------------------------- |
+| `lines` | integer | `200`   | Number of trailing log lines to return. |
+
+Returns:
+
+- `lines`: list of trailing log lines across the rotated set.
+
+### get_jobs
+
+Return recent and in-flight index/reindex activity from the service's in-flight registry. Mirrors `server service jobs` on the CLI.
+
+| Name    | Type    | Default | Description                       |
+| ------- | ------- | ------- | --------------------------------- |
+| `limit` | integer | `null`  | Maximum number of jobs to return. |
+
+Returns:
+
+- `jobs`: list of recent and in-flight index/reindex job records.
 
 ## Need help?
 

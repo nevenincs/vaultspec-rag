@@ -31,7 +31,7 @@ uv run vaultspec-rag --version
 You should see:
 
 ```text
-vaultspec-rag v0.2.9
+vaultspec-rag v0.2.11
 ```
 
 ## Step 2: configure the GPU build
