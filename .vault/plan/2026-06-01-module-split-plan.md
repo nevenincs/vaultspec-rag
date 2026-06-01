@@ -30,7 +30,7 @@ plus ruff, ruff-format, and ty passing unedited.
 
 Split commands.py into a commands/ package re-exporting the verbatim public surface; lowest-risk first to validate the pattern.
 
-- [ ] `P01.S01` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/commands.py`.
+- [x] `P01.S01` - Split into a package re-exporting the verbatim public surface, then verify full suite + ruff + ty green; `src/vaultspec_rag/commands.py`.
 
 ### Phase `P02` - split torch_config.py
 
