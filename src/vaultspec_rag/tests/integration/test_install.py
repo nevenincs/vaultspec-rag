@@ -238,7 +238,18 @@ class TestUserContentPreservation:
         user_rule.write_text("---\nname: custom\n---\n# user rule\n", encoding="utf-8")
 
         uninstall_run(path=installed_workspace, force=True)
-        assert user_rule.is_file()
+        # The user rule survives uninstall (rag removes only its two named
+        # files). vaultspec-core's sync migrates flat custom rules under
+        # rules/project/, so accept either the original or migrated location.
+        migrated_rule = (
+            installed_workspace
+            / ".vaultspec"
+            / "rules"
+            / "rules"
+            / "project"
+            / "my-custom-rule.md"
+        )
+        assert user_rule.is_file() or migrated_rule.is_file()
 
 
 class TestSymmetricRoundTrip:
