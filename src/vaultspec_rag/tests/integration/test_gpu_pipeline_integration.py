@@ -102,6 +102,8 @@ class TestPipelineParity:
             assert set(parallel_store.get_all_code_ids()) == set(
                 serial_store.get_all_code_ids(),
             )
+            # Content-hash metadata must match too (ADR parity constraint).
+            assert parallel_ix._load_meta() == serial_ix._load_meta()
             assert s_res.added > 0
         finally:
             serial_store.close()
@@ -129,7 +131,14 @@ class TestConsumerFailurePropagates:
         )
         try:
             ix = CodebaseIndexer(root, embedding_model, bad_store)
-            with _Workers(4), pytest.raises(Exception):  # noqa: B017 - any real failure
+            with _Workers(4), pytest.raises(Exception) as excinfo:
                 ix.full_index(clean=True, reporter=NullProgressReporter())
+            # Guard against passing for the wrong reason (a test-code bug):
+            # the failure must be a genuine runtime/upsert error, not an
+            # AssertionError / NameError / TypeError from the test itself.
+            assert not isinstance(
+                excinfo.value,
+                AssertionError | NameError | AttributeError | TypeError,
+            ), excinfo.value
         finally:
             bad_store.close()

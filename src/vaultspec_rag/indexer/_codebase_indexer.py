@@ -45,6 +45,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on how long pipeline shutdown waits for the GPU consumer thread
+# to drain its final batch and terminate. Generous enough for any healthy
+# final encode (a couple of slices) yet finite, so a wedged CUDA/Qdrant call
+# escalates to a raised error instead of hanging the producer and holding the
+# indexer's writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
+_CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
+
 
 class CodebaseIndexer:
     """Orchestrates source code indexing into the vector store.
@@ -590,6 +597,7 @@ class CodebaseIndexer:
 
             broke = False
             consumer_died = False
+            consumer_hung = False
             paths_iter = iter(paths)
             try:
                 with ProcessPoolExecutor(
@@ -636,12 +644,36 @@ class CodebaseIndexer:
             except BrokenProcessPool:
                 broke = True
             finally:
-                # End-of-stream: only a live consumer needs the sentinel (a
-                # dead one has already exited). A live consumer keeps draining,
-                # so this put cannot deadlock on a full queue.
-                if consumer.is_alive():
-                    chunk_q.put(None)
-                consumer.join()
+                # Shut the consumer down without ever blocking unbounded on a
+                # wedged consumer (a CUDA/Qdrant call that never returns), which
+                # would otherwise hang the producer and hold the indexer's
+                # writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
+                # Send the end-of-stream sentinel only while the consumer is
+                # alive and draining, and bound every wait by a single deadline.
+                deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
+                while consumer.is_alive():
+                    try:
+                        chunk_q.put(None, timeout=0.5)
+                        break
+                    except queue.Full:
+                        if time.monotonic() >= deadline:
+                            break
+                consumer.join(timeout=max(0.0, deadline - time.monotonic()))
+                consumer_hung = consumer.is_alive()
+
+            # A wedged consumer must abort the run, not hang it: the daemon
+            # thread will not block interpreter exit, but the writer lock must
+            # be released. Raise outside the finally so an in-flight exception
+            # is never masked.
+            if consumer_hung:
+                logger.error(
+                    "GPU consumer thread did not terminate within %.0fs; "
+                    "aborting (a CUDA or Qdrant call may be wedged)",
+                    _CONSUMER_SHUTDOWN_TIMEOUT_S,
+                )
+                raise RuntimeError(
+                    "codebase index GPU consumer thread did not terminate",
+                )
 
             # A consumer-thread failure (GPU OOM, Qdrant error) is the real
             # cause; surface it in the main thread rather than hanging.
