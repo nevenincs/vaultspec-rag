@@ -14,6 +14,8 @@ import logging
 import multiprocessing
 import os
 import pathlib
+import queue
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
 from concurrent.futures.process import BrokenProcessPool
@@ -33,7 +35,6 @@ from ._streaming import (
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
-    import threading
     from collections.abc import Iterable
 
     import pathspec
@@ -469,29 +470,30 @@ class CodebaseIndexer:
         flush_slices = max(1, int(cfg.index_cache_flush_slices))
 
         new_ids: set[str] = set()
-        accumulator: list[CodeChunk] = []
         meta: dict[str, str] = {}
         total = 0
         advanced = 0
-        slice_count = 0
 
-        def _accept(res: _chunk_worker.FileChunkResult | None) -> None:
-            if res is None:
-                return
-            meta[res.rel_path] = res.content_hash
-            accumulator.extend(res.chunks)
+        def _encode_accumulated(
+            acc: list[CodeChunk],
+            state: list[int],
+            *,
+            force: bool,
+        ) -> None:
+            """Encode + upsert full ``slice_size`` batches drained from ``acc``.
 
-        def _drain(force: bool = False) -> None:
-            nonlocal total, slice_count
-            while len(accumulator) >= slice_size or (force and accumulator):
-                take = accumulator[:slice_size]
-                del accumulator[:slice_size]
-                slice_count += 1
-                # Throttle the CUDA cache flush (#155 P03): flush every
-                # ``flush_slices`` slices, and always on the final force-drain
-                # slice so the allocator is left clean after the run.
-                is_final = force and not accumulator
-                release = is_final or slice_count % flush_slices == 0
+            ``state[0]`` is the running slice counter used to throttle the CUDA
+            cache flush. Shared by the serial path and the GPU consumer thread;
+            both mutate the enclosing ``new_ids`` / ``total`` (read only after
+            the consumer is joined, so there is no cross-thread race).
+            """
+            nonlocal total
+            while len(acc) >= slice_size or (force and acc):
+                take = acc[:slice_size]
+                del acc[:slice_size]
+                state[0] += 1
+                is_final = force and not acc
+                release = is_final or state[0] % flush_slices == 0
                 encode_and_upsert_code_slice(
                     take,
                     model=self.model,
@@ -504,16 +506,22 @@ class CodebaseIndexer:
                 total += len(take)
 
         def _run_serial() -> None:
+            """Single-threaded chunk + encode (byte-gate path and fallback)."""
             nonlocal advanced
+            acc: list[CodeChunk] = []
+            state = [0]
             for p in paths:
                 try:
-                    _accept(_chunk_worker.chunk_and_hash_file(p, self.root_dir))
+                    res = _chunk_worker.chunk_and_hash_file(p, self.root_dir)
+                    if res is not None:
+                        meta[res.rel_path] = res.content_hash
+                        acc.extend(res.chunks)
                 except Exception:
                     logger.warning("Failed to chunk %s", p, exc_info=True)
                 advanced += 1
                 reporter.advance()
-                _drain()
-            _drain(force=True)
+                _encode_accumulated(acc, state, force=False)
+            _encode_accumulated(acc, state, force=True)
 
         reporter.phase_start("chunk + embed", len(paths))
         try:
@@ -527,6 +535,61 @@ class CodebaseIndexer:
 
             ctx = multiprocessing.get_context("spawn")
             window = max(2 * slice_size, 8 * workers)
+
+            # Decoupled producer/consumer (#155 index-gpu-pipeline ADR): a
+            # single dedicated GPU consumer thread drains a bounded queue while
+            # this thread (the producer) drains the spawn pool and feeds it.
+            # torch releases the GIL during async CUDA, so the producer refills
+            # while the GPU runs — keeping the GPU saturated instead of idling
+            # during pool bookkeeping. The queue's maxsize is the sole
+            # backpressure + memory bound. The consumer owns the gpu_lock.
+            # ``None`` is the shutdown sentinel: it is never a legitimate
+            # payload because only non-empty chunk lists are ever enqueued.
+            chunk_q: queue.Queue[list[CodeChunk] | None] = queue.Queue(
+                maxsize=window,
+            )
+            consumer_exc: list[BaseException] = []
+
+            def _consumer() -> None:
+                acc: list[CodeChunk] = []
+                state = [0]
+                try:
+                    while True:
+                        item = chunk_q.get()
+                        if item is None:
+                            break
+                        acc.extend(item)
+                        _encode_accumulated(acc, state, force=False)
+                    _encode_accumulated(acc, state, force=True)
+                except BaseException as exc:
+                    consumer_exc.append(exc)
+                    # Drain so a producer blocked on a full queue wakes up.
+                    try:
+                        while True:
+                            chunk_q.get_nowait()
+                    except queue.Empty:
+                        pass
+
+            consumer = threading.Thread(
+                target=_consumer,
+                name="rag-gpu-consumer",
+                daemon=True,
+            )
+            consumer.start()
+
+            def _put(chunks: list[CodeChunk]) -> bool:
+                """Enqueue chunks; return False if the consumer has died."""
+                while True:
+                    if consumer_exc or not consumer.is_alive():
+                        return False
+                    try:
+                        chunk_q.put(chunks, timeout=0.5)
+                        return True
+                    except queue.Full:
+                        continue
+
+            broke = False
+            consumer_died = False
             paths_iter = iter(paths)
             try:
                 with ProcessPoolExecutor(
@@ -541,11 +604,11 @@ class CodebaseIndexer:
                         )
                         for p in itertools.islice(paths_iter, window)
                     }
-                    while pending:
+                    while pending and not consumer_died:
                         done, pending = wait(pending, return_when=FIRST_COMPLETED)
                         for fut in done:
                             try:
-                                _accept(fut.result())
+                                res = fut.result()
                             except BrokenProcessPool:
                                 raise
                             except Exception:
@@ -553,6 +616,12 @@ class CodebaseIndexer:
                                     "Worker failed to chunk a file",
                                     exc_info=True,
                                 )
+                                res = None
+                            if res is not None:
+                                meta[res.rel_path] = res.content_hash
+                                if res.chunks and not _put(res.chunks):
+                                    consumer_died = True
+                                    break
                             advanced += 1
                             reporter.advance()
                             nxt = next(paths_iter, None)
@@ -564,9 +633,22 @@ class CodebaseIndexer:
                                         self.root_dir,
                                     )
                                 )
-                        _drain()
-                    _drain(force=True)
             except BrokenProcessPool:
+                broke = True
+            finally:
+                # End-of-stream: only a live consumer needs the sentinel (a
+                # dead one has already exited). A live consumer keeps draining,
+                # so this put cannot deadlock on a full queue.
+                if consumer.is_alive():
+                    chunk_q.put(None)
+                consumer.join()
+
+            # A consumer-thread failure (GPU OOM, Qdrant error) is the real
+            # cause; surface it in the main thread rather than hanging.
+            if consumer_exc:
+                raise consumer_exc[0]
+
+            if broke:
                 if advanced or total:
                     logger.error(
                         "Chunk process pool broke after %d files (%d chunks "
@@ -575,7 +657,9 @@ class CodebaseIndexer:
                         advanced,
                         total,
                     )
-                    raise
+                    raise BrokenProcessPool(
+                        "codebase chunk process pool broke mid-run",
+                    )
                 logger.warning(
                     "Chunk process pool could not start; "
                     "running chunk + embed serially",
