@@ -48,6 +48,9 @@ class EnvVar(StrEnum):
     EMBEDDING_CODE_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE"
     INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
     INDEX_PARALLEL_MIN_BYTES = "VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES"
+    # Dense-encoder backend selection (#155 onnx-encoder-backend ADR).
+    DENSE_BACKEND = "VAULTSPEC_RAG_DENSE_BACKEND"
+    DENSE_ONNX_FILE = "VAULTSPEC_RAG_DENSE_ONNX_FILE"
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     WATCH_ENABLED = "VAULTSPEC_RAG_WATCH_ENABLED"
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
@@ -85,6 +88,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_code_encode_batch_size": EnvVar.EMBEDDING_CODE_ENCODE_BATCH_SIZE,
     "index_cache_flush_slices": EnvVar.INDEX_CACHE_FLUSH_SLICES,
     "index_parallel_min_bytes": EnvVar.INDEX_PARALLEL_MIN_BYTES,
+    "dense_backend": EnvVar.DENSE_BACKEND,
+    "dense_onnx_file": EnvVar.DENSE_ONNX_FILE,
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
@@ -168,6 +173,13 @@ class VaultSpecConfigWrapper:
         # gate. 8 MiB sits comfortably above the measured serial/parallel
         # crossover while still parallelising any large codebase.
         "index_parallel_min_bytes": 8 * 1024 * 1024,
+        # Dense-encoder backend (#155 onnx-encoder-backend ADR). "torch" is the
+        # default and only validated path on this CUDA-13 build; "onnx" is
+        # experimental and opt-in (requires sentence-transformers[onnx-gpu] in
+        # an onnxruntime-compatible CUDA environment) and degrades to torch on
+        # any failure. ``dense_onnx_file`` is the cached O4 model relative path.
+        "dense_backend": "torch",
+        "dense_onnx_file": "onnx/model_O4.onnx",
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_model": "naver/splade-v3",

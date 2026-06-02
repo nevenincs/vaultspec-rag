@@ -17,6 +17,7 @@ from .config import EnvVar
 
 if TYPE_CHECKING:
     import numpy as np
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,70 @@ class EmbeddingModel:
 
         return get_config().max_embed_chars
 
+    @staticmethod
+    def _load_dense_model(
+        dense_name: str,
+        model_kwargs: dict,
+        cfg: object,
+    ) -> SentenceTransformer:
+        """Construct the dense SentenceTransformer for the configured backend.
+
+        The default backend is ``torch``. When ``dense_backend == "onnx"`` the
+        model is loaded with the ONNX backend on ``CUDAExecutionProvider`` using
+        the cached O4 file (``dense_onnx_file``). Any failure — missing
+        ``optimum`` / ``onnxruntime-gpu``, export error, or a GPU provider that
+        cannot load (e.g. the onnxruntime CUDA-12 vs torch CUDA-13 mismatch) —
+        logs a warning and falls back to the torch construction, so a
+        misconfigured backend never breaks indexing or search (rule
+        ``embedding-backend-falls-back-to-torch``; see ADR
+        ``2026-06-02-onnx-encoder-backend``). The ONNX path is experimental and
+        opt-in: selecting it requires ``sentence-transformers[onnx-gpu]`` in an
+        onnxruntime-compatible CUDA environment.
+        """
+        from sentence_transformers import SentenceTransformer
+
+        backend = str(getattr(cfg, "dense_backend", "torch") or "torch").lower()
+        if backend == "onnx":
+            onnx_file = str(getattr(cfg, "dense_onnx_file", "onnx/model_O4.onnx"))
+            try:
+                try:
+                    import importlib
+
+                    # Pull CUDA libs from any nvidia-*-cu* site-packages so the
+                    # CUDA provider can load even when torch ships a different
+                    # CUDA minor (best-effort; safe no-op on older onnxruntime).
+                    # Dynamic import: onnxruntime is an optional, operator-
+                    # provided dependency, not a project requirement.
+                    importlib.import_module("onnxruntime").preload_dlls()
+                except Exception as exc:  # onnxruntime optional / preload varies
+                    logger.debug("onnxruntime preload skipped: %s", exc)
+                model = SentenceTransformer(
+                    dense_name,
+                    backend="onnx",
+                    model_kwargs={
+                        "provider": "CUDAExecutionProvider",
+                        "file_name": onnx_file,
+                    },
+                    processor_kwargs={"padding_side": "left"},
+                )
+            except Exception:
+                logger.warning(
+                    "ONNX dense backend unavailable (file=%s); falling back to "
+                    "the torch backend. Install sentence-transformers[onnx-gpu] "
+                    "in an onnxruntime-compatible CUDA environment to enable it.",
+                    onnx_file,
+                    exc_info=True,
+                )
+            else:
+                logger.info("Dense model loaded via ONNX backend (%s)", onnx_file)
+                return model
+
+        return SentenceTransformer(
+            dense_name,
+            model_kwargs=model_kwargs,
+            processor_kwargs={"padding_side": "left"},
+        )
+
     def __init__(self, model_name: str | None = None) -> None:
         """Load dense and sparse models onto GPU.
 
@@ -200,7 +265,7 @@ class EmbeddingModel:
         _check_rag_deps()
 
         import torch
-        from sentence_transformers import SentenceTransformer, SparseEncoder
+        from sentence_transformers import SparseEncoder
 
         from .config import get_config
 
@@ -235,11 +300,7 @@ class EmbeddingModel:
             logger.info("flash_attention_2 not available, using default attention")
 
         t0 = time.perf_counter()
-        self._dense_model = SentenceTransformer(
-            dense_name,
-            model_kwargs=model_kwargs,
-            processor_kwargs={"padding_side": "left"},
-        )
+        self._dense_model = self._load_dense_model(dense_name, model_kwargs, cfg)
         # Cap the model's advertised max sequence length so the
         # processor truncates aggressively and the model never
         # allocates attention buffers for the 32 k context window.
