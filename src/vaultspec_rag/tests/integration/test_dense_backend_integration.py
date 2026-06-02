@@ -9,6 +9,7 @@ is built on the GPU.
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -19,7 +20,7 @@ from vaultspec_rag.config import EnvVar, reset_config
 @pytest.mark.integration
 class TestDenseBackendFallback:
     @pytest.mark.timeout(300)
-    def test_onnx_backend_falls_back_to_torch(self) -> None:
+    def test_onnx_backend_falls_back_to_torch(self, caplog) -> None:
         from vaultspec_rag import EmbeddingModel
 
         prev = os.environ.get(EnvVar.DENSE_BACKEND.value)
@@ -28,10 +29,16 @@ class TestDenseBackendFallback:
         try:
             # optimum / onnxruntime-gpu are not project deps, so the ONNX
             # construction fails and the loader must degrade to torch.
-            model = EmbeddingModel()
+            with caplog.at_level(logging.WARNING, logger="vaultspec_rag.embeddings"):
+                model = EmbeddingModel()
             vecs = model.encode_documents(["def f(x):\n    return x + 1\n"])
             assert vecs.shape[0] == 1
             assert vecs.shape[1] == model.dimension
+            # Pin the test to the fallback path: a future ONNX dep must not
+            # silently convert this into a happy-path test (review M1).
+            assert any(
+                "ONNX dense backend unavailable" in r.message for r in caplog.records
+            ), "expected the ONNX->torch fallback warning"
         finally:
             if prev is None:
                 os.environ.pop(EnvVar.DENSE_BACKEND.value, None)

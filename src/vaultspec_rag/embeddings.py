@@ -190,7 +190,7 @@ class EmbeddingModel:
     @staticmethod
     def _load_dense_model(
         dense_name: str,
-        model_kwargs: dict,
+        model_kwargs: dict[str, object],
         cfg: object,
     ) -> SentenceTransformer:
         """Construct the dense SentenceTransformer for the configured backend.
