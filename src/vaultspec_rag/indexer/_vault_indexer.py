@@ -24,6 +24,7 @@ from ._vault_prep import IndexResult, prepare_document
 if TYPE_CHECKING:
     import pathlib
     import threading
+    from collections.abc import Iterable
 
     from ..embeddings import EmbeddingModel
     from ..progress import ProgressReporter
@@ -273,6 +274,7 @@ class VaultIndexer:
         self,
         *,
         reporter: ProgressReporter,
+        changed_paths: Iterable[pathlib.Path] | None = None,
     ) -> IndexResult:
         """Incremental re-index serialized through the writer lock.
 
@@ -280,14 +282,27 @@ class VaultIndexer:
         to :meth:`_incremental_index_locked`. Serializes against
         concurrent ``full_index`` / ``incremental_index`` callers on
         the same indexer (#68 audit F6.6).
+
+        Args:
+            reporter: Required progress reporter.
+            changed_paths: When provided, only the given filesystem paths
+                are reconciled (scoped reindex). Work then becomes
+                proportional to the change set rather than the whole vault
+                (#151). When ``None`` the method keeps its full-scan
+                semantics, so first-run, explicit, and ``clean`` callers
+                are unchanged.
         """
         with self._writer_lock:
-            return self._incremental_index_locked(reporter=reporter)
+            return self._incremental_index_locked(
+                reporter=reporter,
+                changed_paths=changed_paths,
+            )
 
     def _incremental_index_locked(
         self,
         *,
         reporter: ProgressReporter,
+        changed_paths: Iterable[pathlib.Path] | None = None,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`.
 
@@ -296,6 +311,9 @@ class VaultIndexer:
 
         Args:
             reporter: Required progress reporter.
+            changed_paths: When provided, delegates to
+                :meth:`_scoped_incremental_locked` so only the named paths
+                are reconciled. When ``None`` the full-vault scan below runs.
 
         Returns:
             An ``IndexResult`` with counts for newly added, updated, and
@@ -304,6 +322,12 @@ class VaultIndexer:
         Raises:
             OSError: If vault files cannot be read or hashed.
         """
+        if changed_paths is not None:
+            return self._scoped_incremental_locked(
+                changed_paths=changed_paths,
+                reporter=reporter,
+            )
+
         from ..config import get_config
 
         start = time.time()
@@ -406,6 +430,151 @@ class VaultIndexer:
             added=len(new_ids),
             updated=len(modified_ids),
             removed=len(deleted_ids),
+            duration_ms=duration_ms,
+            device=self.model.device,
+        )
+
+    def _vault_doc_id(
+        self,
+        path: pathlib.Path,
+        docs_dir: pathlib.Path,
+    ) -> str | None:
+        """Resolve a filesystem path to its vault document id.
+
+        Mirrors the id scheme used by the full incremental scan: the path
+        relative to ``docs_dir`` with its extension stripped.
+
+        Args:
+            path: A filesystem path (need not exist — pure-path math only).
+            docs_dir: The vault documents root (``root_dir / docs_dir``).
+
+        Returns:
+            The document id, or ``None`` when ``path`` is not under
+            ``docs_dir``.
+        """
+        try:
+            rel = str(path.relative_to(docs_dir)).replace("\\", "/")
+        except ValueError:
+            return None
+        return rel.rsplit(".", 1)[0] if "." in rel else rel
+
+    def _scoped_incremental_locked(
+        self,
+        *,
+        changed_paths: Iterable[pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Reconcile only ``changed_paths`` against the index (#151).
+
+        Resolves each changed path to a vault document id, re-embeds the
+        added/modified docs, deletes vanished ones, and persists a partial
+        read-modify-write of the hash metadata. Work is proportional to the
+        change set, not the vault size.
+
+        Args:
+            changed_paths: Filesystem paths reported as changed.
+            reporter: Required progress reporter.
+
+        Returns:
+            An ``IndexResult`` with added/updated/removed counts for the
+            reconciled subset and the post-reconcile total document count.
+        """
+        from ..config import get_config
+
+        start = time.time()
+        slice_size = max(1, get_config().embedding_batch_size)
+        docs_dir = self.root_dir / get_config().docs_dir
+        prev_meta = self._load_meta()
+
+        reporter.phase_start("scan changed", None)
+        to_hash: dict[str, pathlib.Path] = {}
+        delete_ids: set[str] = set()
+        for path in changed_paths:
+            doc_id = self._vault_doc_id(path, docs_dir)
+            if doc_id is None:
+                continue
+            if path.is_file() and get_doc_type(path, self.root_dir) is not None:
+                to_hash[doc_id] = path
+            elif doc_id in prev_meta:
+                # Previously indexed but now gone or no longer a recognised
+                # vault document — reconcile it out of the index.
+                delete_ids.add(doc_id)
+        reporter.phase_end()
+
+        reporter.phase_start("hash documents", len(to_hash))
+        changed_hashes: dict[str, str] = {}
+        for doc_id, path in to_hash.items():
+            try:
+                with open(path, "rb") as f:
+                    changed_hashes[doc_id] = hashlib.file_digest(
+                        f,
+                        "blake2b",
+                    ).hexdigest()
+            except OSError:
+                logger.warning("Cannot hash file, skipping: %s", doc_id)
+            reporter.advance()
+        reporter.phase_end()
+
+        new_ids = {d for d in changed_hashes if d not in prev_meta}
+        modified_ids = {
+            d
+            for d in changed_hashes
+            if d in prev_meta and changed_hashes[d] != prev_meta.get(d)
+        }
+        to_index_ids = new_ids | modified_ids
+
+        docs_to_index: list[VaultDocument] = []
+        reporter.phase_start("parse documents", len(to_index_ids))
+        if to_index_ids:
+            paths_to_index = [to_hash[d] for d in to_index_ids]
+            with ThreadPoolExecutor() as pool:
+                for doc in pool.map(
+                    lambda p: prepare_document(p, self.root_dir),
+                    paths_to_index,
+                ):
+                    if doc is not None:
+                        docs_to_index.append(doc)
+                    reporter.advance()
+        reporter.phase_end()
+
+        if docs_to_index:
+            _stream_encode_and_upsert_vault(
+                docs=docs_to_index,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+            )
+        else:
+            reporter.phase_start("embed + upsert documents", 0)
+            reporter.phase_end()
+
+        reporter.phase_start("delete removed", len(delete_ids))
+        if delete_ids:
+            self.store.delete_documents(list(delete_ids))
+            reporter.advance(len(delete_ids))
+        reporter.phase_end()
+
+        # Partial read-modify-write: preserve every unchanged entry, refresh
+        # the changed hashes, and drop the deleted ids. Never recompute the
+        # whole map (that is what the full scan is for).
+        new_meta = dict(prev_meta)
+        new_meta.update(changed_hashes)
+        for doc_id in delete_ids:
+            new_meta.pop(doc_id, None)
+        reporter.phase_start("write metadata", 1)
+        self._write_meta(new_meta)
+        reporter.advance(1)
+        reporter.phase_end()
+
+        total = self.store.count()
+        duration_ms = int((time.time() - start) * 1000)
+        return IndexResult(
+            total=total,
+            added=len(new_ids),
+            updated=len(modified_ids),
+            removed=len(delete_ids),
             duration_ms=duration_ms,
             device=self.model.device,
         )

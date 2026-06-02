@@ -160,6 +160,14 @@ async def watch_and_reindex(
     _last_vault_index: float = 0.0
     _last_code_index: float = 0.0
 
+    # Paths observed but not yet reindexed (suppressed by cooldown, or
+    # dropped by a failed run). A scoped reindex only processes the paths it
+    # is handed, so — unlike the former full rescan, which re-discovered
+    # everything each run — these must be carried forward and merged into the
+    # next run or the edits would be lost (#151).
+    pending_vault: set[Path] = set()
+    pending_code: set[Path] = set()
+
     async for changes in awatch(
         root_dir,
         debounce=debounce,
@@ -169,38 +177,42 @@ async def watch_and_reindex(
             or _is_code_change(Path(path), root_dir, vault_dir)
         ),
     ):
-        vault_changed = False
-        code_changed = False
-
         for change_type, path_str in changes:
             path = Path(path_str)
             if change_type in (Change.added, Change.modified, Change.deleted):
                 if _is_vault_change(path, vault_dir):
-                    vault_changed = True
+                    pending_vault.add(path)
                 elif _is_code_change(path, root_dir, vault_dir):
-                    code_changed = True
+                    pending_code.add(path)
 
         now = time.monotonic()
 
-        if vault_changed:
+        if pending_vault:
             if now - _last_vault_index < cooldown:
                 logger.debug(
-                    "Vault re-index suppressed: %.0fs remaining in cooldown",
+                    "Vault re-index suppressed: %.0fs remaining in cooldown "
+                    "(%d path(s) pending)",
                     cooldown - (now - _last_vault_index),
+                    len(pending_vault),
                 )
             else:
                 logger.info(
-                    "Vault changes detected, triggering incremental re-index...",
+                    "Vault changes detected (%d path(s)), triggering scoped "
+                    "re-index...",
+                    len(pending_vault),
                 )
+                batch = frozenset(pending_vault)
                 job_id = _jobs.record_start("vault", "watcher")
                 try:
                     result = await _run_in_thread(
-                        lambda: vault_indexer.incremental_index(
-                            reporter=NullProgressReporter()
+                        lambda paths=batch: vault_indexer.incremental_index(
+                            reporter=NullProgressReporter(),
+                            changed_paths=paths,
                         ),
                     )
                     graph_cache.invalidate()
                     _last_vault_index = time.monotonic()
+                    pending_vault = set()
                     _jobs.record_finish(
                         job_id,
                         result=(
@@ -216,27 +228,34 @@ async def watch_and_reindex(
                         result.duration_ms,
                     )
                 except Exception as exc:
+                    # Keep pending_vault so the failed batch retries next run.
                     _jobs.record_finish(job_id, error=str(exc))
                     logger.exception("Vault re-index failed")
 
-        if code_changed:
+        if pending_code:
             if now - _last_code_index < cooldown:
                 logger.debug(
-                    "Code re-index suppressed: %.0fs remaining in cooldown",
+                    "Code re-index suppressed: %.0fs remaining in cooldown "
+                    "(%d path(s) pending)",
                     cooldown - (now - _last_code_index),
+                    len(pending_code),
                 )
             else:
                 logger.info(
-                    "Code changes detected, triggering incremental re-index...",
+                    "Code changes detected (%d path(s)), triggering scoped re-index...",
+                    len(pending_code),
                 )
+                batch = frozenset(pending_code)
                 job_id = _jobs.record_start("code", "watcher")
                 try:
                     result = await _run_in_thread(
-                        lambda: code_indexer.incremental_index(
-                            reporter=NullProgressReporter()
+                        lambda paths=batch: code_indexer.incremental_index(
+                            reporter=NullProgressReporter(),
+                            changed_paths=paths,
                         ),
                     )
                     _last_code_index = time.monotonic()
+                    pending_code = set()
                     _jobs.record_finish(
                         job_id,
                         result=(
@@ -252,6 +271,7 @@ async def watch_and_reindex(
                         result.duration_ms,
                     )
                 except Exception as exc:
+                    # Keep pending_code so the failed batch retries next run.
                     _jobs.record_finish(job_id, error=str(exc))
                     logger.exception("Code re-index failed")
 
