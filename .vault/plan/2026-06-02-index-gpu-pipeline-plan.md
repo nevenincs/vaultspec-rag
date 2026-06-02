@@ -15,16 +15,16 @@ related:
 
 Replace the inline encode with a dedicated GPU consumer thread draining a bounded queue so the GPU stays saturated while CPU workers chunk.
 
-- [ ] `P01.S01` - Add a bounded-queue feeder plus a single dedicated GPU consumer thread that owns the gpu_lock and runs dense then sparse encoding, replacing the inline drain; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P01.S02` - Shut the consumer down with a sentinel and re-raise any consumer-thread exception in the main thread, and move stale-purge and metadata accounting after the join; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P01.S03` - Preserve the serial byte-gate path and the BrokenProcessPool fallback as the single-threaded inline form under the two-thread structure; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S01` - Add a bounded-queue feeder plus a single dedicated GPU consumer thread that owns the gpu_lock and runs dense then sparse encoding, replacing the inline drain; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S02` - Shut the consumer down with a sentinel and re-raise any consumer-thread exception in the main thread, and move stale-purge and metadata accounting after the join; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S03` - Preserve the serial byte-gate path and the BrokenProcessPool fallback as the single-threaded inline form under the two-thread structure; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P02` - verify
 
 Prove parity and no regression on real GPU.
 
-- [ ] `P02.S04` - Add a real-GPU test asserting consumer-thread pipeline chunk-id and metadata parity with the serial path and that consumer exceptions propagate; `src/vaultspec_rag/tests/integration/`.
-- [ ] `P02.S05` - Validate no regression on the real codebase end to end with the resident service stopped; `src/vaultspec_rag/tests/benchmarks/`.
+- [x] `P02.S04` - Add a real-GPU test asserting consumer-thread pipeline chunk-id and metadata parity with the serial path and that consumer exceptions propagate; `src/vaultspec_rag/tests/integration/`.
+- [x] `P02.S05` - Validate no regression on the real codebase end to end with the resident service stopped; `src/vaultspec_rag/tests/benchmarks/`.
 
 ## Description
 
