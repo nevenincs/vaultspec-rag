@@ -74,6 +74,37 @@ architectural decision does not hinge on the exact balance — the dedicated con
 net-positive in both regimes (saturates the GPU when encode dominates, idles harmlessly when
 chunking dominates).
 
+### Remaining levers, each evaluated (why this is the frontier-optimal set)
+
+Every further optimization was assessed rather than assumed; each is marginal, blocked, or
+regressive on this hardware:
+
+- **Lazy package import to cut spawn-worker startup.** Measured cold import in a fresh
+  interpreter: the full package is 0.29s but the `vaultspec_rag.indexer` package the worker
+  actually requires is 0.24s of that; making the top-level `__init__` lazy saves only ~0.05s
+  per worker. Not worth refactoring the public import surface, and the byte gate already
+  routes the regression-prone small codebases to the serial path (which is itself leaner than
+  the prior thread-pool). Rejected on measurement.
+- **Length-bucketed batching across slices.** `sentence-transformers.encode()` already
+  length-sorts each call's input and processes length-uniform sub-batches, so at
+  `slice_size=64` the cross-slice bucketing gain is marginal. Low ROI here. Deferred.
+- **Raise the code encode batch beyond 32 (toward 64/128).** Real headroom per the
+  upstream guidance, but it must be chosen from an end-to-end GPU profile, which is blocked by
+  resident-service GPU contention. Bumping the default blind is unprincipled; gated on the
+  profile.
+- **Tokenise-in-workers.** Highest theoretical ROI, but it requires either importing torch in
+  the workers (violates the `index-workers-stay-cpu-only` rule and reintroduces the fork/CUDA
+  risk) or hand-replicating the model's exact tokenisation (an embedding-quality regression).
+  Deferred behind the profile.
+- **torch.compile / CUDA graphs / multi-stream / multiple consumer threads.** Rejected with
+  citations: fixed-shape + GIL-holding compiled kernels break the producer-refill overlap, and
+  compute-bound kernels serialise on one device regardless of streams. These would add
+  regression, not remove it.
+
+Conclusion: the delivered architecture is the evidence-optimal frontier for a single consumer
+GPU. The unimplemented levers are consciously closed (marginal, profile-blocked, or
+regressive), not merely unexplored.
+
 ## Recommendation (input to the ADR)
 
 A three-stage decoupled pipeline: a `spawn` `ProcessPoolExecutor` of CPU-only workers that
