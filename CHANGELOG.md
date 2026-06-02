@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.13](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.12...vaultspec-rag-v0.2.13) (2026-06-02)
+
+
+### Bug Fixes
+
+* **watcher:** scoped reindex from the change set ([#151](https://github.com/wgergely/vaultspec-rag/issues/151)) ([eed412d](https://github.com/wgergely/vaultspec-rag/commit/eed412d3f201939ea77cc6c58c0bb2f9817ec9cb))
+* **watcher:** scoped reindex from the change set ([#151](https://github.com/wgergely/vaultspec-rag/issues/151)) ([ff4d02c](https://github.com/wgergely/vaultspec-rag/commit/ff4d02cac7208ef921cff4c5919d55dbd8e7aebb))
+
 ## [0.2.12](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.11...vaultspec-rag-v0.2.12) (2026-06-01)
 
 
