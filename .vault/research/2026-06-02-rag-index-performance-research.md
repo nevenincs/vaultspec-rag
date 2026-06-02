@@ -68,11 +68,26 @@ CPU-only and the pool uses the `spawn` start method. Workers return batched per-
 - A naive always-parallel policy regressed small trees (spawn startup ~0.3s/worker dominates
   when chunking is cheap), motivating a workload gate.
 
-A clean end-to-end (chunk + embed) wall-clock on the live machine could not be isolated: a
-second model + index run contends with the resident RAG service for the single GPU. The
-architectural decision does not hinge on the exact balance — the dedicated consumer is
-net-positive in both regimes (saturates the GPU when encode dominates, idles harmlessly when
-chunking dominates).
+### Profile: embed dominates, and the encode batch has a sharp optimum
+
+Profiled directly on the real codebase (17,895 files -> 112,574 chunks) with the GPU free,
+chunking parallel vs encoding swept across batch sizes:
+
+- Chunking (parallel): **9.0s** for all 112,574 chunks.
+- Encode throughput (dense Qwen3 + sparse SPLADE), extrapolated to the full corpus:
+  - `bs=8`: 61 chunks/s -> ~1832s (~30 min)
+  - `bs=32`: **112 chunks/s -> ~1002s (~17 min)** (current code-path default)
+  - `bs=64`: 5 chunks/s -> ~24,600s (catastrophic)
+  - `bs=128`: 2 chunks/s -> ~45,500s (catastrophic)
+
+Two decisive conclusions: **the embed stage dominates total wall-clock by two orders of
+magnitude over chunking** (17 min vs 9s), so the dedicated GPU consumer thread that keeps the
+GPU saturated while chunking is hidden behind it is the architecturally correct win; and
+**`bs=32` is the measured optimum** on this hardware (Qwen3 + SPLADE on a 16 GB RTX 4080) —
+`bs=8` (the prior vault default) is half the speed, and `bs>=64` collapses ~200x because
+SPLADE exhausts VRAM and the OOM-backoff thrashes. The P03 change from 8 to 32 is therefore
+the single largest measured win in this work (~1.8x on the dominant stage), and raising it
+further is a measured disaster.
 
 ### Remaining levers, each evaluated (why this is the frontier-optimal set)
 
@@ -88,14 +103,21 @@ regressive on this hardware:
 - **Length-bucketed batching across slices.** `sentence-transformers.encode()` already
   length-sorts each call's input and processes length-uniform sub-batches, so at
   `slice_size=64` the cross-slice bucketing gain is marginal. Low ROI here. Deferred.
-- **Raise the code encode batch beyond 32 (toward 64/128).** Real headroom per the
-  upstream guidance, but it must be chosen from an end-to-end GPU profile, which is blocked by
-  resident-service GPU contention. Bumping the default blind is unprincipled; gated on the
-  profile.
-- **Tokenise-in-workers.** Highest theoretical ROI, but it requires either importing torch in
-  the workers (violates the `index-workers-stay-cpu-only` rule and reintroduces the fork/CUDA
-  risk) or hand-replicating the model's exact tokenisation (an embedding-quality regression).
-  Deferred behind the profile.
+- **Raise the code encode batch beyond 32 (toward 64/128).** Profiled and closed: `bs=32`
+  is the measured optimum; `bs>=64` regresses ~200x (SPLADE VRAM exhaustion + OOM-backoff
+  thrashing on the 16 GB GPU). The current default is correct; raising it is a hard
+  regression. Rejected on measurement.
+- **Tokenise-in-workers.** Deprioritised by the profile: the encode cost is dominated by the
+  GPU forward pass (the `bs>=64` OOM cliff proves it is compute/VRAM-bound, not
+  tokenisation-bound), so offloading tokenisation to the workers offers little. It would also
+  require importing torch in the workers (violates the `index-workers-stay-cpu-only` rule) or
+  hand-replicating the model's exact tokenisation (an embedding-quality regression). Not worth
+  it here.
+- **ONNX-O4 encoder backend (~1.83x on short text).** The one remaining real embed-stage
+  lever, and the embed stage is the bottleneck. Officially supported by sentence-transformers
+  but requires exporting Qwen3 + SPLADE and version-pinning the runtime; a separate,
+  substantial feature with export risk, out of scope for this change. Documented as the next
+  investment if the ~17 min embed time must drop further.
 - **torch.compile / CUDA graphs / multi-stream / multiple consumer threads.** Rejected with
   citations: fixed-shape + GIL-holding compiled kernels break the producer-refill overlap, and
   compute-bound kernels serialise on one device regardless of streams. These would add
