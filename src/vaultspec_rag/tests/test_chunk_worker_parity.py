@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 from vaultspec_rag import CodebaseIndexer
@@ -131,39 +133,83 @@ class TestChunkIdentityParity:
         assert len(meta) == len(paths)
 
 
+class _MinBytes:
+    """Context manager overriding ``index_parallel_min_bytes`` (real env)."""
+
+    def __init__(self, value: int) -> None:
+        self._value = str(value)
+        self._prev: str | None = None
+
+    def __enter__(self) -> None:
+        self._prev = os.environ.get(EnvVar.INDEX_PARALLEL_MIN_BYTES.value)
+        os.environ[EnvVar.INDEX_PARALLEL_MIN_BYTES.value] = self._value
+        reset_config()
+
+    def __exit__(self, *exc: object) -> None:
+        if self._prev is None:
+            os.environ.pop(EnvVar.INDEX_PARALLEL_MIN_BYTES.value, None)
+        else:
+            os.environ[EnvVar.INDEX_PARALLEL_MIN_BYTES.value] = self._prev
+        reset_config()
+
+
 class TestWorkerGating:
     """Auto worker selection must gate on total source bytes (#155)."""
 
-    def test_small_tree_auto_stays_serial(self, tmp_path: Path) -> None:
+    def test_byte_gate_controls_auto_parallelism(self, tmp_path: Path) -> None:
+        """The byte gate, not the core count, decides serial vs parallel."""
         _make_code_tree(tmp_path, 20)  # ~tens of KB, well under 8 MiB
         indexer = _chunk_only_indexer(tmp_path)
         paths = indexer.scan_files()
-        with _Workers(0):  # auto
-            assert indexer._plan_chunk_workers(paths) == 1
 
-    def test_small_tree_explicit_bypasses_gate(self, tmp_path: Path) -> None:
+        if (os.cpu_count() or 1) < 2:
+            # No parallelism is possible; auto must be serial regardless.
+            with _Workers(0):
+                assert indexer._plan_chunk_workers(paths) == 1
+            return
+
+        # Multi-core: the SAME small tree is serial under the default gate but
+        # parallel once the gate is lowered to 0 — so the gate, not the core
+        # count, is what forced serial. This contrast is the non-tautological
+        # proof that the gate logic actually runs.
+        with _Workers(0):
+            assert indexer._plan_chunk_workers(paths) == 1
+            with _MinBytes(0):
+                assert indexer._plan_chunk_workers(paths) > 1
+
+    def test_explicit_workers_bypass_gate(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 20)
         indexer = _chunk_only_indexer(tmp_path)
         paths = indexer.scan_files()
-        with _Workers(3):  # explicit request ignores the byte gate
+        # An explicit request resolves to min(request, n_paths) regardless of
+        # core count or the byte gate.
+        with _Workers(3):
             assert indexer._plan_chunk_workers(paths) == 3
 
-    def test_zero_threshold_enables_parallel(self, tmp_path: Path) -> None:
-        _make_code_tree(tmp_path, 20)
-        indexer = _chunk_only_indexer(tmp_path)
-        paths = indexer.scan_files()
-        prev = os.environ.get(EnvVar.INDEX_PARALLEL_MIN_BYTES.value)
-        os.environ[EnvVar.INDEX_PARALLEL_MIN_BYTES.value] = "0"
-        reset_config()
-        try:
-            with _Workers(0):  # auto, but gate disabled
-                assert indexer._plan_chunk_workers(paths) > 1
-        finally:
-            if prev is None:
-                os.environ.pop(EnvVar.INDEX_PARALLEL_MIN_BYTES.value, None)
-            else:
-                os.environ[EnvVar.INDEX_PARALLEL_MIN_BYTES.value] = prev
-            reset_config()
+
+def test_worker_import_does_not_load_torch() -> None:
+    """Importing the chunk worker must not pull in torch (spawn/no-CUDA rule).
+
+    Spawn workers re-import this module; if any module on its import chain
+    eagerly imported torch, every worker would initialise CUDA on startup and
+    reintroduce the fork/spawn CUDA-context crash class the ADR warns about.
+    Checked in a fresh interpreter so the parent process's already-loaded torch
+    cannot mask a regression. See rule ``index-workers-stay-cpu-only``.
+    """
+    code = (
+        "import sys\n"
+        "import vaultspec_rag.indexer._chunk_worker\n"
+        "torch_mods = sorted(m for m in sys.modules if m == 'torch' "
+        "or m.startswith('torch.'))\n"
+        "assert not torch_mods, torch_mods\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 class TestHashParity:

@@ -152,11 +152,17 @@ def chunk_and_hash_file(
     content = _decode_source(raw, path)
     if content is None:
         return FileChunkResult(rel_path, content_hash, [])
-    return FileChunkResult(
-        rel_path,
-        content_hash,
-        _chunk_decoded(content, path, root_dir),
-    )
+    try:
+        chunks = _chunk_decoded(content, path, root_dir)
+    except Exception:
+        # The hash is already computed, so still return a result (with no
+        # chunks) rather than raising: that keeps the file present in the
+        # index metadata, matching the pre-rework behaviour where hashing was
+        # an independent pass. Dropping it would make every later incremental
+        # run re-chunk the file.
+        logger.warning("Chunking failed for %s; indexing hash only", rel_path)
+        return FileChunkResult(rel_path, content_hash, [])
+    return FileChunkResult(rel_path, content_hash, chunks)
 
 
 def chunk_with_ast(
