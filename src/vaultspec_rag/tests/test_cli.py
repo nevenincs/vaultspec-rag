@@ -267,16 +267,33 @@ class TestServerCommands:
         assert "VaultSpec Search" in result.output
         assert "stdio" in result.output
 
-    def test_service_stop_no_status_file(self):
-        result = runner.invoke(app, ["server", "service", "stop"])
-        assert result.exit_code == 0
-        assert "not running" in result.output.lower() or "No service" in result.output
+    def test_service_stop_no_status_file(self, tmp_path: Path):
+        # Isolate the status dir to a guaranteed-empty tmp location: the
+        # default is ~/.vaultspec-rag/, so without this the assertion races
+        # any real service running on the machine (or a concurrent test).
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        try:
+            result = runner.invoke(app, ["server", "service", "stop"])
+            assert result.exit_code == 0
+            assert (
+                "not running" in result.output.lower() or "No service" in result.output
+            )
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
-    def test_service_status_no_status_file(self):
+    def test_service_status_no_status_file(self, tmp_path: Path):
         """No status file → exit 3 (stopped)."""
-        result = runner.invoke(app, ["server", "service", "status"])
-        assert result.exit_code == 3
-        assert "stopped" in result.output.lower()
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        try:
+            result = runner.invoke(app, ["server", "service", "status"])
+            assert result.exit_code == 3
+            assert "stopped" in result.output.lower()
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
 
 class TestServiceLifecycleHelpers:
