@@ -29,6 +29,7 @@ from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
     import threading
+    from collections.abc import Iterable
 
     import pathspec
 
@@ -564,20 +565,32 @@ class CodebaseIndexer:
         self,
         *,
         reporter: ProgressReporter,
+        changed_paths: Iterable[pathlib.Path] | None = None,
     ) -> IndexResult:
         """Incremental codebase re-index serialized through the writer lock.
 
         Thin wrapper that acquires ``self._writer_lock`` and delegates
         to :meth:`_incremental_index_locked`. Mirrors VaultIndexer
         and serializes concurrent reindex callers (#68 audit F6.6).
+
+        Args:
+            reporter: Required progress reporter.
+            changed_paths: When provided, only the given filesystem paths
+                are reconciled (scoped reindex, #151). Work becomes
+                proportional to the change set rather than the whole tree.
+                When ``None`` the full ``.gitignore``-aware scan runs.
         """
         with self._writer_lock:
-            return self._incremental_index_locked(reporter=reporter)
+            return self._incremental_index_locked(
+                reporter=reporter,
+                changed_paths=changed_paths,
+            )
 
     def _incremental_index_locked(
         self,
         *,
         reporter: ProgressReporter,
+        changed_paths: Iterable[pathlib.Path] | None = None,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`.
 
@@ -586,6 +599,9 @@ class CodebaseIndexer:
 
         Args:
             reporter: Required progress reporter.
+            changed_paths: When provided, delegates to
+                :meth:`_scoped_incremental_locked`. When ``None`` the full
+                codebase scan below runs.
 
         Returns:
             An ``IndexResult`` with counts for newly added, updated, and
@@ -594,6 +610,12 @@ class CodebaseIndexer:
         Raises:
             OSError: If source files cannot be read or hashed.
         """
+        if changed_paths is not None:
+            return self._scoped_incremental_locked(
+                changed_paths=changed_paths,
+                reporter=reporter,
+            )
+
         from ..config import get_config
 
         start = time.time()
@@ -687,6 +709,158 @@ class CodebaseIndexer:
             added=len(new_files),
             updated=len(modified_files),
             removed=len(deleted_files),
+            duration_ms=duration_ms,
+            device=self.model.device,
+            files=len(to_index),
+        )
+
+    def _scoped_incremental_locked(
+        self,
+        *,
+        changed_paths: Iterable[pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> IndexResult:
+        """Reconcile only ``changed_paths`` against the code index (#151).
+
+        Applies the same ``.gitignore``/``.vaultragignore``, extension,
+        size, and binary filters as the full scan, then re-chunks the
+        added/modified files, deletes chunks for vanished or
+        no-longer-indexable files, and persists a partial read-modify-write
+        of the hash metadata. Work is proportional to the change set.
+
+        Args:
+            changed_paths: Filesystem paths reported as changed.
+            reporter: Required progress reporter.
+
+        Returns:
+            An ``IndexResult`` with added/updated/removed file counts and
+            the post-reconcile total chunk count.
+        """
+        from ..config import get_config
+
+        start = time.time()
+        slice_size = max(1, get_config().embedding_batch_size)
+        prev_meta = self._load_meta()
+
+        git_spec = self._build_gitignore_spec()
+        rag_spec = self._build_vaultragignore_spec()
+
+        def _is_excluded(rel_path: str) -> bool:
+            if git_spec.match_file(rel_path):
+                return True
+            return rag_spec is not None and rag_spec.match_file(rel_path)
+
+        reporter.phase_start("scan changed", None)
+        to_hash: dict[str, pathlib.Path] = {}
+        delete_files: set[str] = set()
+        for path in changed_paths:
+            try:
+                rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
+            except ValueError:
+                continue
+            indexable = (
+                path.is_file()
+                and path.suffix.lower() in SUPPORTED_EXTENSIONS
+                and not _is_excluded(rel)
+            )
+            if indexable:
+                try:
+                    too_big = path.stat().st_size > _MAX_FILE_SIZE
+                except OSError:
+                    continue
+                if too_big or _is_binary(path):
+                    # No longer indexable — reconcile it out if we had it.
+                    if rel in prev_meta:
+                        delete_files.add(rel)
+                    continue
+                to_hash[rel] = path
+            elif rel in prev_meta:
+                delete_files.add(rel)
+        reporter.phase_end()
+
+        reporter.phase_start("hash files", len(to_hash))
+        changed_hashes: dict[str, str] = {}
+        for rel, path in to_hash.items():
+            try:
+                with open(path, "rb") as f:
+                    changed_hashes[rel] = hashlib.file_digest(
+                        f,
+                        "blake2b",
+                    ).hexdigest()
+            except OSError:
+                logger.warning("Cannot hash file, skipping: %s", rel)
+            reporter.advance()
+        reporter.phase_end()
+
+        for rel in set(to_hash) - set(changed_hashes):
+            to_hash.pop(rel, None)
+
+        new_files = {r for r in changed_hashes if r not in prev_meta}
+        modified_files = {
+            r
+            for r in changed_hashes
+            if r in prev_meta and changed_hashes[r] != prev_meta.get(r)
+        }
+        to_index = new_files | modified_files
+
+        all_new_chunks: list[CodeChunk] = []
+        reporter.phase_start("chunk files", len(to_index))
+        if to_index:
+            paths_to_index = [to_hash[r] for r in to_index]
+            with ThreadPoolExecutor() as pool:
+                futures = [pool.submit(self._chunk_file, p) for p in paths_to_index]
+                for future in as_completed(futures):
+                    try:
+                        file_chunks = future.result()
+                    except Exception:
+                        logger.warning("Worker failed to chunk file", exc_info=True)
+                        reporter.advance()
+                        continue
+                    all_new_chunks.extend(file_chunks)
+                    reporter.advance()
+        reporter.phase_end()
+
+        # Modified files have their old chunks dropped before re-upsert
+        # (chunk ids embed line ranges + content hash, so stale chunks
+        # would otherwise linger); vanished files are dropped outright.
+        files_to_remove = modified_files | delete_files
+        reporter.phase_start("delete removed", len(files_to_remove))
+        if files_to_remove:
+            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
+            if old_chunk_ids:
+                self.store.delete_code_chunks(old_chunk_ids)
+            reporter.advance(len(files_to_remove))
+        reporter.phase_end()
+
+        if all_new_chunks:
+            _stream_encode_and_upsert_codebase(
+                chunks=all_new_chunks,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+            )
+        else:
+            reporter.phase_start("embed + upsert chunks", 0)
+            reporter.phase_end()
+
+        new_meta = dict(prev_meta)
+        new_meta.update(changed_hashes)
+        for rel in delete_files:
+            new_meta.pop(rel, None)
+        reporter.phase_start("write metadata", 1)
+        self._write_meta(new_meta)
+        reporter.advance(1)
+        reporter.phase_end()
+
+        total = self.store.count_code()
+        duration_ms = int((time.time() - start) * 1000)
+        return IndexResult(
+            total=total,
+            added=len(new_files),
+            updated=len(modified_files),
+            removed=len(delete_files),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(to_index),

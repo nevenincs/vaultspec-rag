@@ -33,17 +33,17 @@ Add an optional changed-paths entry point to VaultIndexer and CodebaseIndexer
 that re-embeds only changed ids, deletes removed ids, and does a partial
 metadata read-modify-write; full-scan default preserved.
 
-- [ ] `P01.S01` - Add optional `changed_paths` to VaultIndexer.incremental_index with a scoped locked path that classify-and-ignore-filters paths, resolves doc ids, re-embeds added or modified ids, deletes removed ids, and does a partial meta read-modify-write; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `P01.S02` - Add the same `changed_paths` scoped path to CodebaseIndexer.incremental_index honouring gitignore and vaultragignore and handling deletions, keeping the four existing call sites backward compatible; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S01` - Add optional `changed_paths` to VaultIndexer.incremental_index with a scoped locked path that classify-and-ignore-filters paths, resolves doc ids, re-embeds added or modified ids, deletes removed ids, and does a partial meta read-modify-write; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P01.S02` - Add the same `changed_paths` scoped path to CodebaseIndexer.incremental_index honouring gitignore and vaultragignore and handling deletions, keeping the four existing call sites backward compatible; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P02` - wire watcher and verify
 
 Pass the watcher's classified change set into the scoped entry points and prove
 correctness with real-GPU tests plus lint and the full suite.
 
-- [ ] `P02.S03` - Collect the classified changed vault and code paths in watch_and_reindex and pass them to the scoped reindex entry points, retaining debounce, cooldown, and gpu_lock; `src/vaultspec_rag/watcher.py`.
-- [ ] `P02.S04` - Add real-GPU tests proving a single-file edit re-embeds only that file, a deletion removes only its chunks, and an ignored-file edit is a no-op, with no mocks or skips; `src/vaultspec_rag/tests/integration/`.
-- [ ] `P02.S05` - Run ruff and the full pytest suite and confirm zero violations and green before PR; `pyproject.toml`.
+- [x] `P02.S03` - Collect the classified changed vault and code paths in watch_and_reindex and pass them to the scoped reindex entry points, retaining debounce, cooldown, and gpu_lock; `src/vaultspec_rag/watcher.py`.
+- [x] `P02.S04` - Add real-GPU tests proving a single-file edit re-embeds only that file, a deletion removes only its chunks, and an ignored-file edit is a no-op, with no mocks or skips; `src/vaultspec_rag/tests/integration/`.
+- [x] `P02.S05` - Run ruff and the full pytest suite and confirm zero violations and green before PR; `pyproject.toml`.
 
 ## Parallelization
 
