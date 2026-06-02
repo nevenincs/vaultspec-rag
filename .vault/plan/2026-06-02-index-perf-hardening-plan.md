@@ -15,29 +15,29 @@ related:
 
 Replace the GIL-bound ThreadPoolExecutor chunk fan-out with a spawn-based ProcessPoolExecutor so AST chunking scales across cores.
 
-- [ ] `P01.S01` - Extract a module-level chunk worker plus a pool initializer that builds the per-language parser once per worker and decodes source once per file; `src/vaultspec_rag/indexer/_ast_chunker.py`.
-- [ ] `P01.S02` - Swap the ThreadPoolExecutor chunk fan-out for a spawn-based ProcessPoolExecutor in the full-index path with an in-process serial fallback and a worker-count config knob; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P01.S03` - Apply the same process-pool chunking to the incremental and scoped-incremental paths; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S01` - Extract a module-level chunk worker plus a pool initializer that builds the per-language parser once per worker and decodes source once per file; `src/vaultspec_rag/indexer/_ast_chunker.py`.
+- [x] `P01.S02` - Swap the ThreadPoolExecutor chunk fan-out for a spawn-based ProcessPoolExecutor in the full-index path with an in-process serial fallback and a worker-count config knob; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S03` - Apply the same process-pool chunking to the incremental and scoped-incremental paths; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P02` - chunk-to-embed pipeline
 
 Overlap CPU chunking with GPU encoding via a bounded producer/consumer so the GPU is never idle and memory stays capped.
 
-- [ ] `P02.S04` - Wire a bounded producer/consumer so process-pool chunk batches feed a single in-process GPU consumer that advances the reporter and preserves stale-purge and failure-safe rebuild semantics; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P02.S04` - Wire a bounded producer/consumer so process-pool chunk batches feed a single in-process GPU consumer that advances the reporter and preserves stale-purge and failure-safe rebuild semantics; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P03` - throughput and io tuning
 
 Raise the code-path encode batch, throttle the per-slice cache flush, read each file once, and decode source once per file.
 
-- [ ] `P03.S05` - Decouple a code-path encode batch size in config with a higher default and throttle the per-slice empty_cache to a periodic flush; `src/vaultspec_rag/config.py`.
-- [ ] `P03.S06` - Fold file hashing into the single worker read so the tree is read once instead of twice; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P03.S05` - Decouple a code-path encode batch size in config with a higher default and throttle the per-slice empty_cache to a periodic flush; `src/vaultspec_rag/config.py`.
+- [x] `P03.S06` - Fold file hashing into the single worker read so the tree is read once instead of twice; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P04` - benchmark and verification
 
 Prove a dramatic, reproducible speedup with a before/after benchmark and real-GPU tests.
 
-- [ ] `P04.S07` - Add a benchmark that captures chunk and embed wall-clock before and after on a large synthetic tree; `src/vaultspec_rag/tests/benchmarks/`.
-- [ ] `P04.S08` - Add real-GPU tests for parallel chunking correctness and pipeline chunk-identity parity; `src/vaultspec_rag/tests/integration/`.
+- [x] `P04.S07` - Add a benchmark that captures chunk and embed wall-clock before and after on a large synthetic tree; `src/vaultspec_rag/tests/benchmarks/`.
+- [x] `P04.S08` - Add real-GPU tests for parallel chunking correctness and pipeline chunk-identity parity; `src/vaultspec_rag/tests/integration/`.
 
 ## Description
 
