@@ -43,6 +43,8 @@ class EnvVar(StrEnum):
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
     EMBEDDING_MAX_SEQ_LENGTH = "VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH"
     MAX_EMBED_CHARS = "VAULTSPEC_RAG_MAX_EMBED_CHARS"
+    # Codebase-index parallelism + throughput knobs (#155).
+    INDEX_CHUNK_WORKERS = "VAULTSPEC_RAG_INDEX_CHUNK_WORKERS"
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     WATCH_ENABLED = "VAULTSPEC_RAG_WATCH_ENABLED"
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
@@ -76,6 +78,7 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_encode_batch_size": EnvVar.EMBEDDING_ENCODE_BATCH_SIZE,
     "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
     "max_embed_chars": EnvVar.MAX_EMBED_CHARS,
+    "index_chunk_workers": EnvVar.INDEX_CHUNK_WORKERS,
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
@@ -128,6 +131,14 @@ class VaultSpecConfigWrapper:
         # otherwise leaks into kernel-selection heuristics and wastes
         # attention memory on padded sequences.
         "embedding_max_seq_length": 2048,
+        # Number of worker processes for parallel codebase chunking (#155).
+        # tree-sitter AST chunking is CPU-bound and holds the GIL for both
+        # parse and traverse, so a process pool (not threads) is required to
+        # use multiple cores. ``0`` means "auto" — resolve to
+        # ``os.process_cpu_count()`` at run time. ``1`` forces the serial
+        # in-process path (useful for small trees, debugging, or environments
+        # where spawning workers is undesirable).
+        "index_chunk_workers": 0,
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_model": "naver/splade-v3",

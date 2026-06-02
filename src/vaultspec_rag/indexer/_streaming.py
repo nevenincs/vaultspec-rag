@@ -128,6 +128,54 @@ def _stream_encode_and_upsert_vault(
         logger.info("%s", probe.report())
 
 
+def encode_and_upsert_code_slice(
+    slice_chunks: list[CodeChunk],
+    *,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    release_cache: bool = True,
+) -> None:
+    """Encode dense + sparse vectors for one slice of code chunks and upsert it.
+
+    The GPU lock is held only across the encode calls so the I/O-bound upsert
+    does not block concurrent searches on the same device. When
+    ``release_cache`` is True the CUDA caching pool is returned to the driver
+    on every exit path (#68 audit F6.9); the chunk-to-embed pipeline passes
+    False on most slices and flushes periodically instead (#155 P03).
+
+    Args:
+        slice_chunks: Chunks to encode and upsert (mutated in place with
+            their dense/sparse vectors).
+        model: Embedding model.
+        store: Vector store.
+        gpu_lock: Optional lock serialising GPU access with search.
+        release_cache: Whether to flush the CUDA caching allocator afterwards.
+    """
+    if not slice_chunks:
+        return
+    slice_texts = [c.content for c in slice_chunks]
+    dense = None
+    sparse = None
+    try:
+        with gpu_lock if gpu_lock is not None else nullcontext():
+            dense = model.encode_documents(slice_texts)
+            sparse = model.encode_documents_sparse(slice_texts)
+        for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
+            chunk.vector = vec.tolist()
+            chunk.sparse_indices = list(svec.indices)
+            chunk.sparse_values = list(svec.values)
+        store.upsert_code_chunks(slice_chunks)
+    finally:
+        # del beats ``= None`` for dropping the local out of the frame
+        # entirely before the caching pool is released (#68 audit F10.4).
+        del dense
+        del sparse
+        del slice_texts
+        if release_cache:
+            _release_cuda_cache()
+
+
 def _stream_encode_and_upsert_codebase(
     *,
     chunks: list[CodeChunk],
@@ -154,32 +202,13 @@ def _stream_encode_and_upsert_codebase(
         try:
             for i in range(0, len(sorted_chunks), slice_size):
                 slice_chunks = sorted_chunks[i : i + slice_size]
-                slice_texts = [c.content for c in slice_chunks]
-                dense = None
-                sparse = None
                 probe.checkpoint(f"slice-{i}-before-encode")
-                # Mirror the vault helper: inner try/finally so the
-                # CUDA caching pool is released on every exit path
-                # (#68 audit F6.9).
-                try:
-                    with gpu_lock if gpu_lock is not None else nullcontext():
-                        dense = model.encode_documents(slice_texts)
-                        sparse = model.encode_documents_sparse(slice_texts)
-                    probe.checkpoint(f"slice-{i}-after-encode")
-                    for chunk, vec, svec in zip(
-                        slice_chunks, dense, sparse, strict=True
-                    ):
-                        chunk.vector = vec.tolist()
-                        chunk.sparse_indices = list(svec.indices)
-                        chunk.sparse_values = list(svec.values)
-                    store.upsert_code_chunks(slice_chunks)
-                finally:
-                    # F10.4 audit fix — del beats = None for dropping
-                    # the local out of the frame entirely.
-                    del dense
-                    del sparse
-                    del slice_texts
-                    _release_cuda_cache()
+                encode_and_upsert_code_slice(
+                    slice_chunks,
+                    model=model,
+                    store=store,
+                    gpu_lock=gpu_lock,
+                )
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))
         finally:

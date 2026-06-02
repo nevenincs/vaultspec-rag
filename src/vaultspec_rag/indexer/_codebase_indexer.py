@@ -8,23 +8,28 @@ chunks, tracking content hashes for incremental re-indexing.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import logging
+import multiprocessing
 import os
 import pathlib
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from concurrent.futures.process import BrokenProcessPool
 from typing import TYPE_CHECKING
 
-from ._ast_chunker import ASTChunker
+from . import _chunk_worker
 from ._chunking import (
     _MAX_FILE_SIZE,
     LANGUAGE_MAP,
     SUPPORTED_EXTENSIONS,
-    TextSplitter,
     _is_binary,
 )
-from ._streaming import _stream_encode_and_upsert_codebase
+from ._streaming import (
+    _stream_encode_and_upsert_codebase,
+    encode_and_upsert_code_slice,
+)
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
@@ -35,9 +40,7 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel
     from ..progress import ProgressReporter
-    from ..store import VaultStore
-
-from ..store import CodeChunk
+    from ..store import CodeChunk, VaultStore
 
 logger = logging.getLogger(__name__)
 
@@ -250,10 +253,11 @@ class CodebaseIndexer:
         return self._scan_codebase()
 
     def _chunk_file(self, path: pathlib.Path) -> list[CodeChunk]:
-        """Read file and split into AST-aware CodeChunks.
+        """Read a file and split it into AST-aware ``CodeChunk``s.
 
-        Uses tree-sitter AST chunking for languages with grammars,
-        falling back to TextSplitter for config/data formats.
+        Delegates to the module-level worker (`_chunk_worker.chunk_file`) so the
+        serial in-process path and the process-pool path share a single code
+        path and produce byte-identical chunk ids.
 
         Args:
             path: Absolute path to the source file.
@@ -261,21 +265,7 @@ class CodebaseIndexer:
         Returns:
             List of ``CodeChunk`` instances with empty vectors.
         """
-        try:
-            content = path.read_text(encoding="utf-8")
-        except Exception as e:
-            logger.warning("Cannot read %s: %s", path, e)
-            return []
-
-        ext = path.suffix.lower()
-        lang_entry = LANGUAGE_MAP.get(ext)
-        language = lang_entry[0] if lang_entry else "text"
-        grammar = lang_entry[1] if lang_entry else None
-        rel_path = str(path.relative_to(self.root_dir)).replace("\\", "/")
-
-        if grammar:
-            return self._chunk_with_ast(content, rel_path, language, grammar)
-        return self._chunk_with_splitter(content, rel_path, language)
+        return _chunk_worker.chunk_file(path, self.root_dir)
 
     def _chunk_with_ast(
         self,
@@ -284,61 +274,8 @@ class CodebaseIndexer:
         language: str,
         grammar: str,
     ) -> list[CodeChunk]:
-        """Chunk source code using tree-sitter AST.
-
-        Falls back to ``_chunk_with_splitter`` if AST parsing fails
-        (e.g. syntax errors or missing grammar).
-
-        Args:
-            content: Source code text.
-            rel_path: File path relative to the project root.
-            language: Language name (e.g. ``"python"``).
-            grammar: tree-sitter grammar name (e.g. ``"python"``).
-
-        Returns:
-            List of ``CodeChunk`` instances with empty vectors.
-        """
-        chunker = ASTChunker()
-        try:
-            ast_chunks = chunker.chunk(content, grammar)
-        except Exception:
-            logger.warning(
-                "AST parsing failed for %s, falling back to text splitter",
-                rel_path,
-                exc_info=True,
-            )
-            return self._chunk_with_splitter(content, rel_path, language)
-
-        chunks: list[CodeChunk] = []
-        for (
-            text,
-            line_start,
-            line_end,
-            node_type,
-            function_name,
-            class_name,
-        ) in ast_chunks:
-            if not text.strip():
-                continue
-            chunk_hash = hashlib.blake2b(
-                text.encode("utf-8"),
-                digest_size=6,
-            ).hexdigest()
-            chunks.append(
-                CodeChunk(
-                    id=f"{rel_path}:{line_start}-{line_end}:{chunk_hash}",
-                    path=rel_path,
-                    language=language,
-                    content=text,
-                    line_start=line_start,
-                    line_end=line_end,
-                    node_type=node_type,
-                    function_name=function_name,
-                    class_name=class_name,
-                    vector=[],
-                ),
-            )
-        return chunks
+        """Chunk source code using tree-sitter AST (delegates to the worker)."""
+        return _chunk_worker.chunk_with_ast(content, rel_path, language, grammar)
 
     def _chunk_with_splitter(
         self,
@@ -346,61 +283,242 @@ class CodebaseIndexer:
         rel_path: str,
         language: str,
     ) -> list[CodeChunk]:
-        """Chunk content using TextSplitter for non-AST languages.
+        """Chunk content using TextSplitter (delegates to the worker)."""
+        return _chunk_worker.chunk_with_splitter(content, rel_path, language)
+
+    def _resolve_chunk_workers(self, n_paths: int) -> int:
+        """Resolve the number of chunk worker processes to use.
+
+        Reads the ``index_chunk_workers`` config knob: ``0`` means auto
+        (``os.process_cpu_count()``); any positive value is honoured verbatim.
+        The result is clamped to ``[1, n_paths]`` so a tiny change set never
+        spawns more workers than there are files.
 
         Args:
-            content: Source code or config file text.
-            rel_path: File path relative to the project root.
-            language: Language name passed to ``TextSplitter`` for
-                separator selection.
+            n_paths: Number of files about to be chunked.
 
         Returns:
-            List of ``CodeChunk`` instances with empty vectors.
+            Worker count, at least 1.
         """
-        # chunk_overlap=0 is required: non-zero overlap prepends content from the
-        # previous chunk, making chunks not findable verbatim in the original source.
-        # This breaks line number tracking in _chunk_with_splitter.
-        splitter = TextSplitter(language=language, chunk_overlap=0)
-        text_chunks = splitter.split_text(content)
+        from ..config import get_config
 
-        chunks: list[CodeChunk] = []
-        search_offset = 0
-        for text in text_chunks:
-            idx = content.find(text, search_offset)
-            if idx != -1:
-                line_start = content.count("\n", 0, idx) + 1
-                search_offset = idx + len(text)
-            else:
-                # Chunk not found verbatim — happens when TextSplitter overlap
-                # is > 0 and prepended tail text shifts the chunk boundary.
-                # Fall back to search_offset as approximation; line number
-                # may be off by the overlap size.
-                logger.debug(
-                    "Chunk not found verbatim in %s at offset %d; "
-                    "line_start is approximate (chunk_overlap > 0?)",
-                    rel_path,
-                    search_offset,
+        configured = int(get_config().index_chunk_workers)
+        workers = configured if configured > 0 else (os.process_cpu_count() or 1)
+        return max(1, min(workers, n_paths))
+
+    def _chunk_paths(
+        self,
+        paths: list[pathlib.Path],
+        *,
+        reporter: ProgressReporter,
+    ) -> list[CodeChunk]:
+        """Chunk files in parallel via a spawn-based process pool.
+
+        tree-sitter AST chunking is CPU-bound and holds the GIL for both parse
+        and traverse, so a process pool (not threads) is required to use more
+        than one core. CUDA/torch are never touched in the workers, and the
+        pool uses the ``spawn`` start method so no parent CUDA context is
+        inherited (#155 ADR, rule ``index-workers-stay-cpu-only``). Falls back
+        to the serial in-process path when a single worker is resolved, or when
+        the pool cannot start before any progress has been reported.
+
+        Args:
+            paths: Absolute file paths to chunk.
+            reporter: Progress reporter, advanced once per file.
+
+        Returns:
+            All ``CodeChunk``s across every file, with empty vectors.
+        """
+        all_chunks: list[CodeChunk] = []
+        if not paths:
+            return all_chunks
+
+        workers = self._resolve_chunk_workers(len(paths))
+        if workers <= 1:
+            return self._chunk_paths_serial(paths, reporter)
+
+        completed = 0
+        ctx = multiprocessing.get_context("spawn")
+        try:
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                futures = {
+                    pool.submit(_chunk_worker.chunk_file, p, self.root_dir): p
+                    for p in paths
+                }
+                for future in as_completed(futures):
+                    try:
+                        all_chunks.extend(future.result())
+                    except BrokenProcessPool:
+                        # Pool-level fatal — propagate rather than mis-record
+                        # it as a single-file failure.
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "Worker failed to chunk %s",
+                            futures[future],
+                            exc_info=True,
+                        )
+                    completed += 1
+                    reporter.advance()
+        except BrokenProcessPool:
+            if completed:
+                # Progress already reported for some files; re-chunking would
+                # double-count. Fail loud rather than silently truncate.
+                logger.error(
+                    "Chunk process pool broke after %d/%d files; aborting",
+                    completed,
+                    len(paths),
                 )
-                line_start = content.count("\n", 0, search_offset) + 1
-                search_offset += len(text)
-            line_end = line_start + text.count("\n")
+                raise
+            logger.warning("Chunk process pool could not start; chunking serially")
+            return self._chunk_paths_serial(paths, reporter)
+        return all_chunks
 
-            chunk_hash = hashlib.blake2b(
-                text.encode("utf-8"),
-                digest_size=6,
-            ).hexdigest()
-            chunks.append(
-                CodeChunk(
-                    id=f"{rel_path}:{line_start}-{line_end}:{chunk_hash}",
-                    path=rel_path,
-                    language=language,
-                    content=text,
-                    line_start=line_start,
-                    line_end=line_end,
-                    vector=[],
-                ),
-            )
-        return chunks
+    def _chunk_paths_serial(
+        self,
+        paths: list[pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> list[CodeChunk]:
+        """Chunk files serially in-process (single-worker / fallback path).
+
+        Args:
+            paths: Absolute file paths to chunk.
+            reporter: Progress reporter, advanced once per file.
+
+        Returns:
+            All ``CodeChunk``s across every file, with empty vectors.
+        """
+        all_chunks: list[CodeChunk] = []
+        for p in paths:
+            try:
+                all_chunks.extend(_chunk_worker.chunk_file(p, self.root_dir))
+            except Exception:
+                logger.warning("Failed to chunk %s", p, exc_info=True)
+            reporter.advance()
+        return all_chunks
+
+    def _pipeline_chunk_and_embed(
+        self,
+        paths: list[pathlib.Path],
+        *,
+        slice_size: int,
+        reporter: ProgressReporter,
+    ) -> tuple[set[str], int]:
+        """Overlap process-pool chunking with GPU encode/upsert.
+
+        Worker processes chunk files in parallel while this thread — the sole
+        CUDA consumer — encodes and upserts completed chunks in ``slice_size``
+        batches. A bounded submission window caps both in-flight futures and
+        buffered results, so peak memory is proportional to the window rather
+        than to the whole tree (#155 ADR P02, research O7). The upsert is
+        idempotent by chunk id, so streaming mid-rebuild preserves the
+        failure-safe contract.
+
+        Args:
+            paths: Absolute file paths to chunk and embed.
+            slice_size: Number of chunks per GPU encode/upsert batch.
+            reporter: Progress reporter, advanced once per file chunked.
+
+        Returns:
+            ``(new_ids, total_chunks)``: the set of upserted chunk ids and the
+            total number of chunks embedded.
+        """
+        new_ids: set[str] = set()
+        accumulator: list[CodeChunk] = []
+        total = 0
+        advanced = 0
+
+        def _drain(force: bool = False) -> None:
+            nonlocal total
+            while len(accumulator) >= slice_size or (force and accumulator):
+                take = accumulator[:slice_size]
+                del accumulator[:slice_size]
+                encode_and_upsert_code_slice(
+                    take,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                )
+                new_ids.update(c.id for c in take)
+                total += len(take)
+
+        def _run_serial() -> None:
+            nonlocal advanced
+            for p in paths:
+                try:
+                    accumulator.extend(_chunk_worker.chunk_file(p, self.root_dir))
+                except Exception:
+                    logger.warning("Failed to chunk %s", p, exc_info=True)
+                advanced += 1
+                reporter.advance()
+                _drain()
+            _drain(force=True)
+
+        reporter.phase_start("chunk + embed", len(paths))
+        try:
+            if not paths:
+                return new_ids, total
+
+            workers = self._resolve_chunk_workers(len(paths))
+            if workers <= 1:
+                _run_serial()
+                return new_ids, total
+
+            ctx = multiprocessing.get_context("spawn")
+            window = max(2 * slice_size, 8 * workers)
+            paths_iter = iter(paths)
+            try:
+                with ProcessPoolExecutor(
+                    max_workers=workers,
+                    mp_context=ctx,
+                ) as pool:
+                    pending = {
+                        pool.submit(_chunk_worker.chunk_file, p, self.root_dir)
+                        for p in itertools.islice(paths_iter, window)
+                    }
+                    while pending:
+                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                        for fut in done:
+                            try:
+                                accumulator.extend(fut.result())
+                            except BrokenProcessPool:
+                                raise
+                            except Exception:
+                                logger.warning(
+                                    "Worker failed to chunk a file",
+                                    exc_info=True,
+                                )
+                            advanced += 1
+                            reporter.advance()
+                            nxt = next(paths_iter, None)
+                            if nxt is not None:
+                                pending.add(
+                                    pool.submit(
+                                        _chunk_worker.chunk_file,
+                                        nxt,
+                                        self.root_dir,
+                                    )
+                                )
+                        _drain()
+                    _drain(force=True)
+            except BrokenProcessPool:
+                if advanced or total:
+                    logger.error(
+                        "Chunk process pool broke after %d files (%d chunks "
+                        "embedded); aborting. Set index_chunk_workers=1 to "
+                        "force the serial path.",
+                        advanced,
+                        total,
+                    )
+                    raise
+                logger.warning(
+                    "Chunk process pool could not start; "
+                    "running chunk + embed serially",
+                )
+                _run_serial()
+        finally:
+            reporter.phase_end()
+        return new_ids, total
 
     def full_index(
         self,
@@ -466,33 +584,15 @@ class CodebaseIndexer:
             reporter.advance()
         reporter.phase_end()
 
-        reporter.phase_start("chunk files", len(paths))
-        all_chunks: list[CodeChunk] = []
-        with ThreadPoolExecutor() as pool:
-            futures = [pool.submit(self._chunk_file, p) for p in paths]
-            for future in as_completed(futures):
-                try:
-                    file_chunks = future.result()
-                except Exception:
-                    logger.warning("Worker failed to chunk file", exc_info=True)
-                    reporter.advance()
-                    continue
-                all_chunks.extend(file_chunks)
-                reporter.advance()
-        reporter.phase_end()
-
-        # Fall through on an empty codebase as well — the purge step
-        # must still run so a rebuild after deleting every source
-        # file actually clears the old collection (F3.11 regression
-        # guard).
-
-        # Failure-safe rebuild (mirrors VaultIndexer.full_index): keep
-        # the old chunks live until after streaming succeeds, then
-        # purge only the chunk IDs that are absent from the new corpus.
-        # When ``clean=True`` is explicitly passed, ALSO drop the
-        # collection up front so schema-level changes (e.g. new
-        # embedding dimension) take effect (#68 audit F9.6). The
-        # default ``clean=False`` path remains failure-safe.
+        # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
+        # existing chunk ids BEFORE streaming, keep the old chunks live, and
+        # purge only the ids absent from the new corpus afterwards. When
+        # ``clean=True`` is passed, ALSO drop the collection up front so
+        # schema-level changes (e.g. a new embedding dimension) take effect
+        # (#68 audit F9.6). The snapshot must precede the pipeline because the
+        # pipeline upserts as it goes; an empty tree still falls through to the
+        # purge below so a rebuild after deleting every source file clears the
+        # old collection (F3.11 regression guard).
         reporter.phase_start("prepare collection", 1)
         try:
             if clean:
@@ -512,16 +612,16 @@ class CodebaseIndexer:
         finally:
             reporter.phase_end()
 
-        _stream_encode_and_upsert_codebase(
-            chunks=all_chunks,
+        # Pipelined chunk -> embed: process-pool workers chunk files while the
+        # single in-process GPU consumer encodes and upserts completed slices,
+        # so the GPU never idles waiting for the whole tree to be chunked
+        # (#155 ADR P02).
+        new_ids, total_chunks = self._pipeline_chunk_and_embed(
+            paths,
             slice_size=slice_size,
-            model=self.model,
-            store=self.store,
-            gpu_lock=self._gpu_lock,
             reporter=reporter,
         )
 
-        new_ids = {chunk.id for chunk in all_chunks}
         stale_ids = sorted(existing_ids_before - new_ids)
         reporter.phase_start("purge stale chunks", len(stale_ids))
         try:
@@ -549,8 +649,8 @@ class CodebaseIndexer:
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
-            total=len(all_chunks),
-            added=len(all_chunks),
+            total=total_chunks,
+            added=total_chunks,
             updated=0,
             # Mirror VaultIndexer.full_index — surface the post-stream
             # purge count so MCP / CLI clients can observe how many
@@ -662,17 +762,7 @@ class CodebaseIndexer:
         reporter.phase_start("chunk files", len(to_index))
         if to_index:
             paths_to_index = [current_files[f] for f in to_index]
-            with ThreadPoolExecutor() as pool:
-                futures = [pool.submit(self._chunk_file, p) for p in paths_to_index]
-                for future in as_completed(futures):
-                    try:
-                        file_chunks = future.result()
-                    except Exception:
-                        logger.warning("Worker failed to chunk file", exc_info=True)
-                        reporter.advance()
-                        continue
-                    all_new_chunks.extend(file_chunks)
-                    reporter.advance()
+            all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
         reporter.phase_end()
 
         files_to_remove = modified_files | deleted_files
@@ -807,17 +897,7 @@ class CodebaseIndexer:
         reporter.phase_start("chunk files", len(to_index))
         if to_index:
             paths_to_index = [to_hash[r] for r in to_index]
-            with ThreadPoolExecutor() as pool:
-                futures = [pool.submit(self._chunk_file, p) for p in paths_to_index]
-                for future in as_completed(futures):
-                    try:
-                        file_chunks = future.result()
-                    except Exception:
-                        logger.warning("Worker failed to chunk file", exc_info=True)
-                        reporter.advance()
-                        continue
-                    all_new_chunks.extend(file_chunks)
-                    reporter.advance()
+            all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
         reporter.phase_end()
 
         # Modified files have their old chunks dropped before re-upsert
