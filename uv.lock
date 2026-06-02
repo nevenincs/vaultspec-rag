@@ -2267,7 +2267,7 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=0.10,<1.6.2" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.15" },
     { name = "typer", specifier = ">=0.12.0" },
-    { name = "vaultspec-core", specifier = ">=0.1.20" },
+    { name = "vaultspec-core", specifier = ">=0.1.21" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["dev"]
