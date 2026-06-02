@@ -135,6 +135,7 @@ def encode_and_upsert_code_slice(
     store: VaultStore,
     gpu_lock: threading.Lock | None,
     release_cache: bool = True,
+    encode_batch_size: int | None = None,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
@@ -151,6 +152,10 @@ def encode_and_upsert_code_slice(
         store: Vector store.
         gpu_lock: Optional lock serialising GPU access with search.
         release_cache: Whether to flush the CUDA caching allocator afterwards.
+        encode_batch_size: Inner encode sub-batch size; ``None`` uses the
+            model default. The codebase path passes the larger
+            ``embedding_code_encode_batch_size`` (#155 P03) since code chunks
+            are short and length-uniform.
     """
     if not slice_chunks:
         return
@@ -159,8 +164,11 @@ def encode_and_upsert_code_slice(
     sparse = None
     try:
         with gpu_lock if gpu_lock is not None else nullcontext():
-            dense = model.encode_documents(slice_texts)
-            sparse = model.encode_documents_sparse(slice_texts)
+            dense = model.encode_documents(slice_texts, batch_size=encode_batch_size)
+            sparse = model.encode_documents_sparse(
+                slice_texts,
+                batch_size=encode_batch_size,
+            )
         for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
             chunk.vector = vec.tolist()
             chunk.sparse_indices = list(svec.indices)
@@ -193,21 +201,33 @@ def _stream_encode_and_upsert_codebase(
     are length-sorted before slicing for the same reason as the vault
     helper — minimises padding waste in the model's encode call.
     """
+    from ..config import get_config
     from ..memory_probe import MemoryProbe
+
+    cfg = get_config()
+    encode_batch_size = int(cfg.embedding_code_encode_batch_size)
+    flush_slices = max(1, int(cfg.index_cache_flush_slices))
 
     sorted_chunks = sorted(chunks, key=lambda c: -len(c.content))
 
     with MemoryProbe(name="codebase-full-index") as probe:
         reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
         try:
-            for i in range(0, len(sorted_chunks), slice_size):
+            for slice_idx, i in enumerate(range(0, len(sorted_chunks), slice_size)):
                 slice_chunks = sorted_chunks[i : i + slice_size]
                 probe.checkpoint(f"slice-{i}-before-encode")
+                # Throttle the per-slice CUDA cache flush (#155 P03): flush
+                # every ``flush_slices`` slices instead of every slice, and
+                # always on the final slice so the allocator is left clean.
+                is_last = i + slice_size >= len(sorted_chunks)
+                release = is_last or (slice_idx + 1) % flush_slices == 0
                 encode_and_upsert_code_slice(
                     slice_chunks,
                     model=model,
                     store=store,
                     gpu_lock=gpu_lock,
+                    release_cache=release,
+                    encode_batch_size=encode_batch_size,
                 )
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))

@@ -306,6 +306,42 @@ class CodebaseIndexer:
         workers = configured if configured > 0 else (os.process_cpu_count() or 1)
         return max(1, min(workers, n_paths))
 
+    def _plan_chunk_workers(self, paths: list[pathlib.Path]) -> int:
+        """Decide the worker count for *paths*, gating auto mode on workload.
+
+        Spawn workers cost ~0.3s each to start, so on small or medium trees the
+        process pool loses to serial chunking (#155 benchmark). In AUTO mode
+        (``index_chunk_workers=0``) the pool engages only once the total source
+        size crosses ``index_parallel_min_bytes``; below that the path stays
+        serial. An explicit ``index_chunk_workers`` >= 1 bypasses the gate so a
+        caller can force parallelism (or serial) regardless of size.
+
+        Args:
+            paths: Files about to be chunked.
+
+        Returns:
+            Worker count; ``1`` means run the serial in-process path.
+        """
+        from ..config import get_config
+
+        cfg = get_config()
+        workers = self._resolve_chunk_workers(len(paths))
+        if workers <= 1:
+            return 1
+        if int(cfg.index_chunk_workers) > 0:
+            return workers  # explicit request bypasses the byte gate
+
+        min_bytes = int(cfg.index_parallel_min_bytes)
+        total = 0
+        for p in paths:
+            try:
+                total += p.stat().st_size
+            except OSError:
+                continue
+            if total >= min_bytes:
+                return workers
+        return 1
+
     def _chunk_paths(
         self,
         paths: list[pathlib.Path],
@@ -333,7 +369,7 @@ class CodebaseIndexer:
         if not paths:
             return all_chunks
 
-        workers = self._resolve_chunk_workers(len(paths))
+        workers = self._plan_chunk_workers(paths)
         if workers <= 1:
             return self._chunk_paths_serial(paths, reporter)
 
@@ -403,16 +439,18 @@ class CodebaseIndexer:
         *,
         slice_size: int,
         reporter: ProgressReporter,
-    ) -> tuple[set[str], int]:
+    ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap process-pool chunking with GPU encode/upsert.
 
-        Worker processes chunk files in parallel while this thread — the sole
-        CUDA consumer — encodes and upserts completed chunks in ``slice_size``
-        batches. A bounded submission window caps both in-flight futures and
-        buffered results, so peak memory is proportional to the window rather
-        than to the whole tree (#155 ADR P02, research O7). The upsert is
-        idempotent by chunk id, so streaming mid-rebuild preserves the
-        failure-safe contract.
+        Worker processes read, hash, and chunk files in parallel while this
+        thread — the sole CUDA consumer — encodes and upserts completed chunks
+        in ``slice_size`` batches. A bounded submission window caps both
+        in-flight futures and buffered results, so peak memory is proportional
+        to the window rather than to the whole tree (#155 ADR P02, research
+        O7). Each file is read exactly once: the worker returns the content
+        hash alongside the chunks so no separate hash pass is needed (#155 P03,
+        finding C4). The upsert is idempotent by chunk id, so streaming
+        mid-rebuild preserves the failure-safe contract.
 
         Args:
             paths: Absolute file paths to chunk and embed.
@@ -420,24 +458,47 @@ class CodebaseIndexer:
             reporter: Progress reporter, advanced once per file chunked.
 
         Returns:
-            ``(new_ids, total_chunks)``: the set of upserted chunk ids and the
-            total number of chunks embedded.
+            ``(new_ids, total_chunks, meta)``: the set of upserted chunk ids,
+            the total number of chunks embedded, and the relative-path to
+            blake2b content-hash metadata for every readable file.
         """
+        from ..config import get_config
+
+        cfg = get_config()
+        encode_batch_size = int(cfg.embedding_code_encode_batch_size)
+        flush_slices = max(1, int(cfg.index_cache_flush_slices))
+
         new_ids: set[str] = set()
         accumulator: list[CodeChunk] = []
+        meta: dict[str, str] = {}
         total = 0
         advanced = 0
+        slice_count = 0
+
+        def _accept(res: _chunk_worker.FileChunkResult | None) -> None:
+            if res is None:
+                return
+            meta[res.rel_path] = res.content_hash
+            accumulator.extend(res.chunks)
 
         def _drain(force: bool = False) -> None:
-            nonlocal total
+            nonlocal total, slice_count
             while len(accumulator) >= slice_size or (force and accumulator):
                 take = accumulator[:slice_size]
                 del accumulator[:slice_size]
+                slice_count += 1
+                # Throttle the CUDA cache flush (#155 P03): flush every
+                # ``flush_slices`` slices, and always on the final force-drain
+                # slice so the allocator is left clean after the run.
+                is_final = force and not accumulator
+                release = is_final or slice_count % flush_slices == 0
                 encode_and_upsert_code_slice(
                     take,
                     model=self.model,
                     store=self.store,
                     gpu_lock=self._gpu_lock,
+                    release_cache=release,
+                    encode_batch_size=encode_batch_size,
                 )
                 new_ids.update(c.id for c in take)
                 total += len(take)
@@ -446,7 +507,7 @@ class CodebaseIndexer:
             nonlocal advanced
             for p in paths:
                 try:
-                    accumulator.extend(_chunk_worker.chunk_file(p, self.root_dir))
+                    _accept(_chunk_worker.chunk_and_hash_file(p, self.root_dir))
                 except Exception:
                     logger.warning("Failed to chunk %s", p, exc_info=True)
                 advanced += 1
@@ -457,12 +518,12 @@ class CodebaseIndexer:
         reporter.phase_start("chunk + embed", len(paths))
         try:
             if not paths:
-                return new_ids, total
+                return new_ids, total, meta
 
-            workers = self._resolve_chunk_workers(len(paths))
+            workers = self._plan_chunk_workers(paths)
             if workers <= 1:
                 _run_serial()
-                return new_ids, total
+                return new_ids, total, meta
 
             ctx = multiprocessing.get_context("spawn")
             window = max(2 * slice_size, 8 * workers)
@@ -473,14 +534,18 @@ class CodebaseIndexer:
                     mp_context=ctx,
                 ) as pool:
                     pending = {
-                        pool.submit(_chunk_worker.chunk_file, p, self.root_dir)
+                        pool.submit(
+                            _chunk_worker.chunk_and_hash_file,
+                            p,
+                            self.root_dir,
+                        )
                         for p in itertools.islice(paths_iter, window)
                     }
                     while pending:
                         done, pending = wait(pending, return_when=FIRST_COMPLETED)
                         for fut in done:
                             try:
-                                accumulator.extend(fut.result())
+                                _accept(fut.result())
                             except BrokenProcessPool:
                                 raise
                             except Exception:
@@ -494,7 +559,7 @@ class CodebaseIndexer:
                             if nxt is not None:
                                 pending.add(
                                     pool.submit(
-                                        _chunk_worker.chunk_file,
+                                        _chunk_worker.chunk_and_hash_file,
                                         nxt,
                                         self.root_dir,
                                     )
@@ -518,7 +583,7 @@ class CodebaseIndexer:
                 _run_serial()
         finally:
             reporter.phase_end()
-        return new_ids, total
+        return new_ids, total, meta
 
     def full_index(
         self,
@@ -572,18 +637,6 @@ class CodebaseIndexer:
         paths = self._scan_codebase()
         reporter.phase_end()
 
-        reporter.phase_start("hash files", len(paths))
-        meta: dict[str, str] = {}
-        for p in paths:
-            rel = str(p.relative_to(self.root_dir)).replace("\\", "/")
-            try:
-                with open(p, "rb") as f:
-                    meta[rel] = hashlib.file_digest(f, "blake2b").hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file for metadata: %s", rel)
-            reporter.advance()
-        reporter.phase_end()
-
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
         # purge only the ids absent from the new corpus afterwards. When
@@ -612,11 +665,12 @@ class CodebaseIndexer:
         finally:
             reporter.phase_end()
 
-        # Pipelined chunk -> embed: process-pool workers chunk files while the
-        # single in-process GPU consumer encodes and upserts completed slices,
-        # so the GPU never idles waiting for the whole tree to be chunked
-        # (#155 ADR P02).
-        new_ids, total_chunks = self._pipeline_chunk_and_embed(
+        # Pipelined chunk -> embed: process-pool workers read, hash, and chunk
+        # files while the single in-process GPU consumer encodes and upserts
+        # completed slices, so the GPU never idles waiting for the whole tree
+        # to be chunked (#155 ADR P02). The workers return the content hash
+        # from the same read, so ``meta`` needs no separate hash pass (P03).
+        new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
             paths,
             slice_size=slice_size,
             reporter=reporter,

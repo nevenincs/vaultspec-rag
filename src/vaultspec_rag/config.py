@@ -45,6 +45,9 @@ class EnvVar(StrEnum):
     MAX_EMBED_CHARS = "VAULTSPEC_RAG_MAX_EMBED_CHARS"
     # Codebase-index parallelism + throughput knobs (#155).
     INDEX_CHUNK_WORKERS = "VAULTSPEC_RAG_INDEX_CHUNK_WORKERS"
+    EMBEDDING_CODE_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE"
+    INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
+    INDEX_PARALLEL_MIN_BYTES = "VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES"
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     WATCH_ENABLED = "VAULTSPEC_RAG_WATCH_ENABLED"
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
@@ -79,6 +82,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
     "max_embed_chars": EnvVar.MAX_EMBED_CHARS,
     "index_chunk_workers": EnvVar.INDEX_CHUNK_WORKERS,
+    "embedding_code_encode_batch_size": EnvVar.EMBEDDING_CODE_ENCODE_BATCH_SIZE,
+    "index_cache_flush_slices": EnvVar.INDEX_CACHE_FLUSH_SLICES,
+    "index_parallel_min_bytes": EnvVar.INDEX_PARALLEL_MIN_BYTES,
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
@@ -139,6 +145,29 @@ class VaultSpecConfigWrapper:
         # in-process path (useful for small trees, debugging, or environments
         # where spawning workers is undesirable).
         "index_chunk_workers": 0,
+        # Inner encode sub-batch for the CODEBASE path, decoupled from the
+        # vault path's small ``embedding_encode_batch_size`` (#155). Code
+        # chunks are short (<=1500 chars) and length-sorted, so the padding
+        # pathology that justifies 8 for variable-length vault docs does not
+        # apply; a larger sub-batch keeps the GPU's tensor cores fed and
+        # raises encode throughput. The OOM-backoff in ``encode_documents``
+        # still halves this on memory pressure.
+        "embedding_code_encode_batch_size": 32,
+        # Flush the CUDA caching allocator every N codebase embed slices
+        # instead of every slice (#155). Per-slice flushing (the #68 RSS fix)
+        # forces a device sync each iteration; throttling to every N slices
+        # removes most of those syncs while still bounding allocator growth to
+        # N slices' worth of transient activations. ``1`` restores per-slice
+        # flushing.
+        "index_cache_flush_slices": 8,
+        # Minimum total source bytes before AUTO worker selection
+        # (``index_chunk_workers=0``) engages the process pool (#155). Spawn
+        # workers cost ~0.3s each to start, so on small/medium trees the pool
+        # is slower than serial chunking; below this threshold the auto path
+        # stays serial. An explicit ``index_chunk_workers`` >= 1 bypasses this
+        # gate. 8 MiB sits comfortably above the measured serial/parallel
+        # crossover while still parallelising any large codebase.
+        "index_parallel_min_bytes": 8 * 1024 * 1024,
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_model": "naver/splade-v3",

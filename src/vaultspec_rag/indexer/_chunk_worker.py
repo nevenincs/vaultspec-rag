@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..store import CodeChunk
@@ -38,6 +39,21 @@ logger = logging.getLogger(__name__)
 _CHUNKER: ASTChunker | None = None
 
 
+@dataclass(slots=True)
+class FileChunkResult:
+    """One file's chunks plus its content hash, returned from a worker.
+
+    Carrying the blake2b hash back from the same read that produced the chunks
+    lets the full-index path skip the separate hash pass — the tree is read
+    once, not twice (#155 P03 / finding C4). ``slots=True`` keeps the pickled
+    payload that crosses the process boundary lean (research O3).
+    """
+
+    rel_path: str
+    content_hash: str
+    chunks: list[CodeChunk]
+
+
 def _get_chunker() -> ASTChunker:
     """Return the per-process reusable :class:`ASTChunker`, building it once."""
     global _CHUNKER
@@ -46,27 +62,28 @@ def _get_chunker() -> ASTChunker:
     return _CHUNKER
 
 
-def chunk_file(path: pathlib.Path, root_dir: pathlib.Path) -> list[CodeChunk]:
-    """Read a file, decode it once, and split it into AST-aware ``CodeChunk``s.
+def _decode_source(raw: bytes, path: pathlib.Path) -> str | None:
+    """Decode raw file bytes as UTF-8 with universal-newline translation.
 
-    This is the picklable process-pool entry point. It performs only CPU work:
-    a single file read, tree-sitter parsing (or text-splitter fallback), and
-    chunk construction with empty vectors for the consumer to embed.
-
-    Args:
-        path: Absolute path to the source file.
-        root_dir: Project root used to compute the chunk's relative path.
-
-    Returns:
-        List of ``CodeChunk`` instances with empty vectors, or an empty list
-        when the file cannot be read.
+    Replicates :meth:`pathlib.Path.read_text` semantics (``\\r\\n`` and lone
+    ``\\r`` collapse to ``\\n``) so chunk text, line numbers, and chunk ids are
+    byte-identical to the pre-single-read code path. Returns ``None`` when the
+    bytes are not valid UTF-8.
     """
     try:
-        content = path.read_text(encoding="utf-8")
-    except Exception as e:
-        logger.warning("Cannot read %s: %s", path, e)
-        return []
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        logger.warning("Cannot decode %s: %s", path, e)
+        return None
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
+
+def _chunk_decoded(
+    content: str,
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+) -> list[CodeChunk]:
+    """Split already-decoded source into chunks, selecting AST vs splitter."""
     ext = path.suffix.lower()
     lang_entry = LANGUAGE_MAP.get(ext)
     language = lang_entry[0] if lang_entry else "text"
@@ -76,6 +93,70 @@ def chunk_file(path: pathlib.Path, root_dir: pathlib.Path) -> list[CodeChunk]:
     if grammar:
         return chunk_with_ast(content, rel_path, language, grammar)
     return chunk_with_splitter(content, rel_path, language)
+
+
+def chunk_file(path: pathlib.Path, root_dir: pathlib.Path) -> list[CodeChunk]:
+    """Read a file, decode it once, and split it into AST-aware ``CodeChunk``s.
+
+    This is the picklable process-pool entry point for the incremental and
+    scoped paths (which hash separately). It performs only CPU work: a single
+    file read, tree-sitter parsing (or text-splitter fallback), and chunk
+    construction with empty vectors for the consumer to embed.
+
+    Args:
+        path: Absolute path to the source file.
+        root_dir: Project root used to compute the chunk's relative path.
+
+    Returns:
+        List of ``CodeChunk`` instances with empty vectors, or an empty list
+        when the file cannot be read or decoded.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        logger.warning("Cannot read %s: %s", path, e)
+        return []
+    content = _decode_source(raw, path)
+    if content is None:
+        return []
+    return _chunk_decoded(content, path, root_dir)
+
+
+def chunk_and_hash_file(
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+) -> FileChunkResult | None:
+    """Read a file once, returning both its content hash and its chunks.
+
+    The full-index path uses this so the tree is read a single time rather than
+    once for hashing and again for chunking (#155 P03). The blake2b hash is
+    computed over the raw bytes, matching ``hashlib.file_digest`` exactly, so
+    incremental-index change detection is unaffected. A file that is readable
+    but not valid UTF-8 still yields its hash (with no chunks) so it remains
+    tracked in the index metadata.
+
+    Args:
+        path: Absolute path to the source file.
+        root_dir: Project root used to compute the relative path.
+
+    Returns:
+        A :class:`FileChunkResult`, or ``None`` when the file cannot be read.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        logger.warning("Cannot read %s: %s", path, e)
+        return None
+    content_hash = hashlib.blake2b(raw).hexdigest()
+    rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
+    content = _decode_source(raw, path)
+    if content is None:
+        return FileChunkResult(rel_path, content_hash, [])
+    return FileChunkResult(
+        rel_path,
+        content_hash,
+        _chunk_decoded(content, path, root_dir),
+    )
 
 
 def chunk_with_ast(
