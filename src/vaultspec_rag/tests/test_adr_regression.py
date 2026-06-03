@@ -179,7 +179,10 @@ class TestEmbeddingModelLoadArguments:
 
         from vaultspec_rag.embeddings import EmbeddingModel
 
-        source = textwrap.dedent(inspect.getsource(EmbeddingModel.__init__))
+        # The dense SentenceTransformer construction lives in
+        # ``_load_dense_model`` (backend seam) while SparseEncoder stays in
+        # ``__init__``; parse the whole class so both calls are in scope.
+        source = textwrap.dedent(inspect.getsource(EmbeddingModel))
         return ast.parse(source)
 
     @staticmethod
