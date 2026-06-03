@@ -43,6 +43,14 @@ class EnvVar(StrEnum):
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
     EMBEDDING_MAX_SEQ_LENGTH = "VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH"
     MAX_EMBED_CHARS = "VAULTSPEC_RAG_MAX_EMBED_CHARS"
+    # Codebase-index parallelism + throughput knobs (#155).
+    INDEX_CHUNK_WORKERS = "VAULTSPEC_RAG_INDEX_CHUNK_WORKERS"
+    EMBEDDING_CODE_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE"
+    INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
+    INDEX_PARALLEL_MIN_BYTES = "VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES"
+    # Dense-encoder backend selection (#155 onnx-encoder-backend ADR).
+    DENSE_BACKEND = "VAULTSPEC_RAG_DENSE_BACKEND"
+    DENSE_ONNX_FILE = "VAULTSPEC_RAG_DENSE_ONNX_FILE"
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     WATCH_ENABLED = "VAULTSPEC_RAG_WATCH_ENABLED"
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
@@ -76,6 +84,12 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_encode_batch_size": EnvVar.EMBEDDING_ENCODE_BATCH_SIZE,
     "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
     "max_embed_chars": EnvVar.MAX_EMBED_CHARS,
+    "index_chunk_workers": EnvVar.INDEX_CHUNK_WORKERS,
+    "embedding_code_encode_batch_size": EnvVar.EMBEDDING_CODE_ENCODE_BATCH_SIZE,
+    "index_cache_flush_slices": EnvVar.INDEX_CACHE_FLUSH_SLICES,
+    "index_parallel_min_bytes": EnvVar.INDEX_PARALLEL_MIN_BYTES,
+    "dense_backend": EnvVar.DENSE_BACKEND,
+    "dense_onnx_file": EnvVar.DENSE_ONNX_FILE,
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
@@ -128,6 +142,44 @@ class VaultSpecConfigWrapper:
         # otherwise leaks into kernel-selection heuristics and wastes
         # attention memory on padded sequences.
         "embedding_max_seq_length": 2048,
+        # Number of worker processes for parallel codebase chunking (#155).
+        # tree-sitter AST chunking is CPU-bound and holds the GIL for both
+        # parse and traverse, so a process pool (not threads) is required to
+        # use multiple cores. ``0`` means "auto" — resolve to
+        # ``os.process_cpu_count()`` at run time. ``1`` forces the serial
+        # in-process path (useful for small trees, debugging, or environments
+        # where spawning workers is undesirable).
+        "index_chunk_workers": 0,
+        # Inner encode sub-batch for the CODEBASE path, decoupled from the
+        # vault path's small ``embedding_encode_batch_size`` (#155). Code
+        # chunks are short (<=1500 chars) and length-sorted, so the padding
+        # pathology that justifies 8 for variable-length vault docs does not
+        # apply; a larger sub-batch keeps the GPU's tensor cores fed and
+        # raises encode throughput. The OOM-backoff in ``encode_documents``
+        # still halves this on memory pressure.
+        "embedding_code_encode_batch_size": 32,
+        # Flush the CUDA caching allocator every N codebase embed slices
+        # instead of every slice (#155). Per-slice flushing (the #68 RSS fix)
+        # forces a device sync each iteration; throttling to every N slices
+        # removes most of those syncs while still bounding allocator growth to
+        # N slices' worth of transient activations. ``1`` restores per-slice
+        # flushing.
+        "index_cache_flush_slices": 8,
+        # Minimum total source bytes before AUTO worker selection
+        # (``index_chunk_workers=0``) engages the process pool (#155). Spawn
+        # workers cost ~0.3s each to start, so on small/medium trees the pool
+        # is slower than serial chunking; below this threshold the auto path
+        # stays serial. An explicit ``index_chunk_workers`` >= 1 bypasses this
+        # gate. 8 MiB sits comfortably above the measured serial/parallel
+        # crossover while still parallelising any large codebase.
+        "index_parallel_min_bytes": 8 * 1024 * 1024,
+        # Dense-encoder backend (#155 onnx-encoder-backend ADR). "torch" is the
+        # default and only validated path on this CUDA-13 build; "onnx" is
+        # experimental and opt-in (requires sentence-transformers[onnx-gpu] in
+        # an onnxruntime-compatible CUDA environment) and degrades to torch on
+        # any failure. ``dense_onnx_file`` is the cached O4 model relative path.
+        "dense_backend": "torch",
+        "dense_onnx_file": "onnx/model_O4.onnx",
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_model": "naver/splade-v3",

@@ -1,5 +1,8 @@
 {
   "plugins": {
+    "md001": {
+      "enabled": false
+    },
     "md011": {
       "enabled": false
     },

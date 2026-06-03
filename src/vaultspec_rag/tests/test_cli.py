@@ -1992,18 +1992,25 @@ class TestJsonOutputMode:
         assert env["port"] == 1
         assert "remediation" in env
 
-    def test_service_status_json_stopped_envelope(self):
+    def test_service_status_json_stopped_envelope(self, tmp_path: Path):
         """No service.json: exit 3 + ok=false envelope with error=stopped."""
-        result = runner.invoke(
-            app,
-            ["server", "service", "status", "--json"],
-        )
-        assert result.exit_code == 3
-        env = self._parse_envelope(result.output)
-        assert env["ok"] is False
-        assert env["command"] == "service.status"
-        assert env["error"] == "stopped"
-        assert env["data"]["service_json_present"] is False
+        # Isolate STATUS_DIR to an empty dir so the assertion does not depend
+        # on the developer machine's ambient ~/.vaultspec-rag/ service state;
+        # a running service would otherwise return exit 0 here.
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "service", "status", "--json"],
+            )
+            assert result.exit_code == 3
+            env = self._parse_envelope(result.output)
+            assert env["ok"] is False
+            assert env["command"] == "service.status"
+            assert env["error"] == "stopped"
+            assert env["data"]["service_json_present"] is False
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_json_crashed_envelope(self, tmp_path: Path):
         """File present + dead PID: exit 4 + ok=false + state=crashed_*."""
