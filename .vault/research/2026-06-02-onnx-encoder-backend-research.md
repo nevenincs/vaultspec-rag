@@ -100,9 +100,20 @@ assumption and reaching the decisive end-to-end finding:
   cannot produce Qwen3 embeddings at all** in the current stack (it crashes before any vector
   is returned). So there is nothing to compare yet — torch is the only working dense path.
 
+Follow-up attempts confirmed it is ST-side and not fixable operator-side:
+`use_io_binding=False` turns the io-binding crash into the explicit
+`ValueError: Input position_ids is required by model but not provided` (ST's ONNX forward
+never supplies `position_ids`), and the **prebuilt** `onnx-community/Qwen3-Embedding-0.6B-ONNX`
+fails identically — so it is not our export. The required ONNX stack also pins
+`optimum-onnx 0.1.0`, which downgrades `transformers` 5.9 -> 4.57 (conflicting with the
+project), and a control run on a supported BERT model could not complete in that mutated env.
+
 Net: this is not a CUDA-environment problem and not a "wrong batch regime" judgement call —
 it is a hard integration gap (optimum-onnx + ST do not yet support Qwen3-Embedding inference
-or O4). Adoption is blocked upstream, not by our code.
+or O4) compounded by version conflicts with the project's pinned stack. A clean onnx-vs-torch
+comparison therefore needs a separate, version-matched environment, not mutation of this
+project's venv. Adoption is blocked upstream, not by our code. Torch is the only working dense
+path (measured baseline ~230-254 chunks/s at bs=32).
 
 ## Recommendation (input to the ADR)
 
