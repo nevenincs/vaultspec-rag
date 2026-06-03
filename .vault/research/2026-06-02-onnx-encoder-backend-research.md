@@ -77,17 +77,45 @@ first export needs optimum (+ network for a hub id). Everything must sit behind 
 (default torch) with a logged fallback on any ONNX init/export failure. Confidence: high on
 mechanism, medium on drift.
 
+## Hands-on verification (2026-06-03)
+
+Ran the actual attempt on the RTX 4080 SUPER (cu130 torch), correcting an earlier wrong
+assumption and reaching the decisive end-to-end finding:
+
+- **CUDA 13 onnxruntime exists and coexists cleanly — earlier "cu12-only" claim was wrong.**
+  The stable `onnxruntime-gpu` is CUDA-12 (its `providers_cuda.dll` needs `cublasLt64_12.dll`)
+  and collides with cu130 torch's cuDNN (`WinError 127`). But the **CUDA-13 nightly**
+  (`onnxruntime-gpu 1.27.0.dev`, from the `ort-cuda-13-nightly` index) reuses torch's cu13
+  CUDA/cuDNN ("Skip loading CUDA and cuDNN DLLs since torch is imported") — `CUDAExecutionProvider`
+  is active and torch keeps working in the same process. The CUDA version is **not** the blocker.
+- **The real blocker is the sentence-transformers / optimum ONNX backend not supporting Qwen3
+  end-to-end yet:**
+  - O4 graph optimization raises `NotImplementedError: ONNX Runtime doesn't support the graph optimization of qwen3 yet` from `optimum-onnx 0.1.0` (its supported-model list excludes
+    qwen3 — separate from onnxruntime's own qwen3 optimizer support).
+  - Base ONNX (no O4) exports and loads on CUDA, but **inference crashes**:
+    `optimum/onnxruntime/base.py:_prepare_io_binding -> input_shape = model_inputs[input_name].shape -> AttributeError: 'NoneType' object has no attribute 'shape'` — the exported Qwen3 graph expects an input (e.g. `position_ids`) that the ST
+    ONNX forward leaves `None`.
+- **Torch baseline (measured, same machine/sample):** ~230-254 chunks/s at `bs=32` for the
+  dense Qwen3 encode. No ONNX throughput or parity number exists **because the ONNX path
+  cannot produce Qwen3 embeddings at all** in the current stack (it crashes before any vector
+  is returned). So there is nothing to compare yet — torch is the only working dense path.
+
+Net: this is not a CUDA-environment problem and not a "wrong batch regime" judgement call —
+it is a hard integration gap (optimum-onnx + ST do not yet support Qwen3-Embedding inference
+or O4). Adoption is blocked upstream, not by our code.
+
 ## Recommendation (input to the ADR)
 
 Scope to **dense-only**, behind an **experimental, off-by-default** config flag with a torch
-fallback, and **validate before trusting**. SPLADE ONNX buys little (pooling stays in torch;
-lighter model). The headline speedup is for a batch regime we are not in, and the Qwen3 O4
-path is weeks old with no published parity. Therefore the deliverable is the **complete,
-gated backend plus the evidence to decide its default**: implement
-`VAULTSPEC_RAG_DENSE_BACKEND=torch|onnx` (default `torch`), export+cache the O4 model, run an
-embedding-parity gate, and benchmark embed throughput at the real `bs=32` against the torch
-baseline. Adopt as default only if the benchmark shows a material, regression-free win;
-otherwise ship it opt-in with the benchmark documenting why it stays off.
+fallback. The deliverable is the **complete, gated seam**:
+`VAULTSPEC_RAG_DENSE_BACKEND=torch|onnx` (default `torch`) that degrades to torch on any
+failure. Activation is **blocked upstream**, not merely deferred: the hands-on verification
+shows the ST/optimum ONNX backend cannot run Qwen3-Embedding today (base inference crashes in
+optimum io-binding; O4 unsupported for qwen3). The seam's fallback is therefore not just a
+safety net — it is the *current behaviour* when `onnx` is selected. The throughput/parity
+gate that would justify flipping the default on can only run once `optimum-onnx` adds Qwen3
+support (inference + O4); the seam makes that a one-line config change when it lands. The CUDA
+environment is **not** a blocker — the onnxruntime CUDA-13 nightly coexists with cu130 torch.
 
 ## Open questions for the ADR
 

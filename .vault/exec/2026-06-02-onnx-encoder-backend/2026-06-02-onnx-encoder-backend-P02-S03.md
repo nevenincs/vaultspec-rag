@@ -24,4 +24,13 @@ Config seam + fallback validated: 2 unit + 1 real-GPU test green (no mocks).
 
 ## Notes
 
-The onnx-active GPU path itself is not validated on this cu130 machine (CUDA-12/13 wall); it ships experimental per the ADR, with the parity/throughput gate deferred to a compatible environment.
+Hands-on verification (2026-06-03) corrected the original CUDA assumption: the onnxruntime
+CUDA-13 nightly (1.27.0.dev) coexists cleanly with cu130 torch (reuses torch's cu13 cuDNN;
+`CUDAExecutionProvider` active), so the environment is not the blocker. The real blocker is
+upstream: `optimum-onnx 0.1.0` does not support qwen3 O4 (`NotImplementedError`) and base
+ONNX inference of Qwen3 crashes in optimum io-binding (`_prepare_io_binding`, a `None` input).
+So the ONNX dense path returns no embedding for our model today and there is no throughput or
+parity number to report; selecting `onnx` degrades to torch (the tested behaviour). Torch
+baseline measured ~230-254 chunks/s at bs=32. The benchmark venv was restored to the pristine
+lockfile state afterward (extras removed, transformers 5.9.0). Revisit when optimum-onnx adds
+Qwen3 support.
