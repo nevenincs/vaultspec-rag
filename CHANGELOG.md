@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.14](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.13...vaultspec-rag-v0.2.14) (2026-06-03)
+
+
+### Features
+
+* **embed:** operator-selectable ONNX dense backend with torch fallback (onnx-encoder-backend P01+P02, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([73e0bac](https://github.com/wgergely/vaultspec-rag/commit/73e0bacd4038a2d835f4988be0cd5acb4b628267))
+
+
+### Bug Fixes
+
+* **index:** bound GPU-consumer shutdown so it aborts instead of hanging (index-gpu-pipeline review) ([9309e40](https://github.com/wgergely/vaultspec-rag/commit/9309e40bb7047eaf5796c6e44e5e245b8ad55d9e))
+* **index:** keep index meta complete on chunk failure; harden gate + worker tests ([#155](https://github.com/wgergely/vaultspec-rag/issues/155) review) ([953cec9](https://github.com/wgergely/vaultspec-rag/commit/953cec9f9f2fa77bbda83b2bdf2cbdc125db837d))
+
+
+### Performance
+
+* **index:** dedicated GPU consumer thread + bounded queue (index-gpu-pipeline P01+P02) ([364e3b4](https://github.com/wgergely/vaultspec-rag/commit/364e3b4f4c1b7ae680d08bb6bff5acd7a5e370f5))
+* **index:** encode-batch + flush throttle + single-read IO + parallel gate, with parity tests & benchmark (P03+P04, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([d9ef491](https://github.com/wgergely/vaultspec-rag/commit/d9ef4910243588af72c49588275c65cf50bb0277))
+* **index:** parallel process-pool chunking + chunk-to-embed pipeline (P01+P02, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([7fdbbda](https://github.com/wgergely/vaultspec-rag/commit/7fdbbda5222e80bb9246ecdd6c48225c9ed0f18f))
+* **index:** re-architect codebase indexing for parallelism + GPU pipelining ([53e542a](https://github.com/wgergely/vaultspec-rag/commit/53e542a1d96c5b179cabc800cf0379dbca9cd9c1))
+
 ## [0.2.13](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.12...vaultspec-rag-v0.2.13) (2026-06-02)
 
 
