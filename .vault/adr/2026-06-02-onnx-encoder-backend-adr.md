@@ -39,13 +39,13 @@ Findings, measured hands-on (2026-06-03), supersede the initial CUDA-version con
 
 ## Constraints
 
-- Do not force `onnxruntime-gpu` or the `nvidia-*-cu12` libs into the core dependency set:
-  they are heavy and, on a cu130 torch, risk destabilising the working GPU path.
+- Do not force `onnxruntime-gpu`/`optimum-onnx` into the core dependency set: they are heavy
+  and the ONNX path does not yet work for our model, so they buy nothing for default users.
 - Any backend selection must fall back to the torch path on any import/export/provider
   failure, logged (no silent swallow), so a misconfigured ONNX backend never breaks indexing.
 - Adoption as the default must be gated on a measured, regression-free win (throughput at the
-  real `bs=32` plus an embedding-parity check), which cannot be obtained cleanly on this
-  cu130 machine today.
+  real `bs=32` plus an embedding-parity check), which cannot be obtained until `optimum-onnx`
+  supports Qwen3 inference (today the ONNX path returns no embedding).
 
 ## Implementation
 
@@ -57,21 +57,22 @@ config knob (`VAULTSPEC_RAG_DENSE_BACKEND`, values `torch` | `onnx`, default `to
 `optimum`/`onnxruntime-gpu`, export error, provider load failure) it logs a warning and falls
 back to the torch construction. The sparse SPLADE path stays on torch. No ONNX dependency is
 added to the project; selecting `onnx` requires the operator to have installed
-`sentence-transformers[onnx-gpu]` in an onnxruntime-compatible CUDA environment. The
-parity-and-throughput benchmark that would justify flipping the default on is deferred until
-onnxruntime ships a CUDA-13 build (removing the dual-CUDA fragility); the seam makes that a
-one-line config change when it does.
+`sentence-transformers[onnx-gpu]` plus the onnxruntime CUDA-13 nightly. The
+parity-and-throughput benchmark that would justify flipping the default on is blocked until
+`optimum-onnx` supports Qwen3 (inference + O4); the seam makes that a one-line config change
+when it lands.
 
 ## Rationale
 
 The seam is the only change that satisfies "deliver the ONNX-O4 lever" without violating
 "eliminate all regression". The feature (operator-selectable ONNX dense backend with a safe
-fallback) is delivered and testable now; the heavy, fragile cu12-alongside-cu13 dependency
-stack and the unproven large-batch benefit are kept out of the default path. The empirical
-spikes are decisive: ONNX-O4 on GPU is reachable here only through a dual-CUDA bundle that
-endangers the working torch, and the speedup is in a batch regime we do not use. Shipping the
-seam (zero core deps, tested fallback) and deferring activation is the honest, low-risk
-delivery; forcing adoption now would be speculative and risk a regression.
+fallback) is delivered and testable now; the optional ONNX stack stays out of the default
+path. The hands-on verification is decisive: the CUDA environment is solvable (the cu13
+nightly coexists with cu130 torch), but the sentence-transformers / optimum ONNX backend
+cannot run Qwen3-Embedding end-to-end yet (inference crashes; O4 unsupported), and even once
+fixed the bs=32 batch regime makes a large win unlikely. Shipping the seam (zero core deps,
+tested fallback) and gating activation on upstream support is the honest, low-risk delivery;
+forcing adoption now would ship a path that does not work for our model.
 
 ## Consequences
 
@@ -85,8 +86,7 @@ qwen3 in `optimum-onnx 0.1.0`). The CUDA-13 nightly onnxruntime coexists with cu
 exists because the ONNX path returns no embedding. The expected benefit at `bs=32` is also
 likely small (batch-regime). This ADR does not claim a speedup — only a ready, safe seam.
 Revisit and run the parity/throughput gate when `optimum-onnx` adds Qwen3 support (inference
-
-- O4).
+and O4).
 
 ## Codification candidates
 
