@@ -268,13 +268,37 @@ def test_multi_project_search_isolation(
         # Index both projects (one session per call)
         for m in manifests:
             try:
-                asyncio.run(
+                res_text = asyncio.run(
                     _mcp_call(
                         port,
                         "reindex_vault",
                         {"clean": True, "project_root": str(m.root)},
                     ),
                 )
+                res = json.loads(res_text)
+                assert res.get("ok") is True
+                job_id = res.get("job_id")
+                assert job_id is not None
+
+                # Wait for background job to finish
+                for _ in range(100):
+                    jobs_text = asyncio.run(
+                        _mcp_call(
+                            port,
+                            "get_jobs",
+                            {"limit": 50},
+                        ),
+                    )
+                    jobs_data = json.loads(jobs_text)
+                    jobs = jobs_data.get("jobs", [])
+                    matched = [j for j in jobs if j.get("id") == job_id]
+                    if matched and matched[0].get("phase") in (
+                        "done",
+                        "error",
+                        "failed",
+                    ):
+                        break
+                    time.sleep(0.1)
             except BaseException:
                 # Dump service log on failure for diagnosis
                 if log_path.exists():

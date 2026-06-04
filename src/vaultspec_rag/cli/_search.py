@@ -13,6 +13,7 @@ import vaultspec_rag.cli as _cli
 
 from ..embeddings import EmbeddingModel
 from ..search import VaultSearcher
+from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
 from ._mcp_search import _try_mcp_search
@@ -224,6 +225,16 @@ def handle_search(
             ),
         ),
     ] = False,
+    timeout: Annotated[
+        float | None,
+        typer.Option(
+            "--timeout",
+            help=(
+                "Connection and read timeout budget in seconds "
+                "for service-delegated searches."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Search for relevant context in documentation or code.
 
@@ -354,6 +365,7 @@ def handle_search(
             max_results,
             port,
             str(target),
+            timeout=timeout,
             language=language,
             path=path,
             node_type=node_type,
@@ -416,7 +428,58 @@ def handle_search(
                 "search (--allow-fallback set)...[/]",
             )
 
-    store = _open_vault_store(target, json_mode=json_mode, command="search")
+    try:
+        store = _open_vault_store(
+            target,
+            json_mode=json_mode,
+            command="search",
+            raise_on_locked=True,
+        )
+    except VaultStoreLockedError as exc:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "local_store_locked",
+                (
+                    f"The vault index at {exc.db_path} is currently in "
+                    "use by another process. Current routing mode: "
+                    "direct local-store search. Stop the resident "
+                    "service / MCP server, or route through one running "
+                    "vaultspec-rag service for concurrent access "
+                    "(e.g., using --port 8766)."
+                ),
+                1,
+                db_path=str(exc.db_path),
+                routing_mode="local",
+                remediation=[
+                    "Wait for the other process to finish.",
+                    "vaultspec-rag search ... --port 8766",
+                    "vaultspec-rag server service stop",
+                    "vaultspec-rag server mcp stop",
+                ],
+            )
+        _cli.console.print(
+            f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
+            "is currently in use by another process "
+            "(routing mode: direct local-store search).\n\n"
+            "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
+            "or file watcher is likely running against this workspace.\n\n"
+            "  Local-file-backed RAG storage cannot be opened by multiple "
+            "processes at once. For concurrent agent searches, route every "
+            "request through one running [cyan]vaultspec-rag[/] service.\n\n"
+            "  To resolve, do one of the following:\n"
+            "    1. Wait for the other process to finish.\n"
+            "    2. Route your search request through a running "
+            "service on a port, e.g.:\n"
+            "         [cyan]vaultspec-rag search ... --port 8766[/]\n"
+            "    3. Stop the running server:\n"
+            "         [cyan]vaultspec-rag server mcp stop[/]\n"
+            "         [cyan]vaultspec-rag server service stop[/]\n"
+            "    4. If no vaultspec-rag process is alive, look for an "
+            "orphaned Python process holding the lock and stop it manually."
+        )
+        raise typer.Exit(code=1) from exc
+
     try:
         status_ctx = (
             contextlib.nullcontext()

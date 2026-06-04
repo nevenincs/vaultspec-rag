@@ -115,10 +115,22 @@ async def test_search_vault_increments_counter(
     _clean_metrics: None,
     _clean_watchers: None,
 ) -> None:
+    import asyncio
+
+    from vaultspec_rag.mcp_server import _jobs
+
     root = _make_root(tmp_path)
     mcp_server._registry._model = embedding_model
 
-    await mcp_server.reindex_vault(project_root=str(root))
+    response = await mcp_server.reindex_vault(project_root=str(root))
+    assert isinstance(response, dict)
+    job_id = response["job_id"]
+    for _ in range(50):
+        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            break
+        await asyncio.sleep(0.1)
+
     before = mcp_server.render_prometheus()
     assert "vaultspec_rag_search_total 0" in before
     # The reindex above bumped the reindex counter inline.
@@ -137,10 +149,21 @@ async def test_reindex_vault_increments_counter(
     _clean_metrics: None,
     _clean_watchers: None,
 ) -> None:
+    import asyncio
+
+    from vaultspec_rag.mcp_server import _jobs
+
     root = _make_root(tmp_path)
     mcp_server._registry._model = embedding_model
 
-    await mcp_server.reindex_vault(project_root=str(root))
+    response = await mcp_server.reindex_vault(project_root=str(root))
+    assert isinstance(response, dict)
+    job_id = response["job_id"]
+    for _ in range(50):
+        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            break
+        await asyncio.sleep(0.1)
 
     text = mcp_server.render_prometheus()
     assert "vaultspec_rag_reindex_total 1" in text

@@ -260,6 +260,40 @@ def handle_index(
                 raise typer.Exit(code=1)
 
         if v_data is not None or c_data is not None:
+            is_async = False
+            for data in (v_data, c_data):
+                if isinstance(data, dict) and "job_id" in data:
+                    is_async = True
+
+            if is_async:
+                if json_mode:
+                    _emit_json(
+                        True,
+                        "index",
+                        data={
+                            "via": "mcp",
+                            "async": True,
+                            "vault_job_id": (v_data.get("job_id") if v_data else None),
+                            "codebase_job_id": (
+                                c_data.get("job_id") if c_data else None
+                            ),
+                        },
+                    )
+                    return
+                if v_data:
+                    _cli.console.print(
+                        "Vault re-index job queued on service: "
+                        f"[cyan]{v_data.get('job_id')}[/]"
+                    )
+                if c_data:
+                    _cli.console.print(
+                        "Codebase re-index job queued on service: "
+                        f"[cyan]{c_data.get('job_id')}[/]"
+                    )
+                _cli.console.print(
+                    "Check progress with: [bold]vaultspec-rag server service jobs[/]"
+                )
+                return
 
             def _row(label: str, data: dict[str, object]) -> dict[str, object]:
                 def _i(key: str) -> int:
