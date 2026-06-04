@@ -23,6 +23,7 @@ from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
 )
+from ._service_status import _default_service_port
 from ._store import _open_vault_store
 
 
@@ -340,6 +341,11 @@ def handle_search(
         if prefer is not None:
             offending.append("--prefer")
         _emit_filter_mismatch("code", offending)
+
+    if port is None:
+        port = _default_service_port()
+        if port is not None:
+            allow_fallback = True
 
     if port is not None:
         mcp_results = _try_mcp_search(

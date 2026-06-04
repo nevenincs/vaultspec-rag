@@ -22,6 +22,7 @@ from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
 )
+from ._service_status import _default_service_port
 from ._store import _open_vault_store
 
 
@@ -212,6 +213,12 @@ def handle_index(
             for line in remediation:
                 _cli.console.print(f"  [cyan]{line}[/]")
             raise typer.Exit(code=2)
+
+    if port is None:
+        port = _default_service_port()
+        if port is not None:
+            # We detected a running service, so enable fallback automatically.
+            allow_fallback = True
 
     if port is not None:
         if exclude and not json_mode:

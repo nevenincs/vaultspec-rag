@@ -10,7 +10,7 @@ import hashlib
 import logging
 import threading
 import warnings
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -44,6 +44,70 @@ class VaultStoreLockedError(RuntimeError):
             "multiple vaultspec-rag processes; route concurrent searches "
             "through one resident service or retry after the holder exits.",
         )
+
+
+class FileLock:
+    """Cross-platform non-blocking file lock."""
+
+    def __init__(self, path: pathlib.Path) -> None:
+        self.path = path
+        self.fd = None
+
+    def acquire(self) -> bool:
+        import os
+        import sys
+
+        try:
+            self.fd = os.open(str(self.path), os.O_CREAT | os.O_WRONLY)
+        except OSError:
+            return False
+
+        if sys.platform == "win32":
+            import msvcrt
+
+            try:
+                msvcrt.locking(self.fd, msvcrt.LK_NBLCK, 1)
+                return True
+            except OSError:
+                self.close()
+                return False
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except OSError:
+                self.close()
+                return False
+
+    def release(self) -> None:
+        import os
+        import sys
+
+        if self.fd is not None:
+            if sys.platform == "win32":
+                import msvcrt
+
+                try:
+                    os.lseek(self.fd, 0, os.SEEK_SET)
+                    msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+            else:
+                import fcntl
+
+                with suppress(OSError):
+                    fcntl.flock(self.fd, fcntl.LOCK_UN)
+            self.close()
+
+    def close(self) -> None:
+        import os
+
+        if self.fd is not None:
+            with suppress(OSError):
+                os.close(self.fd)
+            self.fd = None
 
 
 EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
@@ -189,6 +253,9 @@ class VaultStore:
         self.root_dir = _pathlib.Path(root_dir)
         self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
         self.db_path.mkdir(parents=True, exist_ok=True)
+        self._lock_helper = FileLock(self.db_path / "exclusive.lock")
+        if not self._lock_helper.acquire():
+            raise VaultStoreLockedError(str(self.db_path))
         self._client_lock = threading.RLock()
         try:
             with _suppress_local_qdrant_warnings():
@@ -196,6 +263,7 @@ class VaultStore:
                     path=str(self.db_path),
                 )
         except RuntimeError as exc:
+            self._lock_helper.release()
             if "already accessed by another instance" in str(exc):
                 raise VaultStoreLockedError(str(self.db_path)) from exc
             raise
@@ -221,6 +289,8 @@ class VaultStore:
             if self._client is not None:
                 self._client.close()
                 self._client = None
+            if hasattr(self, "_lock_helper") and self._lock_helper is not None:
+                self._lock_helper.release()
 
     def __enter__(self) -> VaultStore:
         """Return *self* to support use as a context manager.

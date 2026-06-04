@@ -71,6 +71,7 @@ async def test_get_jobs_returns_snapshot_shape(_clean_jobs: None) -> None:
         "started_at",
         "finished_at",
         "result",
+        "progress",
     }
     assert entry["id"] == job_id
     assert entry["source"] == "vault"

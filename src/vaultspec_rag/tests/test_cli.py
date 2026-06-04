@@ -2193,3 +2193,89 @@ class TestJsonStdoutPurityAcrossCommands:
         # The contract is one JSON document per invocation.
         env = json.loads(text)
         assert "ok" in env, f"{scenario_id}: envelope missing 'ok' key"
+
+
+class TestAutoDelegation:
+    """Verify CLI search and index auto-detect and delegate to a running service."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_search_auto_delegates_when_service_running(self, tmp_path, monkeypatch):
+        """If service is running, search auto-delegates to it."""
+        (tmp_path / ".vaultspec").mkdir()
+
+        # Mock _read_service_status to return active port and pid
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._read_service_status",
+            lambda: {"pid": 12345, "port": 8766, "service_token": "token123"},
+        )
+        # Mock _is_our_service to return True
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._is_our_service", lambda pid, port, expected_token: True
+        )
+
+        # Mock _try_mcp_search to return dummy results (so we know it got called)
+        called = []
+
+        def mock_try_search(*args, **kwargs):
+            # args: query, search_type, max_results, port, target
+            called.append(args[3])
+            return {"ok": True, "results": []}
+
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._search._try_mcp_search", mock_try_search
+        )
+
+        runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+            ],
+        )
+        assert len(called) == 1
+        assert called[0] == 8766
+
+    def test_index_auto_delegates_when_service_running(self, tmp_path, monkeypatch):
+        """If service is running, index auto-delegates to it."""
+        (tmp_path / ".vaultspec").mkdir()
+
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._read_service_status",
+            lambda: {"pid": 12345, "port": 8766, "service_token": "token123"},
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._is_our_service", lambda pid, port, expected_token: True
+        )
+
+        called = []
+
+        def mock_try_reindex(tool_name, rebuild, port, target):
+            called.append((tool_name, port))
+            return {
+                "ok": True,
+                "added": 1,
+                "updated": 0,
+                "removed": 0,
+                "total": 1,
+                "duration_ms": 10,
+            }
+
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._index._try_mcp_reindex", mock_try_reindex
+        )
+
+        runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "vault",
+            ],
+        )
+        assert len(called) == 1
+        assert called[0] == ("reindex_vault", 8766)

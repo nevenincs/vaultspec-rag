@@ -17,7 +17,6 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.mcp_server as _m
 
-from ..progress import NullProgressReporter
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
 from . import _jobs
@@ -343,14 +342,15 @@ async def reindex_vault(
                 mode = "full" if clean else "incremental"
                 logger.info("Starting %s vault re-index...", mode)
                 job_id = _jobs.record_start("vault", "tool")
+                _jobs.record_progress(job_id, "queued")
                 try:
                     if clean:
                         result = slot.vault_indexer.full_index(
-                            clean=True, reporter=NullProgressReporter()
+                            clean=True, reporter=_jobs.JobProgressReporter(job_id)
                         )
                     else:
                         result = slot.vault_indexer.incremental_index(
-                            reporter=NullProgressReporter()
+                            reporter=_jobs.JobProgressReporter(job_id)
                         )
                 except Exception as exc:
                     _jobs.record_finish(job_id, error=str(exc))
@@ -418,14 +418,15 @@ async def reindex_codebase(
                 mode = "full" if clean else "incremental"
                 logger.info("Starting %s codebase re-index...", mode)
                 job_id = _jobs.record_start("code", "tool")
+                _jobs.record_progress(job_id, "queued")
                 try:
                     if clean:
                         result = slot.code_indexer.full_index(
-                            clean=True, reporter=NullProgressReporter()
+                            clean=True, reporter=_jobs.JobProgressReporter(job_id)
                         )
                     else:
                         result = slot.code_indexer.incremental_index(
-                            reporter=NullProgressReporter()
+                            reporter=_jobs.JobProgressReporter(job_id)
                         )
                 except Exception as exc:
                     _jobs.record_finish(job_id, error=str(exc))

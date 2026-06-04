@@ -179,6 +179,7 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
             "started_at",
             "finished_at",
             "result",
+            "progress",
         }
         entry_id = entry["id"]
         assert isinstance(entry_id, str)

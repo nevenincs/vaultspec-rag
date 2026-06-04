@@ -74,10 +74,34 @@ def service_jobs(
     table.add_column("Result")
     for entry in jobs:
         job = cast("dict[str, object]", entry) if isinstance(entry, dict) else {}
+        phase = str(job.get("phase", "?"))
+        result = str(job.get("result") or "")
+        if phase == "running" and not result:
+            prog = job.get("progress")
+            if isinstance(prog, dict):
+                prog_dict = cast("dict[str, object]", prog)
+                step = str(prog_dict.get("step", ""))
+                completed = prog_dict.get("completed", 0)
+                total = prog_dict.get("total")
+                started_at = job.get("started_at")
+                elapsed_str = ""
+                if isinstance(started_at, float | int):
+                    import time
+
+                    elapsed = time.time() - started_at
+                    elapsed_str = f" ({int(elapsed)}s elapsed)"
+
+                if step == "queued":
+                    result = f"[yellow]queued behind writer lock[/]{elapsed_str}"
+                else:
+                    if total is not None:
+                        result = f"[yellow]{step} ({completed}/{total})[/]{elapsed_str}"
+                    else:
+                        result = f"[yellow]{step} ({completed})[/]{elapsed_str}"
         table.add_row(
             str(job.get("source", "?")),
             str(job.get("trigger", "?")),
-            str(job.get("phase", "?")),
-            str(job.get("result") or ""),
+            phase,
+            result,
         )
     _cli.console.print(table)
