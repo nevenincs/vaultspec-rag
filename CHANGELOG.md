@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.15](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.14...vaultspec-rag-v0.2.15) (2026-06-04)
+
+
+### Features
+
+* implement async background reindexing and timeout-bounded searches with lock contention diagnostics ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([a084a26](https://github.com/wgergely/vaultspec-rag/commit/a084a269aae87b7d23fdd0ffa4cae31daa185ea4))
+* implement async background reindexing and timeout-bounded searches with lock contention diagnostics ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([06cbfd3](https://github.com/wgergely/vaultspec-rag/commit/06cbfd3437cb97f4274865d2aba5d4b7afaa4b6b))
+
+
+### Bug Fixes
+
+* mitigate concurrent locking, expose live index progress, and terminate stuck watcher jobs ([#150](https://github.com/wgergely/vaultspec-rag/issues/150), [#158](https://github.com/wgergely/vaultspec-rag/issues/158), [#159](https://github.com/wgergely/vaultspec-rag/issues/159)) ([1b1e6f4](https://github.com/wgergely/vaultspec-rag/commit/1b1e6f459a079d11383b7082c4d0c2b8082e0107))
+
 ## [0.2.14](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.13...vaultspec-rag-v0.2.14) (2026-06-03)
 
 
