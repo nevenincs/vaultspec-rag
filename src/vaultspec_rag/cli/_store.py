@@ -20,6 +20,7 @@ def _open_vault_store(
     *,
     json_mode: bool = False,
     command: str = "cli",
+    raise_on_locked: bool = False,
 ) -> VaultStore:
     """Open a VaultStore, translating lock errors into a friendly CLI exit.
 
@@ -32,11 +33,13 @@ def _open_vault_store(
         command: Envelope ``command`` field; defaults to ``"cli"`` for
             call sites that have not been wired to a specific command
             name yet.
+        raise_on_locked: If True, propagate VaultStoreLockedError rather than exiting.
 
     Returns:
         An open VaultStore instance.
 
     Raises:
+        VaultStoreLockedError: If raise_on_locked is True and the store is locked.
         typer.Exit: With code 1 if the Qdrant storage is already held by
             another process. The message names the exact path and lists
             the three options available to the user.
@@ -44,6 +47,8 @@ def _open_vault_store(
     try:
         return VaultStore(target)
     except VaultStoreLockedError as exc:
+        if raise_on_locked:
+            raise
         if json_mode:
             _emit_json_error_and_exit(
                 command,

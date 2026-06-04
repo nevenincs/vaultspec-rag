@@ -211,6 +211,7 @@ def _try_mcp_search(
     port: int,
     project_root: str,
     *,
+    timeout: float | None = None,
     language: str | None = None,
     path: str | None = None,
     node_type: str | None = None,
@@ -331,7 +332,20 @@ def _try_mcp_search(
             ),
         }
 
+    import os
+
+    if timeout is None:
+        env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+        if env_timeout:
+            try:
+                timeout = float(env_timeout)
+            except ValueError:
+                timeout = 10.0
+        else:
+            timeout = 10.0
+
     async def _call() -> list[dict[str, object]] | dict[str, object] | None:
+        import asyncio
         import json
 
         from mcp.client.session import ClientSession
@@ -362,26 +376,45 @@ def _try_mcp_search(
             for key, value in vault_filters.items():
                 if value is not None:
                     payload[key] = value
-        async with (
-            streamable_http_client(url) as (read, write, _),
-            ClientSession(read, write) as session,
-        ):
-            await session.initialize()
-            result = await session.call_tool(
-                tool_name,
-                payload,
-            )
-            if result.content:
-                first = result.content[0]
-                if isinstance(first, TextContent):
-                    data = json.loads(first.text)
-                    if data.get("ok") is False:
-                        return data
-                    return data.get("results", [])
-            return []
+
+        async def _do_search():
+            async with (
+                streamable_http_client(url) as (read, write, _),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                result = await session.call_tool(
+                    tool_name,
+                    payload,
+                )
+                if result.content:
+                    first = result.content[0]
+                    if isinstance(first, TextContent):
+                        data = json.loads(first.text)
+                        if data.get("ok") is False:
+                            return data
+                        return data.get("results", [])
+                return []
+
+        return await asyncio.wait_for(_do_search(), timeout=timeout)
 
     try:
         return asyncio.run(_call())
+    except TimeoutError:
+        logger.debug(
+            "MCP search %s on port %s timed out after %ss",
+            tool_name,
+            port,
+            timeout,
+        )
+        return {
+            "ok": False,
+            "error": "mcp_search_timeout",
+            "message": (
+                f"MCP search tool {tool_name!r} on port {port} timed out after "
+                f"the configured budget ({timeout}s)."
+            ),
+        }
     except Exception as exc:
         if _is_connection_refused(exc):
             logger.debug(

@@ -32,6 +32,9 @@ from ._utils import (
 logger = logging.getLogger("vaultspec_rag.mcp_server")
 
 
+_background_tasks: set[Any] = set()
+
+
 @mcp.tool()
 async def search_vault(
     query: str,
@@ -335,52 +338,50 @@ async def reindex_vault(
             (e.g., no CUDA GPU available).
     """
     root = _resolve_root(project_root)
+    job_id = _jobs.record_start("vault", "tool")
+    _jobs.record_progress(job_id, "queued")
 
-    def _run() -> IndexResponse | dict[str, Any]:
+    async def run_indexing_bg() -> None:
         try:
-            with _m._registry.lease(root) as slot:
-                mode = "full" if clean else "incremental"
-                logger.info("Starting %s vault re-index...", mode)
-                job_id = _jobs.record_start("vault", "tool")
-                _jobs.record_progress(job_id, "queued")
+            started = time.perf_counter()
+
+            def _bg_run() -> None:
                 try:
-                    if clean:
-                        result = slot.vault_indexer.full_index(
-                            clean=True, reporter=_jobs.JobProgressReporter(job_id)
+                    with _m._registry.lease(root) as slot:
+                        if clean:
+                            result = slot.vault_indexer.full_index(
+                                clean=True,
+                                reporter=_jobs.JobProgressReporter(job_id),
+                            )
+                        else:
+                            result = slot.vault_indexer.incremental_index(
+                                reporter=_jobs.JobProgressReporter(job_id)
+                            )
+                        _jobs.record_finish(
+                            job_id,
+                            result=(
+                                f"+{result.added} /{result.updated} "
+                                f"-{result.removed} ({result.duration_ms}ms)"
+                            ),
                         )
-                    else:
-                        result = slot.vault_indexer.incremental_index(
-                            reporter=_jobs.JobProgressReporter(job_id)
-                        )
+                        slot.graph_cache.invalidate()
                 except Exception as exc:
                     _jobs.record_finish(job_id, error=str(exc))
-                    raise
-                _jobs.record_finish(
-                    job_id,
-                    result=(
-                        f"+{result.added} /{result.updated} "
-                        f"-{result.removed} ({result.duration_ms}ms)"
-                    ),
-                )
-                slot.graph_cache.invalidate()
-                return IndexResponse(
-                    total=result.total,
-                    added=result.added,
-                    updated=result.updated,
-                    removed=result.removed,
-                    duration_ms=result.duration_ms,
-                    files=result.files,
-                )
-        except RegistryFullError as exc:
-            return _m._registry_full_error_dict(exc)
+                    logger.exception("Background vault re-indexing failed")
 
-    started = time.perf_counter()
-    result = await _run_in_thread(_run)
-    _m.incr("reindex_total")
-    _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
-    if isinstance(result, IndexResponse):
-        _m._ensure_watcher(root)
-    return result
+            await _run_in_thread(_bg_run)
+            _m.incr("reindex_total")
+            _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
+        except Exception:
+            logger.exception("Failed to launch background vault re-indexing task")
+
+    import asyncio
+
+    task = asyncio.create_task(run_indexing_bg())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    _m._ensure_watcher(root)
+    return {"ok": True, "job_id": job_id, "status": "queued"}
 
 
 @mcp.tool()
@@ -411,48 +412,46 @@ async def reindex_codebase(
             (e.g., no CUDA GPU available).
     """
     root = _resolve_root(project_root)
+    job_id = _jobs.record_start("code", "tool")
+    _jobs.record_progress(job_id, "queued")
 
-    def _run() -> IndexResponse | dict[str, Any]:
+    async def run_indexing_bg() -> None:
         try:
-            with _m._registry.lease(root) as slot:
-                mode = "full" if clean else "incremental"
-                logger.info("Starting %s codebase re-index...", mode)
-                job_id = _jobs.record_start("code", "tool")
-                _jobs.record_progress(job_id, "queued")
+            started = time.perf_counter()
+
+            def _bg_run() -> None:
                 try:
-                    if clean:
-                        result = slot.code_indexer.full_index(
-                            clean=True, reporter=_jobs.JobProgressReporter(job_id)
-                        )
-                    else:
-                        result = slot.code_indexer.incremental_index(
-                            reporter=_jobs.JobProgressReporter(job_id)
+                    with _m._registry.lease(root) as slot:
+                        if clean:
+                            result = slot.code_indexer.full_index(
+                                clean=True,
+                                reporter=_jobs.JobProgressReporter(job_id),
+                            )
+                        else:
+                            result = slot.code_indexer.incremental_index(
+                                reporter=_jobs.JobProgressReporter(job_id)
+                            )
+                        _jobs.record_finish(
+                            job_id,
+                            result=(
+                                f"+{result.added} /{result.updated} "
+                                f"-{result.removed} ({result.duration_ms}ms)"
+                            ),
                         )
                 except Exception as exc:
                     _jobs.record_finish(job_id, error=str(exc))
-                    raise
-                _jobs.record_finish(
-                    job_id,
-                    result=(
-                        f"+{result.added} /{result.updated} "
-                        f"-{result.removed} ({result.duration_ms}ms)"
-                    ),
-                )
-                return IndexResponse(
-                    total=result.total,
-                    added=result.added,
-                    updated=result.updated,
-                    removed=result.removed,
-                    duration_ms=result.duration_ms,
-                    files=result.files,
-                )
-        except RegistryFullError as exc:
-            return _m._registry_full_error_dict(exc)
+                    logger.exception("Background codebase re-indexing failed")
 
-    started = time.perf_counter()
-    result = await _run_in_thread(_run)
-    _m.incr("reindex_total")
-    _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
-    if isinstance(result, IndexResponse):
-        _m._ensure_watcher(root)
-    return result
+            await _run_in_thread(_bg_run)
+            _m.incr("reindex_total")
+            _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
+        except Exception:
+            logger.exception("Failed to launch background codebase re-indexing task")
+
+    import asyncio
+
+    task = asyncio.create_task(run_indexing_bg())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    _m._ensure_watcher(root)
+    return {"ok": True, "job_id": job_id, "status": "queued"}

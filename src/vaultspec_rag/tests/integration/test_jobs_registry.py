@@ -204,11 +204,23 @@ async def test_reindex_vault_records_finished_tool_job(
     embedding_model: EmbeddingModel,
     _clean_jobs: None,
 ) -> None:
+    import asyncio
+
     root = _make_root(tmp_path)
     mcp_server._registry._model = embedding_model
 
     response = await mcp_server.reindex_vault(project_root=str(root))
-    assert isinstance(response, mcp_server.IndexResponse)
+    assert isinstance(response, dict)
+    assert response["ok"] is True
+    assert "job_id" in response
+
+    # Wait for background job to finish
+    job_id = response["job_id"]
+    for _ in range(50):
+        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            break
+        await asyncio.sleep(0.1)
 
     vault_tool_jobs = [
         entry
@@ -228,11 +240,23 @@ async def test_reindex_codebase_records_finished_tool_job(
     embedding_model: EmbeddingModel,
     _clean_jobs: None,
 ) -> None:
+    import asyncio
+
     root = _make_root(tmp_path)
     mcp_server._registry._model = embedding_model
 
     response = await mcp_server.reindex_codebase(project_root=str(root))
-    assert isinstance(response, mcp_server.IndexResponse)
+    assert isinstance(response, dict)
+    assert response["ok"] is True
+    assert "job_id" in response
+
+    # Wait for background job to finish
+    job_id = response["job_id"]
+    for _ in range(50):
+        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            break
+        await asyncio.sleep(0.1)
 
     code_tool_jobs = [
         entry

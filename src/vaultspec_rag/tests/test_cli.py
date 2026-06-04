@@ -890,6 +890,97 @@ class TestSearchSafetyContract:
         assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
         assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
 
+    def test_search_locked_store_raises_actionable_error(self, tmp_path, monkeypatch):
+        """Locked store in direct search prints a friendly routing-mode message."""
+        from vaultspec_rag.store import VaultStoreLockedError
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def mock_open(*args, **kwargs):
+            raise VaultStoreLockedError(str(tmp_path / "db"))
+
+        monkeypatch.setattr("vaultspec_rag.cli._search._open_vault_store", mock_open)
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._search._default_service_port", lambda: None
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+            ],
+        )
+        assert result.exit_code != 0
+        normalized = " ".join(result.output.split())
+        assert "routing mode: direct local-store search" in normalized
+
+    def test_search_locked_store_json_mode(self, tmp_path, monkeypatch):
+        """Locked store in direct search under --json outputs local_store_locked."""
+        import json
+
+        from vaultspec_rag.store import VaultStoreLockedError
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def mock_open(*args, **kwargs):
+            raise VaultStoreLockedError(str(tmp_path / "db"))
+
+        monkeypatch.setattr("vaultspec_rag.cli._search._open_vault_store", mock_open)
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._search._default_service_port", lambda: None
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--json",
+            ],
+        )
+        assert result.exit_code != 0
+        data = json.loads(result.output.strip())
+        assert data["ok"] is False
+        assert data["error"] == "local_store_locked"
+        assert "direct local-store search" in data["message"]
+
+    def test_search_mcp_timeout_diagnostics(self, tmp_path, monkeypatch):
+        """Timeout in client inside _try_mcp_search returns mcp_search_timeout."""
+        from vaultspec_rag.cli import _try_mcp_search
+
+        # Mock streamable_http_client to simulate a timeout
+        class DummyClient:
+            async def __aenter__(self):
+                raise TimeoutError("connection timed out")
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        monkeypatch.setattr(
+            "mcp.client.streamable_http.streamable_http_client",
+            lambda url: DummyClient(),
+        )
+
+        res = _try_mcp_search(
+            query="test",
+            search_type="vault",
+            top_k=5,
+            port=8766,
+            project_root=str(tmp_path),
+            timeout=0.01,
+        )
+        assert isinstance(res, dict)
+        assert res["ok"] is False
+        assert res["error"] == "mcp_search_timeout"
+        msg = res["message"]
+        assert isinstance(msg, str)
+        assert "timed out after the configured budget" in msg
+
 
 class TestCleanRequiredTarget:
     """Clean target is required (no default)."""
