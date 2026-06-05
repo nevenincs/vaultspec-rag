@@ -27,7 +27,7 @@ def _open_vault_store(
     Args:
         target: Workspace root directory.
         json_mode: When True, emit a ``local_store_locked`` envelope
-            and ``typer.Exit(1)`` instead of the Rich prose path —
+            and ``typer.Exit(1)`` instead of the Rich prose path -
             every command's ``--json`` flag threads through here so
             the lock-error UX never corrupts the JSON stream.
         command: Envelope ``command`` field; defaults to ``"cli"`` for

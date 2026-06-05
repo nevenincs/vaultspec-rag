@@ -9,7 +9,7 @@ direct API consumers as well as MCP tool handlers.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .graph_cache import GraphCache
 from .progress import NullProgressReporter
@@ -26,10 +26,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "GraphCache",
+    "clean",
     "get_related",
+    "get_status",
     "index",
     "index_codebase",
     "list_documents",
+    "scan_codebase_files",
     "search_codebase",
     "search_vault",
 ]
@@ -45,7 +48,9 @@ def index(
     root_dir: pathlib.Path,
     *,
     full: bool = False,
+    clean: bool = False,
     reporter: ProgressReporter | None = None,
+    model_name: str | None = None,
 ) -> IndexResult:
     """Index vault documents, returning an :class:`IndexResult`.
 
@@ -54,11 +59,12 @@ def index(
 
     Args:
         root_dir: Workspace root directory.
-        full: If ``True``, perform a full re-index (drops and
-            recreates the collection); otherwise incremental.
+        full: If ``True``, perform a full re-index; otherwise incremental.
+        clean: If ``True``, drop and recreate the collection.
         reporter: Optional progress reporter. A ``NullProgressReporter``
             is used when omitted so library consumers can call this
             facade without any UI.
+        model_name: Optional override for the dense embedding model name.
 
     Returns:
         An ``IndexResult`` with counts of added, updated, and
@@ -66,10 +72,13 @@ def index(
     """
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
-    with get_registry().lease(root) as slot:
+    registry = get_registry()
+    if model_name is not None:
+        registry.load_model(model_name)
+    with registry.lease(root) as slot:
         result = (
-            slot.vault_indexer.full_index(reporter=rep)
-            if full
+            slot.vault_indexer.full_index(clean=clean, reporter=rep)
+            if (full or clean)
             else slot.vault_indexer.incremental_index(reporter=rep)
         )
         slot.graph_cache.invalidate()
@@ -80,7 +89,10 @@ def index_codebase(
     root_dir: pathlib.Path,
     *,
     full: bool = False,
+    clean: bool = False,
     reporter: ProgressReporter | None = None,
+    model_name: str | None = None,
+    extra_excludes: list[str] | None = None,
 ) -> IndexResult:
     """Index codebase source files, returning an :class:`IndexResult`.
 
@@ -89,10 +101,12 @@ def index_codebase(
 
     Args:
         root_dir: Workspace root directory.
-        full: If ``True``, perform a full re-index (drops and
-            recreates the codebase collection); otherwise
+        full: If ``True``, perform a full re-index; otherwise
             incremental.
+        clean: If ``True``, drop and recreate the codebase collection.
         reporter: Optional progress reporter.
+        model_name: Optional override for the dense embedding model name.
+        extra_excludes: Optional list of ad-hoc exclusion patterns.
 
     Returns:
         An ``IndexResult`` with counts of added, updated, and
@@ -100,9 +114,14 @@ def index_codebase(
     """
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
-    with get_registry().lease(root) as slot:
-        if full:
-            return slot.code_indexer.full_index(reporter=rep)
+    registry = get_registry()
+    if model_name is not None:
+        registry.load_model(model_name)
+    with registry.lease(root) as slot:
+        if extra_excludes is not None:
+            slot.code_indexer._extra_excludes = extra_excludes
+        if full or clean:
+            return slot.code_indexer.full_index(clean=clean, reporter=rep)
         return slot.code_indexer.incremental_index(reporter=rep)
 
 
@@ -130,6 +149,15 @@ def search_vault(
     Returns:
         Ranked list of SearchResult objects.
     """
+    from .search import validate_search_filters
+
+    validate_search_filters(
+        "vault",
+        doc_type=doc_type,
+        feature=feature,
+        date=date,
+        tag=tag,
+    )
     root = _resolve(root_dir)
     with get_registry().lease(root) as slot:
         return slot.searcher.search_vault(
@@ -177,13 +205,27 @@ def search_codebase(
             'tests/**']``).
         dedup_locales: When True, collapse near-tie locale variants
             into a single canonical result. Opt-in.
-        prefer: Optional ``"prod" | "tests" | "docs"`` — applies a
+        prefer: Optional ``"prod" | "tests" | "docs"`` - applies a
             small +/- score nudge to the matching category after
             rerank. Opt-in.
 
     Returns:
         Ranked list of SearchResult objects.
     """
+    from .search import validate_search_filters
+
+    validate_search_filters(
+        "code",
+        language=language,
+        path=path,
+        node_type=node_type,
+        function_name=function_name,
+        class_name=class_name,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        dedup_locales=dedup_locales,
+        prefer=prefer,
+    )
     root = _resolve(root_dir)
     with get_registry().lease(root) as slot:
         return slot.searcher.search_codebase(
@@ -253,3 +295,143 @@ def get_related(
             "outgoing": sorted(node.out_links),
             "incoming": sorted(node.in_links),
         }
+
+
+def clean(
+    root_dir: pathlib.Path,
+    *,
+    clean_type: Literal["vault", "code", "all"] = "all",
+) -> list[str]:
+    """Wipe the selected collections and their index metadata sidecars.
+
+    Does not load embedding models or touch GPUs.
+
+    Args:
+        root_dir: Workspace root directory.
+        clean_type: What to wipe: 'vault', 'code', or 'all'.
+
+    Returns:
+        List of cleared source labels (e.g. ['vault', 'codebase']).
+    """
+    root = _resolve(root_dir)
+    from .config import get_config
+    from .registry import get_registry
+    from .store import VaultStore
+
+    cfg = get_config()
+    cleared: list[str] = []
+
+    # Evict project from registry to close Qdrant connections and release locks
+    registry = get_registry()
+    registry.close_project(root)
+
+    store = VaultStore(root)
+    try:
+        do_vault = clean_type in ("vault", "all")
+        do_code = clean_type in ("code", "all")
+        if do_vault:
+            store.drop_table()
+            store.ensure_table()
+            cleared.append("vault")
+        if do_code:
+            store.drop_code_table()
+            store.ensure_code_table()
+            cleared.append("codebase")
+    finally:
+        store.close()
+
+    data_dir = root / cfg.data_dir
+    if clean_type in ("vault", "all"):
+        meta = data_dir / cfg.index_metadata_file
+        meta.unlink(missing_ok=True)
+    if clean_type in ("code", "all"):
+        meta = data_dir / cfg.code_index_metadata_file
+        meta.unlink(missing_ok=True)
+
+    return cleared
+
+
+def get_status(root_dir: pathlib.Path) -> dict[str, object]:
+    """Return status of the RAG engine, storage metrics, and GPU info.
+
+    Args:
+        root_dir: Workspace root directory.
+
+    Returns:
+        Dict containing RAG status information.
+    """
+    root = _resolve(root_dir)
+    torch: Any = None
+    try:
+        import torch as _torch
+
+        torch = _torch
+    except ImportError:
+        pass
+
+    cuda_available = torch is not None and torch.cuda.is_available()
+    if cuda_available:
+        gpu_name = torch.cuda.get_device_name(0)
+        props = torch.cuda.get_device_properties(0)
+        vram_mb = props.total_memory // (1024 * 1024)
+        vram_gb = round(props.total_memory / 1e9, 2)
+    else:
+        gpu_name = None
+        vram_mb = 0
+        vram_gb = 0.0
+
+    from .capabilities import backend_capabilities_dict
+    from .registry import get_registry
+    from .store import VaultStore
+
+    registry = get_registry()
+    slot = registry._projects.get(root)
+    if slot is not None:
+        store = slot.store
+        own_store = False
+    else:
+        store = VaultStore(root)
+        own_store = True
+
+    try:
+        vault_count = store.count()
+        code_count = store.count_code()
+        storage_path = str(store.db_path)
+    finally:
+        if own_store:
+            store.close()
+
+    return {
+        "cuda": cuda_available,
+        "gpu_name": gpu_name,
+        "vram_mb": vram_mb,
+        "vram_gb": vram_gb,
+        "storage_path": storage_path,
+        "vault_documents": vault_count,
+        "codebase_chunks": code_count,
+        "vault_count": vault_count,
+        "code_count": code_count,
+        "target_dir": str(root),
+        "backend_capabilities": backend_capabilities_dict(),
+    }
+
+
+def scan_codebase_files(
+    root_dir: pathlib.Path,
+    *,
+    extra_excludes: list[str] | None = None,
+) -> list[pathlib.Path]:
+    """Scan the codebase, returning list of paths that would be indexed.
+
+    Does not require GPU or vector store - safe for dry-runs.
+    """
+    root = _resolve(root_dir)
+    from .indexer import CodebaseIndexer
+
+    indexer = CodebaseIndexer(
+        root_dir=root,
+        model=cast("Any", None),
+        store=cast("Any", None),
+        extra_excludes=extra_excludes,
+    )
+    return indexer.scan_files()

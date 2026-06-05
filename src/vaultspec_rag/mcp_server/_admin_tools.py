@@ -29,7 +29,7 @@ async def list_projects(
 
     Args:
         project_root: Accepted for signature parity with other admin
-            tools (``get_index_status``, ``reindex_*``).  Ignored —
+            tools (``get_index_status``, ``reindex_*``).  Ignored -
             the list is registry-wide.
 
     Returns:
@@ -80,10 +80,10 @@ async def evict_project(root: str) -> dict[str, Any]:
     Returns:
         One of:
 
-        - ``{"evicted": True,  "reason": "forced"}`` — slot removed.
-        - ``{"evicted": False, "reason": "busy"}`` — slot had live
+        - ``{"evicted": True,  "reason": "forced"}`` - slot removed.
+        - ``{"evicted": False, "reason": "busy"}`` - slot had live
           leases; operator should retry.
-        - ``{"evicted": False, "reason": "not_found"}`` — unknown
+        - ``{"evicted": False, "reason": "not_found"}`` - unknown
           root.
     """
     target = Path(root).resolve()
@@ -139,7 +139,7 @@ async def start_watcher(root: str) -> dict[str, Any]:
         root: Workspace root directory (resolved internally).
 
     Returns:
-        Dict with ``root``, ``started`` (bool — running on return), and
+        Dict with ``root``, ``started`` (bool - running on return), and
         ``watch_enabled`` (bool).
     """
     from ..config import get_config
@@ -161,7 +161,7 @@ async def stop_watcher(root: str) -> dict[str, Any]:
         root: Workspace root directory (resolved internally).
 
     Returns:
-        Dict with ``root`` and ``stopped`` (bool — whether a watcher was
+        Dict with ``root`` and ``stopped`` (bool - whether a watcher was
         running and has now been stopped).
     """
     target = Path(root).resolve()
@@ -176,7 +176,7 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state.
 
     A Tier-1 observability read (``service-observability`` ADR): one
-    structured document that mirrors state the service already holds —
+    structured document that mirrors state the service already holds -
     per-source index counts + GPU/device (reusing ``get_index_status``
     logic), the project slot table (reusing ``list_projects`` data), and
     a watcher rollup (reusing ``get_watcher_state`` data). Read-only; no
@@ -191,12 +191,12 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     Returns:
         Dict with keys:
 
-        - ``index`` — the ``get_index_status`` payload (vault/code
+        - ``index`` - the ``get_index_status`` payload (vault/code
           counts, storage path, target dir, GPU VRAM) or a structured
           error dict when the registry is full.
-        - ``projects`` — the ``list_projects`` payload (slot list,
+        - ``projects`` - the ``list_projects`` payload (slot list,
           ``max_projects``, ``idle_ttl_seconds``).
-        - ``watcher`` — the ``get_watcher_state`` rollup (enable flag,
+        - ``watcher`` - the ``get_watcher_state`` rollup (enable flag,
           debounce/cooldown, watched roots).
     """
     from ._tools import get_index_status
@@ -231,7 +231,7 @@ async def get_logs(lines: int = 200) -> dict[str, Any]:
             200). Values ``<= 0`` yield an empty list.
 
     Returns:
-        Dict with key ``lines`` — the list of log lines (without
+        Dict with key ``lines`` - the list of log lines (without
         trailing newlines), oldest-first.
     """
     from ..logging_config import read_service_log
@@ -259,7 +259,7 @@ async def get_jobs(limit: int | None = None) -> dict[str, Any]:
             registry cap). Non-positive values return an empty list.
 
     Returns:
-        Dict with key ``jobs`` — a newest-first list of activity record
+        Dict with key ``jobs`` - a newest-first list of activity record
         dicts (``id``, ``source``, ``trigger``, ``phase``,
         ``started_at``, ``finished_at``, ``result``).
     """

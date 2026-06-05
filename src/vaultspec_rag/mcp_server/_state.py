@@ -50,7 +50,7 @@ _http_mode: bool = False  # set once in main() before event loop starts
 # startup, written into ``service.json`` via the first heartbeat
 # tick, and returned from ``/health``. The CLI's ``_is_our_service``
 # compares the file's recorded value against the live ``/health``
-# response — mismatch reports the responding process is not the
+# response - mismatch reports the responding process is not the
 # daemon named in ``service.json`` (gh #124 + #125: closes
 # PID-reuse false-positives and unrelated-HTTP-server-on-port).
 _SERVICE_TOKEN: str = ""
@@ -58,7 +58,7 @@ _SERVICE_TOKEN: str = ""
 # Heartbeat contract. The daemon writes ``last_heartbeat`` to
 # service.json every _HEARTBEAT_INTERVAL_SECONDS so
 # ``vaultspec-rag server service status`` can detect a stale file
-# (process killed without running atexit / signal handlers —
+# (process killed without running atexit / signal handlers -
 # SIGKILL, OOM, kernel panic). The CLI flags the file stale when
 # the age exceeds _HEARTBEAT_STALENESS_SECONDS. Four beats per
 # minute tolerates up to three missed beats before the verdict
@@ -94,7 +94,7 @@ _shutdown_recorded: bool = False
 #
 # A tiny, dependency-free metrics surface for the ``/metrics`` Prometheus
 # route. Counters and last-duration gauges are mutated *inline* by the
-# search/reindex tool paths under ``_metrics_lock`` — there is **no**
+# search/reindex tool paths under ``_metrics_lock`` - there is **no**
 # background collector thread (honours the standing rejection of background
 # sweepers per the ``service-observability`` ADR). GPU memory is read
 # on-demand inside :func:`render_prometheus` so it reflects the value at
@@ -181,7 +181,7 @@ def _gpu_memory_bytes() -> tuple[float, float] | None:
 def render_prometheus() -> str:
     """Render the current metrics as Prometheus text exposition format.
 
-    Emits the ``0.0.4`` text format directly — no ``prometheus_client``
+    Emits the ``0.0.4`` text format directly - no ``prometheus_client``
     dependency, no collector thread. Counters carry a ``# TYPE ... counter``
     line, gauges ``# TYPE ... gauge``; GPU memory is read on-demand and
     omitted entirely when CUDA is unavailable. The metric names are

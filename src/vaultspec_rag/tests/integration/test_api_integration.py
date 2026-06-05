@@ -133,3 +133,46 @@ class TestRAGAPI:
         assert metrics.total_docs > 0
         assert metrics.total_features > 0
         assert store.count() > 0
+
+    def test_facade_end_to_end(self, tmp_path):
+        """Test the public API facade functions end-to-end against a fresh directory."""
+        import vaultspec_rag
+        from vaultspec_rag.registry import get_registry
+
+        # 1. Create a minimal doc in a fake vault
+        vault_dir = tmp_path / ".vault" / "adr"
+        vault_dir.mkdir(parents=True)
+        doc_path = vault_dir / "2026-06-04-test-adr.md"
+        doc_path.write_text(
+            "---\n"
+            "tags:\n"
+            "  - '#adr'\n"
+            "  - '#test'\n"
+            "date: 2026-06-04\n"
+            "---\n"
+            "# Test Title\n"
+            "Test body content",
+            encoding="utf-8",
+        )
+
+        get_registry().load_model()
+
+        index_res = vaultspec_rag.index(tmp_path)
+        assert index_res.added == 1
+
+        # 2. Call get_status()
+        status = vaultspec_rag.get_status(tmp_path)
+        assert status["vault_documents"] == 1
+        assert status["target_dir"] == str(tmp_path)
+
+        # 3. Call search_vault()
+        results = vaultspec_rag.search_vault(tmp_path, "Test body")
+        assert len(results) > 0
+        assert results[0].title == "Test Title"
+
+        # 4. Call clean()
+        cleared = vaultspec_rag.clean(tmp_path, clean_type="all")
+        assert "vault" in cleared
+
+        status_after = vaultspec_rag.get_status(tmp_path)
+        assert status_after["vault_documents"] == 0

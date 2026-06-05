@@ -1,7 +1,7 @@
 """Tests for :func:`install_run`/:func:`uninstall_run` torch-config flow.
 
 Real filesystem (``tmp_path``), real ``vaultspec_core`` from the dev
-env, real ``tomlkit``. No mocks. No HF / GPU dependency — these tests
+env, real ``tomlkit``. No mocks. No HF / GPU dependency - these tests
 exercise only the pyproject-patching branch and deliberately do not
 trigger the ``sync_after`` subprocess path.
 """
@@ -184,7 +184,7 @@ class TestInstallTorchConfig:
             path=consumer_workspace,
             force=True,
             assume_yes=False,
-            confirm=None,  # non-interactive — would otherwise be skipped-non-tty
+            confirm=None,  # non-interactive - would otherwise be skipped-non-tty
         )
         assert report.torch_config_action == "applied"
         assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
@@ -218,7 +218,7 @@ class TestInstallTorchConfig:
         self, consumer_workspace: Path
     ) -> None:
         """KeyboardInterrupt is a genuine user signal and must remain
-        labelled as 'declined' — distinct from the new EOF branch.
+        labelled as 'declined' - distinct from the new EOF branch.
 
         TEST-09 regression: assert the warning BODY is the
         KeyboardInterrupt-specific text, not the EOF copy. Pinning
@@ -262,7 +262,7 @@ class TestInstallTorchConfig:
 
     def test_install_no_warning_when_torch_is_direct_dep(self, tmp_path: Path) -> None:
         """The transitive-dep warning must not fire when torch is already
-        a direct dep — false positives would train users to ignore it.
+        a direct dep - false positives would train users to ignore it.
         """
         ws = tmp_path / "with-direct-torch"
         ws.mkdir()
@@ -285,7 +285,7 @@ class TestInstallTorchConfig:
         self, tmp_path: Path
     ) -> None:
         """``--force`` bypasses the *prompt*, not the safety classifier.
-        A CUSTOMISED block must still surface as a conflict — silently
+        A CUSTOMISED block must still surface as a conflict - silently
         overwriting user-customised tool config is the worst outcome.
         """
         ws = tmp_path / "customised"
@@ -474,7 +474,7 @@ class TestUninstallTorchConfig:
 
 class TestInstallTorchConfigFollowups:
     """Coverage for the audit findings addressed in the same commit
-    series — INSTALL-02 (confirm exception types), INSTALL-03 (uv sync
+    series - INSTALL-02 (confirm exception types), INSTALL-03 (uv sync
     stdout fallback), INSTALL-05/06 (transitive-dep on already +
     dry-run), TEST-01 (uv sync action branches), TEST-02 (manual_snippet
     bytes), TEST-03 (force vs no-torch-config precedence), and the
@@ -531,7 +531,7 @@ class TestInstallTorchConfigFollowups:
     def test_install_confirm_runtime_error_does_not_kill_install(
         self, consumer_workspace: Path
     ) -> None:
-        """Sibling of the click.Abort case — any unexpected exception
+        """Sibling of the click.Abort case - any unexpected exception
         from a programmatic confirm hook should land in the same
         graceful-degradation branch, not crash the install.
         """
@@ -594,7 +594,7 @@ class TestInstallTorchConfigFollowups:
     ) -> None:
         """INSTALL-06 regression: dry-run is supposed to show what the
         wet run would do. Hiding the transitive-dep warning behind the
-        dry-run gate makes the preview misleading — clean preview, then
+        dry-run gate makes the preview misleading - clean preview, then
         surprise on the real run.
         """
         report = install_run(path=consumer_workspace, dry_run=True)
@@ -608,7 +608,7 @@ class TestInstallTorchConfigFollowups:
     def test_install_transitive_warning_silent_when_torch_is_direct(
         self, tmp_path: Path
     ) -> None:
-        """Negative pair to the rerun/dry-run tests above — false
+        """Negative pair to the rerun/dry-run tests above - false
         positives would train users to ignore the warning. With torch
         as a direct dep, no transitive warning fires regardless of
         which path produced the canonical state.
@@ -817,7 +817,7 @@ class TestUvSyncTorchBranches:
 
     def test_classify_failed_with_both_streams_empty(self) -> None:
         """When uv exits non-zero with no diagnostics, the warning
-        carries only the exit code — but the action must still be
+        carries only the exit code - but the action must still be
         ``failed`` so renderers colour it red.
         """
         from vaultspec_rag.commands import _classify_uv_sync_result
@@ -848,7 +848,7 @@ class TestUvSyncTorchBranches:
         self, tmp_path: Path
     ) -> None:
         """End-to-end test for the only branch the pure helper does
-        not cover — the FileNotFoundError raised when ``uv`` is not
+        not cover - the FileNotFoundError raised when ``uv`` is not
         resolvable on PATH at all. Drives ``install_run`` against a
         consumer that needs a fresh apply and points PATH at an empty
         directory so subprocess can't find any ``uv``.
@@ -882,7 +882,7 @@ class TestManualSnippetBytes:
     future copy edit cannot silently desync README, error messages,
     and runtime output. Post-TOML-01 the cu130 portion is generated by
     the same writer ``apply_patch`` uses, so byte-equality with the
-    actual install output is structural — this test pins the *appended
+    actual install output is structural - this test pins the *appended
     educational comment block* and the leading-newline contract.
     """
 

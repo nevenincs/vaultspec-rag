@@ -11,15 +11,15 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.mcp_server as _m
 
+from ..jobs import register_on_job_complete
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
-from . import _jobs
 from ._models import IndexResponse, IndexStatus, SearchResponse, SearchResultItem
 from ._state import mcp
 from ._utils import (
@@ -32,7 +32,12 @@ from ._utils import (
 logger = logging.getLogger("vaultspec_rag.mcp_server")
 
 
-_background_tasks: set[Any] = set()
+def _on_job_complete(duration_seconds: float) -> None:
+    _m.incr("reindex_total")
+    _m.observe("reindex_last_duration_seconds", duration_seconds)
+
+
+register_on_job_complete(_on_job_complete)
 
 
 @mcp.tool()
@@ -77,24 +82,26 @@ async def search_vault(
 
     def _run() -> SearchResponse | dict[str, Any]:
         try:
-            with _m._registry.lease(root) as slot:
-                logger.info("Searching vault for: %s", query)
-                results = slot.searcher.search_vault(
-                    query,
-                    top_k=top_k,
-                    doc_type=doc_type,
-                    feature=feature,
-                    date=date,
-                    tag=tag,
-                )
-                items = [
-                    SearchResultItem.model_validate(r, from_attributes=True)
-                    for r in results
-                ]
-                return SearchResponse(
-                    results=items,
-                    summary=f"Found {len(results)} relevant documents in the vault.",
-                )
+            import vaultspec_rag
+
+            logger.info("Searching vault for: %s", query)
+            results = vaultspec_rag.search_vault(
+                root,
+                query,
+                top_k=top_k,
+                doc_type=doc_type,
+                feature=feature,
+                date=date,
+                tag=tag,
+            )
+            items = [
+                SearchResultItem.model_validate(r, from_attributes=True)
+                for r in results
+            ]
+            return SearchResponse(
+                results=items,
+                summary=f"Found {len(results)} relevant documents in the vault.",
+            )
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
         except VaultStoreLockedError as exc:
@@ -172,33 +179,35 @@ async def search_codebase(
 
     def _run() -> SearchResponse | dict[str, Any]:
         try:
-            with _m._registry.lease(root) as slot:
-                logger.info(
-                    "Searching codebase for: %s (lang=%s)",
-                    query,
-                    language,
-                )
-                results = slot.searcher.search_codebase(
-                    query,
-                    top_k=top_k,
-                    language=language,
-                    path=path,
-                    node_type=node_type,
-                    function_name=function_name,
-                    class_name=class_name,
-                    include_paths=include_paths,
-                    exclude_paths=exclude_paths,
-                    dedup_locales=dedup_locales,
-                    prefer=prefer,
-                )
-                items = [
-                    SearchResultItem.model_validate(r, from_attributes=True)
-                    for r in results
-                ]
-                return SearchResponse(
-                    results=items,
-                    summary=f"Found {len(results)} relevant code blocks.",
-                )
+            import vaultspec_rag
+
+            logger.info(
+                "Searching codebase for: %s (lang=%s)",
+                query,
+                language,
+            )
+            results = vaultspec_rag.search_codebase(
+                root,
+                query,
+                top_k=top_k,
+                language=language,
+                path=path,
+                node_type=node_type,
+                function_name=function_name,
+                class_name=class_name,
+                include_paths=include_paths,
+                exclude_paths=exclude_paths,
+                dedup_locales=dedup_locales,
+                prefer=prefer,
+            )
+            items = [
+                SearchResultItem.model_validate(r, from_attributes=True)
+                for r in results
+            ]
+            return SearchResponse(
+                results=items,
+                summary=f"Found {len(results)} relevant code blocks.",
+            )
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
         except VaultStoreLockedError as exc:
@@ -236,29 +245,20 @@ async def get_index_status(
 
     def _run() -> IndexStatus | dict[str, Any]:
         try:
-            with _m._registry.lease(root) as slot:
-                try:
-                    import torch
+            import vaultspec_rag
 
-                    vram_gb = (
-                        torch.cuda.get_device_properties(0).total_memory / 1e9
-                        if torch.cuda.is_available()
-                        else 0.0
-                    )
-                except ImportError as exc:
-                    logger.debug(
-                        "torch unavailable for index_status VRAM probe: %s", exc
-                    )
-                    vram_gb = 0.0
-                return IndexStatus(
-                    vault_count=slot.store.count(),
-                    code_count=slot.store.count_code(),
-                    storage_path=str(slot.store.db_path),
-                    target_dir=str(root),
-                    vram_gb=round(vram_gb, 2),
-                )
+            status = vaultspec_rag.get_status(root)
+            return IndexStatus(
+                vault_count=cast("int", status["vault_count"]),
+                code_count=cast("int", status["code_count"]),
+                storage_path=str(status["storage_path"]),
+                target_dir=str(status["target_dir"]),
+                vram_gb=cast("float", status["vram_gb"]),
+            )
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
+        except VaultStoreLockedError as exc:
+            return _m._local_store_locked_error_dict(exc)
 
     return await _run_in_thread(_run)
 
@@ -319,9 +319,9 @@ async def reindex_vault(
     Args:
         clean: If True, run a full re-index that re-encodes every
             vault document and purges any rows whose IDs are absent
-            from the new corpus. The rebuild is failure-safe — the
+            from the new corpus. The rebuild is failure-safe - the
             old collection is preserved until the new slices have
-            been streamed in place — so an interrupted clean run
+            been streamed in place - so an interrupted clean run
             never leaves the store empty (#68 Track B).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
@@ -338,48 +338,9 @@ async def reindex_vault(
             (e.g., no CUDA GPU available).
     """
     root = _resolve_root(project_root)
-    job_id = _jobs.record_start("vault", "tool")
-    _jobs.record_progress(job_id, "queued")
+    from ..jobs import start_reindex_vault
 
-    async def run_indexing_bg() -> None:
-        try:
-            started = time.perf_counter()
-
-            def _bg_run() -> None:
-                try:
-                    with _m._registry.lease(root) as slot:
-                        if clean:
-                            result = slot.vault_indexer.full_index(
-                                clean=True,
-                                reporter=_jobs.JobProgressReporter(job_id),
-                            )
-                        else:
-                            result = slot.vault_indexer.incremental_index(
-                                reporter=_jobs.JobProgressReporter(job_id)
-                            )
-                        _jobs.record_finish(
-                            job_id,
-                            result=(
-                                f"+{result.added} /{result.updated} "
-                                f"-{result.removed} ({result.duration_ms}ms)"
-                            ),
-                        )
-                        slot.graph_cache.invalidate()
-                except Exception as exc:
-                    _jobs.record_finish(job_id, error=str(exc))
-                    logger.exception("Background vault re-indexing failed")
-
-            await _run_in_thread(_bg_run)
-            _m.incr("reindex_total")
-            _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
-        except Exception:
-            logger.exception("Failed to launch background vault re-indexing task")
-
-    import asyncio
-
-    task = asyncio.create_task(run_indexing_bg())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    job_id = start_reindex_vault(root, clean)
     _m._ensure_watcher(root)
     return {"ok": True, "job_id": job_id, "status": "queued"}
 
@@ -394,8 +355,8 @@ async def reindex_codebase(
     Args:
         clean: If True, run a full re-index that re-encodes every
             source chunk and purges any chunk IDs absent from the
-            new scan. The rebuild is failure-safe — the old chunks
-            stay live until the new slices have streamed in place —
+            new scan. The rebuild is failure-safe - the old chunks
+            stay live until the new slices have streamed in place -
             so an interrupted clean run never leaves the codebase
             collection empty (#68 Track B).
         project_root: Optional project root path. Defaults to
@@ -412,46 +373,8 @@ async def reindex_codebase(
             (e.g., no CUDA GPU available).
     """
     root = _resolve_root(project_root)
-    job_id = _jobs.record_start("code", "tool")
-    _jobs.record_progress(job_id, "queued")
+    from ..jobs import start_reindex_codebase
 
-    async def run_indexing_bg() -> None:
-        try:
-            started = time.perf_counter()
-
-            def _bg_run() -> None:
-                try:
-                    with _m._registry.lease(root) as slot:
-                        if clean:
-                            result = slot.code_indexer.full_index(
-                                clean=True,
-                                reporter=_jobs.JobProgressReporter(job_id),
-                            )
-                        else:
-                            result = slot.code_indexer.incremental_index(
-                                reporter=_jobs.JobProgressReporter(job_id)
-                            )
-                        _jobs.record_finish(
-                            job_id,
-                            result=(
-                                f"+{result.added} /{result.updated} "
-                                f"-{result.removed} ({result.duration_ms}ms)"
-                            ),
-                        )
-                except Exception as exc:
-                    _jobs.record_finish(job_id, error=str(exc))
-                    logger.exception("Background codebase re-indexing failed")
-
-            await _run_in_thread(_bg_run)
-            _m.incr("reindex_total")
-            _m.observe("reindex_last_duration_seconds", time.perf_counter() - started)
-        except Exception:
-            logger.exception("Failed to launch background codebase re-indexing task")
-
-    import asyncio
-
-    task = asyncio.create_task(run_indexing_bg())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    job_id = start_reindex_codebase(root, clean)
     _m._ensure_watcher(root)
     return {"ok": True, "job_id": job_id, "status": "queued"}

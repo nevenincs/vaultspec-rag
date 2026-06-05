@@ -3,8 +3,8 @@
 Defines a lightweight ``ProgressReporter`` Protocol owned by the indexer
 layer plus two concrete implementations:
 
-- ``NullProgressReporter`` — no-op used by non-interactive callers.
-- ``RichProgressReporter`` — Rich adapter with TTY-aware line fallback.
+- ``NullProgressReporter`` - no-op used by non-interactive callers.
+- ``RichProgressReporter`` - Rich adapter with TTY-aware line fallback.
 
 The indexer modules depend only on the Protocol and never import Rich.
 """

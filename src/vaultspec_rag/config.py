@@ -21,7 +21,7 @@ class EnvVar(StrEnum):
     """Recognized environment variables for vaultspec-rag.
 
     Each member's value is the full env var name.  This enum is the
-    single source of truth — no other module should use bare string
+    single source of truth - no other module should use bare string
     literals when reading or writing env vars for RAG configuration.
     """
 
@@ -56,7 +56,7 @@ class EnvVar(StrEnum):
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
     WATCH_COOLDOWN_S = "VAULTSPEC_RAG_WATCH_COOLDOWN_S"
 
-    # Third-party env vars referenced in the codebase — defined here so
+    # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
     HF_HOME = "HF_HOME"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
@@ -77,7 +77,7 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
     "service_log_max_bytes": EnvVar.SERVICE_LOG_MAX_BYTES,
     "service_log_backup_count": EnvVar.SERVICE_LOG_BACKUP_COUNT,
-    # Performance tuning knobs (#68 audit F9.1) — surface them via
+    # Performance tuning knobs (#68 audit F9.1) - surface them via
     # env vars too so deploy-time tuning does not require CLI flags
     # or config file edits.
     "embedding_batch_size": EnvVar.EMBEDDING_BATCH_SIZE,
@@ -145,7 +145,7 @@ class VaultSpecConfigWrapper:
         # Number of worker processes for parallel codebase chunking (#155).
         # tree-sitter AST chunking is CPU-bound and holds the GIL for both
         # parse and traverse, so a process pool (not threads) is required to
-        # use multiple cores. ``0`` means "auto" — resolve to
+        # use multiple cores. ``0`` means "auto" - resolve to
         # ``os.process_cpu_count()`` at run time. ``1`` forces the serial
         # in-process path (useful for small trees, debugging, or environments
         # where spawning workers is undesirable).

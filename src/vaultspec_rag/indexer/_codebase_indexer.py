@@ -93,7 +93,7 @@ class CodebaseIndexer:
         self._extra_excludes = extra_excludes or []
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other on the same instance
-        # (#68 audit F6.6 — concurrent reindex race).
+        # (#68 audit F6.6 - concurrent reindex race).
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
@@ -205,7 +205,7 @@ class CodebaseIndexer:
 
         Walks the project tree using ``os.walk``, pruning directories
         matched by ``.gitignore`` and ``.vaultragignore`` patterns via
-        ``pathspec``.  The two specs are independent — a file is
+        ``pathspec``.  The two specs are independent - a file is
         excluded if **either** matches (OR logic), so
         ``.vaultragignore`` can never un-ignore ``.gitignore`` entries.
         Skips binary files and files exceeding ``_MAX_FILE_SIZE``.
@@ -252,7 +252,7 @@ class CodebaseIndexer:
     def scan_files(self) -> list[pathlib.Path]:
         """Return the list of files that would be indexed.
 
-        Does not require GPU or vector store — safe to call with
+        Does not require GPU or vector store - safe to call with
         ``model=None`` and ``store=None`` for dry-run usage.
 
         Returns:
@@ -393,7 +393,7 @@ class CodebaseIndexer:
                     try:
                         all_chunks.extend(future.result())
                     except BrokenProcessPool:
-                        # Pool-level fatal — propagate rather than mis-record
+                        # Pool-level fatal - propagate rather than mis-record
                         # it as a single-file failure.
                         raise
                     except Exception:
@@ -451,7 +451,7 @@ class CodebaseIndexer:
         """Overlap process-pool chunking with GPU encode/upsert.
 
         Worker processes read, hash, and chunk files in parallel while this
-        thread — the sole CUDA consumer — encodes and upserts completed chunks
+        thread - the sole CUDA consumer - encodes and upserts completed chunks
         in ``slice_size`` batches. A bounded submission window caps both
         in-flight futures and buffered results, so peak memory is proportional
         to the window rather than to the whole tree (#155 ADR P02, research
@@ -547,7 +547,7 @@ class CodebaseIndexer:
             # single dedicated GPU consumer thread drains a bounded queue while
             # this thread (the producer) drains the spawn pool and feeds it.
             # torch releases the GIL during async CUDA, so the producer refills
-            # while the GPU runs — keeping the GPU saturated instead of idling
+            # while the GPU runs - keeping the GPU saturated instead of idling
             # during pool bookkeeping. The queue's maxsize is the sole
             # backpressure + memory bound. The consumer owns the gpu_lock.
             # ``None`` is the shutdown sentinel: it is never a legitimate
@@ -729,7 +729,7 @@ class CodebaseIndexer:
             clean: When ``True``, drop and recreate the codebase
                 collection up front so schema-level changes (e.g.
                 a new embedding dimension) take effect (#68 audit
-                F9.6 — codex P2). The default ``clean=False`` path
+                F9.6 - codex P2). The default ``clean=False`` path
                 is failure-safe: it streams upserts in place and
                 purges only the stale chunk IDs after a successful
                 rebuild, so an interrupted run never leaves the
@@ -801,7 +801,7 @@ class CodebaseIndexer:
                 except OSError:
                     logger.error(
                         "Failed to purge stale code chunks after "
-                        "successful rebuild — collection still "
+                        "successful rebuild - collection still "
                         "contains valid new chunks plus %d stale rows",
                         len(stale_ids),
                     )
@@ -822,7 +822,7 @@ class CodebaseIndexer:
             total=total_chunks,
             added=total_chunks,
             updated=0,
-            # Mirror VaultIndexer.full_index — surface the post-stream
+            # Mirror VaultIndexer.full_index - surface the post-stream
             # purge count so MCP / CLI clients can observe how many
             # stale chunks were swept (#68 audit F6.3 / F6.10).
             removed=len(stale_ids),
@@ -1029,7 +1029,7 @@ class CodebaseIndexer:
                 except OSError:
                     continue
                 if too_big or _is_binary(path):
-                    # No longer indexable — reconcile it out if we had it.
+                    # No longer indexable - reconcile it out if we had it.
                     if rel in prev_meta:
                         delete_files.add(rel)
                     continue

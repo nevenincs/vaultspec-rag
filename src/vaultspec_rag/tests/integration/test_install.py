@@ -231,7 +231,7 @@ class TestUserContentPreservation:
         self, installed_workspace: Path
     ) -> None:
         # Pre-existing user-authored rule must not be touched by rag
-        # uninstall — it removes only its two named files.
+        # uninstall - it removes only its two named files.
         user_rule = (
             installed_workspace / ".vaultspec" / "rules" / "rules" / "my-custom-rule.md"
         )
@@ -318,7 +318,7 @@ class TestSafetyGuards:
         """If ``.vault/data/`` is a symlink, ``--remove-data`` must
         refuse the operation rather than follow the symlink and
         rmtree something outside the workspace. The symlink itself
-        is left alone — the user must resolve it manually.
+        is left alone - the user must resolve it manually.
         """
         # Replace .vault/data/ with a symlink pointing outside the
         # workspace. Drop a sentinel inside the link target so we can
@@ -417,7 +417,7 @@ class TestSafetyGuards:
         # Pre-create everything except the mcps parent dir, which
         # we replace with a file. _ensure_workspace_dirs sees mcps
         # already exists (as a file → not is_dir), tries mkdir, and
-        # would fail there — so we have to bypass _ensure_workspace_dirs
+        # would fail there - so we have to bypass _ensure_workspace_dirs
         # entirely by pre-creating it as a dir, then converting after.
         (ws / ".vault" / "data").mkdir(parents=True)
         (ws / ".vaultspec" / "rules" / "rules").mkdir(parents=True)
@@ -597,14 +597,14 @@ class TestSafetyGuards:
 
         We exercise the guard by directly invoking ``seed_builtins``
         with a temporarily-mutated ``_BUNDLED_FILES`` constant via
-        attribute assignment (no monkeypatch fixture used — direct
+        attribute assignment (no monkeypatch fixture used - direct
         assignment with restore in finally to honour the project
         no-mocks rule).
         """
         from vaultspec_rag import builtins as _builtins
 
         original = _builtins._BUNDLED_FILES
-        # NB: this is not a mock — it is editing a module constant.
+        # NB: this is not a mock - it is editing a module constant.
         # We restore it in the finally block.
         _builtins._BUNDLED_FILES = (
             "../../escape.md",

@@ -36,7 +36,7 @@ _GLOB_FETCH_MULTIPLIER = 10
 _LOCALE_DEDUP_SCORE_WINDOW = 0.10
 
 # --prefer prod/tests/docs score nudge magnitude. Roughly one
-# rank-gap in a typical top-k — re-orders ties without making
+# rank-gap in a typical top-k - re-orders ties without making
 # off-category results jump rank.
 _PREFER_SCORE_NUDGE = 0.05
 
@@ -71,9 +71,9 @@ def _locale_variant_key(path: str) -> str | None:
 
     Recognised shapes:
 
-    - ``<dir>/<lang>.<ext>``       — e.g. ``locales/en.yml``
-    - ``<dir>/<lang>/<name>.<ext>`` — e.g. ``i18n/en/messages.po``
-    - ``<name>.<lang>.<ext>``      — e.g. ``messages.en.po``
+    - ``<dir>/<lang>.<ext>``       - e.g. ``locales/en.yml``
+    - ``<dir>/<lang>/<name>.<ext>`` - e.g. ``i18n/en/messages.po``
+    - ``<name>.<lang>.<ext>``      - e.g. ``messages.en.po``
 
     where ``<ext>`` is in ``_LOCALE_FILE_EXTS`` and ``<lang>`` is a
     2-letter ISO 639 code (matched via ``_LOCALE_CODE_RE``).
@@ -82,7 +82,7 @@ def _locale_variant_key(path: str) -> str | None:
     variants of each other and collapse during dedup when their
     scores are within ``_LOCALE_DEDUP_SCORE_WINDOW``.
 
-    Pure function — no I/O, no realistic exception surface.
+    Pure function - no I/O, no realistic exception surface.
     """
     parts = path.rsplit(".", 1)
     if len(parts) != 2:
@@ -94,15 +94,15 @@ def _locale_variant_key(path: str) -> str | None:
     if not segments:
         return None
     last = segments[-1]
-    # Shape A: ``.../<lang>.<ext>`` — e.g. ``locales/en.yml``.
+    # Shape A: ``.../<lang>.<ext>`` - e.g. ``locales/en.yml``.
     # Key is the parent directory.
     if _LOCALE_CODE_RE.match(last):
         return "/".join(segments[:-1]) + f"/*.{ext}"
-    # Shape B: ``.../<lang>/<name>.<ext>`` — e.g. ``i18n/en/messages.po``.
+    # Shape B: ``.../<lang>/<name>.<ext>`` - e.g. ``i18n/en/messages.po``.
     # Key is the grandparent directory plus the filename.
     if len(segments) >= 2 and _LOCALE_CODE_RE.match(segments[-2]):
         return "/".join(segments[:-2]) + f"/*/{last}.{ext}"
-    # Shape C: ``<name>.<lang>.<ext>`` — e.g. ``messages.en.po``.
+    # Shape C: ``<name>.<lang>.<ext>`` - e.g. ``messages.en.po``.
     name_parts = last.rsplit(".", 1)
     if len(name_parts) == 2 and _LOCALE_CODE_RE.match(name_parts[1]):
         return "/".join(segments[:-1]) + f"/{name_parts[0]}.*.{ext}"
@@ -116,7 +116,7 @@ def _classify_chunk_type(path: str) -> Literal["prod", "tests", "docs"]:
     ``tests/docs/`` is reported as ``tests`` because the user's
     intent when running tests is the dominant signal.
 
-    Pure function — no I/O, no realistic exception surface.
+    Pure function - no I/O, no realistic exception surface.
     """
     segments = path.split("/")
     basename = segments[-1].lower() if segments else ""
@@ -142,13 +142,13 @@ def _collapse_locale_variants(
 ) -> list[SearchResult]:
     """Collapse near-tie locale-variant paths to the highest scorer.
 
-    Groups results by ``_locale_variant_key(result.path)`` —
+    Groups results by ``_locale_variant_key(result.path)`` -
     non-locale paths and singletons pass through unchanged. Within
     each group, the highest-scoring result is the canonical
     winner; lower-scoring results within
     ``_LOCALE_DEDUP_SCORE_WINDOW`` of the winner collapse into it
     (their paths are recorded for transparency). Results outside
-    the window survive — they're treated as genuinely different
+    the window survive - they're treated as genuinely different
     content that happens to share a locale stem.
 
     Order preserved: the canonical result keeps the winner's

@@ -4,7 +4,7 @@ Split out of the original ``mcp_server.py`` monolith per the
 ``2026-06-01-module-split-adr``. The watcher bookkeeping dicts and lock
 are mutated in place; the registry is read through the package alias so
 a test rebind of ``_registry`` is observed. ``_ensure_watcher`` keeps
-its literal ``_registry.peek_project`` call — a source-inspection
+its literal ``_registry.peek_project`` call - a source-inspection
 regression test asserts that string is present.
 """
 
@@ -30,7 +30,7 @@ def _ensure_watcher(
 ) -> bool:
     """Launch a filesystem watcher for *root* as a background asyncio task.
 
-    Safe to call repeatedly — starts at most one watcher per root.
+    Safe to call repeatedly - starts at most one watcher per root.
     Uses a double-check lock pattern to prevent duplicate watcher
     creation when multiple tool handlers finish near-simultaneously.
 
@@ -53,14 +53,14 @@ def _ensure_watcher(
 
     cfg = get_config()
     # watch_enabled is the sole opt-out: when disabled the service is
-    # pull-only and no watcher is ever started — including explicit
+    # pull-only and no watcher is ever started - including explicit
     # start/reconfigure requests.
     if not cfg.watch_enabled:
         return False
     root = root.resolve()
     if root in _m._watcher_tasks:
         return True
-    # Resolve the project slot OUTSIDE the lock — peek_project() has
+    # Resolve the project slot OUTSIDE the lock - peek_project() has
     # its own per-root locking and can take 50-200ms on cold start.
     # Holding _watcher_lock during that would block the event loop.
     slot = _m._registry.peek_project(root)

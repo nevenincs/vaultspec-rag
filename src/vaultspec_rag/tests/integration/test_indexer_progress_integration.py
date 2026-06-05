@@ -124,7 +124,7 @@ class TestVaultIndexerProgress:
             assert phase_totals["parse documents"] >= n_docs
             assert phase_totals["prepare collection"] == 1
             assert phase_totals["embed + upsert documents"] == n_docs
-            # Fresh collection — no stale IDs to purge.
+            # Fresh collection - no stale IDs to purge.
             assert phase_totals["purge stale documents"] == 0
             assert phase_totals["write metadata"] == 1
         finally:

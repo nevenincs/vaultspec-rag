@@ -14,7 +14,7 @@ def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:
     When ``bootstrap`` is True, this pre-creates the bare minimum
     directories core's ``resolve_workspace`` requires (``target/``,
     ``.vault/``, ``.vaultspec/``). It does NOT call
-    :func:`vaultspec_core.core.types.init_paths` — that's deferred to
+    :func:`vaultspec_core.core.types.init_paths` - that's deferred to
     the ``sync_provider`` call site via :func:`_init_core_context`.
 
     Why deferred: ``init_paths`` materialises core's
@@ -40,7 +40,7 @@ def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:
 def _init_core_context(target: Path) -> None:
     """Initialise core's runtime context just before a ``sync_provider``
     call. Scoped here (instead of in :func:`_resolve_target`) so the
-    manifest write is paired 1:1 with an actual core API invocation —
+    manifest write is paired 1:1 with an actual core API invocation -
     rag never seeds a manifest just for being instantiated. COHAB-01.
     """
     layout = resolve_workspace(target_override=target)

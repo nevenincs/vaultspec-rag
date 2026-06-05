@@ -42,7 +42,7 @@ def mcp_start(
     from ..mcp_server import main as run_mcp
 
     # Propagate --target to the MCP server via env var (stdio only).
-    # HTTP mode is multi-tenant — project context comes per-request.
+    # HTTP mode is multi-tenant - project context comes per-request.
     root_target = ctx.find_root().params.get("target")
     if root_target is not None:
         if port is not None:

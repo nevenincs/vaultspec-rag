@@ -169,7 +169,7 @@ class TestWorkerGating:
             return
 
         # Multi-core: the SAME small tree is serial under the default gate but
-        # parallel once the gate is lowered to 0 — so the gate, not the core
+        # parallel once the gate is lowered to 0 - so the gate, not the core
         # count, is what forced serial. This contrast is the non-tautological
         # proof that the gate logic actually runs.
         with _Workers(0):

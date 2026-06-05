@@ -349,7 +349,7 @@ class TestMultiProjectSearch:
         slot_a = registry.peek_project(root_a)
         slot_b = registry.peek_project(root_b)
 
-        # Index both (real GPU encoding — no mocks)
+        # Index both (real GPU encoding - no mocks)
         slot_a.vault_indexer.full_index(reporter=NullProgressReporter())
         slot_b.vault_indexer.full_index(reporter=NullProgressReporter())
 
@@ -654,7 +654,7 @@ class TestPerRootLocks:
 
 
 class TestLeaseApi:
-    """ADR D3/D4/D6 — lease, refcount, idle sweep, LRU admission, drain."""
+    """ADR D3/D4/D6 - lease, refcount, idle sweep, LRU admission, drain."""
 
     pytestmark: ClassVar = [pytest.mark.integration]
 

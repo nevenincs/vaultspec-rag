@@ -351,5 +351,5 @@ class TestRerank:
         original_score = single[0].score
         out = searcher._rerank("architecture", single, 5)
         assert len(out) == 1
-        # Score unchanged — reranker was not invoked
+        # Score unchanged - reranker was not invoked
         assert out[0].score == original_score

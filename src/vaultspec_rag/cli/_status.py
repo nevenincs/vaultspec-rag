@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import typer
 from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ..capabilities import backend_capabilities_dict
 from ._app import CLIState, app
-from ._gpu_errors import _handle_gpu_error
-from ._render import _add_backend_contract_rows, _emit_json
-from ._store import _open_vault_store
+from ._render import _add_backend_contract_rows, _emit_json, _emit_json_error_and_exit
 
 
 @app.command("status")
@@ -43,28 +40,37 @@ def handle_status(
     state: CLIState = ctx.obj
     target = state.target
 
+    import vaultspec_rag
+
+    from ..store import VaultStoreLockedError
+    from ._gpu_errors import _handle_gpu_error
+
     try:
-        import torch
-    except ImportError as e:
+        status = vaultspec_rag.get_status(target)
+    except VaultStoreLockedError as exc:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "status",
+                "status_locked",
+                f"Cannot query index status - another process holds the lock: {exc}",
+                1,
+            )
+        _cli.console.print(
+            "[bold red]Error:[/] Cannot query index status - "
+            f"another process holds the lock.\n{exc}\n"
+            "Close any other processes using the index and retry."
+        )
+        raise typer.Exit(code=1) from None
+    except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
 
-    cuda_available = torch.cuda.is_available()
-    if cuda_available:
-        gpu_name = torch.cuda.get_device_name(0)
-        props = torch.cuda.get_device_properties(0)
-        vram_mb = props.total_memory // (1024 * 1024)
-    else:
-        gpu_name = None
-        vram_mb = 0
-
-    # Store metrics
-    store = _open_vault_store(target, json_mode=json_mode, command="status")
-    try:
-        vault_count = store.count()
-        code_count = store.count_code()
-        storage_path = str(store.db_path)
-    finally:
-        store.close()
+    cuda_available = bool(status["cuda"])
+    gpu_name = cast("Any", status["gpu_name"])
+    vram_mb = int(cast("Any", status["vram_mb"]))
+    storage_path = str(status["storage_path"])
+    vault_count = int(cast("Any", status["vault_documents"]))
+    code_count = int(cast("Any", status["codebase_chunks"]))
+    backend_capabilities = cast("Any", status["backend_capabilities"])
 
     if json_mode:
         _emit_json(
@@ -78,7 +84,7 @@ def handle_status(
                 "vault_documents": vault_count,
                 "codebase_chunks": code_count,
                 "target_dir": str(target),
-                "backend_capabilities": backend_capabilities_dict(),
+                "backend_capabilities": backend_capabilities,
             },
         )
         return

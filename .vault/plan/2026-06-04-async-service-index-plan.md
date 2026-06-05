@@ -44,6 +44,22 @@ Implement HTTP request timeouts and surface local Qdrant lock errors
 - [x] `W02.P03.S09` - add regression tests for lock-store direct search failures; `src/vaultspec_rag/tests/test_cli.py`.
 - [x] `W02.P03.S10` - add regression tests for service-route timeout behavior; `src/vaultspec_rag/tests/test_cli.py`.
 
+## Wave `W03` - Backend-Agnostic Refactoring
+
+Refactor reindexing background task management and jobs registry into the core backend library, keeping transport/wrapper layers thin.
+
+### Phase `W03.P04` - Backend-Agnostic Task Scheduling
+
+Move the jobs registry and background task execution routines into the core library, converting MCP tool handlers into thin delegates.
+
+- [x] `W03.P04.S11` - Move background task registry and asyncio create_task execution into a new backend module; `src/vaultspec_rag/jobs.py`.
+- [x] `W03.P04.S12` - Refactor MCP tool handlers to act as thin transport delegates calling the new backend API; `src/vaultspec_rag/mcp_server/_tools.py`.
+- [x] `W03.P04.S13` - Update watcher to import the jobs registry from the backend module; `src/vaultspec_rag/watcher.py`.
+- [x] `W03.P04.S14` - Refactor in-process search CLI to use public backend API search functions; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W03.P04.S15` - Refactor MCP search tools to consume public backend search API; `src/vaultspec_rag/mcp_server/_tools.py`.
+- [x] `W03.P04.S16` - Expose database clean/wipe and engine status as backend API functions; `src/vaultspec_rag/api.py`.
+- [x] `W03.P04.S17` - Refactor clean and status commands/tools in CLI and MCP to delegate to backend; `src/vaultspec_rag/cli/_status.py`.
+
 ## Description
 
 This plan implements asynchronous background reindexing on the RAG resident service, allowing the client CLI to run the `index` command without blocking or timing out (Issue #160). It also addresses search lock contention and request timeouts during multi-agent concurrent execution on Windows shared-worktrees by enforcing request timeouts on service-delegated calls and fail-fast diagnostics on Qdrant database lock conflicts (Issue #162).

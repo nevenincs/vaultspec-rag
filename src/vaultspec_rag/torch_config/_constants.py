@@ -17,7 +17,7 @@ from tomlkit.items import InlineTable, Table
 
 # tomlkit returns ``OutOfOrderTableProxy`` for any ``[tool.X]`` whose
 # child tables (``[tool.X.Y]``, ``[tool.X.Z]``) are interleaved with
-# unrelated sections — the dominant pyproject.toml shape (e.g.
+# unrelated sections - the dominant pyproject.toml shape (e.g.
 # ``[tool.uv]``, ``[tool.ruff]``, ``[tool.uv.sources]`` interspersed).
 # It implements the same Mapping API we exercise (``get``, ``setdefault``,
 # ``__setitem__``, ``__delitem__``, ``__bool__``) but does not subclass

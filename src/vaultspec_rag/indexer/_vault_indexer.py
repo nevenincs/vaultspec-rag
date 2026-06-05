@@ -60,7 +60,7 @@ class VaultIndexer:
             gpu_lock: Optional non-reentrant ``threading.Lock`` that
                 serializes GPU operations (encoding) with concurrent
                 searches. ``threading.Lock`` (not ``RLock``) is
-                expected — same-thread re-entry would deadlock; the
+                expected - same-thread re-entry would deadlock; the
                 indexer never nests its own GPU acquisitions.
         """
         from ..config import get_config
@@ -115,10 +115,10 @@ class VaultIndexer:
             clean: When ``True``, drop and recreate the vault
                 collection up front so schema-level changes (e.g.
                 a new embedding dimension) take effect (#68 audit
-                F9.6 — codex P2). On the ``clean=True`` path an
+                F9.6 - codex P2). On the ``clean=True`` path an
                 interrupted run (CUDA OOM, process kill, Qdrant
                 I/O failure mid-stream) may leave the collection
-                empty until the next successful run — this is
+                empty until the next successful run - this is
                 the explicit user opt-in to destructive semantics.
                 The default ``clean=False`` path is failure-safe:
                 it streams upserts in place and purges only the
@@ -176,7 +176,7 @@ class VaultIndexer:
         # guard).
 
         # Failure-safe rebuild: ensure the table exists, snapshot the
-        # current ID set, stream upsert (idempotent by doc_id — existing
+        # current ID set, stream upsert (idempotent by doc_id - existing
         # rows are overwritten in place), then purge only the IDs that
         # no longer exist in the new corpus. If any slice raises we have
         # not destroyed the old collection. clean=True preserves its
@@ -187,7 +187,7 @@ class VaultIndexer:
         # collection up front so that schema-level changes (e.g. a
         # new embedding dimension) take effect (#68 audit F9.6).
         # This re-introduces a narrow data-loss window between the
-        # drop and the streaming upsert — but only on the explicit
+        # drop and the streaming upsert - but only on the explicit
         # opt-in path. ``clean=False`` (the default + watcher path)
         # remains failure-safe.
         reporter.phase_start("prepare collection", 1)
@@ -222,7 +222,7 @@ class VaultIndexer:
             reporter=reporter,
         )
 
-        # Streaming completed successfully — now it is safe to delete
+        # Streaming completed successfully - now it is safe to delete
         # the rows that were in the collection before but are absent
         # from the freshly-indexed corpus.
         new_ids = {doc.id for doc in docs}
@@ -235,7 +235,7 @@ class VaultIndexer:
                 except OSError:
                     logger.error(
                         "Failed to purge stale vault documents after "
-                        "successful rebuild — collection still "
+                        "successful rebuild - collection still "
                         "contains valid new data plus %d stale rows",
                         len(stale_ids),
                     )
@@ -445,7 +445,7 @@ class VaultIndexer:
         relative to ``docs_dir`` with its extension stripped.
 
         Args:
-            path: A filesystem path (need not exist — pure-path math only).
+            path: A filesystem path (need not exist - pure-path math only).
             docs_dir: The vault documents root (``root_dir / docs_dir``).
 
         Returns:
@@ -497,7 +497,7 @@ class VaultIndexer:
                 to_hash[doc_id] = path
             elif doc_id in prev_meta:
                 # Previously indexed but now gone or no longer a recognised
-                # vault document — reconcile it out of the index.
+                # vault document - reconcile it out of the index.
                 delete_ids.add(doc_id)
         reporter.phase_end()
 

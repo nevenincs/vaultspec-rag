@@ -10,7 +10,7 @@ Three layers, no mocks/skips/monkeypatch:
   the exit-3 + JSON envelope contract.
 - Starlette: exercise the real ``GET /jobs`` route through
   ``starlette.testclient.TestClient`` (the real ASGI client, NOT a mock) built
-  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` — 401 without token,
+  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` - 401 without token,
   200 JSON with token.
 """
 

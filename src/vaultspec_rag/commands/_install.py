@@ -99,7 +99,7 @@ def install_run(
 
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
-    # 1:1 with an actual sync invocation — see COHAB-01 fix in
+    # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
     if dry_run:
         report.warnings.append(
@@ -186,7 +186,7 @@ def _rollback_seeded(rules_dir: Path, seeded: list[str], report: InstallReport) 
 
     Removes only files that *this* install actually wrote (recorded in
     ``seeded``). Never removes pre-existing files. Errors during
-    rollback are recorded as warnings — they cannot mask the original
+    rollback are recorded as warnings - they cannot mask the original
     install failure since the caller re-raises.
     """
     for rel in seeded:

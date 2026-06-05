@@ -7,7 +7,7 @@ Three layers, no mocks/skips/monkeypatch:
   and tolerance of a vanished backup.
 - Starlette: exercise the real ``GET /logs`` route through
   ``starlette.testclient.TestClient`` (the real ASGI client, NOT a mock) built
-  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` — 401 without token,
+  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` - 401 without token,
   200 text with token.
 - MCP + CLI parity: the real ``get_logs`` tool returns ``{"lines": [...]}`` and
   ``server service logs`` reports exit 3 against a dead port.

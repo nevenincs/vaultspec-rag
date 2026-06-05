@@ -33,7 +33,7 @@ def _detect_crlf(pyproject: Path) -> bool:
     Sniffs the raw bytes (not the decoded text) so the answer is the
     real on-disk encoding, immune to ``newline=`` translation. A
     Windows pyproject with ``\\r\\n`` line endings should round-trip
-    through apply / remove without losing them — ``tomlkit.dumps``
+    through apply / remove without losing them - ``tomlkit.dumps``
     always emits LF, so the writer must restore the original
     convention before the atomic write or the user gets a noisy
     git diff that touches every existing line on the very first
@@ -73,7 +73,7 @@ def _tool_uv(doc: TOMLDocument) -> TableLike | None:
     Narrowed to either :class:`tomlkit.items.Table` or
     :class:`tomlkit.container.OutOfOrderTableProxy`. tomlkit returns
     the proxy whenever ``[tool.uv]`` and ``[tool.uv.sources]`` (or
-    ``[[tool.uv.index]]``) are interleaved with non-uv sections — the
+    ``[[tool.uv.index]]``) are interleaved with non-uv sections - the
     dominant ``[tool.*]`` layout in real-world pyprojects. Both expose
     the same Mapping surface we touch.
     """
@@ -170,14 +170,14 @@ def _classify_indices(
 
     Returns a tuple ``(canonical_seen, conflict_seen, conflicts)``
     where ``canonical_seen`` is ``None`` when the user's TOML has a
-    shape we refuse to touch (single-table ``[tool.uv.index]``) —
+    shape we refuse to touch (single-table ``[tool.uv.index]``) -
     the caller should short-circuit to ``CUSTOMISED``.
     """
     conflicts: list[str] = []
 
     # ``[tool.uv.index]`` (single table) and ``index = [{...}]`` (inline
     # array dotted-key form) are both valid TOML but incompatible with
-    # our array-of-tables mutations. Probe the raw key directly —
+    # our array-of-tables mutations. Probe the raw key directly -
     # ``_indices()`` narrows to AoT only, so we can't use its return
     # value to detect these shapes. Distinguish the two so the
     # conflict message describes what the user actually wrote (a
@@ -246,7 +246,7 @@ def _classify_sources(
 
     # `[tool.uv.sources.torch]` (standard table, e.g. a git source
     # spelled as its own section) cannot be promoted into a TOML
-    # array — arrays can only hold inline tables. Treat as
+    # array - arrays can only hold inline tables. Treat as
     # CUSTOMISED so apply never tries to rewrite it.
     if isinstance(torch_srcs, Table) and not isinstance(torch_srcs, InlineTable | list):
         conflicts.append(
@@ -299,7 +299,7 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     if index_canonical and source_canonical:
         return TorchConfigState.CANONICAL, []
     if index_canonical != source_canonical:
-        # Half-applied state — treat as customised; we cannot safely
+        # Half-applied state - treat as customised; we cannot safely
         # complete it without risking user intent.
         missing = "source" if index_canonical else "index"
         conflicts.append(
@@ -318,7 +318,7 @@ def _is_half_applied(doc: TOMLDocument) -> bool:
     shape, no per-half conflict). :func:`_classify` returns
     ``CUSTOMISED`` on this state out of caution for the apply path
     (we refuse to "complete" a half-applied state automatically),
-    but :func:`remove_patch` can safely drop the canonical half —
+    but :func:`remove_patch` can safely drop the canonical half -
     the rag-named entry is unambiguously rag-owned, and leaving it
     behind violates the symmetric-mirror promise. TOML-02.
     """
@@ -343,7 +343,7 @@ def detect_state(pyproject: Path) -> TorchConfigState:
     Raises:
         tomlkit.exceptions.ParseError: If the file is syntactically
             invalid TOML. Callers should surface this as a hard error
-            — there is no safe way to edit a corrupt file.
+            - there is no safe way to edit a corrupt file.
     """
     doc = _load(pyproject)
     if doc is None:

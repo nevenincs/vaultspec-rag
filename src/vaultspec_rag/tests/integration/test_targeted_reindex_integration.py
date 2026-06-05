@@ -79,7 +79,7 @@ class TestVaultScopedReindex:
             assert result.added == 0
             assert result.removed == 0
             # `target` was rehashed; `other` was left entirely alone even
-            # though its bytes changed on disk — proof the scope held.
+            # though its bytes changed on disk - proof the scope held.
             assert meta_after[target_id] != meta_before[target_id]
             assert meta_after[other_id] == meta_before[other_id]
             # No id was dropped by the partial metadata write.

@@ -342,16 +342,30 @@ class VaultStore:
 
     def drop_table(self) -> None:
         """Drop the vault_docs collection if it exists."""
+        from qdrant_client import models
+
         with self._client_lock:
             if self.client.collection_exists(self.TABLE_NAME):
+                with _suppress_local_qdrant_warnings():
+                    self.client.delete(
+                        collection_name=self.TABLE_NAME,
+                        points_selector=models.Filter(),
+                    )
                 self.client.delete_collection(self.TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.TABLE_NAME)
             self._vault_ensured = False
 
     def drop_code_table(self) -> None:
         """Drop the codebase_docs collection if it exists."""
+        from qdrant_client import models
+
         with self._client_lock:
             if self.client.collection_exists(self.CODE_TABLE_NAME):
+                with _suppress_local_qdrant_warnings():
+                    self.client.delete(
+                        collection_name=self.CODE_TABLE_NAME,
+                        points_selector=models.Filter(),
+                    )
                 self.client.delete_collection(self.CODE_TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
             self._code_ensured = False

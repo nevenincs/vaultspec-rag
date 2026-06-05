@@ -25,7 +25,7 @@ def _release_cuda_cache() -> None:
     """Return unused CUDA caching-allocator blocks to the driver.
 
     Called between embedding slices to prevent the allocator from
-    growing unboundedly as per-batch activation buffers accumulate —
+    growing unboundedly as per-batch activation buffers accumulate -
     the root cause of the 24 GB RSS leak documented in issue #68.
     Safe no-op when torch is unavailable.
     """
@@ -88,8 +88,8 @@ def _stream_encode_and_upsert_vault(
                 sparse = None
                 probe.checkpoint(f"slice-{i}-before-encode")
                 # Inner try/finally guarantees the per-slice CUDA
-                # caching pool is released on every exit path —
-                # success, exception, or KeyboardInterrupt — so a
+                # caching pool is released on every exit path -
+                # success, exception, or KeyboardInterrupt - so a
                 # mid-encode interrupt cannot leave a stale reserved
                 # pool wedged in the allocator (#68 audit F6.9).
                 try:
@@ -199,7 +199,7 @@ def _stream_encode_and_upsert_codebase(
     RSS benefit is less pronounced, but we apply the same pattern for
     consistency and so that large monorepos stay bounded too. Chunks
     are length-sorted before slicing for the same reason as the vault
-    helper — minimises padding waste in the model's encode call.
+    helper - minimises padding waste in the model's encode call.
     """
     from ..config import get_config
     from ..memory_probe import MemoryProbe

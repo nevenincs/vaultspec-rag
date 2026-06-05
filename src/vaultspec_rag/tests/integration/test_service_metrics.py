@@ -11,7 +11,7 @@ Three layers, no mocks/skips/monkeypatch:
   ``test_watcher_control.py``) and assert the inline counters increment.
 - Starlette: exercise the real ``GET /metrics`` route through
   ``starlette.testclient.TestClient`` (the real ASGI client, NOT a mock) built
-  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` — 401 without token,
+  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` - 401 without token,
   200 Prometheus text with token.
 """
 

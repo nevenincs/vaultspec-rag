@@ -7,17 +7,17 @@ reranking (CrossEncoder) to find the most relevant context for code generation,
 code review, and documentation discovery.
 
 This module was split into a package (``cli/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface — the Typer
+``2026-06-01-module-split-adr``. The verbatim public surface - the Typer
 ``app`` plus the ``_``-prefixed helpers that tests import or monkeypatch
 directly (``_spawn_service``, ``_health_probe``, ``_try_mcp_search``,
-``console`` …) — is re-exported here unchanged through an explicit
+``console`` …) - is re-exported here unchanged through an explicit
 ``__all__``.
 
 Import order matters and is load-bearing:
 
-1. ``_core`` first — owns ``console`` / ``logger`` / ``sys`` so every
+1. ``_core`` first - owns ``console`` / ``logger`` / ``sys`` so every
    submodule shares one console and one ``vaultspec_rag.cli``-named logger.
-2. ``_app`` next — creates ``app`` and the sub-apps and nests them; this MUST
+2. ``_app`` next - creates ``app`` and the sub-apps and nests them; this MUST
    run before any command submodule's ``@*.command()`` decorator fires.
 3. The leaf helper submodules, then the command submodules (their decorators
    register against the already-nested apps).
@@ -61,7 +61,7 @@ from ._gpu_errors import (
     _no_torch_message,
 )
 
-# 3b. Command submodules — importing them runs the ``@app.command()`` /
+# 3b. Command submodules - importing them runs the ``@app.command()`` /
 #     ``@*_app.command()`` decorators against the apps nested in step 2.
 from ._index import handle_clean, handle_index
 from ._install import handle_install, handle_uninstall

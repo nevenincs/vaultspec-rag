@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import typer  # noqa: TC002 — Typer resolves annotations at runtime
+import typer  # noqa: TC002 - Typer resolves annotations at runtime
 
 from ._app import app
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003 — used at runtime
+from pathlib import Path  # noqa: TC003 - used at runtime
 
 __all__ = [
     "CorpusManifest",
@@ -22,7 +22,7 @@ __all__ = [
 DOC_TYPES: list[str] = ["adr", "plan", "research", "exec", "reference", "audit"]
 FEATURES: list[str] = ["alpha-engine", "beta-pipeline", "gamma-index", "delta-store"]
 
-# Topical paragraphs keyed by doc_type — each doc gets its type paragraph
+# Topical paragraphs keyed by doc_type - each doc gets its type paragraph
 # plus its needle keyword for deterministic retrieval.
 _TYPE_PARAGRAPHS: dict[str, str] = {
     "adr": (

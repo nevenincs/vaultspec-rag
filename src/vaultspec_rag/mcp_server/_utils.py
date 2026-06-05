@@ -78,19 +78,19 @@ def _default_root() -> Path:
     """Resolve the default project root from env or cwd.
 
     Only used in stdio mode.  HTTP mode must always provide an
-    explicit ``project_root`` — see ``_resolve_root()``.
+    explicit ``project_root`` - see ``_resolve_root()``.
 
     Returns:
         Resolved ``Path`` from ``VAULTSPEC_RAG_ROOT`` env var, falling
         back to the current working directory.
 
     Raises:
-        ValueError: If called in HTTP mode (should never happen —
+        ValueError: If called in HTTP mode (should never happen -
             ``_resolve_root`` guards this).
     """
     if _m._http_mode:
         msg = (
-            "project_root is required in HTTP service mode — "
+            "project_root is required in HTTP service mode - "
             "the multi-tenant service has no default project"
         )
         raise ValueError(msg)
@@ -158,7 +158,7 @@ def _validate_query(query: str) -> str:
 def _resolve_root(project_root: str | None) -> Path:
     """Resolve a project root path from an optional string.
 
-    In HTTP service mode, ``project_root`` is required — the
+    In HTTP service mode, ``project_root`` is required - the
     multi-tenant daemon has no default project.  In stdio mode,
     falls back to ``VAULTSPEC_RAG_ROOT`` env var or cwd.
 

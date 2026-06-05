@@ -56,7 +56,7 @@ def uninstall_run(
     """
     # assume_yes is reserved for future prompts; uninstall currently
     # has no prompt to bypass. Suppress the unused-argument lint
-    # without ``del`` — keeping the parameter in the public signature
+    # without ``del`` - keeping the parameter in the public signature
     # so callers don't churn when the future behaviour lands.
     _ = assume_yes
     skip = skip or set()
@@ -78,7 +78,7 @@ def uninstall_run(
 
     if not (target / ".vaultspec").is_dir():
         # No ``.vaultspec/`` means rag was never installed at this
-        # target — anything we found in ``pyproject.toml`` belongs to
+        # target - anything we found in ``pyproject.toml`` belongs to
         # the user (or to a different project that happened to land in
         # the same directory). Mutating their file here is a data-loss
         # surprise, not a symmetric reversal. The torch-config sweep

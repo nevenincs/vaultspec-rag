@@ -1,7 +1,7 @@
 """Read-only HTTP routes for the resident service (#142, plan P03).
 
 Per the ``service-observability`` ADR these routes are strictly
-read-only — all control stays on MCP. They are registered as Starlette
+read-only - all control stays on MCP. They are registered as Starlette
 :class:`~starlette.routing.Route` objects on the *inner* app assembled
 in :mod:`._main` (alongside ``Mount("/mcp")`` + ``Route("/health")``),
 never as additional ASGI wrappers.
@@ -9,8 +9,8 @@ never as additional ASGI wrappers.
 Gating model (ADR Constraints). The HTTP service binds to loopback only
 (``127.0.0.1``), which is the real boundary; on top of that these
 monitoring routes accept the per-process ``service_token`` as an
-optional bearer — via ``Authorization: Bearer <token>`` or a ``?token=``
-query parameter — compared in constant time against
+optional bearer - via ``Authorization: Bearer <token>`` or a ``?token=``
+query parameter - compared in constant time against
 ``_state._SERVICE_TOKEN``. This is a pragmatic monitoring gate, not an
 auth boundary. ``/health`` stays ungated and is registered in
 :mod:`._main`, not here.
@@ -112,7 +112,7 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     """Token-gated read-only ``GET /logs`` returning recent log text.
 
     Returns the last ``?lines=N`` (default 200, clamped to 5000) lines
-    of the rotated service log as ``text/plain``, newest last — parity
+    of the rotated service log as ``text/plain``, newest last - parity
     with the ``get_logs`` MCP tool.
 
     Args:
@@ -147,7 +147,7 @@ def _clamp_limit(raw: str | None) -> int | None:
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
-    Returns the newest-first :mod:`._jobs` registry snapshot as JSON —
+    Returns the newest-first :mod:`._jobs` registry snapshot as JSON -
     parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
     the registry. An optional ``?limit=N`` query parameter caps the
     number of returned records (newest first).

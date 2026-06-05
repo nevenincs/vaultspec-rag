@@ -121,7 +121,7 @@ def handle_benchmark(
             vram_mb = 0.0
 
         table = Table(
-            title=f"Search Latency — {n_queries} queries",
+            title=f"Search Latency - {n_queries} queries",
             show_header=True,
         )
         table.add_column("Metric", style="bold")

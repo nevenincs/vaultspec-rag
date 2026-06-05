@@ -100,7 +100,7 @@ class ServiceRegistry:
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         # Reentrant so eviction can call close_project() while still
-        # holding the lock that selected the victim — closing without
+        # holding the lock that selected the victim - closing without
         # releasing the lock first eliminates a TOCTOU window where a
         # concurrent lease() could resurrect the victim.
         self._lock = threading.RLock()
@@ -153,7 +153,7 @@ class ServiceRegistry:
         """
         if self._model is None:
             raise RuntimeError(
-                "EmbeddingModel not loaded — call load_model() first",
+                "EmbeddingModel not loaded - call load_model() first",
             )
         return self._model
 
@@ -313,7 +313,7 @@ class ServiceRegistry:
             root: Workspace root directory.
 
         Returns:
-            ``(slot, victims)`` — *slot* is the acquired
+            ``(slot, victims)`` - *slot* is the acquired
             ``ProjectSlot`` (already bumped); *victims* is a list of
             ``(root, slot, reason)`` triples that were popped from the
             registry under the lock and need teardown.
@@ -365,7 +365,7 @@ class ServiceRegistry:
         except BaseException:
             # Rollback BEFORE re-raising:
             # 1. Decrement ref_count on the target slot if we already
-            #    bumped it — otherwise the slot is stuck busy forever
+            #    bumped it - otherwise the slot is stuck busy forever
             #    and the caller never sees it via lease().
             # 2. Tear down popped victims so their Qdrant handles and
             #    watchers do not leak.
@@ -404,7 +404,7 @@ class ServiceRegistry:
         held so a concurrent :meth:`lease` cannot observe them and
         resurrect them once teardown begins.  Teardown itself (watcher
         stop → graph invalidate → store close) is the *caller's*
-        responsibility once the lock has been fully released — the
+        responsibility once the lock has been fully released - the
         manual ``RLock.release()/acquire()`` dance is fragile because
         a single ``release()`` on a recursively-held ``RLock`` only
         decrements the recursion counter and does not actually let
@@ -610,7 +610,7 @@ class ServiceRegistry:
         after a 5-second deadline (logging a warning for each).
 
         The 5.0s constant is intentionally NOT configurable per
-        ADR D6 — long enough for worst-case search latency, short
+        ADR D6 - long enough for worst-case search latency, short
         enough that uvicorn lifespan shutdown never looks hung.
         """
         with self._lock:

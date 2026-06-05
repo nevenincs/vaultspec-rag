@@ -47,7 +47,7 @@ def _builtins_root() -> Path:
     if any((pkg_dir / rel).is_file() for rel in _BUNDLED_FILES):
         return pkg_dir
 
-    # Editable install — walk up to the repo root and use the canonical
+    # Editable install - walk up to the repo root and use the canonical
     # source directly. The repo root is identified by ``pyproject.toml``.
     candidate = pkg_dir
     for _ in range(10):

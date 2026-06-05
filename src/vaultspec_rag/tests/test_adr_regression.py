@@ -15,7 +15,7 @@ pytestmark = [pytest.mark.unit]
 
 
 class TestBlake2bFileHashing:
-    """ADR: blake2b-file-hashing — file hashes must use blake2b, not sha256."""
+    """ADR: blake2b-file-hashing - file hashes must use blake2b, not sha256."""
 
     def test_vault_indexer_meta_uses_blake2b_hashes(self, tmp_path):
         """VaultIndexer._save_meta produces blake2b hex digests (128 chars)."""
@@ -60,7 +60,7 @@ class TestBlake2bFileHashing:
 
 
 class TestMCPAsyncTools:
-    """ADR: mcp-sync-tools (superseded) — MCP tools must be async def + anyio."""
+    """ADR: mcp-sync-tools (superseded) - MCP tools must be async def + anyio."""
 
     def test_search_vault_is_async(self):
         import asyncio
@@ -241,7 +241,7 @@ class TestThreadingLock:
     eviction codepaths can call ``close_project`` while still holding
     the registry lock without deadlocking.  Both lock types expose the
     same ``acquire``/``release`` interface but ``isinstance`` against
-    ``type(threading.Lock())`` rejects the RLock — these tests now
+    ``type(threading.Lock())`` rejects the RLock - these tests now
     accept the RLock as well.
     """
 
@@ -292,7 +292,7 @@ class TestManualNodeWalking:
 
 
 class TestRerankerModelName:
-    """ADR: gpu-only-rag-stack — reranker model must be bge-reranker-v2-m3."""
+    """ADR: gpu-only-rag-stack - reranker model must be bge-reranker-v2-m3."""
 
     def test_config_default_reranker_model(self):
         from vaultspec_rag.config import get_config, reset_config
@@ -338,12 +338,13 @@ class TestGraphCacheInvalidation:
     def test_reindex_vault_resets_graph_cache(self):
         import inspect
 
-        from vaultspec_rag.mcp_server import reindex_vault
+        from vaultspec_rag.jobs import start_reindex_vault
 
-        src = inspect.getsource(reindex_vault)
+        src = inspect.getsource(start_reindex_vault)
         assert "graph_cache" in src and "invalidate" in src, (
-            "reindex_vault must call slot.graph_cache.invalidate() after indexing "
-            "to prevent stale graph re-ranking (R29-H3 fix, unified in D3)"
+            "start_reindex_vault must call slot.graph_cache.invalidate() "
+            "after indexing to prevent stale graph re-ranking "
+            "(R29-H3 fix, unified in D3)"
         )
 
 

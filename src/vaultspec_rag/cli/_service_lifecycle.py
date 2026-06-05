@@ -260,8 +260,8 @@ def service_status(
 ) -> None:
     """Display the current status of the background RAG service.
 
-    Gathers four signals before rendering — ``service.json`` present,
-    PID alive, port listening, heartbeat fresh — and surfaces each as
+    Gathers four signals before rendering - ``service.json`` present,
+    PID alive, port listening, heartbeat fresh - and surfaces each as
     its own row plus a derived ``State`` row. Avoids the previous
     "pick one source of truth" behaviour where conflicting signals
     rendered as a misleading verdict.
@@ -281,7 +281,7 @@ def service_status(
                 False,
                 "service.status",
                 error="stopped",
-                message="No service.json — service is not running.",
+                message="No service.json - service is not running.",
                 data={"service_json_present": False, "state": "stopped"},
             )
             raise typer.Exit(code=3)

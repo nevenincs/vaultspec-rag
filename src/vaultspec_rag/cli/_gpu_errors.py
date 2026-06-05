@@ -22,7 +22,7 @@ def _cpu_only_message() -> str:
     :func:`_handle_gpu_error`. ``markup=True`` makes Rich parse
     ``[name]...[/name]`` as markup, so every literal ``[`` in TOML keys
     must be backslash-escaped (``\\[``). Closing ``]`` outside a tag
-    context is already literal and must NOT be escaped — Rich passes
+    context is already literal and must NOT be escaped - Rich passes
     ``\\]`` through verbatim and leaves a stray backslash in the
     rendered output.
     """
@@ -94,9 +94,9 @@ def _handle_gpu_error(exc: Exception) -> None:
     the actual problem:
 
     - torch not installed at all (``ImportError``)
-    - torch installed without CUDA support — the CPU-only PyPI wheel
+    - torch installed without CUDA support - the CPU-only PyPI wheel
       (``torch.version.cuda is None``)
-    - torch built with CUDA but no GPU visible — driver or hardware
+    - torch built with CUDA but no GPU visible - driver or hardware
       issue (``torch.version.cuda`` set, ``is_available()`` False)
 
     Args:

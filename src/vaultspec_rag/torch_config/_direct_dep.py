@@ -48,7 +48,7 @@ def _is_torch_requirement(req: object) -> bool:
     / ``.`` separators all collapse to a single canonical form.
 
     Non-string inputs return False (tomlkit can yield dict-form
-    entries, integers, comments — the predicate must stay total).
+    entries, integers, comments - the predicate must stay total).
     Inputs that are syntactically invalid PEP 508 also return False
     rather than raising.
     """
@@ -82,7 +82,7 @@ def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, Any]]:
     - Poetry: ``[tool.poetry.dependencies]`` /
       ``[tool.poetry.group.*.dependencies]`` (Mapping[name → spec]).
       We synthesise a list of the *names* so ``_is_torch_requirement``
-      matches them — the spec strings are not PEP 508 in Poetry.
+      matches them - the spec strings are not PEP 508 in Poetry.
     - PDM: ``[tool.pdm.dev-dependencies]`` (Mapping[group → list[str]]),
       same shape as PEP 735.
 

@@ -17,7 +17,7 @@ PROJECT_ROOT: pathlib.Path = (
     pathlib.Path(__file__).resolve().parent.parent.parent.parent
 )
 
-#: src/vaultspec/ — the library source root
+#: src/vaultspec/ - the library source root
 LIB_SRC: pathlib.Path = PROJECT_ROOT / "src" / "vaultspec_rag"
 
 #: CLI entry points are now modules inside the vaultspec package

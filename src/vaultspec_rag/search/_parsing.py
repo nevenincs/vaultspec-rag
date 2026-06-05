@@ -1,6 +1,6 @@
 """Query parsing: extract metadata filter tokens from raw queries.
 
-Splits a raw query string into a :class:`ParsedQuery` — the cleaned
+Splits a raw query string into a :class:`ParsedQuery` - the cleaned
 natural-language text plus the structured filters lifted from tokens
 like ``type:adr``, ``feature:rag``, or ``tag:#research``. Holds the
 filter-token regex and the token-to-payload-key mapping.

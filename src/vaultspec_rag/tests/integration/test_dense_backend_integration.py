@@ -2,7 +2,7 @@
 
 Selecting ``dense_backend=onnx`` without ``optimum`` / ``onnxruntime-gpu`` (or
 in an onnxruntime-incompatible CUDA environment) must fall back to the torch
-construction and still produce valid embeddings — the
+construction and still produce valid embeddings - the
 ``embedding-backend-falls-back-to-torch`` rule. No mocks: a real EmbeddingModel
 is built on the GPU.
 """

@@ -140,7 +140,7 @@ def test_detect_state_customised_single_table_index(tmp_path: Path) -> None:
 
 
 def test_detect_state_customised_scalar_torch_source(tmp_path: Path) -> None:
-    """User wrote `torch = "some-string"` — legal TOML, nonsense for
+    """User wrote `torch = "some-string"` - legal TOML, nonsense for
     uv. Classifier must flag CUSTOMISED so apply_patch refuses before
     the mutation helpers crash on a non-dict value.
     """
@@ -379,7 +379,7 @@ def test_preview_patch_on_customised(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# detect on rag's own pyproject — must already be CANONICAL. Regression
+# detect on rag's own pyproject - must already be CANONICAL. Regression
 # guard: if the canonical shape in this module drifts from rag's own
 # pyproject.toml, this test fails and the constants must be re-aligned.
 # ---------------------------------------------------------------------------
@@ -407,7 +407,7 @@ def test_rag_own_pyproject_is_canonical() -> None:
 # ---------------------------------------------------------------------------
 
 
-# Scattered ``[tool.uv]`` / ``[tool.ruff]`` / ``[tool.uv.sources]`` —
+# Scattered ``[tool.uv]`` / ``[tool.ruff]`` / ``[tool.uv.sources]`` -
 # the exact reproducer from issue #83. A single string keeps the test
 # bodies focused on the assertion rather than fixture plumbing.
 SCATTERED_PROJECT = (
@@ -450,7 +450,7 @@ SCATTERED_CANONICAL_TAIL = (
 
 def test_scattered_tool_uv_detect_canonical(tmp_path: Path) -> None:
     """Scattered ``[tool.uv.*]`` with intervening ``[tool.ruff.lint]``
-    section — tomlkit yields ``OutOfOrderTableProxy`` for ``tool.uv``.
+    section - tomlkit yields ``OutOfOrderTableProxy`` for ``tool.uv``.
     Detection must return CANONICAL, not MISSING.
     """
     p = tmp_path / "pyproject.toml"
@@ -676,7 +676,7 @@ def test_remove_managed_direct_torch_dep_preserves_user_entry(tmp_path: Path) ->
 
 
 def test_has_direct_torch_dep_no_project_file(tmp_path: Path) -> None:
-    """Missing pyproject yields ``(False, "")`` — not an exception."""
+    """Missing pyproject yields ``(False, "")`` - not an exception."""
     found, location = tc.has_direct_torch_dep(tmp_path / "missing.toml")
     assert found is False
     assert location == ""
@@ -744,7 +744,7 @@ def test_apply_on_empty_pyproject(tmp_path: Path) -> None:
 
 def test_apply_on_pyproject_with_only_tool_uv(tmp_path: Path) -> None:
     """Pyproject that is just ``[tool.uv]`` with no project section.
-    Less common but legal — apply must not assume ``[project]`` exists.
+    Less common but legal - apply must not assume ``[project]`` exists.
     """
     p = tmp_path / "pyproject.toml"
     _write(p, "[tool.uv]\noverride-dependencies = []\n")
@@ -837,7 +837,7 @@ def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
     ``[tool.uv.*]`` shape must produce TOML that re-parses cleanly
     AND lands canonical cu130 keys at the documented dotted paths.
     The existing scattered test relies on ``detect_state`` returning
-    CANONICAL — which transitively re-parses, but a future refactor
+    CANONICAL - which transitively re-parses, but a future refactor
     that moved the reparse-guard out of ``apply_patch`` could pass
     those tests while emitting subtly broken TOML. Pin the contract.
     """
@@ -890,7 +890,7 @@ def test_apply_inline_array_index_conflict_message(tmp_path: Path) -> None:
     assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
     rep = tc.apply_patch(p)
     assert rep.action == "conflict"
-    # Message must mention "inline array" — not "single table".
+    # Message must mention "inline array" - not "single table".
     assert any("inline array" in c for c in rep.conflicts), rep.conflicts
     assert not any("single table" in c for c in rep.conflicts), rep.conflicts
 
@@ -900,7 +900,7 @@ def test_apply_appended_index_block_has_trailing_blank_line(tmp_path: Path) -> N
     ``[[tool.uv.index]]`` AoT and the consumer file has more
     top-level sections after it, the new block must carry a trailing
     blank line. Without that, the ``explicit = true`` line lands
-    flush against the next section header — readable TOML but a
+    flush against the next section header - readable TOML but a
     noisy git diff.
     """
     p = tmp_path / "pyproject.toml"
@@ -984,7 +984,7 @@ def test_apply_with_existing_user_index(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Round 2 — real-world shapes (#83 follow-up audit)
+# Round 2 - real-world shapes (#83 follow-up audit)
 # ---------------------------------------------------------------------------
 
 
@@ -1027,7 +1027,7 @@ def test_apply_preserves_crlf_line_endings(tmp_path: Path) -> None:
 
 
 def test_remove_preserves_crlf_line_endings(tmp_path: Path) -> None:
-    """Round-trip CRLF preservation: write CRLF, apply, remove —
+    """Round-trip CRLF preservation: write CRLF, apply, remove -
     the file must end up with CRLF line endings throughout (not the
     LF tomlkit emits by default).
     """
@@ -1234,7 +1234,7 @@ def test_has_direct_torch_dep_in_hatch_env_extra_dependencies(tmp_path: Path) ->
 
 def test_has_direct_torch_dep_in_hatch_env_dependencies_table(tmp_path: Path) -> None:
     """The table form ``[tool.hatch.envs.<env>.dependencies] torch =
-    "^2.4"`` is less common but still legal Hatch config — and
+    "^2.4"`` is less common but still legal Hatch config - and
     conventional in projects migrated from Poetry.
     """
     p = tmp_path / "pyproject.toml"

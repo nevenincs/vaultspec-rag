@@ -152,7 +152,7 @@ class TestIndexEdgeCases:
             assert store.count() == len(manifest.docs)
 
             # Delete every indexed .md file, then run a clean full
-            # index — the store must end up empty.
+            # index - the store must end up empty.
             for doc in manifest.docs:
                 doc.path.unlink()
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import Change, awatch
 
-from .mcp_server import _jobs
+from . import jobs as _jobs
 
 if TYPE_CHECKING:
     import asyncio
@@ -87,9 +87,9 @@ def _is_code_change(path: Path, root_dir: Path, vault_dir: Path) -> bool:
         return False
     try:
         path.relative_to(vault_dir)
-        return False  # Inside vault — not a code change
+        return False  # Inside vault - not a code change
     except ValueError as exc:
-        # Expected when path is outside vault — fall through to
+        # Expected when path is outside vault - fall through to
         # the root-dir check below.
         logger.debug(
             "watcher code-path: %s not under vault %s: %s",
@@ -161,8 +161,8 @@ async def watch_and_reindex(
 
     # Paths observed but not yet reindexed (suppressed by cooldown, or
     # dropped by a failed run). A scoped reindex only processes the paths it
-    # is handed, so — unlike the former full rescan, which re-discovered
-    # everything each run — these must be carried forward and merged into the
+    # is handed, so - unlike the former full rescan, which re-discovered
+    # everything each run - these must be carried forward and merged into the
     # next run or the edits would be lost (#151).
     active_vault_job: str | None = None
     active_code_job: str | None = None

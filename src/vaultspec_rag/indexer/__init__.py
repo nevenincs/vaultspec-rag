@@ -5,13 +5,13 @@ stores them in the Qdrant vector store. Supports full and incremental
 indexing.
 
 This module was split into a package (``indexer/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface — the
+``2026-06-01-module-split-adr``. The verbatim public surface - the
 ``VaultIndexer`` / ``CodebaseIndexer`` orchestration classes, the
 ``IndexResult`` dataclass, the ``prepare_document`` helper, the
 ``ASTChunker`` / ``TextSplitter`` chunkers, the shared
 ``LANGUAGE_MAP`` / ``SUPPORTED_EXTENSIONS`` / AST node-type constants,
 and the ``_extract_title`` / ``_extract_feature`` / ``_is_binary``
-helpers that tests import directly — is re-exported here unchanged.
+helpers that tests import directly - is re-exported here unchanged.
 """
 
 from __future__ import annotations

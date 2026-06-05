@@ -349,7 +349,7 @@ class VaultSearcher:
                 dropped when any pattern matches its
                 project-relative path.
             dedup_locales: When True, collapse near-duplicate
-                locale-variant paths after rerank — the highest
+                locale-variant paths after rerank - the highest
                 scoring entry wins, the others drop.
             prefer: When set to ``"prod"`` / ``"tests"`` /
                 ``"docs"``, apply ``±_PREFER_SCORE_NUDGE`` to
@@ -560,7 +560,7 @@ class VaultSearcher:
             dedup_locales: When True, collapse near-tie locale
                 variants (e.g. ``locales/{en,es}.yml``) into a
                 single canonical result. Opt-in.
-            prefer: Optional ``"prod" | "tests" | "docs"`` —
+            prefer: Optional ``"prod" | "tests" | "docs"`` -
                 applies a small +/- score nudge to the matching
                 category after rerank. Opt-in.
 

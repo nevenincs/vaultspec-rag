@@ -64,7 +64,7 @@ def _log_file() -> Path:
 def _append_lifecycle_shutdown_log(reason: str, **kv: object) -> None:
     """Append a ``service.lifecycle``-style shutdown line to the rotating log.
 
-    Used on Windows only — the daemon's atexit handler does not fire
+    Used on Windows only - the daemon's atexit handler does not fire
     under ``TerminateProcess``, so the CLI parent emits a mirror line
     itself after a successful stop. Matches the daemon-side
     :func:`mcp_server._lifecycle_log` format so grep queries cover

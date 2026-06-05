@@ -339,7 +339,7 @@ class TestPydanticModels:
             service_token="abc123",
         )
         assert resp.service_token == "abc123"
-        # The token must serialise — consumers parse the JSON payload.
+        # The token must serialise - consumers parse the JSON payload.
         assert resp.model_dump()["service_token"] == "abc123"
         assert resp.uptime_s == 0.0
         assert resp.backend_capabilities.same_project_search_strategy == "serialized"
@@ -372,7 +372,7 @@ class TestPathTraversalValidation:
         try:
             os.symlink(tmp_path.parent, link_path)
         except OSError:
-            pytest.fail("Cannot create symlink — test requires symlink support")
+            pytest.fail("Cannot create symlink - test requires symlink support")
         full_path = (root_resolved / "escape_link" / "other_file.txt").resolve()
         assert not full_path.is_relative_to(root_resolved)
 
@@ -533,7 +533,7 @@ class TestResolveRoot:
 
 
 class TestHttpModeResolveRoot:
-    """HTTP mode requires explicit project_root — no env/cwd fallback."""
+    """HTTP mode requires explicit project_root - no env/cwd fallback."""
 
     def test_default_root_raises_in_http_mode(self):
         import vaultspec_rag.mcp_server as mod
@@ -915,7 +915,7 @@ class TestRegistryFullErrorShape:
 
 
 class TestMcpPathRewrite:
-    """Bare ``/mcp`` is rewritten to ``/mcp/`` in-process — no 307 hop."""
+    """Bare ``/mcp`` is rewritten to ``/mcp/`` in-process - no 307 hop."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
@@ -936,7 +936,7 @@ class TestMcpPathRewrite:
         assert "_mcp_no_redirect" in source, (
             "main() lost the path-rewriting wrapper; /mcp will 307-redirect"
         )
-        # The wrapper must actually be what's handed to uvicorn — not
+        # The wrapper must actually be what's handed to uvicorn - not
         # just defined and ignored.
         assert "uvicorn.run(\n                _mcp_no_redirect" in source
 
@@ -1104,7 +1104,7 @@ class TestDaemonLifecycleHelpers:
         mcp_server._heartbeat_tick_sync()
 
         data = json.loads(sf.read_text(encoding="utf-8"))
-        # Token preserved — empty token guard prevents the overwrite.
+        # Token preserved - empty token guard prevents the overwrite.
         assert data["service_token"] == "previous-token"
 
     def test_unlink_status_file_silently_missing_is_noop(

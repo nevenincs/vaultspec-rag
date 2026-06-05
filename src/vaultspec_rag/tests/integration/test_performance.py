@@ -219,7 +219,7 @@ class TestPerformance:
         tmp_path_factory,
         monkeypatch,
     ):
-        """Vault full_index must not leak — RSS delta and wall time bounded.
+        """Vault full_index must not leak - RSS delta and wall time bounded.
 
         Regression guard for issue #68:
 
@@ -256,7 +256,7 @@ class TestPerformance:
             indexer = VaultIndexer(root, embedding_model, store)
 
             # MemoryProbe is entered as a context manager so its
-            # background sampler is always torn down — even if any
+            # background sampler is always torn down - even if any
             # assertion below raises.
             with MemoryProbe(name="regression-#68") as probe:
                 probe.checkpoint("before-index")
@@ -279,7 +279,7 @@ class TestPerformance:
             assert delta_mb < 4 * 1024, (
                 f"Peak RSS grew by {delta_mb:.0f}MB during full_index "
                 f"(baseline={baseline_mb:.0f}MB, "
-                f"peak={probe.peak_rss_mb:.0f}MB) — regression of #68 "
+                f"peak={probe.peak_rss_mb:.0f}MB) - regression of #68 "
                 f"memory fix. Report:\n{probe.report()}"
             )
             # Wall-clock ceiling: <30 s for 135 docs. Empirical

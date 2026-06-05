@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.integration]
 def cli_vault(tmp_path_factory):
     """Session-scoped synthetic vault for CLI subprocess tests.
 
-    No VaultStore is opened here — the CLI subprocess will create
+    No VaultStore is opened here - the CLI subprocess will create
     its own Qdrant client, avoiding local-mode lock contention.
     """
     root = tmp_path_factory.mktemp("cli-vault")
@@ -77,7 +77,7 @@ class TestCLIStatus:
 class TestCLIIndex:
     """Tests for ``vaultspec-rag index``.
 
-    Marked ``subprocess_gpu`` — index subprocesses load GPU models.
+    Marked ``subprocess_gpu`` - index subprocesses load GPU models.
     """
 
     @pytest.mark.timeout(300)
@@ -127,7 +127,7 @@ class TestCLIIndex:
 class TestCLISearch:
     """Tests for ``vaultspec-rag search``.
 
-    Marked ``subprocess_gpu`` — these spawn CLI subprocesses that load
+    Marked ``subprocess_gpu`` - these spawn CLI subprocesses that load
     their own GPU models (~1.9 GB VRAM). They MUST run in a separate
     pytest session from tests that use the ``embedding_model`` fixture,
     otherwise combined VRAM exceeds 16 GB and crashes on RTX 4080.

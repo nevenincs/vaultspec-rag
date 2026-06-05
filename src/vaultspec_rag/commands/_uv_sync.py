@@ -65,7 +65,7 @@ def _classify_uv_sync_result(
 
     uv writes resolution failures to stderr most of the time, but
     certain ``--locked`` mismatches and lockfile-conflict renderings
-    land on stdout — surface whichever stream carries a payload so
+    land on stdout - surface whichever stream carries a payload so
     the user has something actionable to read.
     """
     if returncode == 0:

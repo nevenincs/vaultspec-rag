@@ -72,7 +72,7 @@ async def test_get_service_state_consolidated_shape(
 
     index = state["index"]
     assert isinstance(index, dict)
-    # get_index_status payload (model_dump of IndexStatus) — counts + GPU.
+    # get_index_status payload (model_dump of IndexStatus) - counts + GPU.
     assert "vault_count" in index
     assert "code_count" in index
     assert "vram_gb" in index

@@ -66,7 +66,7 @@ def _emit_json(
     The envelope is `{"ok": bool, "command": str, "data" | "error" +
     "message", **extra}`. Every ``--json`` invocation emits exactly
     one document. We bypass the Rich ``console`` entirely so no
-    formatting bytes leak — ``json.dumps`` plus one trailing
+    formatting bytes leak - ``json.dumps`` plus one trailing
     newline, written directly to ``sys.stdout``.
     """
     envelope: dict[str, object] = {"ok": ok, "command": command}
@@ -295,7 +295,7 @@ def _render_install_report(report: Any) -> None:
         # Assemble the prefix and body as a single ``Text`` so Rich's
         # word-wrapper can honour the leading two-space indent across
         # wrapped continuation lines. Also keeps literal ``[…]``
-        # tokens in ``conflict`` verbatim — ``Text.assemble`` does not
+        # tokens in ``conflict`` verbatim - ``Text.assemble`` does not
         # parse markup. CLI-05.
         from rich.text import Text
 
@@ -307,7 +307,7 @@ def _render_install_report(report: Any) -> None:
     for warning in report.warnings:
         # Warnings carry user-pyproject-derived strings (literal TOML
         # keys like ``[tool.uv.sources]``, raw exception messages,
-        # tails of uv stderr) — Rich would parse those as markup tags
+        # tails of uv stderr) - Rich would parse those as markup tags
         # and silently drop the bracketed tokens. Render the prefix
         # with markup, then the body verbatim.
         _cli.console.print("[yellow]warning:[/] ", end="")
@@ -357,7 +357,7 @@ def _render_uninstall_report(report: Any) -> None:
             f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}"
         )
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Same Text.assemble treatment as the install side — see
+        # Same Text.assemble treatment as the install side - see
         # CLI-05 in _render_install_report for the rationale.
         from rich.text import Text
 

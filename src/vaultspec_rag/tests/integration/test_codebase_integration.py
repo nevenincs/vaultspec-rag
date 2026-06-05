@@ -132,7 +132,7 @@ class TestCodebaseFullIndex:
 
         # Code collection must survive untouched.
         assert store.count_code() == code_count_before, (
-            "scoped vault rebuild leaked into the code collection — "
+            "scoped vault rebuild leaked into the code collection - "
             "the shutil.rmtree regression is back"
         )
 
@@ -410,7 +410,7 @@ class TestVaultragignore:
             indexer = CodebaseIndexer(tmp_path, model, store)
             result = indexer.full_index(reporter=NullProgressReporter())
 
-            # vendor.py excluded — only app.py chunks should exist
+            # vendor.py excluded - only app.py chunks should exist
             assert result.added > 0
             all_ids = store.get_all_code_ids()
             paths_indexed = {cid.split(":")[0] for cid in all_ids}
@@ -469,7 +469,7 @@ class TestVaultragignore:
 
         # .gitignore excludes secret.py
         (tmp_path / ".gitignore").write_text("secret.py\n", encoding="utf-8")
-        # .vaultragignore tries to un-ignore it — must fail
+        # .vaultragignore tries to un-ignore it - must fail
         (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
 
         store = VaultStore(tmp_path)

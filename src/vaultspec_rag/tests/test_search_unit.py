@@ -1,4 +1,4 @@
-"""Unit tests for rag.search — query parsing and metadata extraction."""
+"""Unit tests for rag.search - query parsing and metadata extraction."""
 
 from typing import ClassVar
 
@@ -6,7 +6,7 @@ import pytest
 
 from vaultspec_rag import ParsedQuery, SearchResult, parse_query
 
-# No module-level pytestmark — each class sets its own marker
+# No module-level pytestmark - each class sets its own marker
 
 
 class TestParsedQuery:
@@ -381,3 +381,70 @@ class TestCollapseLocaleVariants:
         from vaultspec_rag.search import _collapse_locale_variants
 
         assert _collapse_locale_variants([]) == []
+
+
+class TestFilterValidation:
+    """Unit tests for the validate_search_filters business logic."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_valid_vault_filters(self):
+        from vaultspec_rag.search import validate_search_filters
+
+        # Should not raise
+        validate_search_filters(
+            "vault", doc_type="adr", feature="auth", date="2026-06-05", tag="test"
+        )
+
+    def test_valid_code_filters(self):
+        from vaultspec_rag.search import validate_search_filters
+
+        # Should not raise
+        validate_search_filters(
+            "code",
+            language="python",
+            path="src/api.py",
+            node_type="def",
+            function_name="search",
+            class_name="Engine",
+            include_paths=["src/*"],
+            exclude_paths=["tests/*"],
+            dedup_locales=True,
+            prefer="prod",
+        )
+
+    def test_invalid_prefer_value(self):
+        from vaultspec_rag.search import (
+            InvalidPreferValueError,
+            validate_search_filters,
+        )
+
+        with pytest.raises(InvalidPreferValueError) as excinfo:
+            validate_search_filters("code", prefer="invalid_prefer")
+        assert "invalid_prefer" in str(excinfo.value)
+        assert excinfo.value.prefer_value == "invalid_prefer"
+
+    def test_code_filters_on_vault_type(self):
+        from vaultspec_rag.search import (
+            InvalidFilterForSearchTypeError,
+            validate_search_filters,
+        )
+
+        with pytest.raises(InvalidFilterForSearchTypeError) as excinfo:
+            validate_search_filters("vault", language="python", path="src/api.py")
+        assert excinfo.value.filter_kind == "code"
+        assert "--language" in excinfo.value.offending_filters
+        assert "--path" in excinfo.value.offending_filters
+        assert "code-search filters" in str(excinfo.value)
+
+    def test_vault_filters_on_code_type(self):
+        from vaultspec_rag.search import (
+            InvalidFilterForSearchTypeError,
+            validate_search_filters,
+        )
+
+        with pytest.raises(InvalidFilterForSearchTypeError) as excinfo:
+            validate_search_filters("code", doc_type="adr")
+        assert excinfo.value.filter_kind == "vault"
+        assert "--doc-type" in excinfo.value.offending_filters
+        assert "vault-search filters" in str(excinfo.value)

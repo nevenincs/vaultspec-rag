@@ -179,7 +179,7 @@ def service_projects_evict(
         _cli.console.print(f"[green]Evicted[/] project slot: {root}")
         raise typer.Exit(0)
     if reason == "busy":
-        _cli.console.print(f"[yellow]Slot busy[/]: {root} — retry shortly.")
+        _cli.console.print(f"[yellow]Slot busy[/]: {root} - retry shortly.")
         raise typer.Exit(1)
     if reason == "not_found":
         _cli.console.print(f"[red]Slot not found[/]: {root}")

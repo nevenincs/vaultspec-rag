@@ -155,7 +155,7 @@ class EmbeddingModel:
         Note this is the *slice* size (one slice's worth of docs is
         encoded + upserted before the next slice begins). It is NOT
         the inner sub-batch size that the model's encode call uses
-        for its forward passes — that is governed by
+        for its forward passes - that is governed by
         :meth:`_default_encode_batch_size`.
         """
         from .config import get_config
@@ -197,9 +197,9 @@ class EmbeddingModel:
 
         The default backend is ``torch``. When ``dense_backend == "onnx"`` the
         model is loaded with the ONNX backend on ``CUDAExecutionProvider`` using
-        the cached O4 file (``dense_onnx_file``). Any failure — missing
+        the cached O4 file (``dense_onnx_file``). Any failure - missing
         ``optimum`` / ``onnxruntime-gpu``, export error, or a GPU provider that
-        cannot load (e.g. the onnxruntime CUDA-12 vs torch CUDA-13 mismatch) —
+        cannot load (e.g. the onnxruntime CUDA-12 vs torch CUDA-13 mismatch) -
         logs a warning and falls back to the torch construction, so a
         misconfigured backend never breaks indexing or search (rule
         ``embedding-backend-falls-back-to-torch``; see ADR
@@ -314,7 +314,7 @@ class EmbeddingModel:
         )
         try:
             self._dense_model.max_seq_length = int(max_seq_len)
-        except Exception:  # defensive setattr — old st versions vary
+        except Exception:  # defensive setattr - old st versions vary
             logger.warning("Could not set dense model max_seq_length=%d", max_seq_len)
         logger.info(
             "Dense model loaded in %.2fs (max_seq_length=%d)",

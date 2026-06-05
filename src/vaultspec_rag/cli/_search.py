@@ -11,8 +11,6 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ..embeddings import EmbeddingModel
-from ..search import VaultSearcher
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
@@ -25,7 +23,6 @@ from ._render import (
     _emit_json_error_and_exit,
 )
 from ._service_status import _default_service_port
-from ._store import _open_vault_store
 
 
 def _suppress_hf_progress() -> None:
@@ -279,79 +276,54 @@ def handle_search(
     state: CLIState = ctx.obj
     target = state.target
 
-    code_filter_fields = (
-        ("language", language),
-        ("path", path),
-        ("node_type", node_type),
-        ("function_name", function_name),
-        ("class_name", class_name),
+    from vaultspec_rag.search import (
+        InvalidFilterForSearchTypeError,
+        InvalidPreferValueError,
+        validate_search_filters,
     )
-    vault_filter_fields = (
-        ("doc_type", doc_type),
-        ("feature", feature),
-        ("date", date),
-        ("tag", tag),
-    )
-    code_filters_supplied = any(v is not None for _, v in code_filter_fields)
-    vault_filters_supplied = any(v is not None for _, v in vault_filter_fields)
-    glob_filters_supplied = bool(include_paths) or bool(exclude_paths)
-    postproc_supplied = bool(dedup_locales) or prefer is not None
 
-    if prefer is not None and prefer not in {"prod", "tests", "docs"}:
-        msg = f"--prefer must be one of 'prod', 'tests', 'docs'; got {prefer!r}."
+    try:
+        validate_search_filters(
+            search_type,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+        )
+    except InvalidPreferValueError as exc:
+        msg = str(exc)
         if json_mode:
             _emit_json_error_and_exit(
                 "search",
                 "invalid_prefer_value",
                 msg,
                 2,
-                value=prefer,
+                value=exc.prefer_value,
             )
         _cli.console.print(f"[red]{msg}[/]")
-        raise typer.Exit(code=2)
-
-    def _emit_filter_mismatch(filter_kind: str, offending: list[str]) -> None:
-        flag_list = ", ".join(offending)
-        msg = (
-            f"{filter_kind}-search filters ({flag_list}) require "
-            f"--type {filter_kind}; got --type {search_type}."
-        )
+        raise typer.Exit(code=2) from None
+    except InvalidFilterForSearchTypeError as exc:
+        msg = str(exc)
         if json_mode:
             _emit_json_error_and_exit(
                 "search",
                 "invalid_filter_for_search_type",
                 msg,
                 2,
-                filter_kind=filter_kind,
-                offending=offending,
+                filter_kind=exc.filter_kind,
+                offending=exc.offending_filters,
             )
         _cli.console.print(f"[red]{msg}[/]")
-        raise typer.Exit(code=2)
-
-    if code_filters_supplied and search_type != "code":
-        _emit_filter_mismatch(
-            "code",
-            sorted(name for name, value in code_filter_fields if value is not None),
-        )
-    if vault_filters_supplied and search_type != "vault":
-        _emit_filter_mismatch(
-            "vault",
-            sorted(name for name, value in vault_filter_fields if value is not None),
-        )
-    if glob_filters_supplied and search_type != "code":
-        offending = []
-        if include_paths:
-            offending.append("--include-path")
-        if exclude_paths:
-            offending.append("--exclude-path")
-        _emit_filter_mismatch("code", offending)
-    if postproc_supplied and search_type != "code":
-        offending = []
-        if dedup_locales:
-            offending.append("--dedup-locales")
-        if prefer is not None:
-            offending.append("--prefer")
-        _emit_filter_mismatch("code", offending)
+        raise typer.Exit(code=2) from None
 
     if port is None:
         port = _default_service_port()
@@ -428,13 +400,40 @@ def handle_search(
                 "search (--allow-fallback set)...[/]",
             )
 
+    import vaultspec_rag
+
     try:
-        store = _open_vault_store(
-            target,
-            json_mode=json_mode,
-            command="search",
-            raise_on_locked=True,
+        status_ctx = (
+            contextlib.nullcontext()
+            if json_mode
+            else _cli.console.status(f"[bold green]Searching {search_type}...")
         )
+        with status_ctx:
+            if search_type == "code":
+                results = vaultspec_rag.search_codebase(
+                    target,
+                    query,
+                    top_k=max_results,
+                    language=language,
+                    path=path,
+                    node_type=node_type,
+                    function_name=function_name,
+                    class_name=class_name,
+                    include_paths=include_paths,
+                    exclude_paths=exclude_paths,
+                    dedup_locales=dedup_locales,
+                    prefer=prefer,
+                )
+            else:
+                results = vaultspec_rag.search_vault(
+                    target,
+                    query,
+                    top_k=max_results,
+                    doc_type=doc_type,
+                    feature=feature,
+                    date=date,
+                    tag=tag,
+                )
     except VaultStoreLockedError as exc:
         if json_mode:
             _emit_json_error_and_exit(
@@ -479,45 +478,8 @@ def handle_search(
             "orphaned Python process holding the lock and stop it manually."
         )
         raise typer.Exit(code=1) from exc
-
-    try:
-        status_ctx = (
-            contextlib.nullcontext()
-            if json_mode
-            else _cli.console.status(f"[bold green]Searching {search_type}...")
-        )
-        with status_ctx:
-            try:
-                model = EmbeddingModel()
-            except (ImportError, RuntimeError) as e:
-                _handle_gpu_error(e)
-            searcher = VaultSearcher(target, model, store)
-
-            if search_type == "code":
-                results = searcher.search_codebase(
-                    query,
-                    top_k=max_results,
-                    language=language,
-                    path=path,
-                    node_type=node_type,
-                    function_name=function_name,
-                    class_name=class_name,
-                    include_paths=include_paths,
-                    exclude_paths=exclude_paths,
-                    dedup_locales=dedup_locales,
-                    prefer=prefer,
-                )
-            else:
-                results = searcher.search_vault(
-                    query,
-                    top_k=max_results,
-                    doc_type=doc_type,
-                    feature=feature,
-                    date=date,
-                    tag=tag,
-                )
-    finally:
-        store.close()
+    except (ImportError, RuntimeError) as e:
+        _handle_gpu_error(e)
 
     if json_mode:
         from dataclasses import asdict

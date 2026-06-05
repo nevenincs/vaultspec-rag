@@ -61,7 +61,7 @@ def handle_quality() -> None:
                 probes.append((needle, 5, f"Needle → {doc_id}", doc_id))
 
             table = Table(
-                title="Quality Probes — Synthetic Corpus",
+                title="Quality Probes - Synthetic Corpus",
                 show_header=True,
             )
             table.add_column("#", style="bold", justify="right")
@@ -92,7 +92,7 @@ def handle_quality() -> None:
             threshold = 0.75
             if precision < threshold:
                 _cli.console.print(
-                    f"[bold red]FAILED[/] — precision {precision:.0%} "
+                    f"[bold red]FAILED[/] - precision {precision:.0%} "
                     f"below {threshold:.0%} threshold.",
                 )
                 raise typer.Exit(code=1)

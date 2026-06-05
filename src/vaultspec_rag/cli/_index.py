@@ -9,8 +9,6 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ..embeddings import EmbeddingModel
-from ..indexer import CodebaseIndexer, VaultIndexer
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._core import logger
@@ -23,7 +21,6 @@ from ._render import (
     _emit_json_error_and_exit,
 )
 from ._service_status import _default_service_port
-from ._store import _open_vault_store
 
 
 @app.command("index")
@@ -150,12 +147,9 @@ def handle_index(
                 "[yellow]--dry-run only applies to codebase indexing.[/]"
             )
             return
-        # Bypass __init__ to avoid loading GPU model and Qdrant store;
-        # scan_files() only needs root_dir and _extra_excludes.
-        c_indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        c_indexer.root_dir = target
-        c_indexer._extra_excludes = exclude or []
-        files = c_indexer.scan_files()
+        import vaultspec_rag
+
+        files = vaultspec_rag.scan_codebase_files(target, extra_excludes=exclude)
         if json_mode:
             _emit_json(
                 True,
@@ -184,7 +178,7 @@ def handle_index(
             # imports; compare by enum ``.name`` which is stable.
             type_is_explicit = getattr(param_source, "name", "") != "DEFAULT"
         except (AttributeError, LookupError) as exc:
-            # Defensive fallback — if the click API is unavailable
+            # Defensive fallback - if the click API is unavailable
             # on an exotic typer version, treat default as explicit
             # so we never spuriously block a previously-working flow.
             logger.debug("click ParameterSource probe failed: %s", exc, exc_info=True)
@@ -349,12 +343,13 @@ def handle_index(
                 command="indexing",
                 json_mode=json_mode,
             )
-            raise typer.Exit(code=1)
         if not json_mode:
             _cli.console.print(
                 "[yellow]MCP server unavailable, falling back to in-process "
                 "indexing (--allow-fallback set)...[/]",
             )
+
+    import vaultspec_rag
 
     from ..progress import RichProgressReporter
 
@@ -368,75 +363,42 @@ def handle_index(
         reporter.advance(1)
         reporter.phase_end()
 
-        reporter.phase_start("open store", 1)
-        store = _open_vault_store(target, json_mode=json_mode, command="index")
-        if rebuild:
-            # Scope the rebuild to the selected collection. A
-            # whole-directory rmtree would destroy both collections
-            # even on `--rebuild --type vault`; use the
-            # collection-scoped store API instead.
-            do_vault = index_type in ("vault", "all")
-            do_code = index_type in ("code", "all")
-            try:
-                if do_vault:
-                    store.drop_table()
-                    store.ensure_table()
-                if do_code:
-                    store.drop_code_table()
-                    store.ensure_code_table()
-            except VaultStoreLockedError as exc:
-                if json_mode:
-                    _emit_json_error_and_exit(
-                        "index",
-                        "rebuild_locked",
-                        (
-                            f"Cannot drop the {index_type} collection — "
-                            f"another process holds the lock: {exc}"
-                        ),
-                        1,
-                    )
-                _cli.console.print(
-                    f"[bold red]Error:[/] Cannot drop the {index_type} "
-                    f"collection — another process holds the lock.\n{exc}\n"
-                    "Close any other processes using the index and retry.",
-                )
-                raise typer.Exit(code=1) from None
-        reporter.advance(1)
-        reporter.phase_end()
-
         try:
-            reporter.phase_start("load embedding model", 1)
-            try:
-                emb_model = EmbeddingModel(model_name=model)
-            except (ImportError, RuntimeError) as e:
-                _handle_gpu_error(e)
-            reporter.advance(1)
-            reporter.phase_end()
-
-            v_indexer = VaultIndexer(target, emb_model, store) if do_vault else None
-            c_indexer = (
-                CodebaseIndexer(target, emb_model, store, extra_excludes=exclude or [])
-                if do_code
-                else None
-            )
-
             if do_vault:
-                assert v_indexer is not None
-                v_res = (
-                    v_indexer.full_index(clean=True, reporter=reporter)
-                    if rebuild
-                    else v_indexer.incremental_index(reporter=reporter)
+                v_res = vaultspec_rag.index(
+                    target,
+                    clean=rebuild,
+                    reporter=reporter,
+                    model_name=model,
                 )
 
             if do_code:
-                assert c_indexer is not None
-                c_res = (
-                    c_indexer.full_index(clean=True, reporter=reporter)
-                    if rebuild
-                    else c_indexer.incremental_index(reporter=reporter)
+                c_res = vaultspec_rag.index_codebase(
+                    target,
+                    clean=rebuild,
+                    reporter=reporter,
+                    model_name=model,
+                    extra_excludes=exclude,
                 )
-        finally:
-            store.close()
+        except VaultStoreLockedError as exc:
+            if json_mode:
+                _emit_json_error_and_exit(
+                    "index",
+                    "rebuild_locked" if rebuild else "index_locked",
+                    (
+                        f"Cannot access the {index_type} collection - "
+                        f"another process holds the lock: {exc}"
+                    ),
+                    1,
+                )
+            _cli.console.print(
+                f"[bold red]Error:[/] Cannot access the {index_type} "
+                f"collection - another process holds the lock.\n{exc}\n"
+                "Close any other processes using the index and retry.",
+            )
+            raise typer.Exit(code=1) from None
+        except (ImportError, RuntimeError) as e:
+            _handle_gpu_error(e)
 
     in_process_sources: list[dict[str, object]] = []
     if v_res is not None:
@@ -500,7 +462,7 @@ def handle_clean(
         typer.Argument(
             help=(
                 "What to wipe (REQUIRED): 'vault' (docs), 'code' "
-                "(source), or 'all'. No default — a destructive "
+                "(source), or 'all'. No default - a destructive "
                 "'all' default would be a footgun."
             ),
         ),
@@ -550,32 +512,26 @@ def handle_clean(
             _cli.console.print("[yellow]Clean cancelled.[/]")
             raise typer.Exit(code=1)
 
-    from ..config import get_config
+    import vaultspec_rag
 
-    cfg = get_config()
-    store = _open_vault_store(target, json_mode=json_mode, command="clean")
     try:
-        do_vault = clean_type in ("vault", "all")
-        do_code = clean_type in ("code", "all")
-        if do_vault:
-            store.drop_table()
-            store.ensure_table()
-        if do_code:
-            store.drop_code_table()
-            store.ensure_code_table()
-    finally:
-        store.close()
+        cleared_raw = vaultspec_rag.clean(target, clean_type=clean_type)
+    except VaultStoreLockedError as exc:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "clean",
+                "clean_locked",
+                f"Cannot clean the index - another process holds the lock: {exc}",
+                1,
+            )
+        _cli.console.print(
+            "[bold red]Error:[/] Cannot clean the index - "
+            "another process holds the lock.\n"
+            f"{exc}\nClose any other processes using the index and retry."
+        )
+        raise typer.Exit(code=1) from None
 
-    data_dir = target / cfg.data_dir
-    cleared: list[str] = []
-    if clean_type in ("vault", "all"):
-        meta = data_dir / cfg.index_metadata_file
-        meta.unlink(missing_ok=True)
-        cleared.append("Vault")
-    if clean_type in ("code", "all"):
-        meta = data_dir / cfg.code_index_metadata_file
-        meta.unlink(missing_ok=True)
-        cleared.append("Codebase")
+    cleared = [s.capitalize() for s in cleared_raw]
 
     if json_mode:
         _emit_json(

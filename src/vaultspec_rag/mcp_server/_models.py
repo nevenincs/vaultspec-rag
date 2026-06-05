@@ -158,7 +158,7 @@ class HealthResponse(BaseModel):
     """Health check response for the service.
 
     Attributes:
-        status: Service state — ``"ready"``, ``"degraded"``,
+        status: Service state - ``"ready"``, ``"degraded"``,
             or ``"error"``.
         cuda: Whether a CUDA GPU is available.
         models_loaded: Whether GPU models have been loaded.

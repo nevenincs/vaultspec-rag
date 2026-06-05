@@ -78,7 +78,7 @@ def _run_torch_config_install(
         report.torch_config_conflicts = list(report_patch.conflicts)
         report.warnings.append(
             "pyproject.toml has a non-canonical cu130 block; "
-            "skipping patch — resolve manually or run with different flags"
+            "skipping patch - resolve manually or run with different flags"
         )
         return
 
@@ -104,10 +104,10 @@ def _run_torch_config_install(
     if not effective_assume_yes:
         if confirm is None:
             # Non-interactive caller (or programmatic use without a
-            # prompt hook). Refuse to guess — name the opt-in flags.
+            # prompt hook). Refuse to guess - name the opt-in flags.
             report.torch_config_action = TorchConfigAction.SKIPPED_NON_TTY
             report.warnings.append(
-                "torch-config patch requires confirmation — pass --yes "
+                "torch-config patch requires confirmation - pass --yes "
                 "(or --force) to apply, or --no-torch-config to opt out. "
                 "See pyproject.toml shape in `vaultspec-rag install --help`."
             )
@@ -127,7 +127,7 @@ def _run_torch_config_install(
         except EOFError:
             # Non-interactive harness (CI, pipe, IDE-managed shell)
             # where ``isatty()`` lied. The prompt hit end-of-stream
-            # instead of getting an answer — the user was never asked.
+            # instead of getting an answer - the user was never asked.
             # Distinguish from "declined" so users don't read this as
             # their own choice; name the flag that bypasses the prompt.
             report.torch_config_action = TorchConfigAction.SKIPPED_EOF
@@ -171,7 +171,7 @@ def _run_torch_config_install(
             return
         if not approved:
             # INSTALL-07: keep the decline branch consistent with every
-            # other "skipped" variant — emit a one-line warning naming
+            # other "skipped" variant - emit a one-line warning naming
             # the bypass flags so programmatic consumers iterating
             # ``report.warnings`` get a signal, not just renderer-side
             # colour. The other not-applied-by-user-choice branches
@@ -232,7 +232,7 @@ def _run_torch_config_uninstall(
 ) -> None:
     """Remove the cu130 torch-config block from the consumer pyproject.
 
-    Always attempts symmetric reversal — silent no-op when state is
+    Always attempts symmetric reversal - silent no-op when state is
     MISSING or NO_PROJECT_FILE. CUSTOMISED entries are left alone
     with a warning. Parse / write errors from
     :mod:`vaultspec_rag.torch_config` are captured as non-fatal
@@ -254,7 +254,7 @@ def _run_torch_config_uninstall(
         report.torch_config_action = TorchConfigAction.ABSENT
         return
     if state == torch_config.TorchConfigState.CUSTOMISED:
-        # remove_patch is safe to call on CUSTOMISED — it short-circuits
+        # remove_patch is safe to call on CUSTOMISED - it short-circuits
         # before any write and returns the conflict list. Call it in
         # both dry-run and wet modes so the report is symmetric with
         # the install side (which calls apply_patch unconditionally).
@@ -269,7 +269,7 @@ def _run_torch_config_uninstall(
         report.torch_config_conflicts = list(patch_report.conflicts)
         report.warnings.append(
             "pyproject.toml has a non-canonical cu130 block; "
-            "skipping removal — resolve manually"
+            "skipping removal - resolve manually"
         )
         return
 

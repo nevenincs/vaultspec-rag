@@ -90,7 +90,7 @@ def _unlink_status_file_silently() -> None:
 
 
 def _heartbeat_tick_sync() -> None:
-    """Synchronous heartbeat write — atomic via .tmp + os.replace.
+    """Synchronous heartbeat write - atomic via .tmp + os.replace.
 
     Reads the current service.json, merges ``last_heartbeat`` (ISO-8601
     UTC, second resolution), writes through a tmp file. Called from
@@ -98,7 +98,7 @@ def _heartbeat_tick_sync() -> None:
     loop.
 
     Exits silently when service.json is missing (the CLI parent may
-    have unlinked it during ``server service stop`` — the heartbeat
+    have unlinked it during ``server service stop`` - the heartbeat
     loop will exit on the next tick).
     """
     path = _m._status_file_path()
@@ -176,7 +176,7 @@ def _record_shutdown(reason: str, **kv: object) -> None:
 def _install_daemon_shutdown_hooks() -> None:
     """Register atexit cleanup once per process.
 
-    SIGTERM/SIGINT are intentionally NOT overridden — uvicorn already
+    SIGTERM/SIGINT are intentionally NOT overridden - uvicorn already
     installs its own graceful-shutdown handler for those signals that
     triggers the lifespan ``finally`` block (which calls
     ``_record_shutdown("clean")``). Overriding here breaks that

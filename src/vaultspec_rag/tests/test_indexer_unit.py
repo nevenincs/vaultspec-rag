@@ -1,4 +1,4 @@
-"""Unit tests for rag.indexer — extraction and doc preparation (no GPU)."""
+"""Unit tests for rag.indexer - extraction and doc preparation (no GPU)."""
 
 import hashlib
 from pathlib import Path
@@ -272,7 +272,7 @@ class TestASTChunkerPythonBoundaries:
         # Class and standalone function should produce multiple chunks.
         assert len(chunks) >= 2
         # When a class exceeds the budget, tree-sitter recurses into its
-        # child nodes — "class" keyword and "Greeter" identifier may be
+        # child nodes - "class" keyword and "Greeter" identifier may be
         # separate small nodes. Verify the names appear in combined output.
         combined = "\n".join(texts)
         assert "Greeter" in combined or "class" in combined
@@ -450,7 +450,7 @@ class TestChunkWithSplitterSearchOffset:
 
         if len(chunks) >= 2:
             # The two chunks covering the same text must have different
-            # line_start values — the old content.find() bug would give
+            # line_start values - the old content.find() bug would give
             # them the same line_start.
             line_starts = [c.line_start for c in chunks]
             assert len(set(line_starts)) == len(line_starts), (
@@ -491,7 +491,7 @@ class TestIncrementalIndexMetadata:
             assert len(val) == 128
             int(val, 16)  # raises ValueError if not valid hex
 
-        # Also verify via raw JSON — no floats.
+        # Also verify via raw JSON - no floats.
         raw = json.loads(indexer._meta_path.read_text(encoding="utf-8"))
         for val in raw.values():
             assert not isinstance(val, float), (
@@ -707,7 +707,7 @@ class TestGitignoreNegationPatterns:
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
         # code.py should always be found
         assert "subdir/code.py" in rel_paths
-        # important.log is negated — but .log is not a SUPPORTED_EXTENSION,
+        # important.log is negated - but .log is not a SUPPORTED_EXTENSION,
         # so it won't appear. The test verifies the negation pattern itself
         # is correctly formed by checking the internal pathspec logic.
 
@@ -1178,7 +1178,7 @@ class TestVaultragignore:
         (tmp_path / "secret.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "main.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".gitignore").write_text("secret.py\n", encoding="utf-8")
-        # Attempt to un-ignore secret.py from .vaultragignore — must fail
+        # Attempt to un-ignore secret.py from .vaultragignore - must fail
         (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)

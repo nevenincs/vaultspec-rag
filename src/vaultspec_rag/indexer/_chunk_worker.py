@@ -44,7 +44,7 @@ class FileChunkResult:
     """One file's chunks plus its content hash, returned from a worker.
 
     Carrying the blake2b hash back from the same read that produced the chunks
-    lets the full-index path skip the separate hash pass — the tree is read
+    lets the full-index path skip the separate hash pass - the tree is read
     once, not twice (#155 P03 / finding C4). ``slots=True`` keeps the pickled
     payload that crosses the process boundary lean (research O3).
     """
@@ -235,7 +235,7 @@ def chunk_with_splitter(
             line_start = content.count("\n", 0, idx) + 1
             search_offset = idx + len(text)
         else:
-            # Chunk not found verbatim — happens when TextSplitter overlap
+            # Chunk not found verbatim - happens when TextSplitter overlap
             # is > 0 and prepended tail text shifts the chunk boundary.
             logger.debug(
                 "Chunk not found verbatim in %s at offset %d; "

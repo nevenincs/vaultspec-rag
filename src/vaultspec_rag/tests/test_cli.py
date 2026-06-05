@@ -896,10 +896,10 @@ class TestSearchSafetyContract:
 
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_open(*args, **kwargs):
+        def mock_search(*args, **kwargs):
             raise VaultStoreLockedError(str(tmp_path / "db"))
 
-        monkeypatch.setattr("vaultspec_rag.cli._search._open_vault_store", mock_open)
+        monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
         monkeypatch.setattr(
             "vaultspec_rag.cli._search._default_service_port", lambda: None
         )
@@ -925,10 +925,10 @@ class TestSearchSafetyContract:
 
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_open(*args, **kwargs):
+        def mock_search(*args, **kwargs):
             raise VaultStoreLockedError(str(tmp_path / "db"))
 
-        monkeypatch.setattr("vaultspec_rag.cli._search._open_vault_store", mock_open)
+        monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
         monkeypatch.setattr(
             "vaultspec_rag.cli._search._default_service_port", lambda: None
         )
@@ -1031,7 +1031,7 @@ class TestNoTruncateFlag:
     def test_default_truncates_at_120(self):
         """Default behaviour caps the snippet at 120 chars."""
         rendered = self._render("a" * 300, no_truncate=False)
-        # 300 chars truncated to 120 — a 200-a run cannot appear.
+        # 300 chars truncated to 120 - a 200-a run cannot appear.
         assert "a" * 200 not in rendered
 
     def test_display_empty_results(self):
@@ -1174,7 +1174,7 @@ class TestWinShutdownLog:
             "OSError on append must be debug-logged per the no-swallow rule"
         )
         # The log file was never created (the parent directory does
-        # not exist) — confirms the exception path was exercised.
+        # not exist) - confirms the exception path was exercised.
         assert not missing_dir.exists()
 
     def test_service_stop_emits_log_on_win32(
@@ -1254,7 +1254,7 @@ class TestServiceTokenIdentity:
     """Per-process service_token round-trip.
 
     Daemon writes a uuid4 token into service.json + returns it from
-    /health. The CLI compares both — mismatch reports a recycled-PID
+    /health. The CLI compares both - mismatch reports a recycled-PID
     or unrelated-HTTP-server scenario instead of trusting a stale
     truth-lying executable-name check.
     """
@@ -1281,7 +1281,7 @@ class TestServiceTokenIdentity:
             lambda _port: {"service_token": "abc"},
         )
         monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
-        # Token mismatch is authoritative — return False regardless of
+        # Token mismatch is authoritative - return False regardless of
         # whether the executable-name check would have passed.
         assert not cli._is_our_service(123, port=8766, expected_token="xyz")
 
@@ -1534,7 +1534,7 @@ class TestServiceDaemonHelpers:
         # service_status calls _port_is_listening first (one TCP
         # connect that the HTTPServer accepts but cannot satisfy
         # with HTTP). Use serve_forever so multiple incoming
-        # connections are handled — the listening probe plus
+        # connections are handled - the listening probe plus
         # the /health probe.
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -1636,7 +1636,7 @@ class TestCpuOnlyMessageRendering:
     ``[dependency-groups].dev``). Each opening ``[`` must be
     backslash-escaped so Rich does not parse the TOML keys as markup
     tags. This test renders the actual message via Rich and asserts the
-    user-visible bytes — without it, a future copy edit can silently
+    user-visible bytes - without it, a future copy edit can silently
     break the snippet shown to a user already looking at the wrong
     wheel.
     """
@@ -1669,7 +1669,7 @@ class TestCpuOnlyMessageRendering:
         assert "[dependency-groups].dev" in out, out
 
     def test_no_stray_backslashes_in_rendered_output(self) -> None:
-        """Rich passes ``\\]`` through verbatim — only ``[`` is escapable.
+        """Rich passes ``\\]`` through verbatim - only ``[`` is escapable.
         A stray backslash in the rendered text means a future edit
         overcorrected and put ``\\]`` somewhere it should not be.
         """
@@ -1751,7 +1751,7 @@ class TestRenderInstallReport:
     and ``[dependency-groups].dev``; uv stderr tails embed raw
     ``[…]`` tokens; raw exception messages embed ``[tool]`` strings
     from the historic OutOfOrderTableProxy bug. Rendering any of these
-    via ``markup=True`` silently drops the bracketed substrings — a
+    via ``markup=True`` silently drops the bracketed substrings - a
     direct repeat of the bug Gemini caught for the CPU_ONLY copy, in
     a different channel.
     """
@@ -1821,7 +1821,7 @@ class TestRenderInstallReport:
 
     def test_conflict_with_aot_token_preserved(self) -> None:
         """Conflict surface (already had its own markup-off treatment
-        before this PR — guard it now with a rendering test so a
+        before this PR - guard it now with a rendering test so a
         future maintainer cannot accidentally collapse the two-line
         treatment back into a single ``f"... {conflict}"`` print).
         """
@@ -1938,7 +1938,7 @@ class TestInstallExitCodes:
             '[project]\nname = "demo"\nversion = "0.1.0"\n'
             'dependencies = ["vaultspec-rag"]\n',
         )
-        # CliRunner's stdin is not a TTY, so confirm_fn=None — emulates
+        # CliRunner's stdin is not a TTY, so confirm_fn=None - emulates
         # the non-interactive harness path.
         result = runner.invoke(app, ["install", "--target", str(ws)])
         assert result.exit_code == 2, result.output
@@ -1954,7 +1954,7 @@ class TestInstallExitCodes:
         assert result.exit_code == 2, result.output
 
     def test_install_exit_zero_on_conflict(self, tmp_path: Path) -> None:
-        """CUSTOMISED block — user-state, not a runtime failure.
+        """CUSTOMISED block - user-state, not a runtime failure.
         Conflict exits 0; the warning is the signal, not the exit code.
         """
         ws = self._make_pyproject(
@@ -1970,7 +1970,7 @@ class TestInstallExitCodes:
         assert result.exit_code == 0, result.output
 
     def test_install_exit_zero_when_no_torch_config(self, tmp_path: Path) -> None:
-        """``--no-torch-config`` opts out — exits 0 even on a non-TTY."""
+        """``--no-torch-config`` opts out - exits 0 even on a non-TTY."""
         ws = self._make_pyproject(
             tmp_path,
             '[project]\nname = "demo"\nversion = "0.1.0"\n'
@@ -2188,7 +2188,7 @@ class TestTqdmSuppression:
         )
         normalised = result.stdout.replace(b"\r\n", b"\n")
         assert b"\r" not in normalised, (
-            "bare carriage-return bytes leaked into --help stdout — "
+            "bare carriage-return bytes leaked into --help stdout - "
             "a tqdm-like progress writer is escaping suppression"
         )
 
@@ -2200,9 +2200,9 @@ class TestJsonStdoutPurityAcrossCommands:
 
     # (id, argv-after-binary, expected_exit_code_predicate)
     _SCENARIOS: typing.ClassVar = [
-        # service status with no daemon — exit 3, ok=false envelope
+        # service status with no daemon - exit 3, ok=false envelope
         ("service-status-stopped", ["server", "service", "status", "--json"]),
-        # search filter mismatch — exit 2, ok=false envelope
+        # search filter mismatch - exit 2, ok=false envelope
         (
             "search-filter-mismatch",
             [
@@ -2217,7 +2217,7 @@ class TestJsonStdoutPurityAcrossCommands:
                 "--json",
             ],
         ),
-        # search port unreachable — exit 1, ok=false envelope
+        # search port unreachable - exit 1, ok=false envelope
         (
             "search-port-unreachable",
             ["search", "x", "--port", "1", "--json"],
@@ -2270,7 +2270,7 @@ class TestJsonStdoutPurityAcrossCommands:
         stdout = result.stdout.decode("utf-8", errors="replace")
         text = stdout.strip()
         assert text, (
-            f"{scenario_id}: empty stdout — exit={result.returncode} "
+            f"{scenario_id}: empty stdout - exit={result.returncode} "
             f"stderr={result.stderr!r}"
         )
         # ANSI escape sequences (`\x1b[`) must not appear.

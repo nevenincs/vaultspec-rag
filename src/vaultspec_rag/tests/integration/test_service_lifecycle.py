@@ -309,7 +309,7 @@ def test_multi_project_search_isolation(
                     )
                 raise
 
-        # Search project-0 for the unique marker — must be found
+        # Search project-0 for the unique marker - must be found
         text_0 = asyncio.run(
             _mcp_call(
                 port,
@@ -325,7 +325,7 @@ def test_multi_project_search_isolation(
             "Unique marker not found in project-0 results"
         )
 
-        # Search project-1 for the same marker — must NOT appear
+        # Search project-1 for the same marker - must NOT appear
         text_1 = asyncio.run(
             _mcp_call(
                 port,

@@ -351,7 +351,7 @@ class TestCoreVaultManagement:
 
 
 class TestIdempotentSync:
-    """Verify sync is idempotent — running twice produces same result."""
+    """Verify sync is idempotent - running twice produces same result."""
 
     @pytest.fixture(scope="class")
     def double_synced(

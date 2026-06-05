@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path  # noqa: TC003 — Typer resolves annotations at runtime
+from pathlib import Path  # noqa: TC003 - Typer resolves annotations at runtime
 from typing import Annotated
 
 import typer
@@ -118,7 +118,7 @@ def handle_install(
       They differ elsewhere: ``--force`` also re-seeds bundled files
       and prunes orphaned sync state.
     - On a TTY without ``--yes`` / ``--force``, the user is prompted.
-      Pressing Enter declines (default-no) — pass ``--yes`` to say
+      Pressing Enter declines (default-no) - pass ``--yes`` to say
       yes to all confirmations in one shot.
     - The command exits non-zero (code 2) when torch-config terminates
       in ``error``, ``skipped-eof``, or ``skipped-non-tty``. Other
@@ -128,7 +128,7 @@ def handle_install(
 
     Flag names mirror ``vaultspec-core install`` exactly. The
     positional ``provider`` argument core takes is omitted because
-    rag has no provider concept of its own — propagation flows
+    rag has no provider concept of its own - propagation flows
     through core's existing per-provider sync.
     """
     import sys as _sys
@@ -144,7 +144,7 @@ def handle_install(
     effective_target = target or _global_target(ctx)
 
     def _confirm(prompt: str) -> bool:
-        # Default-no on a destructive write — pressing Enter on the
+        # Default-no on a destructive write - pressing Enter on the
         # ``Patch <pyproject>?`` prompt without reading it must NOT
         # mutate the user's pyproject. Users who want to bypass the
         # prompt can pass ``--yes`` or ``--force``. CLI3-04.
@@ -181,12 +181,12 @@ def handle_install(
 
     # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
     # wanted but couldn't be applied"). The configure_torch=True path
-    # ended in an outcome the user clearly did not opt into — surface
+    # ended in an outcome the user clearly did not opt into - surface
     # it via a non-zero exit so CI consumers fail loudly instead of
     # reading "torch-config: skipped-eof" buried in stdout.
     #
-    # ``DECLINED`` is the user's own answer to a prompt — keep that 0.
-    # ``CONFLICT`` is by-definition the user's own customised state —
+    # ``DECLINED`` is the user's own answer to a prompt - keep that 0.
+    # ``CONFLICT`` is by-definition the user's own customised state -
     # keep that 0 too (the warning is the signal). ``ABSENT`` and
     # ``DISABLED`` are intentional opt-outs; both 0.
     from ..torch_config import TorchConfigAction

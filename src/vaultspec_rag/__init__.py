@@ -25,10 +25,13 @@ except PackageNotFoundError:
 
 from .api import (
     GraphCache,
+    clean,
     get_related,
+    get_status,
     index,
     index_codebase,
     list_documents,
+    scan_codebase_files,
     search_codebase,
     search_vault,
 )
@@ -57,13 +60,16 @@ __all__ = [
     "VaultSearcher",
     "VaultStore",
     "__version__",
+    "clean",
     "get_related",
+    "get_status",
     "index",
     "index_codebase",
     "list_documents",
     "parse_query",
     "prepare_document",
     "rerank_with_graph",
+    "scan_codebase_files",
     "search_codebase",
     "search_vault",
 ]

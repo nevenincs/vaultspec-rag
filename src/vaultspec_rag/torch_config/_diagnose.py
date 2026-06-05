@@ -9,7 +9,7 @@ def diagnose_torch(cuda: str | None, available: bool) -> TorchDiagnosis:
     """Classify a torch install from its observable CUDA attributes.
 
     Args:
-        cuda: ``torch.version.cuda`` — ``None`` for the CPU-only
+        cuda: ``torch.version.cuda`` - ``None`` for the CPU-only
             wheel, a version string like ``"13.0"`` for the CUDA
             wheels.
         available: ``torch.cuda.is_available()`` result.

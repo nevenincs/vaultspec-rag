@@ -188,7 +188,7 @@ class ASTChunker:
 
         children = node.children
         if not children:
-            # Leaf node too large — force-split by character.
+            # Leaf node too large - force-split by character.
             node_start_line = node.start_point[0] + 1
             for i in range(0, len(text), self.chunk_size):
                 chunk = text[i : i + self.chunk_size]

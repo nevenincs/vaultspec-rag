@@ -51,7 +51,7 @@ def manual_snippet() -> str:
     ``tomlkit`` document and serialising the result. The educational
     comment block (about direct-dep promotion under ``uv``) is appended
     as a separate constant. This guarantees byte-equality between the
-    snippet and what ``apply_patch`` actually writes — drift between
+    snippet and what ``apply_patch`` actually writes - drift between
     the README, install logs, and runtime CPU_ONLY error message is
     structurally impossible.
     """
@@ -162,10 +162,10 @@ def remove_patch(pyproject: Path) -> PatchReport:
         return report
     if state == TorchConfigState.CUSTOMISED:
         # Half-applied edge case (one half canonical, the other simply
-        # absent — no per-half conflict, no unsupported shape). The
+        # absent - no per-half conflict, no unsupported shape). The
         # default classifier flags this as CUSTOMISED so apply refuses
         # to "complete" it, but the present half IS rag's canonical
-        # shape — uninstall can safely drop it. Without this branch
+        # shape - uninstall can safely drop it. Without this branch
         # uninstall leaves an orphan rag-named entry behind. TOML-02.
         if _is_half_applied(doc):
             # Fall through to the normal CANONICAL→remove path. The
@@ -179,7 +179,7 @@ def remove_patch(pyproject: Path) -> PatchReport:
 
     # CANONICAL (or half-applied) → remove. Capture the trailing-newline shape pre-read
     # so the symmetric-mirror promise (apply→remove leaves the file
-    # byte-identical to the pre-apply content) holds — tomlkit's
+    # byte-identical to the pre-apply content) holds - tomlkit's
     # ``dumps`` always emits a single trailing LF, which can append
     # one extra byte if the original ended without one. BEHAV-01.
     uses_crlf = _detect_crlf(pyproject)
@@ -206,7 +206,7 @@ def _match_trailing_newline(
     LFs (POSIX convention with a blank final line), some with no
     trailing newline at all. Without this normalisation, ``apply →
     remove`` would silently shift the file's terminator shape,
-    breaking the ADR's "symmetric mirror — leaves the file byte-
+    breaking the ADR's "symmetric mirror - leaves the file byte-
     identical to its pre-apply content" promise.
     """
     eol = "\r\n" if uses_crlf else "\n"
@@ -289,7 +289,7 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
     entry["explicit"] = True
 
     if existing is None:
-        # Fresh AoT — tomlkit already inserts a trailing blank line
+        # Fresh AoT - tomlkit already inserts a trailing blank line
         # before the next top-level section, so no manual trivia
         # override is needed.
         aot = tomlkit.aot()
@@ -299,7 +299,7 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
 
     # Defensive: _classify already rejects single-table forms as
     # CUSTOMISED so apply_patch never reaches this function in that
-    # case. Guard anyway — silently-wrong mutation is the worst
+    # case. Guard anyway - silently-wrong mutation is the worst
     # outcome for a user-owned file.
     if not isinstance(existing, AoT | list):
         raise TypeError(
@@ -398,7 +398,7 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     Always runs the end-of-function cleanup that drops empty
     ``sources`` / ``uv`` / ``tool`` tables, even when ``torch`` was
     never present or was a single-entry deletion. This matters after
-    :func:`_drop_cu130_index` has already removed the index table —
+    :func:`_drop_cu130_index` has already removed the index table -
     both callers run in sequence and the consumer file should end up
     without orphaned empty sections.
 
@@ -445,7 +445,7 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
                     del sources["torch"]
 
         if not sources:
-            # Re-fetch ``uv`` before the cascade-stage delete —
+            # Re-fetch ``uv`` before the cascade-stage delete -
             # ``_drop_cu130_index`` may have already mutated this same
             # proxy via ``del uv["index"]``. See the OutOfOrderTableProxy
             # note in this function's docstring.

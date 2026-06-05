@@ -27,7 +27,7 @@ def _index_corpus(
     """Build RAG components and index a synthetic vault at *root*.
 
     Uses config overrides to place Qdrant data inside the synthetic
-    project's data dir — no suffix hacks needed.
+    project's data dir - no suffix hacks needed.
     """
     from vaultspec_rag import CodebaseIndexer, VaultIndexer, VaultStore
 

@@ -1,7 +1,7 @@
 """Benchmark: parallel vs serial codebase chunking wall-clock (#155).
 
-This is CPU-only on purpose. It isolates the chunk stage — the GIL-bound
-tree-sitter parse-and-traverse that dominated the >1h index in #154 — so the
+This is CPU-only on purpose. It isolates the chunk stage - the GIL-bound
+tree-sitter parse-and-traverse that dominated the >1h index in #154 - so the
 process-pool speedup is visible without the GPU embedding stage masking it.
 The same scanned file list is chunked twice: once forced serial
 (``index_chunk_workers=1``) and once with the auto worker count, and the run
@@ -93,7 +93,7 @@ def reduce_{i}(rows: list[int]) -> int:
 
 
 # Repeat the module body several times per file (with distinct symbol suffixes)
-# so each file carries a substantial AST — this is where the GIL-bound Python
+# so each file carries a substantial AST - this is where the GIL-bound Python
 # traversal cost lives, and where the process pool pays off.
 _REPEATS_PER_FILE = 6
 

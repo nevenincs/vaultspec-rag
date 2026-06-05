@@ -2,7 +2,7 @@
 
 Split out of the original ``mcp_server.py`` monolith per the
 ``2026-06-01-module-split-adr``. ``main`` remains importable from the
-package root (``vaultspec_rag.mcp_server:main``) — both the
+package root (``vaultspec_rag.mcp_server:main``) - both the
 ``vaultspec-search-mcp`` console script and the CLI's ``mcp start``
 command depend on that import path. ``_http_mode`` is reassigned on the
 package namespace so resources/prompts and ``_resolve_root`` observe
@@ -97,7 +97,7 @@ def main(port: int | None = None) -> None:
         # Starlette's ``Mount`` redirects bare "/mcp" to "/mcp/" with
         # a 307 hop. The Starlette version pinned here does not expose
         # a ``redirect_slashes=False`` constructor argument, so we
-        # rewrite the request path before routing instead — an ASGI
+        # rewrite the request path before routing instead - an ASGI
         # wrapper that promotes "/mcp" to "/mcp/" in-process. Both
         # URLs now land directly on the inner app, with no redirect.
         from ._routes import ROUTES as READ_ONLY_ROUTES
@@ -105,7 +105,7 @@ def main(port: int | None = None) -> None:
         # ``/health`` stays UNGATED (registered here, not in
         # ``_routes``); the P03 read-only routes (e.g. token-gated
         # ``/logs``) register from ``_routes.ROUTES`` on this same inner
-        # app. No ASGI wrappers — Starlette ``Route``s only
+        # app. No ASGI wrappers - Starlette ``Route``s only
         # (server-mcp-route + service-observability ADRs).
         app = Starlette(
             routes=[
@@ -133,7 +133,7 @@ def main(port: int | None = None) -> None:
         finally:
             _m._registry.close_all()
     else:
-        # Eager model load for stdio — matches HTTP mode's service_lifespan.
+        # Eager model load for stdio - matches HTTP mode's service_lifespan.
         # Without this, the first tool call hits "EmbeddingModel not loaded"
         # because ServiceRegistry.lease()/peek_project() require a loaded model.
         _m._registry.load_model()

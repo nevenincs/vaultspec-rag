@@ -22,9 +22,9 @@ All such state changes flow through core. See the ADR
 ``2026-04-12-vaultspec-rag-install-adr`` for the architectural decision.
 
 This module was split into a package (``commands/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface — the two
+``2026-06-01-module-split-adr``. The verbatim public surface - the two
 orchestrators, their report dataclasses, and the ``_classify_uv_sync_result``
-helper that tests import directly — is re-exported here unchanged.
+helper that tests import directly - is re-exported here unchanged.
 """
 
 from __future__ import annotations

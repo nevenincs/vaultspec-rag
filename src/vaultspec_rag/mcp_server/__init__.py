@@ -9,31 +9,31 @@ accepting connections.  A raw ``/health`` endpoint is mounted
 alongside the MCP transport at ``/mcp``.
 
 This module was split into a package (``mcp_server/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface — the
+``2026-06-01-module-split-adr``. The verbatim public surface - the
 ``mcp`` FastMCP instance, every tool/resource/prompt, the response
 models, the shared globals, and the ``_``-prefixed helpers tests
-import or monkeypatch directly — is re-exported here unchanged through
+import or monkeypatch directly - is re-exported here unchanged through
 an explicit ``__all__``.
 
 Import order is load-bearing and mirrors the ``cli`` split:
 
-1. ``_state`` first — owns the singleton ``mcp`` instance and the
+1. ``_state`` first - owns the singleton ``mcp`` instance and the
    process-wide globals (``_registry``, ``_watcher_*``,
    ``_SERVICE_TOKEN``, ``_http_mode``, ``_start_time``). These names
    live in *this* package namespace because that is what tests rebind
    (e.g. ``mcp_server._http_mode = True``).
 2. Leaf helper submodules (``_models``, ``_utils``, ``_lifecycle``,
-   ``_lifespan``, ``_watcher``) — pure logic with no decorators.
+   ``_lifespan``, ``_watcher``) - pure logic with no decorators.
 3. Tool / resource / prompt submodules (``_tools``, ``_admin_tools``,
-   ``_resources``) — importing them runs the ``@mcp.tool()`` /
+   ``_resources``) - importing them runs the ``@mcp.tool()`` /
    ``@mcp.resource()`` / ``@mcp.prompt()`` decorators against the one
    ``mcp`` instance defined in step 1.
-4. ``_main`` — the console-script ``main`` entry point.
+4. ``_main`` - the console-script ``main`` entry point.
 
 Reassigned globals (``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
 ``_registry``) are read by submodules at call time through
 ``import vaultspec_rag.mcp_server as _m`` so a rebind on this package
-namespace is observed — the same discipline the ``cli`` split uses for
+namespace is observed - the same discipline the ``cli`` split uses for
 monkeypatched names.
 """
 
@@ -49,7 +49,7 @@ from ..capabilities import BackendCapabilities
 #     ``_jobs.record_*`` and tests reach it via ``mcp_server._jobs``.
 from . import _jobs
 
-# 3. Tool / resource / prompt submodules — their import side effect is
+# 3. Tool / resource / prompt submodules - their import side effect is
 #    the decorator registration against ``mcp``.
 from ._admin_tools import (
     evict_project,

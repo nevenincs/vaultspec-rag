@@ -34,7 +34,7 @@ ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
 
 # Module-level caches for hot-path samplers. ``current_rss_mb`` and
 # ``current_cuda_mb`` are called once per 250 ms by the background
-# sampler — re-importing psutil/torch and re-instantiating
+# sampler - re-importing psutil/torch and re-instantiating
 # ``psutil.Process`` on every call is wasteful. Cache on first use.
 # ``Any`` is intentional: torch is an optional dependency on some
 # install matrices, and ty cannot narrow our own sentinel probe.
@@ -63,7 +63,7 @@ def current_rss_mb() -> float:
     handle is cached on first call because this function runs at
     250 ms cadence from the background sampler.
 
-    Returns ``0.0`` (rather than raising) on any psutil failure —
+    Returns ``0.0`` (rather than raising) on any psutil failure -
     the sampler thread must survive transient errors so a single
     bad reading does not silently kill RSS tracking for the rest
     of the run. See F6.7 / F6.8 in the rolling audit.
@@ -91,7 +91,7 @@ def current_rss_mb() -> float:
 def current_cuda_mb() -> tuple[float, float]:
     """Return ``(allocated_mb, reserved_mb)`` for the active CUDA device.
 
-    Returns zeros when torch is not importable or CUDA is unavailable —
+    Returns zeros when torch is not importable or CUDA is unavailable -
     the probe must never crash host code. The torch module reference
     and the CUDA availability flag are cached on first call so the
     background sampler does not pay repeated import / probe costs.
@@ -184,7 +184,7 @@ class MemoryProbe:
             while not self._sampler_stop.wait(0.25):
                 try:
                     rss = current_rss_mb()
-                except Exception:  # defensive sampler — must not die
+                except Exception:  # defensive sampler - must not die
                     logger.warning(
                         "memory-probe %s sample failed; continuing",
                         self.name,
@@ -255,7 +255,7 @@ class MemoryProbe:
     def stop(self) -> None:
         """Stop the background sampler thread.
 
-        Idempotent — safe to call from both ``__exit__`` and an
+        Idempotent - safe to call from both ``__exit__`` and an
         explicit ``stop()`` invocation. Logs a warning if the sampler
         did not terminate cleanly within the join timeout so silent
         cleanup failures are observable in the logs.
@@ -268,7 +268,7 @@ class MemoryProbe:
         if thread.is_alive():
             logger.warning(
                 "memory-probe %s sampler thread did not terminate "
-                "within 1s — continuing, but the thread will keep "
+                "within 1s - continuing, but the thread will keep "
                 "sampling until process exit",
                 self.name,
             )

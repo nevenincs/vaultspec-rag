@@ -56,8 +56,8 @@ def read_service_log(lines: int, status_dir: Path | None = None) -> list[str]:
     ``service.log`` into ``service.log.1``, ``service.log.2``, … with
     the highest-numbered backup being the oldest. This reader walks the
     set oldest-first (``service.log.N`` … ``service.log.1`` …
-    ``service.log``) so the concatenated stream is chronological —
-    newest lines last — then returns the final *lines* entries.
+    ``service.log``) so the concatenated stream is chronological -
+    newest lines last - then returns the final *lines* entries.
 
     The walk is tolerant of a backup file vanishing mid-rollover: a
     file that disappears (or otherwise fails to read) between the
@@ -102,7 +102,7 @@ def read_service_log(lines: int, status_dir: Path | None = None) -> list[str]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError as exc:
             # The file vanished between the existence probe above and
-            # this read — a rotation raced us. Skip and continue.
+            # this read - a rotation raced us. Skip and continue.
             logger.debug("read_service_log: %s vanished mid-read: %s", path, exc)
             continue
         except OSError as exc:
@@ -145,7 +145,7 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
     The daemon is spawned with its ``stdout``/``stderr`` already ``dup2``'d
     onto the open ``service.log`` FD by the parent CLI.  On first rotation,
     :class:`RotatingFileHandler` renames the log file and opens a fresh
-    stream — but fds 1/2 still reference the *original* kernel inode,
+    stream - but fds 1/2 still reference the *original* kernel inode,
     which ``os.rename`` has just moved to ``service.log.1``.  Without a
     re-``dup2``, stdout/stderr get stuck writing to the rotated file
     forever and the backup-count accounting silently goes wrong.
@@ -188,7 +188,7 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
         propagate an exception, otherwise the handler's error path
         triggers and the rollover never fires.  Both ``fileno()`` and
         ``tell()`` raise ``ValueError`` on a closed stream, and ``fstat``
-        can fail with ``OSError`` on some platforms — fall back through
+        can fail with ``OSError`` on some platforms - fall back through
         all three to ``0`` rather than letting any of them escape.
         """
         if self.stream is None:
@@ -302,7 +302,7 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
 
         Used by :meth:`doRollover`'s recovery path and the ``delay=True``
         no-op path.  Failures are swallowed because the caller is
-        already mid-recovery — the original error (if any) still
+        already mid-recovery - the original error (if any) still
         propagates with its traceback intact.
         """
         try:

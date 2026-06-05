@@ -1,4 +1,4 @@
-"""Benchmark fixtures — real GPU components for performance tests."""
+"""Benchmark fixtures - real GPU components for performance tests."""
 
 from __future__ import annotations
 

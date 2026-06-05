@@ -9,6 +9,8 @@ to make that call.
 
 from __future__ import annotations
 
+from typing import Literal, cast
+
 from ._core import logger
 
 
@@ -229,7 +231,7 @@ def _try_mcp_search(
     """Search via a running MCP server over HTTP.
 
     Uses ``asyncio.run()`` which is safe here because Typer
-    command handlers are always synchronous — there is no outer
+    command handlers are always synchronous - there is no outer
     event loop to conflict with.
 
     Args:
@@ -240,15 +242,15 @@ def _try_mcp_search(
         project_root: Absolute path to the target project. The
             HTTP service is multi-tenant and has no default
             project, so every tool call must carry this value.
-        language: Code-search filter — programming language.
-        path: Code-search filter — exact project-relative path.
-        node_type: Code-search filter — AST node type.
-        function_name: Code-search filter — function/method name.
-        class_name: Code-search filter — class/struct name.
-        doc_type: Vault-search filter — vault doc type.
-        feature: Vault-search filter — feature tag.
-        date: Vault-search filter — exact ISO date.
-        tag: Vault-search filter — free-form tag.
+        language: Code-search filter - programming language.
+        path: Code-search filter - exact project-relative path.
+        node_type: Code-search filter - AST node type.
+        function_name: Code-search filter - function/method name.
+        class_name: Code-search filter - class/struct name.
+        doc_type: Vault-search filter - vault doc type.
+        feature: Vault-search filter - feature tag.
+        date: Vault-search filter - exact ISO date.
+        tag: Vault-search filter - free-form tag.
 
     Returns:
         List of result dicts on success, a structured MCP error
@@ -262,74 +264,40 @@ def _try_mcp_search(
     tool_map = {"vault": "search_vault", "code": "search_codebase"}
     tool_name = tool_map.get(search_type, "search_vault")
 
-    code_filters = {
-        "language": language,
-        "path": path,
-        "node_type": node_type,
-        "function_name": function_name,
-        "class_name": class_name,
-    }
-    vault_filters = {
-        "doc_type": doc_type,
-        "feature": feature,
-        "date": date,
-        "tag": tag,
-    }
-    code_supplied = any(v is not None for v in code_filters.values())
-    vault_supplied = any(v is not None for v in vault_filters.values())
-    glob_supplied = bool(include_paths) or bool(exclude_paths)
-    postproc_supplied = bool(dedup_locales) or prefer is not None
-    if code_supplied and search_type != "code":
-        offending = sorted(k for k, v in code_filters.items() if v is not None)
+    from vaultspec_rag.search import (
+        InvalidFilterForSearchTypeError,
+        InvalidPreferValueError,
+        validate_search_filters,
+    )
+
+    try:
+        validate_search_filters(
+            cast("Literal['vault', 'code']", search_type),
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+        )
+    except InvalidFilterForSearchTypeError as exc:
         return {
             "ok": False,
             "error": "invalid_filter_for_search_type",
-            "message": (
-                "code-search filters "
-                f"({', '.join(offending)}) require --type code; "
-                f"got --type {search_type}."
-            ),
+            "message": str(exc),
         }
-    if vault_supplied and search_type != "vault":
-        offending = sorted(k for k, v in vault_filters.items() if v is not None)
+    except InvalidPreferValueError as exc:
         return {
             "ok": False,
-            "error": "invalid_filter_for_search_type",
-            "message": (
-                "vault-search filters "
-                f"({', '.join(offending)}) require --type vault; "
-                f"got --type {search_type}."
-            ),
-        }
-    if glob_supplied and search_type != "code":
-        offending = []
-        if include_paths:
-            offending.append("--include-path")
-        if exclude_paths:
-            offending.append("--exclude-path")
-        return {
-            "ok": False,
-            "error": "invalid_filter_for_search_type",
-            "message": (
-                "path-glob filters "
-                f"({', '.join(offending)}) require --type code; "
-                f"got --type {search_type}."
-            ),
-        }
-    if postproc_supplied and search_type != "code":
-        offending = []
-        if dedup_locales:
-            offending.append("--dedup-locales")
-        if prefer is not None:
-            offending.append("--prefer")
-        return {
-            "ok": False,
-            "error": "invalid_filter_for_search_type",
-            "message": (
-                "post-process flags "
-                f"({', '.join(offending)}) require --type code; "
-                f"got --type {search_type}."
-            ),
+            "error": "invalid_prefer_value",
+            "message": str(exc),
         }
 
     import os
@@ -361,6 +329,13 @@ def _try_mcp_search(
             "project_root": project_root,
         }
         if search_type == "code":
+            code_filters = {
+                "language": language,
+                "path": path,
+                "node_type": node_type,
+                "function_name": function_name,
+                "class_name": class_name,
+            }
             for key, value in code_filters.items():
                 if value is not None:
                     payload[key] = value
@@ -373,6 +348,12 @@ def _try_mcp_search(
             if prefer is not None:
                 payload["prefer"] = prefer
         elif search_type == "vault":
+            vault_filters = {
+                "doc_type": doc_type,
+                "feature": feature,
+                "date": date,
+                "tag": tag,
+            }
             for key, value in vault_filters.items():
                 if value is not None:
                     payload[key] = value

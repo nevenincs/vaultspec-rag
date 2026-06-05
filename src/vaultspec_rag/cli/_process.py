@@ -67,7 +67,7 @@ def _is_pid_alive(pid: int) -> bool:
         return False
     except PermissionError as exc:
         # Permission denied means the process exists but isn't
-        # owned by us — still "alive" for liveness purposes.
+        # owned by us - still "alive" for liveness purposes.
         logger.debug("pid %s alive but signal denied: %s", pid, exc)
         return True
     return True
@@ -120,7 +120,7 @@ def _is_our_service(
         if probe is not None:
             response_token = probe.get("service_token")
             if isinstance(response_token, str) and response_token:
-                # Both sides reported a token — the comparison is
+                # Both sides reported a token - the comparison is
                 # authoritative regardless of outcome.
                 return response_token == expected_token
             # Probe answered but with no token (pre-upgrade daemon,
@@ -156,7 +156,7 @@ def _is_our_service(
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
         return "vaultspec_rag" in cmdline
     except (OSError, ValueError) as exc:
-        # Non-procfs systems (BSD, macOS without /proc) — fall back
+        # Non-procfs systems (BSD, macOS without /proc) - fall back
         # to PID-alive trust. Debug-log per the no-swallow rule.
         logger.debug(
             "cmdline read failed for pid=%d: %s; falling back to PID-alive trust",
@@ -208,7 +208,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-# Mirrored from mcp_server._HEARTBEAT_STALENESS_SECONDS — kept as a
+# Mirrored from mcp_server._HEARTBEAT_STALENESS_SECONDS - kept as a
 # local constant so cli.py does not import mcp_server (which would
 # pull in FastMCP + heavy deps at CLI startup time). Bump both in
 # lockstep if the contract changes.
@@ -274,7 +274,7 @@ def _health_probe(port: int) -> dict[str, Any] | None:
         with opener.open(url, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        # HTTP errors mean the server answered but unhealthy — surface
+        # HTTP errors mean the server answered but unhealthy - surface
         # the structured shape so callers can render the http code.
         return {"status": "error", "http_code": exc.code}
     except Exception as exc:
@@ -314,7 +314,7 @@ def _service_child_env(
     Returns:
         The child-process environment mapping.
     """
-    # Strip VAULTSPEC_RAG_ROOT from the daemon env — the HTTP service is
+    # Strip VAULTSPEC_RAG_ROOT from the daemon env - the HTTP service is
     # multi-tenant and must not fall back to a baked-in project root.
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.

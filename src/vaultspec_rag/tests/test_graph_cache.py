@@ -65,7 +65,7 @@ class TestGraphCacheGet:
     def test_get_returns_graph_for_missing_vault(self, tmp_path: Path):
         cache = GraphCache(ttl_seconds=300.0)
         result = cache.get(tmp_path)
-        # VaultGraph succeeds on a dir with no .vault/ — returns a graph
+        # VaultGraph succeeds on a dir with no .vault/ - returns a graph
         # with zero nodes rather than raising.
         from vaultspec_core.graph import VaultGraph
 
@@ -127,7 +127,7 @@ class TestGraphCacheConcurrency:
             t.join(timeout=30)
 
         assert len(results) == 8
-        # All threads got the same graph object — proves single construction
+        # All threads got the same graph object - proves single construction
         first = results[0]
         assert all(r is first for r in results)
 
@@ -137,7 +137,7 @@ class TestGraphCacheFailureRecovery:
 
     When VaultGraph raises, get() catches the exception, sets _graph=None
     and _built_at=now. Because _is_stale() returns True whenever _graph
-    is None, the next call will attempt a fresh build — no TTL-based
+    is None, the next call will attempt a fresh build - no TTL-based
     retry suppression.
     """
 
@@ -229,7 +229,7 @@ class TestVaultSearcherGraphProvider:
             call_count += 1
             return graph_instance
 
-        # Build a minimal VaultSearcher without GPU models — only test
+        # Build a minimal VaultSearcher without GPU models - only test
         # _get_graph, which does not need the model or store.
         from vaultspec_rag.search import VaultSearcher
 
