@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.16](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.15...vaultspec-rag-v0.2.16) (2026-06-05)
+
+
+### Features
+
+* **arch:** decouple CLI/MCP and standardize into backend facade APIs ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([a87987b](https://github.com/wgergely/vaultspec-rag/commit/a87987b065cfa23b23254a095c6103879ab9ce24))
+
 ## [0.2.15](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.14...vaultspec-rag-v0.2.15) (2026-06-04)
 
 
