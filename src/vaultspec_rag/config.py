@@ -56,6 +56,10 @@ class EnvVar(StrEnum):
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
     WATCH_COOLDOWN_S = "VAULTSPEC_RAG_WATCH_COOLDOWN_S"
 
+    QDRANT_URL = "VAULTSPEC_RAG_QDRANT_URL"
+    QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
+    QDRANT_QUANTIZATION = "VAULTSPEC_RAG_QDRANT_QUANTIZATION"
+
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
     HF_HOME = "HF_HOME"
@@ -94,6 +98,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
     "watch_cooldown_s": EnvVar.WATCH_COOLDOWN_S,
+    "qdrant_url": EnvVar.QDRANT_URL,
+    "qdrant_api_key": EnvVar.QDRANT_API_KEY,
+    "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
 }
 
 
@@ -117,6 +124,9 @@ class VaultSpecConfigWrapper:
     """
 
     _RAG_DEFAULTS: ClassVar[dict[str, Any]] = {
+        "qdrant_url": None,
+        "qdrant_api_key": None,
+        "qdrant_quantization": None,
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",

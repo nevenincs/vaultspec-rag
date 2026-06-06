@@ -34,6 +34,11 @@ def _run_cli(
     timeout: int = 300,
 ) -> subprocess.CompletedProcess:
     """Run a vaultspec-rag CLI command via the installed entry point."""
+    import os
+
+    env = dict(os.environ)
+    if cwd is not None:
+        env["VAULTSPEC_RAG_STATUS_DIR"] = str(cwd)
     cmd = [
         sys.executable,
         "-c",
@@ -46,6 +51,7 @@ def _run_cli(
         text=True,
         timeout=timeout,
         cwd=cwd,
+        env=env,
         encoding="utf-8",
         errors="replace",
     )

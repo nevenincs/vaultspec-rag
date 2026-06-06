@@ -247,7 +247,7 @@ def handle_index(
             if isinstance(data, dict) and data.get("ok") is False:
                 if not json_mode:
                     _cli.console.print(
-                        f"[red]MCP reindex_{label} reported an error; "
+                        f"[red]Reindex {label} reported an error; "
                         f"refusing to silently fall back.[/]",
                     )
                 _display_mcp_error(data, json_mode=json_mode, command="index")
@@ -316,7 +316,7 @@ def handle_index(
                 )
                 return
 
-            table = Table(title="Indexing Summary (via MCP)", show_header=True)
+            table = Table(title="Indexing Summary", show_header=True)
             table.add_column("Source", style="bold")
             table.add_column("Added", style="green", justify="right")
             table.add_column("Updated", style="yellow", justify="right")
@@ -342,11 +342,6 @@ def handle_index(
                 port,
                 command="indexing",
                 json_mode=json_mode,
-            )
-        if not json_mode:
-            _cli.console.print(
-                "[yellow]MCP server unavailable, falling back to in-process "
-                "indexing (--allow-fallback set)...[/]",
             )
 
     import vaultspec_rag
@@ -433,7 +428,7 @@ def handle_index(
         return
 
     # Summary table
-    table = Table(title="Indexing Summary (via in-process)", show_header=True)
+    table = Table(title="Indexing Summary", show_header=True)
     table.add_column("Source", style="bold")
     table.add_column("Added", style="green", justify="right")
     table.add_column("Updated", style="yellow", justify="right")

@@ -154,26 +154,23 @@ def _display_mcp_error(
 def _display_search_results(
     results: list[dict[str, object]],
     search_type: str,
-    via: Literal["mcp", "in-process"] = "mcp",
+    via: Literal["mcp", "in-process"] = "mcp",  # noqa: ARG001
     *,
     no_truncate: bool = False,
 ) -> None:
-    """Display MCP search results as a Rich table.
+    """Display search results as a Rich table.
 
     Args:
         results: List of result dicts with ``score``, ``path``,
             ``snippet``, and optional ``line_start`` keys.
         search_type: Label for the table title (e.g.
             ``vault``, ``code``, ``all``).
-        via: Path indicator suffixed to the table title so users
-            can tell whether the fast-path service answered or the
-            in-process fallback did.
+        via: Ignored transport path indicator.
         no_truncate: Bypass the 120-character snippet truncation
             so sibling files with long paths stay distinguishable.
 
     """
-    suffix = "(via MCP)" if via == "mcp" else "(via in-process)"
-    table = Table(title=f"Search Results: {search_type} {suffix}", box=None)
+    table = Table(title=f"Search Results: {search_type}", box=None)
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("Location", style="green")
     table.add_column("Snippet", style="white")
@@ -213,7 +210,7 @@ def _display_port_unreachable_error(
             command,
             "port_unreachable",
             (
-                f"MCP service on port {port} is unreachable. "
+                f"Service on port {port} is unreachable. "
                 f"The CLI will not silently fall back to in-process "
                 f"{command}; start the service or re-run with "
                 f"--allow-fallback (single-agent use only)."
@@ -228,7 +225,7 @@ def _display_port_unreachable_error(
         )
         return
     _cli.console.print(
-        f"[bold red]MCP service on port {port} is unreachable.[/]\n"
+        f"[bold red]Service on port {port} is unreachable.[/]\n"
         f"[white]The CLI will not silently fall back to in-process "
         f"{command} because that would acquire the Qdrant lock and "
         f"strand any other agent waiting on the resident service.[/]\n"

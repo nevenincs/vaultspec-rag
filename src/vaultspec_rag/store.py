@@ -251,22 +251,38 @@ class VaultStore:
         cfg = get_config()
 
         self.root_dir = _pathlib.Path(root_dir)
-        self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
-        self.db_path.mkdir(parents=True, exist_ok=True)
-        self._lock_helper = FileLock(self.db_path / "exclusive.lock")
-        if not self._lock_helper.acquire():
-            raise VaultStoreLockedError(str(self.db_path))
         self._client_lock = threading.RLock()
-        try:
-            with _suppress_local_qdrant_warnings():
+
+        if cfg.qdrant_url:
+            self.db_path = cfg.qdrant_url
+            self._lock_helper = None
+            try:
                 self._client: QdrantClient | None = _QdrantClient(
-                    path=str(self.db_path),
+                    url=cfg.qdrant_url,
+                    api_key=cfg.qdrant_api_key,
                 )
-        except RuntimeError as exc:
-            self._lock_helper.release()
-            if "already accessed by another instance" in str(exc):
-                raise VaultStoreLockedError(str(self.db_path)) from exc
-            raise
+            except Exception as exc:
+                logger.error(
+                    "Failed to connect to Qdrant server at %s: %s", cfg.qdrant_url, exc
+                )
+                raise
+        else:
+            self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
+            self.db_path.mkdir(parents=True, exist_ok=True)
+            self._lock_helper = FileLock(self.db_path / "exclusive.lock")
+            if not self._lock_helper.acquire():
+                raise VaultStoreLockedError(str(self.db_path))
+            try:
+                with _suppress_local_qdrant_warnings():
+                    self._client: QdrantClient | None = _QdrantClient(
+                        path=str(self.db_path),
+                    )
+            except RuntimeError as exc:
+                self._lock_helper.release()
+                if "already accessed by another instance" in str(exc):
+                    raise VaultStoreLockedError(str(self.db_path)) from exc
+                raise
+
         self._embedding_dim = embedding_dim or EMBEDDING_DIM
         self._vault_ensured = False
         self._code_ensured = False
@@ -322,9 +338,44 @@ class VaultStore:
         """
         from qdrant_client import models
 
+        from .config import get_config
+
+        cfg = get_config()
+        quantization_val = cfg.qdrant_quantization
+
+        quantization_config = None
+        if quantization_val:
+            val = str(quantization_val).lower().strip()
+            if val in ("scalar", "int8", "scalar_int8"):
+                quantization_config = models.ScalarQuantization(
+                    scalar=models.ScalarQuantizationConfig(
+                        type=models.ScalarType.INT8,
+                        always_ram=True,
+                    )
+                )
+            elif val in ("turbo", "turboquant"):
+                quantization_config = models.TurboQuantization(
+                    turbo=models.TurboQuantQuantizationConfig(
+                        always_ram=True,
+                    )
+                )
+            elif val in ("product", "pq"):
+                quantization_config = models.ProductQuantization(
+                    product=models.ProductQuantizationConfig(
+                        compression=models.CompressionRatio.X16,
+                        always_ram=True,
+                    )
+                )
+
         with self._client_lock:
             if self.client.collection_exists(name):
                 return
+
+            from typing import Any
+
+            kwargs: dict[str, Any] = {}
+            if quantization_config is not None:
+                kwargs["quantization_config"] = quantization_config
 
             self.client.create_collection(
                 collection_name=name,
@@ -337,6 +388,7 @@ class VaultStore:
                 sparse_vectors_config={
                     "sparse": models.SparseVectorParams(),
                 },
+                **kwargs,
             )
         logger.info("Created collection '%s' at %s", name, self.db_path)
 
@@ -761,6 +813,8 @@ class VaultStore:
         limit: int = 5,
         *,
         sparse_vector: SparseResult | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
     ) -> list[dict]:
         """Execute hybrid dense + sparse search with RRF on vault_docs.
 
@@ -772,6 +826,10 @@ class VaultStore:
             limit: Max results to return.
             sparse_vector: Pre-computed SPLADE sparse embedding
                 with ``.indices`` and ``.values`` attributes.
+            like_ids: Optional list of document IDs or point IDs to guide
+                search (positive feedback).
+            unlike_ids: Optional list of document IDs or point IDs to push
+                search away (negative feedback).
 
         Returns:
             List of result dicts with payload fields and
@@ -792,9 +850,31 @@ class VaultStore:
         if not isinstance(query_vector, list):
             dense_vec = query_vector.tolist()
 
+        if like_ids or unlike_ids:
+            from typing import Any
+
+            pos: list[Any] = [dense_vec]
+            if like_ids:
+                pos.extend(
+                    self._stable_id(i) if isinstance(i, str) else i for i in like_ids
+                )
+            neg: list[Any] = (
+                [self._stable_id(i) if isinstance(i, str) else i for i in unlike_ids]
+                if unlike_ids
+                else []
+            )
+            dense_query = models.RecommendQuery(
+                recommend=models.RecommendInput(
+                    positive=pos,
+                    negative=neg,
+                )
+            )
+        else:
+            dense_query = dense_vec
+
         prefetch = [
             models.Prefetch(
-                query=dense_vec,
+                query=dense_query,
                 using="dense",
                 limit=limit * 4,
                 filter=query_filter,
@@ -835,7 +915,7 @@ class VaultStore:
                 )
                 fallback = self.client.query_points(
                     collection_name=self.TABLE_NAME,
-                    query=dense_vec,
+                    query=dense_query,
                     using="dense",
                     limit=limit,
                     query_filter=query_filter,
@@ -852,6 +932,8 @@ class VaultStore:
         limit: int = 5,
         *,
         sparse_vector: SparseResult | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
     ) -> list[dict]:
         """Execute hybrid dense + sparse search with RRF on codebase_docs.
 
@@ -863,6 +945,10 @@ class VaultStore:
             limit: Max results to return.
             sparse_vector: Pre-computed SPLADE sparse embedding
                 with ``.indices`` and ``.values`` attributes.
+            like_ids: Optional list of chunk IDs or point IDs to guide
+                search (positive feedback).
+            unlike_ids: Optional list of chunk IDs or point IDs to push
+                search away (negative feedback).
 
         Returns:
             List of result dicts with payload fields and
@@ -883,9 +969,31 @@ class VaultStore:
         if not isinstance(query_vector, list):
             dense_vec = query_vector.tolist()
 
+        if like_ids or unlike_ids:
+            from typing import Any
+
+            pos: list[Any] = [dense_vec]
+            if like_ids:
+                pos.extend(
+                    self._stable_id(i) if isinstance(i, str) else i for i in like_ids
+                )
+            neg: list[Any] = (
+                [self._stable_id(i) if isinstance(i, str) else i for i in unlike_ids]
+                if unlike_ids
+                else []
+            )
+            dense_query = models.RecommendQuery(
+                recommend=models.RecommendInput(
+                    positive=pos,
+                    negative=neg,
+                )
+            )
+        else:
+            dense_query = dense_vec
+
         prefetch = [
             models.Prefetch(
-                query=dense_vec,
+                query=dense_query,
                 using="dense",
                 limit=limit * 4,
                 filter=query_filter,
@@ -926,7 +1034,7 @@ class VaultStore:
                 )
                 fallback = self.client.query_points(
                     collection_name=self.CODE_TABLE_NAME,
-                    query=dense_vec,
+                    query=dense_query,
                     using="dense",
                     limit=limit,
                     query_filter=query_filter,

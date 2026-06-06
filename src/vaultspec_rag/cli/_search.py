@@ -394,11 +394,6 @@ def handle_search(
                 json_mode=json_mode,
             )
             raise typer.Exit(code=1)
-        if not json_mode:
-            _cli.console.print(
-                "[yellow]MCP server unavailable, falling back to in-process "
-                "search (--allow-fallback set)...[/]",
-            )
 
     import vaultspec_rag
 
@@ -503,7 +498,7 @@ def handle_search(
         return
 
     table = Table(
-        title=f"Search Results: {search_type} (via in-process)",
+        title=f"Search Results: {search_type}",
         box=None,
     )
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)

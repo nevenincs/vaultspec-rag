@@ -309,9 +309,11 @@ class TestRrfKParameter:
 
     def test_hybrid_search_uses_rrf_k60(self):
         import inspect
+        import linecache
 
         from vaultspec_rag.store import VaultStore
 
+        linecache.clearcache()
         src = inspect.getsource(VaultStore.hybrid_search)
         assert "Rrf(k=60)" in src or "rrf=models.Rrf(k=60)" in src, (
             "hybrid_search must use RrfQuery(rrf=Rrf(k=60)), "
@@ -320,9 +322,11 @@ class TestRrfKParameter:
 
     def test_hybrid_search_codebase_uses_rrf_k60(self):
         import inspect
+        import linecache
 
         from vaultspec_rag.store import VaultStore
 
+        linecache.clearcache()
         src = inspect.getsource(VaultStore.hybrid_search_codebase)
         assert "Rrf(k=60)" in src or "rrf=models.Rrf(k=60)" in src
 

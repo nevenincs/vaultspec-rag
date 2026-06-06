@@ -132,6 +132,41 @@ class TestVaultSearch:
             assert isinstance(r.score, float)
             assert r.score > 0, f"Result {r.id} has non-positive score {r.score}"
 
+    def test_search_with_relevance_feedback(self, rag_components):
+        """Verify that passing like_ids and unlike_ids is accepted and
+        changes scoring/ordering.
+        """
+        from vaultspec_rag import VaultSearcher
+
+        model = rag_components["model"]
+        store = rag_components["store"]
+        root = rag_components["root"]
+
+        searcher = VaultSearcher(root, model, store)
+
+        # Get baseline results first
+        baseline = searcher.search_vault("architecture decision", top_k=5)
+        assert len(baseline) > 1
+
+        # We like the second result and unlike the first result
+        like_id = baseline[1].id
+        unlike_id = baseline[0].id
+
+        refinement = searcher.search_vault(
+            "architecture decision",
+            top_k=5,
+            like_ids=[like_id],
+            unlike_ids=[unlike_id],
+        )
+
+        assert len(refinement) > 0
+        # The unliked document should either not be present or rank lower/have
+        # a lower score.
+        refinement_ids = [r.id for r in refinement]
+        if unlike_id in refinement_ids:
+            # If present, it should not be at the top position
+            assert refinement_ids[0] != unlike_id
+
 
 # ---- Search edge cases ----
 

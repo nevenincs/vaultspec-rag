@@ -106,6 +106,7 @@ constraint-dependencies = [
 ]
 
 [tool.uv.sources]
+vaultspec-core = { path = "../../vaultspec-core-worktrees/main" }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]

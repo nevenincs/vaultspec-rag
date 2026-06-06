@@ -2,78 +2,68 @@
 
 ## [0.2.15](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.14...vaultspec-rag-v0.2.15) (2026-06-04)
 
-
 ### Features
 
-* implement async background reindexing and timeout-bounded searches with lock contention diagnostics ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([a084a26](https://github.com/wgergely/vaultspec-rag/commit/a084a269aae87b7d23fdd0ffa4cae31daa185ea4))
-* implement async background reindexing and timeout-bounded searches with lock contention diagnostics ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([06cbfd3](https://github.com/wgergely/vaultspec-rag/commit/06cbfd3437cb97f4274865d2aba5d4b7afaa4b6b))
-
+- implement async background reindexing and timeout-bounded searches with lock contention diagnostics ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([a084a26](https://github.com/wgergely/vaultspec-rag/commit/a084a269aae87b7d23fdd0ffa4cae31daa185ea4))
+- implement async background reindexing and timeout-bounded searches with lock contention diagnostics ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([06cbfd3](https://github.com/wgergely/vaultspec-rag/commit/06cbfd3437cb97f4274865d2aba5d4b7afaa4b6b))
 
 ### Bug Fixes
 
-* mitigate concurrent locking, expose live index progress, and terminate stuck watcher jobs ([#150](https://github.com/wgergely/vaultspec-rag/issues/150), [#158](https://github.com/wgergely/vaultspec-rag/issues/158), [#159](https://github.com/wgergely/vaultspec-rag/issues/159)) ([1b1e6f4](https://github.com/wgergely/vaultspec-rag/commit/1b1e6f459a079d11383b7082c4d0c2b8082e0107))
+- mitigate concurrent locking, expose live index progress, and terminate stuck watcher jobs ([#150](https://github.com/wgergely/vaultspec-rag/issues/150), [#158](https://github.com/wgergely/vaultspec-rag/issues/158), [#159](https://github.com/wgergely/vaultspec-rag/issues/159)) ([1b1e6f4](https://github.com/wgergely/vaultspec-rag/commit/1b1e6f459a079d11383b7082c4d0c2b8082e0107))
 
 ## [0.2.14](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.13...vaultspec-rag-v0.2.14) (2026-06-03)
 
-
 ### Features
 
-* **embed:** operator-selectable ONNX dense backend with torch fallback (onnx-encoder-backend P01+P02, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([73e0bac](https://github.com/wgergely/vaultspec-rag/commit/73e0bacd4038a2d835f4988be0cd5acb4b628267))
-
+- **embed:** operator-selectable ONNX dense backend with torch fallback (onnx-encoder-backend P01+P02, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([73e0bac](https://github.com/wgergely/vaultspec-rag/commit/73e0bacd4038a2d835f4988be0cd5acb4b628267))
 
 ### Bug Fixes
 
-* **index:** bound GPU-consumer shutdown so it aborts instead of hanging (index-gpu-pipeline review) ([9309e40](https://github.com/wgergely/vaultspec-rag/commit/9309e40bb7047eaf5796c6e44e5e245b8ad55d9e))
-* **index:** keep index meta complete on chunk failure; harden gate + worker tests ([#155](https://github.com/wgergely/vaultspec-rag/issues/155) review) ([953cec9](https://github.com/wgergely/vaultspec-rag/commit/953cec9f9f2fa77bbda83b2bdf2cbdc125db837d))
-
+- **index:** bound GPU-consumer shutdown so it aborts instead of hanging (index-gpu-pipeline review) ([9309e40](https://github.com/wgergely/vaultspec-rag/commit/9309e40bb7047eaf5796c6e44e5e245b8ad55d9e))
+- **index:** keep index meta complete on chunk failure; harden gate + worker tests ([#155](https://github.com/wgergely/vaultspec-rag/issues/155) review) ([953cec9](https://github.com/wgergely/vaultspec-rag/commit/953cec9f9f2fa77bbda83b2bdf2cbdc125db837d))
 
 ### Performance
 
-* **index:** dedicated GPU consumer thread + bounded queue (index-gpu-pipeline P01+P02) ([364e3b4](https://github.com/wgergely/vaultspec-rag/commit/364e3b4f4c1b7ae680d08bb6bff5acd7a5e370f5))
-* **index:** encode-batch + flush throttle + single-read IO + parallel gate, with parity tests & benchmark (P03+P04, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([d9ef491](https://github.com/wgergely/vaultspec-rag/commit/d9ef4910243588af72c49588275c65cf50bb0277))
-* **index:** parallel process-pool chunking + chunk-to-embed pipeline (P01+P02, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([7fdbbda](https://github.com/wgergely/vaultspec-rag/commit/7fdbbda5222e80bb9246ecdd6c48225c9ed0f18f))
-* **index:** re-architect codebase indexing for parallelism + GPU pipelining ([53e542a](https://github.com/wgergely/vaultspec-rag/commit/53e542a1d96c5b179cabc800cf0379dbca9cd9c1))
+- **index:** dedicated GPU consumer thread + bounded queue (index-gpu-pipeline P01+P02) ([364e3b4](https://github.com/wgergely/vaultspec-rag/commit/364e3b4f4c1b7ae680d08bb6bff5acd7a5e370f5))
+- **index:** encode-batch + flush throttle + single-read IO + parallel gate, with parity tests & benchmark (P03+P04, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([d9ef491](https://github.com/wgergely/vaultspec-rag/commit/d9ef4910243588af72c49588275c65cf50bb0277))
+- **index:** parallel process-pool chunking + chunk-to-embed pipeline (P01+P02, [#155](https://github.com/wgergely/vaultspec-rag/issues/155)) ([7fdbbda](https://github.com/wgergely/vaultspec-rag/commit/7fdbbda5222e80bb9246ecdd6c48225c9ed0f18f))
+- **index:** re-architect codebase indexing for parallelism + GPU pipelining ([53e542a](https://github.com/wgergely/vaultspec-rag/commit/53e542a1d96c5b179cabc800cf0379dbca9cd9c1))
 
 ## [0.2.13](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.12...vaultspec-rag-v0.2.13) (2026-06-02)
 
-
 ### Bug Fixes
 
-* **watcher:** scoped reindex from the change set ([#151](https://github.com/wgergely/vaultspec-rag/issues/151)) ([eed412d](https://github.com/wgergely/vaultspec-rag/commit/eed412d3f201939ea77cc6c58c0bb2f9817ec9cb))
-* **watcher:** scoped reindex from the change set ([#151](https://github.com/wgergely/vaultspec-rag/issues/151)) ([ff4d02c](https://github.com/wgergely/vaultspec-rag/commit/ff4d02cac7208ef921cff4c5919d55dbd8e7aebb))
+- **watcher:** scoped reindex from the change set ([#151](https://github.com/wgergely/vaultspec-rag/issues/151)) ([eed412d](https://github.com/wgergely/vaultspec-rag/commit/eed412d3f201939ea77cc6c58c0bb2f9817ec9cb))
+- **watcher:** scoped reindex from the change set ([#151](https://github.com/wgergely/vaultspec-rag/issues/151)) ([ff4d02c](https://github.com/wgergely/vaultspec-rag/commit/ff4d02cac7208ef921cff4c5919d55dbd8e7aebb))
 
 ## [0.2.12](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.11...vaultspec-rag-v0.2.12) (2026-06-01)
 
-
 ### Bug Fixes
 
-* correct false claims in the bundled builtin rule (+docs truthfulness) ([66fc9c0](https://github.com/wgergely/vaultspec-rag/commit/66fc9c06e2dba284ae693e6fc039daaa174afe29))
+- correct false claims in the bundled builtin rule (+docs truthfulness) ([66fc9c0](https://github.com/wgergely/vaultspec-rag/commit/66fc9c06e2dba284ae693e6fc039daaa174afe29))
 
 ## [0.2.11](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.10...vaultspec-rag-v0.2.11) (2026-06-01)
 
-
 ### Features
 
-* **service-observability:** P01 in-flight activity registry ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([bb6c898](https://github.com/wgergely/vaultspec-rag/commit/bb6c898bcc72b8f206dd094919c6581c95a64f2b))
-* **service-observability:** P02 consolidated status + P03 logs (CLI/MCP/HTTP) ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([ae33966](https://github.com/wgergely/vaultspec-rag/commit/ae33966e3035be0d98d2530f3c8138b85a9544bf))
-* **service-observability:** P04 jobs exposure + P05 metrics ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([3cc9da7](https://github.com/wgergely/vaultspec-rag/commit/3cc9da76e1c8f4b395b52e179f8bb6759433a546))
-* service-operability cluster ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)/[#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)/[#145](https://github.com/wgergely/vaultspec-rag/issues/145)) + monolith modularization ([8120747](https://github.com/wgergely/vaultspec-rag/commit/8120747f1c0b2a9dd3f2438c36e79118d78374a6))
-* **service-operability:** P01 watcher config keys ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)) ([1d4fe2c](https://github.com/wgergely/vaultspec-rag/commit/1d4fe2c0434afd5249e4946c5363fa8061c5a8d8))
-* **service-operability:** P02 wire watcher config + enable guard ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)) ([691cddb](https://github.com/wgergely/vaultspec-rag/commit/691cddb7b0e333d460f29cf2e9945a59eddacccf))
-* **service-operability:** P03 service-start watcher flags + env translation ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)) ([40d8718](https://github.com/wgergely/vaultspec-rag/commit/40d8718868480011ffe5f2c393a8d3c8bf0a7d3e))
-* **service-operability:** P04 watcher runtime control parity (CLI&lt;-&gt;MCP) ([89bdd66](https://github.com/wgergely/vaultspec-rag/commit/89bdd66a6b335c659880821fd1216bb3f5b55fd9))
-
+- **service-observability:** P01 in-flight activity registry ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([bb6c898](https://github.com/wgergely/vaultspec-rag/commit/bb6c898bcc72b8f206dd094919c6581c95a64f2b))
+- **service-observability:** P02 consolidated status + P03 logs (CLI/MCP/HTTP) ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([ae33966](https://github.com/wgergely/vaultspec-rag/commit/ae33966e3035be0d98d2530f3c8138b85a9544bf))
+- **service-observability:** P04 jobs exposure + P05 metrics ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)) ([3cc9da7](https://github.com/wgergely/vaultspec-rag/commit/3cc9da76e1c8f4b395b52e179f8bb6759433a546))
+- service-operability cluster ([#142](https://github.com/wgergely/vaultspec-rag/issues/142)/[#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)/[#145](https://github.com/wgergely/vaultspec-rag/issues/145)) + monolith modularization ([8120747](https://github.com/wgergely/vaultspec-rag/commit/8120747f1c0b2a9dd3f2438c36e79118d78374a6))
+- **service-operability:** P01 watcher config keys ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)) ([1d4fe2c](https://github.com/wgergely/vaultspec-rag/commit/1d4fe2c0434afd5249e4946c5363fa8061c5a8d8))
+- **service-operability:** P02 wire watcher config + enable guard ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)/[#144](https://github.com/wgergely/vaultspec-rag/issues/144)) ([691cddb](https://github.com/wgergely/vaultspec-rag/commit/691cddb7b0e333d460f29cf2e9945a59eddacccf))
+- **service-operability:** P03 service-start watcher flags + env translation ([#143](https://github.com/wgergely/vaultspec-rag/issues/143)) ([40d8718](https://github.com/wgergely/vaultspec-rag/commit/40d8718868480011ffe5f2c393a8d3c8bf0a7d3e))
+- **service-operability:** P04 watcher runtime control parity (CLI\<->MCP) ([89bdd66](https://github.com/wgergely/vaultspec-rag/commit/89bdd66a6b335c659880821fd1216bb3f5b55fd9))
 
 ### Bug Fixes
 
-* **mcp:** restore python -m vaultspec_rag.mcp_server entry point after package split ([bf3b2ed](https://github.com/wgergely/vaultspec-rag/commit/bf3b2edd57962fda32e89848fdcd1b12c81b2d48))
+- **mcp:** restore python -m vaultspec_rag.mcp_server entry point after package split ([bf3b2ed](https://github.com/wgergely/vaultspec-rag/commit/bf3b2edd57962fda32e89848fdcd1b12c81b2d48))
 
 ## [0.2.10](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.9...vaultspec-rag-v0.2.10) (2026-05-31)
 
-
 ### Miscellaneous
 
-* cut 0.2.10 with docs overhaul and core 0.1.20 dep bump ([246614f](https://github.com/wgergely/vaultspec-rag/commit/246614fcd47dcee048667d1ebe5a880f675c8537))
+- cut 0.2.10 with docs overhaul and core 0.1.20 dep bump ([246614f](https://github.com/wgergely/vaultspec-rag/commit/246614fcd47dcee048667d1ebe5a880f675c8537))
 
 ## [0.2.9](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.8...vaultspec-rag-v0.2.9) (2026-05-31)
 
