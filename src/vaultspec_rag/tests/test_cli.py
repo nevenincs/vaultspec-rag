@@ -822,8 +822,8 @@ class TestSearchSafetyContract:
         assert "unreachable" in result.output.lower()
         assert "allow-fallback" in result.output.lower()
 
-    def test_search_port_dead_with_allow_fallback_prints_warning(self, tmp_path):
-        """--allow-fallback emits the legacy fallthrough warning."""
+    def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path):
+        """--allow-fallback does NOT emit the legacy fallthrough warning."""
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
             app,
@@ -838,10 +838,10 @@ class TestSearchSafetyContract:
             ],
         )
         normalized = " ".join(result.output.split())
-        assert "--allow-fallback set" in normalized
+        assert "falling back to in-process" not in normalized
 
     def test_search_results_via_mcp_indicator(self):
-        """via='mcp' renders '(via MCP)' in the table title."""
+        """via='mcp' does not render '(via MCP)' in the table title."""
         from io import StringIO
 
         from rich.console import Console
@@ -858,10 +858,11 @@ class TestSearchSafetyContract:
                 via="mcp",
             )
         rendered = " ".join(out.getvalue().split())
-        assert "(via MCP)" in rendered
+        assert "Search Results: code" in rendered
+        assert "(via MCP)" not in rendered
 
     def test_search_results_via_in_process_indicator(self):
-        """via='in-process' renders '(via in-process)' in the title."""
+        """via='in-process' does not render '(via in-process)' in the title."""
         from io import StringIO
 
         from rich.console import Console
@@ -878,7 +879,8 @@ class TestSearchSafetyContract:
                 via="in-process",
             )
         rendered = " ".join(out.getvalue().split())
-        assert "(via in-process)" in rendered
+        assert "Search Results: code" in rendered
+        assert "(via in-process)" not in rendered
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
@@ -2370,3 +2372,130 @@ class TestAutoDelegation:
         )
         assert len(called) == 1
         assert called[0] == ("reindex_vault", 8766)
+
+
+class TestBenchmarkAndQualityCommands:
+    """Tests for the benchmark and quality subcommands, asserting delegation to APIs."""
+
+    def test_benchmark_command_delegation(self, tmp_path, monkeypatch):
+        (tmp_path / ".vaultspec").mkdir()
+
+        called = []
+
+        def mock_run_benchmark(root, n_queries):
+            called.append((root, n_queries))
+            return {
+                "p50": 1.2,
+                "p95": 3.4,
+                "p99": 5.6,
+                "mean": 2.3,
+                "stdev": 0.5,
+                "vault_count": 42,
+                "code_count": 100,
+                "gpu": "GeForce RTX 4090",
+                "vram_mb": 512.0,
+            }
+
+        monkeypatch.setattr("vaultspec_rag.api.run_benchmark", mock_run_benchmark)
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "benchmark",
+                "--n-queries",
+                "10",
+            ],
+        )
+        assert result.exit_code == 0
+        assert len(called) == 1
+        assert called[0][1] == 10
+        assert "GeForce RTX 4090" in result.output
+        assert "512.0 MB" in result.output
+        assert "42" in result.output
+
+    def test_benchmark_empty_vault(self, tmp_path, monkeypatch):
+        (tmp_path / ".vaultspec").mkdir()
+
+        def mock_run_benchmark(root, n_queries):
+            raise ValueError("No vault documents indexed.")
+
+        monkeypatch.setattr("vaultspec_rag.api.run_benchmark", mock_run_benchmark)
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "benchmark",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "No vault documents indexed" in result.output
+
+    def test_quality_command_delegation_pass(self, tmp_path, monkeypatch):
+        (tmp_path / ".vaultspec").mkdir()
+
+        called = []
+
+        def mock_run_quality_probe():
+            called.append(True)
+            return {
+                "passed": 8,
+                "total": 8,
+                "precision": 1.0,
+                "threshold": 0.75,
+                "probes": [
+                    {"query": "q1", "label": "L1", "passed": True},
+                ],
+            }
+
+        monkeypatch.setattr(
+            "vaultspec_rag.api.run_quality_probe",
+            mock_run_quality_probe,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "quality",
+            ],
+        )
+        assert result.exit_code == 0
+        assert len(called) == 1
+        assert "PASS" in result.output
+        assert "100%" in result.output
+
+    def test_quality_command_delegation_fail(self, tmp_path, monkeypatch):
+        (tmp_path / ".vaultspec").mkdir()
+
+        def mock_run_quality_probe():
+            return {
+                "passed": 4,
+                "total": 8,
+                "precision": 0.5,
+                "threshold": 0.75,
+                "probes": [
+                    {"query": "q1", "label": "L1", "passed": False},
+                ],
+            }
+
+        monkeypatch.setattr(
+            "vaultspec_rag.api.run_quality_probe",
+            mock_run_quality_probe,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "quality",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "FAILED" in result.output
+        assert "50%" in result.output

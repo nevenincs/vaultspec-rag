@@ -199,20 +199,19 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
         - ``watcher`` - the ``get_watcher_state`` rollup (enable flag,
           debounce/cooldown, watched roots).
     """
-    from ._tools import get_index_status
+    import vaultspec_rag
 
-    index = await get_index_status(project_root=project_root)
-    projects = await list_projects(project_root=project_root)
-    watcher = await get_watcher_state(project_root=project_root)
+    from ._utils import _resolve_root
 
-    index_data: dict[str, Any] = (
-        index if isinstance(index, dict) else index.model_dump()
-    )
-    return {
-        "index": index_data,
-        "projects": projects,
-        "watcher": watcher,
-    }
+    root = _resolve_root(project_root)
+
+    with _m._watcher_lock:
+        watching_roots = [str(r) for r in _m._watcher_tasks]
+
+    def _run() -> dict[str, Any]:
+        return vaultspec_rag.get_service_state(root, watching_roots=watching_roots)
+
+    return await _run_in_thread(_run)
 
 
 @mcp.tool()
@@ -310,3 +309,49 @@ async def reconfigure_watcher(
         if cooldown_s is not None
         else float(cfg.watch_cooldown_s),
     }
+
+
+@mcp.tool()
+async def benchmark(
+    project_root: str | None = None,
+    n_queries: int = 20,
+) -> dict[str, Any]:
+    """Run search latency benchmarks against the indexed vault.
+
+    Reports p50/p95/p99 latency, store counts, and GPU memory usage.
+
+    Args:
+        project_root: Optional workspace root directory.
+        n_queries: Number of search queries to time.
+
+    Returns:
+        Dict containing benchmark results.
+    """
+    import vaultspec_rag
+
+    from ._utils import _resolve_root
+
+    root = _resolve_root(project_root)
+
+    def _run() -> dict[str, Any]:
+        return vaultspec_rag.run_benchmark(root, n_queries=n_queries)
+
+    return await _run_in_thread(_run)
+
+
+@mcp.tool()
+async def quality() -> dict[str, Any]:
+    """Run quality-scoring probes against a synthetic test corpus.
+
+    Generates a temporary synthetic vault, indexes it, runs needle-based
+    precision probes, and reports results.
+
+    Returns:
+        Dict containing quality probe results.
+    """
+    import vaultspec_rag
+
+    def _run() -> dict[str, Any]:
+        return vaultspec_rag.run_quality_probe()
+
+    return await _run_in_thread(_run)

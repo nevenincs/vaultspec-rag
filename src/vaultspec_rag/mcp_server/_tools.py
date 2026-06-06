@@ -48,6 +48,8 @@ async def search_vault(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
 ) -> SearchResponse | dict[str, Any]:
     """Search the documentation vault for relevant ADRs, plans, and research.
@@ -62,6 +64,10 @@ async def search_vault(
         date: Optional exact ISO-date filter.
         tag: Optional free-form tag filter (matches against the
             ``tags`` payload array).
+        like_ids: Optional list of document IDs or point IDs to guide
+            search (positive feedback).
+        unlike_ids: Optional list of document IDs or point IDs to push
+            search away (negative feedback).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
@@ -93,6 +99,8 @@ async def search_vault(
                 feature=feature,
                 date=date,
                 tag=tag,
+                like_ids=like_ids,
+                unlike_ids=unlike_ids,
             )
             items = [
                 SearchResultItem.model_validate(r, from_attributes=True)
@@ -129,6 +137,8 @@ async def search_codebase(
     exclude_paths: list[str] | None = None,
     dedup_locales: bool = False,
     prefer: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
 ) -> SearchResponse | dict[str, Any]:
     """Search the source codebase for relevant functions, classes, or logic.
@@ -159,6 +169,10 @@ async def search_codebase(
         prefer: Optional ``"prod" | "tests" | "docs"``. Applies a
             small +/- score nudge to the matching category after
             rerank. Opt-in; defaults to None (no nudge).
+        like_ids: Optional list of chunk IDs or point IDs to guide
+            search (positive feedback).
+        unlike_ids: Optional list of chunk IDs or point IDs to push
+            search away (negative feedback).
         project_root: Optional project root path. Defaults to
             ``VAULTSPEC_RAG_ROOT`` env var or cwd (stdio only).
             Required in HTTP service mode.
@@ -199,6 +213,8 @@ async def search_codebase(
                 exclude_paths=exclude_paths,
                 dedup_locales=dedup_locales,
                 prefer=prefer,
+                like_ids=like_ids,
+                unlike_ids=unlike_ids,
             )
             items = [
                 SearchResultItem.model_validate(r, from_attributes=True)

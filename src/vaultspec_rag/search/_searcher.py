@@ -243,6 +243,8 @@ class VaultSearcher:
         feature: str | None = None,
         date: str | None = None,
         tag: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
     ) -> list[SearchResult]:
         """Search vault using pre-encoded dense and sparse vectors.
 
@@ -259,6 +261,10 @@ class VaultSearcher:
             feature: Optional feature-tag filter.
             date: Optional ISO date filter.
             tag: Optional free-form tag filter.
+            like_ids: Optional list of document IDs or point IDs to guide
+                search (positive feedback).
+            unlike_ids: Optional list of document IDs or point IDs to push
+                search away (negative feedback).
 
         Returns:
             Ranked list of vault SearchResult instances.
@@ -285,6 +291,8 @@ class VaultSearcher:
             filters=store_filters or None,
             limit=fetch_limit,
             sparse_vector=sparse_vector,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
         )
 
         results = []
@@ -325,6 +333,8 @@ class VaultSearcher:
         exclude_paths: list[str] | None = None,
         dedup_locales: bool = False,
         prefer: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
     ) -> list[SearchResult]:
         """Search codebase using pre-encoded dense and sparse vectors.
 
@@ -356,6 +366,10 @@ class VaultSearcher:
                 results based on path-derived category after
                 rerank, then re-sort. Opt-in; default is no
                 preference.
+            like_ids: Optional list of chunk IDs or point IDs to guide
+                search (positive feedback).
+            unlike_ids: Optional list of chunk IDs or point IDs to push
+                search away (negative feedback).
 
         Returns:
             Ranked list of codebase SearchResult instances.
@@ -398,6 +412,8 @@ class VaultSearcher:
             filters=store_filters or None,
             limit=fetch_limit,
             sparse_vector=sparse_vector,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
         )
 
         # Post-query glob filter. Runs before SearchResult / rerank
@@ -494,6 +510,8 @@ class VaultSearcher:
         feature: str | None = None,
         date: str | None = None,
         tag: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
     ) -> list[SearchResult]:
         """Search only the vault collection.
 
@@ -508,6 +526,8 @@ class VaultSearcher:
             feature: Optional feature-tag filter.
             date: Optional ISO date filter.
             tag: Optional free-form tag filter.
+            like_ids: Optional list of document IDs or point IDs to guide search.
+            unlike_ids: Optional list of document IDs or point IDs to push search away.
 
         Returns:
             Ranked list of vault SearchResult instances.
@@ -523,6 +543,8 @@ class VaultSearcher:
             feature=feature,
             date=date,
             tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
         )
 
     def search_codebase(
@@ -539,6 +561,8 @@ class VaultSearcher:
         exclude_paths: list[str] | None = None,
         dedup_locales: bool = False,
         prefer: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
     ) -> list[SearchResult]:
         """Search only the source codebase.
 
@@ -563,6 +587,8 @@ class VaultSearcher:
             prefer: Optional ``"prod" | "tests" | "docs"`` -
                 applies a small +/- score nudge to the matching
                 category after rerank. Opt-in.
+            like_ids: Optional list of chunk IDs or point IDs to guide search.
+            unlike_ids: Optional list of chunk IDs or point IDs to push search away.
 
         Returns:
             Ranked list of codebase SearchResult instances.
@@ -583,4 +609,6 @@ class VaultSearcher:
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
         )

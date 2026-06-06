@@ -24,7 +24,6 @@ LIB_SRC: pathlib.Path = PROJECT_ROOT / "src" / "vaultspec_rag"
 SCRIPTS: pathlib.Path = PROJECT_ROOT / "src" / "vaultspec_rag"
 
 TEST_PORT_BASE: int = 10001
-TEST_PORT_A2A_BASE: int = 10020
 TEST_PORT_SUBAGENT: int = 10010
 
 TIMEOUT_QUICK: int = 15
@@ -34,7 +33,6 @@ TIMEOUT_CLAUDE_E2E: int = 60
 TIMEOUT_GEMINI_E2E: int = 60
 TIMEOUT_MCP_E2E: int = 180
 TIMEOUT_FULL_CYCLE: int = 180
-TIMEOUT_A2A_E2E: int = 300
 
 DELAY_SHORT: float = 0.2
 DELAY_MEDIUM: float = 0.3

@@ -28,10 +28,13 @@ __all__ = [
     "GraphCache",
     "clean",
     "get_related",
+    "get_service_state",
     "get_status",
     "index",
     "index_codebase",
     "list_documents",
+    "run_benchmark",
+    "run_quality_probe",
     "scan_codebase_files",
     "search_codebase",
     "search_vault",
@@ -73,8 +76,7 @@ def index(
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
     registry = get_registry()
-    if model_name is not None:
-        registry.load_model(model_name)
+    registry.load_model(model_name)
     with registry.lease(root) as slot:
         result = (
             slot.vault_indexer.full_index(clean=clean, reporter=rep)
@@ -115,8 +117,7 @@ def index_codebase(
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
     registry = get_registry()
-    if model_name is not None:
-        registry.load_model(model_name)
+    registry.load_model(model_name)
     with registry.lease(root) as slot:
         if extra_excludes is not None:
             slot.code_indexer._extra_excludes = extra_excludes
@@ -134,6 +135,8 @@ def search_vault(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
 ) -> list[SearchResult]:
     """Search the documentation vault.
 
@@ -145,6 +148,8 @@ def search_vault(
         feature: Optional feature-tag filter.
         date: Optional ISO date filter.
         tag: Optional free-form tag filter.
+        like_ids: Optional list of document IDs or point IDs to guide search.
+        unlike_ids: Optional list of document IDs or point IDs to push search away.
 
     Returns:
         Ranked list of SearchResult objects.
@@ -159,7 +164,9 @@ def search_vault(
         tag=tag,
     )
     root = _resolve(root_dir)
-    with get_registry().lease(root) as slot:
+    registry = get_registry()
+    registry.load_model()
+    with registry.lease(root) as slot:
         return slot.searcher.search_vault(
             query,
             top_k=top_k,
@@ -167,6 +174,8 @@ def search_vault(
             feature=feature,
             date=date,
             tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
         )
 
 
@@ -184,6 +193,8 @@ def search_codebase(
     exclude_paths: list[str] | None = None,
     dedup_locales: bool = False,
     prefer: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
 ) -> list[SearchResult]:
     """Search the source codebase.
 
@@ -208,6 +219,8 @@ def search_codebase(
         prefer: Optional ``"prod" | "tests" | "docs"`` - applies a
             small +/- score nudge to the matching category after
             rerank. Opt-in.
+        like_ids: Optional list of chunk IDs or point IDs to guide search.
+        unlike_ids: Optional list of chunk IDs or point IDs to push search away.
 
     Returns:
         Ranked list of SearchResult objects.
@@ -227,7 +240,9 @@ def search_codebase(
         prefer=prefer,
     )
     root = _resolve(root_dir)
-    with get_registry().lease(root) as slot:
+    registry = get_registry()
+    registry.load_model()
+    with registry.lease(root) as slot:
         return slot.searcher.search_codebase(
             query,
             top_k=top_k,
@@ -240,6 +255,8 @@ def search_codebase(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
         )
 
 
@@ -435,3 +452,248 @@ def scan_codebase_files(
         extra_excludes=extra_excludes,
     )
     return indexer.scan_files()
+
+
+def run_benchmark(
+    root_dir: pathlib.Path,
+    *,
+    n_queries: int = 20,
+) -> dict[str, Any]:
+    """Run search latency benchmarks against the indexed vault.
+
+    Args:
+        root_dir: Workspace root directory.
+        n_queries: Number of search queries to time.
+
+    Returns:
+        Dict containing benchmark results: p50, p95, p99, mean, stdev,
+        vault_count, code_count, gpu_name, vram_mb.
+    """
+    import statistics
+    import time
+
+    root = _resolve(root_dir)
+    registry = get_registry()
+    registry.load_model()
+
+    with registry.lease(root) as slot:
+        vault_count = slot.store.count()
+        if vault_count == 0:
+            raise ValueError("No vault documents indexed.")
+
+        code_count = slot.store.count_code()
+
+        # Warmup
+        slot.searcher.search_vault("warmup", top_k=1)
+
+        _bench_queries = [
+            "architecture decision",
+            "pipeline execution model",
+            "connector protocol design",
+            "security audit vulnerability",
+            "implementation plan phase",
+            "type:adr architecture",
+            "feature:pipeline-engine execution",
+            "scheduler algorithm selection",
+            "pipeline executor implementation",
+            "dag execution research",
+            "data transformation pipeline",
+            "worker pool thread",
+            "type:plan implementation",
+            "semantic search embedding",
+            "Qdrant vector store",
+            "date:2026-01 decisions",
+            "checkpoint storage performance",
+            "connector grpc streaming",
+            "execution graph dependency",
+            "incremental indexing hash",
+        ]
+
+        latencies: list[float] = []
+        for i in range(n_queries):
+            q = _bench_queries[i % len(_bench_queries)]
+            t0 = time.perf_counter()
+            slot.searcher.search_vault(q, top_k=5)
+            latencies.append((time.perf_counter() - t0) * 1000)
+
+        latencies.sort()
+        p50 = latencies[n_queries // 2]
+        p95 = latencies[int(n_queries * 0.95)]
+        p99 = latencies[int(n_queries * 0.99)]
+        mean = statistics.mean(latencies)
+        stdev = statistics.stdev(latencies) if len(latencies) > 1 else 0.0
+
+        try:
+            import torch
+
+            gpu_name = (
+                torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
+            )
+            vram_mb = (
+                torch.cuda.memory_allocated(0) / (1024 * 1024)
+                if torch.cuda.is_available()
+                else 0.0
+            )
+        except ImportError:
+            gpu_name = "N/A"
+            vram_mb = 0.0
+
+        return {
+            "p50": p50,
+            "p95": p95,
+            "p99": p99,
+            "mean": mean,
+            "stdev": stdev,
+            "vault_count": vault_count,
+            "code_count": code_count,
+            "gpu": gpu_name,
+            "vram_mb": vram_mb,
+        }
+
+
+def run_quality_probe(
+    *,
+    threshold: float = 0.75,
+) -> dict[str, Any]:
+    """Run search quality probes against a synthetic test corpus.
+
+    Generates a temporary synthetic vault, indexes it, runs
+    needle-based precision probes, and returns results.
+
+    Returns:
+        Dict containing:
+            - "passed": int
+            - "total": int
+            - "precision": float
+            - "threshold": float
+            - "probes": list of dicts with {"query": str, "label": str, "passed": bool}
+    """
+    import tempfile
+    from pathlib import Path
+
+    from .progress import NullProgressReporter
+    from .synthetic import build_synthetic_vault
+
+    registry = get_registry()
+    registry.load_model()
+
+    with tempfile.TemporaryDirectory(prefix="vaultspec-quality-") as tmp:
+        root = Path(tmp)
+        manifest = build_synthetic_vault(root, n_docs=24, seed=42)
+
+        with registry.lease(root) as slot:
+            slot.vault_indexer.full_index(reporter=NullProgressReporter())
+
+            probes: list[dict[str, Any]] = []
+            passed = 0
+
+            needles = list(manifest.needles.items())[:8]
+            for needle, doc_id in needles:
+                results = slot.searcher.search_vault(needle, top_k=5)
+                ok = any(doc_id in r.id for r in results)
+                if ok:
+                    passed += 1
+                probes.append(
+                    {
+                        "query": needle,
+                        "label": f"Needle → {doc_id}",
+                        "expected_id": doc_id,
+                        "passed": ok,
+                    }
+                )
+
+            total = len(needles)
+            precision = passed / total if total else 0.0
+
+        registry.close_project(root)
+
+        return {
+            "passed": passed,
+            "total": total,
+            "precision": precision,
+            "threshold": threshold,
+            "probes": probes,
+        }
+
+
+def get_service_state(
+    root_dir: pathlib.Path,
+    *,
+    watching_roots: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return a consolidated read-only snapshot of the service's state.
+
+    Args:
+        root_dir: Workspace root directory.
+        watching_roots: Optional list of root paths currently watched.
+
+    Returns:
+        Dict containing index, projects, and watcher sections.
+    """
+    from datetime import datetime
+
+    from .config import get_config
+    from .registry import get_registry
+    from .service import RegistryFullError
+    from .store import VaultStoreLockedError
+
+    root = _resolve(root_dir)
+
+    try:
+        index_data = get_status(root)
+    except RegistryFullError as exc:
+        index_data = {
+            "error": "registry_full",
+            "message": str(exc),
+            "max_projects": exc.max_projects,
+        }
+    except VaultStoreLockedError as exc:
+        index_data = {
+            "error": "store_locked",
+            "message": str(exc),
+        }
+    except Exception as exc:
+        index_data = {
+            "error": "unknown",
+            "message": str(exc),
+        }
+
+    registry = get_registry()
+    snapshot = registry.snapshot()
+    wall_now = datetime.now().astimezone()
+    projects = []
+    for entry in snapshot:
+        idle_s = float(entry["idle_seconds"])
+        last_access_wall = wall_now.timestamp() - idle_s
+        last_access_iso = (
+            datetime.fromtimestamp(last_access_wall).astimezone().isoformat()
+        )
+        projects.append(
+            {
+                "root": str(entry["root"]),
+                "last_access_iso": last_access_iso,
+                "idle_seconds": idle_s,
+                "ref_count": int(entry["ref_count"]),
+            },
+        )
+    projects_data = {
+        "projects": projects,
+        "max_projects": registry.max_projects,
+        "idle_ttl_seconds": registry.idle_ttl_seconds,
+    }
+
+    cfg = get_config()
+    watching = watching_roots or []
+    watcher_data: dict[str, Any] = {
+        "watch_enabled": bool(cfg.watch_enabled),
+        "debounce_ms": int(cfg.watch_debounce_ms),
+        "cooldown_s": float(cfg.watch_cooldown_s),
+        "watching": watching,
+        "running": str(root) in watching,
+    }
+
+    return {
+        "index": index_data,
+        "projects": projects_data,
+        "watcher": watcher_data,
+    }
