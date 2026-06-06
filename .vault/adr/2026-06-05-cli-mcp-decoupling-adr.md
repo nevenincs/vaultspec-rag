@@ -17,7 +17,7 @@ The CLI (`src/vaultspec_rag/cli/`) and MCP (`src/vaultspec_rag/mcp_server/`) ent
 
 - **Decoupled Interfaces**: Interface wrappers must only parse command arguments or payload parameters, forward them to the backend, and render the returned results.
 - **Backend Facade**: All core capabilities—such as indexing, search, diagnostics, benchmarking, and quality checks—must reside in `vaultspec_rag` and be exposed through unified functions in `src/vaultspec_rag/api.py`.
-- **Robust Integration Testing**: The A2A layer must be tested using real subprocesses and service calls to prevent gaps in transport/API verification.
+- **Robust Integration Testing**: The CLI/MCP interface layers must be tested using real subprocesses and service calls to prevent gaps in transport/API verification.
 
 ## Constraints
 
