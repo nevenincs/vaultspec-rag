@@ -40,11 +40,16 @@ Based on an audit of the codebase, the terminology conflation extends deeply int
    - **`tests/`**: Other daemon integration tests that refer to the `mcp_server` internal objects.
    - **`.vaultspec/rules/vaultspec-rag.builtin.md`**: The framework's core rules specifically document the entry point as `vaultspec_rag.mcp_server:main`, which needs to be updated.
 
+1. **Architectural Conflation (Daemon as MCP Server):**
+
+   - **`vaultspec_rag/cli/_mcp_search.py`**: The CLI's fast-path (`_try_mcp_search` and `_try_mcp_reindex`) currently connects to the daemon using the `mcp.client.streamable_http` module. This means the daemon acts directly as an MCP server via SSE, forcing the daemon to handle protocol parsing instead of exposing native REST APIs for core RAG operations.
+   - **`vaultspec_rag/mcp_server/_tools.py`**: The MCP tools execute `vaultspec_rag` logic in-process. If `vaultspec-search-mcp` is run as a standalone stdio adapter, it runs its own RAG instance rather than acting as a lightweight client delegating to the resident daemon.
+
 ## Next Steps
 
-We must systematically split `mcp_server` into two distinct packages:
+To properly decouple the "RAG Server" from the "MCP Server", we must execute a deep architectural refactor:
 
-1. `vaultspec_rag.server`: The background HTTP daemon running FastAPI.
-1. `vaultspec_rag.mcp`: The protocol adapter (stdio/SSE serialization, `@mcp.tool()` definitions).
-
-Additionally, we need to collapse the `service` CLI group into the `server` group and correct all misleading docstrings.
+1. **Native REST APIs**: The background HTTP daemon (`vaultspec_rag.server`) must expose native REST endpoints for `/search` and `/reindex`, completely dropping its reliance on hosting an MCP SSE endpoint.
+1. **CLI as a REST Client**: The CLI fast-path (`_try_mcp_search`) must be rewritten to consume these new REST endpoints via standard HTTP requests (`_try_http_search`).
+1. **MCP as a Consumer Client**: The MCP protocol adapter (`vaultspec_rag.mcp`) must be isolated as a standalone, lightweight wrapper that proxies LLM requests to the daemon's REST API, stripping it of all in-process RAG orchestration.
+1. **Package & CLI Separation**: Rename `mcp_server` to `server`, flatten the CLI `server service` group to `server`, and decouple the `mcp` startup commands. Correct all misleading docstrings and references in the test suite and framework rules.
