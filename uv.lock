@@ -2375,7 +2375,6 @@ version = "0.2.16"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "mcp" },
     { name = "packaging" },
     { name = "pathspec" },
     { name = "psutil" },
@@ -2398,6 +2397,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "identify" },
+    { name = "mcp" },
     { name = "mdformat" },
     { name = "mdformat-frontmatter" },
     { name = "mdformat-gfm" },
@@ -2411,12 +2411,16 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+mcp = [
+    { name = "mcp" },
+]
 
 [package.dev-dependencies]
 dev = [
     { name = "flake8" },
     { name = "flake8-cognitive-complexity" },
     { name = "identify" },
+    { name = "mcp" },
     { name = "mdformat" },
     { name = "mdformat-frontmatter" },
     { name = "mdformat-gfm" },
@@ -2437,7 +2441,8 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
     { name = "identify", marker = "extra == 'dev'", specifier = ">=2.0.0" },
-    { name = "mcp", specifier = ">=1.26.0" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.26.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0" },
     { name = "mdformat", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "mdformat-frontmatter", marker = "extra == 'dev'", specifier = ">=2.0.10" },
     { name = "mdformat-gfm", marker = "extra == 'dev'", specifier = ">=1.0.0" },
@@ -2468,13 +2473,14 @@ requires-dist = [
     { name = "vaultspec-core", specifier = ">=0.1.27" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["mcp", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "flake8", specifier = ">=7.3.0" },
     { name = "flake8-cognitive-complexity", specifier = ">=0.1.0" },
     { name = "identify", specifier = ">=2.0.0" },
+    { name = "mcp", specifier = ">=1.26.0" },
     { name = "mdformat", specifier = ">=1.0.0" },
     { name = "mdformat-frontmatter", specifier = ">=2.0.10" },
     { name = "mdformat-gfm", specifier = ">=1.0.0" },
