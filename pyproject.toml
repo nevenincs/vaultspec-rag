@@ -55,7 +55,7 @@ version = "0.2.16"
 
   [project.scripts]
   vaultspec-rag = "vaultspec_rag.__main__:main"
-  vaultspec-search-mcp = "vaultspec_rag.mcp_server:main"
+  vaultspec-search-mcp = "vaultspec_rag.server:main"
 
   [project.urls]
   "Bug Tracker" = "https://github.com/wgergely/vaultspec-rag/issues"
