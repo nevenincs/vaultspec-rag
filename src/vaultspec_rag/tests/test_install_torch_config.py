@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 import pytest
 import tomlkit
 
-from .. import torch_config as tc
-from ..commands import install_run, uninstall_run
+from vaultspec_rag import torch_config as tc
+from vaultspec_rag.commands import install_run, uninstall_run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -158,7 +158,7 @@ class TestInstallTorchConfig:
                 (
                     "import json; "
                     "from pathlib import Path; "
-                    "from ..commands import install_run; "
+                    "from vaultspec_rag.commands import install_run; "
                     "report = install_run(path=Path(r'"
                     + str(consumer_workspace)
                     + "'), assume_yes=True); "
@@ -783,14 +783,14 @@ class TestUvSyncTorchBranches:
     """
 
     def test_classify_succeeded_when_returncode_zero(self) -> None:
-        from ..commands import _classify_uv_sync_result
+        from vaultspec_rag.commands import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(returncode=0, stdout="", stderr="")
         assert action == "succeeded"
         assert warning is None
 
     def test_classify_failed_with_stderr_tail(self) -> None:
-        from ..commands import _classify_uv_sync_result
+        from vaultspec_rag.commands import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(
             returncode=1, stdout="", stderr="resolution failed\nmore detail"
@@ -805,7 +805,7 @@ class TestUvSyncTorchBranches:
         """INSTALL-03 regression: stderr empty, stdout populated → use
         stdout's tail. Pre-fix, the user got only the bare exit code.
         """
-        from ..commands import _classify_uv_sync_result
+        from vaultspec_rag.commands import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(
             returncode=2, stdout="lockfile mismatch on torch", stderr=""
@@ -820,7 +820,7 @@ class TestUvSyncTorchBranches:
         carries only the exit code - but the action must still be
         ``failed`` so renderers colour it red.
         """
-        from ..commands import _classify_uv_sync_result
+        from vaultspec_rag.commands import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(returncode=255, stdout="", stderr="")
         assert action == "failed"
@@ -832,7 +832,7 @@ class TestUvSyncTorchBranches:
 
     def test_classify_failed_tails_only_last_five_lines(self) -> None:
         """Long uv outputs must be tailed to keep warning readable."""
-        from ..commands import _classify_uv_sync_result
+        from vaultspec_rag.commands import _classify_uv_sync_result
 
         many = "\n".join(f"line {i}" for i in range(1, 21))
         action, warning = _classify_uv_sync_result(returncode=1, stdout="", stderr=many)
