@@ -16,7 +16,7 @@ import logging
 import vaultspec_rag.mcp_server as _m
 
 from ._lifespan import health_handler, service_lifespan
-from ._state import mcp
+from vaultspec_rag.mcp import mcp
 
 logger = logging.getLogger("vaultspec_rag.mcp_server")
 

@@ -51,17 +51,6 @@ from . import _jobs
 
 # 3. Tool / resource / prompt submodules - their import side effect is
 #    the decorator registration against ``mcp``.
-from ._admin_tools import (
-    evict_project,
-    get_jobs,
-    get_logs,
-    get_service_state,
-    get_watcher_state,
-    list_projects,
-    reconfigure_watcher,
-    start_watcher,
-    stop_watcher,
-)
 
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
@@ -84,41 +73,6 @@ from ._models import (
     IndexStatus,
     SearchResponse,
     SearchResultItem,
-)
-from ._resources import analyze_feature, get_vault_document
-
-# 1. Shared state: the mcp instance + process-wide globals. Defined
-#    before any tool submodule imports so the decorators register
-#    against this one instance and so the rebindable globals resolve
-#    on the package namespace.
-from ._state import (
-    _HEARTBEAT_INTERVAL_SECONDS,
-    _HEARTBEAT_STALENESS_SECONDS,
-    _MAX_QUERY_LEN,
-    _SENSITIVE_DIRS,
-    _SENSITIVE_PATTERNS,
-    _SERVICE_TOKEN,
-    _http_mode,
-    _registry,
-    _shutdown_hooks_installed,
-    _shutdown_recorded,
-    _start_time,
-    _watcher_lock,
-    _watcher_stops,
-    _watcher_tasks,
-    incr,
-    mcp,
-    observe,
-    render_prometheus,
-    reset_metrics,
-)
-from ._tools import (
-    get_code_file,
-    get_index_status,
-    reindex_codebase,
-    reindex_vault,
-    search_codebase,
-    search_vault,
 )
 from ._utils import (
     _clamp_top_k,
@@ -177,31 +131,13 @@ __all__ = [
     "_watcher_lock",
     "_watcher_stops",
     "_watcher_tasks",
-    "analyze_feature",
-    "evict_project",
-    "get_code_file",
-    "get_index_status",
-    "get_jobs",
-    "get_logs",
-    "get_service_state",
-    "get_vault_document",
-    "get_watcher_state",
     "health_handler",
     "incr",
-    "list_projects",
     "main",
-    "mcp",
     "observe",
-    "reconfigure_watcher",
-    "reindex_codebase",
-    "reindex_vault",
     "render_prometheus",
     "reset_metrics",
-    "search_codebase",
-    "search_vault",
     "service_lifespan",
-    "start_watcher",
-    "stop_watcher",
 ]
 
 

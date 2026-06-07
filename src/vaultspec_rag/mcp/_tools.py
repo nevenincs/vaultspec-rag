@@ -15,26 +15,26 @@ from typing import Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
-from ..jobs import register_on_job_complete
-from ..service import RegistryFullError
-from ..store import VaultStoreLockedError
-from ._models import (
+from ...jobs import register_on_job_complete
+from ...service import RegistryFullError
+from ...store import VaultStoreLockedError
+from ..server._models import (
     IndexResponse,
     IndexStatus,
     SearchResponse,
     SearchResultItem,
 )
-from ._state import mcp
-from ._utils import (
+from ._mcp import mcp
+from ..server._utils import (
     _clamp_top_k,
     _is_sensitive_path,
     _resolve_root,
     _validate_query,
 )
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 
 def _on_job_complete(duration_seconds: float) -> None:
@@ -359,7 +359,7 @@ async def reindex_vault(
             (e.g., no CUDA GPU available).
     """
     root = _resolve_root(project_root)
-    from ..jobs import start_reindex_vault
+    from ...jobs import start_reindex_vault
 
     job_id = start_reindex_vault(root, clean)
     _m._ensure_watcher(root)
@@ -394,7 +394,7 @@ async def reindex_codebase(
             (e.g., no CUDA GPU available).
     """
     root = _resolve_root(project_root)
-    from ..jobs import start_reindex_codebase
+    from ...jobs import start_reindex_codebase
 
     job_id = start_reindex_codebase(root, clean)
     _m._ensure_watcher(root)

@@ -27,8 +27,6 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
-from mcp.server.fastmcp import FastMCP
-
 from ..registry import get_registry
 
 if TYPE_CHECKING:
@@ -36,8 +34,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger("vaultspec_rag.mcp_server")
-
-mcp = FastMCP("VaultSpec Search", stateless_http=True)
 
 _registry = get_registry()
 _watcher_tasks: dict[Path, asyncio.Task[None]] = {}

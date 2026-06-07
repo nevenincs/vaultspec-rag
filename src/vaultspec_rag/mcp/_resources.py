@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from anyio.to_thread import run_sync as _run_in_thread
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
-from ._state import mcp
-from ._utils import _default_root
+from ._mcp import mcp
+from ..server._utils import _default_root
 
 
 @mcp.resource("vault://{doc_id}")
