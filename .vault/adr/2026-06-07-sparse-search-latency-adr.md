@@ -9,6 +9,8 @@ related:
 
 # `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `proposed`)
 
+> **Approval Pending**: Approval of this ADR is blocked pending the full implementation of the MCP vs. Server terminological deconflation (Issues #167, #168, #169). The CLI and MCP layers must be fully decoupled and the architectural conflation resolved before these latency optimizations can proceed.
+
 ## Problem Statement
 
 During full-codebase queries, local-mode search experiences severe latency (up to ~20 seconds for sparse queries across ~114k chunks), primarily because the local Qdrant in-process store forces a linear scan of SPLADE embeddings. Additionally, an architectural audit surfaced a business logic leak in the MCP layer (`src/vaultspec_rag/mcp_server/_tools.py`) where job scheduling logic bypasses the core APIs.

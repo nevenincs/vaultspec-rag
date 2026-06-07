@@ -31,6 +31,8 @@ related:
   - '[[2026-06-06-cli-tree-overhaul-W03-P05-S55]]'
   - '[[2026-06-06-cli-tree-overhaul-W03-P05-S56]]'
   - '[[2026-06-06-cli-tree-overhaul-W03-P05-summary]]'
+  - '[[2026-06-06-cli-tree-overhaul-W03-P06-S57]]'
+  - '[[2026-06-06-cli-tree-overhaul-W03-P06-summary]]'
   - '[[2026-06-06-cli-tree-overhaul-adr]]'
   - '[[2026-06-06-cli-tree-overhaul-plan]]'
   - '[[2026-06-06-cli-tree-overhaul-research]]'
@@ -74,6 +76,8 @@ Auto-generated index of all documents tagged with `#cli-tree-overhaul`.
 - `2026-06-06-cli-tree-overhaul-W03-P05-S55` - `cli-tree-overhaul` Step `S55`
 - `2026-06-06-cli-tree-overhaul-W03-P05-S56` - `cli-tree-overhaul` Step `S56`
 - `2026-06-06-cli-tree-overhaul-W03-P05-summary` - Phase W03-P05 Summary
+- `2026-06-06-cli-tree-overhaul-W03-P06-S57` - cli-tree-overhaul W03 P06 S57
+- `2026-06-06-cli-tree-overhaul-W03-P06-summary` - cli-tree-overhaul W03 P06 summary
 
 ### plan
 
