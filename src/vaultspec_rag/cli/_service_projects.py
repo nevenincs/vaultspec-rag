@@ -10,7 +10,7 @@ from rich.table import Table
 import vaultspec_rag.cli as _cli
 
 from ._app import service_projects_app
-from ._mcp_search import _try_mcp_admin
+from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
@@ -99,7 +99,7 @@ def service_projects_list(
 ) -> None:
     """List active project slots on a running RAG service."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("list_projects", {}, resolved_port)
+    result = _try_http_admin("list_projects", {}, resolved_port)
     if result is None:
         _handle_list_not_running(json_mode)
 
@@ -181,7 +181,7 @@ def service_projects_evict(
 ) -> None:
     """Evict a project slot on a running RAG service."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin(
+    result = _try_http_admin(
         "evict_project",
         {"root": root},
         resolved_port,

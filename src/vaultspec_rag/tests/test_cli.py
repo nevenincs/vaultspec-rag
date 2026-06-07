@@ -18,7 +18,7 @@ from ..cli import (
     _is_our_service,
     _is_pid_alive,
     _read_service_status,
-    _try_mcp_search,
+    _try_http_search,
     _write_service_status,
     app,
 )
@@ -409,28 +409,28 @@ class TestServiceLifecycleHelpers:
 
 
 class TestMcpFastPath:
-    """Tests for MCP fast-path functions (_try_mcp_search, _display_search_results)."""
+    """Tests for MCP fast-path functions (_try_http_search, _display_search_results)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_tool_map_vault(self):
         """Connection refused on port 1 returns None, no exception."""
-        result = _try_mcp_search("test query", "vault", 5, 1, "/tmp/proj")
+        result = _try_http_search("test query", "vault", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_tool_map_code(self):
         """search_type='code' maps to search_codebase, returns None on failure."""
-        result = _try_mcp_search("test query", "code", 5, 1, "/tmp/proj")
+        result = _try_http_search("test query", "code", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_invalid_search_type(self):
         """Unknown search_type falls back to search_vault, returns None on failure."""
-        result = _try_mcp_search("test query", "invalid", 5, 1, "/tmp/proj")
+        result = _try_http_search("test query", "invalid", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_code_filters_with_vault_returns_usage_error(self):
         """Filter kwargs with --type vault yield a structured usage error."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test query",
             "vault",
             5,
@@ -445,7 +445,7 @@ class TestMcpFastPath:
 
     def test_code_filters_with_all_returns_usage_error(self):
         """search_type='all' is also incompatible with code-only filters."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "q",
             "all",
             5,
@@ -462,12 +462,12 @@ class TestMcpFastPath:
     def test_code_filters_unset_dont_short_circuit(self):
         """All filters None must not trigger the usage error path."""
         # No service running on port 1 → expect transport None, NOT usage-error dict.
-        result = _try_mcp_search("q", "vault", 5, 1, "/tmp/proj")
+        result = _try_http_search("q", "vault", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_code_filters_with_code_attempts_call(self):
         """Filters paired with --type code reach the call path; no service → None."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "q",
             "code",
             5,
@@ -513,7 +513,7 @@ class TestMcpFastPath:
 
     def test_path_filter_with_vault_returns_usage_error(self):
         """--path is a code filter; pairing it with vault must error."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test",
             "vault",
             5,
@@ -527,7 +527,7 @@ class TestMcpFastPath:
 
     def test_vault_filter_with_code_returns_usage_error(self):
         """doc_type/feature/date/tag with --type code must error."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test",
             "code",
             5,
@@ -541,7 +541,7 @@ class TestMcpFastPath:
 
     def test_vault_filters_with_code_attempt_call(self):
         """doc_type/feature/date/tag with --type vault reach the call path."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "q",
             "vault",
             5,
@@ -557,7 +557,7 @@ class TestMcpFastPath:
 
     def test_include_path_with_vault_returns_usage_error(self):
         """--include-path is a code filter; --type vault must error."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test",
             "vault",
             5,
@@ -571,7 +571,7 @@ class TestMcpFastPath:
 
     def test_exclude_path_with_vault_returns_usage_error(self):
         """--exclude-path with --type vault errors out symmetrically."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test",
             "vault",
             5,
@@ -585,7 +585,7 @@ class TestMcpFastPath:
 
     def test_glob_filters_with_code_attempt_call(self):
         """--include-path/--exclude-path with --type code reach the call path."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "q",
             "code",
             5,
@@ -630,7 +630,7 @@ class TestMcpFastPath:
 
     def test_dedup_locales_with_vault_returns_usage_error(self):
         """--dedup-locales is a code-only post-process flag."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test",
             "vault",
             5,
@@ -644,7 +644,7 @@ class TestMcpFastPath:
 
     def test_prefer_with_vault_returns_usage_error(self):
         """--prefer is a code-only post-process flag."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "test",
             "vault",
             5,
@@ -658,7 +658,7 @@ class TestMcpFastPath:
 
     def test_postproc_flags_with_code_attempt_call(self):
         """dedup_locales/prefer with --type code reach the call path."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "q",
             "code",
             5,
@@ -718,7 +718,7 @@ class TestMcpFastPath:
 
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
-        result = _try_mcp_search(
+        result = _try_http_search(
             "q",
             "code",
             5,
@@ -745,7 +745,7 @@ class TestMcpFastPath:
 
         monkeypatch.setattr(asyncio, "run", _boom)
 
-        result = cli_mod._try_mcp_search(
+        result = cli_mod._try_http_search(
             "q",
             "code",
             5,
@@ -758,7 +758,7 @@ class TestMcpFastPath:
         assert "synthetic live-but-broken" in str(result.get("message", ""))
 
     def test_live_but_broken_reindex_returns_structured_error(self, monkeypatch):
-        """Same discrimination for _try_mcp_reindex."""
+        """Same discrimination for _try_http_reindex."""
         import asyncio
 
         from .. import cli as cli_mod
@@ -768,7 +768,7 @@ class TestMcpFastPath:
 
         monkeypatch.setattr(asyncio, "run", _boom)
 
-        result = cli_mod._try_mcp_reindex(
+        result = cli_mod._try_http_reindex(
             "reindex_vault",
             False,
             8766,
@@ -789,7 +789,7 @@ class TestMcpFastPath:
 
         monkeypatch.setattr(asyncio, "run", _refuse)
 
-        result = cli_mod._try_mcp_search(
+        result = cli_mod._try_http_search(
             "q",
             "code",
             5,
@@ -952,8 +952,8 @@ class TestSearchSafetyContract:
         assert "direct local-store search" in data["message"]
 
     def test_search_mcp_timeout_diagnostics(self, tmp_path, monkeypatch):
-        """Timeout in client inside _try_mcp_search returns mcp_search_timeout."""
-        from ..cli import _try_mcp_search
+        """Timeout in client inside _try_http_search returns mcp_search_timeout."""
+        from ..cli import _try_http_search
 
         # Mock streamable_http_client to simulate a timeout
         class DummyClient:
@@ -968,7 +968,7 @@ class TestSearchSafetyContract:
             lambda _url: DummyClient(),
         )
 
-        res = _try_mcp_search(
+        res = _try_http_search(
             query="test",
             search_type="vault",
             top_k=5,
@@ -2308,7 +2308,7 @@ class TestAutoDelegation:
             lambda _pid, _port, _expected_token: True,
         )
 
-        # Mock _try_mcp_search to return dummy results (so we know it got called)
+        # Mock _try_http_search to return dummy results (so we know it got called)
         called = []
 
         def mock_try_search(*args, **_kwargs):
@@ -2317,7 +2317,7 @@ class TestAutoDelegation:
             return {"ok": True, "results": []}
 
         monkeypatch.setattr(
-            "vaultspec_rag.cli._search._try_mcp_search", mock_try_search
+            "vaultspec_rag.cli._search._try_http_search", mock_try_search
         )
 
         runner.invoke(
@@ -2359,7 +2359,7 @@ class TestAutoDelegation:
             }
 
         monkeypatch.setattr(
-            "vaultspec_rag.cli._index._try_mcp_reindex", mock_try_reindex
+            "vaultspec_rag.cli._index._try_http_reindex", mock_try_reindex
         )
 
         runner.invoke(

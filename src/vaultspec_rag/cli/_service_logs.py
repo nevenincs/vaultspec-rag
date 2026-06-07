@@ -1,7 +1,7 @@
 """``server service logs``: tail the rotated service log.
 
 Tier-2a observability subcommand (``service-observability`` ADR, plan
-P03). Calls the ``get_logs`` MCP tool over the ``_try_mcp_admin`` seam
+P03). Calls the ``get_logs`` MCP tool over the ``_try_http_admin`` seam
 and prints the lines (or the JSON envelope). Service-not-running yields
 exit code 3.
 """
@@ -15,7 +15,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ._app import service_app
-from ._mcp_search import _try_mcp_admin
+from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
@@ -37,7 +37,7 @@ def service_logs(
 ) -> None:
     """Show the last N lines of the running service's rotated log."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("get_logs", {"lines": lines}, resolved_port)
+    result = _try_http_admin("get_logs", {"lines": lines}, resolved_port)
     if result is None:
         if json_mode:
             _emit_json_error_and_exit(

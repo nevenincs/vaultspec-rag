@@ -9,7 +9,7 @@ code review, and documentation discovery.
 This module was split into a package (``cli/``) per the
 ``2026-06-01-module-split-adr``. The verbatim public surface - the Typer
 ``app`` plus the ``_``-prefixed helpers that tests import or monkeypatch
-directly (``_spawn_service``, ``_health_probe``, ``_try_mcp_search``,
+directly (``_spawn_service``, ``_health_probe``, ``_try_http_search``,
 ``console`` …) - is re-exported here unchanged through an explicit
 ``__all__``.
 
@@ -66,11 +66,11 @@ from ._gpu_errors import (
 from ._index import handle_clean, handle_index
 from ._install import handle_install, handle_uninstall
 from ._mcp_admin import mcp_start, mcp_status, mcp_stop
-from ._mcp_search import (
+from ._http_search import (
     _is_connection_refused,
-    _try_mcp_admin,
-    _try_mcp_reindex,
-    _try_mcp_search,
+    _try_http_admin,
+    _try_http_reindex,
+    _try_http_search,
 )
 from ._process import (
     _health_probe,
@@ -160,9 +160,9 @@ __all__ = [
     "_status_file",
     "_suppress_hf_progress",
     "_terminate_pid",
-    "_try_mcp_admin",
-    "_try_mcp_reindex",
-    "_try_mcp_search",
+    "_try_http_admin",
+    "_try_http_reindex",
+    "_try_http_search",
     "_write_service_status",
     "app",
     "console",

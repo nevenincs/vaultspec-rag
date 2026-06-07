@@ -1,7 +1,7 @@
 """``server service jobs``: list recent index/reindex activity.
 
 Tier-2b observability subcommand (``service-observability`` ADR, plan
-P04). Calls the ``get_jobs`` MCP tool over the ``_try_mcp_admin`` seam
+P04). Calls the ``get_jobs`` MCP tool over the ``_try_http_admin`` seam
 and renders a Rich table (or the JSON envelope). Service-not-running
 yields exit code 3.
 """
@@ -16,7 +16,7 @@ from rich.table import Table
 import vaultspec_rag.cli as _cli
 
 from ._app import service_app
-from ._mcp_search import _try_mcp_admin
+from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
@@ -64,7 +64,7 @@ def service_jobs(
     args: dict[str, object] = {}
     if limit is not None:
         args["limit"] = limit
-    result = _try_mcp_admin("get_jobs", args, resolved_port)
+    result = _try_http_admin("get_jobs", args, resolved_port)
     if result is None:
         if json_mode:
             _emit_json_error_and_exit(

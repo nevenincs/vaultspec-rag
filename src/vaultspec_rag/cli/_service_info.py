@@ -2,7 +2,7 @@
 
 Tier-1 observability subcommand (``service-observability`` ADR, plan
 P02). Calls the ``get_service_state`` MCP tool over the
-``_try_mcp_admin`` seam and renders a Rich summary (or the JSON
+``_try_http_admin`` seam and renders a Rich summary (or the JSON
 envelope). Service-not-running yields exit code 3.
 """
 
@@ -16,7 +16,7 @@ from rich.table import Table
 import vaultspec_rag.cli as _cli
 
 from ._app import service_app
-from ._mcp_search import _try_mcp_admin
+from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_projects import _truncate_root
 from ._service_status import _default_service_port
@@ -35,7 +35,7 @@ def service_info(
 ) -> None:
     """Show a consolidated snapshot of the running service's state."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("get_service_state", {}, resolved_port)
+    result = _try_http_admin("get_service_state", {}, resolved_port)
     if result is None:
         if json_mode:
             _emit_json_error_and_exit(

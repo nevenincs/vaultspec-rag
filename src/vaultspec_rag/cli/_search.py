@@ -14,7 +14,7 @@ import vaultspec_rag.cli as _cli
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
-from ._mcp_search import _try_mcp_search
+from ._http_search import _try_http_search
 from ._render import (
     _display_mcp_error,
     _display_port_unreachable_error,
@@ -563,7 +563,7 @@ def handle_search(
             allow_fallback = True
 
     if port is not None:
-        mcp_results = _try_mcp_search(
+        mcp_results = _try_http_search(
             query,
             search_type,
             max_results,

@@ -16,7 +16,7 @@ from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
-from ._mcp_search import _try_mcp_reindex
+from ._http_search import _try_http_reindex
 from ._render import (
     _display_mcp_error,
     _display_port_unreachable_error,
@@ -110,14 +110,14 @@ def _try_mcp_delegation(
     c_data = None
 
     if do_vault:
-        v_data = _try_mcp_reindex(
+        v_data = _try_http_reindex(
             "reindex_vault",
             rebuild,
             port,
             str(target),
         )
     if do_code:
-        c_data = _try_mcp_reindex(
+        c_data = _try_http_reindex(
             "reindex_codebase",
             rebuild,
             port,
@@ -317,7 +317,7 @@ def handle_index(
     """Index vault documents and/or codebase chunks.
 
     When ``--port`` is given, delegates to a running MCP server
-    via ``_try_mcp_reindex``. On dead/unreachable port, hard-fails
+    via ``_try_http_reindex``. On dead/unreachable port, hard-fails
     with remediation unless ``--allow-fallback`` is set.
 
     Args:

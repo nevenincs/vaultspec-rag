@@ -10,7 +10,7 @@ from rich.table import Table
 import vaultspec_rag.cli as _cli
 
 from ._app import service_watcher_app
-from ._mcp_search import _try_mcp_admin
+from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_projects import _truncate_root
 from ._service_status import _default_service_port
@@ -51,7 +51,7 @@ def service_watcher_status(
 ) -> None:
     """Show watcher config and which roots are being watched."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("get_watcher_state", {}, resolved_port)
+    result = _try_http_admin("get_watcher_state", {}, resolved_port)
     if result is None:
         _watcher_service_unreachable("service.watcher.status", json_mode)
         return
@@ -93,7 +93,7 @@ def service_watcher_start(
 ) -> None:
     """Eagerly start the watcher for a project root."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("start_watcher", {"root": root}, resolved_port)
+    result = _try_http_admin("start_watcher", {"root": root}, resolved_port)
     if result is None:
         _watcher_service_unreachable("service.watcher.start", json_mode, root=root)
         return
@@ -128,7 +128,7 @@ def service_watcher_stop(
 ) -> None:
     """Stop the watcher for a project root (pull-only for that root)."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("stop_watcher", {"root": root}, resolved_port)
+    result = _try_http_admin("stop_watcher", {"root": root}, resolved_port)
     if result is None:
         _watcher_service_unreachable("service.watcher.stop", json_mode, root=root)
         return
@@ -170,7 +170,7 @@ def service_watcher_reconfigure(
         args["debounce_ms"] = debounce_ms
     if cooldown_s is not None:
         args["cooldown_s"] = cooldown_s
-    result = _try_mcp_admin("reconfigure_watcher", args, resolved_port)
+    result = _try_http_admin("reconfigure_watcher", args, resolved_port)
     if result is None:
         _watcher_service_unreachable(
             "service.watcher.reconfigure",
