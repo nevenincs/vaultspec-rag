@@ -5,47 +5,47 @@ requires = ["hatchling"]
 [project]
 authors = [{ name = "Gergely Wootsch", email = "hello@gergely-wootsch.com" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Text Processing :: Indexing",
-    "Typing :: Typed",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Text Processing :: Indexing",
+  "Typing :: Typed",
 ]
 dependencies = [
-    "sentence-transformers>=5.0",
-    "torch>=2.4",
-    "transformers>=4.51",
-    "qdrant-client>=1.16.0",
-    "pydantic>=2.12.5",
-    "rich>=14.3.2",
-    "vaultspec-core>=0.1.27",
-    "mcp>=1.26.0",
-    "typer>=0.12.0",
-    "click>=8.1.7",
-    "python-dotenv>=1.0.0",
-    "tree-sitter>=0.23",
-    "tree-sitter-language-pack>=0.10,<1.6.2",
-    "pathspec>=0.12",
-    "watchfiles>=1.0.0",
-    "psutil>=6.0.0",
-    "tomlkit>=0.13",
-    "packaging>=24.0",
+  "sentence-transformers>=5.0",
+  "torch>=2.4",
+  "transformers>=4.51",
+  "qdrant-client>=1.16.0",
+  "pydantic>=2.12.5",
+  "rich>=14.3.2",
+  "vaultspec-core>=0.1.27",
+  "mcp>=1.26.0",
+  "typer>=0.12.0",
+  "click>=8.1.7",
+  "python-dotenv>=1.0.0",
+  "tree-sitter>=0.23",
+  "tree-sitter-language-pack>=0.10,<1.6.2",
+  "pathspec>=0.12",
+  "watchfiles>=1.0.0",
+  "psutil>=6.0.0",
+  "tomlkit>=0.13",
+  "packaging>=24.0",
 ]
 description = "GPU-accelerated RAG module for vaultspec vault search"
 keywords = [
-    "cuda",
-    "embeddings",
-    "gpu",
-    "mcp",
-    "qdrant",
-    "rag",
-    "semantic-search",
-    "sentence-transformers",
-    "vaultspec",
-    "vector-search",
+  "cuda",
+  "embeddings",
+  "gpu",
+  "mcp",
+  "qdrant",
+  "rag",
+  "semantic-search",
+  "sentence-transformers",
+  "vaultspec",
+  "vector-search",
 ]
 license = { file = "LICENSE" }
 name = "vaultspec-rag"
@@ -53,18 +53,18 @@ readme = "README.md"
 requires-python = ">=3.13"
 version = "0.2.16"
 
-[project.scripts]
-vaultspec-rag = "vaultspec_rag.__main__:main"
-vaultspec-search-mcp = "vaultspec_rag.mcp_server:main"
+  [project.scripts]
+  vaultspec-rag = "vaultspec_rag.__main__:main"
+  vaultspec-search-mcp = "vaultspec_rag.mcp_server:main"
 
-[project.urls]
-"Bug Tracker" = "https://github.com/wgergely/vaultspec-rag/issues"
-Documentation = "https://github.com/wgergely/vaultspec-rag/tree/main/.vaultspec/README.md"
-Homepage = "https://github.com/wgergely/vaultspec-rag"
-Repository = "https://github.com/wgergely/vaultspec-rag"
+  [project.urls]
+  "Bug Tracker" = "https://github.com/wgergely/vaultspec-rag/issues"
+  Documentation = "https://github.com/wgergely/vaultspec-rag/tree/main/.vaultspec/README.md"
+  Homepage = "https://github.com/wgergely/vaultspec-rag"
+  Repository = "https://github.com/wgergely/vaultspec-rag"
 
-[project.optional-dependencies]
-dev = [
+  [project.optional-dependencies]
+  dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2.4.0",
@@ -78,46 +78,44 @@ dev = [
     "mdformat-frontmatter>=2.0.10",
     "mdformat-gfm>=1.0.0",
     "pymarkdownlnt>=0.9.0",
-]
+  ]
 
 [dependency-groups]
 dev = [
-    "flake8>=7.3.0",
-    "flake8-cognitive-complexity>=0.1.0",
-    "identify>=2.0.0",
-    "mdformat>=1.0.0",
-    "mdformat-frontmatter>=2.0.10",
-    "mdformat-gfm>=1.0.0",
-    "prek>=0.3.2",
-    "pymarkdownlnt>=0.9.0",
-    "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
-    "pytest-durations>=1.0.0",
-    "pytest-reportlog>=0.4.0",
-    "pytest-timeout>=2.4.0",
-    "radon>=6.0.1",
-    "ruff>=0.15.2",
-    "ty>=0.0.15",
-    "xenon>=0.9.3",
+  "flake8>=7.3.0",
+  "flake8-cognitive-complexity>=0.1.0",
+  "identify>=2.0.0",
+  "mdformat>=1.0.0",
+  "mdformat-frontmatter>=2.0.10",
+  "mdformat-gfm>=1.0.0",
+  "prek>=0.3.2",
+  "pymarkdownlnt>=0.9.0",
+  "pytest>=9.0.3",
+  "pytest-asyncio>=1.3.0",
+  "pytest-durations>=1.0.0",
+  "pytest-reportlog>=0.4.0",
+  "pytest-timeout>=2.4.0",
+  "radon>=6.0.1",
+  "ruff>=0.15.2",
+  "ty>=0.0.15",
+  "xenon>=0.9.3",
 ]
 
 [tool.uv]
 # Pin transitive deps up to non-vulnerable versions. `uv audit` flags
 # python-multipart<0.0.26 (CVE-2026-40347) via `mcp`. constraint-dependencies
 # forces the resolver to pick a fixed release without us taking a direct dep.
-constraint-dependencies = [
-    "python-multipart>=0.0.26",
-]
+constraint-dependencies = ["python-multipart>=0.0.26"]
 
-[tool.uv.sources]
-torch = [
+  [tool.uv.sources]
+  torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
+  ]
 
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
+  [[tool.uv.index]]
+  explicit = true
+  name = "pytorch-cu130"
+  url = "https://download.pytorch.org/whl/cu130"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vaultspec_rag"]
@@ -130,14 +128,14 @@ packages = ["src/vaultspec_rag"]
 # .vaultspec/rules/ tree contains vaultspec-core's bundled content too and
 # each companion must ship only its own.
 [tool.hatch.build.targets.sdist.force-include]
-".vaultspec/rules/rules/vaultspec-rag.builtin.md" = ".vaultspec/rules/rules/vaultspec-rag.builtin.md"
 ".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = ".vaultspec/rules/mcps/vaultspec-rag.builtin.json"
+".vaultspec/rules/rules/vaultspec-rag.builtin.md" = ".vaultspec/rules/rules/vaultspec-rag.builtin.md"
 "assets/logo.png" = "assets/logo.png"
 "assets/logo.svg" = "assets/logo.svg"
 
-[tool.hatch.build.targets.wheel.force-include]
-".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
-".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = "vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json"
+  [tool.hatch.build.targets.wheel.force-include]
+  ".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = "vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json"
+  ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -148,14 +146,14 @@ log_cli_level = "INFO"
 log_file = "test-debug.log"
 log_file_level = "DEBUG"
 markers = [
-    "unit: fast tests with no external dependencies",
-    "integration: requires CLI tools and network",
-    "subprocess_gpu: CLI subprocess tests that load their own GPU models (run separately from integration)",
-    "performance: benchmarking tests for throughput and latency",
-    "quality: precision/recall and document coverage tests",
-    "robustness: edge case and error handling tests",
-    "timeout: timeout in seconds for individual tests",
-    "xdist_group: pytest-xdist scheduling group",
+  "unit: fast tests with no external dependencies",
+  "integration: requires CLI tools and network",
+  "subprocess_gpu: CLI subprocess tests that load their own GPU models (run separately from integration)",
+  "performance: benchmarking tests for throughput and latency",
+  "quality: precision/recall and document coverage tests",
+  "robustness: edge case and error handling tests",
+  "timeout: timeout in seconds for individual tests",
+  "xdist_group: pytest-xdist scheduling group",
 ]
 testpaths = ["src/vaultspec_rag/tests"]
 timeout = 300
@@ -165,8 +163,9 @@ timeout_func_only = true
 line-length = 88
 target-version = "py313"
 
-[tool.ruff.lint]
-select = [
+  [tool.ruff.lint]
+  ignore = ["TID252"]
+  select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
     "F",   # pyflakes
@@ -181,22 +180,18 @@ select = [
     "N",   # pep8-naming
     "TID", # flake8-tidy-imports
     "C90", # mccabe complexity
-]
-ignore = [
-    "TID252",
-]
-unfixable = ["B"]
+  ]
+  unfixable = ["B"]
 
-[tool.ruff.lint.mccabe]
-max-complexity = 15
+    [tool.ruff.lint.mccabe]
+    max-complexity = 15
 
 
+    [tool.ruff.lint.isort]
+    known-first-party = ["vaultspec_rag"]
 
-[tool.ruff.lint.isort]
-known-first-party = ["vaultspec_rag"]
-
-[tool.ruff.lint.flake8-type-checking]
-runtime-evaluated-decorators = ["app.command", "service_app.command"]
+    [tool.ruff.lint.flake8-type-checking]
+    runtime-evaluated-decorators = ["app.command", "service_app.command"]
 
 [tool.ty.environment]
 python-version = "3.13"

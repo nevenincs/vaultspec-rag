@@ -622,6 +622,7 @@ class CodebaseIndexer:
         )
         consumer.start()
         return consumer
+
     def _shutdown_consumer(
         self, consumer: threading.Thread, chunk_q: queue.Queue[list[CodeChunk] | None]
     ) -> bool:

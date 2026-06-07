@@ -105,7 +105,7 @@ def validate_search_filters(
         if offending:
             offending_flags = _format_flags(offending)
             raise InvalidFilterForSearchTypeError(
-                f"code-search filters ({', '.join(sorted(offending))}) require "
+                f"code-search filters ({', '.join(sorted(offending_flags))}) require "
                 f"--type code; got --type {search_type}.",
                 filter_kind="code",
                 offending_filters=offending_flags,
@@ -115,7 +115,7 @@ def validate_search_filters(
         offending_flags = _format_flags(vault_filters_supplied)
         raise InvalidFilterForSearchTypeError(
             (
-                f"vault-search filters ({', '.join(sorted(vault_filters_supplied))}) "
+                f"vault-search filters ({', '.join(sorted(offending_flags))}) "
                 f"require --type vault; got --type {search_type}."
             ),
             filter_kind="vault",

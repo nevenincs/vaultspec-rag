@@ -25,6 +25,7 @@ Rename mcp_server to server and isolate mcp protocol adapter
 - [ ] `P01.S02` - Extract MCP protocol layer to vaultspec_rag/mcp; `src/vaultspec_rag/mcp`.
 - [ ] `P01.S05` - Rename test_mcp_server.py to test_server.py and update test imports; `tests/test_mcp_server.py`.
 - [ ] `P01.S06` - Update mcp_server references in CLI and daemon tests; `tests/`.
+- [ ] `P01.S08` - Update console script entrypoints in pyproject.toml; `pyproject.toml`.
 
 ### Phase `P02` - CLI and Docs Redesign
 

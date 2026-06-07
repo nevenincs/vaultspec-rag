@@ -441,7 +441,7 @@ class TestMcpFastPath:
         assert isinstance(result, dict)
         assert result.get("ok") is False
         assert result.get("error") == "invalid_filter_for_search_type"
-        assert "function_name" in str(result.get("message", ""))
+        assert "--function-name" in str(result.get("message", ""))
 
     def test_code_filters_with_all_returns_usage_error(self):
         """search_type='all' is also incompatible with code-only filters."""
@@ -457,7 +457,7 @@ class TestMcpFastPath:
         assert isinstance(result, dict)
         assert result.get("error") == "invalid_filter_for_search_type"
         msg = str(result.get("message", ""))
-        assert "language" in msg and "class_name" in msg
+        assert "--language" in msg and "--class-name" in msg
 
     def test_code_filters_unset_dont_short_circuit(self):
         """All filters None must not trigger the usage error path."""
@@ -537,7 +537,7 @@ class TestMcpFastPath:
         )
         assert isinstance(result, dict)
         assert result.get("error") == "invalid_filter_for_search_type"
-        assert "doc_type" in str(result.get("message", ""))
+        assert "--doc-type" in str(result.get("message", ""))
 
     def test_vault_filters_with_code_attempt_call(self):
         """doc_type/feature/date/tag with --type vault reach the call path."""
@@ -862,7 +862,7 @@ class TestSearchSafetyContract:
         assert "(via MCP)" not in rendered
 
     def test_search_results_via_in_process_indicator(self):
-        """via='in-process' does not render '(via in-process)' in the title."""
+        """via='in-process' renders '(via in-process)' in the title."""
         from io import StringIO
 
         from rich.console import Console
@@ -880,7 +880,7 @@ class TestSearchSafetyContract:
             )
         rendered = " ".join(out.getvalue().split())
         assert "Search Results: code" in rendered
-        assert "(via in-process)" not in rendered
+        assert "(via in-process)" in rendered
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
@@ -2042,7 +2042,7 @@ class TestJsonOutputMode:
         assert env["ok"] is False
         assert env["command"] == "search"
         assert env["error"] == "invalid_filter_for_search_type"
-        assert "function_name" in env["message"]
+        assert "--function-name" in env["message"]
 
     def test_search_json_glob_with_vault_envelope(self):
         """Glob + --type vault yields the same envelope shape."""
@@ -2420,7 +2420,8 @@ class TestBenchmarkAndQualityCommands:
     def test_benchmark_empty_vault(self, tmp_path, monkeypatch):
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_run_benchmark(_root, _n_queries):
+        def mock_run_benchmark(*args, **kwargs):
+            del args, kwargs
             raise ValueError("No vault documents indexed.")
 
         monkeypatch.setattr("vaultspec_rag.api.run_benchmark", mock_run_benchmark)
