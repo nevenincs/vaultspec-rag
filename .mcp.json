@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "vaultspec-rag": {
+      "command": "uv",
+      "args": [
+        "run",
+        "vaultspec-search-mcp"
+      ]
+    },
+    "vaultspec-core": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "vaultspec_core.mcp_server.app"
+      ]
+    }
+  },
+  "_vaultspecManaged": [
+    "vaultspec-core",
+    "vaultspec-rag"
+  ]
+}
