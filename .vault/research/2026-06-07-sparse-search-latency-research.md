@@ -6,21 +6,7 @@ date: '2026-06-07'
 related: []
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #research) and one feature tag.
-     Replace sparse-search-latency with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
 
-     Related: use wiki-links as '[[YYYY-MM-DD-foo-bar]]'.
-
-     DO NOT add frontmatter fields
-     outside the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
 
 # `sparse-search-latency` research: `Scaling Bottlenecks`
 
@@ -30,7 +16,9 @@ This document details the research into sparse search latency and scaling bottle
 
 ### 1. Zero-Business-Logic CLI and MCP Wrappers
 The CLI and MCP entry points must act solely as thin transport layers containing no business logic.
-- **Current state**: Needs audit of `src/vaultspec_rag/cli/` and `src/vaultspec_rag/mcp_server/`.
+- **Current state**:
+  - `src/vaultspec_rag/cli/`: Codebase discovery confirms that the CLI correctly acts as a transport layer. Commands in `cli/_search.py` and `cli/_index.py` correctly delegate to core `vaultspec_rag.search_codebase` / `search_vault` and `vaultspec_rag.index` APIs.
+  - `src/vaultspec_rag/mcp_server/`: While it avoids low-level stores like `QdrantClient` and `VectorParams`, we found a logic leak in `src/vaultspec_rag/mcp_server/_tools.py`. The MCP tools `reindex_vault` and `reindex_codebase` import and invoke internal background job scheduling (`from ..jobs import start_reindex_vault, start_reindex_codebase`) directly, rather than routing through unified `vaultspec_rag` core APIs.
 - **Goal**: Standardize modules to only parse parameters/payloads, invoke core `vaultspec_rag` APIs, and format output. Ensure full integration test coverage without mock/stub test gaps.
 
 ### 2. Local-Mode Search Latency & Scaling Bottlenecks
@@ -39,7 +27,8 @@ For full-codebase queries (e.g., 114k chunks), the local Qdrant in-process store
 - Sparse-only latency: ~18.9s
 - Hybrid search (RRF) latency: ~20.1s
 
-### 3. Proposed Remediation Paths
-- **Dense-Only Fallback**: Add a configuration toggle (e.g., `VAULTSPEC_RAG_SPARSE_ENABLED=0` or `dense_only=True`) to skip sparse matching for large codebases.
-- **Dedicated Qdrant Server**: Benchmark and document running a standalone Qdrant server instance, which supports native HNSW and inverted sparse indexes.
-- **Pre-Filtering**: Investigate automatic partitioning or query optimizations to reduce the active point space before running RRF queries.
+### 3. Proposed Remediation Paths Evaluation
+Based on codebase investigation within `search.py`, `store.py`, and `config.py`:
+- **Dense-Only Fallback**: Highly feasible. `src/vaultspec_rag/config.py` contains settings for `sparse_model: "naver/splade-v3"` but lacks an explicit toggle. We can easily add a `sparse_enabled: True` setting (analogous to the existing `reranker_enabled: True` setting in `_RAG_DEFAULTS`) and wire it up to selectively disable sparse queries.
+- **Dedicated Qdrant Server**: Already supported by the configuration. `src/vaultspec_rag/config.py` reads `EnvVar.QDRANT_URL` and `qdrant_api_key`. `src/vaultspec_rag/store.py` checks `if cfg.qdrant_url:` and correctly provisions a remote connection (`_QdrantClient(url=cfg.qdrant_url, api_key=cfg.qdrant_api_key)`).
+- **Pre-Filtering**: Already supported structurally by the metadata schema. `src/vaultspec_rag/store.py` registers `PayloadSchemaType.KEYWORD` indexes for `path`, `language`, `function_name`, `class_name`, and `node_type`, plus an `INTEGER` index for `line_start`. Qdrant can utilize these payload attributes natively to heavily filter the search space prior to executing the expensive RRF evaluation.

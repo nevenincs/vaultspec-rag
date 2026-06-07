@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from vaultspec_core.config import reset_config
 
-from vaultspec_rag import IndexResult, prepare_document
-from vaultspec_rag.config import reset_config as reset_rag_config
-from vaultspec_rag.indexer import (
+from .. import IndexResult, prepare_document
+from ..config import reset_config as reset_rag_config
+from ..indexer import (
     _CLASS_LIKE_NODES,
     _CONTAINER_NODES,
     _FUNCTION_LIKE_NODES,
@@ -293,7 +293,7 @@ class TestASTChunkerPythonBoundaries:
 
     def test_chunk_ids_contain_hash_via_chunk_file(self, tmp_path: Path):
         """_chunk_with_ast produces IDs with blake2b hash suffix."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         src = tmp_path / "example.py"
         src.write_text(self.SAMPLE, encoding="utf-8")
@@ -359,7 +359,7 @@ class TestASTChunkerFallback:
 
     def test_invalid_grammar_falls_back_to_splitter(self, tmp_path: Path):
         """_chunk_with_ast returns splitter chunks for an invalid grammar."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         content = "x = 1\ny = 2\nz = 3\n"
 
@@ -377,7 +377,7 @@ class TestASTChunkerFallback:
 
     def test_chunk_file_uses_splitter_for_yaml(self, tmp_path: Path):
         """Files with grammar=None in LANGUAGE_MAP use TextSplitter."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         src = tmp_path / "config.yaml"
         content = "key: value\nlist:\n  - item1\n  - item2\n"
@@ -435,7 +435,7 @@ class TestChunkWithSplitterSearchOffset:
     mapping duplicate code blocks to the same line number."""
 
     def test_duplicate_blocks_get_different_lines(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         # Construct content with an identical block repeated.
         block = "x = 1\ny = 2\nz = 3\n"
@@ -464,7 +464,7 @@ class TestIncrementalIndexMetadata:
     def test_meta_values_are_blake2b_hex(self, tmp_path: Path):
         import json
 
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         # Write a source file.
         src = tmp_path / "mod.py"
@@ -505,7 +505,7 @@ class TestIncrementalIndexUnhashedFiles:
     def test_metadata_excludes_unhashed_files(self, tmp_path: Path):
         """current_hashes dict (used for metadata) must not include
         files that failed read_bytes, preventing KeyError on save."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = tmp_path
@@ -625,7 +625,7 @@ class TestCodeChunkMetadataFields:
     """CodeChunk dataclass carries node_type, function_name, class_name."""
 
     def test_chunk_with_ast_populates_function_name(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         code = "def process(data):\n    return data\n"
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
@@ -636,7 +636,7 @@ class TestCodeChunkMetadataFields:
         assert fn_chunks, "Expected function_name='process' on CodeChunk"
 
     def test_chunk_with_ast_populates_node_type(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         code = "class Engine:\n    pass\n"
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
@@ -647,7 +647,7 @@ class TestCodeChunkMetadataFields:
         assert typed, "Expected node_type='class_definition' on CodeChunk"
 
     def test_chunk_with_splitter_has_none_metadata(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         content = "key: value\n"
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
@@ -664,14 +664,14 @@ class TestTextSplitterRobustness:
     """Regression coverage for text splitter leaf splitting."""
 
     def test_empty_separator_forces_length_split(self):
-        from vaultspec_rag.indexer import TextSplitter
+        from ..indexer import TextSplitter
 
         splitter = TextSplitter(chunk_size=5, chunk_overlap=0, language="text")
         chunks = splitter.split_text("abcdefghijk")
         assert chunks == ["abcde", "fghij", "k"]
 
     def test_overlap_cannot_create_zero_step(self):
-        from vaultspec_rag.indexer import TextSplitter
+        from ..indexer import TextSplitter
 
         splitter = TextSplitter(chunk_size=5, chunk_overlap=5, language="text")
         chunks = splitter.split_text("abcdefgh")
@@ -684,7 +684,7 @@ class TestGitignoreNegationPatterns:
     the ! prefix at the start, not prepend the directory before it."""
 
     def test_negation_pattern_not_mangled(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         # Create project structure:
         #   subdir/.gitignore with "*.log\n!important.log"
@@ -711,7 +711,7 @@ class TestGitignoreNegationPatterns:
         # so it won't appear. The test verifies the negation pattern itself
         # is correctly formed by checking the internal pathspec logic.
 
-    def test_negation_pattern_format(self, tmp_path: Path):
+    def test_negation_pattern_format(self):
         """Verify the pattern string itself is !subdir/pattern not subdir/!pattern."""
         import pathspec
 
@@ -742,7 +742,7 @@ class TestHashingPermissionError:
     def test_full_index_meta_skips_unreadable_file(self, tmp_path: Path):
         """Metadata hashing in full_index skips files that raise OSError."""
 
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer.root_dir = tmp_path
@@ -764,7 +764,7 @@ class TestHashingPermissionError:
 
     def test_write_load_meta_roundtrip(self, tmp_path: Path):
         """_write_meta and _load_meta correctly round-trip blake2b hashes."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer.__new__(CodebaseIndexer)
         indexer._meta_path = tmp_path / "sub" / "code_index_meta.json"
@@ -867,7 +867,7 @@ class TestCodebaseMetaRoundTrip:
         """_write_meta writes a JSON file that _load_meta can read back."""
         import json
 
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         meta_path = tmp_path / ".rag" / "codebase_meta.json"
         indexer = object.__new__(CodebaseIndexer)
@@ -882,7 +882,7 @@ class TestCodebaseMetaRoundTrip:
 
     def test_load_meta_returns_written_hashes(self, tmp_path):
         """_load_meta round-trips what _write_meta wrote."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         meta_path = tmp_path / ".rag" / "codebase_meta.json"
         indexer = object.__new__(CodebaseIndexer)
@@ -895,7 +895,7 @@ class TestCodebaseMetaRoundTrip:
 
     def test_load_meta_returns_empty_when_missing(self, tmp_path):
         """_load_meta returns {} when no meta file exists."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         meta_path = tmp_path / ".rag" / "codebase_meta.json"
         indexer = object.__new__(CodebaseIndexer)
@@ -1013,7 +1013,7 @@ class TestR10MinorAnchoredPattern:
     """R10-m3: Anchored patterns in subdirectory .gitignore avoid double slash."""
 
     def test_anchored_pattern_no_double_slash(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         root = tmp_path / "proj"
         root.mkdir()
@@ -1044,7 +1044,7 @@ class TestCodebaseInternalDirectoryExclusions:
     """Codebase indexing must not index vaultspec internal document trees."""
 
     def test_scan_codebase_excludes_vault_and_vaultspec(self, tmp_path: Path):
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("TODO = True\n", encoding="utf-8")
@@ -1123,7 +1123,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_vaultragignore_excludes_matching_files(self, tmp_path: Path):
         """Files matching .vaultragignore patterns are excluded from scan."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "generated.py").write_text("y = 2\n", encoding="utf-8")
@@ -1141,7 +1141,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_missing_vaultragignore_no_error(self, tmp_path: Path):
         """Missing .vaultragignore is silently ignored (D3)."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
@@ -1156,7 +1156,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_extra_excludes_applied(self, tmp_path: Path):
         """CLI --exclude patterns are applied via extra_excludes (D4)."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "temp.py").write_text("y = 2\n", encoding="utf-8")
@@ -1173,7 +1173,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_vaultragignore_negation_cannot_override_gitignore(self, tmp_path: Path):
         """Negation in .vaultragignore cannot un-ignore .gitignore entries (D1)."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "secret.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "main.py").write_text("y = 2\n", encoding="utf-8")
@@ -1198,7 +1198,7 @@ class TestVaultragignore:
 
         *.test.py is excluded, but !important.test.py brings it back.
         """
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "foo.test.py").write_text("y = 2\n", encoding="utf-8")
@@ -1220,7 +1220,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_gitignore_still_respected_alongside_vaultragignore(self, tmp_path: Path):
         """Both .gitignore and .vaultragignore exclusions are applied (D1)."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "build_output.py").write_text("y = 2\n", encoding="utf-8")
@@ -1241,7 +1241,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_scan_files_matches_scan_codebase(self, tmp_path: Path):
         """scan_files() returns the same result as _scan_codebase() (D5)."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
@@ -1254,7 +1254,7 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_vaultragignore_directory_exclusion(self, tmp_path: Path):
         """Directory patterns in .vaultragignore prune entire subtrees."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         vendor = tmp_path / "vendor"

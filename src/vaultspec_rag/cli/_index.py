@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
+
+if TYPE_CHECKING:
+    import pathlib
 
 import typer
 from rich.table import Table
@@ -21,6 +24,217 @@ from ._render import (
     _emit_json_error_and_exit,
 )
 from ._service_status import _default_service_port
+
+
+def _handle_dry_run(
+    index_type: str, json_mode: bool, target: pathlib.Path, exclude: list[str] | None
+) -> None:
+    if index_type not in ("code", "all"):
+        if json_mode:
+            _emit_json_error_and_exit(
+                "index",
+                "dry_run_requires_code",
+                "--dry-run only applies to codebase indexing.",
+                2,
+            )
+        _cli.console.print("[yellow]--dry-run only applies to codebase indexing.[/]")
+        raise typer.Exit(code=2)
+    import vaultspec_rag
+
+    files = vaultspec_rag.scan_codebase_files(target, extra_excludes=exclude)
+    if json_mode:
+        _emit_json(
+            True,
+            "index",
+            data={
+                "dry_run": True,
+                "count": len(files),
+                "files": [str(f.relative_to(target)) for f in sorted(files)],
+            },
+        )
+        return
+    _cli.console.print(f"[bold]{len(files)}[/] files would be indexed:")
+    for f in sorted(files):
+        _cli.console.print(f"  {f.relative_to(target)}")
+
+
+def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
+    try:
+        param_source = ctx.get_parameter_source("index_type")
+        type_is_explicit = getattr(param_source, "name", "") != "DEFAULT"
+    except (AttributeError, LookupError) as exc:
+        logger.debug("click ParameterSource probe failed: %s", exc, exc_info=True)
+        type_is_explicit = True
+    if not type_is_explicit:
+        remediation = [
+            "vaultspec-rag index --rebuild --type vault",
+            "vaultspec-rag index --rebuild --type code",
+            "vaultspec-rag index --rebuild --type all",
+        ]
+        msg = (
+            "--rebuild is destructive; pass an explicit --type "
+            "(vault|code|all) so the scope is unambiguous. The "
+            "previous behaviour silently inherited --type all "
+            "from the default and dropped both collections."
+        )
+        if json_mode:
+            _emit_json_error_and_exit(
+                "index",
+                "rebuild_requires_explicit_type",
+                msg,
+                2,
+                remediation=remediation,
+            )
+        _cli.console.print(f"[red]{msg}[/]")
+        for line in remediation:
+            _cli.console.print(f"  [cyan]{line}[/]")
+        raise typer.Exit(code=2)
+
+
+def _try_mcp_delegation(
+    port: int,
+    exclude: list[str] | None,
+    json_mode: bool,
+    index_type: str,
+    rebuild: bool,
+    target: pathlib.Path,
+    allow_fallback: bool,
+) -> bool:
+    if exclude and not json_mode:
+        _cli.console.print(
+            "[yellow]--exclude is ignored when delegating to MCP server.[/]",
+        )
+    do_vault = index_type in ("vault", "all")
+    do_code = index_type in ("code", "all")
+    v_data = None
+    c_data = None
+
+    if do_vault:
+        v_data = _try_mcp_reindex(
+            "reindex_vault",
+            rebuild,
+            port,
+            str(target),
+        )
+    if do_code:
+        c_data = _try_mcp_reindex(
+            "reindex_codebase",
+            rebuild,
+            port,
+            str(target),
+        )
+
+    for label, data in (("vault", v_data), ("codebase", c_data)):
+        if isinstance(data, dict) and data.get("ok") is False:
+            if not json_mode:
+                _cli.console.print(
+                    f"[red]Reindex {label} reported an error; "
+                    f"refusing to silently fall back.[/]",
+                )
+            _display_mcp_error(data, json_mode=json_mode, command="index")
+            raise typer.Exit(code=1)
+
+    if v_data is not None or c_data is not None:
+        return _print_mcp_results(v_data, c_data, json_mode)
+
+    if not allow_fallback:
+        _display_port_unreachable_error(
+            port,
+            command="indexing",
+            json_mode=json_mode,
+        )
+        raise typer.Exit(code=1)
+
+    return False
+
+
+def _print_mcp_async_results(
+    v_data: dict | None, c_data: dict | None, json_mode: bool
+) -> bool:
+    if json_mode:
+        _emit_json(
+            True,
+            "index",
+            data={
+                "via": "mcp",
+                "async": True,
+                "vault_job_id": (v_data.get("job_id") if v_data else None),
+                "codebase_job_id": (c_data.get("job_id") if c_data else None),
+            },
+        )
+        return True
+    if v_data:
+        _cli.console.print(
+            f"Vault re-index job queued on service: [cyan]{v_data.get('job_id')}[/]"
+        )
+    if c_data:
+        _cli.console.print(
+            f"Codebase re-index job queued on service: [cyan]{c_data.get('job_id')}[/]"
+        )
+    _cli.console.print(
+        "Check progress with: [bold]vaultspec-rag server service jobs[/]"
+    )
+    return True
+
+
+def _print_mcp_results(
+    v_data: dict | None, c_data: dict | None, json_mode: bool
+) -> bool:
+    is_async = False
+    for data in (v_data, c_data):
+        if isinstance(data, dict) and "job_id" in data:
+            is_async = True
+
+    if is_async:
+        return _print_mcp_async_results(v_data, c_data, json_mode)
+
+    def _row(label: str, data: dict[str, object]) -> dict[str, object]:
+        def _i(key: str) -> int:
+            raw = data.get(key, 0)
+            return int(raw) if isinstance(raw, int | float | str) else 0
+
+        return {
+            "source": label,
+            "added": _i("added"),
+            "updated": _i("updated"),
+            "removed": _i("removed"),
+            "total": _i("total"),
+            "duration_ms": _i("duration_ms"),
+        }
+
+    sources: list[dict[str, object]] = []
+    if v_data:
+        sources.append(_row("vault", v_data))
+    if c_data:
+        sources.append(_row("codebase", c_data))
+    if json_mode:
+        _emit_json(
+            True,
+            "index",
+            data={"via": "mcp", "sources": sources},
+        )
+        return True
+
+    table = Table(title="Indexing Summary", show_header=True)
+    table.add_column("Source", style="bold")
+    table.add_column("Added", style="green", justify="right")
+    table.add_column("Updated", style="yellow", justify="right")
+    table.add_column("Removed", style="red", justify="right")
+    table.add_column("Total", style="cyan", justify="right")
+    table.add_column("Time", justify="right")
+    for row in sources:
+        src_value = row["source"]
+        label = src_value.capitalize() if isinstance(src_value, str) else ""
+        table.add_row(
+            label,
+            str(row["added"]),
+            str(row["updated"]),
+            str(row["removed"]),
+            str(row["total"]),
+            f"{row['duration_ms']}ms",
+        )
+    _cli.console.print(table)
+    return True
 
 
 @app.command("index")
@@ -132,81 +346,12 @@ def handle_index(
     state: CLIState = ctx.obj
     target = state.target
 
-    # --dry-run: list codebase files without loading GPU or Qdrant.
-    # Must come before --port MCP delegation (D9).
     if dry_run:
-        if index_type not in ("code", "all"):
-            if json_mode:
-                _emit_json_error_and_exit(
-                    "index",
-                    "dry_run_requires_code",
-                    "--dry-run only applies to codebase indexing.",
-                    2,
-                )
-            _cli.console.print(
-                "[yellow]--dry-run only applies to codebase indexing.[/]"
-            )
-            return
-        import vaultspec_rag
-
-        files = vaultspec_rag.scan_codebase_files(target, extra_excludes=exclude)
-        if json_mode:
-            _emit_json(
-                True,
-                "index",
-                data={
-                    "dry_run": True,
-                    "count": len(files),
-                    "files": [str(f.relative_to(target)) for f in sorted(files)],
-                },
-            )
-            return
-        _cli.console.print(f"[bold]{len(files)}[/] files would be indexed:")
-        for f in sorted(files):
-            _cli.console.print(f"  {f.relative_to(target)}")
+        _handle_dry_run(index_type, json_mode, target, exclude)
         return
 
-    # `--rebuild` is destructive; the `--type all` default would
-    # silently destroy both collections. Require an explicit
-    # `--type` whenever `--rebuild` is set, but keep bare
-    # `vaultspec-rag index` (incremental, idempotent) frictionless.
     if rebuild:
-        try:
-            param_source = ctx.get_parameter_source("index_type")
-            # click 8.3+ / typer 0.26+ may vendor ParameterSource
-            # such that neither ``is`` nor ``==`` works across
-            # imports; compare by enum ``.name`` which is stable.
-            type_is_explicit = getattr(param_source, "name", "") != "DEFAULT"
-        except (AttributeError, LookupError) as exc:
-            # Defensive fallback - if the click API is unavailable
-            # on an exotic typer version, treat default as explicit
-            # so we never spuriously block a previously-working flow.
-            logger.debug("click ParameterSource probe failed: %s", exc, exc_info=True)
-            type_is_explicit = True
-        if not type_is_explicit:
-            remediation = [
-                "vaultspec-rag index --rebuild --type vault",
-                "vaultspec-rag index --rebuild --type code",
-                "vaultspec-rag index --rebuild --type all",
-            ]
-            msg = (
-                "--rebuild is destructive; pass an explicit --type "
-                "(vault|code|all) so the scope is unambiguous. The "
-                "previous behaviour silently inherited --type all "
-                "from the default and dropped both collections."
-            )
-            if json_mode:
-                _emit_json_error_and_exit(
-                    "index",
-                    "rebuild_requires_explicit_type",
-                    msg,
-                    2,
-                    remediation=remediation,
-                )
-            _cli.console.print(f"[red]{msg}[/]")
-            for line in remediation:
-                _cli.console.print(f"  [cyan]{line}[/]")
-            raise typer.Exit(code=2)
+        _validate_rebuild(ctx, json_mode)
 
     if port is None:
         port = _default_service_port()
@@ -214,136 +359,22 @@ def handle_index(
             # We detected a running service, so enable fallback automatically.
             allow_fallback = True
 
-    if port is not None:
-        if exclude and not json_mode:
-            _cli.console.print(
-                "[yellow]--exclude is ignored when delegating to MCP server.[/]",
-            )
-        do_vault = index_type in ("vault", "all")
-        do_code = index_type in ("code", "all")
-        v_data = None
-        c_data = None
+    if port is not None and _try_mcp_delegation(
+        port, exclude, json_mode, index_type, rebuild, target, allow_fallback
+    ):
+        return
 
-        if do_vault:
-            v_data = _try_mcp_reindex(
-                "reindex_vault",
-                rebuild,
-                port,
-                str(target),
-            )
-        if do_code:
-            c_data = _try_mcp_reindex(
-                "reindex_codebase",
-                rebuild,
-                port,
-                str(target),
-            )
+    _try_in_process_indexing(index_type, rebuild, model, exclude, target, json_mode)
 
-        # Surface structured errors (live service, broken tool) instead
-        # of silently relaning. _try_mcp_reindex now returns:
-        #   None  -> connection refused (service down)
-        #   dict  -> either a successful summary or {"ok": False, ...}
-        for label, data in (("vault", v_data), ("codebase", c_data)):
-            if isinstance(data, dict) and data.get("ok") is False:
-                if not json_mode:
-                    _cli.console.print(
-                        f"[red]Reindex {label} reported an error; "
-                        f"refusing to silently fall back.[/]",
-                    )
-                _display_mcp_error(data, json_mode=json_mode, command="index")
-                raise typer.Exit(code=1)
 
-        if v_data is not None or c_data is not None:
-            is_async = False
-            for data in (v_data, c_data):
-                if isinstance(data, dict) and "job_id" in data:
-                    is_async = True
-
-            if is_async:
-                if json_mode:
-                    _emit_json(
-                        True,
-                        "index",
-                        data={
-                            "via": "mcp",
-                            "async": True,
-                            "vault_job_id": (v_data.get("job_id") if v_data else None),
-                            "codebase_job_id": (
-                                c_data.get("job_id") if c_data else None
-                            ),
-                        },
-                    )
-                    return
-                if v_data:
-                    _cli.console.print(
-                        "Vault re-index job queued on service: "
-                        f"[cyan]{v_data.get('job_id')}[/]"
-                    )
-                if c_data:
-                    _cli.console.print(
-                        "Codebase re-index job queued on service: "
-                        f"[cyan]{c_data.get('job_id')}[/]"
-                    )
-                _cli.console.print(
-                    "Check progress with: [bold]vaultspec-rag server service jobs[/]"
-                )
-                return
-
-            def _row(label: str, data: dict[str, object]) -> dict[str, object]:
-                def _i(key: str) -> int:
-                    raw = data.get(key, 0)
-                    return int(raw) if isinstance(raw, int | float | str) else 0
-
-                return {
-                    "source": label,
-                    "added": _i("added"),
-                    "updated": _i("updated"),
-                    "removed": _i("removed"),
-                    "total": _i("total"),
-                    "duration_ms": _i("duration_ms"),
-                }
-
-            sources: list[dict[str, object]] = []
-            if v_data:
-                sources.append(_row("vault", v_data))
-            if c_data:
-                sources.append(_row("codebase", c_data))
-            if json_mode:
-                _emit_json(
-                    True,
-                    "index",
-                    data={"via": "mcp", "sources": sources},
-                )
-                return
-
-            table = Table(title="Indexing Summary", show_header=True)
-            table.add_column("Source", style="bold")
-            table.add_column("Added", style="green", justify="right")
-            table.add_column("Updated", style="yellow", justify="right")
-            table.add_column("Removed", style="red", justify="right")
-            table.add_column("Total", style="cyan", justify="right")
-            table.add_column("Time", justify="right")
-            for row in sources:
-                src_value = row["source"]
-                label = src_value.capitalize() if isinstance(src_value, str) else ""
-                table.add_row(
-                    label,
-                    str(row["added"]),
-                    str(row["updated"]),
-                    str(row["removed"]),
-                    str(row["total"]),
-                    f"{row['duration_ms']}ms",
-                )
-            _cli.console.print(table)
-            return
-
-        if not allow_fallback:
-            _display_port_unreachable_error(
-                port,
-                command="indexing",
-                json_mode=json_mode,
-            )
-
+def _try_in_process_indexing(
+    index_type: str,
+    rebuild: bool,
+    model: str | None,
+    exclude: list[str] | None,
+    target: pathlib.Path,
+    json_mode: bool,
+) -> None:
     import vaultspec_rag
 
     from ..progress import RichProgressReporter

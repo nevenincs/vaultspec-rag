@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.progress import NullProgressReporter
+from ...progress import NullProgressReporter
 
 pytestmark = [pytest.mark.integration]
 
@@ -27,7 +27,7 @@ class TestRAGAPI:
         exists, then calls the API facade which opens its own store
         connection.
         """
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -42,7 +42,7 @@ class TestRAGAPI:
 
     def test_search_with_type_filter(self, rag_components):
         """rag.api.search filters by doc_type."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -137,7 +137,8 @@ class TestRAGAPI:
     def test_facade_end_to_end(self, tmp_path):
         """Test the public API facade functions end-to-end against a fresh directory."""
         import vaultspec_rag
-        from vaultspec_rag.registry import get_registry
+
+        from ...registry import get_registry
 
         # 1. Create a minimal doc in a fake vault
         vault_dir = tmp_path / ".vault" / "adr"

@@ -41,8 +41,8 @@ def _run_cli(
         env["VAULTSPEC_RAG_STATUS_DIR"] = str(cwd)
     cmd = [
         sys.executable,
-        "-c",
-        "from vaultspec_rag.cli import app; app()",
+        "-m",
+        "vaultspec_rag",
         *args,
     ]
     return subprocess.run(

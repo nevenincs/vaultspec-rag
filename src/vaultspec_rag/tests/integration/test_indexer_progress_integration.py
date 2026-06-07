@@ -10,9 +10,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from vaultspec_rag.indexer import CodebaseIndexer, VaultIndexer
-from vaultspec_rag.store import VaultStore
-
+from ...indexer import CodebaseIndexer, VaultIndexer
+from ...store import VaultStore
 from ..corpus import build_synthetic_vault
 
 pytestmark = [pytest.mark.integration]

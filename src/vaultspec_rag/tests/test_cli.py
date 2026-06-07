@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from vaultspec_rag.cli import (
+from ..cli import (
     _add_backend_contract_rows,
     _display_mcp_error,
     _display_search_results,
@@ -22,8 +22,8 @@ from vaultspec_rag.cli import (
     _write_service_status,
     app,
 )
-from vaultspec_rag.config import EnvVar
-from vaultspec_rag.torch_config import TorchConfigAction
+from ..config import EnvVar
+from ..torch_config import TorchConfigAction
 
 pytestmark = [pytest.mark.unit]
 
@@ -124,8 +124,8 @@ class TestCleanCommand:
         assert "wipe" in result.output.lower()
 
     def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
-        from vaultspec_rag.config import get_config
-        from vaultspec_rag.store import VaultStore
+        from ..config import get_config
+        from ..store import VaultStore
 
         root = self._workspace(tmp_path)
         cfg = get_config()
@@ -305,7 +305,7 @@ class TestServiceLifecycleHelpers:
         """A socket bound and listening locally is reported as listening."""
         import socket
 
-        from vaultspec_rag.cli import _port_is_listening
+        from ..cli import _port_is_listening
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
@@ -320,7 +320,7 @@ class TestServiceLifecycleHelpers:
         """An unbound ephemeral port returns False without raising."""
         import socket
 
-        from vaultspec_rag.cli import _port_is_listening
+        from ..cli import _port_is_listening
 
         # Bind to find a free port, then close so it's unbound.
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -331,13 +331,13 @@ class TestServiceLifecycleHelpers:
 
     def test_heartbeat_age_missing_field(self):
         """No last_heartbeat → None (caller treats as 'no data')."""
-        from vaultspec_rag.cli import _heartbeat_age_seconds
+        from ..cli import _heartbeat_age_seconds
 
         assert _heartbeat_age_seconds({"pid": 1, "port": 2}) is None
 
     def test_heartbeat_age_malformed_timestamp(self):
         """Unparseable timestamp → None, no exception."""
-        from vaultspec_rag.cli import _heartbeat_age_seconds
+        from ..cli import _heartbeat_age_seconds
 
         assert _heartbeat_age_seconds({"last_heartbeat": "not-a-date"}) is None
 
@@ -345,7 +345,7 @@ class TestServiceLifecycleHelpers:
         """Just-written heartbeat → near-zero seconds."""
         from datetime import UTC, datetime
 
-        from vaultspec_rag.cli import _heartbeat_age_seconds
+        from ..cli import _heartbeat_age_seconds
 
         ts = datetime.now(UTC).isoformat(timespec="seconds")
         age = _heartbeat_age_seconds({"last_heartbeat": ts})
@@ -356,7 +356,7 @@ class TestServiceLifecycleHelpers:
         """Old heartbeat → seconds matching the synthesized delta."""
         from datetime import UTC, datetime, timedelta
 
-        from vaultspec_rag.cli import _heartbeat_age_seconds
+        from ..cli import _heartbeat_age_seconds
 
         old = (datetime.now(UTC) - timedelta(seconds=120)).isoformat(
             timespec="seconds",
@@ -369,7 +369,7 @@ class TestServiceLifecycleHelpers:
         """Pre-3.13-style naive ISO timestamps must not crash."""
         from datetime import UTC, datetime, timedelta
 
-        from vaultspec_rag.cli import _heartbeat_age_seconds
+        from ..cli import _heartbeat_age_seconds
 
         old = (
             (datetime.now(UTC) - timedelta(seconds=10))
@@ -738,7 +738,7 @@ class TestMcpFastPath:
         """
         import asyncio
 
-        from vaultspec_rag import cli as cli_mod
+        from .. import cli as cli_mod
 
         def _boom(*_args, **_kwargs):
             raise RuntimeError("synthetic live-but-broken tool failure")
@@ -761,7 +761,7 @@ class TestMcpFastPath:
         """Same discrimination for _try_mcp_reindex."""
         import asyncio
 
-        from vaultspec_rag import cli as cli_mod
+        from .. import cli as cli_mod
 
         def _boom(*_args, **_kwargs):
             raise RuntimeError("tool unavailable")
@@ -782,7 +782,7 @@ class TestMcpFastPath:
         """Explicit ConnectionRefusedError must keep the dead-service path."""
         import asyncio
 
-        from vaultspec_rag import cli as cli_mod
+        from .. import cli as cli_mod
 
         def _refuse(*_args, **_kwargs):
             raise ConnectionRefusedError("port closed")
@@ -884,7 +884,7 @@ class TestSearchSafetyContract:
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
-        from vaultspec_rag.cli import _suppress_hf_progress
+        from ..cli import _suppress_hf_progress
 
         monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
         monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
@@ -894,11 +894,11 @@ class TestSearchSafetyContract:
 
     def test_search_locked_store_raises_actionable_error(self, tmp_path, monkeypatch):
         """Locked store in direct search prints a friendly routing-mode message."""
-        from vaultspec_rag.store import VaultStoreLockedError
+        from ..store import VaultStoreLockedError
 
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_search(*args, **kwargs):
+        def mock_search(*_args, **_kwargs):
             raise VaultStoreLockedError(str(tmp_path / "db"))
 
         monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
@@ -923,11 +923,11 @@ class TestSearchSafetyContract:
         """Locked store in direct search under --json outputs local_store_locked."""
         import json
 
-        from vaultspec_rag.store import VaultStoreLockedError
+        from ..store import VaultStoreLockedError
 
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_search(*args, **kwargs):
+        def mock_search(*_args, **_kwargs):
             raise VaultStoreLockedError(str(tmp_path / "db"))
 
         monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
@@ -953,7 +953,7 @@ class TestSearchSafetyContract:
 
     def test_search_mcp_timeout_diagnostics(self, tmp_path, monkeypatch):
         """Timeout in client inside _try_mcp_search returns mcp_search_timeout."""
-        from vaultspec_rag.cli import _try_mcp_search
+        from ..cli import _try_mcp_search
 
         # Mock streamable_http_client to simulate a timeout
         class DummyClient:
@@ -965,7 +965,7 @@ class TestSearchSafetyContract:
 
         monkeypatch.setattr(
             "mcp.client.streamable_http.streamable_http_client",
-            lambda url: DummyClient(),
+            lambda _url: DummyClient(),
         )
 
         res = _try_mcp_search(
@@ -1125,7 +1125,7 @@ class TestWinShutdownLog:
         tmp_path: Path,
         monkeypatch,
     ):
-        from vaultspec_rag import cli
+        from .. import cli
 
         log_path = tmp_path / "service.log"
         monkeypatch.setattr(cli, "_log_file", lambda: log_path)
@@ -1157,7 +1157,7 @@ class TestWinShutdownLog:
         No-swallow rule: the helper must debug-log the exception so
         the suppression is observable.
         """
-        from vaultspec_rag import cli
+        from .. import cli
 
         missing_dir = tmp_path / "nonexistent" / "service.log"
         monkeypatch.setattr(cli, "_log_file", lambda: missing_dir)
@@ -1185,7 +1185,7 @@ class TestWinShutdownLog:
         monkeypatch,
     ):
         """End-to-end: ``server service stop`` on win32 appends the line."""
-        from vaultspec_rag import cli
+        from .. import cli
 
         status_dir = tmp_path / "status"
         status_dir.mkdir()
@@ -1227,7 +1227,7 @@ class TestWinShutdownLog:
         monkeypatch,
     ):
         """POSIX path keeps the daemon-side lifecycle finally as source of truth."""
-        from vaultspec_rag import cli
+        from .. import cli
 
         status_dir = tmp_path / "status"
         status_dir.mkdir()
@@ -1264,7 +1264,7 @@ class TestServiceTokenIdentity:
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_token_match_returns_true(self, monkeypatch):
-        from vaultspec_rag import cli
+        from .. import cli
 
         monkeypatch.setattr(
             cli,
@@ -1275,7 +1275,7 @@ class TestServiceTokenIdentity:
         assert cli._is_our_service(123, port=8766, expected_token="abc")
 
     def test_token_mismatch_returns_false(self, monkeypatch):
-        from vaultspec_rag import cli
+        from .. import cli
 
         monkeypatch.setattr(
             cli,
@@ -1289,7 +1289,7 @@ class TestServiceTokenIdentity:
 
     def test_token_absent_in_response_falls_back(self, monkeypatch, caplog):
         """Pre-upgrade daemon (no token in response) → exe-name fallback."""
-        from vaultspec_rag import cli
+        from .. import cli
 
         monkeypatch.setattr(cli, "_health_probe", lambda _port: {})
         monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
@@ -1314,7 +1314,7 @@ class TestServiceTokenIdentity:
 
     def test_no_token_in_status_skips_token_check(self, monkeypatch):
         """No expected_token (pre-upgrade service.json) → exe-name only."""
-        from vaultspec_rag import cli
+        from .. import cli
 
         probe_called = {"n": 0}
 
@@ -1330,7 +1330,7 @@ class TestServiceTokenIdentity:
 
     def test_health_probe_failure_falls_back(self, monkeypatch):
         """Network failure on /health → exe-name fallback, no exception."""
-        from vaultspec_rag import cli
+        from .. import cli
 
         monkeypatch.setattr(cli, "_health_probe", lambda _port: None)
         monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
@@ -1649,7 +1649,7 @@ class TestCpuOnlyMessageRendering:
 
         from rich.console import Console
 
-        from vaultspec_rag.cli import _cpu_only_message
+        from ..cli import _cpu_only_message
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
@@ -1691,7 +1691,7 @@ class TestNoGpuMessageRendering:
 
         from rich.console import Console
 
-        from vaultspec_rag.cli import _no_gpu_message
+        from ..cli import _no_gpu_message
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
@@ -1728,7 +1728,7 @@ class TestNoTorchMessageRendering:
 
         from rich.console import Console
 
-        from vaultspec_rag.cli import _no_torch_message
+        from ..cli import _no_torch_message
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
@@ -1764,7 +1764,7 @@ class TestRenderInstallReport:
 
         from rich.console import Console
 
-        from vaultspec_rag import cli as cli_mod
+        from .. import cli as cli_mod
 
         buf = io.StringIO()
         original = cli_mod.console
@@ -1778,7 +1778,7 @@ class TestRenderInstallReport:
         return buf.getvalue()
 
     def test_warning_with_literal_toml_keys_preserved(self) -> None:
-        from vaultspec_rag.commands import InstallReport
+        from ..commands import InstallReport
 
         warning = (
             "torch-config patched, but `torch` is not a direct dependency. "
@@ -1804,7 +1804,7 @@ class TestRenderInstallReport:
         the new INSTALL-03 tail. ``[project]`` and ``[tool]`` tokens
         in uv's own error rendering must survive.
         """
-        from vaultspec_rag.commands import InstallReport
+        from ..commands import InstallReport
 
         report = InstallReport(
             action="install",
@@ -1827,7 +1827,7 @@ class TestRenderInstallReport:
         future maintainer cannot accidentally collapse the two-line
         treatment back into a single ``f"... {conflict}"`` print).
         """
-        from vaultspec_rag.commands import InstallReport
+        from ..commands import InstallReport
 
         report = InstallReport(
             action="install",
@@ -1846,7 +1846,7 @@ class TestRenderInstallReport:
         must reach the colour map. A regression that dropped it would
         render the label in default-white instead of yellow.
         """
-        from vaultspec_rag.commands import InstallReport
+        from ..commands import InstallReport
 
         report = InstallReport(
             action="install",
@@ -1867,7 +1867,7 @@ class TestRenderUninstallReport:
 
         from rich.console import Console
 
-        from vaultspec_rag import cli as cli_mod
+        from .. import cli as cli_mod
 
         buf = io.StringIO()
         original = cli_mod.console
@@ -1881,7 +1881,7 @@ class TestRenderUninstallReport:
         return buf.getvalue()
 
     def test_warning_with_literal_toml_keys_preserved(self) -> None:
-        from vaultspec_rag.commands import UninstallReport
+        from ..commands import UninstallReport
 
         report = UninstallReport(
             action="uninstall",
@@ -1898,7 +1898,7 @@ class TestRenderUninstallReport:
         """INSTALL-08 follow-up: uninstall now has ``error`` in its
         colour map. Just verify the label reaches the renderer.
         """
-        from vaultspec_rag.commands import UninstallReport
+        from ..commands import UninstallReport
 
         report = UninstallReport(
             action="uninstall",
@@ -2304,13 +2304,14 @@ class TestAutoDelegation:
         )
         # Mock _is_our_service to return True
         monkeypatch.setattr(
-            "vaultspec_rag.cli._is_our_service", lambda pid, port, expected_token: True
+            "vaultspec_rag.cli._is_our_service",
+            lambda _pid, _port, _expected_token: True,
         )
 
         # Mock _try_mcp_search to return dummy results (so we know it got called)
         called = []
 
-        def mock_try_search(*args, **kwargs):
+        def mock_try_search(*args, **_kwargs):
             # args: query, search_type, max_results, port, target
             called.append(args[3])
             return {"ok": True, "results": []}
@@ -2340,12 +2341,13 @@ class TestAutoDelegation:
             lambda: {"pid": 12345, "port": 8766, "service_token": "token123"},
         )
         monkeypatch.setattr(
-            "vaultspec_rag.cli._is_our_service", lambda pid, port, expected_token: True
+            "vaultspec_rag.cli._is_our_service",
+            lambda _pid, _port, _expected_token: True,
         )
 
         called = []
 
-        def mock_try_reindex(tool_name, rebuild, port, target):
+        def mock_try_reindex(tool_name, _rebuild, port, _target):
             called.append((tool_name, port))
             return {
                 "ok": True,
@@ -2418,7 +2420,7 @@ class TestBenchmarkAndQualityCommands:
     def test_benchmark_empty_vault(self, tmp_path, monkeypatch):
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_run_benchmark(root, n_queries):
+        def mock_run_benchmark(_root, _n_queries):
             raise ValueError("No vault documents indexed.")
 
         monkeypatch.setattr("vaultspec_rag.api.run_benchmark", mock_run_benchmark)

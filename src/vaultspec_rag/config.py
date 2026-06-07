@@ -223,6 +223,37 @@ class VaultSpecConfigWrapper:
         """
         self._base = base
 
+    def _resolve_rag_default(self, name: str) -> Any:
+        # 1. CLI override via base config
+        try:
+            return getattr(self._base, name)
+        except AttributeError as exc:
+            # Base config doesn't carry RAG-specific knob; fall
+            # through to env var, then to module default. Debug
+            # so the swallow stays observable.
+            logger.debug(
+                "config attr %s not on base; fall through: %s",
+                name,
+                exc,
+            )
+
+        # 2. Env var override
+        env_key = _ENV_OVERRIDE_MAP.get(name)
+        if env_key is not None:
+            env_val = os.environ.get(env_key.value)
+            if env_val is not None:
+                default = self._RAG_DEFAULTS[name]
+                if isinstance(default, bool):
+                    return env_val.lower() in ("1", "true", "yes")
+                if isinstance(default, int):
+                    return int(env_val)
+                if isinstance(default, float):
+                    return float(env_val)
+                return env_val
+
+        # 3. Default
+        return self._RAG_DEFAULTS[name]
+
     def __getattr__(self, name: str) -> Any:
         """Return a config attribute, checking env overrides then defaults.
 
@@ -242,35 +273,7 @@ class VaultSpecConfigWrapper:
                 also missing from the base config.
         """
         if name in self._RAG_DEFAULTS:
-            # 1. CLI override via base config
-            try:
-                return getattr(self._base, name)
-            except AttributeError as exc:
-                # Base config doesn't carry RAG-specific knob; fall
-                # through to env var, then to module default. Debug
-                # so the swallow stays observable.
-                logger.debug(
-                    "config attr %s not on base; fall through: %s",
-                    name,
-                    exc,
-                )
-
-            # 2. Env var override
-            env_key = _ENV_OVERRIDE_MAP.get(name)
-            if env_key is not None:
-                env_val = os.environ.get(env_key.value)
-                if env_val is not None:
-                    default = self._RAG_DEFAULTS[name]
-                    if isinstance(default, bool):
-                        return env_val.lower() in ("1", "true", "yes")
-                    if isinstance(default, int):
-                        return int(env_val)
-                    if isinstance(default, float):
-                        return float(env_val)
-                    return env_val
-
-            # 3. Default
-            return self._RAG_DEFAULTS[name]
+            return self._resolve_rag_default(name)
 
         return getattr(self._base, name)
 

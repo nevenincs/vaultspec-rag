@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from vaultspec_rag.cli import app
+from ..cli import app
 
 pytestmark = [pytest.mark.integration]
 

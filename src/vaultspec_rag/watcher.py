@@ -170,8 +170,6 @@ async def watch_and_reindex(
     pending_vault: set[Path] = set()
     pending_code: set[Path] = set()
 
-    import asyncio
-
     try:
         async for changes in awatch(
             root_dir,
@@ -193,117 +191,33 @@ async def watch_and_reindex(
             now = time.monotonic()
 
             if pending_vault:
-                if now - _last_vault_index < cooldown:
-                    logger.debug(
-                        "Vault re-index suppressed: %.0fs remaining in cooldown "
-                        "(%d path(s) pending)",
-                        cooldown - (now - _last_vault_index),
-                        len(pending_vault),
-                    )
-                else:
-                    logger.info(
-                        "Vault changes detected (%d path(s)), triggering scoped "
-                        "re-index...",
-                        len(pending_vault),
-                    )
-                    batch = frozenset(pending_vault)
-                    active_vault_job = _jobs.record_start("vault", "watcher")
-                    _jobs.record_progress(active_vault_job, "queued")
-                    try:
-                        result = await _run_in_thread(
-                            lambda paths=batch, job_id=active_vault_job: (
-                                vault_indexer.incremental_index(
-                                    reporter=_jobs.JobProgressReporter(job_id),
-                                    changed_paths=paths,
-                                )
-                            ),
-                        )
-                        graph_cache.invalidate()
-                        _last_vault_index = time.monotonic()
-                        pending_vault = set()
-                        _jobs.record_finish(
-                            active_vault_job,
-                            result=(
-                                f"+{result.added} /{result.updated} "
-                                f"-{result.removed} ({result.duration_ms}ms)"
-                            ),
-                        )
-                        logger.info(
-                            "Vault re-index complete: +%d /%d -%d (%dms)",
-                            result.added,
-                            result.updated,
-                            result.removed,
-                            result.duration_ms,
-                        )
-                    except Exception as exc:
-                        # Keep pending_vault so the failed batch retries next run.
-                        _jobs.record_finish(active_vault_job, error=str(exc))
-                        logger.exception("Vault re-index failed")
-                    except asyncio.CancelledError:
-                        _jobs.record_finish(
-                            active_vault_job,
-                            phase="cancelled",
-                            error="watcher task cancelled",
-                        )
-                        raise
-                    finally:
-                        active_vault_job = None
+                (
+                    _last_vault_index,
+                    pending_vault,
+                    active_vault_job,
+                ) = await _process_vault_changes(
+                    pending_vault,
+                    _last_vault_index,
+                    cooldown,
+                    now,
+                    vault_indexer,
+                    graph_cache,
+                    active_vault_job,
+                )
 
             if pending_code:
-                if now - _last_code_index < cooldown:
-                    logger.debug(
-                        "Code re-index suppressed: %.0fs remaining in cooldown "
-                        "(%d path(s) pending)",
-                        cooldown - (now - _last_code_index),
-                        len(pending_code),
-                    )
-                else:
-                    logger.info(
-                        "Code changes detected (%d path(s)), triggering scoped "
-                        "re-index...",
-                        len(pending_code),
-                    )
-                    batch = frozenset(pending_code)
-                    active_code_job = _jobs.record_start("code", "watcher")
-                    _jobs.record_progress(active_code_job, "queued")
-                    try:
-                        result = await _run_in_thread(
-                            lambda paths=batch, job_id=active_code_job: (
-                                code_indexer.incremental_index(
-                                    reporter=_jobs.JobProgressReporter(job_id),
-                                    changed_paths=paths,
-                                )
-                            ),
-                        )
-                        _last_code_index = time.monotonic()
-                        pending_code = set()
-                        _jobs.record_finish(
-                            active_code_job,
-                            result=(
-                                f"+{result.added} /{result.updated} "
-                                f"-{result.removed} ({result.duration_ms}ms)"
-                            ),
-                        )
-                        logger.info(
-                            "Code re-index complete: +%d /%d -%d (%dms)",
-                            result.added,
-                            result.updated,
-                            result.removed,
-                            result.duration_ms,
-                        )
-                    except Exception as exc:
-                        # Keep pending_code so the failed batch retries next run.
-                        _jobs.record_finish(active_code_job, error=str(exc))
-                        logger.exception("Code re-index failed")
-                    except asyncio.CancelledError:
-                        _jobs.record_finish(
-                            active_code_job,
-                            phase="cancelled",
-                            error="watcher task cancelled",
-                        )
-                        raise
-                    finally:
-                        active_code_job = None
+                (
+                    _last_code_index,
+                    pending_code,
+                    active_code_job,
+                ) = await _process_code_changes(
+                    pending_code,
+                    _last_code_index,
+                    cooldown,
+                    now,
+                    code_indexer,
+                    active_code_job,
+                )
     finally:
         if active_vault_job is not None:
             _jobs.record_finish(
@@ -314,3 +228,137 @@ async def watch_and_reindex(
                 active_code_job, phase="cancelled", error="watcher task stopped"
             )
         logger.info("Filesystem watcher stopped.")
+
+
+async def _process_vault_changes(
+    pending_vault: set[Path],
+    _last_vault_index: float,
+    cooldown: float,
+    now: float,
+    vault_indexer: VaultIndexer,
+    graph_cache: GraphCache,
+    active_vault_job: str | None,
+) -> tuple[float, set[Path], str | None]:
+    import asyncio
+    import time
+
+    if now - _last_vault_index < cooldown:
+        logger.debug(
+            "Vault re-index suppressed: %.0fs remaining in cooldown "
+            "(%d path(s) pending)",
+            cooldown - (now - _last_vault_index),
+            len(pending_vault),
+        )
+        return _last_vault_index, pending_vault, active_vault_job
+
+    logger.info(
+        "Vault changes detected (%d path(s)), triggering scoped re-index...",
+        len(pending_vault),
+    )
+    batch = frozenset(pending_vault)
+    active_vault_job = _jobs.record_start("vault", "watcher")
+    _jobs.record_progress(active_vault_job, "queued")
+    try:
+        result = await _run_in_thread(
+            lambda paths=batch, job_id=active_vault_job: (
+                vault_indexer.incremental_index(
+                    reporter=_jobs.JobProgressReporter(job_id),
+                    changed_paths=paths,
+                )
+            ),
+        )
+        graph_cache.invalidate()
+        _last_vault_index = time.monotonic()
+        pending_vault = set()
+        _jobs.record_finish(
+            active_vault_job,
+            result=(
+                f"+{result.added} /{result.updated} "
+                f"-{result.removed} ({result.duration_ms}ms)"
+            ),
+        )
+        logger.info(
+            "Vault re-index complete: +%d /%d -%d (%dms)",
+            result.added,
+            result.updated,
+            result.removed,
+            result.duration_ms,
+        )
+    except Exception as exc:
+        _jobs.record_finish(active_vault_job, error=str(exc))
+        logger.exception("Vault re-index failed")
+    except asyncio.CancelledError:
+        _jobs.record_finish(
+            active_vault_job,
+            phase="cancelled",
+            error="watcher task cancelled",
+        )
+        raise
+    finally:
+        active_vault_job = None
+    return _last_vault_index, pending_vault, active_vault_job
+
+
+async def _process_code_changes(
+    pending_code: set[Path],
+    _last_code_index: float,
+    cooldown: float,
+    now: float,
+    code_indexer: CodebaseIndexer,
+    active_code_job: str | None,
+) -> tuple[float, set[Path], str | None]:
+    import asyncio
+    import time
+
+    if now - _last_code_index < cooldown:
+        logger.debug(
+            "Code re-index suppressed: %.0fs remaining in cooldown "
+            "(%d path(s) pending)",
+            cooldown - (now - _last_code_index),
+            len(pending_code),
+        )
+        return _last_code_index, pending_code, active_code_job
+
+    logger.info(
+        "Code changes detected (%d path(s)), triggering scoped re-index...",
+        len(pending_code),
+    )
+    batch = frozenset(pending_code)
+    active_code_job = _jobs.record_start("code", "watcher")
+    _jobs.record_progress(active_code_job, "queued")
+    try:
+        result = await _run_in_thread(
+            lambda paths=batch, job_id=active_code_job: code_indexer.incremental_index(
+                reporter=_jobs.JobProgressReporter(job_id),
+                changed_paths=paths,
+            ),
+        )
+        _last_code_index = time.monotonic()
+        pending_code = set()
+        _jobs.record_finish(
+            active_code_job,
+            result=(
+                f"+{result.added} /{result.updated} "
+                f"-{result.removed} ({result.duration_ms}ms)"
+            ),
+        )
+        logger.info(
+            "Code re-index complete: +%d /%d -%d (%dms)",
+            result.added,
+            result.updated,
+            result.removed,
+            result.duration_ms,
+        )
+    except Exception as exc:
+        _jobs.record_finish(active_code_job, error=str(exc))
+        logger.exception("Code re-index failed")
+    except asyncio.CancelledError:
+        _jobs.record_finish(
+            active_code_job,
+            phase="cancelled",
+            error="watcher task cancelled",
+        )
+        raise
+    finally:
+        active_code_job = None
+    return _last_code_index, pending_code, active_code_job

@@ -10,7 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from vaultspec_rag.config import EnvVar, get_config, reset_config
+from ..config import EnvVar, get_config, reset_config
 
 
 @pytest.fixture(autouse=True)

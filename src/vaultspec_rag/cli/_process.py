@@ -45,7 +45,7 @@ def _is_pid_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
+        kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(
             0x1000,  # PROCESS_QUERY_LIMITED_INFORMATION
             False,
@@ -140,7 +140,7 @@ def _is_our_service(
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
+        kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFO
         if not handle:
             return True  # can't query → fall back to PID-alive trust
@@ -195,7 +195,7 @@ def _port_is_available(port: int) -> bool:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Reject HTTP redirects to prevent SSRF via health endpoint."""
 
-    def redirect_request(  # type: ignore[override]
+    def redirect_request(
         self,
         req: urllib.request.Request,
         fp: object,
@@ -355,12 +355,12 @@ def _spawn_service(
         watch_debounce_ms=watch_debounce_ms,
         watch_cooldown_s=watch_cooldown_s,
     )
-    log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
     if sys.platform == "win32":
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
-            stdout=log_fh,
+            stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
             creationflags=0x00000200 | 0x08000000,  # NEW_PROCESS_GROUP | NO_WINDOW
@@ -369,12 +369,12 @@ def _spawn_service(
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
-            stdout=log_fh,
+            stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
             start_new_session=True,
         )
-    log_fh.close()  # child has the fd now
+    os.close(log_fd)  # child has the fd now
     return proc.pid
 
 

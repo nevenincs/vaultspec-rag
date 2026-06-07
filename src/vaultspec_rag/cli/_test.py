@@ -1,12 +1,10 @@
 """``test`` command: forward extra args to pytest over the test tree."""
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path
 
-import typer  # noqa: TC002 - Typer resolves annotations at runtime
+import typer
 
 from ._app import app
 

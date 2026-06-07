@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#win-shutdown-log'
-date: '2026-05-31'
+date: '2026-06-06'
 related:
   - '[[2026-05-31-win-shutdown-log-adr]]'
   - '[[2026-05-31-win-shutdown-log-plan]]'

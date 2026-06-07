@@ -23,7 +23,7 @@ class TestStoreHelpers:
         """_build_filter should return a Qdrant Filter with correct conditions."""
         from qdrant_client import models
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter({"doc_type": "adr"})
         assert result is not None
@@ -38,7 +38,7 @@ class TestStoreHelpers:
         """_build_filter with multiple keys should produce multiple conditions."""
         from qdrant_client import models
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter({"doc_type": "adr", "feature": "rag"})
         assert result is not None
@@ -48,14 +48,14 @@ class TestStoreHelpers:
 
     def test_build_filter_empty_returns_none(self):
         """_build_filter with empty dict should return None."""
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter({})
         assert result is None
 
     def test_build_filter_none_returns_none(self):
         """_build_filter with None should return None."""
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter(None)
         assert result is None
@@ -64,7 +64,7 @@ class TestStoreHelpers:
         """_build_filter date key should use MatchValue for exact matching."""
         from qdrant_client import models
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter({"date": "2026-02-07"})
         assert result is not None
@@ -75,14 +75,14 @@ class TestStoreHelpers:
 
     def test_build_filter_ignores_unknown_keys(self):
         """_build_filter should ignore keys not in (doc_type, feature, date)."""
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter({"unknown_key": "value"})
         assert result is None
 
     def test_stable_id_deterministic(self):
         """_stable_id should return the same integer for the same input."""
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         id1 = VaultStore._stable_id("test-doc")
         id2 = VaultStore._stable_id("test-doc")
@@ -91,7 +91,7 @@ class TestStoreHelpers:
 
     def test_stable_id_different_inputs(self):
         """_stable_id should return different integers for different inputs."""
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         id1 = VaultStore._stable_id("doc-a")
         id2 = VaultStore._stable_id("doc-b")
@@ -101,7 +101,7 @@ class TestStoreHelpers:
         """_build_filter with tag key produces MatchAny on tags field."""
         from qdrant_client import models
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_filter({"tag": "auth"})
         assert result is not None
@@ -118,7 +118,7 @@ class TestStoreLocalWarnings:
     """Qdrant local-mode warning handling."""
 
     def test_payload_index_warning_is_suppressed(self, tmp_path):
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -133,7 +133,7 @@ class TestStoreLocalWarnings:
         assert not any("Payload indexes have no effect" in msg for msg in messages)
 
     def test_large_local_collection_warning_is_suppressed(self):
-        from vaultspec_rag.store import _suppress_local_qdrant_warnings
+        from ..store import _suppress_local_qdrant_warnings
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -155,7 +155,7 @@ class TestStoreLocalClientSerialization:
     """Real local-Qdrant client calls serialize on the store client lock."""
 
     def _assert_call_waits_for_store_lock(self, tmp_path, store_call, expected) -> None:
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         store = VaultStore(tmp_path)
         acquired = False
@@ -200,26 +200,26 @@ class TestStoreLocalClientSerialization:
             store.close()
 
     def test_vault_hybrid_search_waits_for_store_lock(self, tmp_path):
-        from vaultspec_rag.store import EMBEDDING_DIM
+        from ..store import EMBEDDING_DIM
 
         self._assert_call_waits_for_store_lock(
             tmp_path,
             lambda store: store.hybrid_search(
                 query_vector=[0.0] * EMBEDDING_DIM,
-                query_text="anything",
+                _query_text="anything",
                 limit=1,
             ),
             [],
         )
 
     def test_codebase_hybrid_search_waits_for_store_lock(self, tmp_path):
-        from vaultspec_rag.store import EMBEDDING_DIM
+        from ..store import EMBEDDING_DIM
 
         self._assert_call_waits_for_store_lock(
             tmp_path,
             lambda store: store.hybrid_search_codebase(
                 query_vector=[0.0] * EMBEDDING_DIM,
-                query_text="anything",
+                _query_text="anything",
                 limit=1,
             ),
             [],
@@ -239,7 +239,7 @@ class TestStoreLocalClientSerialization:
         return vector
 
     def _seed_searchable_points(self, store, dim: int) -> None:
-        from vaultspec_rag.store import CodeChunk, VaultDocument
+        from ..store import CodeChunk, VaultDocument
 
         store.upsert_documents(
             [
@@ -283,7 +283,7 @@ class TestStoreLocalClientSerialization:
         )
 
     def test_parallel_hybrid_searches_complete_without_qdrant_errors(self, tmp_path):
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         dim = 8
         worker_count = 8
@@ -301,7 +301,7 @@ class TestStoreLocalClientSerialization:
                     if (worker_id + iteration) % 2 == 0:
                         rows = store.hybrid_search(
                             query_vector=query_vector,
-                            query_text="parallel local qdrant search",
+                            _query_text="parallel local qdrant search",
                             filters={"feature": "parallel-search"},
                             limit=3,
                         )
@@ -311,7 +311,7 @@ class TestStoreLocalClientSerialization:
                     else:
                         rows = store.hybrid_search_codebase(
                             query_vector=query_vector,
-                            query_text="parallel local qdrant code search",
+                            _query_text="parallel local qdrant code search",
                             filters={"language": "python"},
                             limit=3,
                         )
@@ -340,7 +340,7 @@ class TestBuildCodeFilter:
         """Path ending with / should use MatchValue (KEYWORD index)."""
         from qdrant_client import models
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_code_filter({"path": "src/"})
         assert result is not None
@@ -353,7 +353,7 @@ class TestBuildCodeFilter:
         """Exact path should use MatchValue."""
         from qdrant_client import models
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         result = VaultStore._build_code_filter({"path": "src/main.py"})
         assert result is not None
@@ -370,8 +370,8 @@ class TestQdrantServerMode:
         self, tmp_path, monkeypatch
     ):
         """When VAULTSPEC_RAG_QDRANT_URL is set, VaultStore bypasses FileLock."""
-        from vaultspec_rag.config import reset_config
-        from vaultspec_rag.store import VaultStore
+        from ..config import reset_config
+        from ..store import VaultStore
 
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://localhost:65432")
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_API_KEY", "test-api-key")
@@ -397,8 +397,8 @@ class TestQdrantServerMode:
 
     def test_quantization_configs_built_correctly(self, tmp_path, monkeypatch):
         """Verify qdrant_quantization builds correct models configs."""
-        from vaultspec_rag.config import reset_config
-        from vaultspec_rag.store import VaultStore
+        from ..config import reset_config
+        from ..store import VaultStore
 
         # Test scalar quantization config mapping
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_QUANTIZATION", "scalar")
@@ -413,7 +413,7 @@ class TestQdrantServerMode:
             # method or inspect how _ensure_collection builds the config.
             # Let's inspect the code inside _ensure_collection or just verify
             # qdrant_quantization in config.
-            from vaultspec_rag.config import get_config
+            from ..config import get_config
 
             cfg = get_config()
             assert cfg.qdrant_quantization == "scalar"

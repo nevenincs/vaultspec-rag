@@ -7,14 +7,13 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
 
-    from vaultspec_rag import EmbeddingModel
+    from .. import EmbeddingModel
 from vaultspec_core.config import reset_config
 
-from vaultspec_rag.config import VaultSpecConfigWrapper as VaultSpecConfig
-from vaultspec_rag.config import get_config
-from vaultspec_rag.config import reset_config as reset_rag_config
-from vaultspec_rag.progress import NullProgressReporter
-
+from ..config import VaultSpecConfigWrapper as VaultSpecConfig
+from ..config import get_config
+from ..config import reset_config as reset_rag_config
+from ..progress import NullProgressReporter
 from .corpus import CorpusManifest, build_synthetic_vault
 
 # GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
@@ -29,7 +28,7 @@ def _index_corpus(
     Uses config overrides to place Qdrant data inside the synthetic
     project's data dir - no suffix hacks needed.
     """
-    from vaultspec_rag import CodebaseIndexer, VaultIndexer, VaultStore
+    from .. import CodebaseIndexer, VaultIndexer, VaultStore
 
     store = VaultStore(root)
     indexer = VaultIndexer(root, model, store)
@@ -52,7 +51,7 @@ def embedding_model():
 
     Avoids loading ~900MB of GPU models per fixture.
     """
-    from vaultspec_rag import EmbeddingModel
+    from .. import EmbeddingModel
 
     return EmbeddingModel()
 

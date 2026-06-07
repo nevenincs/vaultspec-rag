@@ -20,7 +20,12 @@ import vaultspec_rag.mcp_server as _m
 from ..jobs import register_on_job_complete
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
-from ._models import IndexResponse, IndexStatus, SearchResponse, SearchResultItem
+from ._models import (
+    IndexResponse,
+    IndexStatus,
+    SearchResponse,
+    SearchResultItem,
+)
 from ._state import mcp
 from ._utils import (
     _clamp_top_k,

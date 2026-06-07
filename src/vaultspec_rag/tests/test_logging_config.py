@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vaultspec_rag.logging_config import (
+from ..logging_config import (
     DaemonRotatingFileHandler,
     install_daemon_log_rotation,
 )

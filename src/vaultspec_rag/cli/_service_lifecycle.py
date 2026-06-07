@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 import typer
 from rich.panel import Panel
@@ -244,6 +244,215 @@ def service_stop() -> None:
     )
 
 
+def _compute_token_match(
+    expected_token: str | None,
+    pid_alive: bool,
+    port_listening: bool,
+    port: int,
+) -> bool | None:
+    if expected_token is None or not pid_alive:
+        return None
+    probe_for_token = _health_probe(port) if port_listening else None
+    if probe_for_token is not None and isinstance(
+        probe_for_token.get("service_token"),
+        str,
+    ):
+        response_token = probe_for_token["service_token"]
+        return bool(response_token) and response_token == expected_token
+    return None
+
+
+def _compute_state(
+    pid_alive: bool,
+    pid_is_ours: bool,
+    port_listening: bool,
+    heartbeat_stale: bool,
+) -> tuple[str, str, int]:
+    if not pid_alive:
+        _status_file().unlink(missing_ok=True)
+        return (
+            "crashed_pid_dead",
+            "[red]crashed (PID dead, stale service.json cleaned)[/]",
+            4,
+        )
+    if not pid_is_ours:
+        return (
+            "crashed_pid_reused",
+            "[red]crashed (PID reused by unrelated process)[/]",
+            4,
+        )
+    if not port_listening:
+        return "crashed_port_silent", "[red]crashed (port silent)[/]", 4
+    if heartbeat_stale:
+        return "crashed_heartbeat_stale", "[red]crashed (heartbeat stale)[/]", 4
+    return "running", "[green]running[/]", 0
+
+
+def _evaluate_service_signals(
+    status: dict[str, Any],
+) -> tuple[
+    int, int, str, bool, bool, bool, float | None, bool, bool | None, str, str, int
+]:
+    pid = int(status.get("pid", 0))
+    port = int(status.get("port", 0))
+    started_at = str(status.get("started_at", "unknown"))
+
+    raw_token = status.get("service_token")
+    expected_token = raw_token if isinstance(raw_token, str) and raw_token else None
+    pid_alive = _cli._is_pid_alive(pid)
+    pid_is_ours = (
+        _cli._is_our_service(pid, port=port, expected_token=expected_token)
+        if pid_alive
+        else False
+    )
+    port_listening = _port_is_listening(port) if pid_alive else False
+    heartbeat_age = _heartbeat_age_seconds(status)
+    heartbeat_stale = (
+        pid_alive
+        if heartbeat_age is None
+        else heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
+    )
+
+    token_match = _compute_token_match(expected_token, pid_alive, port_listening, port)
+    state, state_label, exit_code = _compute_state(
+        pid_alive, pid_is_ours, port_listening, heartbeat_stale
+    )
+
+    return (
+        pid,
+        port,
+        started_at,
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_age,
+        heartbeat_stale,
+        token_match,
+        state,
+        state_label,
+        exit_code,
+    )
+
+
+def _render_status_json(
+    pid: int,
+    port: int,
+    started_at: str,
+    pid_alive: bool,
+    pid_is_ours: bool,
+    port_listening: bool,
+    heartbeat_age: float | None,
+    heartbeat_stale: bool,
+    token_match: bool | None,
+    state: str,
+    exit_code: int,
+    health: dict[str, object] | None,
+) -> None:
+    payload: dict[str, object] = {
+        "service_json_present": True,
+        "pid": pid,
+        "port": port,
+        "started_at": started_at,
+        "pid_alive": pid_alive,
+        "pid_matches_service": pid_is_ours,
+        "port_listening": port_listening,
+        "heartbeat_age_seconds": heartbeat_age,
+        "heartbeat_stale": heartbeat_stale,
+        "service_token_match": token_match,
+        "state": state,
+    }
+    if isinstance(health, dict):
+        payload["health"] = health
+    _emit_json(
+        exit_code == 0,
+        "service.status",
+        data=payload,
+        **(
+            {"error": state, "message": f"Service state: {state}"}
+            if exit_code != 0
+            else {}
+        ),
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+def _get_token_label(token_match: bool | None) -> str:
+    if token_match is None:
+        return "[yellow]n/a[/]"
+    if token_match:
+        return "[green]yes[/]"
+    return "[red]no[/]"
+
+
+def _add_health_rows(
+    table: Table, health: dict[str, object] | None, port_listening: bool
+) -> None:
+    if isinstance(health, dict):
+        table.add_row("Health", str(health.get("status", "unknown")))
+        table.add_row("CUDA", str(health.get("cuda", "unknown")))
+        table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
+        table.add_row("Projects", str(health.get("project_count", "unknown")))
+        uptime = health.get("uptime_s", 0.0)
+        table.add_row("Uptime", f"{float(cast('float', uptime)):.0f}s")
+        caps = health.get("backend_capabilities")
+        if isinstance(caps, dict):
+            _add_backend_contract_rows(table, cast("dict[str, object]", caps))
+    elif port_listening:
+        table.add_row("Health", "[yellow]unreachable[/]")
+
+
+def _render_status_table(
+    pid: int,
+    port: int,
+    started_at: str,
+    pid_alive: bool,
+    pid_is_ours: bool,
+    port_listening: bool,
+    heartbeat_age: float | None,
+    heartbeat_stale: bool,
+    token_match: bool | None,
+    state_label: str,
+    exit_code: int,
+    health: dict[str, object] | None,
+) -> None:
+    table = Table(title="Service Status", show_header=False, padding=(0, 2))
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    table.add_row("Service JSON", "[green]present[/]")
+    table.add_row("PID", str(pid))
+    table.add_row("Port", str(port))
+    table.add_row("Started", started_at)
+    table.add_row(
+        "PID Alive",
+        "[green]yes[/]" if pid_alive else "[red]no[/]",
+    )
+    table.add_row(
+        "PID Matches Service",
+        "[green]yes[/]" if pid_is_ours else "[red]no[/]" if pid_alive else "n/a",
+    )
+    table.add_row("Service Token Match", _get_token_label(token_match))
+    table.add_row(
+        "Port Listening",
+        "[green]yes[/]" if port_listening else "[red]no[/]" if pid_alive else "n/a",
+    )
+    if heartbeat_age is None:
+        table.add_row("Heartbeat", "[yellow]absent[/]")
+    else:
+        colour = "red" if heartbeat_stale else "green"
+        table.add_row(
+            "Heartbeat",
+            f"[{colour}]{heartbeat_age:.0f}s ago[/]",
+        )
+    table.add_row("State", state_label)
+
+    _add_health_rows(table, health, port_listening)
+
+    _cli.console.print(table)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
 @service_app.command("status")
 def service_status(
     json_mode: Annotated[
@@ -293,153 +502,54 @@ def service_status(
         _cli.console.print(table)
         raise typer.Exit(code=3)
 
-    pid = int(status["pid"])
-    port = int(status["port"])
-    started_at = status.get("started_at", "unknown")
-
-    # Gather every signal first; render once at the end.
-    raw_token = status.get("service_token")
-    expected_token = raw_token if isinstance(raw_token, str) and raw_token else None
-    pid_alive = _cli._is_pid_alive(pid)
-    pid_is_ours = (
-        _cli._is_our_service(pid, port=port, expected_token=expected_token)
-        if pid_alive
-        else False
-    )
-    port_listening = _port_is_listening(port) if pid_alive else False
-    heartbeat_age = _heartbeat_age_seconds(status)
-    heartbeat_stale = (
-        pid_alive
-        if heartbeat_age is None
-        else heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
-    )
-    # Token-match is reported as a separate signal so divergences
-    # (PID alive + port listening + heartbeat fresh + token absent)
-    # surface explicitly. None = not checked (pre-upgrade status
-    # file or pid dead); True = matched; False = mismatched.
-    if expected_token is None or not pid_alive:
-        token_match: bool | None = None
-    else:
-        probe_for_token = _health_probe(port) if port_listening else None
-        if probe_for_token is not None and isinstance(
-            probe_for_token.get("service_token"),
-            str,
-        ):
-            response_token = probe_for_token["service_token"]
-            token_match = bool(response_token) and response_token == expected_token
-        else:
-            token_match = None
-
-    # State derivation: clean / known-bad mapping.
-    state: str
-    state_label: str
-    exit_code: int
-    if not pid_alive:
-        state = "crashed_pid_dead"
-        state_label = "[red]crashed (PID dead, stale service.json cleaned)[/]"
-        _status_file().unlink(missing_ok=True)
-        exit_code = 4
-    elif not pid_is_ours:
-        state = "crashed_pid_reused"
-        state_label = "[red]crashed (PID reused by unrelated process)[/]"
-        exit_code = 4
-    elif not port_listening:
-        state = "crashed_port_silent"
-        state_label = "[red]crashed (port silent)[/]"
-        exit_code = 4
-    elif heartbeat_stale:
-        state = "crashed_heartbeat_stale"
-        state_label = "[red]crashed (heartbeat stale)[/]"
-        exit_code = 4
-    else:
-        state = "running"
-        state_label = "[green]running[/]"
-        exit_code = 0
+    (
+        pid,
+        port,
+        started_at,
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_age,
+        heartbeat_stale,
+        token_match,
+        state,
+        state_label,
+        exit_code,
+    ) = _evaluate_service_signals(status)
 
     health = _health_probe(port) if port_listening else None
 
     if json_mode:
-        payload: dict[str, object] = {
-            "service_json_present": True,
-            "pid": pid,
-            "port": port,
-            "started_at": started_at,
-            "pid_alive": pid_alive,
-            "pid_matches_service": pid_is_ours,
-            "port_listening": port_listening,
-            "heartbeat_age_seconds": heartbeat_age,
-            "heartbeat_stale": heartbeat_stale,
-            "service_token_match": token_match,
-            "state": state,
-        }
-        if isinstance(health, dict):
-            payload["health"] = health
-        _emit_json(
-            exit_code == 0,
-            "service.status",
-            data=payload,
-            **(
-                {"error": state, "message": f"Service state: {state}"}
-                if exit_code != 0
-                else {}
-            ),
+        _render_status_json(
+            pid,
+            port,
+            started_at,
+            pid_alive,
+            pid_is_ours,
+            port_listening,
+            heartbeat_age,
+            heartbeat_stale,
+            token_match,
+            state,
+            exit_code,
+            health,
         )
-        if exit_code != 0:
-            raise typer.Exit(code=exit_code)
         return
 
-    table = Table(title="Service Status", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Service JSON", "[green]present[/]")
-    table.add_row("PID", str(pid))
-    table.add_row("Port", str(port))
-    table.add_row("Started", started_at)
-    table.add_row(
-        "PID Alive",
-        "[green]yes[/]" if pid_alive else "[red]no[/]",
+    _render_status_table(
+        pid,
+        port,
+        started_at,
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_age,
+        heartbeat_stale,
+        token_match,
+        state_label,
+        exit_code,
+        health,
     )
-    table.add_row(
-        "PID Matches Service",
-        "[green]yes[/]" if pid_is_ours else "[red]no[/]" if pid_alive else "n/a",
-    )
-    if token_match is None:
-        token_label = "[yellow]n/a[/]"
-    elif token_match:
-        token_label = "[green]yes[/]"
-    else:
-        token_label = "[red]no[/]"
-    table.add_row("Service Token Match", token_label)
-    table.add_row(
-        "Port Listening",
-        "[green]yes[/]" if port_listening else "[red]no[/]" if pid_alive else "n/a",
-    )
-    if heartbeat_age is None:
-        table.add_row("Heartbeat", "[yellow]absent[/]")
-    else:
-        colour = "red" if heartbeat_stale else "green"
-        table.add_row(
-            "Heartbeat",
-            f"[{colour}]{heartbeat_age:.0f}s ago[/]",
-        )
-    table.add_row("State", state_label)
-
-    if isinstance(health, dict):
-        table.add_row("Health", health.get("status", "unknown"))
-        table.add_row("CUDA", str(health.get("cuda", "unknown")))
-        table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
-        table.add_row("Projects", str(health.get("project_count", "unknown")))
-        uptime = health.get("uptime_s", 0.0)
-        table.add_row("Uptime", f"{uptime:.0f}s")
-        caps = health.get("backend_capabilities")
-        if isinstance(caps, dict):
-            _add_backend_contract_rows(table, cast("dict[str, object]", caps))
-    elif port_listening:
-        table.add_row("Health", "[yellow]unreachable[/]")
-
-    _cli.console.print(table)
-    if exit_code != 0:
-        raise typer.Exit(code=exit_code)
 
 
 @service_app.command("warmup")

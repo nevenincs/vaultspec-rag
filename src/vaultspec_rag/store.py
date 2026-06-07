@@ -808,7 +808,7 @@ class VaultStore:
     def hybrid_search(
         self,
         query_vector: list[float],
-        query_text: str,  # noqa: ARG002
+        _query_text: str,
         filters: dict[str, str] | None = None,
         limit: int = 5,
         *,
@@ -840,94 +840,25 @@ class VaultStore:
                 triggers dense-only fallback.
         """
         from qdrant_client import models
-        from qdrant_client.http.exceptions import (
-            ResponseHandlingException,
-            UnexpectedResponse,
-        )
 
         query_filter = self._build_filter(filters)
-        dense_vec = query_vector
-        if not isinstance(query_vector, list):
-            dense_vec = query_vector.tolist()
-
-        if like_ids or unlike_ids:
-            from typing import Any
-
-            pos: list[Any] = [dense_vec]
-            if like_ids:
-                pos.extend(
-                    self._stable_id(i) if isinstance(i, str) else i for i in like_ids
-                )
-            neg: list[Any] = (
-                [self._stable_id(i) if isinstance(i, str) else i for i in unlike_ids]
-                if unlike_ids
-                else []
-            )
-            dense_query = models.RecommendQuery(
-                recommend=models.RecommendInput(
-                    positive=pos,
-                    negative=neg,
-                )
-            )
-        else:
-            dense_query = dense_vec
-
-        prefetch = [
-            models.Prefetch(
-                query=dense_query,
-                using="dense",
-                limit=limit * 4,
-                filter=query_filter,
-            ),
-        ]
-
-        if sparse_vector is not None:
-            prefetch.append(
-                models.Prefetch(
-                    query=models.SparseVector(
-                        indices=list(sparse_vector.indices),
-                        values=list(sparse_vector.values),
-                    ),
-                    using="sparse",
-                    limit=limit * 4,
-                    filter=query_filter,
-                ),
-            )
-
-        with self._client_lock:
-            self.ensure_table()
-            try:
-                results = self.client.query_points(
-                    collection_name=self.TABLE_NAME,
-                    prefetch=prefetch,
-                    query=models.RrfQuery(rrf=models.Rrf(k=60)),
-                    limit=limit,
-                )
-                scored_points = results.points
-            except (
-                UnexpectedResponse,
-                ResponseHandlingException,
-                ValueError,
-            ) as exc:
-                logger.warning(
-                    "Hybrid search failed (%s), falling back to dense-only",
-                    exc,
-                )
-                fallback = self.client.query_points(
-                    collection_name=self.TABLE_NAME,
-                    query=dense_query,
-                    using="dense",
-                    limit=limit,
-                    query_filter=query_filter,
-                )
-                scored_points = fallback.points
+        dense_vec = (
+            query_vector if isinstance(query_vector, list) else query_vector.tolist()
+        )
+        dense_query = self._build_dense_query(dense_vec, like_ids, unlike_ids, models)
+        prefetch = self._build_prefetch(
+            dense_query, sparse_vector, query_filter, limit, models
+        )
+        scored_points = self._execute_hybrid_query(
+            self.TABLE_NAME, False, prefetch, dense_query, query_filter, limit, models
+        )
 
         return self._points_to_dicts(scored_points, "doc_id")
 
     def hybrid_search_codebase(
         self,
         query_vector: list[float],
-        query_text: str,  # noqa: ARG002
+        _query_text: str,
         filters: dict[str, str] | None = None,
         limit: int = 5,
         *,
@@ -959,38 +890,64 @@ class VaultStore:
                 triggers dense-only fallback.
         """
         from qdrant_client import models
-        from qdrant_client.http.exceptions import (
-            ResponseHandlingException,
-            UnexpectedResponse,
-        )
 
         query_filter = self._build_code_filter(filters)
-        dense_vec = query_vector
-        if not isinstance(query_vector, list):
-            dense_vec = query_vector.tolist()
+        dense_vec = (
+            query_vector if isinstance(query_vector, list) else query_vector.tolist()
+        )
+        dense_query = self._build_dense_query(dense_vec, like_ids, unlike_ids, models)
+        prefetch = self._build_prefetch(
+            dense_query, sparse_vector, query_filter, limit, models
+        )
+        scored_points = self._execute_hybrid_query(
+            self.CODE_TABLE_NAME,
+            True,
+            prefetch,
+            dense_query,
+            query_filter,
+            limit,
+            models,
+        )
 
-        if like_ids or unlike_ids:
-            from typing import Any
+        return self._points_to_dicts(scored_points, "chunk_id")
 
-            pos: list[Any] = [dense_vec]
-            if like_ids:
-                pos.extend(
-                    self._stable_id(i) if isinstance(i, str) else i for i in like_ids
-                )
-            neg: list[Any] = (
-                [self._stable_id(i) if isinstance(i, str) else i for i in unlike_ids]
-                if unlike_ids
-                else []
+    def _build_dense_query(
+        self,
+        dense_vec: list[float],
+        like_ids: list[str | int] | None,
+        unlike_ids: list[str | int] | None,
+        models,
+    ):
+        if not like_ids and not unlike_ids:
+            return dense_vec
+
+        from typing import Any
+
+        pos: list[Any] = [dense_vec]
+        if like_ids:
+            pos.extend(
+                self._stable_id(i) if isinstance(i, str) else i for i in like_ids
             )
-            dense_query = models.RecommendQuery(
-                recommend=models.RecommendInput(
-                    positive=pos,
-                    negative=neg,
-                )
+        neg: list[Any] = (
+            [self._stable_id(i) if isinstance(i, str) else i for i in unlike_ids]
+            if unlike_ids
+            else []
+        )
+        return models.RecommendQuery(
+            recommend=models.RecommendInput(
+                positive=pos,
+                negative=neg,
             )
-        else:
-            dense_query = dense_vec
+        )
 
+    def _build_prefetch(
+        self,
+        dense_query,
+        sparse_vector,
+        query_filter,
+        limit: int,
+        models,
+    ):
         prefetch = [
             models.Prefetch(
                 query=dense_query,
@@ -1012,36 +969,53 @@ class VaultStore:
                     filter=query_filter,
                 ),
             )
+        return prefetch
+
+    def _execute_hybrid_query(
+        self,
+        collection_name: str,
+        is_codebase: bool,
+        prefetch,
+        dense_query,
+        query_filter,
+        limit: int,
+        models,
+    ):
+        from qdrant_client.http.exceptions import (
+            ResponseHandlingException,
+            UnexpectedResponse,
+        )
 
         with self._client_lock:
-            self.ensure_code_table()
+            if is_codebase:
+                self.ensure_code_table()
+            else:
+                self.ensure_table()
             try:
                 results = self.client.query_points(
-                    collection_name=self.CODE_TABLE_NAME,
+                    collection_name=collection_name,
                     prefetch=prefetch,
                     query=models.RrfQuery(rrf=models.Rrf(k=60)),
                     limit=limit,
                 )
-                scored_points = results.points
+                return results.points
             except (
                 UnexpectedResponse,
                 ResponseHandlingException,
                 ValueError,
             ) as exc:
                 logger.warning(
-                    "Codebase hybrid search failed (%s), falling back to dense-only",
+                    "Hybrid search failed (%s), falling back to dense-only",
                     exc,
                 )
                 fallback = self.client.query_points(
-                    collection_name=self.CODE_TABLE_NAME,
+                    collection_name=collection_name,
                     query=dense_query,
                     using="dense",
                     limit=limit,
                     query_filter=query_filter,
                 )
-                scored_points = fallback.points
-
-        return self._points_to_dicts(scored_points, "chunk_id")
+                return fallback.points
 
     @staticmethod
     def _points_to_dicts(scored_points: list, id_field: str) -> list[dict]:

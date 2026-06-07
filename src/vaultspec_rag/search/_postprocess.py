@@ -137,6 +137,42 @@ def _classify_chunk_type(path: str) -> Literal["prod", "tests", "docs"]:
     return "prod"
 
 
+def _group_locale_variants(results: list[SearchResult]) -> dict[str, list[int]]:
+    grouped: dict[str, list[int]] = {}
+    for index, result in enumerate(results):
+        key = _locale_variant_key(result.path)
+        if key is None:
+            continue
+        grouped.setdefault(key, []).append(index)
+    return grouped
+
+
+def _find_collapsed_variants(
+    grouped: dict[str, list[int]], results: list[SearchResult]
+) -> tuple[set[int], dict[int, list[str]]]:
+    drop: set[int] = set()
+    collapsed_variants: dict[int, list[str]] = {}
+    for indices in grouped.values():
+        if len(indices) < 2:
+            continue
+        # Highest-scoring entry wins. Stable sort on (-score,
+        # original_index) keeps ranking deterministic for ties.
+        ranked = sorted(
+            indices,
+            key=lambda idx: (-results[idx].score, idx),
+        )
+        winner = ranked[0]
+        winner_score = results[winner].score
+        collapsed_paths: list[str] = []
+        for other in ranked[1:]:
+            if winner_score - results[other].score <= _LOCALE_DEDUP_SCORE_WINDOW:
+                drop.add(other)
+                collapsed_paths.append(results[other].path)
+        if collapsed_paths:
+            collapsed_variants[winner] = collapsed_paths
+    return drop, collapsed_variants
+
+
 def _collapse_locale_variants(
     results: list[SearchResult],
 ) -> list[SearchResult]:
@@ -158,37 +194,11 @@ def _collapse_locale_variants(
     if not results:
         return results
 
-    grouped: dict[str, list[int]] = {}
-    for index, result in enumerate(results):
-        key = _locale_variant_key(result.path)
-        if key is None:
-            continue
-        grouped.setdefault(key, []).append(index)
-
+    grouped = _group_locale_variants(results)
     if not grouped:
         return results
 
-    drop: set[int] = set()
-    collapsed_variants: dict[int, list[str]] = {}
-    for indices in grouped.values():
-        if len(indices) < 2:
-            continue
-        # Highest-scoring entry wins. Stable sort on (-score,
-        # original_index) keeps ranking deterministic for ties.
-        ranked = sorted(
-            indices,
-            key=lambda idx: (-results[idx].score, idx),
-        )
-        winner = ranked[0]
-        winner_score = results[winner].score
-        collapsed_paths: list[str] = []
-        for other in ranked[1:]:
-            if winner_score - results[other].score <= _LOCALE_DEDUP_SCORE_WINDOW:
-                drop.add(other)
-                collapsed_paths.append(results[other].path)
-        if collapsed_paths:
-            collapsed_variants[winner] = collapsed_paths
-
+    drop, collapsed_variants = _find_collapsed_variants(grouped, results)
     if not drop:
         return results
 

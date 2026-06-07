@@ -10,7 +10,11 @@ from vaultspec_core.core.commands import sync_provider
 from ..builtins import seed_builtins
 from ._models import InstallReport
 from ._torch_flow import _run_torch_config_install
-from ._workspace import _ensure_workspace_dirs, _init_core_context, _resolve_target
+from ._workspace import (
+    _ensure_workspace_dirs,
+    _init_core_context,
+    _resolve_target,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,6 +22,63 @@ if TYPE_CHECKING:
     from ._models import ConfirmFn
 
 logger = logging.getLogger(__name__)
+
+
+def _seed_rules(
+    rules_dir: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    upgrade: bool,
+) -> None:
+    if not dry_run:
+        try:
+            seed_builtins(rules_dir, force=force or upgrade, written=report.seeded)
+        except Exception:
+            _rollback_seeded(rules_dir, report.seeded, report)
+            raise
+    else:
+        from ..builtins import list_builtins
+
+        bundled = list_builtins()
+        report.seeded = [
+            rel for rel in bundled if not (rules_dir / rel).exists() or force or upgrade
+        ]
+
+
+def _run_core_sync(
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    skip: set[str],
+) -> None:
+    if dry_run:
+        report.warnings.append(
+            "dry-run: core sync_provider not invoked (would propagate "
+            "seeded files to .mcp.json and provider dirs)"
+        )
+    elif "core" not in skip:
+        try:
+            _init_core_context(target)
+        except Exception as exc:
+            logger.error("workspace context bootstrap failed: %s", exc)
+            report.warnings.append(f"workspace bootstrap failed: {exc}")
+        else:
+            try:
+                report.sync_results = sync_provider(
+                    "all",
+                    dry_run=False,
+                    force=force,
+                    skip=skip,
+                )
+            except Exception as exc:
+                logger.error("sync_provider failed during install: %s", exc)
+                report.warnings.append(
+                    f"core sync failed: {exc} "
+                    f"(seeded files left in place; re-run install or "
+                    f"uninstall --force to clean up)"
+                )
 
 
 def install_run(
@@ -76,57 +137,13 @@ def install_run(
     report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
 
     rules_dir = target / ".vaultspec" / "rules"
-    if not dry_run:
-        # Pass an out-list so partial progress is captured BEFORE any
-        # exception propagates. seed_builtins now raises OSError on
-        # the first per-file failure (no more silent partial seeds).
-        # On failure we roll back only the files this install actually
-        # wrote, surface the error as a warning, and re-raise so the
-        # caller sees the failure.
-        try:
-            seed_builtins(rules_dir, force=force or upgrade, written=report.seeded)
-        except Exception:
-            _rollback_seeded(rules_dir, report.seeded, report)
-            raise
-    else:
-        # Compute what would be written without touching disk.
-        from ..builtins import list_builtins
-
-        bundled = list_builtins()
-        report.seeded = [
-            rel for rel in bundled if not (rules_dir / rel).exists() or force or upgrade
-        ]
+    _seed_rules(rules_dir, report, dry_run, force, upgrade)
 
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
-    if dry_run:
-        report.warnings.append(
-            "dry-run: core sync_provider not invoked (would propagate "
-            "seeded files to .mcp.json and provider dirs)"
-        )
-    elif "core" not in skip:
-        try:
-            _init_core_context(target)
-        except Exception as exc:
-            logger.error("workspace context bootstrap failed: %s", exc)
-            report.warnings.append(f"workspace bootstrap failed: {exc}")
-        else:
-            try:
-                report.sync_results = sync_provider(
-                    "all",
-                    dry_run=False,
-                    force=force,
-                    skip=skip,
-                )
-            except Exception as exc:
-                logger.error("sync_provider failed during install: %s", exc)
-                report.warnings.append(
-                    f"core sync failed: {exc} "
-                    f"(seeded files left in place; re-run install or "
-                    f"uninstall --force to clean up)"
-                )
+    _run_core_sync(target, report, dry_run, force, skip)
 
     _run_torch_config_install(
         target=target,

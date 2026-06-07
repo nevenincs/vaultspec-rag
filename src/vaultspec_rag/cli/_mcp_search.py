@@ -9,7 +9,7 @@ to make that call.
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from ._core import logger
 
@@ -90,6 +90,21 @@ def _try_mcp_reindex(
         }
 
 
+def _is_refused_exception(
+    current: BaseException,
+    refused_errnos: set[int],
+    httpx_refused_types: tuple[type[BaseException], ...],
+) -> bool:
+    if isinstance(current, ConnectionRefusedError):
+        return True
+    if (
+        isinstance(current, OSError)
+        and getattr(current, "errno", None) in refused_errnos
+    ):
+        return True
+    return bool(httpx_refused_types and isinstance(current, httpx_refused_types))
+
+
 def _is_connection_refused(exc: BaseException) -> bool:
     """Walk an exception chain looking for a connect-refused signal.
 
@@ -119,14 +134,7 @@ def _is_connection_refused(exc: BaseException) -> bool:
         if id(current) in seen:
             continue
         seen.add(id(current))
-        if isinstance(current, ConnectionRefusedError):
-            return True
-        if (
-            isinstance(current, OSError)
-            and getattr(current, "errno", None) in refused_errnos
-        ):
-            return True
-        if httpx_refused_types and isinstance(current, httpx_refused_types):
+        if _is_refused_exception(current, refused_errnos, httpx_refused_types):
             return True
         if current.__cause__ is not None:
             stack.append(current.__cause__)
@@ -139,9 +147,9 @@ def _is_connection_refused(exc: BaseException) -> bool:
 
 def _try_mcp_admin(
     tool_name: str,
-    args: dict[str, object],
+    args: dict[str, Any],
     port: int | None,
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     """Call an admin MCP tool on a running RAG service.
 
     Distinguishes "service unreachable" (connection refused → returns
@@ -165,7 +173,7 @@ def _try_mcp_admin(
 
     import asyncio
 
-    async def _call() -> dict[str, object] | None:
+    async def _call() -> dict[str, Any] | None:
         import json
 
         from mcp.client.session import ClientSession
@@ -204,6 +212,113 @@ def _try_mcp_admin(
             exc_info=True,
         )
         return {}
+
+
+def _get_search_timeout(timeout: float | None) -> float:
+    import os
+
+    if timeout is None:
+        env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+        if env_timeout:
+            try:
+                return float(env_timeout)
+            except ValueError:
+                return 10.0
+        return 10.0
+    return timeout
+
+
+def _build_mcp_search_payload(
+    query: str,
+    search_type: str,
+    top_k: int,
+    project_root: str,
+    language: str | None,
+    path: str | None,
+    node_type: str | None,
+    function_name: str | None,
+    class_name: str | None,
+    doc_type: str | None,
+    feature: str | None,
+    date: str | None,
+    tag: str | None,
+    include_paths: list[str] | None,
+    exclude_paths: list[str] | None,
+    dedup_locales: bool,
+    prefer: str | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "query": query,
+        "top_k": top_k,
+        "project_root": project_root,
+    }
+    if search_type == "code":
+        code_filters = {
+            "language": language,
+            "path": path,
+            "node_type": node_type,
+            "function_name": function_name,
+            "class_name": class_name,
+        }
+        for key, value in code_filters.items():
+            if value is not None:
+                payload[key] = value
+        if include_paths:
+            payload["include_paths"] = list(include_paths)
+        if exclude_paths:
+            payload["exclude_paths"] = list(exclude_paths)
+        if dedup_locales:
+            payload["dedup_locales"] = True
+        if prefer is not None:
+            payload["prefer"] = prefer
+    elif search_type == "vault":
+        vault_filters = {
+            "doc_type": doc_type,
+            "feature": feature,
+            "date": date,
+            "tag": tag,
+        }
+        for key, value in vault_filters.items():
+            if value is not None:
+                payload[key] = value
+    return payload
+
+
+async def _do_mcp_search_async(
+    port: int,
+    tool_name: str,
+    payload: dict[str, object],
+    timeout: float,
+) -> list[dict[str, object]] | dict[str, object]:
+    import asyncio
+    import json
+
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.types import TextContent
+
+    url = f"http://127.0.0.1:{port}/mcp/"
+
+    async def _do_search():
+        async with (
+            streamable_http_client(url) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool(
+                tool_name,
+                payload,
+            )
+            if result.content:
+                first = result.content[0]
+                if isinstance(first, TextContent):
+                    data = json.loads(first.text)
+                    if data.get("ok") is False:
+                        return data
+                    return data.get("results", [])
+            return []
+
+    return await asyncio.wait_for(_do_search(), timeout=timeout)
 
 
 def _try_mcp_search(
@@ -264,7 +379,7 @@ def _try_mcp_search(
     tool_map = {"vault": "search_vault", "code": "search_codebase"}
     tool_name = tool_map.get(search_type, "search_vault")
 
-    from vaultspec_rag.search import (
+    from ..search import (
         InvalidFilterForSearchTypeError,
         InvalidPreferValueError,
         validate_search_filters,
@@ -300,87 +415,29 @@ def _try_mcp_search(
             "message": str(exc),
         }
 
-    import os
-
-    if timeout is None:
-        env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
-        if env_timeout:
-            try:
-                timeout = float(env_timeout)
-            except ValueError:
-                timeout = 10.0
-        else:
-            timeout = 10.0
-
-    async def _call() -> list[dict[str, object]] | dict[str, object] | None:
-        import asyncio
-        import json
-
-        from mcp.client.session import ClientSession
-        from mcp.client.streamable_http import streamable_http_client
-        from mcp.types import TextContent
-
-        # Trailing slash avoids a 307 redirect from the Starlette
-        # Mount("/mcp") wrapping the inner app at "/".
-        url = f"http://127.0.0.1:{port}/mcp/"
-        payload: dict[str, object] = {
-            "query": query,
-            "top_k": top_k,
-            "project_root": project_root,
-        }
-        if search_type == "code":
-            code_filters = {
-                "language": language,
-                "path": path,
-                "node_type": node_type,
-                "function_name": function_name,
-                "class_name": class_name,
-            }
-            for key, value in code_filters.items():
-                if value is not None:
-                    payload[key] = value
-            if include_paths:
-                payload["include_paths"] = list(include_paths)
-            if exclude_paths:
-                payload["exclude_paths"] = list(exclude_paths)
-            if dedup_locales:
-                payload["dedup_locales"] = True
-            if prefer is not None:
-                payload["prefer"] = prefer
-        elif search_type == "vault":
-            vault_filters = {
-                "doc_type": doc_type,
-                "feature": feature,
-                "date": date,
-                "tag": tag,
-            }
-            for key, value in vault_filters.items():
-                if value is not None:
-                    payload[key] = value
-
-        async def _do_search():
-            async with (
-                streamable_http_client(url) as (read, write, _),
-                ClientSession(read, write) as session,
-            ):
-                await session.initialize()
-                result = await session.call_tool(
-                    tool_name,
-                    payload,
-                )
-                if result.content:
-                    first = result.content[0]
-                    if isinstance(first, TextContent):
-                        data = json.loads(first.text)
-                        if data.get("ok") is False:
-                            return data
-                        return data.get("results", [])
-                return []
-
-        return await asyncio.wait_for(_do_search(), timeout=timeout)
+    timeout = _get_search_timeout(timeout)
+    payload = _build_mcp_search_payload(
+        query,
+        search_type,
+        top_k,
+        project_root,
+        language,
+        path,
+        node_type,
+        function_name,
+        class_name,
+        doc_type,
+        feature,
+        date,
+        tag,
+        include_paths,
+        exclude_paths,
+        dedup_locales,
+        prefer,
+    )
 
     try:
-        return asyncio.run(_call())
+        return asyncio.run(_do_mcp_search_async(port, tool_name, payload, timeout))
     except TimeoutError:
         logger.debug(
             "MCP search %s on port %s timed out after %ss",

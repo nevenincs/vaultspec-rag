@@ -13,8 +13,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from vaultspec_rag.config import EnvVar
-from vaultspec_rag.mcp_server import (
+from ..config import EnvVar
+from ..mcp_server import (
     BackendCapabilities,
     HealthResponse,
     IndexResponse,
@@ -669,13 +669,13 @@ class TestServiceRegistryIntegration:
     """Test that the module-level _registry is a ServiceRegistry."""
 
     def test_registry_exists(self):
-        from vaultspec_rag.mcp_server import _registry
-        from vaultspec_rag.service import ServiceRegistry
+        from ..mcp_server import _registry
+        from ..service import ServiceRegistry
 
         assert isinstance(_registry, ServiceRegistry)
 
     def test_registry_has_gpu_lock(self):
-        from vaultspec_rag.mcp_server import _registry
+        from ..mcp_server import _registry
 
         assert isinstance(_registry.gpu_lock, threading.Lock)
 
@@ -722,7 +722,8 @@ class TestHealthHandler:
         from starlette.testclient import TestClient
 
         import vaultspec_rag.mcp_server as mod
-        from vaultspec_rag.service import ServiceRegistry
+
+        from ..service import ServiceRegistry
 
         orig_registry = mod._registry
         orig_start = mod._start_time
@@ -793,39 +794,39 @@ class TestMultiProjectWatcher:
     """Module-level watcher state supports multiple projects (PHASE3-001)."""
 
     def test_watcher_tasks_is_dict(self):
-        from vaultspec_rag.mcp_server import _watcher_tasks
+        from ..mcp_server import _watcher_tasks
 
         assert isinstance(_watcher_tasks, dict)
 
     def test_watcher_stops_is_dict(self):
-        from vaultspec_rag.mcp_server import _watcher_stops
+        from ..mcp_server import _watcher_stops
 
         assert isinstance(_watcher_stops, dict)
 
     def test_stop_all_watchers_callable(self):
-        from vaultspec_rag.mcp_server import _stop_all_watchers
+        from ..mcp_server import _stop_all_watchers
 
         assert callable(_stop_all_watchers)
 
     def test_stop_watcher_callable(self):
-        from vaultspec_rag.mcp_server import _stop_watcher
+        from ..mcp_server import _stop_watcher
 
         assert callable(_stop_watcher)
 
     def test_ensure_watcher_callable(self):
-        from vaultspec_rag.mcp_server import _ensure_watcher
+        from ..mcp_server import _ensure_watcher
 
         assert callable(_ensure_watcher)
 
     def test_stop_all_on_empty_is_safe(self):
         """Calling _stop_all_watchers with no running watchers is a no-op."""
-        from vaultspec_rag.mcp_server import _stop_all_watchers
+        from ..mcp_server import _stop_all_watchers
 
         _stop_all_watchers()  # must not raise
 
     def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path):
         """Stopping a watcher for a root that was never started is safe."""
-        from vaultspec_rag.mcp_server import _stop_watcher
+        from ..mcp_server import _stop_watcher
 
         _stop_watcher(tmp_path)  # must not raise
 
@@ -835,8 +836,8 @@ class TestAdminTools:
 
     def test_list_projects_empty_registry(self) -> None:
         """With no slots, returns empty projects and config-matched caps."""
-        from vaultspec_rag.config import get_config
-        from vaultspec_rag.mcp_server import _registry, list_projects
+        from ..config import get_config
+        from ..mcp_server import _registry, list_projects
 
         # Force an empty registry.
         with _registry._lock:
@@ -851,7 +852,7 @@ class TestAdminTools:
         assert result["idle_ttl_seconds"] == float(cfg.service_idle_ttl_seconds)
 
     def test_evict_project_unknown_returns_not_found(self, tmp_path) -> None:
-        from vaultspec_rag.mcp_server import evict_project
+        from ..mcp_server import evict_project
 
         result = _run(evict_project(str(tmp_path / "never-seen")))
         assert result == {"evicted": False, "reason": "not_found"}
@@ -866,13 +867,13 @@ class TestAdminTools:
 class TestRegistryFullErrorShape:
     """MCP tool handlers translate RegistryFullError into a structured dict."""
 
-    def test_error_dict_shape(self, tmp_path) -> None:
+    def test_error_dict_shape(self) -> None:
         """_registry_full_error_dict contains every ADR D4 key."""
-        from vaultspec_rag.mcp_server import (
+        from ..mcp_server import (
             _registry,
             _registry_full_error_dict,
         )
-        from vaultspec_rag.service import RegistryFullError
+        from ..service import RegistryFullError
 
         exc = RegistryFullError(_registry.max_projects)
         result = _registry_full_error_dict(exc)
@@ -884,8 +885,8 @@ class TestRegistryFullErrorShape:
 
     def test_local_store_locked_error_dict_shape(self, tmp_path) -> None:
         """Local Qdrant lock contention returns an actionable MCP payload."""
-        from vaultspec_rag.mcp_server import _local_store_locked_error_dict
-        from vaultspec_rag.store import VaultStoreLockedError
+        from ..mcp_server import _local_store_locked_error_dict
+        from ..store import VaultStoreLockedError
 
         db_path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
         exc = VaultStoreLockedError(str(db_path))
@@ -902,7 +903,7 @@ class TestRegistryFullErrorShape:
         assert caps["local_storage_process_model"] == "exclusive"
         assert "resident vaultspec-rag service" in result["message"]
 
-    def test_ensure_watcher_uses_peek_project(self, tmp_path) -> None:
+    def test_ensure_watcher_uses_peek_project(self) -> None:
         """_ensure_watcher must not bump ref_count on the slot.
 
         Reads the module source directly so the assertion is robust to
@@ -910,7 +911,7 @@ class TestRegistryFullErrorShape:
         """
         import inspect
 
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         source = inspect.getsource(mcp_server._ensure_watcher)
         assert "_registry.peek_project" in source
@@ -933,7 +934,7 @@ class TestMcpPathRewrite:
         """
         import inspect
 
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         source = inspect.getsource(mcp_server.main)
         assert "_mcp_no_redirect" in source, (
@@ -994,7 +995,7 @@ class TestDaemonLifecycleHelpers:
         self,
         caplog,
     ) -> None:
-        from vaultspec_rag.mcp_server import _lifecycle_log
+        from ..mcp_server import _lifecycle_log
 
         with caplog.at_level("WARNING", logger="vaultspec_rag.mcp_server"):
             _lifecycle_log("startup", pid=42, port=8766)
@@ -1011,7 +1012,7 @@ class TestDaemonLifecycleHelpers:
 
     def test_heartbeat_tick_sync_no_status_file(self, tmp_path, monkeypatch) -> None:
         """Missing service.json → no-op (no exception, no file created)."""
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         monkeypatch.setattr(
             mcp_server,
@@ -1030,7 +1031,7 @@ class TestDaemonLifecycleHelpers:
         """Existing service.json gets last_heartbeat merged in atomically."""
         from datetime import UTC, datetime
 
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         sf = tmp_path / "service.json"
         sf.write_text(
@@ -1063,7 +1064,7 @@ class TestDaemonLifecycleHelpers:
         skipped so a stale token from a previous daemon does not get
         overwritten with empty.
         """
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         sf = tmp_path / "service.json"
         sf.write_text(
@@ -1084,7 +1085,7 @@ class TestDaemonLifecycleHelpers:
         monkeypatch,
     ) -> None:
         """Empty _SERVICE_TOKEN must not overwrite an existing token."""
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         sf = tmp_path / "service.json"
         # Simulate a service.json that already has a token (e.g.
@@ -1116,7 +1117,7 @@ class TestDaemonLifecycleHelpers:
         monkeypatch,
     ) -> None:
         """Calling cleanup with no file does not raise."""
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         monkeypatch.setattr(
             mcp_server,
@@ -1132,7 +1133,7 @@ class TestDaemonLifecycleHelpers:
         caplog,
     ) -> None:
         """First call wins; subsequent calls do not log or unlink twice."""
-        from vaultspec_rag import mcp_server
+        from .. import mcp_server
 
         sf = tmp_path / "service.json"
         sf.write_text(json.dumps({"pid": 1, "port": 2}), encoding="utf-8")

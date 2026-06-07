@@ -39,7 +39,7 @@ def indexer(_bench_components):
 @pytest.fixture(scope="session")
 def searcher(_bench_components):
     """Real VaultSearcher."""
-    from vaultspec_rag import VaultSearcher
+    from ... import VaultSearcher
 
     comp = _bench_components
     return VaultSearcher(comp["root"], comp["model"], comp["store"])

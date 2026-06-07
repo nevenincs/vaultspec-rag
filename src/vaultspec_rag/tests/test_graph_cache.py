@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from vaultspec_rag.graph_cache import GraphCache
+from ..graph_cache import GraphCache
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -231,7 +231,7 @@ class TestVaultSearcherGraphProvider:
 
         # Build a minimal VaultSearcher without GPU models - only test
         # _get_graph, which does not need the model or store.
-        from vaultspec_rag.search import VaultSearcher
+        from ..search import VaultSearcher
 
         searcher = VaultSearcher.__new__(VaultSearcher)
         searcher._graph_provider = provider
@@ -249,7 +249,7 @@ class TestVaultSearcherGraphProvider:
         """Without graph_provider, the internal lock+TTL cache is used."""
         root = _make_vault_dir(tmp_path)
 
-        from vaultspec_rag.search import VaultSearcher
+        from ..search import VaultSearcher
 
         searcher = VaultSearcher.__new__(VaultSearcher)
         searcher._graph_provider = None
@@ -269,7 +269,7 @@ class TestVaultSearcherGraphProvider:
         """Internal fallback path has a lock for R36-C1 safety."""
         root = _make_vault_dir(tmp_path)
 
-        from vaultspec_rag.search import VaultSearcher
+        from ..search import VaultSearcher
 
         searcher = VaultSearcher.__new__(VaultSearcher)
         searcher._graph_provider = None

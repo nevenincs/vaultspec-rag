@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.store import CodeChunk, VaultStore
+from ..store import CodeChunk, VaultStore
 
 pytestmark = [pytest.mark.integration]
 

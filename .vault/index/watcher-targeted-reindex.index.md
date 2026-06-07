@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#watcher-targeted-reindex'
-date: '2026-06-02'
+date: '2026-06-06'
 related:
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'
   - '[[2026-06-02-watcher-targeted-reindex-plan]]'

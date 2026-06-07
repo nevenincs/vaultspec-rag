@@ -51,7 +51,12 @@ from ._direct_dep import (
     remove_managed_direct_torch_dep,
 )
 from ._inspect import detect_state
-from ._mutate import apply_patch, manual_snippet, preview_patch, remove_patch
+from ._mutate import (
+    apply_patch,
+    manual_snippet,
+    preview_patch,
+    remove_patch,
+)
 
 __all__ = [
     "CU130_INDEX_NAME",

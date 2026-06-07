@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#gpu-rag-stack'
-date: '2026-05-31'
+date: '2026-06-06'
 related:
   - '[[2026-03-06-cli-api-audit]]'
   - '[[2026-03-06-cli-mcp-audit]]'

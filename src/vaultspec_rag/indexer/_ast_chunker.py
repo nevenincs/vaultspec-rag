@@ -116,6 +116,56 @@ class ASTChunker:
                 return child
         return None
 
+    def _get_node_metadata(
+        self,
+        node: TSNode,
+        node_type: str,
+        source_bytes: bytes,
+        parent_class_name: str | None,
+    ) -> tuple[bool, bool, str | None, str | None]:
+        if node_type == "decorated_definition":
+            inner = self._find_decorated_inner(node)
+            if inner is not None:
+                inner_type: str = inner.type
+                is_class = inner_type in _CLASS_LIKE_NODES
+                is_func = inner_type in _FUNCTION_LIKE_NODES
+                node_name = (
+                    self._extract_name(inner, source_bytes)
+                    if (is_class or is_func)
+                    else None
+                )
+            else:
+                is_class = False
+                is_func = False
+                node_name = None
+        else:
+            is_class = node_type in _CLASS_LIKE_NODES
+            is_func = node_type in _FUNCTION_LIKE_NODES
+            node_name = (
+                self._extract_name(node, source_bytes)
+                if (is_class or is_func)
+                else None
+            )
+
+        function_name = node_name if is_func else None
+        class_name = node_name if is_class else parent_class_name
+        return is_class, is_func, function_name, class_name
+
+    def _split_large_leaf(
+        self,
+        node: TSNode,
+        text: str,
+        function_name: str | None,
+        class_name: str | None,
+        out: list[tuple[str, int, int, str | None, str | None, str | None]],
+    ) -> None:
+        node_start_line = node.start_point[0] + 1
+        for i in range(0, len(text), self.chunk_size):
+            chunk = text[i : i + self.chunk_size]
+            ls = node_start_line + text[:i].count("\n")
+            le = ls + chunk.count("\n")
+            out.append((chunk, ls, le, None, function_name, class_name))
+
     def _collect_chunks(
         self,
         node: TSNode,
@@ -148,34 +198,9 @@ class ASTChunker:
         text = source_bytes[node.start_byte : node.end_byte].decode("utf-8")
         node_type: str = node.type
 
-        # Handle decorated_definition: inspect the wrapped definition
-        # to determine whether this is a function or class decoration.
-        if node_type == "decorated_definition":
-            inner = self._find_decorated_inner(node)
-            if inner is not None:
-                inner_type: str = inner.type
-                is_class = inner_type in _CLASS_LIKE_NODES
-                is_func = inner_type in _FUNCTION_LIKE_NODES
-                node_name = (
-                    self._extract_name(inner, source_bytes)
-                    if (is_class or is_func)
-                    else None
-                )
-            else:
-                is_class = False
-                is_func = False
-                node_name = None
-        else:
-            is_class = node_type in _CLASS_LIKE_NODES
-            is_func = node_type in _FUNCTION_LIKE_NODES
-            node_name = (
-                self._extract_name(node, source_bytes)
-                if (is_class or is_func)
-                else None
-            )
-
-        function_name = node_name if is_func else None
-        class_name = node_name if is_class else parent_class_name
+        is_class, _is_func, function_name, class_name = self._get_node_metadata(
+            node, node_type, source_bytes, parent_class_name
+        )
 
         is_container = node_type in _CONTAINER_NODES
 
@@ -188,31 +213,59 @@ class ASTChunker:
 
         children = node.children
         if not children:
-            # Leaf node too large - force-split by character.
-            node_start_line = node.start_point[0] + 1
-            for i in range(0, len(text), self.chunk_size):
-                chunk = text[i : i + self.chunk_size]
-                # Count newlines in text[:i] to get line offset from node start.
-                ls = node_start_line + text[:i].count("\n")
-                le = ls + chunk.count("\n")
-                out.append((chunk, ls, le, None, function_name, class_name))
+            self._split_large_leaf(node, text, function_name, class_name, out)
             return
 
-        # When recursing into a class body, propagate the class name downward.
-        child_class_name = node_name if is_class else parent_class_name
+        child_class_name = (
+            self._extract_name(node, source_bytes) if is_class else parent_class_name
+        )
+        self._process_children(
+            children,
+            source,
+            source_bytes,
+            top_nodes,
+            out,
+            function_name,
+            child_class_name,
+        )
 
-        # Recurse into children, greedily merging small siblings.
+    def _process_children(
+        self,
+        children: list[TSNode],
+        source: str,
+        source_bytes: bytes,
+        top_nodes: set[str],
+        out: list[tuple[str, int, int, str | None, str | None, str | None]],
+        function_name: str | None,
+        child_class_name: str | None,
+    ) -> None:
         buffer_parts: list[str] = []
         buffer_start: int | None = None
         buffer_end: int = 0
         buffer_len = 0
 
+        def _flush_buffer() -> None:
+            nonlocal buffer_parts, buffer_start, buffer_len, buffer_end
+            if buffer_parts and buffer_start is not None:
+                merged = "\n".join(buffer_parts)
+                out.append(
+                    (
+                        merged,
+                        buffer_start,
+                        buffer_end,
+                        None,
+                        function_name,
+                        child_class_name,
+                    )
+                )
+                buffer_parts = []
+                buffer_start = None
+                buffer_len = 0
+
         for child in children:
             child_text = source_bytes[child.start_byte : child.end_byte].decode("utf-8")
             child_type: str = child.type
 
-            # Structural children (functions, classes, decorators) are
-            # emitted via recursion so they carry proper metadata.
             is_structural = (
                 child_type in _FUNCTION_LIKE_NODES
                 or child_type in _CLASS_LIKE_NODES
@@ -221,21 +274,7 @@ class ASTChunker:
             )
 
             if len(child_text) > self.chunk_size or is_structural:
-                if buffer_parts and buffer_start is not None:
-                    merged = "\n".join(buffer_parts)
-                    out.append(
-                        (
-                            merged,
-                            buffer_start,
-                            buffer_end,
-                            None,
-                            function_name,
-                            child_class_name,
-                        )
-                    )
-                    buffer_parts = []
-                    buffer_start = None
-                    buffer_len = 0
+                _flush_buffer()
                 self._collect_chunks(
                     child,
                     source,
@@ -245,18 +284,7 @@ class ASTChunker:
                     child_class_name,
                 )
             elif buffer_len + len(child_text) + 1 > self.chunk_size:
-                if buffer_parts and buffer_start is not None:
-                    merged = "\n".join(buffer_parts)
-                    out.append(
-                        (
-                            merged,
-                            buffer_start,
-                            buffer_end,
-                            None,
-                            function_name,
-                            child_class_name,
-                        )
-                    )
+                _flush_buffer()
                 buffer_parts = [child_text]
                 buffer_start = child.start_point[0] + 1
                 buffer_end = child.end_point[0] + 1
@@ -268,66 +296,49 @@ class ASTChunker:
                 buffer_end = child.end_point[0] + 1
                 buffer_len += len(child_text) + 1
 
-        if buffer_parts and buffer_start is not None:
-            merged = "\n".join(buffer_parts)
-            out.append(
-                (
-                    merged,
-                    buffer_start,
-                    buffer_end,
-                    None,
-                    function_name,
-                    child_class_name,
-                )
-            )
+        _flush_buffer()
+
+    def _can_merge(
+        self,
+        prev: tuple[str, int, int, str | None, str | None, str | None],
+        chunk: tuple[str, int, int, str | None, str | None, str | None],
+        half: int,
+    ) -> bool:
+        return (
+            len(prev[0]) < half
+            and len(chunk[0]) < half
+            and len(prev[0]) + len(chunk[0]) + 1 <= self.chunk_size
+        )
+
+    def _do_merge(
+        self,
+        prev: tuple[str, int, int, str | None, str | None, str | None],
+        chunk: tuple[str, int, int, str | None, str | None, str | None],
+    ) -> tuple[str, int, int, str | None, str | None, str | None]:
+        if prev[3] is not None and chunk[3] is not None:
+            merged_nt = prev[3] if prev[3] == chunk[3] else None
+        else:
+            merged_nt = prev[3] or chunk[3]
+        return (
+            prev[0] + "\n" + chunk[0],
+            prev[1],
+            chunk[2],
+            merged_nt,
+            prev[4] or chunk[4],
+            prev[5] or chunk[5],
+        )
 
     def _merge_small(
         self,
         chunks: list[tuple[str, int, int, str | None, str | None, str | None]],
     ) -> list[tuple[str, int, int, str | None, str | None, str | None]]:
-        """Merge adjacent chunks that are under half the budget.
-
-        Two consecutive chunks are merged when both are shorter than
-        ``chunk_size // 2`` and their combined length (plus a newline)
-        still fits within ``chunk_size``.
-
-        Args:
-            chunks: List of ``(text, line_start, line_end, node_type,
-                function_name, class_name)`` tuples produced by
-                ``_collect_chunks``.
-
-        Returns:
-            A new list of ``(text, line_start, line_end, node_type,
-            function_name, class_name)`` tuples with small adjacent
-            entries merged.  ``node_type`` is ``None`` when two merged
-            chunks had different types.
-        """
         if not chunks:
             return chunks
         half = self.chunk_size // 2
         merged: list[tuple[str, int, int, str | None, str | None, str | None]] = []
         for chunk in chunks:
-            if (
-                merged
-                and len(merged[-1][0]) < half
-                and len(chunk[0]) < half
-                and len(merged[-1][0]) + len(chunk[0]) + 1 <= self.chunk_size
-            ):
-                prev = merged[-1]
-                # When merging, node_type is None if the two chunks
-                # have different types (cross-type merge).
-                if prev[3] is not None and chunk[3] is not None:
-                    merged_nt = prev[3] if prev[3] == chunk[3] else None
-                else:
-                    merged_nt = prev[3] or chunk[3]
-                merged[-1] = (
-                    prev[0] + "\n" + chunk[0],
-                    prev[1],
-                    chunk[2],
-                    merged_nt,
-                    prev[4] or chunk[4],  # function_name: keep first non-None
-                    prev[5] or chunk[5],  # class_name: keep first non-None
-                )
+            if merged and self._can_merge(merged[-1], chunk, half):
+                merged[-1] = self._do_merge(merged[-1], chunk)
             else:
                 merged.append(chunk)
         return merged

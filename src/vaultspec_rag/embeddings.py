@@ -58,9 +58,9 @@ def _check_rag_deps() -> None:
             "Run: uv sync (then `vaultspec-rag install` for CUDA torch wheels).",
         ) from None
 
-    try:
-        import sentence_transformers  # noqa: F401
-    except ImportError:
+    import importlib.util
+
+    if importlib.util.find_spec("sentence_transformers") is None:
         raise ImportError(
             "sentence-transformers not installed. Run: uv sync",
         ) from None

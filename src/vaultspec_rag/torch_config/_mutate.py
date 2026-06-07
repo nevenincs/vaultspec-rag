@@ -9,7 +9,7 @@ content via tomlkit's round-trip semantics.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import tomlkit
 from tomlkit import TOMLDocument
@@ -392,6 +392,44 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
             del uv["index"]
 
 
+def _drop_canonical_torch_entry(sources: Any) -> None:
+    if not isinstance(sources, _TABLE_LIKE_TYPES):
+        return
+    torch_entry = sources.get("torch")
+    if torch_entry is None:
+        return
+
+    if isinstance(torch_entry, InlineTable | dict) and not isinstance(
+        torch_entry, list
+    ):
+        if _source_match(torch_entry) == "canonical":
+            del sources["torch"]
+    elif isinstance(torch_entry, list):
+        for i in range(len(torch_entry) - 1, -1, -1):
+            e = torch_entry[i]
+            if isinstance(e, InlineTable | dict) and _source_match(e) == "canonical":
+                torch_entry.pop(i)
+        if len(torch_entry) == 0:
+            del sources["torch"]
+
+
+def _cleanup_empty_sources(doc: TOMLDocument, sources: Any) -> None:
+    if isinstance(sources, _TABLE_LIKE_TYPES) and not sources:
+        uv = _tool_uv(doc)
+        if uv is not None:
+            del uv["sources"]
+
+
+def _cleanup_empty_uv_tables(doc: TOMLDocument) -> None:
+    uv = _tool_uv(doc)
+    if uv is not None and not uv:
+        tool = doc.get("tool")
+        if isinstance(tool, _TABLE_LIKE_TYPES):
+            del tool["uv"]
+            if not tool:
+                del doc["tool"]
+
+
 def _drop_torch_source(doc: TOMLDocument) -> None:
     """Remove the canonical cu130 torch entry from ``[tool.uv.sources]``.
 
@@ -414,53 +452,6 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
         return
     sources = uv.get("sources")
 
-    # Process the torch entry only when sources is present and
-    # shaped as a table. The early-return anti-pattern is avoided:
-    # even when sources is absent, the cleanup cascade below must
-    # run so that an empty ``[tool.uv]`` left behind by
-    # :func:`_drop_cu130_index` gets dropped. ``InlineTable`` covers
-    # the ``sources = { torch = [...] }`` inline form symmetric with
-    # :func:`_torch_sources` so remove honours every detect-classified
-    # CANONICAL shape.
-    if isinstance(sources, _TABLE_LIKE_TYPES):
-        torch_entry = sources.get("torch")
-        if torch_entry is not None:
-            if isinstance(torch_entry, InlineTable | dict) and not isinstance(
-                torch_entry, list
-            ):
-                if _source_match(torch_entry) == "canonical":
-                    del sources["torch"]
-            elif isinstance(torch_entry, list):
-                # Array-of-inline-tables form. Iterate backwards and
-                # pop in-place to preserve inline comments and
-                # formatting on non-canonical entries; rebuilding
-                # the array from a kept list would strip that trivia.
-                for i in range(len(torch_entry) - 1, -1, -1):
-                    e = torch_entry[i]
-                    if isinstance(e, InlineTable | dict) and (
-                        _source_match(e) == "canonical"
-                    ):
-                        torch_entry.pop(i)
-                if len(torch_entry) == 0:
-                    del sources["torch"]
-
-        if not sources:
-            # Re-fetch ``uv`` before the cascade-stage delete -
-            # ``_drop_cu130_index`` may have already mutated this same
-            # proxy via ``del uv["index"]``. See the OutOfOrderTableProxy
-            # note in this function's docstring.
-            uv = _tool_uv(doc)
-            if uv is not None:
-                del uv["sources"]
-
-    # Cleanup cascades: always try to drop empty parent tables so a
-    # full uninstall (index + torch) leaves no orphaned sections.
-    # Re-fetch ``uv`` again so the emptiness check runs on a fresh
-    # proxy with consistent internal state.
-    uv = _tool_uv(doc)
-    if uv is not None and not uv:
-        tool = doc.get("tool")
-        if isinstance(tool, _TABLE_LIKE_TYPES):
-            del tool["uv"]
-            if not tool:
-                del doc["tool"]
+    _drop_canonical_torch_entry(sources)
+    _cleanup_empty_sources(doc, sources)
+    _cleanup_empty_uv_tables(doc)

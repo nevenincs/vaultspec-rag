@@ -30,7 +30,7 @@ class TestRobustness:
         """
         from vaultspec_core.vaultcore import scan_vault
 
-        from vaultspec_rag import prepare_document
+        from ... import prepare_document
 
         root = rag_components["root"]
 
@@ -59,7 +59,7 @@ class TestRobustness:
         """
         from vaultspec_core.vaultcore import scan_vault
 
-        from vaultspec_rag import prepare_document
+        from ... import prepare_document
 
         root = rag_components["root"]
         audit_paths = [p for p in scan_vault(root) if "audit" in p.parts]
@@ -80,7 +80,7 @@ class TestRobustness:
         Graph re-ranking should boost well-connected docs but not
         eliminate orphans from results.
         """
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]

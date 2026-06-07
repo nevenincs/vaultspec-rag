@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.progress import NullProgressReporter
+from ...progress import NullProgressReporter
 
 pytestmark = [pytest.mark.performance]
 
@@ -29,7 +29,7 @@ class TestPerformance:
         """
         import time
 
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -53,7 +53,7 @@ class TestPerformance:
         """5 sequential vault queries should complete within 5 seconds total."""
         import time
 
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -99,7 +99,7 @@ class TestPerformance:
         """Query parsing (pure regex) should be sub-millisecond."""
         import time
 
-        from vaultspec_rag import parse_query
+        from ... import parse_query
 
         start = time.perf_counter()
         for _ in range(100):
@@ -115,7 +115,7 @@ class TestPerformance:
 
     def test_store_disk_footprint(self, rag_components_full):
         """The Qdrant data directory should be under 50MB for the full corpus."""
-        from vaultspec_rag.config import get_config
+        from ...config import get_config
 
         cfg = get_config()
         root = rag_components_full["root"]
@@ -154,7 +154,7 @@ class TestPerformance:
 
     def test_graph_cache_reused_across_searches(self, rag_components):
         """VaultSearcher should reuse cached VaultGraph across searches."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -174,7 +174,7 @@ class TestPerformance:
 
     def test_graph_cache_ttl_expiry(self, rag_components):
         """VaultSearcher with TTL=0 should rebuild graph on every search."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -240,9 +240,9 @@ class TestPerformance:
         """
         import time
 
-        from vaultspec_rag import VaultIndexer, VaultStore
-        from vaultspec_rag.memory_probe import MemoryProbe
-        from vaultspec_rag.tests.corpus import build_synthetic_vault
+        from ... import VaultIndexer, VaultStore
+        from ...memory_probe import MemoryProbe
+        from ..corpus import build_synthetic_vault
 
         # monkeypatch.setenv scopes the mutation to this test so the
         # probe never bleeds into parallel pytest-xdist workers.

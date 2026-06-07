@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#search-postprocess'
-date: '2026-05-31'
+date: '2026-06-06'
 related:
   - '[[2026-05-31-search-postprocess-adr]]'
   - '[[2026-05-31-search-postprocess-plan]]'

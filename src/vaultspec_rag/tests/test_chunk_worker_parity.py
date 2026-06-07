@@ -20,10 +20,10 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from vaultspec_rag import CodebaseIndexer
-from vaultspec_rag.config import EnvVar, reset_config
-from vaultspec_rag.indexer import _chunk_worker
-from vaultspec_rag.progress import NullProgressReporter
+from .. import CodebaseIndexer
+from ..config import EnvVar, reset_config
+from ..indexer import _chunk_worker
+from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
     from pathlib import Path

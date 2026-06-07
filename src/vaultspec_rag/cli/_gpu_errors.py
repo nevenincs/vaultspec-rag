@@ -105,7 +105,11 @@ def _handle_gpu_error(exc: Exception) -> None:
     Raises:
         typer.Exit: Always exits with code 1.
     """
-    from ..torch_config import TorchDiagnosis, diagnose_torch, manual_snippet
+    from ..torch_config import (
+        TorchDiagnosis,
+        diagnose_torch,
+        manual_snippet,
+    )
 
     diagnosis: TorchDiagnosis
     if isinstance(exc, ImportError):

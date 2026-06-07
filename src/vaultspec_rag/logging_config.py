@@ -277,25 +277,30 @@ class DaemonRotatingFileHandler(RotatingFileHandler):
             self.stream = None
 
         if self.backupCount > 0:
-            for i in range(self.backupCount - 1, 0, -1):
-                src = self.rotation_filename(f"{self.baseFilename}.{i}")
-                dst = self.rotation_filename(f"{self.baseFilename}.{i + 1}")
-                if os.path.exists(src):
-                    if os.path.exists(dst):
-                        os.remove(dst)
-                    os.replace(src, dst)
-
-            first_backup = self.rotation_filename(f"{self.baseFilename}.1")
-            if os.path.exists(first_backup):
-                os.remove(first_backup)
-            if os.path.exists(self.baseFilename):
-                shutil.copyfile(self.baseFilename, first_backup)
+            self._shift_backups()
+            self._copy_base_to_first_backup()
 
         with open(self.baseFilename, "w", encoding=self.encoding):
             pass
 
         if not self.delay:
             self.stream = self._open()
+
+    def _shift_backups(self) -> None:
+        for i in range(self.backupCount - 1, 0, -1):
+            src = self.rotation_filename(f"{self.baseFilename}.{i}")
+            dst = self.rotation_filename(f"{self.baseFilename}.{i + 1}")
+            if os.path.exists(src):
+                if os.path.exists(dst):
+                    os.remove(dst)
+                os.replace(src, dst)
+
+    def _copy_base_to_first_backup(self) -> None:
+        first_backup = self.rotation_filename(f"{self.baseFilename}.1")
+        if os.path.exists(first_backup):
+            os.remove(first_backup)
+        if os.path.exists(self.baseFilename):
+            shutil.copyfile(self.baseFilename, first_backup)
 
     def _rebind_fds_to_basefile(self) -> None:
         """Best-effort: re-``dup2`` fds 1 and 2 onto ``self.baseFilename``.

@@ -287,7 +287,7 @@ class VaultSearcher:
         fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
         raw_results = self.store.hybrid_search(
             query_vector=query_vector,
-            query_text=query_text,
+            _query_text=query_text,
             filters=store_filters or None,
             limit=fetch_limit,
             sparse_vector=sparse_vector,
@@ -315,6 +315,88 @@ class VaultSearcher:
         results = self._rerank(query_text, results, top_k)
         graph = self._get_graph()
         return rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+
+    def _build_codebase_store_filters(
+        self,
+        parsed: ParsedQuery,
+        language: str | None,
+        path: str | None,
+        node_type: str | None,
+        function_name: str | None,
+        class_name: str | None,
+    ) -> dict[str, str]:
+        store_filters = {
+            k: v
+            for k, v in parsed.filters.items()
+            if k in ("language", "path", "node_type", "function_name", "class_name")
+        }
+        for k, v in (
+            ("language", language),
+            ("path", path),
+            ("node_type", node_type),
+            ("function_name", function_name),
+            ("class_name", class_name),
+        ):
+            if v is not None:
+                store_filters[k] = v
+        return store_filters
+
+    def _filter_raw_codebase_results(
+        self,
+        raw_results: list[dict],
+        include_norm: list[str],
+        exclude_norm: list[str],
+    ) -> list[dict]:
+        if not include_norm and not exclude_norm:
+            return raw_results
+        filtered: list[dict] = []
+        for r in raw_results:
+            path_value = str(r.get("path", ""))
+            if include_norm and not any(
+                fnmatch.fnmatch(path_value, pat) for pat in include_norm
+            ):
+                continue
+            if exclude_norm and any(
+                fnmatch.fnmatch(path_value, pat) for pat in exclude_norm
+            ):
+                continue
+            filtered.append(r)
+        return filtered
+
+    def _map_codebase_results(self, raw_results: list[dict]) -> list[SearchResult]:
+        results = []
+        for r in raw_results:
+            score = r.get("_relevance_score", 0.0)
+            results.append(
+                SearchResult(
+                    id=r["id"],
+                    path=r["path"],
+                    title=r["path"],
+                    score=float(score),
+                    snippet=r.get("content", "")[:200].strip(),
+                    source="codebase",
+                    language=r.get("language", ""),
+                    line_start=r.get("line_start"),
+                    line_end=r.get("line_end"),
+                    node_type=r.get("node_type"),
+                    function_name=r.get("function_name"),
+                    class_name=r.get("class_name"),
+                ),
+            )
+        return results
+
+    def _apply_prefer_nudge(
+        self, results: list[SearchResult], prefer: str | None
+    ) -> None:
+        if prefer not in _PREFER_CATEGORIES:
+            return
+        for r in results:
+            category = _classify_chunk_type(r.path)
+            if category == prefer:
+                r.score += _PREFER_SCORE_NUDGE
+            else:
+                r.score -= _PREFER_SCORE_NUDGE
+        results.sort(key=lambda r: r.score, reverse=True)
 
     def _search_codebase_encoded(
         self,
@@ -374,21 +456,9 @@ class VaultSearcher:
         Returns:
             Ranked list of codebase SearchResult instances.
         """
-        store_filters = {
-            k: v
-            for k, v in parsed.filters.items()
-            if k in ("language", "path", "node_type", "function_name", "class_name")
-        }
-        if language is not None:
-            store_filters["language"] = language
-        if path is not None:
-            store_filters["path"] = path
-        if node_type is not None:
-            store_filters["node_type"] = node_type
-        if function_name is not None:
-            store_filters["function_name"] = function_name
-        if class_name is not None:
-            store_filters["class_name"] = class_name
+        store_filters = self._build_codebase_store_filters(
+            parsed, language, path, node_type, function_name, class_name
+        )
 
         # Normalise caller patterns once. The codebase indexer stores
         # POSIX paths on every platform (indexer.py:1600 replaces
@@ -408,7 +478,7 @@ class VaultSearcher:
             fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
         raw_results = self.store.hybrid_search_codebase(
             query_vector=query_vector,
-            query_text=query_text,
+            _query_text=query_text,
             filters=store_filters or None,
             limit=fetch_limit,
             sparse_vector=sparse_vector,
@@ -419,54 +489,18 @@ class VaultSearcher:
         # Post-query glob filter. Runs before SearchResult / rerank
         # so the CrossEncoder cost is proportional to the survivors,
         # not the over-fetched raw set.
-        if has_glob_filter:
-            filtered: list[dict] = []
-            for r in raw_results:
-                path_value = str(r.get("path", ""))
-                if include_norm and not any(
-                    fnmatch.fnmatch(path_value, pat) for pat in include_norm
-                ):
-                    continue
-                if exclude_norm and any(
-                    fnmatch.fnmatch(path_value, pat) for pat in exclude_norm
-                ):
-                    continue
-                filtered.append(r)
-            raw_results = filtered
+        raw_results = self._filter_raw_codebase_results(
+            raw_results, include_norm, exclude_norm
+        )
 
-        results = []
-        for r in raw_results:
-            score = r.get("_relevance_score", 0.0)
-            results.append(
-                SearchResult(
-                    id=r["id"],
-                    path=r["path"],
-                    title=r["path"],
-                    score=float(score),
-                    snippet=r.get("content", "")[:200].strip(),
-                    source="codebase",
-                    language=r.get("language", ""),
-                    line_start=r.get("line_start"),
-                    line_end=r.get("line_end"),
-                    node_type=r.get("node_type"),
-                    function_name=r.get("function_name"),
-                    class_name=r.get("class_name"),
-                ),
-            )
+        results = self._map_codebase_results(raw_results)
         results = self._rerank(query_text, results, top_k)
 
         # --prefer post-rerank score nudge. Apply ±_PREFER_SCORE_NUDGE
         # based on path-derived category, then re-sort. The
         # CrossEncoder's query-relevance scoring runs first; user
         # preference re-orders ties and near-ties only.
-        if prefer in _PREFER_CATEGORIES:
-            for r in results:
-                category = _classify_chunk_type(r.path)
-                if category == prefer:
-                    r.score += _PREFER_SCORE_NUDGE
-                else:
-                    r.score -= _PREFER_SCORE_NUDGE
-            results.sort(key=lambda r: r.score, reverse=True)
+        self._apply_prefer_nudge(results, prefer)
 
         # --dedup-locales collapse pass. Group results by locale
         # stem; within each group, near-tie scores (within

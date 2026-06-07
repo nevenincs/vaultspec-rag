@@ -337,22 +337,7 @@ class VaultIndexer:
 
         reporter.phase_start("scan vault", None)
         docs_dir = self.root_dir / get_config().docs_dir
-        current_docs: dict[str, pathlib.Path] = {}
-        for path in scan_vault(self.root_dir):
-            doc_type = get_doc_type(path, self.root_dir)
-            if doc_type is not None:
-                try:
-                    rel = str(path.relative_to(docs_dir)).replace("\\", "/")
-                except ValueError as exc:
-                    logger.debug(
-                        "relative_to(%s) failed for %s: %s; using basename",
-                        docs_dir,
-                        path,
-                        exc,
-                    )
-                    rel = path.name
-                doc_id = rel.rsplit(".", 1)[0] if "." in rel else rel
-                current_docs[doc_id] = path
+        current_docs: dict[str, pathlib.Path] = self._scan_vault_for_docs(docs_dir)
         reporter.phase_end()
 
         stored_ids = self.store.get_all_ids()
@@ -362,17 +347,7 @@ class VaultIndexer:
         potentially_modified = current_ids & stored_ids
 
         reporter.phase_start("hash documents", len(current_docs))
-        current_hashes: dict[str, str] = {}
-        for doc_id, path in current_docs.items():
-            try:
-                with open(path, "rb") as f:
-                    current_hashes[doc_id] = hashlib.file_digest(
-                        f,
-                        "blake2b",
-                    ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", doc_id)
-            reporter.advance()
+        current_hashes: dict[str, str] = self._hash_documents(current_docs, reporter)
         reporter.phase_end()
 
         modified_ids = {
@@ -383,21 +358,7 @@ class VaultIndexer:
         }
 
         to_index_ids = new_ids | modified_ids
-        docs_to_index: list[VaultDocument] = []
-
-        reporter.phase_start("parse documents", len(to_index_ids))
-        if to_index_ids:
-            paths_to_index = [current_docs[doc_id] for doc_id in to_index_ids]
-            with ThreadPoolExecutor() as pool:
-                results = pool.map(
-                    lambda p: prepare_document(p, self.root_dir),
-                    paths_to_index,
-                )
-                for doc in results:
-                    if doc is not None:
-                        docs_to_index.append(doc)
-                    reporter.advance()
-        reporter.phase_end()
+        docs_to_index = self._parse_documents(to_index_ids, current_docs, reporter)
 
         if docs_to_index:
             _stream_encode_and_upsert_vault(
@@ -432,7 +393,64 @@ class VaultIndexer:
             removed=len(deleted_ids),
             duration_ms=duration_ms,
             device=self.model.device,
+            files=len(current_docs),
         )
+
+    def _scan_vault_for_docs(self, docs_dir: pathlib.Path) -> dict[str, pathlib.Path]:
+        current_docs: dict[str, pathlib.Path] = {}
+        for path in scan_vault(self.root_dir):
+            doc_type = get_doc_type(path, self.root_dir)
+            if doc_type is not None:
+                try:
+                    rel = str(path.relative_to(docs_dir)).replace("\\", "/")
+                except ValueError as exc:
+                    logger.debug(
+                        "relative_to(%s) failed for %s: %s; using basename",
+                        docs_dir,
+                        path,
+                        exc,
+                    )
+                    rel = path.name
+                doc_id = rel.rsplit(".", 1)[0] if "." in rel else rel
+                current_docs[doc_id] = path
+        return current_docs
+
+    def _hash_documents(
+        self, current_docs: dict[str, pathlib.Path], reporter: ProgressReporter
+    ) -> dict[str, str]:
+        current_hashes: dict[str, str] = {}
+        for doc_id, path in current_docs.items():
+            try:
+                with open(path, "rb") as f:
+                    current_hashes[doc_id] = hashlib.file_digest(
+                        f,
+                        "blake2b",
+                    ).hexdigest()
+            except OSError:
+                logger.warning("Cannot hash file, skipping: %s", doc_id)
+            reporter.advance()
+        return current_hashes
+
+    def _parse_documents(
+        self,
+        to_index_ids: set[str],
+        id_to_path: dict[str, pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> list[VaultDocument]:
+        docs_to_index: list[VaultDocument] = []
+        reporter.phase_start("parse documents", len(to_index_ids))
+        if to_index_ids:
+            paths_to_index = [id_to_path[d] for d in to_index_ids]
+            with ThreadPoolExecutor() as pool:
+                for doc in pool.map(
+                    lambda p: prepare_document(p, self.root_dir),
+                    paths_to_index,
+                ):
+                    if doc is not None:
+                        docs_to_index.append(doc)
+                    reporter.advance()
+        reporter.phase_end()
+        return docs_to_index
 
     def _vault_doc_id(
         self,
@@ -490,29 +508,13 @@ class VaultIndexer:
         to_hash: dict[str, pathlib.Path] = {}
         delete_ids: set[str] = set()
         for path in changed_paths:
-            doc_id = self._vault_doc_id(path, docs_dir)
-            if doc_id is None:
-                continue
-            if path.is_file() and get_doc_type(path, self.root_dir) is not None:
-                to_hash[doc_id] = path
-            elif doc_id in prev_meta:
-                # Previously indexed but now gone or no longer a recognised
-                # vault document - reconcile it out of the index.
-                delete_ids.add(doc_id)
+            self._process_changed_vault_path(
+                path, docs_dir, prev_meta, to_hash, delete_ids
+            )
         reporter.phase_end()
 
         reporter.phase_start("hash documents", len(to_hash))
-        changed_hashes: dict[str, str] = {}
-        for doc_id, path in to_hash.items():
-            try:
-                with open(path, "rb") as f:
-                    changed_hashes[doc_id] = hashlib.file_digest(
-                        f,
-                        "blake2b",
-                    ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", doc_id)
-            reporter.advance()
+        changed_hashes = self._hash_documents(to_hash, reporter)
         reporter.phase_end()
 
         new_ids = {d for d in changed_hashes if d not in prev_meta}
@@ -523,19 +525,7 @@ class VaultIndexer:
         }
         to_index_ids = new_ids | modified_ids
 
-        docs_to_index: list[VaultDocument] = []
-        reporter.phase_start("parse documents", len(to_index_ids))
-        if to_index_ids:
-            paths_to_index = [to_hash[d] for d in to_index_ids]
-            with ThreadPoolExecutor() as pool:
-                for doc in pool.map(
-                    lambda p: prepare_document(p, self.root_dir),
-                    paths_to_index,
-                ):
-                    if doc is not None:
-                        docs_to_index.append(doc)
-                    reporter.advance()
-        reporter.phase_end()
+        docs_to_index = self._parse_documents(to_index_ids, to_hash, reporter)
 
         if docs_to_index:
             _stream_encode_and_upsert_vault(
@@ -577,7 +567,26 @@ class VaultIndexer:
             removed=len(delete_ids),
             duration_ms=duration_ms,
             device=self.model.device,
+            files=len(changed_paths)
+            if isinstance(changed_paths, list)
+            else 0,  # Approximate
         )
+
+    def _process_changed_vault_path(
+        self,
+        path: pathlib.Path,
+        docs_dir: pathlib.Path,
+        prev_meta: dict[str, str],
+        to_hash: dict[str, pathlib.Path],
+        delete_ids: set[str],
+    ) -> None:
+        doc_id = self._vault_doc_id(path, docs_dir)
+        if doc_id is None:
+            return
+        if path.is_file() and get_doc_type(path, self.root_dir) is not None:
+            to_hash[doc_id] = path
+        elif doc_id in prev_meta:
+            delete_ids.add(doc_id)
 
     def _save_meta(self, docs: list[VaultDocument]) -> None:
         """Save index metadata (content hashes) from VaultDocument list.

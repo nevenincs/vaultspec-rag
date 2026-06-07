@@ -10,7 +10,11 @@ from rich.table import Table
 import vaultspec_rag.cli as _cli
 
 from ._app import CLIState, app
-from ._render import _add_backend_contract_rows, _emit_json, _emit_json_error_and_exit
+from ._render import (
+    _add_backend_contract_rows,
+    _emit_json,
+    _emit_json_error_and_exit,
+)
 
 
 @app.command("status")

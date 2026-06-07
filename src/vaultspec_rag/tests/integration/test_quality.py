@@ -22,7 +22,7 @@ class TestHelpfulness:
 
     def test_search_finds_audit_docs(self, rag_components):
         """'audit report security compliance' should surface audit docs."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -38,7 +38,7 @@ class TestHelpfulness:
 
     def test_search_finds_architecture_docs(self, rag_components):
         """'architecture decision trade-offs' should surface ADR docs."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -56,7 +56,7 @@ class TestHelpfulness:
 
     def test_search_finds_plan_docs(self, rag_components):
         """'implementation plan milestones' should surface plan docs."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -77,7 +77,7 @@ class TestHelpfulness:
 
     def test_search_needle_precision(self, rag_components):
         """Searching for a needle keyword should surface the exact document."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
         model = rag_components["model"]
@@ -100,7 +100,7 @@ class TestHelpfulness:
 
     def test_search_irrelevant_type_returns_empty(self, rag_components):
         """Searching for content that belongs to no indexed doc_type returns empty."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -120,7 +120,7 @@ class TestHelpfulness:
 
     def test_type_filter_excludes_others(self, rag_components):
         """'type:adr architecture' should return ONLY adr docs."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -137,7 +137,7 @@ class TestHelpfulness:
 
     def test_feature_filter_narrows(self, rag_components):
         """'feature:<feature> ...' should return ONLY docs with that feature."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
         model = rag_components["model"]
@@ -160,7 +160,7 @@ class TestHelpfulness:
 
     def test_date_filter_prefix(self, rag_components):
         """'date:2026-01-01 ...' should return docs dated 2026-01-01."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -177,7 +177,7 @@ class TestHelpfulness:
 
     def test_combined_filters(self, rag_components):
         """'type:adr feature:<feature>' should return the intersection."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
         model = rag_components["model"]
@@ -208,7 +208,7 @@ class TestHelpfulness:
 
     def test_needle_ranks_high(self, rag_components):
         """A needle keyword should rank its target doc in top 3."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
         model = rag_components["model"]
@@ -241,7 +241,7 @@ class TestHelpfulness:
         """
         from vaultspec_core.graph import VaultGraph
 
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components_full["model"]
         store = rag_components_full["store"]
@@ -273,7 +273,7 @@ class TestHelpfulness:
 
     def test_results_have_positive_scores(self, rag_components):
         """All results from any query should have score > 0."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -291,7 +291,7 @@ class TestHelpfulness:
 
     def test_more_results_with_higher_limit(self, rag_components):
         """top_k=10 should return >= len(top_k=3) results."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -313,7 +313,7 @@ class TestHelpfulness:
 
         Should return empty or results with very low scores.
         """
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]
@@ -333,7 +333,7 @@ class TestHelpfulness:
 
     def test_nonsense_query(self, rag_components):
         """'asdfghjkl zxcvbnm' should return empty or very low absolute scores."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         model = rag_components["model"]
         store = rag_components["store"]

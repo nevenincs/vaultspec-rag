@@ -24,6 +24,16 @@ class InvalidFilterForSearchTypeError(ValueError):
         self.offending_filters = offending_filters
 
 
+def _format_flags(names: list[str]) -> list[str]:
+    flags = []
+    for name in names:
+        flag = name.replace("_", "-")
+        if not flag.startswith("--"):
+            flag = f"--{flag}"
+        flags.append(flag)
+    return sorted(flags)
+
+
 def validate_search_filters(
     search_type: Literal["vault", "code"],
     *,
@@ -89,38 +99,25 @@ def validate_search_filters(
 
     if search_type != "code":
         offending = []
-        if code_filters_supplied:
-            offending.extend(code_filters_supplied)
-        for name in glob_filters_supplied:
-            offending.append(f"--{name.replace('_', '-')}")
-        for name in postproc_supplied:
-            offending.append(f"--{name.replace('_', '-')}")
+        offending.extend(code_filters_supplied)
+        offending.extend(glob_filters_supplied)
+        offending.extend(postproc_supplied)
         if offending:
-            offending_flags = []
-            for name in offending:
-                flag = name.replace("_", "-")
-                if not flag.startswith("--"):
-                    flag = f"--{flag}"
-                offending_flags.append(flag)
+            offending_flags = _format_flags(offending)
             raise InvalidFilterForSearchTypeError(
                 f"code-search filters ({', '.join(sorted(offending))}) require "
                 f"--type code; got --type {search_type}.",
                 filter_kind="code",
-                offending_filters=sorted(offending_flags),
+                offending_filters=offending_flags,
             )
 
     if search_type != "vault" and vault_filters_supplied:
-        offending_flags = []
-        for name in vault_filters_supplied:
-            flag = name.replace("_", "-")
-            if not flag.startswith("--"):
-                flag = f"--{flag}"
-            offending_flags.append(flag)
+        offending_flags = _format_flags(vault_filters_supplied)
         raise InvalidFilterForSearchTypeError(
             (
                 f"vault-search filters ({', '.join(sorted(vault_filters_supplied))}) "
                 f"require --type vault; got --type {search_type}."
             ),
             filter_kind="vault",
-            offending_filters=sorted(offending_flags),
+            offending_filters=offending_flags,
         )

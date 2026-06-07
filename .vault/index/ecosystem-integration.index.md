@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#ecosystem-integration'
-date: '2026-05-31'
+date: '2026-06-06'
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'

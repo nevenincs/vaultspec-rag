@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#service-operability'
-date: '2026-06-01'
+date: '2026-06-06'
 related:
   - '[[2026-06-01-service-operability-adr]]'
   - '[[2026-06-01-service-operability-plan]]'

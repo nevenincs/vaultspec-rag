@@ -39,7 +39,12 @@ from .api import (
     search_vault,
 )
 from .embeddings import EmbeddingModel, SparseResult
-from .indexer import CodebaseIndexer, IndexResult, VaultIndexer, prepare_document
+from .indexer import (
+    CodebaseIndexer,
+    IndexResult,
+    VaultIndexer,
+    prepare_document,
+)
 from .search import (
     ParsedQuery,
     SearchResult,

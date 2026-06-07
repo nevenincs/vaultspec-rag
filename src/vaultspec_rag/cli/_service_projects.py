@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 from rich.table import Table
@@ -34,57 +34,25 @@ def _truncate_root(root: str, width: int = 60) -> str:
     return "…" + root[-(width - 1) :]
 
 
-@service_projects_app.command("list")
-def service_projects_list(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
-    ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help="Emit one JSON envelope to stdout instead of a Rich table.",
-        ),
-    ] = False,
-) -> None:
-    """List active project slots on a running RAG service."""
-    resolved_port = port if port is not None else _default_service_port()
-    result = _try_mcp_admin("list_projects", {}, resolved_port)
-    if result is None:
-        if json_mode:
-            _emit_json_error_and_exit(
-                "service.projects.list",
-                "service_not_running",
-                "Service is not running. Start it with "
-                "`vaultspec-rag server service start`.",
-                3,
-            )
-        _cli.console.print(
-            "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server service start[/].",
-        )
-        raise typer.Exit(3)
-
-    raw_projects = result.get("projects")
-    projects: list[object] = (
-        list(raw_projects) if isinstance(raw_projects, list) else []
-    )
-    max_projects = result.get("max_projects", 0)
-    idle_ttl = result.get("idle_ttl_seconds", 0)
-
+def _handle_list_not_running(json_mode: bool) -> NoReturn:
     if json_mode:
-        _emit_json(
-            True,
+        _emit_json_error_and_exit(
             "service.projects.list",
-            data={
-                "projects": projects,
-                "max_projects": max_projects,
-                "idle_ttl_seconds": idle_ttl,
-            },
+            "service_not_running",
+            "Service is not running. Start it with "
+            "`vaultspec-rag server service start`.",
+            3,
         )
-        return
+    _cli.console.print(
+        "[red]Service is not running.[/] "
+        "Start it with [bold]vaultspec-rag server service start[/].",
+    )
+    raise typer.Exit(3)
 
+
+def _print_projects_table(
+    projects: list[object], max_projects: int, idle_ttl: int
+) -> None:
     if not projects:
         _cli.console.print(
             f"No active project slots. (0/{max_projects} slots, idle TTL {idle_ttl}s)",
@@ -115,6 +83,87 @@ def service_projects_list(
     )
 
 
+@service_projects_app.command("list")
+def service_projects_list(
+    port: Annotated[
+        int | None,
+        typer.Option("--port", help="MCP port (defaults to running service)."),
+    ] = None,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit one JSON envelope to stdout instead of a Rich table.",
+        ),
+    ] = False,
+) -> None:
+    """List active project slots on a running RAG service."""
+    resolved_port = port if port is not None else _default_service_port()
+    result = _try_mcp_admin("list_projects", {}, resolved_port)
+    if result is None:
+        _handle_list_not_running(json_mode)
+
+    raw_projects = result.get("projects")
+    projects: list[object] = (
+        list(raw_projects) if isinstance(raw_projects, list) else []
+    )
+    max_projects = result.get("max_projects", 0)
+    idle_ttl = result.get("idle_ttl_seconds", 0)
+
+    if json_mode:
+        _emit_json(
+            True,
+            "service.projects.list",
+            data={
+                "projects": projects,
+                "max_projects": max_projects,
+                "idle_ttl_seconds": idle_ttl,
+            },
+        )
+        return
+
+    _print_projects_table(projects, int(max_projects), int(idle_ttl))
+
+
+def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:
+    if json_mode:
+        _emit_json_error_and_exit(
+            "service.projects.evict",
+            "service_not_running",
+            "Service is not running. Start it with "
+            "`vaultspec-rag server service start`.",
+            3,
+            root=root,
+        )
+    _cli.console.print(
+        "[red]Service is not running.[/] "
+        "Start it with [bold]vaultspec-rag server service start[/].",
+    )
+    raise typer.Exit(3)
+
+
+def _handle_evict_json(
+    evicted: bool, reason: str, root: str, result: dict[str, Any]
+) -> None:
+    if evicted:
+        _emit_json(
+            True,
+            "service.projects.evict",
+            data={"evicted": True, "reason": reason or "ok", "root": root},
+        )
+        raise typer.Exit(0)
+    exit_code = 1 if reason == "busy" else 2 if reason == "not_found" else 1
+    _emit_json_error_and_exit(
+        "service.projects.evict",
+        reason or "unexpected_response",
+        f"Eviction failed for {root}: reason={reason or 'unknown'}.",
+        exit_code,
+        root=root,
+        evicted=False,
+        raw_response=result,
+    )
+
+
 @service_projects_app.command("evict")
 def service_projects_evict(
     root: Annotated[str, typer.Argument(help="Project root to evict.")],
@@ -138,42 +187,13 @@ def service_projects_evict(
         resolved_port,
     )
     if result is None:
-        if json_mode:
-            _emit_json_error_and_exit(
-                "service.projects.evict",
-                "service_not_running",
-                "Service is not running. Start it with "
-                "`vaultspec-rag server service start`.",
-                3,
-                root=root,
-            )
-        _cli.console.print(
-            "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server service start[/].",
-        )
-        raise typer.Exit(3)
+        _handle_evict_not_running(json_mode, root)
 
     reason = str(result.get("reason", ""))
     evicted = bool(result.get("evicted", False))
 
     if json_mode:
-        if evicted:
-            _emit_json(
-                True,
-                "service.projects.evict",
-                data={"evicted": True, "reason": reason or "ok", "root": root},
-            )
-            raise typer.Exit(0)
-        exit_code = 1 if reason == "busy" else 2 if reason == "not_found" else 1
-        _emit_json_error_and_exit(
-            "service.projects.evict",
-            reason or "unexpected_response",
-            f"Eviction failed for {root}: reason={reason or 'unknown'}.",
-            exit_code,
-            root=root,
-            evicted=False,
-            raw_response=result,
-        )
+        _handle_evict_json(evicted, reason, root, result)
 
     if evicted:
         _cli.console.print(f"[green]Evicted[/] project slot: {root}")

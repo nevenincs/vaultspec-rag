@@ -8,11 +8,57 @@ from pathlib import Path
 
 from vaultspec_core.core.commands import sync_provider
 
-from ._models import _RAG_MCP_REL_PATH, _RAG_RULE_REL_PATH, UninstallReport
+from ._models import (
+    _RAG_MCP_REL_PATH,
+    _RAG_RULE_REL_PATH,
+    UninstallReport,
+)
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
 
 logger = logging.getLogger(__name__)
+
+
+def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> None:
+    rules_dir = target / ".vaultspec" / "rules"
+    candidates = [
+        rules_dir / _RAG_RULE_REL_PATH,
+        rules_dir / _RAG_MCP_REL_PATH,
+    ]
+    for src_file in candidates:
+        if not src_file.exists():
+            continue
+        rel = str(src_file.relative_to(target)).replace("\\", "/")
+        if not dry_run:
+            try:
+                src_file.unlink()
+            except OSError as exc:
+                logger.warning("Failed to remove %s: %s", rel, exc)
+                report.warnings.append(f"failed to remove {rel}: {exc}")
+                continue
+        report.removed.append(rel)
+
+
+def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> None:
+    data_dir = target / ".vault" / "data"
+    if data_dir.is_symlink():
+        msg = (
+            f"refusing to --remove-data: {data_dir} is a symlink. "
+            f"Resolve the symlink manually and re-run uninstall."
+        )
+        logger.warning(msg)
+        report.warnings.append(msg)
+    elif data_dir.is_dir():
+        if not dry_run:
+            try:
+                shutil.rmtree(data_dir, onexc=_rmtree_safe_onexc)
+            except OSError as exc:
+                logger.warning("Failed to remove %s: %s", data_dir, exc)
+                report.warnings.append(f"failed to remove .vault/data: {exc}")
+            else:
+                report.data_removed = True
+        else:
+            report.data_removed = True
 
 
 def uninstall_run(
@@ -89,23 +135,7 @@ def uninstall_run(
         _run_torch_config_uninstall(target=target, report=report, dry_run=True)
         return report
 
-    rules_dir = target / ".vaultspec" / "rules"
-    candidates = [
-        rules_dir / _RAG_RULE_REL_PATH,
-        rules_dir / _RAG_MCP_REL_PATH,
-    ]
-    for src_file in candidates:
-        if not src_file.exists():
-            continue
-        rel = str(src_file.relative_to(target)).replace("\\", "/")
-        if not dry_run:
-            try:
-                src_file.unlink()
-            except OSError as exc:
-                logger.warning("Failed to remove %s: %s", rel, exc)
-                report.warnings.append(f"failed to remove {rel}: {exc}")
-                continue
-        report.removed.append(rel)
+    _remove_candidates(target, dry_run, report)
 
     if dry_run:
         report.warnings.append(
@@ -137,37 +167,7 @@ def uninstall_run(
     _run_torch_config_uninstall(target=target, report=report, dry_run=dry_run)
 
     if remove_data:
-        data_dir = target / ".vault" / "data"
-        # Symlink containment guard: rag must NEVER follow a symlink
-        # out of the workspace and rmtree somewhere unexpected. If
-        # ``.vault/data/`` is a symlink (even one pointing inside the
-        # workspace), refuse the destructive operation and surface a
-        # clear warning. The user must resolve the symlink manually
-        # before re-running uninstall, which forces an explicit
-        # decision about what to delete.
-        if data_dir.is_symlink():
-            msg = (
-                f"refusing to --remove-data: {data_dir} is a symlink. "
-                f"Resolve the symlink manually and re-run uninstall."
-            )
-            logger.warning(msg)
-            report.warnings.append(msg)
-        elif data_dir.is_dir():
-            # is_dir() is False for symlinks-to-files but True for
-            # symlinks-to-dirs, so the symlink check above must run
-            # first. Belt-and-braces: also pass ``onerror`` so any
-            # symlink encountered *inside* the tree is unlinked
-            # rather than followed.
-            if not dry_run:
-                try:
-                    shutil.rmtree(data_dir, onexc=_rmtree_safe_onexc)
-                except OSError as exc:
-                    logger.warning("Failed to remove %s: %s", data_dir, exc)
-                    report.warnings.append(f"failed to remove .vault/data: {exc}")
-                else:
-                    report.data_removed = True
-            else:
-                report.data_removed = True
+        _remove_data_dir(target, dry_run, report)
 
     return report
 

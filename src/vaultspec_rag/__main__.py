@@ -5,7 +5,7 @@ This module delegates directly to the root Typer application defined in
 share the same command surface.
 """
 
-from vaultspec_rag.cli import app
+from .cli import app
 
 
 def main() -> None:

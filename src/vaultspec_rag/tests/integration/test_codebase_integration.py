@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.progress import NullProgressReporter
+from ...progress import NullProgressReporter
 
 pytestmark = [pytest.mark.integration]
 
@@ -47,7 +47,7 @@ def code_project(rag_components, tmp_path):
 
     Yields a dict with code_indexer, store, model, root, and the source dir.
     """
-    from vaultspec_rag import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer, VaultStore
 
     model = rag_components["model"]
 
@@ -110,7 +110,7 @@ class TestCodebaseFullIndex:
         ``store.drop_table()`` / ``store.drop_code_table()`` so
         each collection is independent.
         """
-        from vaultspec_rag import VaultIndexer
+        from ... import VaultIndexer
 
         store = code_project["store"]
         model = code_project["model"]
@@ -170,7 +170,7 @@ class TestCodebaseSearch:
 
     @pytest.mark.timeout(120)
     def test_search_codebase_returns_results(self, code_project):
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         model = code_project["model"]
@@ -186,7 +186,7 @@ class TestCodebaseSearch:
     @pytest.mark.timeout(120)
     def test_search_codebase_exclude_path_glob(self, code_project):
         """--exclude-path drops matching files post-query."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         # Add a second file under tests/ that would otherwise rank high
         # for the query, so we can prove exclude really prunes.
@@ -222,7 +222,7 @@ class TestCodebaseSearch:
     @pytest.mark.timeout(120)
     def test_search_codebase_include_path_glob(self, code_project):
         """--include-path keeps only matching files post-query."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         tests_dir = code_project["src_dir"].parent / "tests"
         tests_dir.mkdir()
@@ -249,7 +249,7 @@ class TestCodebaseSearch:
 
     @pytest.mark.timeout(120)
     def test_search_codebase_with_language_filter(self, code_project):
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         model = code_project["model"]
@@ -270,7 +270,7 @@ class TestCodebaseSearch:
     @pytest.mark.timeout(120)
     def test_search_codebase_finds_calculator_class(self, code_project):
         """Search for 'calculator' returns results with Calculator class content."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         searcher = VaultSearcher(
@@ -289,7 +289,7 @@ class TestCodebaseSearch:
     @pytest.mark.timeout(120)
     def test_search_codebase_results_have_line_numbers(self, code_project):
         """Codebase search results must include line_start metadata."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         searcher = VaultSearcher(
@@ -307,7 +307,7 @@ class TestCodebaseSearch:
     @pytest.mark.timeout(120)
     def test_search_codebase_snippet_contains_source_code(self, code_project):
         """Snippets should contain actual source code, not empty strings."""
-        from vaultspec_rag import VaultSearcher
+        from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         searcher = VaultSearcher(
@@ -393,7 +393,7 @@ class TestVaultragignore:
         self, rag_components, tmp_path
     ):
         """Files matching .vaultragignore are not indexed."""
-        from vaultspec_rag import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultStore
 
         model = rag_components["model"]
 
@@ -424,7 +424,7 @@ class TestVaultragignore:
         self, rag_components, tmp_path
     ):
         """Removing .vaultragignore causes previously excluded files to appear."""
-        from vaultspec_rag import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultStore
 
         model = rag_components["model"]
 
@@ -460,7 +460,7 @@ class TestVaultragignore:
         self, rag_components, tmp_path
     ):
         """D1: .vaultragignore negation cannot un-ignore .gitignore entries."""
-        from vaultspec_rag import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultStore
 
         model = rag_components["model"]
 
@@ -488,7 +488,7 @@ class TestVaultragignore:
     @pytest.mark.timeout(120)
     def test_extra_excludes_applied_in_full_index(self, rag_components, tmp_path):
         """CLI --exclude patterns flow through extra_excludes to full_index."""
-        from vaultspec_rag import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultStore
 
         model = rag_components["model"]
 

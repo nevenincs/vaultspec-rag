@@ -104,7 +104,10 @@ from ._service_lifecycle import (
     service_warmup,
 )
 from ._service_logs import service_logs
-from ._service_projects import service_projects_evict, service_projects_list
+from ._service_projects import (
+    service_projects_evict,
+    service_projects_list,
+)
 from ._service_status import (
     _append_lifecycle_shutdown_log,
     _default_service_port,

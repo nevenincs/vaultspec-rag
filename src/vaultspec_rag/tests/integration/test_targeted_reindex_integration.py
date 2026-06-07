@@ -15,10 +15,9 @@ import pytest
 from vaultspec_core.config import reset_config
 from vaultspec_core.vaultcore import scan_vault
 
-from vaultspec_rag.config import get_config
-from vaultspec_rag.config import reset_config as reset_rag_config
-from vaultspec_rag.progress import NullProgressReporter
-
+from ...config import get_config
+from ...config import reset_config as reset_rag_config
+from ...progress import NullProgressReporter
 from ..corpus import build_synthetic_vault
 
 pytestmark = [pytest.mark.integration]
@@ -32,7 +31,7 @@ def _vault_doc_id(path, docs_dir) -> str:
 
 def _build_vault(root, model, *, n_docs: int = 6):
     """Build and fully index a small synthetic vault at *root*."""
-    from vaultspec_rag import VaultIndexer, VaultStore
+    from ... import VaultIndexer, VaultStore
 
     reset_config()
     reset_rag_config()
@@ -152,7 +151,7 @@ class TestVaultScopedReindex:
 
 def _build_code(root, model):
     """Build a tiny source tree and fully index it at *root*."""
-    from vaultspec_rag import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer, VaultStore
 
     reset_config()
     reset_rag_config()

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from vaultspec_rag.config import EnvVar, get_config, reset_config
+from ..config import EnvVar, get_config, reset_config
 
 
 class TestDenseBackendConfig:

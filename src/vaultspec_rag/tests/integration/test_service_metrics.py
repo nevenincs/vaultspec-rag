@@ -24,14 +24,15 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.mcp_server as _m
-from vaultspec_rag import mcp_server
-from vaultspec_rag.mcp_server._routes import ROUTES
+
+from ... import mcp_server
+from ...mcp_server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from vaultspec_rag.embeddings import EmbeddingModel
+    from ...embeddings import EmbeddingModel
 
 
 @pytest.fixture
@@ -117,7 +118,7 @@ async def test_search_vault_increments_counter(
 ) -> None:
     import asyncio
 
-    from vaultspec_rag.mcp_server import _jobs
+    from ...mcp_server import _jobs
 
     root = _make_root(tmp_path)
     mcp_server._registry._model = embedding_model
@@ -151,7 +152,7 @@ async def test_reindex_vault_increments_counter(
 ) -> None:
     import asyncio
 
-    from vaultspec_rag.mcp_server import _jobs
+    from ...mcp_server import _jobs
 
     root = _make_root(tmp_path)
     mcp_server._registry._model = embedding_model

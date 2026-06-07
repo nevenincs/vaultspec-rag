@@ -163,28 +163,7 @@ def _source_match(entry: InlineTable | dict) -> str:
     return "conflict"
 
 
-def _classify_indices(
-    doc: TOMLDocument,
-) -> tuple[bool | None, bool, list[str]]:
-    """Classify the ``[[tool.uv.index]]`` section.
-
-    Returns a tuple ``(canonical_seen, conflict_seen, conflicts)``
-    where ``canonical_seen`` is ``None`` when the user's TOML has a
-    shape we refuse to touch (single-table ``[tool.uv.index]``) -
-    the caller should short-circuit to ``CUSTOMISED``.
-    """
-    conflicts: list[str] = []
-
-    # ``[tool.uv.index]`` (single table) and ``index = [{...}]`` (inline
-    # array dotted-key form) are both valid TOML but incompatible with
-    # our array-of-tables mutations. Probe the raw key directly -
-    # ``_indices()`` narrows to AoT only, so we can't use its return
-    # value to detect these shapes. Distinguish the two so the
-    # conflict message describes what the user actually wrote (a
-    # "single table" message for an inline-array confused some users
-    # into thinking the issue was the wrong-key shape). TOML-03.
-    uv = _tool_uv(doc)
-    raw_index = uv.get("index") if uv is not None else None
+def _check_index_shape(raw_index: Any, conflicts: list[str]) -> bool:
     if raw_index is not None and not isinstance(raw_index, AoT):
         if isinstance(raw_index, list):
             conflicts.append(
@@ -197,25 +176,52 @@ def _classify_indices(
                 "[tool.uv.index] is a single table, not an array-of-tables; "
                 "rag's apply_patch expects [[tool.uv.index]]"
             )
-        return None, False, conflicts
+        return False
+    return True
 
+
+def _eval_index_entries(indices: AoT, conflicts: list[str]) -> tuple[bool, bool]:
     canonical_seen = False
     conflict_seen = False
+    for entry in indices:
+        if not isinstance(entry, Table | InlineTable | dict):
+            continue
+        m = _index_match(entry)
+        if m == "canonical":
+            canonical_seen = True
+        elif m == "conflict":
+            conflict_seen = True
+            conflicts.append(
+                f"[[tool.uv.index]] '{CU130_INDEX_NAME}' "
+                f"exists with non-canonical url/explicit"
+            )
+    return canonical_seen, conflict_seen
+
+
+def _classify_indices(
+    doc: TOMLDocument,
+) -> tuple[bool | None, bool, list[str]]:
+    """Classify the ``[[tool.uv.index]]`` section.
+
+    Returns a tuple ``(canonical_seen, conflict_seen, conflicts)``
+    where ``canonical_seen`` is ``None`` when the user's TOML has a
+    shape we refuse to touch (single-table ``[tool.uv.index]``) -
+    the caller should short-circuit to ``CUSTOMISED``.
+    """
+    conflicts: list[str] = []
+
+    uv = _tool_uv(doc)
+    raw_index = uv.get("index") if uv is not None else None
+
+    if not _check_index_shape(raw_index, conflicts):
+        return None, False, conflicts
+
     indices = _indices(doc)
     if indices is not None:
-        for entry in indices:
-            if not isinstance(entry, Table | InlineTable | dict):
-                continue
-            m = _index_match(entry)
-            if m == "canonical":
-                canonical_seen = True
-            elif m == "conflict":
-                conflict_seen = True
-                conflicts.append(
-                    f"[[tool.uv.index]] '{CU130_INDEX_NAME}' "
-                    f"exists with non-canonical url/explicit"
-                )
-    return canonical_seen, conflict_seen, conflicts
+        canonical_seen, conflict_seen = _eval_index_entries(indices, conflicts)
+        return canonical_seen, conflict_seen, conflicts
+
+    return False, False, conflicts
 
 
 def _classify_sources(

@@ -19,7 +19,7 @@ class TestBlake2bFileHashing:
 
     def test_vault_indexer_meta_uses_blake2b_hashes(self, tmp_path):
         """VaultIndexer._save_meta produces blake2b hex digests (128 chars)."""
-        from vaultspec_rag.indexer import VaultIndexer
+        from ..indexer import VaultIndexer
 
         indexer = object.__new__(VaultIndexer)
         indexer._meta_path = tmp_path / ".rag" / "vault_meta.json"
@@ -39,7 +39,7 @@ class TestBlake2bFileHashing:
 
     def test_codebase_indexer_meta_uses_blake2b_hashes(self, tmp_path):
         """CodebaseIndexer._write_meta produces blake2b hex digests."""
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         indexer = object.__new__(CodebaseIndexer)
         indexer._meta_path = tmp_path / ".rag" / "code_meta.json"
@@ -65,42 +65,42 @@ class TestMCPAsyncTools:
     def test_search_vault_is_async(self):
         import asyncio
 
-        from vaultspec_rag.mcp_server import search_vault
+        from ..mcp_server import search_vault
 
         assert asyncio.iscoroutinefunction(search_vault)
 
     def test_search_codebase_is_async(self):
         import asyncio
 
-        from vaultspec_rag.mcp_server import search_codebase
+        from ..mcp_server import search_codebase
 
         assert asyncio.iscoroutinefunction(search_codebase)
 
     def test_reindex_vault_is_async(self):
         import asyncio
 
-        from vaultspec_rag.mcp_server import reindex_vault
+        from ..mcp_server import reindex_vault
 
         assert asyncio.iscoroutinefunction(reindex_vault)
 
     def test_reindex_codebase_is_async(self):
         import asyncio
 
-        from vaultspec_rag.mcp_server import reindex_codebase
+        from ..mcp_server import reindex_codebase
 
         assert asyncio.iscoroutinefunction(reindex_codebase)
 
     def test_get_index_status_is_async(self):
         import asyncio
 
-        from vaultspec_rag.mcp_server import get_index_status
+        from ..mcp_server import get_index_status
 
         assert asyncio.iscoroutinefunction(get_index_status)
 
     def test_get_code_file_is_async(self):
         import asyncio
 
-        from vaultspec_rag.mcp_server import get_code_file
+        from ..mcp_server import get_code_file
 
         assert asyncio.iscoroutinefunction(get_code_file)
 
@@ -110,7 +110,7 @@ class TestPathResolveCache:
 
     def test_relative_and_dot_relative_same_engine(self, tmp_path):
         """Path('./x') and Path('x') resolve to the same registry key."""
-        from vaultspec_rag.registry import get_registry
+        from ..registry import get_registry
 
         # Both paths resolve to the same absolute path
         abs_path = tmp_path / "project"
@@ -126,7 +126,7 @@ class TestGraphCache:
     """ADR: GraphCache returns same instance on repeated calls."""
 
     def test_graph_cache_invalidate_clears(self):
-        from vaultspec_rag.graph_cache import GraphCache
+        from ..graph_cache import GraphCache
 
         cache = GraphCache(ttl_seconds=300.0)
         # After invalidate, internal state is cleared
@@ -138,7 +138,7 @@ class TestGraphCache:
     def test_graph_cache_has_lock(self):
         import threading
 
-        from vaultspec_rag.graph_cache import GraphCache
+        from ..graph_cache import GraphCache
 
         cache = GraphCache(ttl_seconds=300.0)
         assert isinstance(cache._lock, type(threading.Lock()))
@@ -150,7 +150,7 @@ class TestQwen3NoDocumentPrompt:
     def test_encode_documents_no_prompt_name(self):
         import inspect
 
-        from vaultspec_rag.embeddings import EmbeddingModel
+        from ..embeddings import EmbeddingModel
 
         source = inspect.getsource(EmbeddingModel.encode_documents)
         assert "prompt_name" not in source, (
@@ -160,7 +160,7 @@ class TestQwen3NoDocumentPrompt:
     def test_encode_query_uses_prompt_name(self):
         import inspect
 
-        from vaultspec_rag.embeddings import EmbeddingModel
+        from ..embeddings import EmbeddingModel
 
         source = inspect.getsource(EmbeddingModel.encode_query)
         assert "prompt_name" in source, (
@@ -177,7 +177,7 @@ class TestEmbeddingModelLoadArguments:
         import inspect
         import textwrap
 
-        from vaultspec_rag.embeddings import EmbeddingModel
+        from ..embeddings import EmbeddingModel
 
         # The dense SentenceTransformer construction lives in
         # ``_load_dense_model`` (backend seam) while SparseEncoder stays in
@@ -252,12 +252,12 @@ class TestThreadingLock:
         return (type(threading.Lock()), type(threading.RLock()))
 
     def test_mcp_registry_lock_exists(self):
-        from vaultspec_rag.mcp_server import _registry
+        from ..mcp_server import _registry
 
         assert isinstance(_registry._lock, self._lock_types())
 
     def test_registry_singleton_has_lock(self):
-        from vaultspec_rag.registry import get_registry
+        from ..registry import get_registry
 
         reg = get_registry()
         assert isinstance(reg._lock, self._lock_types())
@@ -269,9 +269,9 @@ class TestFilterOnPrefetch:
     def test_hybrid_search_uses_prefetch_filter(self):
         import inspect
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
-        source = inspect.getsource(VaultStore.hybrid_search)
+        source = inspect.getsource(VaultStore._build_prefetch)
         # Filter must appear in Prefetch constructor, not as query_filter kwarg
         assert "Prefetch(" in source
         assert "filter=query_filter" in source
@@ -283,7 +283,7 @@ class TestManualNodeWalking:
     def test_extract_name_uses_child_by_field_name(self):
         import inspect
 
-        from vaultspec_rag.indexer import ASTChunker
+        from ..indexer import ASTChunker
 
         source = inspect.getsource(ASTChunker._extract_name)
         assert "child_by_field_name" in source, (
@@ -295,7 +295,7 @@ class TestRerankerModelName:
     """ADR: gpu-only-rag-stack - reranker model must be bge-reranker-v2-m3."""
 
     def test_config_default_reranker_model(self):
-        from vaultspec_rag.config import get_config, reset_config
+        from ..config import get_config, reset_config
 
         reset_config()
         cfg = get_config()
@@ -311,12 +311,12 @@ class TestRrfKParameter:
         import inspect
         import linecache
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         linecache.clearcache()
-        src = inspect.getsource(VaultStore.hybrid_search)
+        src = inspect.getsource(VaultStore._execute_hybrid_query)
         assert "Rrf(k=60)" in src or "rrf=models.Rrf(k=60)" in src, (
-            "hybrid_search must use RrfQuery(rrf=Rrf(k=60)), "
+            "_execute_hybrid_query must use RrfQuery(rrf=Rrf(k=60)), "
             "not FusionQuery default (k=2)"
         )
 
@@ -324,10 +324,10 @@ class TestRrfKParameter:
         import inspect
         import linecache
 
-        from vaultspec_rag.store import VaultStore
+        from ..store import VaultStore
 
         linecache.clearcache()
-        src = inspect.getsource(VaultStore.hybrid_search_codebase)
+        src = inspect.getsource(VaultStore._execute_hybrid_query)
         assert "Rrf(k=60)" in src or "rrf=models.Rrf(k=60)" in src
 
 
@@ -342,7 +342,7 @@ class TestGraphCacheInvalidation:
     def test_reindex_vault_resets_graph_cache(self):
         import inspect
 
-        from vaultspec_rag.jobs import start_reindex_vault
+        from ..jobs import start_reindex_vault
 
         src = inspect.getsource(start_reindex_vault)
         assert "graph_cache" in src and "invalidate" in src, (
@@ -360,7 +360,7 @@ class TestCliMcpFastPath:
     def test_try_mcp_search_uses_asyncio_run(self):
         import inspect
 
-        from vaultspec_rag.cli import _try_mcp_search
+        from ..cli import _try_mcp_search
 
         src = inspect.getsource(_try_mcp_search)
         assert "asyncio.run(" in src, (
@@ -377,7 +377,7 @@ class TestWatcherGraphInvalidation:
     def test_watch_and_reindex_requires_graph_cache(self):
         import inspect
 
-        from vaultspec_rag.watcher import watch_and_reindex
+        from ..watcher import watch_and_reindex
 
         signature = inspect.signature(watch_and_reindex)
         assert "graph_cache" in signature.parameters, (
@@ -398,7 +398,7 @@ class TestAtomicMetaWrite:
     def test_vault_indexer_write_meta_uses_os_replace(self):
         import inspect
 
-        from vaultspec_rag.indexer import VaultIndexer
+        from ..indexer import VaultIndexer
 
         src = inspect.getsource(VaultIndexer._write_meta)
         assert "os.replace(" in src, (
@@ -409,7 +409,7 @@ class TestAtomicMetaWrite:
     def test_codebase_indexer_write_meta_uses_os_replace(self):
         import inspect
 
-        from vaultspec_rag.indexer import CodebaseIndexer
+        from ..indexer import CodebaseIndexer
 
         src = inspect.getsource(CodebaseIndexer._write_meta)
         assert "os.replace(" in src, (

@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#service-graph'
-date: '2026-05-31'
+date: '2026-06-06'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'

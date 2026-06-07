@@ -14,8 +14,8 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from vaultspec_rag import mcp_server
-from vaultspec_rag.cli import app
+from .. import mcp_server
+from ..cli import app
 
 runner = CliRunner()
 

@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from vaultspec_core.config import reset_config
 
-from vaultspec_rag.cli import _health_probe, _is_pid_alive
-from vaultspec_rag.config import reset_config as reset_rag_config
+from ...cli import _health_probe, _is_pid_alive
+from ...config import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping

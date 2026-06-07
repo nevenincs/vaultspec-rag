@@ -15,9 +15,14 @@ import multiprocessing
 import os
 import pathlib
 import queue
-import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ProcessPoolExecutor,
+    as_completed,
+    wait,
+)
 from concurrent.futures.process import BrokenProcessPool
 from typing import TYPE_CHECKING
 
@@ -35,7 +40,8 @@ from ._streaming import (
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    import threading
+    from collections.abc import Callable, Iterable, Iterator
 
     import pathspec
 
@@ -149,22 +155,31 @@ class CodebaseIndexer:
                 logger.debug("gitignore %s unreadable; skipping: %s", gitignore, exc)
                 continue
             rel_dir = gitignore.parent.relative_to(self.root_dir)
-            for line in lines:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if str(rel_dir) == ".":
-                    patterns.append(stripped)
-                else:
-                    prefix = str(rel_dir).replace(chr(92), "/")
-                    if stripped.startswith("!"):
-                        # Negation must stay at the start: !subdir/pattern
-                        inner = stripped[1:].lstrip("/")
-                        patterns.append(f"!{prefix}/{inner}")
-                    else:
-                        patterns.append(f"{prefix}/{stripped.lstrip('/')}")
+            self._process_gitignore_lines(lines, rel_dir, patterns)
 
         return pathspec.GitIgnoreSpec.from_lines(patterns)
+
+    def _process_gitignore_lines(
+        self,
+        lines: list[str],
+        rel_dir: pathlib.Path,
+        patterns: list[str],
+    ) -> None:
+        rel_dir_str = str(rel_dir)
+        prefix = rel_dir_str.replace(chr(92), "/")
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if rel_dir_str == ".":
+                patterns.append(stripped)
+            else:
+                if stripped.startswith("!"):
+                    # Negation must stay at the start: !subdir/pattern
+                    inner = stripped[1:].lstrip("/")
+                    patterns.append(f"!{prefix}/{inner}")
+                else:
+                    patterns.append(f"{prefix}/{stripped.lstrip('/')}")
 
     def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
         """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns.
@@ -233,21 +248,31 @@ class CodebaseIndexer:
                 dirs[:] = [d for d in dirs if not _is_excluded(f"{d}/")]
             else:
                 dirs[:] = [d for d in dirs if not _is_excluded(f"{rel_dir}/{d}/")]
-            for fname in files:
-                p = pathlib.Path(dirpath) / fname
-                if p.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                    continue
-                rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
-                if _is_excluded(rel):
-                    continue
-                if p.stat().st_size > _MAX_FILE_SIZE:
-                    logger.debug("Skipping oversized file: %s", rel)
-                    continue
-                if _is_binary(p):
-                    logger.debug("Skipping binary file: %s", rel)
-                    continue
-                result.append(p)
+            self._process_scan_files(dirpath, files, rel_dir, _is_excluded, result)
         return result
+
+    def _process_scan_files(
+        self,
+        dirpath: str,
+        files: list[str],
+        rel_dir: str,
+        _is_excluded: Callable[[str], bool],
+        result: list[pathlib.Path],
+    ) -> None:
+        for fname in files:
+            p = pathlib.Path(dirpath) / fname
+            if p.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
+            if _is_excluded(rel):
+                continue
+            if p.stat().st_size > _MAX_FILE_SIZE:
+                logger.debug("Skipping oversized file: %s", rel)
+                continue
+            if _is_binary(p):
+                logger.debug("Skipping binary file: %s", rel)
+                continue
+            result.append(p)
 
     def scan_files(self) -> list[pathlib.Path]:
         """Return the list of files that would be indexed.
@@ -441,6 +466,247 @@ class CodebaseIndexer:
             reporter.advance()
         return all_chunks
 
+    def _run_serial_chunk_and_embed(
+        self,
+        paths: list[pathlib.Path],
+        meta: dict[str, str],
+        encode_batch_size: int,
+        flush_slices: int,
+        reporter: ProgressReporter,
+        total_in: int,
+        new_ids: set[str],
+    ) -> tuple[int, int]:
+        from ..config import get_config
+
+        slice_size = max(1, get_config().embedding_batch_size)
+        total = total_in
+        advanced = 0
+        acc: list[CodeChunk] = []
+        state = [0]
+
+        def _encode_accumulated(force: bool) -> None:
+            nonlocal total
+            while len(acc) >= slice_size or (force and acc):
+                take = acc[:slice_size]
+                del acc[:slice_size]
+                state[0] += 1
+                is_final = force and not acc
+                release = is_final or state[0] % flush_slices == 0
+                encode_and_upsert_code_slice(
+                    take,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    release_cache=release,
+                    encode_batch_size=encode_batch_size,
+                )
+                new_ids.update(c.id for c in take)
+                total += len(take)
+
+        for p in paths:
+            try:
+                res = _chunk_worker.chunk_and_hash_file(p, self.root_dir)
+                if res is not None:
+                    meta[res.rel_path] = res.content_hash
+                    acc.extend(res.chunks)
+            except Exception:
+                logger.warning("Failed to chunk %s", p, exc_info=True)
+            advanced += 1
+            reporter.advance()
+            _encode_accumulated(force=False)
+        _encode_accumulated(force=True)
+        return total, advanced
+
+    def _drain_pool(
+        self,
+        workers: int,
+        ctx: multiprocessing.context.BaseContext,
+        paths_iter: Iterator[pathlib.Path],
+        window: int,
+        meta: dict[str, str],
+        put_fn: Callable[[list[CodeChunk]], bool],
+        reporter: ProgressReporter,
+    ) -> tuple[bool, bool, int]:
+        from concurrent.futures import ProcessPoolExecutor
+
+        _broke = False
+        _consumer_died = False
+        _advanced_inc = 0
+        try:
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=ctx,
+            ) as pool:
+                pending = {
+                    pool.submit(
+                        _chunk_worker.chunk_and_hash_file,
+                        p,
+                        self.root_dir,
+                    )
+                    for p in itertools.islice(paths_iter, window)
+                }
+                while pending and not _consumer_died:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        died, advanced_inc = self._process_future(
+                            fut, pool, pending, paths_iter, meta, put_fn, reporter
+                        )
+                        _advanced_inc += advanced_inc
+                        if died:
+                            _consumer_died = True
+                            break
+        except BrokenProcessPool:
+            _broke = True
+        return _broke, _consumer_died, _advanced_inc
+
+    def _process_future(
+        self,
+        fut: Future,
+        pool: ProcessPoolExecutor,
+        pending: set[Future],
+        paths_iter: Iterator[pathlib.Path],
+        meta: dict[str, str],
+        put_fn: Callable[[list[CodeChunk]], bool],
+        reporter: ProgressReporter,
+    ) -> tuple[bool, int]:
+        try:
+            res = fut.result()
+        except BrokenProcessPool:
+            raise
+        except Exception:
+            logger.warning("Worker failed to chunk a file", exc_info=True)
+            res = None
+
+        died = False
+        if res is not None:
+            meta[res.rel_path] = res.content_hash
+            if res.chunks and not put_fn(res.chunks):
+                died = True
+
+        reporter.advance()
+        nxt = next(paths_iter, None)
+        if nxt is not None:
+            pending.add(
+                pool.submit(_chunk_worker.chunk_and_hash_file, nxt, self.root_dir)
+            )
+        return died, 1
+
+    def _spawn_consumer(
+        self,
+        chunk_q: queue.Queue[list[CodeChunk] | None],
+        consumer_exc: list[BaseException],
+        encode_fn: Callable[..., None],
+    ) -> threading.Thread:
+        import queue
+        import threading
+
+        def _consumer_loop() -> None:
+            try:
+                acc: list[CodeChunk] = []
+                state = [0]
+                while True:
+                    try:
+                        batch = chunk_q.get(timeout=1.0)
+                    except queue.Empty:
+                        continue
+                    if batch is None:
+                        encode_fn(acc, state, force=True)
+                        break
+                    acc.extend(batch)
+                    encode_fn(acc, state, force=False)
+            except BaseException as e:
+                consumer_exc.append(e)
+
+        consumer = threading.Thread(
+            target=_consumer_loop, name="codebase-indexer-consumer"
+        )
+        consumer.start()
+        return consumer
+    def _shutdown_consumer(
+        self, consumer: threading.Thread, chunk_q: queue.Queue[list[CodeChunk] | None]
+    ) -> bool:
+        import queue
+        import time
+
+        deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
+        while consumer.is_alive():
+            try:
+                chunk_q.put(None, timeout=0.5)
+                break
+            except queue.Full:
+                if time.monotonic() >= deadline:
+                    break
+        consumer.join(timeout=max(0.0, deadline - time.monotonic()))
+        return consumer.is_alive()
+
+    def _handle_pipeline_errors(
+        self,
+        consumer_hung: bool,
+        consumer_exc: list[BaseException],
+        broke: bool,
+        advanced: int,
+        total: int,
+        run_serial_fn: Callable[[], None],
+    ) -> None:
+        from concurrent.futures.process import BrokenProcessPool
+
+        if consumer_hung:
+            logger.error(
+                "GPU consumer thread did not terminate within %.0fs; "
+                "aborting (a CUDA or Qdrant call may be wedged)",
+                _CONSUMER_SHUTDOWN_TIMEOUT_S,
+            )
+            raise RuntimeError(
+                "codebase index GPU consumer thread did not terminate",
+            )
+        if consumer_exc:
+            raise consumer_exc[0]
+        if broke:
+            if advanced or total:
+                logger.error(
+                    "Chunk process pool broke after %d files (%d chunks "
+                    "embedded); aborting. Set index_chunk_workers=1 to "
+                    "force the serial path.",
+                    advanced,
+                    total,
+                )
+                raise BrokenProcessPool(
+                    "codebase chunk process pool broke mid-run",
+                )
+            logger.warning(
+                "Chunk process pool could not start; running chunk + embed serially",
+            )
+            run_serial_fn()
+
+    def _do_encode_accumulated(
+        self,
+        acc: list[CodeChunk],
+        state: list[int],
+        force: bool,
+        slice_size: int,
+        flush_slices: int,
+        encode_batch_size: int,
+        new_ids: set[str],
+    ) -> int:
+        consumed = 0
+        while len(acc) >= slice_size or (force and acc):
+            take = acc[:slice_size]
+            del acc[:slice_size]
+            state[0] += 1
+            is_final = force and not acc
+            release = is_final or state[0] % flush_slices == 0
+            encode_and_upsert_code_slice(
+                take,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                release_cache=release,
+                encode_batch_size=encode_batch_size,
+            )
+            new_ids.update(c.id for c in take)
+            consumed += len(take)
+        return consumed
+
     def _pipeline_chunk_and_embed(
         self,
         paths: list[pathlib.Path],
@@ -487,48 +753,18 @@ class CodebaseIndexer:
             *,
             force: bool,
         ) -> None:
-            """Encode + upsert full ``slice_size`` batches drained from ``acc``.
-
-            ``state[0]`` is the running slice counter used to throttle the CUDA
-            cache flush. Shared by the serial path and the GPU consumer thread;
-            both mutate the enclosing ``new_ids`` / ``total`` (read only after
-            the consumer is joined, so there is no cross-thread race).
-            """
             nonlocal total
-            while len(acc) >= slice_size or (force and acc):
-                take = acc[:slice_size]
-                del acc[:slice_size]
-                state[0] += 1
-                is_final = force and not acc
-                release = is_final or state[0] % flush_slices == 0
-                encode_and_upsert_code_slice(
-                    take,
-                    model=self.model,
-                    store=self.store,
-                    gpu_lock=self._gpu_lock,
-                    release_cache=release,
-                    encode_batch_size=encode_batch_size,
-                )
-                new_ids.update(c.id for c in take)
-                total += len(take)
+            consumed = self._do_encode_accumulated(
+                acc, state, force, slice_size, flush_slices, encode_batch_size, new_ids
+            )
+            total += consumed
 
         def _run_serial() -> None:
-            """Single-threaded chunk + encode (byte-gate path and fallback)."""
-            nonlocal advanced
-            acc: list[CodeChunk] = []
-            state = [0]
-            for p in paths:
-                try:
-                    res = _chunk_worker.chunk_and_hash_file(p, self.root_dir)
-                    if res is not None:
-                        meta[res.rel_path] = res.content_hash
-                        acc.extend(res.chunks)
-                except Exception:
-                    logger.warning("Failed to chunk %s", p, exc_info=True)
-                advanced += 1
-                reporter.advance()
-                _encode_accumulated(acc, state, force=False)
-            _encode_accumulated(acc, state, force=True)
+            nonlocal advanced, total
+            total, adv_inc = self._run_serial_chunk_and_embed(
+                paths, meta, encode_batch_size, flush_slices, reporter, total, new_ids
+            )
+            advanced += adv_inc
 
         reporter.phase_start("chunk + embed", len(paths))
         try:
@@ -557,32 +793,7 @@ class CodebaseIndexer:
             )
             consumer_exc: list[BaseException] = []
 
-            def _consumer() -> None:
-                acc: list[CodeChunk] = []
-                state = [0]
-                try:
-                    while True:
-                        item = chunk_q.get()
-                        if item is None:
-                            break
-                        acc.extend(item)
-                        _encode_accumulated(acc, state, force=False)
-                    _encode_accumulated(acc, state, force=True)
-                except BaseException as exc:
-                    consumer_exc.append(exc)
-                    # Drain so a producer blocked on a full queue wakes up.
-                    try:
-                        while True:
-                            chunk_q.get_nowait()
-                    except queue.Empty:
-                        pass
-
-            consumer = threading.Thread(
-                target=_consumer,
-                name="rag-gpu-consumer",
-                daemon=True,
-            )
-            consumer.start()
+            consumer = self._spawn_consumer(chunk_q, consumer_exc, _encode_accumulated)
 
             def _put(chunks: list[CodeChunk]) -> bool:
                 """Enqueue chunks; return False if the consumer has died."""
@@ -596,107 +807,26 @@ class CodebaseIndexer:
                         continue
 
             broke = False
-            consumer_died = False
             consumer_hung = False
             paths_iter = iter(paths)
+
             try:
-                with ProcessPoolExecutor(
-                    max_workers=workers,
-                    mp_context=ctx,
-                ) as pool:
-                    pending = {
-                        pool.submit(
-                            _chunk_worker.chunk_and_hash_file,
-                            p,
-                            self.root_dir,
-                        )
-                        for p in itertools.islice(paths_iter, window)
-                    }
-                    while pending and not consumer_died:
-                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                        for fut in done:
-                            try:
-                                res = fut.result()
-                            except BrokenProcessPool:
-                                raise
-                            except Exception:
-                                logger.warning(
-                                    "Worker failed to chunk a file",
-                                    exc_info=True,
-                                )
-                                res = None
-                            if res is not None:
-                                meta[res.rel_path] = res.content_hash
-                                if res.chunks and not _put(res.chunks):
-                                    consumer_died = True
-                                    break
-                            advanced += 1
-                            reporter.advance()
-                            nxt = next(paths_iter, None)
-                            if nxt is not None:
-                                pending.add(
-                                    pool.submit(
-                                        _chunk_worker.chunk_and_hash_file,
-                                        nxt,
-                                        self.root_dir,
-                                    )
-                                )
-            except BrokenProcessPool:
-                broke = True
+                broke, _consumer_died, advanced_inc = self._drain_pool(
+                    workers,
+                    ctx,
+                    paths_iter,
+                    window,
+                    meta,
+                    _put,
+                    reporter,
+                )
+                advanced += advanced_inc
             finally:
-                # Shut the consumer down without ever blocking unbounded on a
-                # wedged consumer (a CUDA/Qdrant call that never returns), which
-                # would otherwise hang the producer and hold the indexer's
-                # writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
-                # Send the end-of-stream sentinel only while the consumer is
-                # alive and draining, and bound every wait by a single deadline.
-                deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
-                while consumer.is_alive():
-                    try:
-                        chunk_q.put(None, timeout=0.5)
-                        break
-                    except queue.Full:
-                        if time.monotonic() >= deadline:
-                            break
-                consumer.join(timeout=max(0.0, deadline - time.monotonic()))
-                consumer_hung = consumer.is_alive()
+                consumer_hung = self._shutdown_consumer(consumer, chunk_q)
 
-            # A wedged consumer must abort the run, not hang it: the daemon
-            # thread will not block interpreter exit, but the writer lock must
-            # be released. Raise outside the finally so an in-flight exception
-            # is never masked.
-            if consumer_hung:
-                logger.error(
-                    "GPU consumer thread did not terminate within %.0fs; "
-                    "aborting (a CUDA or Qdrant call may be wedged)",
-                    _CONSUMER_SHUTDOWN_TIMEOUT_S,
-                )
-                raise RuntimeError(
-                    "codebase index GPU consumer thread did not terminate",
-                )
-
-            # A consumer-thread failure (GPU OOM, Qdrant error) is the real
-            # cause; surface it in the main thread rather than hanging.
-            if consumer_exc:
-                raise consumer_exc[0]
-
-            if broke:
-                if advanced or total:
-                    logger.error(
-                        "Chunk process pool broke after %d files (%d chunks "
-                        "embedded); aborting. Set index_chunk_workers=1 to "
-                        "force the serial path.",
-                        advanced,
-                        total,
-                    )
-                    raise BrokenProcessPool(
-                        "codebase chunk process pool broke mid-run",
-                    )
-                logger.warning(
-                    "Chunk process pool could not start; "
-                    "running chunk + embed serially",
-                )
-                _run_serial()
+            self._handle_pipeline_errors(
+                consumer_hung, consumer_exc, broke, advanced, total, _run_serial
+            )
         finally:
             reporter.phase_end()
         return new_ids, total, meta
@@ -974,6 +1104,80 @@ class CodebaseIndexer:
             files=len(to_index),
         )
 
+    def _scan_changed_paths(
+        self,
+        changed_paths: Iterable[pathlib.Path],
+        prev_meta: dict[str, str],
+        reporter: ProgressReporter,
+    ) -> tuple[dict[str, pathlib.Path], set[str]]:
+        git_spec = self._build_gitignore_spec()
+        rag_spec = self._build_vaultragignore_spec()
+
+        def _is_excluded(rel_path: str) -> bool:
+            if git_spec.match_file(rel_path):
+                return True
+            return rag_spec is not None and rag_spec.match_file(rel_path)
+
+        reporter.phase_start("scan changed", None)
+        to_hash: dict[str, pathlib.Path] = {}
+        delete_files: set[str] = set()
+        for path in changed_paths:
+            self._process_changed_path(
+                path, prev_meta, _is_excluded, to_hash, delete_files
+            )
+        reporter.phase_end()
+        return to_hash, delete_files
+
+    def _process_changed_path(
+        self,
+        path: pathlib.Path,
+        prev_meta: dict[str, str],
+        _is_excluded: Callable[[str], bool],
+        to_hash: dict[str, pathlib.Path],
+        delete_files: set[str],
+    ) -> None:
+        try:
+            rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
+        except ValueError:
+            return
+        indexable = (
+            path.is_file()
+            and path.suffix.lower() in SUPPORTED_EXTENSIONS
+            and not _is_excluded(rel)
+        )
+        if indexable:
+            try:
+                too_big = path.stat().st_size > _MAX_FILE_SIZE
+            except OSError:
+                return
+            if too_big or _is_binary(path):
+                if rel in prev_meta:
+                    delete_files.add(rel)
+                return
+            to_hash[rel] = path
+        elif rel in prev_meta:
+            delete_files.add(rel)
+
+    def _hash_changed_paths(
+        self,
+        to_hash: dict[str, pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> dict[str, str]:
+        reporter.phase_start("hash files", len(to_hash))
+        changed_hashes: dict[str, str] = {}
+        for rel, path in to_hash.items():
+            try:
+                with open(path, "rb") as f:
+                    changed_hashes[rel] = hashlib.file_digest(
+                        f,
+                        "blake2b",
+                    ).hexdigest()
+            except OSError:
+                logger.warning("Cannot hash file, skipping: %s", rel)
+            reporter.advance()
+        reporter.phase_end()
+        return changed_hashes
+
     def _scoped_incremental_locked(
         self,
         *,
@@ -1002,55 +1206,10 @@ class CodebaseIndexer:
         slice_size = max(1, get_config().embedding_batch_size)
         prev_meta = self._load_meta()
 
-        git_spec = self._build_gitignore_spec()
-        rag_spec = self._build_vaultragignore_spec()
-
-        def _is_excluded(rel_path: str) -> bool:
-            if git_spec.match_file(rel_path):
-                return True
-            return rag_spec is not None and rag_spec.match_file(rel_path)
-
-        reporter.phase_start("scan changed", None)
-        to_hash: dict[str, pathlib.Path] = {}
-        delete_files: set[str] = set()
-        for path in changed_paths:
-            try:
-                rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
-            except ValueError:
-                continue
-            indexable = (
-                path.is_file()
-                and path.suffix.lower() in SUPPORTED_EXTENSIONS
-                and not _is_excluded(rel)
-            )
-            if indexable:
-                try:
-                    too_big = path.stat().st_size > _MAX_FILE_SIZE
-                except OSError:
-                    continue
-                if too_big or _is_binary(path):
-                    # No longer indexable - reconcile it out if we had it.
-                    if rel in prev_meta:
-                        delete_files.add(rel)
-                    continue
-                to_hash[rel] = path
-            elif rel in prev_meta:
-                delete_files.add(rel)
-        reporter.phase_end()
-
-        reporter.phase_start("hash files", len(to_hash))
-        changed_hashes: dict[str, str] = {}
-        for rel, path in to_hash.items():
-            try:
-                with open(path, "rb") as f:
-                    changed_hashes[rel] = hashlib.file_digest(
-                        f,
-                        "blake2b",
-                    ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", rel)
-            reporter.advance()
-        reporter.phase_end()
+        to_hash, delete_files = self._scan_changed_paths(
+            changed_paths, prev_meta, reporter
+        )
+        changed_hashes = self._hash_changed_paths(to_hash, reporter)
 
         for rel in set(to_hash) - set(changed_hashes):
             to_hash.pop(rel, None)

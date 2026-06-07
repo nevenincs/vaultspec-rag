@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#index-perf-hardening'
-date: '2026-06-02'
+date: '2026-06-06'
 related:
   - '[[2026-06-02-index-perf-hardening-P01-S01]]'
   - '[[2026-06-02-index-perf-hardening-P01-S02]]'

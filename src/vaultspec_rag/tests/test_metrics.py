@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.tests.metrics import ndcg_at_k, precision_at_k, reciprocal_rank
+from .metrics import ndcg_at_k, precision_at_k, reciprocal_rank
 
 pytestmark = [pytest.mark.unit]
 

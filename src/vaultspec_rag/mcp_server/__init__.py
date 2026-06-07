@@ -40,7 +40,7 @@ monkeypatched names.
 from __future__ import annotations
 
 # Re-export ``BackendCapabilities`` from its home module so the
-# pre-split ``from vaultspec_rag.mcp_server import BackendCapabilities``
+# pre-split ``from . import BackendCapabilities``
 # import keeps resolving.
 from ..capabilities import BackendCapabilities
 
@@ -130,7 +130,11 @@ from ._utils import (
     _validate_query,
     _validate_vault_root,
 )
-from ._watcher import _ensure_watcher, _stop_all_watchers, _stop_watcher
+from ._watcher import (
+    _ensure_watcher,
+    _stop_all_watchers,
+    _stop_watcher,
+)
 
 __all__ = [
     "_HEARTBEAT_INTERVAL_SECONDS",

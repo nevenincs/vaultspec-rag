@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from vaultspec_rag.progress import NullProgressReporter
-from vaultspec_rag.service import ProjectSlot, RegistryFullError, ServiceRegistry
+from ..progress import NullProgressReporter
+from ..service import ProjectSlot, RegistryFullError, ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

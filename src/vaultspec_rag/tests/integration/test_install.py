@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from vaultspec_rag.commands import install_run, uninstall_run
+from ...commands import install_run, uninstall_run
 
 pytestmark = [pytest.mark.integration]
 
@@ -338,9 +338,7 @@ class TestSafetyGuards:
         try:
             data_dir.symlink_to(outside, target_is_directory=True)
         except (OSError, NotImplementedError) as exc:
-            import pytest as _pytest
-
-            _pytest.skip(f"symlink creation unsupported: {exc}")
+            raise RuntimeError(f"symlink creation unsupported: {exc}") from exc
 
         report = uninstall_run(path=installed_workspace, force=True, remove_data=True)
 
@@ -493,7 +491,7 @@ class TestSafetyGuards:
         the install_run rollback path and leaves the workspace in an
         undetectable broken state.
         """
-        from vaultspec_rag.builtins import seed_builtins
+        from ...builtins import seed_builtins
 
         target = tmp_path / "rules"
         target.mkdir()
@@ -514,7 +512,7 @@ class TestSafetyGuards:
         before the failing iteration, so callers (install_run) can
         roll back targeted partial state.
         """
-        from vaultspec_rag.builtins import seed_builtins
+        from ...builtins import seed_builtins
 
         target = tmp_path / "rules"
         target.mkdir()
@@ -550,7 +548,7 @@ class TestSafetyGuards:
         """
         from typer.testing import CliRunner
 
-        from vaultspec_rag.cli import app
+        from ...cli import app
 
         ws = tmp_path / "global-target-ws"
         ws.mkdir()
@@ -574,7 +572,7 @@ class TestSafetyGuards:
         """
         from typer.testing import CliRunner
 
-        from vaultspec_rag.cli import app
+        from ...cli import app
 
         runner = CliRunner()
         result = runner.invoke(
@@ -589,7 +587,7 @@ class TestSafetyGuards:
         assert not (installed_workspace / _RAG_MCP_REL).exists()
 
     def test_seed_builtins_refuses_traversal_in_relative_path(
-        self, tmp_path: Path, monkeypatch: object
+        self, tmp_path: Path
     ) -> None:
         """Defense-in-depth: even if ``_BUNDLED_FILES`` were ever
         corrupted to contain a traversal, ``seed_builtins`` must
@@ -601,7 +599,7 @@ class TestSafetyGuards:
         assignment with restore in finally to honour the project
         no-mocks rule).
         """
-        from vaultspec_rag import builtins as _builtins
+        from ... import builtins as _builtins
 
         original = _builtins._BUNDLED_FILES
         # NB: this is not a mock - it is editing a module constant.

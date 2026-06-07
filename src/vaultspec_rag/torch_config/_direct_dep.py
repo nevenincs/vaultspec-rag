@@ -92,102 +92,120 @@ def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, Any]]:
     build.
     """
     found: list[tuple[str, Any]] = []
-    project = doc.get("project")
-    # ``project`` is normally a standard table; ``optional-dependencies``
-    # and ``dependency-groups`` may be expressed as inline tables
-    # (``optional-dependencies = { gpu = [...] }``), which tomlkit returns
-    # as :class:`tomlkit.items.InlineTable`. All three shapes expose the
-    # ``.get(key)`` / ``.items()`` Mapping surface we exercise here.
-    if isinstance(project, _TABLE_LIKE_TYPES):
-        deps = project.get("dependencies")
-        if isinstance(deps, list):
-            found.append(("[project].dependencies", deps))
-        optional = project.get("optional-dependencies")
-        if isinstance(optional, _TABLE_LIKE_TYPES):
-            for name, group in optional.items():
-                if isinstance(group, list):
-                    found.append((f"[project.optional-dependencies].{name}", group))
+
+    _extract_pep_deps(doc, found)
+
+    tool = doc.get("tool")
+    if not isinstance(tool, _TABLE_LIKE_TYPES):
+        return found
+
+    _extract_uv_deps(tool, found)
+    _extract_poetry_deps(tool, found)
+    _extract_pdm_deps(tool, found)
+    _extract_hatch_deps(tool, found)
+
+    return found
+
+
+def _extract_pep_optional_deps(project: Any, found: list[tuple[str, Any]]) -> None:
+    optional = project.get("optional-dependencies")
+    if isinstance(optional, _TABLE_LIKE_TYPES):
+        for name, group in optional.items():
+            if isinstance(group, list):
+                found.append((f"[project.optional-dependencies].{name}", group))
+
+
+def _extract_pep_groups(doc: TOMLDocument, found: list[tuple[str, Any]]) -> None:
     groups = doc.get("dependency-groups")
     if isinstance(groups, _TABLE_LIKE_TYPES):
         for name, group in groups.items():
             if isinstance(group, list):
                 found.append((f"[dependency-groups].{name}", group))
 
-    tool = doc.get("tool")
-    if not isinstance(tool, _TABLE_LIKE_TYPES):
-        return found
 
+def _extract_pep_deps(doc: TOMLDocument, found: list[tuple[str, Any]]) -> None:
+    project = doc.get("project")
+    if isinstance(project, _TABLE_LIKE_TYPES):
+        deps = project.get("dependencies")
+        if isinstance(deps, list):
+            found.append(("[project].dependencies", deps))
+        _extract_pep_optional_deps(project, found)
+    _extract_pep_groups(doc, found)
+
+
+def _extract_uv_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
     uv = tool.get("uv")
     if isinstance(uv, _TABLE_LIKE_TYPES):
         uv_dev = uv.get("dev-dependencies")
         if isinstance(uv_dev, list):
             found.append(("[tool.uv].dev-dependencies", uv_dev))
 
-    poetry = tool.get("poetry")
-    if isinstance(poetry, _TABLE_LIKE_TYPES):
-        # Poetry's ``[tool.poetry.dependencies]`` is ``Mapping[name → spec]``.
-        # The keys are bare package names; we synthesise a list of those
-        # so ``_is_torch_requirement`` ("torch") matches.
-        pdeps = poetry.get("dependencies")
-        if isinstance(pdeps, _TABLE_LIKE_TYPES):
-            found.append(("[tool.poetry.dependencies]", list(pdeps.keys())))
-        # Pre-1.2 Poetry expressed dev deps as ``[tool.poetry.dev-dependencies]``.
-        # Poetry 1.2+ moved them under ``[tool.poetry.group.dev.dependencies]``
-        # but the legacy section is still produced by older `poetry add`
-        # invocations and still on countless deployed pyprojects.
-        pdev = poetry.get("dev-dependencies")
-        if isinstance(pdev, _TABLE_LIKE_TYPES):
-            found.append(("[tool.poetry.dev-dependencies]", list(pdev.keys())))
-        pgroups = poetry.get("group")
-        if isinstance(pgroups, _TABLE_LIKE_TYPES):
-            for gname, gtable in pgroups.items():
-                if not isinstance(gtable, _TABLE_LIKE_TYPES):
-                    continue
-                gdeps = gtable.get("dependencies")
-                if isinstance(gdeps, _TABLE_LIKE_TYPES):
-                    found.append(
-                        (
-                            f"[tool.poetry.group.{gname}.dependencies]",
-                            list(gdeps.keys()),
-                        )
-                    )
 
+def _extract_poetry_groups(poetry: Any, found: list[tuple[str, Any]]) -> None:
+    pgroups = poetry.get("group")
+    if not isinstance(pgroups, _TABLE_LIKE_TYPES):
+        return
+    for gname, gtable in pgroups.items():
+        if not isinstance(gtable, _TABLE_LIKE_TYPES):
+            continue
+        gdeps = gtable.get("dependencies")
+        if isinstance(gdeps, _TABLE_LIKE_TYPES):
+            found.append(
+                (
+                    f"[tool.poetry.group.{gname}.dependencies]",
+                    list(gdeps.keys()),
+                )
+            )
+
+
+def _extract_poetry_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
+    poetry = tool.get("poetry")
+    if not isinstance(poetry, _TABLE_LIKE_TYPES):
+        return
+    pdeps = poetry.get("dependencies")
+    if isinstance(pdeps, _TABLE_LIKE_TYPES):
+        found.append(("[tool.poetry.dependencies]", list(pdeps.keys())))
+    pdev = poetry.get("dev-dependencies")
+    if isinstance(pdev, _TABLE_LIKE_TYPES):
+        found.append(("[tool.poetry.dev-dependencies]", list(pdev.keys())))
+    _extract_poetry_groups(poetry, found)
+
+
+def _extract_pdm_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
     pdm = tool.get("pdm")
     if isinstance(pdm, _TABLE_LIKE_TYPES):
-        # PDM ``[tool.pdm.dev-dependencies]`` is ``Mapping[group → list[str]]``,
-        # same shape as PEP 735 ``[dependency-groups]``.
         pdm_dev = pdm.get("dev-dependencies")
         if isinstance(pdm_dev, _TABLE_LIKE_TYPES):
             for gname, gdeps in pdm_dev.items():
                 if isinstance(gdeps, list):
                     found.append((f"[tool.pdm.dev-dependencies].{gname}", gdeps))
 
+
+def _extract_hatch_env(ename: str, etable: Any, found: list[tuple[str, Any]]) -> None:
+    if not isinstance(etable, _TABLE_LIKE_TYPES):
+        return
+    for key in ("dependencies", "extra-dependencies"):
+        edeps = etable.get(key)
+        if isinstance(edeps, list):
+            found.append((f"[tool.hatch.envs.{ename}].{key}", edeps))
+        elif isinstance(edeps, _TABLE_LIKE_TYPES):
+            found.append(
+                (
+                    f"[tool.hatch.envs.{ename}.{key}]",
+                    list(edeps.keys()),
+                )
+            )
+
+
+def _extract_hatch_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
     hatch = tool.get("hatch")
-    if isinstance(hatch, _TABLE_LIKE_TYPES):
-        # Hatch envs (``[tool.hatch.envs.<env>]``) carry per-environment
-        # dependency lists. Two surfaces are common in real projects:
-        # ``dependencies`` / ``extra-dependencies`` as PEP 508 lists,
-        # and the legacy ``[tool.hatch.envs.<env>.dependencies]`` table
-        # form (``Mapping[name → spec]``, same shape as Poetry deps).
-        # Both must be checked so a Hatch user with torch declared
-        # doesn't trigger the "not a direct dep" warning.
-        envs = hatch.get("envs")
-        if isinstance(envs, _TABLE_LIKE_TYPES):
-            for ename, etable in envs.items():
-                if not isinstance(etable, _TABLE_LIKE_TYPES):
-                    continue
-                for key in ("dependencies", "extra-dependencies"):
-                    edeps = etable.get(key)
-                    if isinstance(edeps, list):
-                        found.append((f"[tool.hatch.envs.{ename}].{key}", edeps))
-                    elif isinstance(edeps, _TABLE_LIKE_TYPES):
-                        found.append(
-                            (
-                                f"[tool.hatch.envs.{ename}.{key}]",
-                                list(edeps.keys()),
-                            )
-                        )
-    return found
+    if not isinstance(hatch, _TABLE_LIKE_TYPES):
+        return
+    envs = hatch.get("envs")
+    if not isinstance(envs, _TABLE_LIKE_TYPES):
+        return
+    for ename, etable in envs.items():
+        _extract_hatch_env(ename, etable, found)
 
 
 def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:

@@ -18,6 +18,95 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _confirm_torch_patch(
+    pyproject: Path,
+    report: InstallReport,
+    assume_yes: bool,
+    force: bool,
+    confirm: ConfirmFn | None,
+) -> bool:
+    effective_assume_yes = assume_yes or force
+    if not effective_assume_yes:
+        if confirm is None:
+            report.torch_config_action = TorchConfigAction.SKIPPED_NON_TTY
+            report.warnings.append(
+                "torch-config patch requires confirmation - pass --yes "
+                "(or --force) to apply, or --no-torch-config to opt out. "
+                "See pyproject.toml shape in `vaultspec-rag install --help`."
+            )
+            return False
+        try:
+            approved = confirm(
+                f"Patch {pyproject} with the cu130 torch index? "
+                f"This lets uv resolve the CUDA torch wheel."
+            )
+        except KeyboardInterrupt:
+            report.torch_config_action = TorchConfigAction.DECLINED
+            report.warnings.append("torch-config patch declined by user")
+            return False
+        except EOFError:
+            report.torch_config_action = TorchConfigAction.SKIPPED_EOF
+            report.warnings.append(
+                "torch-config patch skipped: confirmation prompt hit EOF "
+                "(non-interactive stdin). Re-run with --yes or --force "
+                "to apply, or --no-torch-config to opt out."
+            )
+            return False
+        except Exception as exc:
+            if _exception_caused_by(exc, EOFError):
+                report.torch_config_action = TorchConfigAction.SKIPPED_EOF
+                report.warnings.append(
+                    "torch-config patch skipped: confirmation prompt hit EOF "
+                    "(non-interactive stdin). Re-run with --yes or --force "
+                    "to apply, or --no-torch-config to opt out."
+                )
+                return False
+            logger.warning(
+                "torch-config confirm() raised %s: %s", type(exc).__name__, exc
+            )
+            report.torch_config_action = TorchConfigAction.DECLINED
+            report.warnings.append(
+                f"torch-config patch skipped: confirm prompt raised "
+                f"{type(exc).__name__}. Re-run with --yes or --force to bypass "
+                f"the prompt, or --no-torch-config to opt out."
+            )
+            return False
+        if not approved:
+            report.torch_config_action = TorchConfigAction.DECLINED
+            report.warnings.append(
+                "torch-config patch declined; "
+                "re-run with --yes or --force to apply, "
+                "or --no-torch-config to opt out."
+            )
+            return False
+    return True
+
+
+def _handle_canonical_state(
+    pyproject: Path, target: Path, report: InstallReport, sync_after: bool
+) -> None:
+    report.torch_config_action = TorchConfigAction.ALREADY
+    _ensure_torch_direct_dep(pyproject, report)
+    if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
+        _run_uv_sync_torch(target=target, report=report)
+
+
+def _handle_customised_state(pyproject: Path, report: InstallReport) -> None:
+    try:
+        report_patch = torch_config.apply_patch(pyproject)
+    except Exception as exc:
+        logger.error("torch_config.apply_patch failed on CUSTOMISED: %s", exc)
+        report.torch_config_action = TorchConfigAction.ERROR
+        report.warnings.append(f"torch-config inspect failed: {exc}")
+        return
+    report.torch_config_action = TorchConfigAction.CONFLICT
+    report.torch_config_conflicts = list(report_patch.conflicts)
+    report.warnings.append(
+        "pyproject.toml has a non-canonical cu130 block; "
+        "skipping patch - resolve manually or run with different flags"
+    )
+
+
 def _run_torch_config_install(
     *,
     target: Path,
@@ -59,27 +148,10 @@ def _run_torch_config_install(
         )
         return
     if state == torch_config.TorchConfigState.CANONICAL:
-        report.torch_config_action = TorchConfigAction.ALREADY
-        _ensure_torch_direct_dep(pyproject, report)
-        if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
-            _run_uv_sync_torch(target=target, report=report)
+        _handle_canonical_state(pyproject, target, report, sync_after)
         return
     if state == torch_config.TorchConfigState.CUSTOMISED:
-        # Detect returns no conflicts on CUSTOMISED; run apply to get
-        # the structured conflict list. apply_patch will not mutate.
-        try:
-            report_patch = torch_config.apply_patch(pyproject)
-        except Exception as exc:
-            logger.error("torch_config.apply_patch failed on CUSTOMISED: %s", exc)
-            report.torch_config_action = TorchConfigAction.ERROR
-            report.warnings.append(f"torch-config inspect failed: {exc}")
-            return
-        report.torch_config_action = TorchConfigAction.CONFLICT
-        report.torch_config_conflicts = list(report_patch.conflicts)
-        report.warnings.append(
-            "pyproject.toml has a non-canonical cu130 block; "
-            "skipping patch - resolve manually or run with different flags"
-        )
+        _handle_customised_state(pyproject, report)
         return
 
     # state is MISSING.
@@ -93,97 +165,8 @@ def _run_torch_config_install(
             )
         return
 
-    # ``--force`` is the user's blanket opt-in for destructive intent
-    # across the install (re-seed bundled files, prune sync state). It
-    # would be surprising for it not to also bypass the torch-config
-    # confirmation: a user who has typed ``--force`` once expects the
-    # whole flow to land. Treat ``force`` as implying ``assume_yes``
-    # for this step.
-    effective_assume_yes = assume_yes or force
-
-    if not effective_assume_yes:
-        if confirm is None:
-            # Non-interactive caller (or programmatic use without a
-            # prompt hook). Refuse to guess - name the opt-in flags.
-            report.torch_config_action = TorchConfigAction.SKIPPED_NON_TTY
-            report.warnings.append(
-                "torch-config patch requires confirmation - pass --yes "
-                "(or --force) to apply, or --no-torch-config to opt out. "
-                "See pyproject.toml shape in `vaultspec-rag install --help`."
-            )
-            return
-        try:
-            approved = confirm(
-                f"Patch {pyproject} with the cu130 torch index? "
-                f"This lets uv resolve the CUDA torch wheel."
-            )
-        except KeyboardInterrupt:
-            # User actively interrupted. Treat as a decline; do not
-            # rewrite the action label, since this is the only branch
-            # that genuinely reflects user intent.
-            report.torch_config_action = TorchConfigAction.DECLINED
-            report.warnings.append("torch-config patch declined by user")
-            return
-        except EOFError:
-            # Non-interactive harness (CI, pipe, IDE-managed shell)
-            # where ``isatty()`` lied. The prompt hit end-of-stream
-            # instead of getting an answer - the user was never asked.
-            # Distinguish from "declined" so users don't read this as
-            # their own choice; name the flag that bypasses the prompt.
-            report.torch_config_action = TorchConfigAction.SKIPPED_EOF
-            report.warnings.append(
-                "torch-config patch skipped: confirmation prompt hit EOF "
-                "(non-interactive stdin). Re-run with --yes or --force "
-                "to apply, or --no-torch-config to opt out."
-            )
-            return
-        except Exception as exc:
-            # Any other exception from a custom ``confirm`` hook (e.g.
-            # ``click.Abort`` raised by Rich's Confirm.ask in some
-            # detached-stdio terminals, or an IDE-injected callback
-            # raising its own type) must NOT tear down the rest of the
-            # install. Torch-config is documented as a non-fatal step;
-            # fold the failure into the same warning taxonomy as the
-            # other prompt-side branches and continue.
-            #
-            # Special case: Rich's ``Confirm.ask`` on Windows wraps EOF
-            # input as ``click.Abort`` rather than re-raising the bare
-            # ``EOFError``. Walk the exception chain to detect that and
-            # re-route to the same SKIPPED_EOF taxonomy the explicit
-            # ``except EOFError`` branch produces. BEHAV-02.
-            if _exception_caused_by(exc, EOFError):
-                report.torch_config_action = TorchConfigAction.SKIPPED_EOF
-                report.warnings.append(
-                    "torch-config patch skipped: confirmation prompt hit EOF "
-                    "(non-interactive stdin). Re-run with --yes or --force "
-                    "to apply, or --no-torch-config to opt out."
-                )
-                return
-            logger.warning(
-                "torch-config confirm() raised %s: %s", type(exc).__name__, exc
-            )
-            report.torch_config_action = TorchConfigAction.DECLINED
-            report.warnings.append(
-                f"torch-config patch skipped: confirm prompt raised "
-                f"{type(exc).__name__}. Re-run with --yes or --force to bypass "
-                f"the prompt, or --no-torch-config to opt out."
-            )
-            return
-        if not approved:
-            # INSTALL-07: keep the decline branch consistent with every
-            # other "skipped" variant - emit a one-line warning naming
-            # the bypass flags so programmatic consumers iterating
-            # ``report.warnings`` get a signal, not just renderer-side
-            # colour. The other not-applied-by-user-choice branches
-            # (KeyboardInterrupt, EOFError, skipped-non-tty) already do
-            # this; declined was the asymmetric outlier.
-            report.torch_config_action = TorchConfigAction.DECLINED
-            report.warnings.append(
-                "torch-config patch declined; "
-                "re-run with --yes or --force to apply, "
-                "or --no-torch-config to opt out."
-            )
-            return
+    if not _confirm_torch_patch(pyproject, report, assume_yes, force, confirm):
+        return
 
     try:
         patch_report = torch_config.apply_patch(pyproject)

@@ -38,6 +38,269 @@ def _suppress_hf_progress() -> None:
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 
+def _handle_mcp_results(
+    mcp_results: list | dict | None,
+    query: str,
+    search_type: str,
+    json_mode: bool,
+    no_truncate: bool,
+) -> None:
+    if isinstance(mcp_results, dict):
+        _display_mcp_error(
+            mcp_results,
+            json_mode=json_mode,
+            command="search",
+        )
+        raise typer.Exit(code=1)
+    if json_mode:
+        _emit_json(
+            True,
+            "search",
+            data={
+                "query": query,
+                "search_type": search_type,
+                "via": "mcp",
+                "results": list(mcp_results or []),
+            },
+        )
+        return
+    if not mcp_results:
+        _cli.console.print(
+            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+        )
+        return
+    _display_search_results(
+        mcp_results,
+        search_type,
+        via="mcp",
+        no_truncate=no_truncate,
+    )
+
+
+def _handle_vaultstore_locked_error(
+    exc: VaultStoreLockedError, json_mode: bool
+) -> None:
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "local_store_locked",
+            (
+                f"The vault index at {exc.db_path} is currently in "
+                "use by another process. Current routing mode: "
+                "direct local-store search. Stop the resident "
+                "service / MCP server, or route through one running "
+                "vaultspec-rag service for concurrent access "
+                "(e.g., using --port 8766)."
+            ),
+            1,
+            db_path=str(exc.db_path),
+            routing_mode="local",
+            remediation=[
+                "Wait for the other process to finish.",
+                "vaultspec-rag search ... --port 8766",
+                "vaultspec-rag server service stop",
+                "vaultspec-rag server mcp stop",
+            ],
+        )
+    _cli.console.print(
+        f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
+        "is currently in use by another process "
+        "(routing mode: direct local-store search).\n\n"
+        "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
+        "or file watcher is likely running against this workspace.\n\n"
+        "  Local-file-backed RAG storage cannot be opened by multiple "
+        "processes at once. For concurrent agent searches, route every "
+        "request through one running [cyan]vaultspec-rag[/] service.\n\n"
+        "  To resolve, do one of the following:\n"
+        "    1. Wait for the other process to finish.\n"
+        "    2. Route your search request through a running "
+        "service on a port, e.g.:\n"
+        "         [cyan]vaultspec-rag search ... --port 8766[/]\n"
+        "    3. Stop the running server:\n"
+        "         [cyan]vaultspec-rag server mcp stop[/]\n"
+        "         [cyan]vaultspec-rag server service stop[/]\n"
+        "    4. If no vaultspec-rag process is alive, look for an "
+        "orphaned Python process holding the lock and stop it manually."
+    )
+    raise typer.Exit(code=1) from exc
+
+
+def _try_in_process_search(
+    target,
+    query,
+    search_type,
+    max_results,
+    language,
+    path,
+    node_type,
+    function_name,
+    class_name,
+    include_paths,
+    exclude_paths,
+    dedup_locales,
+    prefer,
+    doc_type,
+    feature,
+    date,
+    tag,
+    json_mode,
+):
+    import vaultspec_rag
+
+    try:
+        status_ctx = (
+            contextlib.nullcontext()
+            if json_mode
+            else _cli.console.status(f"[bold green]Searching {search_type}...")
+        )
+        with status_ctx:
+            if search_type == "code":
+                results = vaultspec_rag.search_codebase(
+                    target,
+                    query,
+                    top_k=max_results,
+                    language=language,
+                    path=path,
+                    node_type=node_type,
+                    function_name=function_name,
+                    class_name=class_name,
+                    include_paths=include_paths,
+                    exclude_paths=exclude_paths,
+                    dedup_locales=dedup_locales,
+                    prefer=prefer,
+                )
+            else:
+                results = vaultspec_rag.search_vault(
+                    target,
+                    query,
+                    top_k=max_results,
+                    doc_type=doc_type,
+                    feature=feature,
+                    date=date,
+                    tag=tag,
+                )
+        return results
+    except VaultStoreLockedError as exc:
+        _handle_vaultstore_locked_error(exc, json_mode)
+    except (ImportError, RuntimeError) as e:
+        _handle_gpu_error(e)
+        return []
+
+
+def _validate_and_handle_filters(
+    search_type: Literal["vault", "code"],
+    language: str | None,
+    path: str | None,
+    node_type: str | None,
+    function_name: str | None,
+    class_name: str | None,
+    doc_type: str | None,
+    feature: str | None,
+    date: str | None,
+    tag: str | None,
+    include_paths: list[str] | None,
+    exclude_paths: list[str] | None,
+    dedup_locales: bool,
+    prefer: str | None,
+    json_mode: bool,
+) -> None:
+    from ..search import (
+        InvalidFilterForSearchTypeError,
+        InvalidPreferValueError,
+        validate_search_filters,
+    )
+
+    try:
+        validate_search_filters(
+            search_type,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+        )
+    except InvalidPreferValueError as exc:
+        msg = str(exc)
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "invalid_prefer_value",
+                msg,
+                2,
+                value=exc.prefer_value,
+            )
+        _cli.console.print(f"[red]{msg}[/]")
+        raise typer.Exit(code=2) from None
+    except InvalidFilterForSearchTypeError as exc:
+        msg = str(exc)
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "invalid_filter_for_search_type",
+                msg,
+                2,
+                filter_kind=exc.filter_kind,
+                offending=exc.offending_filters,
+            )
+        _cli.console.print(f"[red]{msg}[/]")
+        raise typer.Exit(code=2) from None
+
+
+def _render_in_process_results(
+    results: list,
+    query: str,
+    search_type: str,
+    json_mode: bool,
+    no_truncate: bool,
+) -> None:
+    if json_mode:
+        from dataclasses import asdict
+
+        _emit_json(
+            True,
+            "search",
+            data={
+                "query": query,
+                "search_type": search_type,
+                "via": "in-process",
+                "results": [asdict(r) for r in results],
+            },
+        )
+        return
+
+    if not results:
+        _cli.console.print(
+            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+        )
+        return
+
+    table = Table(
+        title=f"Search Results: {search_type}",
+        box=None,
+    )
+    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
+    table.add_column("Location", style="green")
+    table.add_column("Snippet", style="white")
+
+    for r in results:
+        snippet_raw = r.snippet.replace("\n", " ")
+        snippet = snippet_raw if no_truncate else snippet_raw[:120]
+        location = r.path
+        if r.line_start:
+            location += f":{r.line_start}"
+        table.add_row(f"{r.score:.2f}", location, snippet)
+
+    _cli.console.print(table)
+
+
 @app.command("search")
 def handle_search(
     ctx: typer.Context,
@@ -276,54 +539,23 @@ def handle_search(
     state: CLIState = ctx.obj
     target = state.target
 
-    from vaultspec_rag.search import (
-        InvalidFilterForSearchTypeError,
-        InvalidPreferValueError,
-        validate_search_filters,
+    _validate_and_handle_filters(
+        search_type=search_type,
+        language=language,
+        path=path,
+        node_type=node_type,
+        function_name=function_name,
+        class_name=class_name,
+        doc_type=doc_type,
+        feature=feature,
+        date=date,
+        tag=tag,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        dedup_locales=dedup_locales,
+        prefer=prefer,
+        json_mode=json_mode,
     )
-
-    try:
-        validate_search_filters(
-            search_type,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-        )
-    except InvalidPreferValueError as exc:
-        msg = str(exc)
-        if json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "invalid_prefer_value",
-                msg,
-                2,
-                value=exc.prefer_value,
-            )
-        _cli.console.print(f"[red]{msg}[/]")
-        raise typer.Exit(code=2) from None
-    except InvalidFilterForSearchTypeError as exc:
-        msg = str(exc)
-        if json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "invalid_filter_for_search_type",
-                msg,
-                2,
-                filter_kind=exc.filter_kind,
-                offending=exc.offending_filters,
-            )
-        _cli.console.print(f"[red]{msg}[/]")
-        raise typer.Exit(code=2) from None
 
     if port is None:
         port = _default_service_port()
@@ -353,39 +585,7 @@ def handle_search(
             prefer=prefer,
         )
         if mcp_results is not None:
-            if isinstance(mcp_results, dict):
-                _display_mcp_error(
-                    mcp_results,
-                    json_mode=json_mode,
-                    command="search",
-                )
-                # Rich path falls through to its own exit; JSON path
-                # exited inside _display_mcp_error.
-                raise typer.Exit(code=1)
-            if json_mode:
-                _emit_json(
-                    True,
-                    "search",
-                    data={
-                        "query": query,
-                        "search_type": search_type,
-                        "via": "mcp",
-                        "results": list(mcp_results),
-                    },
-                )
-                return
-            if not mcp_results:
-                _cli.console.print(
-                    f"[yellow]No {search_type} results found for:[/] "
-                    f"[italic]{query}[/]",
-                )
-                return
-            _display_search_results(
-                mcp_results,
-                search_type,
-                via="mcp",
-                no_truncate=no_truncate,
-            )
+            _handle_mcp_results(mcp_results, query, search_type, json_mode, no_truncate)
             return
         if not allow_fallback:
             _display_port_unreachable_error(
@@ -395,122 +595,25 @@ def handle_search(
             )
             raise typer.Exit(code=1)
 
-    import vaultspec_rag
-
-    try:
-        status_ctx = (
-            contextlib.nullcontext()
-            if json_mode
-            else _cli.console.status(f"[bold green]Searching {search_type}...")
-        )
-        with status_ctx:
-            if search_type == "code":
-                results = vaultspec_rag.search_codebase(
-                    target,
-                    query,
-                    top_k=max_results,
-                    language=language,
-                    path=path,
-                    node_type=node_type,
-                    function_name=function_name,
-                    class_name=class_name,
-                    include_paths=include_paths,
-                    exclude_paths=exclude_paths,
-                    dedup_locales=dedup_locales,
-                    prefer=prefer,
-                )
-            else:
-                results = vaultspec_rag.search_vault(
-                    target,
-                    query,
-                    top_k=max_results,
-                    doc_type=doc_type,
-                    feature=feature,
-                    date=date,
-                    tag=tag,
-                )
-    except VaultStoreLockedError as exc:
-        if json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "local_store_locked",
-                (
-                    f"The vault index at {exc.db_path} is currently in "
-                    "use by another process. Current routing mode: "
-                    "direct local-store search. Stop the resident "
-                    "service / MCP server, or route through one running "
-                    "vaultspec-rag service for concurrent access "
-                    "(e.g., using --port 8766)."
-                ),
-                1,
-                db_path=str(exc.db_path),
-                routing_mode="local",
-                remediation=[
-                    "Wait for the other process to finish.",
-                    "vaultspec-rag search ... --port 8766",
-                    "vaultspec-rag server service stop",
-                    "vaultspec-rag server mcp stop",
-                ],
-            )
-        _cli.console.print(
-            f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
-            "is currently in use by another process "
-            "(routing mode: direct local-store search).\n\n"
-            "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
-            "or file watcher is likely running against this workspace.\n\n"
-            "  Local-file-backed RAG storage cannot be opened by multiple "
-            "processes at once. For concurrent agent searches, route every "
-            "request through one running [cyan]vaultspec-rag[/] service.\n\n"
-            "  To resolve, do one of the following:\n"
-            "    1. Wait for the other process to finish.\n"
-            "    2. Route your search request through a running "
-            "service on a port, e.g.:\n"
-            "         [cyan]vaultspec-rag search ... --port 8766[/]\n"
-            "    3. Stop the running server:\n"
-            "         [cyan]vaultspec-rag server mcp stop[/]\n"
-            "         [cyan]vaultspec-rag server service stop[/]\n"
-            "    4. If no vaultspec-rag process is alive, look for an "
-            "orphaned Python process holding the lock and stop it manually."
-        )
-        raise typer.Exit(code=1) from exc
-    except (ImportError, RuntimeError) as e:
-        _handle_gpu_error(e)
-
-    if json_mode:
-        from dataclasses import asdict
-
-        _emit_json(
-            True,
-            "search",
-            data={
-                "query": query,
-                "search_type": search_type,
-                "via": "in-process",
-                "results": [asdict(r) for r in results],
-            },
-        )
-        return
-
-    if not results:
-        _cli.console.print(
-            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
-        )
-        return
-
-    table = Table(
-        title=f"Search Results: {search_type}",
-        box=None,
+    results = _try_in_process_search(
+        target,
+        query,
+        search_type,
+        max_results,
+        language,
+        path,
+        node_type,
+        function_name,
+        class_name,
+        include_paths,
+        exclude_paths,
+        dedup_locales,
+        prefer,
+        doc_type,
+        feature,
+        date,
+        tag,
+        json_mode,
     )
-    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Location", style="green")
-    table.add_column("Snippet", style="white")
 
-    for r in results:
-        snippet_raw = r.snippet.replace("\n", " ")
-        snippet = snippet_raw if no_truncate else snippet_raw[:120]
-        location = r.path
-        if r.line_start:
-            location += f":{r.line_start}"
-        table.add_row(f"{r.score:.2f}", location, snippet)
-
-    _cli.console.print(table)
+    _render_in_process_results(results, query, search_type, json_mode, no_truncate)

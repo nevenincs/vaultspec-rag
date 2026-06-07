@@ -82,77 +82,59 @@ class TextSplitter:
             List of text chunks, each at most ``chunk_size`` characters.
         """
         # This is a simplified version of RecursiveCharacterTextSplitter logic
-        chunks = []
         if not text:
-            return chunks
+            return []
+        return self._recursive_split(text, self.separators)
 
-        def _recursive_split(
-            remaining_text: str,
-            seps: list[str],
-        ) -> list[str]:
-            """Recursively split text using hierarchical separators.
+    def _force_split(self, remaining_text: str) -> list[str]:
+        step = max(1, self.chunk_size - self.chunk_overlap)
+        return [
+            remaining_text[i : i + self.chunk_size]
+            for i in range(0, len(remaining_text), step)
+        ]
 
-            Tries each separator in order, splitting the text and
-            merging pieces up to ``chunk_size``.  Recurses with the
-            next separator when a piece is still too large.
+    def _merge_splits(self, splits: list[str], separator: str) -> list[str]:
+        final_chunks = []
+        current_chunk = ""
 
-            Args:
-                remaining_text: Text still to be split.
-                seps: Remaining separators to try, most
-                    structural first.
-
-            Returns:
-                List of text chunks, each at most
-                ``chunk_size`` characters.
-            """
-            if len(remaining_text) <= self.chunk_size:
-                return [remaining_text]
-
-            if not seps:
-                # Force split by length if no separators left
-                step = max(1, self.chunk_size - self.chunk_overlap)
-                return [
-                    remaining_text[i : i + self.chunk_size]
-                    for i in range(0, len(remaining_text), step)
-                ]
-
-            separator = seps[0]
-            if separator == "":
-                step = max(1, self.chunk_size - self.chunk_overlap)
-                return [
-                    remaining_text[i : i + self.chunk_size]
-                    for i in range(0, len(remaining_text), step)
-                ]
-            splits = remaining_text.split(separator)
-
-            final_chunks = []
-            current_chunk = ""
-
-            for s in splits:
-                if not s:
-                    continue
-                if not current_chunk:
-                    current_chunk = s
-                elif len(current_chunk) + len(separator) + len(s) <= self.chunk_size:
-                    current_chunk += separator + s
-                else:
-                    final_chunks.append(current_chunk)
-                    overlap_start = max(0, len(current_chunk) - self.chunk_overlap)
-                    current_chunk = current_chunk[overlap_start:] + separator + s
-
-            if current_chunk:
+        for s in splits:
+            if not s:
+                continue
+            if not current_chunk:
+                current_chunk = s
+            elif len(current_chunk) + len(separator) + len(s) <= self.chunk_size:
+                current_chunk += separator + s
+            else:
                 final_chunks.append(current_chunk)
+                overlap_start = max(0, len(current_chunk) - self.chunk_overlap)
+                current_chunk = current_chunk[overlap_start:] + separator + s
 
-            # If any chunk is still too big, recurse with next separator
-            processed = []
-            for c in final_chunks:
-                if len(c) > self.chunk_size:
-                    processed.extend(_recursive_split(c, seps[1:]))
-                else:
-                    processed.append(c)
-            return processed
+        if current_chunk:
+            final_chunks.append(current_chunk)
+        return final_chunks
 
-        return _recursive_split(text, self.separators)
+    def _recursive_split(
+        self,
+        remaining_text: str,
+        seps: list[str],
+    ) -> list[str]:
+        if len(remaining_text) <= self.chunk_size:
+            return [remaining_text]
+
+        if not seps or seps[0] == "":
+            return self._force_split(remaining_text)
+
+        separator = seps[0]
+        splits = remaining_text.split(separator)
+        final_chunks = self._merge_splits(splits, separator)
+
+        processed = []
+        for c in final_chunks:
+            if len(c) > self.chunk_size:
+                processed.extend(self._recursive_split(c, seps[1:]))
+            else:
+                processed.append(c)
+        return processed
 
 
 # ---------------------------------------------------------------------------

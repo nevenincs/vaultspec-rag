@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 import tomlkit
 
-from vaultspec_rag import torch_config as tc
+from .. import torch_config as tc
 
 if TYPE_CHECKING:
     from pathlib import Path

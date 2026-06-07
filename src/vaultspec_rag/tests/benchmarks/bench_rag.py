@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from vaultspec_rag.progress import NullProgressReporter
+from ...progress import NullProgressReporter
 
 
 @pytest.mark.performance
@@ -36,7 +36,8 @@ def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
 
 
 @pytest.mark.performance
-def test_bench_full_index(root, model, store, indexer) -> dict:
+@pytest.mark.usefixtures("root", "model", "store")
+def test_bench_full_index(indexer) -> dict:
     """Time full_index() on the entire vault corpus."""
     start = time.perf_counter()
     result = indexer.full_index(reporter=NullProgressReporter())
@@ -123,7 +124,7 @@ def test_bench_memory(root) -> dict:
     result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
     # Qdrant disk size
-    from vaultspec_rag.config import get_config
+    from ...config import get_config
 
     cfg = get_config()
     qdrant_dir = root / cfg.data_dir / cfg.qdrant_dir

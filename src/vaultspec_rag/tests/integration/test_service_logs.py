@@ -24,10 +24,11 @@ from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
 import vaultspec_rag.mcp_server as _m
-from vaultspec_rag import mcp_server
-from vaultspec_rag.cli import app
-from vaultspec_rag.logging_config import read_service_log
-from vaultspec_rag.mcp_server._routes import ROUTES
+
+from ... import mcp_server
+from ...cli import app
+from ...logging_config import read_service_log
+from ...mcp_server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -103,7 +104,7 @@ def _routes_app(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
     """
     import os
 
-    from vaultspec_rag.config import EnvVar, reset_config
+    from ...config import EnvVar, reset_config
 
     (tmp_path / "service.log").write_text("line-a\nline-b\n", encoding="utf-8")
 
@@ -184,7 +185,7 @@ def test_logs_route_respects_lines_param(
 async def test_get_logs_tool_returns_lines(tmp_path: Path) -> None:
     import os
 
-    from vaultspec_rag.config import EnvVar, reset_config
+    from ...config import EnvVar, reset_config
 
     (tmp_path / "service.log").write_text("m1\nm2\n", encoding="utf-8")
     prev_env = os.environ.get(EnvVar.STATUS_DIR.value)

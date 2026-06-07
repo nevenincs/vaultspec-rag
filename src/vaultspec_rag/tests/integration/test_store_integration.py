@@ -32,7 +32,7 @@ class TestVaultStore:
 
     def test_vault_store_context_manager(self, tmp_path):
         """VaultStore should support the context manager protocol."""
-        from vaultspec_rag import VaultStore
+        from ... import VaultStore
 
         with VaultStore(tmp_path) as store:
             assert store._client is not None
@@ -42,7 +42,7 @@ class TestVaultStore:
 
     def test_vault_store_locked_raises_typed_exception(self, tmp_path):
         """Opening the same Qdrant storage twice must raise VaultStoreLockedError."""
-        from vaultspec_rag.store import VaultStore, VaultStoreLockedError
+        from ...store import VaultStore, VaultStoreLockedError
 
         first = VaultStore(tmp_path)
         try:
@@ -60,7 +60,7 @@ class TestVaultStore:
         query_vec = model.encode_query("architecture decision")
         results = store.hybrid_search(
             query_vector=query_vec,
-            query_text="architecture decision",
+            _query_text="architecture decision",
             limit=5,
         )
         assert len(results) > 0
@@ -91,7 +91,7 @@ class TestVaultStore:
         assert store.count() == count_before - 1
 
         # Re-insert it so other tests aren't affected (session-scoped fixture)
-        from vaultspec_rag import VaultDocument
+        from ... import VaultDocument
 
         reinsert = VaultDocument(
             id=doc["id"],
@@ -124,7 +124,7 @@ class TestVaultStore:
 
         results = store.hybrid_search(
             query_vector=query_vec.tolist(),
-            query_text=query_text,
+            _query_text=query_text,
             limit=5,
             sparse_vector=sparse_vec,
         )
@@ -137,7 +137,7 @@ class TestVaultStore:
         """Searching a fresh VaultStore with no indexed docs should return
         empty results without crashing.
         """
-        from vaultspec_rag import VaultStore
+        from ... import VaultStore
 
         model = rag_components["model"]
         store = VaultStore(tmp_path)
@@ -148,7 +148,7 @@ class TestVaultStore:
 
             results = store.hybrid_search(
                 query_vector=query_vec.tolist(),
-                query_text="anything",
+                _query_text="anything",
                 limit=5,
             )
             assert results == []

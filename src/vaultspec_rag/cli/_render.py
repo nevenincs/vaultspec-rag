@@ -154,7 +154,7 @@ def _display_mcp_error(
 def _display_search_results(
     results: list[dict[str, object]],
     search_type: str,
-    via: Literal["mcp", "in-process"] = "mcp",  # noqa: ARG001
+    via: Literal["mcp", "in-process"] = "mcp",
     *,
     no_truncate: bool = False,
 ) -> None:
@@ -165,12 +165,12 @@ def _display_search_results(
             ``snippet``, and optional ``line_start`` keys.
         search_type: Label for the table title (e.g.
             ``vault``, ``code``, ``all``).
-        via: Ignored transport path indicator.
+        via: Transport path indicator (e.g. ``mcp``, ``in-process``).
         no_truncate: Bypass the 120-character snippet truncation
             so sibling files with long paths stay distinguishable.
 
     """
-    table = Table(title=f"Search Results: {search_type}", box=None)
+    table = Table(title=f"Search Results: {search_type} (via {via})", box=None)
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("Location", style="green")
     table.add_column("Snippet", style="white")

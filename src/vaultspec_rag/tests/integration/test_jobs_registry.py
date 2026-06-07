@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vaultspec_rag import mcp_server
-from vaultspec_rag.mcp_server import _jobs
+from ... import mcp_server
+from ...mcp_server import _jobs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from vaultspec_rag.embeddings import EmbeddingModel
+    from ...embeddings import EmbeddingModel
 
 
 @pytest.fixture

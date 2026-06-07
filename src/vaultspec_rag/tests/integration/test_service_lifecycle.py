@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from vaultspec_rag.cli import (
+from ...cli import (
     _is_pid_alive,
     _read_service_status,
     _spawn_service,
@@ -27,7 +27,6 @@ from vaultspec_rag.cli import (
     _write_service_status,
     app,
 )
-
 from ._helpers import (
     _get_ephemeral_port,
     _poll_health,
@@ -215,7 +214,7 @@ def test_multi_project_search_isolation(
     tmp_path: Path,
 ) -> None:
     """Two projects indexed via MCP have isolated search results."""
-    from vaultspec_rag.synthetic import build_multi_project_fixture
+    from ...synthetic import build_multi_project_fixture
 
     with _service_env(tmp_path):
         port = _get_ephemeral_port()

@@ -25,10 +25,11 @@ from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
 import vaultspec_rag.mcp_server as _m
-from vaultspec_rag import mcp_server
-from vaultspec_rag.cli import app
-from vaultspec_rag.mcp_server import _jobs
-from vaultspec_rag.mcp_server._routes import ROUTES
+
+from ... import mcp_server
+from ...cli import app
+from ...mcp_server import _jobs
+from ...mcp_server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vaultspec_rag import CodebaseIndexer
-from vaultspec_rag.config import EnvVar, reset_config
-from vaultspec_rag.progress import NullProgressReporter
+from ... import CodebaseIndexer
+from ...config import EnvVar, reset_config
+from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
     from pathlib import Path

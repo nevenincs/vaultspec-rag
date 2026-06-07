@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaultspec_rag.progress import NullProgressReporter
+from ...progress import NullProgressReporter
 
 pytestmark = [pytest.mark.integration]
 
@@ -54,7 +54,7 @@ class TestDocumentPreparation:
     def test_prepare_real_document(self, rag_components):
         from vaultspec_core.vaultcore import scan_vault
 
-        from vaultspec_rag import prepare_document
+        from ... import prepare_document
 
         root = rag_components["root"]
         docs = list(scan_vault(root))
@@ -71,8 +71,8 @@ class TestDocumentPreparation:
     def test_prepare_all_documents(self, rag_components):
         from vaultspec_core.vaultcore import scan_vault
 
-        from vaultspec_rag import prepare_document
-        from vaultspec_rag.config import get_config
+        from ... import prepare_document
+        from ...config import get_config
 
         root = rag_components["root"]
         docs_dir = root / get_config().docs_dir
@@ -135,9 +135,9 @@ class TestIndexEdgeCases:
         collection empty. Previously the empty-docs early-return
         silently preserved the old rows.
         """
-        from vaultspec_rag.indexer import VaultIndexer
-        from vaultspec_rag.store import VaultStore
-        from vaultspec_rag.tests.corpus import build_synthetic_vault
+        from ...indexer import VaultIndexer
+        from ...store import VaultStore
+        from ..corpus import build_synthetic_vault
 
         root = tmp_path_factory.mktemp("full-index-empty-regression")
         manifest = build_synthetic_vault(root, n_docs=6, seed=310)

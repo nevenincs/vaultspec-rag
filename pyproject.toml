@@ -82,6 +82,8 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "flake8>=7.3.0",
+    "flake8-cognitive-complexity>=0.1.0",
     "identify>=2.0.0",
     "mdformat>=1.0.0",
     "mdformat-frontmatter>=2.0.10",
@@ -93,8 +95,10 @@ dev = [
     "pytest-durations>=1.0.0",
     "pytest-reportlog>=0.4.0",
     "pytest-timeout>=2.4.0",
+    "radon>=6.0.1",
     "ruff>=0.15.2",
     "ty>=0.0.15",
+    "xenon>=0.9.3",
 ]
 
 [tool.uv]
@@ -175,15 +179,24 @@ select = [
     "TCH", # flake8-type-checking
     "RUF", # ruff-specific rules
     "N",   # pep8-naming
+    "TID", # flake8-tidy-imports
+    "C90", # mccabe complexity
+]
+ignore = [
+    "TID252",
 ]
 unfixable = ["B"]
 
-[tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["ARG"]
-"**/tests/**/*.py" = ["ARG"]
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["vaultspec_rag"]
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-decorators = ["app.command", "service_app.command"]
 
 [tool.ty.environment]
 python-version = "3.13"

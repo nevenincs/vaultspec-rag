@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from rich.console import Console
 
-from vaultspec_rag.progress import (
+from ..progress import (
     NullProgressReporter,
     ProgressReporter,
     RichProgressReporter,

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import os
 
-from vaultspec_rag.cli import _service_child_env
-from vaultspec_rag.config import EnvVar
+from ..cli import _service_child_env
+from ..config import EnvVar
 
 
 def _set_env(var: EnvVar, value: str) -> str | None:

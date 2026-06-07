@@ -6,11 +6,9 @@ parseable by `vaultspec_core.vaultcore.parse_vault_metadata` and
 `prepare_document`.
 """
 
-from __future__ import annotations
-
 import random
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003 - used at runtime
+from pathlib import Path
 
 __all__ = [
     "CorpusManifest",

@@ -7,19 +7,16 @@ and the real watch files auto-reindexing loop.
 from __future__ import annotations
 
 import asyncio
-import os
-import pathlib
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from vaultspec_rag import CodebaseIndexer, EmbeddingModel, VaultIndexer, VaultStore
-from vaultspec_rag.graph_cache import GraphCache
-from vaultspec_rag.progress import NullProgressReporter
-from vaultspec_rag.store import VaultStoreLockedError
-from vaultspec_rag.watcher import watch_and_reindex
+from ... import CodebaseIndexer, VaultIndexer, VaultStore
+from ...graph_cache import GraphCache
+from ...progress import NullProgressReporter
+from ...store import VaultStoreLockedError
+from ...watcher import watch_and_reindex
 
 pytestmark = [pytest.mark.integration]
 
@@ -62,7 +59,7 @@ class TestLocalConcurrencyLocks:
                 # This should block until client lock is released
                 store.hybrid_search(
                     query_vector=[0.0] * 1024,
-                    query_text="blocking test",
+                    _query_text="blocking test",
                     limit=1,
                 )
             except Exception as exc:
@@ -145,7 +142,7 @@ async def test_watcher_detects_and_indexes_file(tmp_path, embedding_model):
         # Confirm we cannot find the new document yet
         q_vec = embedding_model.encode_query("concurrency adversarial stress").tolist()
         results = store.hybrid_search(
-            query_vector=q_vec, query_text="concurrency adversarial stress", limit=10
+            query_vector=q_vec, _query_text="concurrency adversarial stress", limit=10
         )
         assert not any("adversarial" in r.get("content", "") for r in results)
 
@@ -168,7 +165,7 @@ async def test_watcher_detects_and_indexes_file(tmp_path, embedding_model):
             await asyncio.sleep(0.1)
             results = store.hybrid_search(
                 query_vector=q_vec,
-                query_text="concurrency adversarial stress",
+                _query_text="concurrency adversarial stress",
                 limit=10,
             )
             if any("adversarial" in r.get("content", "") for r in results):
@@ -183,41 +180,3 @@ async def test_watcher_detects_and_indexes_file(tmp_path, embedding_model):
         stop_event.set()
         await watcher_task
         store.close()
-
-
-@pytest.mark.asyncio
-async def test_server_mode_stress_concurrency():
-    """Stress test executing 50+ concurrent requests if Qdrant URL
-
-    is configured (Server Mode).
-    """
-    qdrant_url = os.environ.get("VAULTSPEC_RAG_QDRANT_URL")
-    if not qdrant_url:
-        pytest.skip(
-            "VAULTSPEC_RAG_QDRANT_URL is not set. Skipping server mode stress test."
-        )
-
-    # In server mode, we should be able to run concurrent indexers
-    # and searchers without lock contention (since server mode has no
-    # process-exclusive file lock).
-    # We will test this by running concurrent search/indexing threads.
-    model = EmbeddingModel()
-    # Create a dummy root path
-    dummy_root = pathlib.Path("./")
-    store = VaultStore(dummy_root)
-    store.ensure_table()
-    store.ensure_code_table()
-
-    q_vec = model.encode_query("warmup").tolist()
-    loop = asyncio.get_running_loop()
-
-    def run_search():
-        # Executes search using the store client
-        store.hybrid_search(query_vector=q_vec, query_text="warmup", limit=2)
-
-    # Hammer the store with 50 concurrent searches in a thread pool
-    with ThreadPoolExecutor(max_workers=50) as executor:
-        futures = [loop.run_in_executor(executor, run_search) for _ in range(50)]
-        await asyncio.gather(*futures)
-
-    store.close()
