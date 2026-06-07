@@ -23,6 +23,8 @@ Rename mcp_server to server and isolate mcp protocol adapter
 
 - [ ] `P01.S01` - Rename vaultspec_rag/mcp_server to vaultspec_rag/server; `src/vaultspec_rag/server`.
 - [ ] `P01.S02` - Extract MCP protocol layer to vaultspec_rag/mcp; `src/vaultspec_rag/mcp`.
+- [ ] `P01.S05` - Rename test_mcp_server.py to test_server.py and update test imports; `tests/test_mcp_server.py`.
+- [ ] `P01.S06` - Update mcp_server references in CLI and daemon tests; `tests/`.
 
 ### Phase `P02` - CLI and Docs Redesign
 
@@ -30,6 +32,7 @@ Flatten the CLI command hierarchy and audit docstrings
 
 - [ ] `P02.S03` - Flatten server service to server; `src/vaultspec_rag/cli/_app.py`.
 - [ ] `P02.S04` - Audit docstrings and help text; `src/vaultspec_rag/cli`.
+- [ ] `P02.S07` - Update mcp_server entrypoint in framework rules and sync; `.vaultspec/rules/`.
 
 ## Parallelization
 

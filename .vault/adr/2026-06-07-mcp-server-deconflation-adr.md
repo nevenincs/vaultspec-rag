@@ -41,7 +41,7 @@ Establishing a clean boundary between the core daemon and the protocol adapter a
 ## Consequences
 
 - **Gains:** Crystal-clear module boundaries, significantly simplified CLI commands, and correct, non-misleading documentation.
-- **Difficulties:** A massive cross-file refactor of imports is necessary, which carries a risk of breaking internal wiring if not tested comprehensively.
+- **Difficulties:** A massive cross-file refactor of imports is necessary, which carries a risk of breaking internal wiring if not tested comprehensively. This includes renaming and updating the test suite (`tests/test_mcp_server.py`) and correcting framework rule documentation (`.vaultspec/rules/vaultspec-rag.builtin.md`).
 
 ## Codification candidates
 

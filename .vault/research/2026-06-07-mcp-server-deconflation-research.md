@@ -34,6 +34,12 @@ Based on an audit of the codebase, the terminology conflation extends deeply int
    - **`_service_lifecycle.py`**: The help text for `service_start` incorrectly states "Spawns the MCP server on the given port", when it actually spawns the HTTP REST RAG service.
    - **`_index.py`**: The `index` CLI command help text incorrectly claims that `--port` delegates "to a running MCP server", when it actually talks to the HTTP REST service.
 
+1. **Test Suite & Framework Rules:**
+
+   - **`tests/test_mcp_server.py`**: Extensive unit tests tightly coupled to the package name and internal module structure.
+   - **`tests/`**: Other daemon integration tests that refer to the `mcp_server` internal objects.
+   - **`.vaultspec/rules/vaultspec-rag.builtin.md`**: The framework's core rules specifically document the entry point as `vaultspec_rag.mcp_server:main`, which needs to be updated.
+
 ## Next Steps
 
 We must systematically split `mcp_server` into two distinct packages:
