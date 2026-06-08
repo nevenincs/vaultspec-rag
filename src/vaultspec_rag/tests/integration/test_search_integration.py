@@ -174,6 +174,36 @@ class TestVaultSearch:
 class TestSearchEdgeCases:
     """Edge cases for search operations."""
 
+    def test_encode_query_respects_sparse_enabled(self, rag_components):
+        """When sparse_enabled is False, _encode_query should return None for sparse vector."""
+        from ... import VaultSearcher
+
+        model = rag_components["model"]
+        store = rag_components["store"]
+        root = rag_components["root"]
+
+        searcher = VaultSearcher(root, model, store)
+        searcher._sparse_enabled = False
+
+        parsed, text, dense, sparse = searcher._encode_query("test query")
+        assert sparse is None
+        assert isinstance(dense, list)
+
+    def test_encode_query_sparse_enabled_true(self, rag_components):
+        """When sparse_enabled is True, _encode_query should return a sparse vector."""
+        from ... import VaultSearcher
+
+        model = rag_components["model"]
+        store = rag_components["store"]
+        root = rag_components["root"]
+
+        searcher = VaultSearcher(root, model, store)
+        searcher._sparse_enabled = True
+
+        parsed, text, dense, sparse = searcher._encode_query("test query")
+        assert sparse is not None
+        assert hasattr(sparse, "indices")
+
     def test_empty_query(self, rag_components):
         """VaultSearcher.search_vault('') should not crash."""
         from ... import VaultSearcher
