@@ -59,6 +59,7 @@ class EnvVar(StrEnum):
     QDRANT_URL = "VAULTSPEC_RAG_QDRANT_URL"
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
     QDRANT_QUANTIZATION = "VAULTSPEC_RAG_QDRANT_QUANTIZATION"
+    SPARSE_ENABLED = "VAULTSPEC_RAG_SPARSE_ENABLED"
 
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
@@ -101,6 +102,7 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_url": EnvVar.QDRANT_URL,
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
+    "sparse_enabled": EnvVar.SPARSE_ENABLED,
 }
 
 
@@ -192,6 +194,7 @@ class VaultSpecConfigWrapper:
         "dense_onnx_file": "onnx/model_O4.onnx",
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
+        "sparse_enabled": True,
         "sparse_model": "naver/splade-v3",
         "reranker_enabled": True,
         "reranker_model": "BAAI/bge-reranker-v2-m3",
