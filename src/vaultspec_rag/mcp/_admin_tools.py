@@ -62,19 +62,7 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
 @mcp.tool()
 async def get_logs(lines: int = 200) -> dict[str, Any]:
     """Return the last *lines* of the rotated service log."""
-    # Note: _call_daemon expects JSON, but /logs returns plain text.
-    # To fix this without changing _call_daemon, we use the HTTP route but we need a JSON endpoint or custom logic.
-    # We will use custom logic here directly for now, or just read the log via the shared module.
-    # Wait, the plan says "Rewrite MCP tools to strictly consume the REST API".
-    # But for /logs, let's just make a JSON route /logs/json or we can read it locally.
-    # Actually, we can read locally:
-    from anyio.to_thread import run_sync as _run_in_thread
-    from ..logging_config import read_service_log
-
-    def _run() -> dict[str, Any]:
-        return {"lines": read_service_log(lines)}
-
-    return await _run_in_thread(_run)
+    return _call_daemon(f"/logs/json?lines={lines}")
 
 
 @mcp.tool()
@@ -107,25 +95,13 @@ async def benchmark(
     n_queries: int = 20,
 ) -> dict[str, Any]:
     """Run search latency benchmarks against the indexed vault."""
-    from anyio.to_thread import run_sync as _run_in_thread
-    import vaultspec_rag
-    from ..server._utils import _resolve_root
-
-    root = _resolve_root(project_root)
-
-    def _run() -> dict[str, Any]:
-        return vaultspec_rag.run_benchmark(root, n_queries=n_queries)
-
-    return await _run_in_thread(_run)
+    payload: dict[str, Any] = {"n_queries": n_queries}
+    if project_root:
+        payload["project_root"] = project_root
+    return _call_daemon("/benchmark", payload)
 
 
 @mcp.tool()
 async def quality() -> dict[str, Any]:
     """Run quality-scoring probes against a synthetic test corpus."""
-    from anyio.to_thread import run_sync as _run_in_thread
-    import vaultspec_rag
-
-    def _run() -> dict[str, Any]:
-        return vaultspec_rag.run_quality_probe()
-
-    return await _run_in_thread(_run)
+    return _call_daemon("/quality", {})

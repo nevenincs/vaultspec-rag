@@ -647,10 +647,10 @@ class VaultStore:
         Returns:
             Set of string IDs extracted from point payloads.
         """
-        with self._client_lock:
-            ids: set[str] = set()
-            offset = None
-            while True:
+        ids: set[str] = set()
+        offset = None
+        while True:
+            with self._client_lock:
                 points, next_offset = self.client.scroll(
                     collection_name=collection,
                     limit=1000,
@@ -658,13 +658,13 @@ class VaultStore:
                     with_payload=[id_field],
                     with_vectors=False,
                 )
-                for point in points:
-                    if point.payload and id_field in point.payload:
-                        ids.add(str(point.payload[id_field]))
-                if next_offset is None:
-                    break
-                offset = next_offset
-            return ids
+            for point in points:
+                if point.payload and id_field in point.payload:
+                    ids.add(str(point.payload[id_field]))
+            if next_offset is None:
+                break
+            offset = next_offset
+        return ids
 
     def get_code_ids_by_paths(self, rel_paths: set[str]) -> list[str]:
         """Return chunk IDs for code chunks belonging to the given file paths.
@@ -685,18 +685,20 @@ class VaultStore:
 
         with self._client_lock:
             self.ensure_code_table()
-            scroll_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="path",
-                        match=models.MatchAny(any=list(rel_paths)),
-                    ),
-                ],
-            )
+        
+        scroll_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="path",
+                    match=models.MatchAny(any=list(rel_paths)),
+                ),
+            ],
+        )
 
-            ids: list[str] = []
-            offset = None
-            while True:
+        ids: list[str] = []
+        offset = None
+        while True:
+            with self._client_lock:
                 points, next_offset = self.client.scroll(
                     collection_name=self.CODE_TABLE_NAME,
                     scroll_filter=scroll_filter,
@@ -705,13 +707,13 @@ class VaultStore:
                     with_payload=["chunk_id"],
                     with_vectors=False,
                 )
-                for point in points:
-                    if point.payload and "chunk_id" in point.payload:
-                        ids.append(str(point.payload["chunk_id"]))
-                if next_offset is None:
-                    break
-                offset = next_offset
-            return ids
+            for point in points:
+                if point.payload and "chunk_id" in point.payload:
+                    ids.append(str(point.payload["chunk_id"]))
+            if next_offset is None:
+                break
+            offset = next_offset
+        return ids
 
     def count(self) -> int:
         """Return total number of indexed documents in vault_docs.
@@ -774,20 +776,22 @@ class VaultStore:
 
         with self._client_lock:
             self.ensure_table()
-            scroll_filter = None
-            if doc_type:
-                scroll_filter = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="doc_type",
-                            match=models.MatchValue(value=doc_type),
-                        ),
-                    ],
-                )
+        
+        scroll_filter = None
+        if doc_type:
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="doc_type",
+                        match=models.MatchValue(value=doc_type),
+                    ),
+                ],
+            )
 
-            docs: list[dict] = []
-            offset = None
-            while True:
+        docs: list[dict] = []
+        offset = None
+        while True:
+            with self._client_lock:
                 points, next_offset = self.client.scroll(
                     collection_name=self.TABLE_NAME,
                     scroll_filter=scroll_filter,
@@ -796,14 +800,14 @@ class VaultStore:
                     with_payload=True,
                     with_vectors=False,
                 )
-                for point in points:
-                    payload = dict(point.payload) if point.payload else {}
-                    payload["id"] = payload.pop("doc_id", str(point.id))
-                    docs.append(payload)
-                if next_offset is None:
-                    break
-                offset = next_offset
-            return docs
+            for point in points:
+                payload = dict(point.payload) if point.payload else {}
+                payload["id"] = payload.pop("doc_id", str(point.id))
+                docs.append(payload)
+            if next_offset is None:
+                break
+            offset = next_offset
+        return docs
 
     def hybrid_search(
         self,

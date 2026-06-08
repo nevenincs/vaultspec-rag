@@ -453,8 +453,51 @@ async def code_file_route(request: Request) -> JSONResponse:
     return JSONResponse(res)
 
 
+async def benchmark_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    project_root = payload.get("project_root")
+    n_queries = payload.get("n_queries", 20)
+    from ._utils import _resolve_root
+    root = _resolve_root(project_root)
+    
+    def _run():
+        import vaultspec_rag
+        return vaultspec_rag.run_benchmark(root, n_queries=n_queries)
+        
+    from anyio.to_thread import run_sync as _run_in_thread
+    res = await _run_in_thread(_run)
+    return JSONResponse(res)
+
+
+async def quality_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+        
+    def _run():
+        import vaultspec_rag
+        return vaultspec_rag.run_quality_probe()
+        
+    from anyio.to_thread import run_sync as _run_in_thread
+    res = await _run_in_thread(_run)
+    return JSONResponse(res)
+
+
+async def logs_json_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    lines = _clamp_lines(request.query_params.get("lines"))
+    body = read_service_log(lines)
+    return JSONResponse({"lines": body})
+
+
 ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),
+    Route("/logs/json", logs_json_route, methods=["GET"]),
     Route("/jobs", jobs_route, methods=["GET"]),
     Route("/metrics", metrics_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
@@ -467,4 +510,6 @@ ROUTES: list[Route] = [
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
     Route("/service-state", get_service_state_route, methods=["GET"]),
     Route("/code-file", code_file_route, methods=["POST"]),
+    Route("/benchmark", benchmark_route, methods=["POST"]),
+    Route("/quality", quality_route, methods=["POST"]),
 ]

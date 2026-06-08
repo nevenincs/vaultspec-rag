@@ -39,6 +39,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class VaultGraphError(RuntimeError):
+    """Raised when the VaultGraph fails to initialize."""
+
+
 class VaultSearcher:
     """Orchestrates hybrid search across vault and codebase.
 
@@ -229,7 +233,7 @@ class VaultSearcher:
                     except Exception as e:
                         logger.error("Graph build failed: %s", e)
                         self._graph_built_at = now
-                        return None
+                        raise VaultGraphError("Failed to build vault graph") from e
         return self._cached_graph
 
     def _search_vault_encoded(

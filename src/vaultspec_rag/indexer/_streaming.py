@@ -63,7 +63,11 @@ def _stream_encode_and_upsert_vault(
     (idempotent by doc_id) so the input order is purely a perf
     optimisation. Wall-clock work, #68.
     """
+    from ..config import get_config
     from ..memory_probe import MemoryProbe
+
+    cfg = get_config()
+    sparse_enabled = cfg.sparse_enabled
 
     # Sort docs by combined title+content length, longest first.
     # SentenceTransformer.encode internally sorts again per call, but
@@ -98,12 +102,19 @@ def _stream_encode_and_upsert_vault(
                     # blocking concurrent searches on the same GPU.
                     with gpu_lock if gpu_lock is not None else nullcontext():
                         dense = model.encode_documents(slice_texts)
-                        sparse = model.encode_documents_sparse(slice_texts)
+                        if sparse_enabled:
+                            sparse = model.encode_documents_sparse(slice_texts)
+                        else:
+                            sparse = [None] * len(slice_texts)
                     probe.checkpoint(f"slice-{i}-after-encode")
                     for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
                         doc.vector = vec.tolist()
-                        doc.sparse_indices = list(svec.indices)
-                        doc.sparse_values = list(svec.values)
+                        if svec is not None:
+                            doc.sparse_indices = list(svec.indices)
+                            doc.sparse_values = list(svec.values)
+                        else:
+                            doc.sparse_indices = []
+                            doc.sparse_values = []
                     store.upsert_documents(slice_docs)
                 finally:
                     # Drop references to per-slice tensors before
@@ -157,6 +168,9 @@ def encode_and_upsert_code_slice(
             ``embedding_code_encode_batch_size`` (#155 P03) since code chunks
             are short and length-uniform.
     """
+    from ..config import get_config
+    cfg = get_config()
+    
     if not slice_chunks:
         return
     slice_texts = [c.content for c in slice_chunks]
@@ -165,14 +179,21 @@ def encode_and_upsert_code_slice(
     try:
         with gpu_lock if gpu_lock is not None else nullcontext():
             dense = model.encode_documents(slice_texts, batch_size=encode_batch_size)
-            sparse = model.encode_documents_sparse(
-                slice_texts,
-                batch_size=encode_batch_size,
-            )
+            if cfg.sparse_enabled:
+                sparse = model.encode_documents_sparse(
+                    slice_texts,
+                    batch_size=encode_batch_size,
+                )
+            else:
+                sparse = [None] * len(slice_texts)
         for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
             chunk.vector = vec.tolist()
-            chunk.sparse_indices = list(svec.indices)
-            chunk.sparse_values = list(svec.values)
+            if svec is not None:
+                chunk.sparse_indices = list(svec.indices)
+                chunk.sparse_values = list(svec.values)
+            else:
+                chunk.sparse_indices = []
+                chunk.sparse_values = []
         store.upsert_code_chunks(slice_chunks)
     finally:
         # del beats ``= None`` for dropping the local out of the frame
