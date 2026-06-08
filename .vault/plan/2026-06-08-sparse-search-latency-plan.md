@@ -19,6 +19,8 @@ related:
      - NEVER use [[wiki-links]] or markdown links in the
        document body. -->
 
+<!-- RETIRED: S09 -->
+
 # `sparse-search-latency` `Scaling Bottlenecks` plan
 
 ## Description
@@ -43,6 +45,15 @@ Map glob filters to Qdrant native filters before search to skip post-query Pytho
 - [x] `P02.S05` - Update VaultStore.hybrid_search_codebase to accept regex filters and construct MatchPattern; `src/vaultspec_rag/store.py`.
 - [x] `P02.S06` - Remove post-query \_filter_raw_codebase_results logic; `src/vaultspec_rag/search/_searcher.py`.
 - [x] `P02.S07` - Update tests to assert Qdrant glob filtering works correctly; `src/vaultspec_rag/tests/`.
+
+### Phase `P03` - Comprehensive Code Review
+
+Run extensive code reviews to identify and mitigate any hidden exceptions, edge cases, or performance cliffs introduced during the latency optimizations.
+
+- [x] `P03.S08` - Run Vaultspec Code Reviewer subagent for full scope audit; `src/vaultspec_rag/`.
+- [x] `P03.S10` - Resolve MCP Deconflation Gap (CRITICAL); `src/vaultspec_rag/mcp/`.
+- [x] `P03.S11` - Resolve Execution Paths & Latency Bottlenecks (HIGH); `src/vaultspec_rag/store.py`.
+- [x] `P03.S12` - Resolve Sparse Fallback Boundaries Leak (HIGH); `src/vaultspec_rag/indexer/_streaming.py`.
 
 ## Parallelization
 
