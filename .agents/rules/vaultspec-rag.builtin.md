@@ -176,7 +176,7 @@ to analyze a feature across docs and code.
 
 - `vaultspec-rag` — CLI (package: `vaultspec_rag.__main__:main`)
 - `vaultspec-search-mcp` — MCP server stdio mode
-  (package: `vaultspec_rag.mcp_server:main`)
+  (package: `vaultspec_rag.mcp:main`)
 - `vaultspec-rag server mcp start` — MCP server via CLI
 - `vaultspec-rag server service start` — HTTP RAG service
 

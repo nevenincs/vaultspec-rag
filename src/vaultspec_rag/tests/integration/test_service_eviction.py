@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import threading
 import time
 import urllib.request
@@ -54,6 +53,7 @@ async def _call_tool(
     args: dict[str, Any],
 ) -> dict[str, Any]:
     import httpx
+
     from ._helpers import _poll_health
 
     health = _poll_health(port)

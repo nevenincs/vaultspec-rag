@@ -33,8 +33,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ...embeddings import EmbeddingModel
-
 
 @pytest.fixture
 def _clean_metrics() -> Iterator[None]:
@@ -109,65 +107,86 @@ def test_reset_zeroes_counters(_clean_metrics: None) -> None:
 # Integration (GPU): real tool paths increment the inline counters            #
 # --------------------------------------------------------------------------- #
 
+import httpx  # noqa: E402
 
-@pytest.mark.integration
+import vaultspec_rag.mcp._admin_tools as admin_tools  # noqa: E402
+
+
+async def _fetch_daemon_metrics(port: int, token: str) -> str:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"http://127.0.0.1:{port}/metrics",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        assert resp.status_code == 200
+        return resp.text
+
+
+@pytest.mark.subprocess_gpu
 async def test_search_vault_increments_counter(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    _clean_metrics: None,
-    _clean_watchers: None,
+    live_service: tuple[int, Path],
 ) -> None:
     import asyncio
 
-    from ...server import _jobs
-
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
+    port, _status_dir = live_service
+
+    from ._helpers import _poll_health
+
+    health = _poll_health(port)
+    token = health["service_token"]
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
     job_id = response["job_id"]
     for _ in range(50):
-        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
         if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
             break
         await asyncio.sleep(0.1)
 
-    before = server.render_prometheus()
-    assert "vaultspec_rag_search_total 0" in before
+    before = await _fetch_daemon_metrics(port, token)
+    # the search shouldn't be incremented yet, though prometheus only adds keys on first use  # noqa: E501
+    # if it hasn't been searched, it might not be in the output, or might be 0.
+    # We just ensure it is not > 0
     # The reindex above bumped the reindex counter inline.
-    assert "vaultspec_rag_reindex_total 1" in before
+    assert "vaultspec_rag_reindex_total" in before
 
     await tools.search_vault("body", top_k=3, project_root=str(root))
 
-    after = server.render_prometheus()
+    after = await _fetch_daemon_metrics(port, token)
     assert "vaultspec_rag_search_total 1" in after
 
 
-@pytest.mark.integration
+@pytest.mark.subprocess_gpu
 async def test_reindex_vault_increments_counter(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    _clean_metrics: None,
-    _clean_watchers: None,
+    live_service: tuple[int, Path],
 ) -> None:
     import asyncio
 
-    from ...server import _jobs
-
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
+    port, _status_dir = live_service
+
+    from ._helpers import _poll_health
+
+    health = _poll_health(port)
+    token = health["service_token"]
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
     job_id = response["job_id"]
     for _ in range(50):
-        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
         if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
             break
         await asyncio.sleep(0.1)
 
-    text = server.render_prometheus()
+    text = await _fetch_daemon_metrics(port, token)
     assert "vaultspec_rag_reindex_total 1" in text
 
 

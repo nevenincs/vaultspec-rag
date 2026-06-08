@@ -357,15 +357,15 @@ class TestCliMcpFastPath:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_try_http_search_uses_asyncio_run(self):
+    def test_try_http_search_uses_urllib(self):
         import inspect
 
         from vaultspec_rag.cli._http_search import _try_http_search
 
         src = inspect.getsource(_try_http_search)
-        assert "asyncio.run(" in src, (
-            "_try_http_search must use asyncio.run() not loop.run_until_complete(); "
-            "Typer handlers are always sync so asyncio.run() is safe and correct"
+        assert "urllib.request" in src, (
+            "_try_http_search must use synchronous urllib.request instead of async HTTP "
+            "because Typer handlers are sync."
         )
 
 

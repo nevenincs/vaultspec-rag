@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ...embeddings import EmbeddingModel
 
 runner = CliRunner()
 
@@ -59,14 +58,12 @@ def _make_root(tmp_path: Path) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.integration
+@pytest.mark.subprocess_gpu
 async def test_get_service_state_consolidated_shape(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    _clean_watchers: None,
+    live_service: tuple[int, Path],  # noqa: ARG001
 ) -> None:
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
 
     state = await admin.get_service_state(project_root=str(root))
 

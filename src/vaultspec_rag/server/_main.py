@@ -89,9 +89,15 @@ def main(port: int | None = None) -> None:
             backup_count=int(cfg.service_log_backup_count),
         )
 
-
-
         from ._routes import ROUTES as READ_ONLY_ROUTES
+
+        def _mcp_no_redirect(app):
+            async def _wrapper(scope, receive, send):
+                if scope["type"] == "http" and scope.get("path") == "/mcp":
+                    scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
+                await app(scope, receive, send)
+
+            return _wrapper
 
         # ``/health`` stays UNGATED (registered here, not in
         # ``_routes``); the P03 read-only routes (e.g. token-gated
@@ -101,6 +107,7 @@ def main(port: int | None = None) -> None:
         app = Starlette(
             routes=[
                 Route("/health", health_handler),
+                Mount("/mcp", mcp.get_starlette_app()),  # type: ignore
                 *READ_ONLY_ROUTES,
             ],
             lifespan=service_lifespan,
@@ -108,7 +115,7 @@ def main(port: int | None = None) -> None:
 
         try:
             uvicorn.run(
-                app,
+                _mcp_no_redirect(app),
                 host="127.0.0.1",
                 port=port,
                 timeout_graceful_shutdown=30,

@@ -246,22 +246,23 @@ class TestServerCommands:
     def test_server_help(self):
         result = runner.invoke(app, ["server", "--help"])
         assert result.exit_code == 0
-        assert "start" in result.output
+        assert "service" in result.output
+        assert "mcp" in result.output
 
     def test_mcp_help(self):
-        result = runner.invoke(app, ["mcp", "--help"])
+        result = runner.invoke(app, ["server", "mcp", "--help"])
         assert result.exit_code == 0
         assert "start" in result.output
         assert "stop" in result.output
         assert "status" in result.output
 
     def test_mcp_stop(self):
-        result = runner.invoke(app, ["mcp", "stop"])
+        result = runner.invoke(app, ["server", "mcp", "stop"])
         assert result.exit_code == 0
         assert "stdio" in result.output.lower()
 
     def test_mcp_status(self):
-        result = runner.invoke(app, ["mcp", "status"])
+        result = runner.invoke(app, ["server", "mcp", "status"])
         assert result.exit_code == 0
         assert "VaultSpec Search" in result.output
         assert "stdio" in result.output
@@ -274,7 +275,7 @@ class TestServerCommands:
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
-            result = runner.invoke(app, ["server", "stop"])
+            result = runner.invoke(app, ["server", "service", "stop"])
             assert result.exit_code == 0
             assert (
                 "not running" in result.output.lower() or "No service" in result.output
@@ -288,7 +289,7 @@ class TestServerCommands:
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
-            result = runner.invoke(app, ["server", "status"])
+            result = runner.invoke(app, ["server", "service", "status"])
             assert result.exit_code == 3
             assert "stopped" in result.output.lower()
         finally:
@@ -396,7 +397,7 @@ class TestServiceLifecycleHelpers:
             ).isoformat(timespec="seconds")
             sf.write_text(json.dumps(data), encoding="utf-8")
 
-            result = runner.invoke(app, ["server", "status"])
+            result = runner.invoke(app, ["server", "service", "status"])
             assert result.exit_code == 4
             # Port 1 likely yields "crashed (port silent)" first because
             # port-not-listening is checked before heartbeat staleness in
@@ -1199,7 +1200,7 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "win32")
 
-            result = runner.invoke(app, ["server", "stop"])
+            result = runner.invoke(app, ["server", "service", "stop"])
             assert result.exit_code == 0, result.output
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
@@ -1233,7 +1234,7 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "linux")
 
-            result = runner.invoke(app, ["server", "stop"])
+            result = runner.invoke(app, ["server", "service", "stop"])
             assert result.exit_code == 0, result.output
 
             # No CLI-emitted line on POSIX.
@@ -1434,7 +1435,7 @@ class TestServiceDaemonHelpers:
             sf = tmp_path / "service.json"
             assert sf.exists()
 
-            result = runner.invoke(app, ["server", "stop"])
+            result = runner.invoke(app, ["server", "service", "stop"])
             assert result.exit_code == 0
             out = result.output.lower()
             assert "no longer running" in out or "cleaned" in out
@@ -1454,7 +1455,7 @@ class TestServiceDaemonHelpers:
             sf = tmp_path / "service.json"
             assert sf.exists()
 
-            result = runner.invoke(app, ["server", "status"])
+            result = runner.invoke(app, ["server", "service", "status"])
             assert result.exit_code == 4
             lower = result.output.lower()
             assert "crashed" in lower or "stale" in lower
@@ -1546,7 +1547,7 @@ class TestServiceDaemonHelpers:
             data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
             sf.write_text(json.dumps(data), encoding="utf-8")
 
-            result = runner.invoke(app, ["server", "status"])
+            result = runner.invoke(app, ["server", "service", "status"])
 
             assert result.exit_code == 0
             assert "Projects" in result.output
@@ -1583,7 +1584,7 @@ class TestServiceProjectsCli:
     def test_projects_list_help_renders(self) -> None:
         result = runner.invoke(
             app,
-            ["server", "projects", "list", "--help"],
+            ["server", "service", "projects", "list", "--help"],
         )
         assert result.exit_code == 0
         assert "project slots" in result.output.lower()
@@ -1591,7 +1592,7 @@ class TestServiceProjectsCli:
     def test_projects_evict_help_renders(self) -> None:
         result = runner.invoke(
             app,
-            ["server", "projects", "evict", "--help"],
+            ["server", "service", "projects", "evict", "--help"],
         )
         assert result.exit_code == 0
         assert "Evict" in result.output or "evict" in result.output
@@ -1600,7 +1601,7 @@ class TestServiceProjectsCli:
         port = _find_free_port()
         result = runner.invoke(
             app,
-            ["server", "projects", "list", "--port", str(port)],
+            ["server", "service", "projects", "list", "--port", str(port)],
         )
         assert result.exit_code == 3
 
@@ -1610,6 +1611,7 @@ class TestServiceProjectsCli:
             app,
             [
                 "server",
+                "service",
                 "projects",
                 "evict",
                 "/some/root",
@@ -2085,7 +2087,7 @@ class TestJsonOutputMode:
         try:
             result = runner.invoke(
                 app,
-                ["server", "status", "--json"],
+                ["server", "service", "status", "--json"],
             )
             assert result.exit_code == 3
             env = self._parse_envelope(result.output)
@@ -2101,7 +2103,7 @@ class TestJsonOutputMode:
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=99999999, port=8766)
-            result = runner.invoke(app, ["server", "status", "--json"])
+            result = runner.invoke(app, ["server", "service", "status", "--json"])
             assert result.exit_code == 4
             env = self._parse_envelope(result.output)
             assert env["ok"] is False
@@ -2194,7 +2196,7 @@ class TestJsonStdoutPurityAcrossCommands:
     # (id, argv-after-binary, expected_exit_code_predicate)
     _SCENARIOS: typing.ClassVar = [
         # service status with no daemon - exit 3, ok=false envelope
-        ("service-status-stopped", ["server", "status", "--json"]),
+        ("service-status-stopped", ["server", "service", "status", "--json"]),
         # search filter mismatch - exit 2, ok=false envelope
         (
             "search-filter-mismatch",

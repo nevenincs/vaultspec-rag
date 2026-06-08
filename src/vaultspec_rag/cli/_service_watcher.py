@@ -26,8 +26,7 @@ def _watcher_service_unreachable(
         _emit_json_error_and_exit(
             command,
             "service_not_running",
-            "Service is not running. Start it with "
-            "`vaultspec-rag server start`.",
+            "Service is not running. Start it with `vaultspec-rag server start`.",
             3,
             **extra,
         )

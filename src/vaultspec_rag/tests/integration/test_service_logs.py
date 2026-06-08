@@ -182,25 +182,18 @@ def test_logs_route_respects_lines_param(
 # --------------------------------------------------------------------------- #
 
 
-async def test_get_logs_tool_returns_lines(tmp_path: Path) -> None:
-    import os
+@pytest.mark.subprocess_gpu
+async def test_get_logs_tool_returns_lines(live_service: tuple[int, Path]) -> None:
+    _port, status_dir = live_service
 
-    from ...config import EnvVar, reset_config
+    # Append to the real log file so we can read it back via the API
+    with open(status_dir / "service.log", "a", encoding="utf-8") as f:
+        f.write("m1\nm2\n")
 
-    (tmp_path / "service.log").write_text("m1\nm2\n", encoding="utf-8")
-    prev_env = os.environ.get(EnvVar.STATUS_DIR.value)
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
-    reset_config()
-    try:
-        result = await admin.get_logs(lines=10)
-    finally:
-        if prev_env is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev_env
-        reset_config()
+    result = await admin.get_logs(lines=10)
 
-    assert result == {"lines": ["m1", "m2"]}
+    assert "m1" in result["lines"]
+    assert "m2" in result["lines"]
 
 
 def test_logs_not_running_json() -> None:

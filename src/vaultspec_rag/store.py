@@ -685,7 +685,7 @@ class VaultStore:
 
         with self._client_lock:
             self.ensure_code_table()
-        
+
         scroll_filter = models.Filter(
             must=[
                 models.FieldCondition(
@@ -776,7 +776,7 @@ class VaultStore:
 
         with self._client_lock:
             self.ensure_table()
-        
+
         scroll_filter = None
         if doc_type:
             scroll_filter = models.Filter(

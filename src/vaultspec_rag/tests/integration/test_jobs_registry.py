@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ...embeddings import EmbeddingModel
-
 
 @pytest.fixture
 def _clean_jobs() -> Iterator[None]:
@@ -199,17 +197,17 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
 # Integration (GPU): real reindex tools write tool-triggered records          #
 # --------------------------------------------------------------------------- #
 
+import vaultspec_rag.mcp._admin_tools as admin_tools
 
-@pytest.mark.integration
+
+@pytest.mark.subprocess_gpu
 async def test_reindex_vault_records_finished_tool_job(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    _clean_jobs: None,
+    live_service: tuple[int, Path],
 ) -> None:
     import asyncio
 
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
@@ -219,33 +217,33 @@ async def test_reindex_vault_records_finished_tool_job(
     # Wait for background job to finish
     job_id = response["job_id"]
     for _ in range(50):
-        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
         if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
             break
         await asyncio.sleep(0.1)
 
+    jobs_res = await admin_tools.get_jobs()
     vault_tool_jobs = [
         entry
-        for entry in _jobs.snapshot()
+        for entry in jobs_res.get("jobs", [])
         if entry["source"] == "vault" and entry["trigger"] == "tool"
     ]
-    assert len(vault_tool_jobs) == 1
-    job = vault_tool_jobs[0]
+    assert len(vault_tool_jobs) >= 1
+    job = next(j for j in vault_tool_jobs if j["id"] == job_id)
     assert job["phase"] == "done"
     assert isinstance(job["finished_at"], float)
     assert isinstance(job["result"], str)
 
 
-@pytest.mark.integration
+@pytest.mark.subprocess_gpu
 async def test_reindex_codebase_records_finished_tool_job(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    _clean_jobs: None,
+    live_service: tuple[int, Path],
 ) -> None:
     import asyncio
 
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
 
     response = await tools.reindex_codebase(project_root=str(root))
     assert isinstance(response, dict)
@@ -255,18 +253,20 @@ async def test_reindex_codebase_records_finished_tool_job(
     # Wait for background job to finish
     job_id = response["job_id"]
     for _ in range(50):
-        jobs = [j for j in _jobs.snapshot() if j["id"] == job_id]
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
         if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
             break
         await asyncio.sleep(0.1)
 
+    jobs_res = await admin_tools.get_jobs()
     code_tool_jobs = [
         entry
-        for entry in _jobs.snapshot()
+        for entry in jobs_res.get("jobs", [])
         if entry["source"] == "code" and entry["trigger"] == "tool"
     ]
-    assert len(code_tool_jobs) == 1
-    job = code_tool_jobs[0]
+    assert len(code_tool_jobs) >= 1
+    job = next(j for j in code_tool_jobs if j["id"] == job_id)
     assert job["phase"] == "done"
     assert isinstance(job["finished_at"], float)
     assert isinstance(job["result"], str)

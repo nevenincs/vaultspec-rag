@@ -28,9 +28,7 @@ def _is_connection_refused(exc: BaseException) -> bool:
             getattr(errno, "WSAECONNREFUSED", 10061),
         ):
             return True
-    if isinstance(exc, ConnectionRefusedError):
-        return True
-    return False
+    return bool(isinstance(exc, ConnectionRefusedError))
 
 
 def _do_http_call(

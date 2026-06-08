@@ -80,7 +80,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
 
         result = runner.invoke(
             app,
-            ["server", "start", "--port", str(port)],
+            ["server", "service", "start", "--port", str(port)],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         assert "already in use" in (result.stdout or "").lower(), (
@@ -104,9 +104,9 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
         status_path.write_text(json.dumps(stale_data), encoding="utf-8")
 
         try:
-            result = runner.invoke(
+            result2 = runner.invoke(
                 app,
-                ["server", "start", "--port", str(port)],
+                ["server", "service", "start", "--port", str(port)],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
 
@@ -114,7 +114,7 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
             new_status = _read_service_status()
             assert new_status is not None, (
                 f"Expected new status file after stale recovery, got None. "
-                f"CLI output: {result.stdout!r}"
+                f"CLI output: {result2.stdout!r}"
             )
             new_pid = int(new_status["pid"])
             assert new_pid != 99999
@@ -136,7 +136,7 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
     with _service_env(tmp_path):
         result = runner.invoke(
             app,
-            ["server", "stop"],
+            ["server", "service", "stop"],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         output = (result.stdout or "").lower()
@@ -160,7 +160,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
 
         runner.invoke(
             app,
-            ["server", "stop"],
+            ["server", "service", "stop"],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
 
@@ -195,12 +195,12 @@ def test_service_status_running(
         deadline = time.monotonic() + 30.0
         output = ""
         while time.monotonic() < deadline:
-            result = runner.invoke(
+            result2 = runner.invoke(
                 app,
-                ["server", "status"],
+                ["server", "service", "status"],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
-            output = result.stdout or ""
+            output = result2.stdout or ""
             if "running" in output.lower():
                 break
             time.sleep(1.0)

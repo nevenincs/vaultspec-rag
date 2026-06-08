@@ -39,8 +39,7 @@ def _handle_list_not_running(json_mode: bool) -> NoReturn:
         _emit_json_error_and_exit(
             "service.projects.list",
             "service_not_running",
-            "Service is not running. Start it with "
-            "`vaultspec-rag server start`.",
+            "Service is not running. Start it with `vaultspec-rag server start`.",
             3,
         )
     _cli.console.print(
@@ -130,8 +129,7 @@ def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:
         _emit_json_error_and_exit(
             "service.projects.evict",
             "service_not_running",
-            "Service is not running. Start it with "
-            "`vaultspec-rag server start`.",
+            "Service is not running. Start it with `vaultspec-rag server start`.",
             3,
             root=root,
         )

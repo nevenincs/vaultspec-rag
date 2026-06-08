@@ -537,7 +537,11 @@ class VaultSearcher:
         query_text = parsed.text or raw_query
         with self._gpu_lock if self._gpu_lock is not None else nullcontext():
             query_vector = self.model.encode_query(query_text).tolist()
-            sparse_vector = self.model.encode_query_sparse(query_text) if self._sparse_enabled else None
+            sparse_vector = (
+                self.model.encode_query_sparse(query_text)
+                if self._sparse_enabled
+                else None
+            )
         return parsed, query_text, query_vector, sparse_vector
 
     def search_vault(

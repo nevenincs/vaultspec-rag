@@ -28,7 +28,8 @@ app = typer.Typer(
 )
 
 # Command Groups
-server_app = typer.Typer(help="Manage local or containerized RAG services.")
+server_root_app = typer.Typer(help="Manage local or containerized RAG services.")
+server_app = typer.Typer(help="Manage the HTTP RAG service.")
 mcp_app = typer.Typer(help="Control the Model Context Protocol (MCP) server.")
 server_projects_app = typer.Typer(
     help="Inspect and evict project slots on a running RAG service.",
@@ -37,8 +38,9 @@ server_watcher_app = typer.Typer(
     help="Inspect and control the filesystem auto-reindex watcher.",
 )
 
-app.add_typer(server_app, name="server")
-app.add_typer(mcp_app, name="mcp")
+app.add_typer(server_root_app, name="server")
+server_root_app.add_typer(server_app, name="service")
+server_root_app.add_typer(mcp_app, name="mcp")
 server_app.add_typer(server_projects_app, name="projects")
 server_app.add_typer(server_watcher_app, name="watcher")
 

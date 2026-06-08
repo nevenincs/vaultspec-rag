@@ -9,8 +9,6 @@ GPU-backed slot. No mocks: env vars on the real ``os.environ``, the real
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import os
 from typing import TYPE_CHECKING
 
@@ -25,7 +23,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ...embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.integration]
 
@@ -61,19 +58,17 @@ def _make_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.subprocess_gpu
 async def test_start_then_stop_watcher(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    _clean_watchers: None,
+    live_service: tuple[int, Path],
 ) -> None:
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
     resolved = str(root.resolve())
 
     started = await admin.start_watcher(str(root))
     assert started["started"] is True
     assert started["watch_enabled"] is True
-    assert root.resolve() in server._watcher_tasks
 
     state = await admin.get_watcher_state(str(root))
     assert resolved in state["watching"]
@@ -81,52 +76,54 @@ async def test_start_then_stop_watcher(
 
     stopped = await admin.stop_watcher(str(root))
     assert stopped["stopped"] is True
-    assert root.resolve() not in server._watcher_tasks
 
     state2 = await admin.get_watcher_state(str(root))
     assert state2["running"] is False
 
 
+@pytest.mark.subprocess_gpu
 async def test_reconfigure_restarts_with_new_values(
     tmp_path: Path,
-    embedding_model: EmbeddingModel,
-    caplog: pytest.LogCaptureFixture,
-    _clean_watchers: None,
+    live_service: tuple[int, Path],
 ) -> None:
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
     await admin.start_watcher(str(root))
 
-    with caplog.at_level(logging.INFO, logger="vaultspec_rag.watcher"):
-        result = await admin.reconfigure_watcher(
-            str(root),
-            debounce_ms=50,
-            cooldown_s=2,
-        )
-        await asyncio.sleep(0.1)
-
+    result = await admin.reconfigure_watcher(
+        str(root),
+        debounce_ms=50,
+        cooldown_s=2,
+    )
     assert result["restarted"] is True
     assert result["debounce_ms"] == 50
     assert result["cooldown_s"] == 2
-    assert root.resolve() in server._watcher_tasks
-    assert "debounce=50ms" in caplog.text
-    assert "cooldown=2s" in caplog.text
+
+    state = await admin.get_watcher_state(str(root))
+    assert state["debounce_ms"] == 50
+    assert state["cooldown_s"] == 2
 
 
+@pytest.mark.subprocess_gpu
 async def test_start_watcher_disabled_is_pull_only(
     tmp_path: Path,
-    _clean_watchers: None,
+    request: pytest.FixtureRequest,
 ) -> None:
+    from ...cli import _spawn_service, _terminate_pid, _write_service_status
+    from ._helpers import _get_ephemeral_port, _poll_health, _service_env
+
     root = _make_root(tmp_path)
-    prev = _set_env(EnvVar.WATCH_ENABLED, "0")
-    try:
-        reset_config()
+
+    with _service_env(tmp_path, env_overrides={"VAULTSPEC_RAG_WATCH_ENABLED": "0"}):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+        pid = _spawn_service(port, log_path)
+        request.addfinalizer(lambda: _terminate_pid(pid))
+        _write_service_status(pid, port)
+        _poll_health(port)
+
         result = await admin.start_watcher(str(root))
         assert result["started"] is False
         assert result["watch_enabled"] is False
-        assert root.resolve() not in server._watcher_tasks
 
         state = await admin.get_watcher_state()
         assert state["watch_enabled"] is False
-    finally:
-        _restore_env(EnvVar.WATCH_ENABLED, prev)

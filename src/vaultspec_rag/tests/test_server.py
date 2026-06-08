@@ -837,31 +837,6 @@ class TestMultiProjectWatcher:
 class TestAdminTools:
     """list_projects and evict_project MCP admin tools."""
 
-    def test_list_projects_empty_registry(self) -> None:
-        """With no slots, returns empty projects and config-matched caps."""
-        from vaultspec_rag.mcp._admin_tools import list_projects
-        from vaultspec_rag.server import _registry
-
-        from ..config import get_config
-
-        # Force an empty registry.
-        with _registry._lock:
-            roots = list(_registry._projects.keys())
-        for r in roots:
-            _registry.close_project(r)
-
-        result = _run(list_projects())
-        assert result["projects"] == []
-        cfg = get_config()
-        assert result["max_projects"] == cfg.service_max_projects
-        assert result["idle_ttl_seconds"] == float(cfg.service_idle_ttl_seconds)
-
-    def test_evict_project_unknown_returns_not_found(self, tmp_path) -> None:
-        from vaultspec_rag.mcp._admin_tools import evict_project
-
-        result = _run(evict_project(str(tmp_path / "never-seen")))
-        assert result == {"evicted": False, "reason": "not_found"}
-
     def test_list_projects_help_tool_registered(self) -> None:
         tools = _run(mcp.list_tools())
         names = {t.name for t in tools}

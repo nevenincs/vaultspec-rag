@@ -152,17 +152,17 @@ def _clamp_limit(raw: str | None) -> int | None:
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
-        Returns the newest-first :mod:`._jobs` registry snapshot as JSON -
-        parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
-        the registry. An optional ``?limit=N`` query parameter caps the
-        number of returned records (newest first).
+    Returns the newest-first :mod:`._jobs` registry snapshot as JSON -
+    parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
+    the registry. An optional ``?limit=N`` query parameter caps the
+    number of returned records (newest first).
 
-        Args:
-            request: The incoming Starlette request.
+    Args:
+        request: The incoming Starlette request.
 
-        Returns:
-            A ``JSONResponse`` of ``{"jobs": [...]}``, or the
-            ``require_token`` 401 ``JSONResponse``.
+    Returns:
+        A ``JSONResponse`` of ``{"jobs": [...]}``, or the
+        ``require_token`` 401 ``JSONResponse``.
     """
     denied = require_token(request)
     if denied is not None:
@@ -461,13 +461,16 @@ async def benchmark_route(request: Request) -> JSONResponse:
     project_root = payload.get("project_root")
     n_queries = payload.get("n_queries", 20)
     from ._utils import _resolve_root
+
     root = _resolve_root(project_root)
-    
+
     def _run():
         import vaultspec_rag
+
         return vaultspec_rag.run_benchmark(root, n_queries=n_queries)
-        
+
     from anyio.to_thread import run_sync as _run_in_thread
+
     res = await _run_in_thread(_run)
     return JSONResponse(res)
 
@@ -476,12 +479,14 @@ async def quality_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-        
+
     def _run():
         import vaultspec_rag
+
         return vaultspec_rag.run_quality_probe()
-        
+
     from anyio.to_thread import run_sync as _run_in_thread
+
     res = await _run_in_thread(_run)
     return JSONResponse(res)
 

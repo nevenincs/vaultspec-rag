@@ -31,3 +31,19 @@ def rag_components_with_code(embedding_model, tmp_path_factory):
     yield {**components, "manifest": manifest}
 
     components["store"].close()
+
+
+@pytest.fixture
+def live_service(request, tmp_path):
+    """Provides a running real background service and its temp status directory."""
+    from ...cli import _spawn_service, _terminate_pid, _write_service_status
+    from ._helpers import _get_ephemeral_port, _poll_health, _service_env
+
+    with _service_env(tmp_path):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+        pid = _spawn_service(port, log_path)
+        request.addfinalizer(lambda: _terminate_pid(pid))
+        _write_service_status(pid, port)
+        _poll_health(port)
+        yield port, tmp_path

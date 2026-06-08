@@ -169,8 +169,9 @@ def encode_and_upsert_code_slice(
             are short and length-uniform.
     """
     from ..config import get_config
+
     cfg = get_config()
-    
+
     if not slice_chunks:
         return
     slice_texts = [c.content for c in slice_chunks]

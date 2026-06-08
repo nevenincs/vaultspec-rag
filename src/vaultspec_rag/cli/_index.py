@@ -171,9 +171,7 @@ def _print_mcp_async_results(
         _cli.console.print(
             f"Codebase re-index job queued on service: [cyan]{c_data.get('job_id')}[/]"
         )
-    _cli.console.print(
-        "Check progress with: [bold]vaultspec-rag server jobs[/]"
-    )
+    _cli.console.print("Check progress with: [bold]vaultspec-rag server jobs[/]")
     return True
 
 
