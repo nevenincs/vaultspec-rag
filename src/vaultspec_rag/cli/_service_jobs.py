@@ -15,7 +15,7 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ._app import service_app
+from ._app import server_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
@@ -44,7 +44,7 @@ def _format_running_job_result(job: dict[str, object]) -> str:
     return f"[yellow]{step} ({completed})[/]{elapsed_str}"
 
 
-@service_app.command("jobs")
+@server_app.command("jobs")
 def service_jobs(
     limit: Annotated[
         int | None,

@@ -9,7 +9,7 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ._app import service_watcher_app
+from ._app import server_watcher_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_projects import _truncate_root
@@ -38,7 +38,7 @@ def _watcher_service_unreachable(
     raise typer.Exit(3)
 
 
-@service_watcher_app.command("status")
+@server_watcher_app.command("status")
 def service_watcher_status(
     port: Annotated[
         int | None,
@@ -79,7 +79,7 @@ def service_watcher_status(
     _cli.console.print(table)
 
 
-@service_watcher_app.command("start")
+@server_watcher_app.command("start")
 def service_watcher_start(
     root: Annotated[str, typer.Argument(help="Project root to watch.")],
     port: Annotated[
@@ -114,7 +114,7 @@ def service_watcher_start(
     raise typer.Exit(0)
 
 
-@service_watcher_app.command("stop")
+@server_watcher_app.command("stop")
 def service_watcher_stop(
     root: Annotated[str, typer.Argument(help="Project root to stop watching.")],
     port: Annotated[
@@ -143,7 +143,7 @@ def service_watcher_stop(
     raise typer.Exit(0)
 
 
-@service_watcher_app.command("reconfigure")
+@server_watcher_app.command("reconfigure")
 def service_watcher_reconfigure(
     root: Annotated[str, typer.Argument(help="Project root to reconfigure.")],
     debounce_ms: Annotated[

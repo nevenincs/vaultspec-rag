@@ -21,19 +21,19 @@ This plan implements the structural and terminological deconflation of the RAG S
 
 Rename mcp_server to server, implement REST endpoints, and isolate mcp protocol adapter
 
-- [ ] `P01.S01` - Rename vaultspec_rag/mcp_server to vaultspec_rag/server and update console script entrypoints; `src/vaultspec_rag/server`, `pyproject.toml`.
-- [ ] `P01.S02` - Extract MCP protocol layer to vaultspec_rag/mcp; `src/vaultspec_rag/mcp`.
-- [ ] `P01.S03` - Implement REST API endpoints (/search, /reindex) for the daemon; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `P01.S04` - Rewrite MCP tools to strictly consume the REST API instead of in-process routing; `src/vaultspec_rag/mcp/_tools.py`.
-- [ ] `P01.S05` - Rewrite CLI delegation to use HTTP REST client instead of MCP client; `src/vaultspec_rag/cli/_mcp_search.py` -> `_http_search.py`.
-- [ ] `P01.S06` - Rename test_mcp_server.py to test_server.py and update test imports; `tests/test_mcp_server.py`.
-- [ ] `P01.S07` - Update mcp_server references in CLI and daemon tests; `tests/`.
+- [x] `P01.S01` - Rename vaultspec_rag/mcp_server to vaultspec_rag/server and update console script entrypoints; `src/vaultspec_rag/server`, `pyproject.toml`.
+- [x] `P01.S02` - Extract MCP protocol layer to vaultspec_rag/mcp; `src/vaultspec_rag/mcp`.
+- [x] `P01.S03` - Implement REST API endpoints (/search, /reindex) for the daemon; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P01.S04` - Rewrite MCP tools to strictly consume the REST API instead of in-process routing; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `P01.S05` - Rewrite CLI delegation to use HTTP REST client instead of MCP client; `src/vaultspec_rag/cli/_mcp_search.py` -> `_http_search.py`.
+- [x] `P01.S06` - Rename test_mcp_server.py to test_server.py and update test imports; `tests/test_mcp_server.py`.
+- [x] `P01.S07` - Update mcp_server references in CLI and daemon tests; `tests/`.
 
 ### Phase `P02` - CLI and Docs Redesign
 
 Flatten the CLI command hierarchy and audit docstrings
 
-- [ ] `P02.S09` - Flatten server service to server, and decouple mcp startup; `src/vaultspec_rag/cli/_app.py`, `_mcp_admin.py`.
+- [x] `P02.S09` - Flatten server service to server, and decouple mcp startup; `src/vaultspec_rag/cli/_app.py`, `_mcp_admin.py`.
 - [ ] `P02.S10` - Audit docstrings and help text; `src/vaultspec_rag/cli`.
 - [ ] `P02.S11` - Update mcp_server entrypoint in framework rules and sync; `.vaultspec/rules/`.
 

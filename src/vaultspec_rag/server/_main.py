@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 
 import vaultspec_rag.server as _m
-from vaultspec_rag.mcp import mcp
 
 from ._lifespan import health_handler, service_lifespan
 
@@ -22,6 +21,8 @@ logger = logging.getLogger("vaultspec_rag.server")
 
 
 def main(port: int | None = None) -> None:
+    from vaultspec_rag.mcp import mcp
+
     """Start the MCP server on stdio or HTTP transport.
 
     In HTTP mode, builds a Starlette app that mounts the MCP

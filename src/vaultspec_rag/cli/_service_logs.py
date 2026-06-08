@@ -14,13 +14,13 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from ._app import service_app
+from ._app import server_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
 
-@service_app.command("logs")
+@server_app.command("logs")
 def service_logs(
     lines: Annotated[
         int,

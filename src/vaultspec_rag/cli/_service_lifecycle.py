@@ -14,7 +14,7 @@ from rich.table import Table
 import vaultspec_rag.cli as _cli
 
 from ..config import EnvVar
-from ._app import service_app
+from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
@@ -33,7 +33,7 @@ from ._service_status import (
 )
 
 
-@service_app.command("start")
+@server_app.command("start")
 def service_start(
     port: Annotated[
         int,
@@ -177,7 +177,7 @@ def service_start(
     raise typer.Exit(code=1)
 
 
-@service_app.command("stop")
+@server_app.command("stop")
 def service_stop() -> None:
     """Stop the background RAG service.
 
@@ -453,7 +453,7 @@ def _render_status_table(
         raise typer.Exit(code=exit_code)
 
 
-@service_app.command("status")
+@server_app.command("status")
 def service_status(
     json_mode: Annotated[
         bool,
@@ -552,7 +552,7 @@ def service_status(
     )
 
 
-@service_app.command("warmup")
+@server_app.command("warmup")
 def service_warmup() -> None:
     """Pre-download GPU model files to the HuggingFace cache.
 

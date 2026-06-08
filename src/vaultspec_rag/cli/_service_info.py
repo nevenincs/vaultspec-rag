@@ -15,14 +15,14 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ._app import service_app
+from ._app import server_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_projects import _truncate_root
 from ._service_status import _default_service_port
 
 
-@service_app.command("info")
+@server_app.command("info")
 def service_info(
     port: Annotated[
         int | None,

@@ -28,21 +28,19 @@ app = typer.Typer(
 )
 
 # Command Groups
-server_app = typer.Typer(help="Manage RAG servers and backend services.")
+server_app = typer.Typer(help="Manage local or containerized RAG services.")
 mcp_app = typer.Typer(help="Control the Model Context Protocol (MCP) server.")
-service_app = typer.Typer(help="Manage local or containerized RAG services.")
-service_projects_app = typer.Typer(
+server_projects_app = typer.Typer(
     help="Inspect and evict project slots on a running RAG service.",
 )
-service_watcher_app = typer.Typer(
+server_watcher_app = typer.Typer(
     help="Inspect and control the filesystem auto-reindex watcher.",
 )
 
 app.add_typer(server_app, name="server")
-server_app.add_typer(mcp_app, name="mcp")
-server_app.add_typer(service_app, name="service")
-service_app.add_typer(service_projects_app, name="projects")
-service_app.add_typer(service_watcher_app, name="watcher")
+app.add_typer(mcp_app, name="mcp")
+server_app.add_typer(server_projects_app, name="projects")
+server_app.add_typer(server_watcher_app, name="watcher")
 
 
 class CLIState:

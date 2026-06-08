@@ -246,23 +246,22 @@ class TestServerCommands:
     def test_server_help(self):
         result = runner.invoke(app, ["server", "--help"])
         assert result.exit_code == 0
-        assert "mcp" in result.output
-        assert "service" in result.output
+        assert "start" in result.output
 
     def test_mcp_help(self):
-        result = runner.invoke(app, ["server", "mcp", "--help"])
+        result = runner.invoke(app, ["mcp", "--help"])
         assert result.exit_code == 0
         assert "start" in result.output
         assert "stop" in result.output
         assert "status" in result.output
 
     def test_mcp_stop(self):
-        result = runner.invoke(app, ["server", "mcp", "stop"])
+        result = runner.invoke(app, ["mcp", "stop"])
         assert result.exit_code == 0
         assert "stdio" in result.output.lower()
 
     def test_mcp_status(self):
-        result = runner.invoke(app, ["server", "mcp", "status"])
+        result = runner.invoke(app, ["mcp", "status"])
         assert result.exit_code == 0
         assert "VaultSpec Search" in result.output
         assert "stdio" in result.output
@@ -275,7 +274,7 @@ class TestServerCommands:
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0
             assert (
                 "not running" in result.output.lower() or "No service" in result.output
@@ -289,7 +288,7 @@ class TestServerCommands:
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 3
             assert "stopped" in result.output.lower()
         finally:
@@ -397,7 +396,7 @@ class TestServiceLifecycleHelpers:
             ).isoformat(timespec="seconds")
             sf.write_text(json.dumps(data), encoding="utf-8")
 
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 4
             # Port 1 likely yields "crashed (port silent)" first because
             # port-not-listening is checked before heartbeat staleness in
@@ -736,14 +735,13 @@ class TestMcpFastPath:
         relane to the unsafe in-process path. The fix preserves the
         ``None`` -> dead-service semantic for ConnectionRefused only.
         """
-        import asyncio
 
         from .. import cli as cli_mod
 
         def _boom(*_args, **_kwargs):
             raise RuntimeError("synthetic live-but-broken tool failure")
 
-        monkeypatch.setattr(asyncio, "run", _boom)
+        monkeypatch.setattr("vaultspec_rag.cli._http_search._do_http_call", _boom)
 
         result = cli_mod._try_http_search(
             "q",
@@ -754,19 +752,20 @@ class TestMcpFastPath:
         )
         assert isinstance(result, dict)
         assert result.get("ok") is False
-        assert result.get("error") == "mcp_call_failed"
+        assert result.get("error") == "http_call_failed"
         assert "synthetic live-but-broken" in str(result.get("message", ""))
 
     def test_live_but_broken_reindex_returns_structured_error(self, monkeypatch):
         """Same discrimination for _try_http_reindex."""
-        import asyncio
 
         from .. import cli as cli_mod
 
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("tool unavailable")
+        def mock_timeout(*_a, **_kw):
+            raise TimeoutError("synthetic mcp timeout")
 
-        monkeypatch.setattr(asyncio, "run", _boom)
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._http_search._do_http_call", mock_timeout
+        )
 
         result = cli_mod._try_http_reindex(
             "reindex_vault",
@@ -776,18 +775,17 @@ class TestMcpFastPath:
         )
         assert isinstance(result, dict)
         assert result.get("ok") is False
-        assert result.get("error") == "mcp_call_failed"
+        assert result.get("error") == "http_call_failed"
 
     def test_connection_refused_still_returns_none(self, monkeypatch):
         """Explicit ConnectionRefusedError must keep the dead-service path."""
-        import asyncio
 
         from .. import cli as cli_mod
 
         def _refuse(*_args, **_kwargs):
             raise ConnectionRefusedError("port closed")
 
-        monkeypatch.setattr(asyncio, "run", _refuse)
+        monkeypatch.setattr("vaultspec_rag.cli._http_search._do_http_call", _refuse)
 
         result = cli_mod._try_http_search(
             "q",
@@ -952,20 +950,14 @@ class TestSearchSafetyContract:
         assert "direct local-store search" in data["message"]
 
     def test_search_mcp_timeout_diagnostics(self, tmp_path, monkeypatch):
-        """Timeout in client inside _try_http_search returns mcp_search_timeout."""
+        """Timeout in client inside _try_http_search returns http_search_timeout."""
         from ..cli import _try_http_search
 
-        # Mock streamable_http_client to simulate a timeout
-        class DummyClient:
-            async def __aenter__(self):
-                raise TimeoutError("connection timed out")
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                pass
+        def mock_timeout(*_args, **_kwargs):
+            raise TimeoutError("connection timed out")
 
         monkeypatch.setattr(
-            "mcp.client.streamable_http.streamable_http_client",
-            lambda _url: DummyClient(),
+            "vaultspec_rag.cli._http_search._do_http_call", mock_timeout
         )
 
         res = _try_http_search(
@@ -978,10 +970,10 @@ class TestSearchSafetyContract:
         )
         assert isinstance(res, dict)
         assert res["ok"] is False
-        assert res["error"] == "mcp_search_timeout"
+        assert res["error"] == "http_search_timeout"
         msg = res["message"]
         assert isinstance(msg, str)
-        assert "timed out after the configured budget" in msg
+        assert "timed out after" in msg
 
 
 class TestCleanRequiredTarget:
@@ -1207,7 +1199,7 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "win32")
 
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
@@ -1241,7 +1233,7 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "linux")
 
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
 
             # No CLI-emitted line on POSIX.
@@ -1442,7 +1434,7 @@ class TestServiceDaemonHelpers:
             sf = tmp_path / "service.json"
             assert sf.exists()
 
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0
             out = result.output.lower()
             assert "no longer running" in out or "cleaned" in out
@@ -1462,7 +1454,7 @@ class TestServiceDaemonHelpers:
             sf = tmp_path / "service.json"
             assert sf.exists()
 
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 4
             lower = result.output.lower()
             assert "crashed" in lower or "stale" in lower
@@ -1554,7 +1546,7 @@ class TestServiceDaemonHelpers:
             data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
             sf.write_text(json.dumps(data), encoding="utf-8")
 
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0
             assert "Projects" in result.output
@@ -1591,7 +1583,7 @@ class TestServiceProjectsCli:
     def test_projects_list_help_renders(self) -> None:
         result = runner.invoke(
             app,
-            ["server", "service", "projects", "list", "--help"],
+            ["server", "projects", "list", "--help"],
         )
         assert result.exit_code == 0
         assert "project slots" in result.output.lower()
@@ -1599,7 +1591,7 @@ class TestServiceProjectsCli:
     def test_projects_evict_help_renders(self) -> None:
         result = runner.invoke(
             app,
-            ["server", "service", "projects", "evict", "--help"],
+            ["server", "projects", "evict", "--help"],
         )
         assert result.exit_code == 0
         assert "Evict" in result.output or "evict" in result.output
@@ -1608,7 +1600,7 @@ class TestServiceProjectsCli:
         port = _find_free_port()
         result = runner.invoke(
             app,
-            ["server", "service", "projects", "list", "--port", str(port)],
+            ["server", "projects", "list", "--port", str(port)],
         )
         assert result.exit_code == 3
 
@@ -1618,7 +1610,6 @@ class TestServiceProjectsCli:
             app,
             [
                 "server",
-                "service",
                 "projects",
                 "evict",
                 "/some/root",
@@ -2094,7 +2085,7 @@ class TestJsonOutputMode:
         try:
             result = runner.invoke(
                 app,
-                ["server", "service", "status", "--json"],
+                ["server", "status", "--json"],
             )
             assert result.exit_code == 3
             env = self._parse_envelope(result.output)
@@ -2110,7 +2101,7 @@ class TestJsonOutputMode:
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=99999999, port=8766)
-            result = runner.invoke(app, ["server", "service", "status", "--json"])
+            result = runner.invoke(app, ["server", "status", "--json"])
             assert result.exit_code == 4
             env = self._parse_envelope(result.output)
             assert env["ok"] is False
@@ -2203,7 +2194,7 @@ class TestJsonStdoutPurityAcrossCommands:
     # (id, argv-after-binary, expected_exit_code_predicate)
     _SCENARIOS: typing.ClassVar = [
         # service status with no daemon - exit 3, ok=false envelope
-        ("service-status-stopped", ["server", "service", "status", "--json"]),
+        ("service-status-stopped", ["server", "status", "--json"]),
         # search filter mismatch - exit 2, ok=false envelope
         (
             "search-filter-mismatch",

@@ -116,6 +116,31 @@ def _try_http_admin(
             res = _do_http_call(port, url_path, None)
         elif tool_name == "get_code_file":
             res = _do_http_call(port, "/code-file", args)
+        elif tool_name == "list_projects":
+            url_path = "/projects"
+            if args.get("project_root"):
+                import urllib.parse
+
+                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
+            res = _do_http_call(port, url_path, None)
+        elif tool_name == "evict_project":
+            res = _do_http_call(port, "/projects/evict", args)
+        elif tool_name == "get_watcher_state":
+            url_path = "/watcher"
+            if args.get("project_root"):
+                import urllib.parse
+
+                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
+            res = _do_http_call(port, url_path, None)
+        elif tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
+            res = _do_http_call(port, f"/watcher/{tool_name.split('_')[0]}", args)
+        elif tool_name == "get_service_state":
+            url_path = "/service-state"
+            if args.get("project_root"):
+                import urllib.parse
+
+                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
+            res = _do_http_call(port, url_path, None)
         else:
             # Fallback for others if any
             res = {

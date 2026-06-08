@@ -9,7 +9,7 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ._app import service_projects_app
+from ._app import server_projects_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
@@ -83,7 +83,7 @@ def _print_projects_table(
     )
 
 
-@service_projects_app.command("list")
+@server_projects_app.command("list")
 def service_projects_list(
     port: Annotated[
         int | None,
@@ -164,7 +164,7 @@ def _handle_evict_json(
     )
 
 
-@service_projects_app.command("evict")
+@server_projects_app.command("evict")
 def service_projects_evict(
     root: Annotated[str, typer.Argument(help="Project root to evict.")],
     port: Annotated[
