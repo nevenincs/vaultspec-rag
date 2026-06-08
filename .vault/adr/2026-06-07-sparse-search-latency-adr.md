@@ -7,9 +7,9 @@ related:
   - "[[2026-06-07-sparse-search-latency-research]]"
 ---
 
-# `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `proposed`)
+# `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `approved`)
 
-> **Approval Pending**: Approval of this ADR is blocked pending the full implementation of the MCP vs. Server terminological deconflation (Issues #167, #168, #169). The CLI and MCP layers must be fully decoupled and the architectural conflation resolved before these latency optimizations can proceed.
+> **Approval Granted**: The blocked status of this ADR was lifted following the successful implementation of the MCP vs. Server terminological deconflation (Issues #167, #168, #169). The CLI and MCP layers are now fully decoupled, satisfying the prerequisite for proceeding with latency optimizations.
 
 ## Problem Statement
 
@@ -32,12 +32,12 @@ During full-codebase queries, local-mode search experiences severe latency (up t
 
 1. **Zero-Business Logic Enforcement:**
 
-   - Refactor `src/vaultspec_rag/mcp_server/_tools.py` to route the `reindex_vault` and `reindex_codebase` jobs through the unified `vaultspec_rag` top-level API, removing direct dependencies on the internal `jobs` module.
+   - **Completed**: Refactored `src/vaultspec_rag/mcp/_tools.py` to route the `reindex_vault` and `reindex_codebase` jobs through the unified `vaultspec_rag` top-level API via the `/reindex` REST endpoint, successfully removing direct dependencies on the internal `jobs` module.
 
 1. **Search Latency Optimizations:**
 
    - **Dense-Only Fallback:** Introduce a `sparse_enabled: bool` toggle to `_RAG_DEFAULTS` inside the configuration module. When `False`, skip SPLADE computation and sparse matching entirely, relying purely on fast dense searches.
-   - **Payload Pre-Filtering:** Update the search querying logic to propagate `include_paths`, `exclude_paths`, and `language` parameters directly into Qdrant `Filter` conditions, ensuring the search engine narrows the vector space prior to computing scores.
+   - **Payload Pre-Filtering:** Update the search querying logic to propagate `include_paths`, `exclude_paths`, and `language` parameters directly into Qdrant `Filter` conditions, ensuring the search engine narrows the vector space prior to computing scores. Since `include_paths` and `exclude_paths` are glob patterns, they will be translated into regex-backed Qdrant `MatchPattern` filters instead of doing post-query Python iteration.
    - **Server Mode Support:** Formalize and document the use of `VAULTSPEC_RAG_QDRANT_URL` to enable connecting to high-performance remote Qdrant instances.
 
 ## Rationale
