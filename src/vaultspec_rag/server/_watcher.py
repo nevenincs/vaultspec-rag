@@ -1,6 +1,6 @@
 """Filesystem-watcher lifecycle for resident projects.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. The watcher bookkeeping dicts and lock
 are mutated in place; the registry is read through the package alias so
 a test rebind of ``_registry`` is observed. ``_ensure_watcher`` keeps
@@ -14,12 +14,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 
 def _ensure_watcher(

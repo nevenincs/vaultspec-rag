@@ -67,7 +67,7 @@ def _append_lifecycle_shutdown_log(reason: str, **kv: object) -> None:
     Used on Windows only - the daemon's atexit handler does not fire
     under ``TerminateProcess``, so the CLI parent emits a mirror line
     itself after a successful stop. Matches the daemon-side
-    :func:`mcp_server._lifecycle_log` format so grep queries cover
+    :func:`server._lifecycle_log` format so grep queries cover
     both code paths (daemon-emitted ``service.lifecycle`` and
     CLI-emitted ``cli.lifecycle``).
 

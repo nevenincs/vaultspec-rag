@@ -24,12 +24,12 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.mcp._admin_tools as admin
+import vaultspec_rag.server as _m
 
-from ... import mcp_server
 from ...cli import app
-from ...mcp_server import _jobs
-from ...mcp_server._routes import ROUTES
+from ...server import _jobs
+from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,7 +58,7 @@ async def test_get_jobs_returns_snapshot_shape(_clean_jobs: None) -> None:
     job_id = _jobs.record_start("vault", "tool")
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
-    result = await mcp_server.get_jobs()
+    result = await admin.get_jobs()
     assert set(result) == {"jobs"}
     jobs = result["jobs"]
     assert isinstance(jobs, list)
@@ -85,14 +85,14 @@ async def test_get_jobs_is_newest_first(_clean_jobs: None) -> None:
     first = _jobs.record_start("vault", "tool")
     second = _jobs.record_start("code", "watcher")
 
-    jobs = (await mcp_server.get_jobs())["jobs"]
+    jobs = (await admin.get_jobs())["jobs"]
     assert [entry["id"] for entry in jobs] == [second, first]
 
 
 async def test_get_jobs_honours_limit(_clean_jobs: None) -> None:
     newest_ids = [_jobs.record_start("vault", "tool") for _ in range(5)]
 
-    jobs = (await mcp_server.get_jobs(limit=2))["jobs"]
+    jobs = (await admin.get_jobs(limit=2))["jobs"]
     assert len(jobs) == 2
     # Newest-first: the two most recent records.
     assert [entry["id"] for entry in jobs] == [newest_ids[-1], newest_ids[-2]]
@@ -100,7 +100,7 @@ async def test_get_jobs_honours_limit(_clean_jobs: None) -> None:
 
 async def test_get_jobs_non_positive_limit_is_empty(_clean_jobs: None) -> None:
     _jobs.record_start("vault", "tool")
-    assert (await mcp_server.get_jobs(limit=0))["jobs"] == []
+    assert (await admin.get_jobs(limit=0))["jobs"] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -132,7 +132,7 @@ def test_jobs_subcommand_registered() -> None:
 
 
 def test_jobs_cli_mcp_parity() -> None:
-    assert callable(mcp_server.get_jobs)
+    assert callable(admin.get_jobs)
     help_result = runner.invoke(app, ["server", "service", "--help"])
     assert help_result.exit_code == 0
     assert "jobs" in help_result.stdout

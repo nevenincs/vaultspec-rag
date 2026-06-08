@@ -9,14 +9,16 @@ walks the exception chain to make that call.
 from __future__ import annotations
 
 import json
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import Any, Literal, cast
 
 from ._core import logger
 
+
 def _is_connection_refused(exc: BaseException) -> bool:
     import errno
+
     if isinstance(exc, urllib.error.URLError):
         reason = getattr(exc, "reason", None)
         if isinstance(reason, ConnectionRefusedError):
@@ -30,23 +32,27 @@ def _is_connection_refused(exc: BaseException) -> bool:
         return True
     return False
 
-def _do_http_call(port: int, path: str, payload: dict | None, timeout: float | None = None) -> dict | None:
+
+def _do_http_call(
+    port: int, path: str, payload: dict | None, timeout: float | None = None
+) -> dict | None:
     from ._service_status import _read_service_status
+
     status = _read_service_status()
     token = status.get("service_token", status.get("token", "")) if status else ""
-    
+
     url = f"http://127.0.0.1:{port}{path}"
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-        
+
     if payload is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     else:
         req = urllib.request.Request(url, headers=headers, method="GET")
-        
+
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -56,6 +62,7 @@ def _do_http_call(port: int, path: str, payload: dict | None, timeout: float | N
             return json.loads(body)
         except:
             return {"ok": False, "error": "http_error", "message": f"{e.code}: {body}"}
+
 
 def _try_http_reindex(
     tool_name: str,
@@ -80,6 +87,7 @@ def _try_http_reindex(
             "message": f"HTTP reindex on port {port} failed: {exc.__class__.__name__}: {exc}",
         }
 
+
 def _try_http_admin(
     tool_name: str,
     args: dict[str, Any],
@@ -103,23 +111,36 @@ def _try_http_admin(
             url_path = "/status"
             if args.get("project_root"):
                 import urllib.parse
+
                 url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
             res = _do_http_call(port, url_path, None)
         elif tool_name == "get_code_file":
             res = _do_http_call(port, "/code-file", args)
         else:
             # Fallback for others if any
-            res = {"ok": False, "error": "unknown_admin_tool", "message": f"Tool {tool_name} not mapped"}
+            res = {
+                "ok": False,
+                "error": "unknown_admin_tool",
+                "message": f"Tool {tool_name} not mapped",
+            }
         return res if res is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
-            logger.debug("HTTP admin call on port %s: connection refused (%s)", port, exc)
+            logger.debug(
+                "HTTP admin call on port %s: connection refused (%s)", port, exc
+            )
             return None
-        logger.debug("HTTP admin call on port %s raised non-refused exception", port, exc_info=True)
+        logger.debug(
+            "HTTP admin call on port %s raised non-refused exception",
+            port,
+            exc_info=True,
+        )
         return {}
+
 
 def _get_search_timeout(timeout: float | None) -> float:
     import os
+
     if timeout is None:
         env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
         if env_timeout:
@@ -129,6 +150,7 @@ def _get_search_timeout(timeout: float | None) -> float:
                 return 10.0
         return 10.0
     return timeout
+
 
 def _build_http_search_payload(
     query: str,
@@ -187,6 +209,7 @@ def _build_http_search_payload(
                 payload[key] = value
     return payload
 
+
 def _try_http_search(
     query: str,
     search_type: str,
@@ -214,7 +237,7 @@ def _try_http_search(
         InvalidPreferValueError,
         validate_search_filters,
     )
-    
+
     try:
         validate_search_filters(
             cast("Literal['vault', 'code']", search_type),
@@ -233,15 +256,33 @@ def _try_http_search(
             prefer=prefer,
         )
     except InvalidFilterForSearchTypeError as exc:
-        return {"ok": False, "error": "invalid_filter_for_search_type", "message": str(exc)}
+        return {
+            "ok": False,
+            "error": "invalid_filter_for_search_type",
+            "message": str(exc),
+        }
     except InvalidPreferValueError as exc:
         return {"ok": False, "error": "invalid_prefer_value", "message": str(exc)}
 
     timeout = _get_search_timeout(timeout)
     payload = _build_http_search_payload(
-        query, search_type, top_k, project_root, language, path, node_type,
-        function_name, class_name, doc_type, feature, date, tag,
-        include_paths, exclude_paths, dedup_locales, prefer,
+        query,
+        search_type,
+        top_k,
+        project_root,
+        language,
+        path,
+        node_type,
+        function_name,
+        class_name,
+        doc_type,
+        feature,
+        date,
+        tag,
+        include_paths,
+        exclude_paths,
+        dedup_locales,
+        prefer,
     )
 
     try:
@@ -253,11 +294,26 @@ def _try_http_search(
         return []
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)
-        return {"ok": False, "error": "http_search_timeout", "message": f"HTTP search on port {port} timed out after {timeout}s."}
+        return {
+            "ok": False,
+            "error": "http_search_timeout",
+            "message": f"HTTP search on port {port} timed out after {timeout}s.",
+        }
     except Exception as exc:
-        if isinstance(exc, TimeoutError) or (isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError)):
-            return {"ok": False, "error": "http_search_timeout", "message": f"HTTP search on port {port} timed out after {timeout}s."}
+        if isinstance(exc, TimeoutError) or (
+            isinstance(exc, urllib.error.URLError)
+            and isinstance(exc.reason, TimeoutError)
+        ):
+            return {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": f"HTTP search on port {port} timed out after {timeout}s.",
+            }
         if _is_connection_refused(exc):
             logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
             return None
-        return {"ok": False, "error": "http_call_failed", "message": f"HTTP search on port {port} failed: {exc.__class__.__name__}: {exc}"}
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP search on port {port} failed: {exc.__class__.__name__}: {exc}",
+        }

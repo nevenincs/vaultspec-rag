@@ -1,8 +1,8 @@
 """Console-script entry point for the MCP server.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. ``main`` remains importable from the
-package root (``vaultspec_rag.mcp_server:main``) - both the
+package root (``vaultspec_rag.server:main``) - both the
 ``vaultspec-search-mcp`` console script and the CLI's ``mcp start``
 command depend on that import path. ``_http_mode`` is reassigned on the
 package namespace so resources/prompts and ``_resolve_root`` observe
@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import logging
 
-import vaultspec_rag.mcp_server as _m
-
-from ._lifespan import health_handler, service_lifespan
+import vaultspec_rag.server as _m
 from vaultspec_rag.mcp import mcp
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+from ._lifespan import health_handler, service_lifespan
+
+logger = logging.getLogger("vaultspec_rag.server")
 
 
 def main(port: int | None = None) -> None:

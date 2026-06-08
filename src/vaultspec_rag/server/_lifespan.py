@@ -1,6 +1,6 @@
 """Service lifespan and the raw ``/health`` endpoint.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. ``service_lifespan`` reassigns the
 process-wide ``_start_time`` / ``_SERVICE_TOKEN`` on the package
 namespace so ``health_handler`` (and tests that rebind ``_registry`` /
@@ -20,10 +20,9 @@ from typing import TYPE_CHECKING
 
 from anyio.to_thread import run_sync as _run_in_thread
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
 from ..capabilities import backend_capabilities_dict
-from ._state import mcp
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -31,7 +30,7 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 
 @asynccontextmanager
@@ -94,23 +93,18 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
             exc_info=True,
         )
 
-    # Start the MCP session manager.  Starlette's Mount does NOT
-    # propagate lifespan to sub-apps, so the streamable_http_app's
-    # own lifespan never fires.  Running it here ensures the session
-    # manager's task group is active before the first /mcp request.
-    async with mcp.session_manager.run():
-        try:
-            yield
-        finally:
-            heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await heartbeat_task
-            # Cancel watchers BEFORE closing stores to prevent
-            # incremental_index() running against a closed store.
-            _m._stop_all_watchers()
-            _m._registry.close_all()
-            logger.info("Service shutdown complete")
-            _m._record_shutdown("clean")
+    try:
+        yield
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await heartbeat_task
+        # Cancel watchers BEFORE closing stores to prevent
+        # incremental_index() running against a closed store.
+        _m._stop_all_watchers()
+        _m._registry.close_all()
+        logger.info("Service shutdown complete")
+        _m._record_shutdown("clean")
 
 
 async def health_handler(_request: Request) -> object:

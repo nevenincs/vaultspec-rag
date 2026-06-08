@@ -1,9 +1,9 @@
 """Validation, clamping, root resolution, and structured-error helpers.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. Rebindable globals (``_http_mode``,
 ``_registry``) are read at call time through the package alias so a
-test rebind on ``vaultspec_rag.mcp_server`` is observed.
+test rebind on ``vaultspec_rag.server`` is observed.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
 from ..capabilities import backend_capabilities_dict
 from ._state import (
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..service import RegistryFullError
     from ..store import VaultStoreLockedError
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 
 def _registry_full_error_dict(exc: RegistryFullError) -> dict[str, Any]:

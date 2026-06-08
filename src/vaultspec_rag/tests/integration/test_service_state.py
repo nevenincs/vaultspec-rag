@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from ... import mcp_server
+import vaultspec_rag.mcp._admin_tools as admin
+
+from ... import server
 from ...cli import app
 
 if TYPE_CHECKING:
@@ -39,7 +41,7 @@ _DEAD_PORT = "59233"
 def _clean_watchers() -> Iterator[None]:
     """Stop any watcher the consolidated read may have started as a side effect."""
     yield
-    mcp_server._stop_all_watchers()
+    server._stop_all_watchers()
 
 
 def _make_root(tmp_path: Path) -> Path:
@@ -64,9 +66,9 @@ async def test_get_service_state_consolidated_shape(
     _clean_watchers: None,
 ) -> None:
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
 
-    state = await mcp_server.get_service_state(project_root=str(root))
+    state = await admin.get_service_state(project_root=str(root))
 
     assert set(state) == {"index", "projects", "watcher"}
 
@@ -123,7 +125,7 @@ def test_info_subcommand_registered() -> None:
 
 def test_info_cli_mcp_parity() -> None:
     # The consolidated read must exist as an MCP tool AND a CLI subcommand.
-    assert callable(mcp_server.get_service_state)
+    assert callable(admin.get_service_state)
     help_result = runner.invoke(app, ["server", "service", "--help"])
     assert help_result.exit_code == 0
     assert "info" in help_result.stdout

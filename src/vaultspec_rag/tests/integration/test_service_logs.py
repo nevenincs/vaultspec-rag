@@ -23,12 +23,12 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.mcp._admin_tools as admin
+import vaultspec_rag.server as _m
 
-from ... import mcp_server
 from ...cli import app
 from ...logging_config import read_service_log
-from ...mcp_server._routes import ROUTES
+from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -192,7 +192,7 @@ async def test_get_logs_tool_returns_lines(tmp_path: Path) -> None:
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
     reset_config()
     try:
-        result = await mcp_server.get_logs(lines=10)
+        result = await admin.get_logs(lines=10)
     finally:
         if prev_env is None:
             os.environ.pop(EnvVar.STATUS_DIR.value, None)
@@ -227,7 +227,7 @@ def test_logs_subcommand_registered() -> None:
 
 
 def test_logs_cli_mcp_parity() -> None:
-    assert callable(mcp_server.get_logs)
+    assert callable(admin.get_logs)
     help_result = runner.invoke(app, ["server", "service", "--help"])
     assert help_result.exit_code == 0
     assert "logs" in help_result.stdout

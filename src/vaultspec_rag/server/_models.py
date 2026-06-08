@@ -1,6 +1,6 @@
 """Pydantic response models for the MCP server.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. These models serialize tool results
 across the MCP transport and are re-exported verbatim from the package
 root.

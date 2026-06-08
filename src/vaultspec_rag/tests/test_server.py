@@ -13,8 +13,11 @@ from contextlib import asynccontextmanager
 
 import pytest
 
+from vaultspec_rag.mcp._mcp import mcp
+from vaultspec_rag.mcp._resources import analyze_feature
+
 from ..config import EnvVar
-from ..mcp_server import (
+from ..server import (
     BackendCapabilities,
     HealthResponse,
     IndexResponse,
@@ -26,9 +29,7 @@ from ..mcp_server import (
     _is_sensitive_path,
     _resolve_root,
     _validate_vault_root,
-    analyze_feature,
     health_handler,
-    mcp,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -45,10 +46,10 @@ async def _empty_lifespan(_app):
 
 
 class TestPackageEntryPoint:
-    """Guard the ``python -m vaultspec_rag.mcp_server`` daemon-spawn path.
+    """Guard the ``python -m vaultspec_rag.server`` daemon-spawn path.
 
-    The service daemon is launched as ``python -m vaultspec_rag.mcp_server
-    --port N``. When ``mcp_server`` became a package, the ``-m`` invocation
+    The service daemon is launched as ``python -m vaultspec_rag.server
+    --port N``. When ``server`` became a package, the ``-m`` invocation
     required a ``__main__`` module; without it the daemon never starts and
     every subprocess service-lifecycle test fails. ``--help`` is free (no
     GPU/model load), so this is a fast, real subprocess check.
@@ -56,7 +57,7 @@ class TestPackageEntryPoint:
 
     def test_python_dash_m_help_runs(self):
         result = subprocess.run(
-            [sys.executable, "-m", "vaultspec_rag.mcp_server", "--help"],
+            [sys.executable, "-m", "vaultspec_rag.server", "--help"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -539,7 +540,7 @@ class TestHttpModeResolveRoot:
     """HTTP mode requires explicit project_root - no env/cwd fallback."""
 
     def test_default_root_raises_in_http_mode(self):
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         orig = mod._http_mode
         mod._http_mode = True
@@ -550,7 +551,7 @@ class TestHttpModeResolveRoot:
             mod._http_mode = orig
 
     def test_resolve_root_none_raises_in_http_mode(self):
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         orig = mod._http_mode
         mod._http_mode = True
@@ -561,7 +562,7 @@ class TestHttpModeResolveRoot:
             mod._http_mode = orig
 
     def test_resolve_root_explicit_works_in_http_mode(self, tmp_path):
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         (tmp_path / ".vault").mkdir()
         orig = mod._http_mode
@@ -574,7 +575,7 @@ class TestHttpModeResolveRoot:
 
     def test_resolve_root_env_ignored_in_http_mode(self, tmp_path):
         """Even with VAULTSPEC_RAG_ROOT set, HTTP mode rejects None."""
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         (tmp_path / ".vault").mkdir()
         orig_mode = mod._http_mode
@@ -602,7 +603,7 @@ class TestHttpModeResolveRoot:
 
     def test_vault_resource_raises_in_http_mode(self):
         """get_vault_document should raise with resource-specific message."""
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         orig = mod._http_mode
         mod._http_mode = True
@@ -611,7 +612,9 @@ class TestHttpModeResolveRoot:
                 ValueError,
                 match="only available in stdio mode",
             ):
-                _run(mod.get_vault_document("adr/overview"))
+                from vaultspec_rag.mcp._resources import get_vault_document
+
+                _run(get_vault_document("adr/overview"))
         finally:
             mod._http_mode = orig
 
@@ -621,7 +624,7 @@ class TestMainTransportSetup:
 
     def test_http_mode_flag_for_http(self):
         """port=8888 → _http_mode=True."""
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         orig = mod._http_mode
         try:
@@ -633,7 +636,7 @@ class TestMainTransportSetup:
 
     def test_http_mode_flag_for_stdio(self):
         """port=None → _http_mode=False."""
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         orig = mod._http_mode
         try:
@@ -645,7 +648,7 @@ class TestMainTransportSetup:
 
     def test_stdio_wires_on_close_project(self):
         """Stdio path must wire _on_close_project for watcher cleanup."""
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         orig = mod._registry._on_close_project
         try:
@@ -657,7 +660,7 @@ class TestMainTransportSetup:
 
     def test_stop_all_watchers_clears_state(self):
         """_stop_all_watchers empties both dicts even when empty."""
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         # Verify it's safe to call with no watchers running
         mod._stop_all_watchers()
@@ -669,13 +672,13 @@ class TestServiceRegistryIntegration:
     """Test that the module-level _registry is a ServiceRegistry."""
 
     def test_registry_exists(self):
-        from ..mcp_server import _registry
+        from ..server import _registry
         from ..service import ServiceRegistry
 
         assert isinstance(_registry, ServiceRegistry)
 
     def test_registry_has_gpu_lock(self):
-        from ..mcp_server import _registry
+        from ..server import _registry
 
         assert isinstance(_registry.gpu_lock, threading.Lock)
 
@@ -721,7 +724,7 @@ class TestHealthHandler:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        import vaultspec_rag.mcp_server as mod
+        import vaultspec_rag.server as mod
 
         from ..service import ServiceRegistry
 
@@ -794,39 +797,39 @@ class TestMultiProjectWatcher:
     """Module-level watcher state supports multiple projects (PHASE3-001)."""
 
     def test_watcher_tasks_is_dict(self):
-        from ..mcp_server import _watcher_tasks
+        from ..server import _watcher_tasks
 
         assert isinstance(_watcher_tasks, dict)
 
     def test_watcher_stops_is_dict(self):
-        from ..mcp_server import _watcher_stops
+        from ..server import _watcher_stops
 
         assert isinstance(_watcher_stops, dict)
 
     def test_stop_all_watchers_callable(self):
-        from ..mcp_server import _stop_all_watchers
+        from ..server import _stop_all_watchers
 
         assert callable(_stop_all_watchers)
 
     def test_stop_watcher_callable(self):
-        from ..mcp_server import _stop_watcher
+        from ..server import _stop_watcher
 
         assert callable(_stop_watcher)
 
     def test_ensure_watcher_callable(self):
-        from ..mcp_server import _ensure_watcher
+        from ..server import _ensure_watcher
 
         assert callable(_ensure_watcher)
 
     def test_stop_all_on_empty_is_safe(self):
         """Calling _stop_all_watchers with no running watchers is a no-op."""
-        from ..mcp_server import _stop_all_watchers
+        from ..server import _stop_all_watchers
 
         _stop_all_watchers()  # must not raise
 
     def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path):
         """Stopping a watcher for a root that was never started is safe."""
-        from ..mcp_server import _stop_watcher
+        from ..server import _stop_watcher
 
         _stop_watcher(tmp_path)  # must not raise
 
@@ -836,8 +839,10 @@ class TestAdminTools:
 
     def test_list_projects_empty_registry(self) -> None:
         """With no slots, returns empty projects and config-matched caps."""
+        from vaultspec_rag.mcp._admin_tools import list_projects
+        from vaultspec_rag.server import _registry
+
         from ..config import get_config
-        from ..mcp_server import _registry, list_projects
 
         # Force an empty registry.
         with _registry._lock:
@@ -852,7 +857,7 @@ class TestAdminTools:
         assert result["idle_ttl_seconds"] == float(cfg.service_idle_ttl_seconds)
 
     def test_evict_project_unknown_returns_not_found(self, tmp_path) -> None:
-        from ..mcp_server import evict_project
+        from vaultspec_rag.mcp._admin_tools import evict_project
 
         result = _run(evict_project(str(tmp_path / "never-seen")))
         assert result == {"evicted": False, "reason": "not_found"}
@@ -869,7 +874,7 @@ class TestRegistryFullErrorShape:
 
     def test_error_dict_shape(self) -> None:
         """_registry_full_error_dict contains every ADR D4 key."""
-        from ..mcp_server import (
+        from ..server import (
             _registry,
             _registry_full_error_dict,
         )
@@ -885,7 +890,7 @@ class TestRegistryFullErrorShape:
 
     def test_local_store_locked_error_dict_shape(self, tmp_path) -> None:
         """Local Qdrant lock contention returns an actionable MCP payload."""
-        from ..mcp_server import _local_store_locked_error_dict
+        from ..server import _local_store_locked_error_dict
         from ..store import VaultStoreLockedError
 
         db_path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
@@ -911,9 +916,9 @@ class TestRegistryFullErrorShape:
         """
         import inspect
 
-        from .. import mcp_server
+        from .. import server
 
-        source = inspect.getsource(mcp_server._ensure_watcher)
+        source = inspect.getsource(server._ensure_watcher)
         assert "_registry.peek_project" in source
         assert "_registry.get_project" not in source
 
@@ -934,9 +939,9 @@ class TestMcpPathRewrite:
         """
         import inspect
 
-        from .. import mcp_server
+        from .. import server
 
-        source = inspect.getsource(mcp_server.main)
+        source = inspect.getsource(server.main)
         assert "_mcp_no_redirect" in source, (
             "main() lost the path-rewriting wrapper; /mcp will 307-redirect"
         )
@@ -995,12 +1000,12 @@ class TestDaemonLifecycleHelpers:
         self,
         caplog,
     ) -> None:
-        from ..mcp_server import _lifecycle_log
+        from ..server import _lifecycle_log
 
-        with caplog.at_level("WARNING", logger="vaultspec_rag.mcp_server"):
+        with caplog.at_level("WARNING", logger="vaultspec_rag.server"):
             _lifecycle_log("startup", pid=42, port=8766)
 
-        records = [r for r in caplog.records if r.name == "vaultspec_rag.mcp_server"]
+        records = [r for r in caplog.records if r.name == "vaultspec_rag.server"]
         assert records, "lifecycle log did not surface on the expected logger"
         rec = records[-1]
         assert rec.levelname == "WARNING"
@@ -1012,15 +1017,15 @@ class TestDaemonLifecycleHelpers:
 
     def test_heartbeat_tick_sync_no_status_file(self, tmp_path, monkeypatch) -> None:
         """Missing service.json → no-op (no exception, no file created)."""
-        from .. import mcp_server
+        from .. import server
 
         monkeypatch.setattr(
-            mcp_server,
+            server,
             "_status_file_path",
             lambda: tmp_path / "service.json",
         )
         # Should not raise and should not create the file.
-        mcp_server._heartbeat_tick_sync()
+        server._heartbeat_tick_sync()
         assert not (tmp_path / "service.json").exists()
 
     def test_heartbeat_tick_sync_writes_last_heartbeat(
@@ -1031,16 +1036,16 @@ class TestDaemonLifecycleHelpers:
         """Existing service.json gets last_heartbeat merged in atomically."""
         from datetime import UTC, datetime
 
-        from .. import mcp_server
+        from .. import server
 
         sf = tmp_path / "service.json"
         sf.write_text(
             json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
             encoding="utf-8",
         )
-        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
+        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
 
-        mcp_server._heartbeat_tick_sync()
+        server._heartbeat_tick_sync()
 
         data = json.loads(sf.read_text(encoding="utf-8"))
         assert data["pid"] == 1
@@ -1064,17 +1069,17 @@ class TestDaemonLifecycleHelpers:
         skipped so a stale token from a previous daemon does not get
         overwritten with empty.
         """
-        from .. import mcp_server
+        from .. import server
 
         sf = tmp_path / "service.json"
         sf.write_text(
             json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
             encoding="utf-8",
         )
-        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
-        monkeypatch.setattr(mcp_server, "_SERVICE_TOKEN", "deadbeef" * 4)
+        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
+        monkeypatch.setattr(server, "_SERVICE_TOKEN", "deadbeef" * 4)
 
-        mcp_server._heartbeat_tick_sync()
+        server._heartbeat_tick_sync()
 
         data = json.loads(sf.read_text(encoding="utf-8"))
         assert data["service_token"] == "deadbeef" * 4
@@ -1085,7 +1090,7 @@ class TestDaemonLifecycleHelpers:
         monkeypatch,
     ) -> None:
         """Empty _SERVICE_TOKEN must not overwrite an existing token."""
-        from .. import mcp_server
+        from .. import server
 
         sf = tmp_path / "service.json"
         # Simulate a service.json that already has a token (e.g.
@@ -1102,10 +1107,10 @@ class TestDaemonLifecycleHelpers:
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
-        monkeypatch.setattr(mcp_server, "_SERVICE_TOKEN", "")
+        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
+        monkeypatch.setattr(server, "_SERVICE_TOKEN", "")
 
-        mcp_server._heartbeat_tick_sync()
+        server._heartbeat_tick_sync()
 
         data = json.loads(sf.read_text(encoding="utf-8"))
         # Token preserved - empty token guard prevents the overwrite.
@@ -1117,14 +1122,14 @@ class TestDaemonLifecycleHelpers:
         monkeypatch,
     ) -> None:
         """Calling cleanup with no file does not raise."""
-        from .. import mcp_server
+        from .. import server
 
         monkeypatch.setattr(
-            mcp_server,
+            server,
             "_status_file_path",
             lambda: tmp_path / "nope.json",
         )
-        mcp_server._unlink_status_file_silently()  # no exception
+        server._unlink_status_file_silently()  # no exception
 
     def test_record_shutdown_is_idempotent(
         self,
@@ -1133,29 +1138,29 @@ class TestDaemonLifecycleHelpers:
         caplog,
     ) -> None:
         """First call wins; subsequent calls do not log or unlink twice."""
-        from .. import mcp_server
+        from .. import server
 
         sf = tmp_path / "service.json"
         sf.write_text(json.dumps({"pid": 1, "port": 2}), encoding="utf-8")
-        monkeypatch.setattr(mcp_server, "_status_file_path", lambda: sf)
+        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
         # Reset the module-level guard so this test is isolated.
-        monkeypatch.setattr(mcp_server, "_shutdown_recorded", False)
+        monkeypatch.setattr(server, "_shutdown_recorded", False)
 
-        with caplog.at_level("WARNING", logger="vaultspec_rag.mcp_server"):
-            mcp_server._record_shutdown("test-first")
+        with caplog.at_level("WARNING", logger="vaultspec_rag.server"):
+            server._record_shutdown("test-first")
             assert not sf.exists()
-            mcp_server._record_shutdown("test-second")
+            server._record_shutdown("test-second")
 
         first = [
             r
             for r in caplog.records
-            if r.name == "vaultspec_rag.mcp_server"
+            if r.name == "vaultspec_rag.server"
             and "reason=test-first" in r.getMessage()
         ]
         second = [
             r
             for r in caplog.records
-            if r.name == "vaultspec_rag.mcp_server"
+            if r.name == "vaultspec_rag.server"
             and "reason=test-second" in r.getMessage()
         ]
         assert first, "first shutdown should log"

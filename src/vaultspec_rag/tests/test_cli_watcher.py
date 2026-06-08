@@ -14,7 +14,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from .. import mcp_server
+from .. import server
 from ..cli import app
 
 runner = CliRunner()
@@ -63,7 +63,7 @@ def test_cli_mcp_control_parity() -> None:
         "stop_watcher",
         "reconfigure_watcher",
     ):
-        assert callable(getattr(mcp_server, tool))
+        assert callable(getattr(server, tool))
     help_result = runner.invoke(app, ["server", "service", "watcher", "--help"])
     assert help_result.exit_code == 0
     for name in ("status", "start", "stop", "reconfigure"):

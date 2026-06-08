@@ -1,12 +1,12 @@
 """Shared module-level state for the MCP server package.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. This module is the canonical home of
 the singleton :data:`mcp` FastMCP instance and the process-wide
 globals (registry, watcher bookkeeping, identity token, HTTP-mode
 flag). The package ``__init__`` re-imports these names so they live in
-the ``vaultspec_rag.mcp_server`` namespace, which is the target tests
-rebind (e.g. ``mcp_server._http_mode = True``).
+the ``vaultspec_rag.server`` namespace, which is the target tests
+rebind (e.g. ``server._http_mode = True``).
 
 Rebind discipline (mirrors the ``cli`` split's monkeypatch handling):
 
@@ -17,7 +17,7 @@ Rebind discipline (mirrors the ``cli`` split's monkeypatch handling):
   are *reassigned* at runtime (``main`` sets ``_http_mode``;
   ``service_lifespan`` sets ``_start_time``/``_SERVICE_TOKEN``; tests
   rebind ``_registry``). Consumers must read them at call time through
-  ``import vaultspec_rag.mcp_server as _m`` so a rebind on the package
+  ``import vaultspec_rag.server as _m`` so a rebind on the package
   namespace is observed.
 """
 
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 _registry = get_registry()
 _watcher_tasks: dict[Path, asyncio.Task[None]] = {}

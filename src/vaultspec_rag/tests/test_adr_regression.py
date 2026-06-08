@@ -65,42 +65,42 @@ class TestMCPAsyncTools:
     def test_search_vault_is_async(self):
         import asyncio
 
-        from ..mcp_server import search_vault
+        from vaultspec_rag.mcp._tools import search_vault
 
         assert asyncio.iscoroutinefunction(search_vault)
 
     def test_search_codebase_is_async(self):
         import asyncio
 
-        from ..mcp_server import search_codebase
+        from vaultspec_rag.mcp._tools import search_codebase
 
         assert asyncio.iscoroutinefunction(search_codebase)
 
     def test_reindex_vault_is_async(self):
         import asyncio
 
-        from ..mcp_server import reindex_vault
+        from vaultspec_rag.mcp._tools import reindex_vault
 
         assert asyncio.iscoroutinefunction(reindex_vault)
 
     def test_reindex_codebase_is_async(self):
         import asyncio
 
-        from ..mcp_server import reindex_codebase
+        from vaultspec_rag.mcp._tools import reindex_codebase
 
         assert asyncio.iscoroutinefunction(reindex_codebase)
 
     def test_get_index_status_is_async(self):
         import asyncio
 
-        from ..mcp_server import get_index_status
+        from vaultspec_rag.mcp._tools import get_index_status
 
         assert asyncio.iscoroutinefunction(get_index_status)
 
     def test_get_code_file_is_async(self):
         import asyncio
 
-        from ..mcp_server import get_code_file
+        from vaultspec_rag.mcp._tools import get_code_file
 
         assert asyncio.iscoroutinefunction(get_code_file)
 
@@ -234,7 +234,7 @@ class TestEmbeddingModelLoadArguments:
 
 
 class TestThreadingLock:
-    """ADR: mcp_server and api use threading locks for initialization.
+    """ADR: server and api use threading locks for initialization.
 
     The eviction work (#45) upgraded ``ServiceRegistry._lock`` from a
     plain ``threading.Lock`` to a reentrant ``threading.RLock`` so the
@@ -252,7 +252,7 @@ class TestThreadingLock:
         return (type(threading.Lock()), type(threading.RLock()))
 
     def test_mcp_registry_lock_exists(self):
-        from ..mcp_server import _registry
+        from ..server import _registry
 
         assert isinstance(_registry._lock, self._lock_types())
 
@@ -353,18 +353,18 @@ class TestGraphCacheInvalidation:
 
 
 class TestCliMcpFastPath:
-    """CLI _try_mcp_search must use asyncio.run() (safe from sync Typer handlers)."""
+    """CLI _try_http_search must use asyncio.run() (safe from sync Typer handlers)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_try_mcp_search_uses_asyncio_run(self):
+    def test_try_http_search_uses_asyncio_run(self):
         import inspect
 
-        from ..cli import _try_mcp_search
+        from vaultspec_rag.cli._http_search import _try_http_search
 
-        src = inspect.getsource(_try_mcp_search)
+        src = inspect.getsource(_try_http_search)
         assert "asyncio.run(" in src, (
-            "_try_mcp_search must use asyncio.run() not loop.run_until_complete(); "
+            "_try_http_search must use asyncio.run() not loop.run_until_complete(); "
             "Typer handlers are always sync so asyncio.run() is safe and correct"
         )
 

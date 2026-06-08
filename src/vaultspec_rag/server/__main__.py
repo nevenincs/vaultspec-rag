@@ -1,8 +1,8 @@
-"""Package entry point for ``python -m vaultspec_rag.mcp_server``.
+"""Package entry point for ``python -m vaultspec_rag.server``.
 
 The resident service daemon is spawned as
-``python -m vaultspec_rag.mcp_server --port N`` (see the CLI service
-spawn). When ``mcp_server`` became a package (module-split ADR), the
+``python -m vaultspec_rag.server --port N`` (see the CLI service
+spawn). When ``server`` became a package (module-split ADR), the
 ``-m`` invocation stopped working because a package needs a
 ``__main__`` module to be directly executable. This thin module
 restores it by delegating to ``main``, which parses ``--port`` /

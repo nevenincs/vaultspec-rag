@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ... import mcp_server
+from ... import server
 from ...config import EnvVar, reset_config
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ def _restore_env(var: EnvVar, prev: str | None) -> None:
 def _clean_watchers() -> Iterator[None]:
     reset_config()
     yield
-    mcp_server._stop_all_watchers()
+    server._stop_all_watchers()
     reset_config()
 
 
@@ -67,8 +67,8 @@ async def test_watch_disabled_starts_no_watcher(
     prev = _set_env(EnvVar.WATCH_ENABLED, "0")
     try:
         reset_config()
-        mcp_server._ensure_watcher(root)
-        assert root.resolve() not in mcp_server._watcher_tasks
+        server._ensure_watcher(root)
+        assert root.resolve() not in server._watcher_tasks
     finally:
         _restore_env(EnvVar.WATCH_ENABLED, prev)
 
@@ -82,7 +82,7 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
     root = _make_root(tmp_path)
     # Share the session model with the global registry so peek_project
     # can build a slot without reloading GPU weights.
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
     saved = [
         (EnvVar.WATCH_ENABLED, _set_env(EnvVar.WATCH_ENABLED, "1")),
         (EnvVar.WATCH_DEBOUNCE_MS, _set_env(EnvVar.WATCH_DEBOUNCE_MS, "123")),
@@ -91,10 +91,10 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
     try:
         reset_config()
         with caplog.at_level(logging.INFO, logger="vaultspec_rag.watcher"):
-            mcp_server._ensure_watcher(root)
+            server._ensure_watcher(root)
             # Yield so the freshly created task runs its startup log line.
             await asyncio.sleep(0.1)
-        assert root.resolve() in mcp_server._watcher_tasks
+        assert root.resolve() in server._watcher_tasks
         assert "debounce=123ms" in caplog.text
         assert "cooldown=4s" in caplog.text
     finally:

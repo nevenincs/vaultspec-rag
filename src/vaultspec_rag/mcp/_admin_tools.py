@@ -1,6 +1,6 @@
 """Admin and watcher-control MCP tools.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. Importing this module runs the
 ``@mcp.tool()`` decorators for the registry/watcher admin tools.
 Registry and watcher bookkeeping are read through the package alias so
@@ -112,7 +112,7 @@ async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
         root paths with a live watcher). When *project_root* is given,
         also ``running`` (bool) for that root.
     """
-    from ...config import get_config
+    from ..config import get_config
 
     cfg = get_config()
     with _m._watcher_lock:
@@ -142,7 +142,7 @@ async def start_watcher(root: str) -> dict[str, Any]:
         Dict with ``root``, ``started`` (bool - running on return), and
         ``watch_enabled`` (bool).
     """
-    from ...config import get_config
+    from ..config import get_config
 
     target = Path(root).resolve()
     started = _m._ensure_watcher(target)
@@ -233,7 +233,7 @@ async def get_logs(lines: int = 200) -> dict[str, Any]:
         Dict with key ``lines`` - the list of log lines (without
         trailing newlines), oldest-first.
     """
-    from ...logging_config import read_service_log
+    from ..logging_config import read_service_log
 
     def _run() -> dict[str, Any]:
         return {"lines": read_service_log(lines)}
@@ -289,7 +289,7 @@ async def reconfigure_watcher(
         Dict with ``root``, ``restarted`` (bool), and the effective
         ``debounce_ms`` / ``cooldown_s`` in force after the restart.
     """
-    from ...config import get_config
+    from ..config import get_config
 
     target = Path(root).resolve()
     _m._stop_watcher(target)

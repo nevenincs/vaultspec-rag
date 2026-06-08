@@ -1,6 +1,6 @@
 """MCP resources and prompts.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. Importing this module runs the
 ``@mcp.resource()`` / ``@mcp.prompt()`` decorators. The HTTP-mode flag
 is read through the package alias so a test rebind of ``_http_mode`` is
@@ -13,8 +13,8 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.server as _m
 
-from ._mcp import mcp
 from ..server._utils import _default_root
+from ._mcp import mcp
 
 
 @mcp.resource("vault://{doc_id}")

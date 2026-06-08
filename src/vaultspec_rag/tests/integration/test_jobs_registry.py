@@ -19,8 +19,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ... import mcp_server
-from ...mcp_server import _jobs
+import vaultspec_rag.mcp._tools as tools
+
+from ... import server
+from ...server import _jobs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,7 +42,7 @@ def _clean_jobs() -> Iterator[None]:
     """
     _jobs.reset()
     yield
-    mcp_server._stop_all_watchers()
+    server._stop_all_watchers()
     _jobs.reset()
 
 
@@ -207,9 +209,9 @@ async def test_reindex_vault_records_finished_tool_job(
     import asyncio
 
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
 
-    response = await mcp_server.reindex_vault(project_root=str(root))
+    response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
     assert response["ok"] is True
     assert "job_id" in response
@@ -243,9 +245,9 @@ async def test_reindex_codebase_records_finished_tool_job(
     import asyncio
 
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
 
-    response = await mcp_server.reindex_codebase(project_root=str(root))
+    response = await tools.reindex_codebase(project_root=str(root))
     assert isinstance(response, dict)
     assert response["ok"] is True
     assert "job_id" in response

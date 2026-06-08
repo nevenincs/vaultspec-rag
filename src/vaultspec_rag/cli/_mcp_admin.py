@@ -39,7 +39,7 @@ def mcp_start(
         SystemExit: When the MCP server process exits (typically via Ctrl+C).
 
     """
-    from ..mcp_server import main as run_mcp
+    from ..server import main as run_mcp
 
     # Propagate --target to the MCP server via env var (stdio only).
     # HTTP mode is multi-tenant - project context comes per-request.

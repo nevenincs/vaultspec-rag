@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ... import mcp_server
+import vaultspec_rag.mcp._admin_tools as admin
+
+from ... import server
 from ...config import EnvVar, reset_config
 
 if TYPE_CHECKING:
@@ -45,7 +47,7 @@ def _restore_env(var: EnvVar, prev: str | None) -> None:
 def _clean_watchers() -> Iterator[None]:
     reset_config()
     yield
-    mcp_server._stop_all_watchers()
+    server._stop_all_watchers()
     reset_config()
 
 
@@ -65,23 +67,23 @@ async def test_start_then_stop_watcher(
     _clean_watchers: None,
 ) -> None:
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
     resolved = str(root.resolve())
 
-    started = await mcp_server.start_watcher(str(root))
+    started = await admin.start_watcher(str(root))
     assert started["started"] is True
     assert started["watch_enabled"] is True
-    assert root.resolve() in mcp_server._watcher_tasks
+    assert root.resolve() in server._watcher_tasks
 
-    state = await mcp_server.get_watcher_state(str(root))
+    state = await admin.get_watcher_state(str(root))
     assert resolved in state["watching"]
     assert state["running"] is True
 
-    stopped = await mcp_server.stop_watcher(str(root))
+    stopped = await admin.stop_watcher(str(root))
     assert stopped["stopped"] is True
-    assert root.resolve() not in mcp_server._watcher_tasks
+    assert root.resolve() not in server._watcher_tasks
 
-    state2 = await mcp_server.get_watcher_state(str(root))
+    state2 = await admin.get_watcher_state(str(root))
     assert state2["running"] is False
 
 
@@ -92,11 +94,11 @@ async def test_reconfigure_restarts_with_new_values(
     _clean_watchers: None,
 ) -> None:
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
-    await mcp_server.start_watcher(str(root))
+    server._registry._model = embedding_model
+    await admin.start_watcher(str(root))
 
     with caplog.at_level(logging.INFO, logger="vaultspec_rag.watcher"):
-        result = await mcp_server.reconfigure_watcher(
+        result = await admin.reconfigure_watcher(
             str(root),
             debounce_ms=50,
             cooldown_s=2,
@@ -106,7 +108,7 @@ async def test_reconfigure_restarts_with_new_values(
     assert result["restarted"] is True
     assert result["debounce_ms"] == 50
     assert result["cooldown_s"] == 2
-    assert root.resolve() in mcp_server._watcher_tasks
+    assert root.resolve() in server._watcher_tasks
     assert "debounce=50ms" in caplog.text
     assert "cooldown=2s" in caplog.text
 
@@ -119,12 +121,12 @@ async def test_start_watcher_disabled_is_pull_only(
     prev = _set_env(EnvVar.WATCH_ENABLED, "0")
     try:
         reset_config()
-        result = await mcp_server.start_watcher(str(root))
+        result = await admin.start_watcher(str(root))
         assert result["started"] is False
         assert result["watch_enabled"] is False
-        assert root.resolve() not in mcp_server._watcher_tasks
+        assert root.resolve() not in server._watcher_tasks
 
-        state = await mcp_server.get_watcher_state()
+        state = await admin.get_watcher_state()
         assert state["watch_enabled"] is False
     finally:
         _restore_env(EnvVar.WATCH_ENABLED, prev)

@@ -60,18 +60,18 @@ from ._gpu_errors import (
     _no_gpu_message,
     _no_torch_message,
 )
-
-# 3b. Command submodules - importing them runs the ``@app.command()`` /
-#     ``@*_app.command()`` decorators against the apps nested in step 2.
-from ._index import handle_clean, handle_index
-from ._install import handle_install, handle_uninstall
-from ._mcp_admin import mcp_start, mcp_status, mcp_stop
 from ._http_search import (
     _is_connection_refused,
     _try_http_admin,
     _try_http_reindex,
     _try_http_search,
 )
+
+# 3b. Command submodules - importing them runs the ``@app.command()`` /
+#     ``@*_app.command()`` decorators against the apps nested in step 2.
+from ._index import handle_clean, handle_index
+from ._install import handle_install, handle_uninstall
+from ._mcp_admin import mcp_start, mcp_status, mcp_stop
 from ._process import (
     _health_probe,
     _heartbeat_age_seconds,

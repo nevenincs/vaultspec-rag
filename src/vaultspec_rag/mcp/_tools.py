@@ -1,6 +1,6 @@
 """Search and index MCP tools.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. Importing this module runs the
 ``@mcp.tool()`` decorators, registering the search/index tools on the
 shared :data:`mcp` instance. The registry is read through the package
@@ -10,32 +10,37 @@ alias so a test rebind of ``_registry`` is observed.
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
-from ._mcp import mcp
 from ..cli._service_status import _read_service_status
+from ._mcp import mcp
+
 
 def _call_daemon(path: str, payload: dict | None = None) -> dict:
     status = _read_service_status()
     if not status or "port" not in status:
-        raise RuntimeError("vaultspec-rag daemon is not running (service.json not found).")
-        
+        raise RuntimeError(
+            "vaultspec-rag daemon is not running (service.json not found)."
+        )
+
     port = status["port"]
     token = status.get("service_token", status.get("token", ""))
-    
+
     url = f"http://127.0.0.1:{port}{path}"
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-        
+
     if payload is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     else:
         req = urllib.request.Request(url, headers=headers, method="GET")
-        
+
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -47,6 +52,7 @@ def _call_daemon(path: str, payload: dict | None = None) -> dict:
             raise RuntimeError(f"REST API call to {url} failed with {e.code}: {body}")
     except Exception as e:
         raise RuntimeError(f"REST API call to {url} failed: {e}")
+
 
 @mcp.tool()
 async def search_vault(
@@ -122,6 +128,7 @@ async def get_index_status(
     url_path = "/status"
     if project_root:
         import urllib.parse
+
         url_path += "?project_root=" + urllib.parse.quote(project_root)
     return _call_daemon(url_path)
 
@@ -133,7 +140,9 @@ async def get_code_file(
 ) -> str:
     """Retrieve the full content of a source file by path."""
     payload = {"path": path, "project_root": project_root}
-    res = _call_daemon("/code-file", {k: v for k, v in payload.items() if v is not None})
+    res = _call_daemon(
+        "/code-file", {k: v for k, v in payload.items() if v is not None}
+    )
     if "content" in res:
         return res["content"]
     if "error" in res:

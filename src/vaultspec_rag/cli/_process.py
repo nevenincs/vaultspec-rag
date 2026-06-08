@@ -208,8 +208,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-# Mirrored from mcp_server._HEARTBEAT_STALENESS_SECONDS - kept as a
-# local constant so cli.py does not import mcp_server (which would
+# Mirrored from server._HEARTBEAT_STALENESS_SECONDS - kept as a
+# local constant so cli.py does not import server (which would
 # pull in FastMCP + heavy deps at CLI startup time). Bump both in
 # lockstep if the contract changes.
 _HEARTBEAT_STALENESS_SECONDS = 60
@@ -349,7 +349,7 @@ def _spawn_service(
         PID of the spawned process.
 
     """
-    cmd = [sys.executable, "-m", "vaultspec_rag.mcp_server", "--port", str(port)]
+    cmd = [sys.executable, "-m", "vaultspec_rag.server", "--port", str(port)]
     env = _service_child_env(
         watch=watch,
         watch_debounce_ms=watch_debounce_ms,

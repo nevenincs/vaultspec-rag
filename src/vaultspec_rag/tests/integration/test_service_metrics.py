@@ -23,10 +23,11 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.mcp._tools as tools
+import vaultspec_rag.server as _m
 
-from ... import mcp_server
-from ...mcp_server._routes import ROUTES
+from ... import server
+from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,16 +39,16 @@ if TYPE_CHECKING:
 @pytest.fixture
 def _clean_metrics() -> Iterator[None]:
     """Zero the metrics holder before and after each test."""
-    mcp_server.reset_metrics()
+    server.reset_metrics()
     yield
-    mcp_server.reset_metrics()
+    server.reset_metrics()
 
 
 @pytest.fixture
 def _clean_watchers() -> Iterator[None]:
     """Stop any watcher the search/reindex paths started as a side effect."""
     yield
-    mcp_server._stop_all_watchers()
+    server._stop_all_watchers()
 
 
 def _make_root(tmp_path: Path) -> Path:
@@ -66,17 +67,17 @@ def _make_root(tmp_path: Path) -> Path:
 
 
 def test_incr_accumulates_in_render(_clean_metrics: None) -> None:
-    mcp_server.incr("search_total")
-    mcp_server.incr("search_total")
-    mcp_server.incr("reindex_total")
+    server.incr("search_total")
+    server.incr("search_total")
+    server.incr("reindex_total")
 
-    text = mcp_server.render_prometheus()
+    text = server.render_prometheus()
     assert "vaultspec_rag_search_total 2" in text
     assert "vaultspec_rag_reindex_total 1" in text
 
 
 def test_render_emits_type_lines(_clean_metrics: None) -> None:
-    text = mcp_server.render_prometheus()
+    text = server.render_prometheus()
     assert "# TYPE vaultspec_rag_search_total counter" in text
     assert "# TYPE vaultspec_rag_reindex_total counter" in text
     assert "# TYPE vaultspec_rag_search_last_duration_seconds gauge" in text
@@ -86,21 +87,21 @@ def test_render_emits_type_lines(_clean_metrics: None) -> None:
 
 
 def test_observe_sets_gauge(_clean_metrics: None) -> None:
-    mcp_server.observe("search_last_duration_seconds", 0.25)
-    text = mcp_server.render_prometheus()
+    server.observe("search_last_duration_seconds", 0.25)
+    text = server.render_prometheus()
     assert "vaultspec_rag_search_last_duration_seconds 0.25" in text
 
 
 def test_incr_unknown_name_is_noop(_clean_metrics: None) -> None:
-    mcp_server.incr("does_not_exist")
-    text = mcp_server.render_prometheus()
+    server.incr("does_not_exist")
+    text = server.render_prometheus()
     assert "does_not_exist" not in text
 
 
 def test_reset_zeroes_counters(_clean_metrics: None) -> None:
-    mcp_server.incr("search_total", 5)
-    mcp_server.reset_metrics()
-    text = mcp_server.render_prometheus()
+    server.incr("search_total", 5)
+    server.reset_metrics()
+    text = server.render_prometheus()
     assert "vaultspec_rag_search_total 0" in text
 
 
@@ -118,12 +119,12 @@ async def test_search_vault_increments_counter(
 ) -> None:
     import asyncio
 
-    from ...mcp_server import _jobs
+    from ...server import _jobs
 
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
 
-    response = await mcp_server.reindex_vault(project_root=str(root))
+    response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
     job_id = response["job_id"]
     for _ in range(50):
@@ -132,14 +133,14 @@ async def test_search_vault_increments_counter(
             break
         await asyncio.sleep(0.1)
 
-    before = mcp_server.render_prometheus()
+    before = server.render_prometheus()
     assert "vaultspec_rag_search_total 0" in before
     # The reindex above bumped the reindex counter inline.
     assert "vaultspec_rag_reindex_total 1" in before
 
-    await mcp_server.search_vault("body", top_k=3, project_root=str(root))
+    await tools.search_vault("body", top_k=3, project_root=str(root))
 
-    after = mcp_server.render_prometheus()
+    after = server.render_prometheus()
     assert "vaultspec_rag_search_total 1" in after
 
 
@@ -152,12 +153,12 @@ async def test_reindex_vault_increments_counter(
 ) -> None:
     import asyncio
 
-    from ...mcp_server import _jobs
+    from ...server import _jobs
 
     root = _make_root(tmp_path)
-    mcp_server._registry._model = embedding_model
+    server._registry._model = embedding_model
 
-    response = await mcp_server.reindex_vault(project_root=str(root))
+    response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
     job_id = response["job_id"]
     for _ in range(50):
@@ -166,7 +167,7 @@ async def test_reindex_vault_increments_counter(
             break
         await asyncio.sleep(0.1)
 
-    text = mcp_server.render_prometheus()
+    text = server.render_prometheus()
     assert "vaultspec_rag_reindex_total 1" in text
 
 
@@ -184,8 +185,8 @@ def _routes_app(_clean_metrics: None) -> Iterator[tuple[TestClient, str]]:
     counter increments so the rendered body carries non-zero values.
     Restores the token on teardown so the suite stays isolated.
     """
-    mcp_server.incr("search_total", 3)
-    mcp_server.incr("reindex_total")
+    server.incr("search_total", 3)
+    server.incr("reindex_total")
 
     prev_token = _m._SERVICE_TOKEN
     _m._SERVICE_TOKEN = "test-token-metrics"

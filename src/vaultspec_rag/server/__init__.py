@@ -8,7 +8,7 @@ a ``service_lifespan`` that eagerly loads GPU models before
 accepting connections.  A raw ``/health`` endpoint is mounted
 alongside the MCP transport at ``/mcp``.
 
-This module was split into a package (``mcp_server/``) per the
+This module was split into a package (``server/``) per the
 ``2026-06-01-module-split-adr``. The verbatim public surface - the
 ``mcp`` FastMCP instance, every tool/resource/prompt, the response
 models, the shared globals, and the ``_``-prefixed helpers tests
@@ -21,7 +21,7 @@ Import order is load-bearing and mirrors the ``cli`` split:
    process-wide globals (``_registry``, ``_watcher_*``,
    ``_SERVICE_TOKEN``, ``_http_mode``, ``_start_time``). These names
    live in *this* package namespace because that is what tests rebind
-   (e.g. ``mcp_server._http_mode = True``).
+   (e.g. ``server._http_mode = True``).
 2. Leaf helper submodules (``_models``, ``_utils``, ``_lifecycle``,
    ``_lifespan``, ``_watcher``) - pure logic with no decorators.
 3. Tool / resource / prompt submodules (``_tools``, ``_admin_tools``,
@@ -32,7 +32,7 @@ Import order is load-bearing and mirrors the ``cli`` split:
 
 Reassigned globals (``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
 ``_registry``) are read by submodules at call time through
-``import vaultspec_rag.mcp_server as _m`` so a rebind on this package
+``import vaultspec_rag.server as _m`` so a rebind on this package
 namespace is observed - the same discipline the ``cli`` split uses for
 monkeypatched names.
 """
@@ -46,12 +46,11 @@ from ..capabilities import BackendCapabilities
 
 # 2a. Leaf helper imported as a submodule (not by-name): the in-flight
 #     jobs registry. The reindex tools and watcher write through
-#     ``_jobs.record_*`` and tests reach it via ``mcp_server._jobs``.
+#     ``_jobs.record_*`` and tests reach it via ``server._jobs``.
 from . import _jobs
 
 # 3. Tool / resource / prompt submodules - their import side effect is
 #    the decorator registration against ``mcp``.
-
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
     _heartbeat_loop,
@@ -73,6 +72,28 @@ from ._models import (
     IndexStatus,
     SearchResponse,
     SearchResultItem,
+)
+
+# 1. State globals
+from ._state import (
+    _HEARTBEAT_INTERVAL_SECONDS,
+    _HEARTBEAT_STALENESS_SECONDS,
+    _MAX_QUERY_LEN,
+    _SENSITIVE_DIRS,
+    _SENSITIVE_PATTERNS,
+    _SERVICE_TOKEN,
+    _http_mode,
+    _registry,
+    _shutdown_hooks_installed,
+    _shutdown_recorded,
+    _start_time,
+    _watcher_lock,
+    _watcher_stops,
+    _watcher_tasks,
+    incr,
+    observe,
+    render_prometheus,
+    reset_metrics,
 )
 from ._utils import (
     _clamp_top_k,

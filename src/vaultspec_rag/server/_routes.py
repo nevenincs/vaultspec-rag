@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
 from ..logging_config import read_service_log
 from . import _jobs
@@ -33,7 +33,7 @@ from . import _jobs
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 # Default and clamp bounds for the ``?lines=`` query parameter.
 _DEFAULT_LOG_LINES = 200
@@ -173,7 +173,7 @@ async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:
     """Token-gated read-only ``GET /metrics`` in Prometheus text format.
 
     Emits the ``0.0.4`` text exposition format produced inline by
-    :func:`~vaultspec_rag.mcp_server.render_prometheus` (counters/gauges
+    :func:`~vaultspec_rag.server.render_prometheus` (counters/gauges
     incremented by the search/reindex tool paths; GPU memory read
     on-demand at scrape time). No background collector thread, no
     ``prometheus_client`` dependency. Read-only.
@@ -196,28 +196,32 @@ async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:
 
 # Routes mounted by ``_main`` on the inner Starlette app. Read-only only.
 import time
+
 from anyio.to_thread import run_sync as _run_in_thread
+
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
-from ._utils import _clamp_top_k, _validate_query, _resolve_root
+from ._utils import _clamp_top_k, _resolve_root, _validate_query
+
 
 async def search_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    
+
     payload = await request.json()
     search_type = payload.get("type", "vault")
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
-    
+
     top_k = _clamp_top_k(top_k)
     query = _validate_query(query)
     root = _resolve_root(project_root)
-    
+
     def _run():
         import vaultspec_rag
+
         try:
             if search_type == "vault":
                 results = vaultspec_rag.search_vault(
@@ -249,16 +253,22 @@ async def search_route(request: Request) -> JSONResponse:
                     unlike_ids=payload.get("unlike_ids"),
                 )
             from ._models import SearchResultItem
-            items = [SearchResultItem.model_validate(r, from_attributes=True).model_dump(mode="json") for r in results]
+
+            items = [
+                SearchResultItem.model_validate(r, from_attributes=True).model_dump(
+                    mode="json"
+                )
+                for r in results
+            ]
             return {
                 "results": items,
-                "summary": f"Found {len(results)} relevant items."
+                "summary": f"Found {len(results)} relevant items.",
             }
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
         except VaultStoreLockedError as exc:
             return _m._local_store_locked_error_dict(exc)
-            
+
     started = time.perf_counter()
     result = await _run_in_thread(_run)
     _m.incr("search_total")
@@ -267,26 +277,28 @@ async def search_route(request: Request) -> JSONResponse:
         _m._ensure_watcher(root)
     return JSONResponse(result)
 
+
 async def reindex_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-        
+
     payload = await request.json()
     reindex_type = payload.get("type", "vault")
     clean = payload.get("clean", False)
     project_root = payload.get("project_root")
-    
+
     root = _resolve_root(project_root)
-    from ..jobs import start_reindex_vault, start_reindex_codebase
-    
+    from ..jobs import start_reindex_codebase, start_reindex_vault
+
     if reindex_type == "vault":
         job_id = start_reindex_vault(root, clean)
     else:
         job_id = start_reindex_codebase(root, clean)
-        
+
     _m._ensure_watcher(root)
     return JSONResponse({"ok": True, "job_id": job_id, "status": "queued"})
+
 
 ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),

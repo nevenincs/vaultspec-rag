@@ -1,9 +1,9 @@
 """Daemon lifecycle helpers: log paths, heartbeat, and shutdown hooks.
 
-Split out of the original ``mcp_server.py`` monolith per the
+Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. ``_heartbeat_tick_sync`` reads the
 rebindable ``_status_file_path`` and ``_SERVICE_TOKEN`` through the
-package alias so test monkeypatches on ``vaultspec_rag.mcp_server`` are
+package alias so test monkeypatches on ``vaultspec_rag.server`` are
 observed.
 """
 
@@ -17,11 +17,11 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-import vaultspec_rag.mcp_server as _m
+import vaultspec_rag.server as _m
 
 from ._state import _HEARTBEAT_INTERVAL_SECONDS
 
-logger = logging.getLogger("vaultspec_rag.mcp_server")
+logger = logging.getLogger("vaultspec_rag.server")
 
 
 def _resolve_log_path() -> Path:
@@ -163,7 +163,7 @@ def _record_shutdown(reason: str, **kv: object) -> None:
     atexit, the signal handler, and the lifespan finally block may
     all fire in sequence. The first one wins. The guard
     (``_shutdown_recorded``) is read and written on the package
-    namespace so a test rebind of ``mcp_server._shutdown_recorded`` is
+    namespace so a test rebind of ``server._shutdown_recorded`` is
     observed (it was a plain module global pre-split).
     """
     if _m._shutdown_recorded:
