@@ -20,15 +20,20 @@ from __future__ import annotations
 
 import hmac
 import logging
+import time
 from typing import TYPE_CHECKING
 
+from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
 import vaultspec_rag.server as _m
 
 from ..logging_config import read_service_log
+from ..service import RegistryFullError
+from ..store import VaultStoreLockedError
 from . import _jobs
+from ._utils import _clamp_top_k, _resolve_root, _validate_query
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -147,17 +152,26 @@ def _clamp_limit(raw: str | None) -> int | None:
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
-    Returns the newest-first :mod:`._jobs` registry snapshot as JSON -
-    parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
-    the registry. An optional ``?limit=N`` query parameter caps the
-    number of returned records (newest first).
+        Returns the newest-first :mod:`._jobs` registry snapshot as JSON -
+        parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
+        the registry. An optional ``?limit=N`` query parameter caps the
+        number of returned records (newest first).
 
-    Args:
-        request: The incoming Starlette request.
+        Args:
+            request: The incoming Starlette request.
 
-    Returns:
-        A ``JSONResponse`` of ``{"jobs": [...]}`` , or the
-        ``require_token`` 401 ``JSONResponse``.
+        Returns:
+            A ``JSONResponse`` of ``{"jobs": [...
+        Route("/projects", list_projects_route, methods=["GET"]),
+        Route("/projects/evict", evict_project_route, methods=["POST"]),
+        Route("/watcher", get_watcher_state_route, methods=["GET"]),
+        Route("/watcher/start", start_watcher_route, methods=["POST"]),
+        Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
+        Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
+        Route("/service-state", get_service_state_route, methods=["GET"]),
+        Route("/code-file", code_file_route, methods=["POST"]),
+    ]}`` , or the
+            ``require_token`` 401 ``JSONResponse``.
     """
     denied = require_token(request)
     if denied is not None:
@@ -192,16 +206,6 @@ async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:
         _m.render_prometheus(),
         media_type="text/plain; version=0.0.4",
     )
-
-
-# Routes mounted by ``_main`` on the inner Starlette app. Read-only only.
-import time
-
-from anyio.to_thread import run_sync as _run_in_thread
-
-from ..service import RegistryFullError
-from ..store import VaultStoreLockedError
-from ._utils import _clamp_top_k, _resolve_root, _validate_query
 
 
 async def search_route(request: Request) -> JSONResponse:
@@ -298,6 +302,161 @@ async def reindex_route(request: Request) -> JSONResponse:
 
     _m._ensure_watcher(root)
     return JSONResponse({"ok": True, "job_id": job_id, "status": "queued"})
+
+
+async def list_projects_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    return JSONResponse(
+        {
+            "projects": _m._registry.snapshot(),
+            "max_projects": _m._registry.max_projects,
+            "idle_ttl_seconds": _m._registry.idle_ttl_seconds,
+        }
+    )
+
+
+async def evict_project_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    root = payload.get("root")
+    from pathlib import Path
+
+    target = Path(root).resolve()
+    evicted = _m._registry.try_evict(target)[0]
+    return JSONResponse({"root": str(target), "evicted": evicted})
+
+
+async def get_watcher_state_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    from ..config import get_config
+
+    cfg = get_config()
+    with _m._watcher_lock:
+        roots = [str(p) for p in _m._watcher_tasks]
+    return JSONResponse(
+        {
+            "watch_enabled": bool(cfg.watch_enabled),
+            "debounce_ms": int(cfg.watch_debounce_ms),
+            "cooldown_s": float(cfg.watch_cooldown_s),
+            "watched_roots": sorted(roots),
+        }
+    )
+
+
+async def start_watcher_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    root = payload.get("root")
+    from pathlib import Path
+
+    from ..config import get_config
+
+    cfg = get_config()
+    target = Path(root).resolve()
+    started = _m._ensure_watcher(target)
+    return JSONResponse(
+        {
+            "root": str(target),
+            "started": started,
+            "watch_enabled": bool(cfg.watch_enabled),
+        }
+    )
+
+
+async def stop_watcher_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    root = payload.get("root")
+    from pathlib import Path
+
+    target = Path(root).resolve()
+    stopped = _m._stop_watcher(target)
+    return JSONResponse({"root": str(target), "stopped": stopped})
+
+
+async def reconfigure_watcher_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    root = payload.get("root")
+    debounce_ms = payload.get("debounce_ms")
+    cooldown_s = payload.get("cooldown_s")
+    from pathlib import Path
+
+    target = Path(root).resolve()
+    _m._stop_watcher(target)
+    _m._ensure_watcher(target, debounce_ms=debounce_ms, cooldown_s=cooldown_s)
+    return JSONResponse({"ok": True, "message": f"Watcher reconfigured for {root}"})
+
+
+async def get_service_state_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    project_root = request.query_params.get("project_root")
+    import vaultspec_rag
+
+    from ._utils import _resolve_root
+
+    root = _resolve_root(project_root)
+
+    with _m._watcher_lock:
+        watching_roots = [str(r) for r in _m._watcher_tasks]
+
+    def _run():
+        return vaultspec_rag.get_service_state(root, watching_roots=watching_roots)
+
+    from anyio.to_thread import run_sync as _run_in_thread
+
+    res = await _run_in_thread(_run)
+    return JSONResponse(res)
+
+
+async def code_file_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    path = payload.get("path")
+    project_root = payload.get("project_root")
+    from ._utils import _resolve_root
+
+    root = _resolve_root(project_root)
+
+    def _run():
+        try:
+            root_resolved = root.resolve()
+            full_path = (root_resolved / path).resolve()
+            if not full_path.is_relative_to(root_resolved):
+                return {"error": f"path '{path}' is outside the workspace"}
+            from ._utils import _is_sensitive_path
+
+            if _is_sensitive_path(path):
+                return {"error": "access denied"}
+            if not full_path.exists():
+                return {"error": f"File '{path}' not found"}
+            max_read_size = 10 * 1024 * 1024
+            if full_path.stat().st_size > max_read_size:
+                return {"error": f"File '{path}' exceeds maximum read size of 10 MB"}
+            return {"content": full_path.read_text(encoding="utf-8")}
+        except Exception as e:
+            return {"error": str(e)}
+
+    from anyio.to_thread import run_sync as _run_in_thread
+
+    res = await _run_in_thread(_run)
+    return JSONResponse(res)
 
 
 ROUTES: list[Route] = [
