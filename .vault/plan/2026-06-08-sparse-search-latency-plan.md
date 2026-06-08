@@ -5,9 +5,19 @@ tags:
 date: '2026-06-08'
 tier: L2
 related:
-  - "[[2026-06-07-sparse-search-latency-adr]]"
-  - "[[2026-06-07-sparse-search-latency-research]]"
+  - '[[2026-06-07-sparse-search-latency-adr]]'
+  - '[[2026-06-07-sparse-search-latency-research]]'
 ---
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 # `sparse-search-latency` `Scaling Bottlenecks` plan
 
@@ -21,18 +31,18 @@ This plan implements latency optimizations for the VaultSpec RAG service to addr
 
 Introduce sparse_enabled toggle in configuration to bypass SPLADE and accelerate dense-only queries.
 
-- [ ] `P01.S01` - Add sparse_enabled to \_RAG_DEFAULTS; `src/vaultspec_rag/config.py`.
-- [ ] `P01.S02` - Skip SPLADE computation and index fetching when sparse_enabled is False; `src/vaultspec_rag/search/_searcher.py`.
-- [ ] `P01.S03` - Update tests to assert dense-only fallback works; `src/vaultspec_rag/tests/`.
+- [x] `P01.S01` - Add sparse_enabled to \_RAG_DEFAULTS; `src/vaultspec_rag/config.py`.
+- [x] `P01.S02` - Skip SPLADE computation and index fetching when sparse_enabled is False; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P01.S03` - Update tests to assert dense-only fallback works; `src/vaultspec_rag/tests/`.
 
 ### Phase `P02` - Glob Pre-Filtering via Qdrant MatchPattern
 
 Map glob filters to Qdrant native filters before search to skip post-query Python filtering.
 
-- [ ] `P02.S04` - Translate include_paths and exclude_paths globs to Regex strings; `src/vaultspec_rag/search/_searcher.py`.
-- [ ] `P02.S05` - Update VaultStore.hybrid_search_codebase to accept regex filters and construct MatchPattern; `src/vaultspec_rag/store.py`.
-- [ ] `P02.S06` - Remove post-query \_filter_raw_codebase_results logic; `src/vaultspec_rag/search/_searcher.py`.
-- [ ] `P02.S07` - Update tests to assert Qdrant glob filtering works correctly; `src/vaultspec_rag/tests/`.
+- [x] `P02.S04` - Translate include_paths and exclude_paths globs to Regex strings; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P02.S05` - Update VaultStore.hybrid_search_codebase to accept regex filters and construct MatchPattern; `src/vaultspec_rag/store.py`.
+- [x] `P02.S06` - Remove post-query \_filter_raw_codebase_results logic; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P02.S07` - Update tests to assert Qdrant glob filtering works correctly; `src/vaultspec_rag/tests/`.
 
 ## Parallelization
 

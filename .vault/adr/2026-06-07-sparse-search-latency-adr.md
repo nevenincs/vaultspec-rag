@@ -37,7 +37,7 @@ During full-codebase queries, local-mode search experiences severe latency (up t
 1. **Search Latency Optimizations:**
 
    - **Dense-Only Fallback:** Introduce a `sparse_enabled: bool` toggle to `_RAG_DEFAULTS` inside the configuration module. When `False`, skip SPLADE computation and sparse matching entirely, relying purely on fast dense searches.
-   - **Payload Pre-Filtering:** Update the search querying logic to propagate `include_paths`, `exclude_paths`, and `language` parameters directly into Qdrant `Filter` conditions, ensuring the search engine narrows the vector space prior to computing scores. Since `include_paths` and `exclude_paths` are glob patterns, they will be translated into regex-backed Qdrant `MatchPattern` filters instead of doing post-query Python iteration.
+   - **Payload Pre-Filtering (ABORTED):** Originally planned to translate glob parameters into regex-backed Qdrant `MatchPattern` filters to narrow the vector space natively. However, `qdrant-client` `1.18.0` strictly forbids regex `MatchPattern` structures on payload fields. Qdrant does not natively support payload filtering via regular expressions. Therefore, the legacy Python-level post-query `fnmatch` iteration will be retained as it is structurally necessary.
    - **Server Mode Support:** Formalize and document the use of `VAULTSPEC_RAG_QDRANT_URL` to enable connecting to high-performance remote Qdrant instances.
 
 ## Rationale
