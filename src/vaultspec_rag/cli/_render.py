@@ -218,8 +218,8 @@ def _display_port_unreachable_error(
             1,
             port=port,
             remediation=[
-                "vaultspec-rag server service status",
-                "vaultspec-rag server service start",
+                "vaultspec-rag server status",
+                "vaultspec-rag server start",
                 "rerun with --allow-fallback (single-agent only)",
             ],
         )
@@ -230,8 +230,8 @@ def _display_port_unreachable_error(
         f"{command} because that would acquire the Qdrant lock and "
         f"strand any other agent waiting on the resident service.[/]\n"
         f"[bold]Remediation:[/]\n"
-        f"  1. Check status:  vaultspec-rag server service status\n"
-        f"  2. Start service: vaultspec-rag server service start\n"
+        f"  1. Check status:  vaultspec-rag server status\n"
+        f"  2. Start service: vaultspec-rag server start\n"
         f"  3. Or opt in to in-process fallback: re-run with "
         f"--allow-fallback (single-agent use only).",
     )

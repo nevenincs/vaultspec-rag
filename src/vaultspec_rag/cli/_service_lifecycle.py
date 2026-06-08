@@ -1,4 +1,4 @@
-"""``server service`` lifecycle commands: start, stop, status, warmup."""
+"""``server`` lifecycle commands: start, stop, status, warmup."""
 
 from __future__ import annotations
 

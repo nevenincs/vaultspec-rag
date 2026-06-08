@@ -9,6 +9,7 @@ related:
   - '[[2026-06-07-mcp-server-deconflation-research]]'
 ---
 
+
 # `mcp-server-deconflation` `MCP and Server Deconflation` plan
 
 ## Description
@@ -34,8 +35,8 @@ Rename mcp_server to server, implement REST endpoints, and isolate mcp protocol 
 Flatten the CLI command hierarchy and audit docstrings
 
 - [x] `P02.S09` - Flatten server service to server, and decouple mcp startup; `src/vaultspec_rag/cli/_app.py`, `_mcp_admin.py`.
-- [ ] `P02.S10` - Audit docstrings and help text; `src/vaultspec_rag/cli`.
-- [ ] `P02.S11` - Update mcp_server entrypoint in framework rules and sync; `.vaultspec/rules/`.
+- [x] `P02.S10` - Audit docstrings and help text; `src/vaultspec_rag/cli`.
+- [x] `P02.S11` - Update mcp_server entrypoint in framework rules and sync; `.vaultspec/rules/`.
 
 ## Parallelization
 

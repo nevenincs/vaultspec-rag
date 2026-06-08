@@ -80,7 +80,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
 
         result = runner.invoke(
             app,
-            ["server", "service", "start", "--port", str(port)],
+            ["server", "start", "--port", str(port)],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         assert "already in use" in (result.stdout or "").lower(), (
@@ -106,7 +106,7 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
         try:
             result = runner.invoke(
                 app,
-                ["server", "service", "start", "--port", str(port)],
+                ["server", "start", "--port", str(port)],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
 
@@ -136,7 +136,7 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
     with _service_env(tmp_path):
         result = runner.invoke(
             app,
-            ["server", "service", "stop"],
+            ["server", "stop"],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         output = (result.stdout or "").lower()
@@ -160,7 +160,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
 
         runner.invoke(
             app,
-            ["server", "service", "stop"],
+            ["server", "stop"],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
 
@@ -197,7 +197,7 @@ def test_service_status_running(
         while time.monotonic() < deadline:
             result = runner.invoke(
                 app,
-                ["server", "service", "status"],
+                ["server", "status"],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
             output = result.stdout or ""
@@ -247,22 +247,44 @@ def test_multi_project_search_isolation(
             tool_name: str,
             arguments: dict[str, object],
         ) -> str:
-            """One MCP tool call per session (matches production pattern)."""
-            from mcp.client.session import ClientSession
-            from mcp.client.streamable_http import streamable_http_client
-            from mcp.types import TextContent
+            """One REST call per session (matches production pattern)."""
+            import httpx
+            import json
+            from ._helpers import _poll_health
 
-            url = f"http://127.0.0.1:{test_port}/mcp"
-            async with (
-                streamable_http_client(url) as (read, write, _),
-                ClientSession(read, write) as session,
-            ):
-                await session.initialize()
-                result = await session.call_tool(tool_name, arguments)
-                assert not result.isError, f"{tool_name} failed: {result.content}"
-                first = result.content[0]
-                assert isinstance(first, TextContent)
-                return first.text
+            health = _poll_health(test_port)
+            token = health["service_token"]
+
+            async with httpx.AsyncClient() as client:
+                if tool_name == "reindex_vault":
+                    resp = await client.post(
+                        f"http://127.0.0.1:{test_port}/reindex",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={"type": "vault", **arguments},
+                        timeout=30.0,
+                    )
+                    assert resp.status_code == 200, f"reindex_vault failed: {resp.text}"
+                    return resp.text
+                elif tool_name == "search_vault":
+                    resp = await client.post(
+                        f"http://127.0.0.1:{test_port}/search",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={"type": "vault", **arguments},
+                        timeout=10.0,
+                    )
+                    assert resp.status_code == 200, f"search_vault failed: {resp.text}"
+                    # Return string format because the test expects to json.load it
+                    return json.dumps(resp.json()["results"])
+                elif tool_name == "get_jobs":
+                    resp = await client.get(
+                        f"http://127.0.0.1:{test_port}/jobs",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params={"limit": arguments.get("limit", 50)},
+                        timeout=10.0,
+                    )
+                    assert resp.status_code == 200, f"get_jobs failed: {resp.text}"
+                    return resp.text
+                raise ValueError(f"Unknown tool_name: {tool_name}")
 
         # Index both projects (one session per call)
         for m in manifests:

@@ -53,23 +53,36 @@ async def _call_tool(
     tool_name: str,
     args: dict[str, Any],
 ) -> dict[str, Any]:
-    from mcp.client.session import ClientSession
-    from mcp.client.streamable_http import streamable_http_client
-    from mcp.types import TextContent
+    import httpx
+    from ._helpers import _poll_health
 
-    url = f"http://127.0.0.1:{port}/mcp"
-    async with (
-        streamable_http_client(url) as (read, write, _),
-        ClientSession(read, write) as session,
-    ):
-        await session.initialize()
-        result = await session.call_tool(tool_name, args)
-        if result.content:
-            first = result.content[0]
-            if isinstance(first, TextContent):
-                parsed = json.loads(first.text)
-                if isinstance(parsed, dict):
-                    return parsed
+    health = _poll_health(port)
+    token = health["service_token"]
+
+    async with httpx.AsyncClient() as client:
+        if tool_name == "search_vault":
+            resp = await client.post(
+                f"http://127.0.0.1:{port}/search",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"type": "vault", **args},
+                timeout=10.0,
+            )
+            return resp.json()["results"] if resp.status_code == 200 else {}
+        elif tool_name == "list_projects":
+            resp = await client.get(
+                f"http://127.0.0.1:{port}/projects",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
+            )
+            return resp.json() if resp.status_code == 200 else {}
+        elif tool_name == "evict_project":
+            resp = await client.post(
+                f"http://127.0.0.1:{port}/projects/evict",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"root": args["root"]},
+                timeout=10.0,
+            )
+            return resp.json() if resp.status_code == 200 else {}
         return {}
 
 

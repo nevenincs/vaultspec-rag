@@ -63,7 +63,7 @@ def _open_vault_store(
                 db_path=str(exc.db_path),
                 remediation=[
                     "Wait for the other process to finish.",
-                    "vaultspec-rag server service stop",
+                    "vaultspec-rag server stop",
                     "vaultspec-rag server mcp stop",
                 ],
             )
@@ -79,7 +79,7 @@ def _open_vault_store(
             "    1. Wait for the other process to finish.\n"
             "    2. Stop the running server:\n"
             "         [cyan]vaultspec-rag server mcp stop[/]\n"
-            "         [cyan]vaultspec-rag server service stop[/]\n"
+            "         [cyan]vaultspec-rag server stop[/]\n"
             "    3. If no vaultspec-rag process is alive, look for an "
             "orphaned Python process holding the lock and stop it manually.",
         )

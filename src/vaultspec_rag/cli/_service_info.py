@@ -1,4 +1,4 @@
-"""``server service info``: consolidated read-only service state.
+"""``server info``: consolidated read-only service state.
 
 Tier-1 observability subcommand (``service-observability`` ADR, plan
 P02). Calls the ``get_service_state`` MCP tool over the
@@ -42,12 +42,12 @@ def service_info(
                 "service.info",
                 "service_not_running",
                 "Service is not running. Start it with "
-                "`vaultspec-rag server service start`.",
+                "`vaultspec-rag server start`.",
                 3,
             )
         _cli.console.print(
             "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server service start[/].",
+            "Start it with [bold]vaultspec-rag server start[/].",
         )
         raise typer.Exit(3)
 

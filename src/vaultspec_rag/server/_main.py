@@ -89,18 +89,8 @@ def main(port: int | None = None) -> None:
             backup_count=int(cfg.service_log_backup_count),
         )
 
-        # Override the default streamable_http_path so the inner
-        # Starlette app serves at "/" instead of "/mcp".  Combined
-        # with Mount("/mcp"), the effective client URL is "/mcp".
-        mcp.settings.streamable_http_path = "/"
-        mcp_http_app = mcp.streamable_http_app()
 
-        # Starlette's ``Mount`` redirects bare "/mcp" to "/mcp/" with
-        # a 307 hop. The Starlette version pinned here does not expose
-        # a ``redirect_slashes=False`` constructor argument, so we
-        # rewrite the request path before routing instead - an ASGI
-        # wrapper that promotes "/mcp" to "/mcp/" in-process. Both
-        # URLs now land directly on the inner app, with no redirect.
+
         from ._routes import ROUTES as READ_ONLY_ROUTES
 
         # ``/health`` stays UNGATED (registered here, not in
@@ -110,21 +100,15 @@ def main(port: int | None = None) -> None:
         # (server-mcp-route + service-observability ADRs).
         app = Starlette(
             routes=[
-                Mount("/mcp", app=mcp_http_app),
                 Route("/health", health_handler),
                 *READ_ONLY_ROUTES,
             ],
             lifespan=service_lifespan,
         )
 
-        async def _mcp_no_redirect(scope, receive, send):
-            if scope["type"] == "http" and scope.get("path") == "/mcp":
-                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
-            await app(scope, receive, send)
-
         try:
             uvicorn.run(
-                _mcp_no_redirect,
+                app,
                 host="127.0.0.1",
                 port=port,
                 timeout_graceful_shutdown=30,

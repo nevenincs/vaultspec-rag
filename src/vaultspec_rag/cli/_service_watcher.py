@@ -1,4 +1,4 @@
-"""``server service watcher`` commands: status, start, stop, reconfigure."""
+"""``server watcher`` commands: status, start, stop, reconfigure."""
 
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ def _watcher_service_unreachable(
             command,
             "service_not_running",
             "Service is not running. Start it with "
-            "`vaultspec-rag server service start`.",
+            "`vaultspec-rag server start`.",
             3,
             **extra,
         )
     _cli.console.print(
         "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server service start[/].",
+        "Start it with [bold]vaultspec-rag server start[/].",
     )
     raise typer.Exit(3)
 

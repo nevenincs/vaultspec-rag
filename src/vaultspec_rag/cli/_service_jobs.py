@@ -1,4 +1,4 @@
-"""``server service jobs``: list recent index/reindex activity.
+"""``server jobs``: list recent index/reindex activity.
 
 Tier-2b observability subcommand (``service-observability`` ADR, plan
 P04). Calls the ``get_jobs`` MCP tool over the ``_try_http_admin`` seam
@@ -71,12 +71,12 @@ def service_jobs(
                 "service.jobs",
                 "service_not_running",
                 "Service is not running. Start it with "
-                "`vaultspec-rag server service start`.",
+                "`vaultspec-rag server start`.",
                 3,
             )
         _cli.console.print(
             "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server service start[/].",
+            "Start it with [bold]vaultspec-rag server start[/].",
         )
         raise typer.Exit(3)
 

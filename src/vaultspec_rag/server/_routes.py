@@ -161,16 +161,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             request: The incoming Starlette request.
 
         Returns:
-            A ``JSONResponse`` of ``{"jobs": [...
-        Route("/projects", list_projects_route, methods=["GET"]),
-        Route("/projects/evict", evict_project_route, methods=["POST"]),
-        Route("/watcher", get_watcher_state_route, methods=["GET"]),
-        Route("/watcher/start", start_watcher_route, methods=["POST"]),
-        Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
-        Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
-        Route("/service-state", get_service_state_route, methods=["GET"]),
-        Route("/code-file", code_file_route, methods=["POST"]),
-    ]}`` , or the
+            A ``JSONResponse`` of ``{"jobs": [...]}``, or the
             ``require_token`` 401 ``JSONResponse``.
     """
     denied = require_token(request)
@@ -308,9 +299,12 @@ async def list_projects_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    projects = _m._registry.snapshot()
+    for p in projects:
+        p["root"] = str(p["root"])
     return JSONResponse(
         {
-            "projects": _m._registry.snapshot(),
+            "projects": projects,
             "max_projects": _m._registry.max_projects,
             "idle_ttl_seconds": _m._registry.idle_ttl_seconds,
         }
@@ -326,8 +320,8 @@ async def evict_project_route(request: Request) -> JSONResponse:
     from pathlib import Path
 
     target = Path(root).resolve()
-    evicted = _m._registry.try_evict(target)[0]
-    return JSONResponse({"root": str(target), "evicted": evicted})
+    evicted, reason = _m._registry.try_evict(target)
+    return JSONResponse({"root": str(target), "evicted": evicted, "reason": reason})
 
 
 async def get_watcher_state_route(request: Request) -> JSONResponse:
@@ -465,4 +459,12 @@ ROUTES: list[Route] = [
     Route("/metrics", metrics_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
     Route("/reindex", reindex_route, methods=["POST"]),
+    Route("/projects", list_projects_route, methods=["GET"]),
+    Route("/projects/evict", evict_project_route, methods=["POST"]),
+    Route("/watcher", get_watcher_state_route, methods=["GET"]),
+    Route("/watcher/start", start_watcher_route, methods=["POST"]),
+    Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
+    Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
+    Route("/service-state", get_service_state_route, methods=["GET"]),
+    Route("/code-file", code_file_route, methods=["POST"]),
 ]

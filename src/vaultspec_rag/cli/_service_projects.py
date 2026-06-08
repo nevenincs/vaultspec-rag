@@ -1,4 +1,4 @@
-"""``server service projects`` commands: list and evict project slots."""
+"""``server projects`` commands: list and evict project slots."""
 
 from __future__ import annotations
 
@@ -40,12 +40,12 @@ def _handle_list_not_running(json_mode: bool) -> NoReturn:
             "service.projects.list",
             "service_not_running",
             "Service is not running. Start it with "
-            "`vaultspec-rag server service start`.",
+            "`vaultspec-rag server start`.",
             3,
         )
     _cli.console.print(
         "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server service start[/].",
+        "Start it with [bold]vaultspec-rag server start[/].",
     )
     raise typer.Exit(3)
 
@@ -131,13 +131,13 @@ def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:
             "service.projects.evict",
             "service_not_running",
             "Service is not running. Start it with "
-            "`vaultspec-rag server service start`.",
+            "`vaultspec-rag server start`.",
             3,
             root=root,
         )
     _cli.console.print(
         "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server service start[/].",
+        "Start it with [bold]vaultspec-rag server start[/].",
     )
     raise typer.Exit(3)
 

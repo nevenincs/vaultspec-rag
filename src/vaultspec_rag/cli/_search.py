@@ -98,7 +98,7 @@ def _handle_vaultstore_locked_error(
             remediation=[
                 "Wait for the other process to finish.",
                 "vaultspec-rag search ... --port 8766",
-                "vaultspec-rag server service stop",
+                "vaultspec-rag server stop",
                 "vaultspec-rag server mcp stop",
             ],
         )
@@ -118,7 +118,7 @@ def _handle_vaultstore_locked_error(
         "         [cyan]vaultspec-rag search ... --port 8766[/]\n"
         "    3. Stop the running server:\n"
         "         [cyan]vaultspec-rag server mcp stop[/]\n"
-        "         [cyan]vaultspec-rag server service stop[/]\n"
+        "         [cyan]vaultspec-rag server stop[/]\n"
         "    4. If no vaultspec-rag process is alive, look for an "
         "orphaned Python process holding the lock and stop it manually."
     )
