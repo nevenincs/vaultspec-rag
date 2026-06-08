@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#service-token-identity'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-05-31-service-token-identity-adr]]'
   - '[[2026-05-31-service-token-identity-plan]]'

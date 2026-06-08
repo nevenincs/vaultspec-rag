@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#service-lifecycle'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-05-30-service-lifecycle-adr]]'
   - '[[2026-05-30-service-lifecycle-plan]]'

@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#codebase-hygiene-sweep'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-05-31-codebase-hygiene-sweep-adr]]'
   - '[[2026-05-31-codebase-hygiene-sweep-plan]]'

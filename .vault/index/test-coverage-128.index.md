@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#test-coverage-128'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-05-31-test-coverage-128-adr]]'
   - '[[2026-05-31-test-coverage-128-plan]]'

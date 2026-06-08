@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#index-progress-bars'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
   - '[[2026-04-12-index-progress-bars-audit]]'

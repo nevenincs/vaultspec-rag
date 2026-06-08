@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#server-mcp-route'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
   - '[[2026-05-31-server-mcp-route-plan]]'

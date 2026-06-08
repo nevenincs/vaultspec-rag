@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#cli-index-default'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-05-30-cli-index-default-adr]]'
   - '[[2026-05-30-cli-index-default-plan]]'

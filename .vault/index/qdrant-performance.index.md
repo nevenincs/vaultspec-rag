@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#qdrant-performance'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-06-05-qdrant-performance-W01-P01-S01]]'
   - '[[2026-06-05-qdrant-performance-W01-P01-summary]]'

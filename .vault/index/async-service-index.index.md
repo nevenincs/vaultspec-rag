@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#async-service-index'
-date: '2026-06-06'
+date: '2026-06-08'
 related:
   - '[[2026-06-04-async-service-index-W01-P01-S01]]'
   - '[[2026-06-04-async-service-index-W01-P01-S02]]'

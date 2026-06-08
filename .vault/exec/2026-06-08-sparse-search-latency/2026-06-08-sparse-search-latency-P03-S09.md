@@ -6,7 +6,6 @@ date: '2026-06-08'
 step_id: 'S09'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
-  - '[[2026-06-08-comprehensive-code-review]]'
 ---
 
 # sparse-search-latency P03.S09: Resolve any identified CRITICAL/HIGH issues
