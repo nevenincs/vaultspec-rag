@@ -100,6 +100,7 @@ class VaultSearcher:
         self._gpu_lock = gpu_lock
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
+        self._sparse_enabled: bool = cfg.sparse_enabled
         self._reranker = reranker
         self._reranker_lock = threading.Lock()
 
@@ -514,7 +515,7 @@ class VaultSearcher:
     def _encode_query(
         self,
         raw_query: str,
-    ) -> tuple[ParsedQuery, str, list[float], SparseResult]:
+    ) -> tuple[ParsedQuery, str, list[float], SparseResult | None]:
         """Parse and encode a query, returning shared components.
 
         Used by ``search_vault`` and ``search_codebase`` to
@@ -532,7 +533,7 @@ class VaultSearcher:
         query_text = parsed.text or raw_query
         with self._gpu_lock if self._gpu_lock is not None else nullcontext():
             query_vector = self.model.encode_query(query_text).tolist()
-            sparse_vector = self.model.encode_query_sparse(query_text)
+            sparse_vector = self.model.encode_query_sparse(query_text) if self._sparse_enabled else None
         return parsed, query_text, query_vector, sparse_vector
 
     def search_vault(
