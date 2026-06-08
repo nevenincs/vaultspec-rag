@@ -17,6 +17,9 @@ related:
   - '[[2026-06-08-sparse-search-latency-P02-summary]]'
   - '[[2026-06-08-sparse-search-latency-P03-S09]]'
   - '[[2026-06-08-sparse-search-latency-P03-summary]]'
+  - '[[2026-06-08-sparse-search-latency-P04-S13]]'
+  - '[[2026-06-08-sparse-search-latency-P04-S14]]'
+  - '[[2026-06-08-sparse-search-latency-P04-summary]]'
   - '[[2026-06-08-sparse-search-latency-code-review-audit]]'
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
@@ -47,6 +50,9 @@ Auto-generated index of all documents tagged with `#sparse-search-latency`.
 - `2026-06-08-sparse-search-latency-P02-summary` - `sparse-search-latency` Phase P02 Summary
 - `2026-06-08-sparse-search-latency-P03-S09` - sparse-search-latency P03.S09: Resolve any identified CRITICAL/HIGH issues
 - `2026-06-08-sparse-search-latency-P03-summary` - sparse-search-latency P03 Summary
+- `2026-06-08-sparse-search-latency-P04-S13` - `sparse-search-latency` `P04.S13`: Test suite harmonization
+- `2026-06-08-sparse-search-latency-P04-S14` - `sparse-search-latency` `P04.S14` execution
+- `2026-06-08-sparse-search-latency-P04-summary` - `sparse-search-latency` `P04` summary
 
 ### plan
 

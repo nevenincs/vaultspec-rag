@@ -107,7 +107,7 @@ def main(port: int | None = None) -> None:
         app = Starlette(
             routes=[
                 Route("/health", health_handler),
-                Mount("/mcp", mcp.get_starlette_app()),  # type: ignore
+                Mount("/mcp", mcp.streamable_http_app()),
                 *READ_ONLY_ROUTES,
             ],
             lifespan=service_lifespan,

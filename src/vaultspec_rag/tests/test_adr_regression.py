@@ -353,18 +353,18 @@ class TestGraphCacheInvalidation:
 
 
 class TestCliMcpFastPath:
-    """CLI _try_http_search must use asyncio.run() (safe from sync Typer handlers)."""
+    """CLI _do_http_call must use asyncio.run() (safe from sync Typer handlers)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_try_http_search_uses_urllib(self):
+    def test_do_http_call_uses_urllib(self):
         import inspect
 
-        from vaultspec_rag.cli._http_search import _try_http_search
+        from vaultspec_rag.cli._http_search import _do_http_call
 
-        src = inspect.getsource(_try_http_search)
+        src = inspect.getsource(_do_http_call)
         assert "urllib.request" in src, (
-            "_try_http_search must use synchronous urllib.request instead of async HTTP "
+            "_do_http_call must use synchronous urllib.request instead of async HTTP "
             "because Typer handlers are sync."
         )
 

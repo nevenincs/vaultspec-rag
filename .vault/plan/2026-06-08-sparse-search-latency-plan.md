@@ -9,16 +9,6 @@ related:
   - '[[2026-06-07-sparse-search-latency-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 <!-- RETIRED: S09 -->
 
 # `sparse-search-latency` `Scaling Bottlenecks` plan
@@ -60,6 +50,7 @@ Run extensive code reviews to identify and mitigate any hidden exceptions, edge 
 Fix all 43 failing tests caused by the CLI refactor drift and the new MCP REST boundary requirements without using mocks.
 
 - [x] `P04.S13` - Fix CLI test drift and MCP tool REST boundary tests; `src/vaultspec_rag/tests/`.
+- [x] `P04.S14` - Fix MCP Starlette mount missing `streamable_http_app` and Typer CLI handler regression; `src/vaultspec_rag/server/_main.py`.
 
 ## Parallelization
 
