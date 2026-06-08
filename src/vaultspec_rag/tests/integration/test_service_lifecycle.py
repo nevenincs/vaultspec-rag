@@ -248,8 +248,10 @@ def test_multi_project_search_isolation(
             arguments: dict[str, object],
         ) -> str:
             """One REST call per session (matches production pattern)."""
-            import httpx
             import json
+
+            import httpx
+
             from ._helpers import _poll_health
 
             health = _poll_health(test_port)
@@ -279,7 +281,7 @@ def test_multi_project_search_isolation(
                     resp = await client.get(
                         f"http://127.0.0.1:{test_port}/jobs",
                         headers={"Authorization": f"Bearer {token}"},
-                        params={"limit": arguments.get("limit", 50)},
+                        params={"limit": int(str(arguments.get("limit", 50)))},
                         timeout=10.0,
                     )
                     assert resp.status_code == 200, f"get_jobs failed: {resp.text}"

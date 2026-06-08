@@ -991,6 +991,17 @@ class VaultStore:
                 self.ensure_code_table()
             else:
                 self.ensure_table()
+
+            if len(prefetch) < 2:
+                results = self.client.query_points(
+                    collection_name=collection_name,
+                    query=dense_query,
+                    using="dense",
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+                return results.points
+
             try:
                 results = self.client.query_points(
                     collection_name=collection_name,

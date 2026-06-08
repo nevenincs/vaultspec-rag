@@ -175,7 +175,8 @@ class TestSearchEdgeCases:
     """Edge cases for search operations."""
 
     def test_encode_query_respects_sparse_enabled(self, rag_components):
-        """When sparse_enabled is False, _encode_query should return None for sparse vector."""
+        """When sparse_enabled is False, _encode_query should return None for
+        sparse vector."""
         from ... import VaultSearcher
 
         model = rag_components["model"]
@@ -185,7 +186,7 @@ class TestSearchEdgeCases:
         searcher = VaultSearcher(root, model, store)
         searcher._sparse_enabled = False
 
-        parsed, text, dense, sparse = searcher._encode_query("test query")
+        _parsed, _text, dense, sparse = searcher._encode_query("test query")
         assert sparse is None
         assert isinstance(dense, list)
 
@@ -200,7 +201,7 @@ class TestSearchEdgeCases:
         searcher = VaultSearcher(root, model, store)
         searcher._sparse_enabled = True
 
-        parsed, text, dense, sparse = searcher._encode_query("test query")
+        _parsed, _text, _dense, sparse = searcher._encode_query("test query")
         assert sparse is not None
         assert hasattr(sparse, "indices")
 
@@ -305,6 +306,37 @@ class TestSearchEdgeCases:
         # Verify the store is still functional after adversarial queries
         results = searcher.search_vault("architecture", top_k=3)
         assert len(results) > 0, "Store should still work after adversarial queries"
+
+    def test_search_vault_sparse_disabled_end_to_end(self, rag_components):
+        """search_vault with sparse_enabled=False should return results without
+        crashing."""
+        from ... import VaultSearcher
+
+        model = rag_components["model"]
+        store = rag_components["store"]
+        root = rag_components["root"]
+
+        searcher = VaultSearcher(root, model, store)
+        searcher._sparse_enabled = False
+
+        results = searcher.search_vault("architecture", top_k=5)
+        assert isinstance(results, list)
+        assert len(results) > 0
+
+    def test_search_codebase_sparse_disabled_end_to_end(self, rag_components):
+        """search_codebase with sparse_enabled=False should return results without
+        crashing."""
+        from ... import VaultSearcher
+
+        model = rag_components["model"]
+        store = rag_components["store"]
+        root = rag_components["root"]
+
+        searcher = VaultSearcher(root, model, store)
+        searcher._sparse_enabled = False
+
+        results = searcher.search_codebase("def", top_k=5)
+        assert isinstance(results, list)
 
 
 class TestRerank:
