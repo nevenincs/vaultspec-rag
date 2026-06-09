@@ -1,4 +1,4 @@
-"""Shared module-level state for the MCP server package.
+"""Shared module-level state for the RAG daemon (server) package.
 
 Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. This module is the canonical home of

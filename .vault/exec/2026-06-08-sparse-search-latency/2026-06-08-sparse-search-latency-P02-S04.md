@@ -8,9 +8,6 @@ related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
 
-
-
-
 # `sparse-search-latency` P02 plan: S04
 
 Phase P02

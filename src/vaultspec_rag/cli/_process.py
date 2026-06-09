@@ -336,7 +336,7 @@ def _spawn_service(
     watch_debounce_ms: int | None = None,
     watch_cooldown_s: float | None = None,
 ) -> int:
-    """Spawn the MCP server as a detached background process.
+    """Spawn the RAG service as a detached background process.
 
     Args:
         port: TCP port for the HTTP server.

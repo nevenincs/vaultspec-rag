@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+import vaultspec_rag.mcp._admin_tools as admin_tools
 import vaultspec_rag.mcp._tools as tools
 
 from ... import server
@@ -197,13 +198,11 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
 # Integration (GPU): real reindex tools write tool-triggered records          #
 # --------------------------------------------------------------------------- #
 
-import vaultspec_rag.mcp._admin_tools as admin_tools
-
 
 @pytest.mark.subprocess_gpu
+@pytest.mark.usefixtures("live_service")
 async def test_reindex_vault_records_finished_tool_job(
     tmp_path: Path,
-    live_service: tuple[int, Path],
 ) -> None:
     import asyncio
 
@@ -237,9 +236,9 @@ async def test_reindex_vault_records_finished_tool_job(
 
 
 @pytest.mark.subprocess_gpu
+@pytest.mark.usefixtures("live_service")
 async def test_reindex_codebase_records_finished_tool_job(
     tmp_path: Path,
-    live_service: tuple[int, Path],
 ) -> None:
     import asyncio
 

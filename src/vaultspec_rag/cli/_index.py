@@ -18,8 +18,8 @@ from ._core import logger
 from ._gpu_errors import _handle_gpu_error
 from ._http_search import _try_http_reindex
 from ._render import (
-    _display_mcp_error,
     _display_port_unreachable_error,
+    _display_service_error,
     _emit_json,
     _emit_json_error_and_exit,
 )
@@ -91,7 +91,7 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
         raise typer.Exit(code=2)
 
 
-def _try_mcp_delegation(
+def _try_service_delegation(
     port: int,
     exclude: list[str] | None,
     json_mode: bool,
@@ -102,7 +102,7 @@ def _try_mcp_delegation(
 ) -> bool:
     if exclude and not json_mode:
         _cli.console.print(
-            "[yellow]--exclude is ignored when delegating to MCP server.[/]",
+            "[yellow]--exclude is ignored when delegating to the RAG service.[/]",
         )
     do_vault = index_type in ("vault", "all")
     do_code = index_type in ("code", "all")
@@ -131,11 +131,11 @@ def _try_mcp_delegation(
                     f"[red]Reindex {label} reported an error; "
                     f"refusing to silently fall back.[/]",
                 )
-            _display_mcp_error(data, json_mode=json_mode, command="index")
+            _display_service_error(data, json_mode=json_mode, command="index")
             raise typer.Exit(code=1)
 
     if v_data is not None or c_data is not None:
-        return _print_mcp_results(v_data, c_data, json_mode)
+        return _print_service_results(v_data, c_data, json_mode)
 
     if not allow_fallback:
         _display_port_unreachable_error(
@@ -148,7 +148,7 @@ def _try_mcp_delegation(
     return False
 
 
-def _print_mcp_async_results(
+def _print_service_async_results(
     v_data: dict | None, c_data: dict | None, json_mode: bool
 ) -> bool:
     if json_mode:
@@ -156,7 +156,7 @@ def _print_mcp_async_results(
             True,
             "index",
             data={
-                "via": "mcp",
+                "via": "service",
                 "async": True,
                 "vault_job_id": (v_data.get("job_id") if v_data else None),
                 "codebase_job_id": (c_data.get("job_id") if c_data else None),
@@ -175,7 +175,7 @@ def _print_mcp_async_results(
     return True
 
 
-def _print_mcp_results(
+def _print_service_results(
     v_data: dict | None, c_data: dict | None, json_mode: bool
 ) -> bool:
     is_async = False
@@ -184,7 +184,7 @@ def _print_mcp_results(
             is_async = True
 
     if is_async:
-        return _print_mcp_async_results(v_data, c_data, json_mode)
+        return _print_service_async_results(v_data, c_data, json_mode)
 
     def _row(label: str, data: dict[str, object]) -> dict[str, object]:
         def _i(key: str) -> int:
@@ -209,7 +209,7 @@ def _print_mcp_results(
         _emit_json(
             True,
             "index",
-            data={"via": "mcp", "sources": sources},
+            data={"via": "service", "sources": sources},
         )
         return True
 
@@ -261,7 +261,7 @@ def handle_index(
         int | None,
         typer.Option(
             "--port",
-            help="Port of running MCP server (fast path).",
+            help="Port of running RAG service (fast path).",
         ),
     ] = None,
     dry_run: Annotated[
@@ -314,7 +314,7 @@ def handle_index(
 ) -> None:
     """Index vault documents and/or codebase chunks.
 
-    When ``--port`` is given, delegates to a running MCP server
+    When ``--port`` is given, delegates to a running RAG service
     via ``_try_http_reindex``. On dead/unreachable port, hard-fails
     with remediation unless ``--allow-fallback`` is set.
 
@@ -324,7 +324,7 @@ def handle_index(
             ``all``.
         model: Override the default embedding model name.
         rebuild: Drop the selected index collections before re-indexing.
-        port: Port of a running MCP server for fast-path
+        port: Port of a running RAG service for fast-path
             delegation.
         dry_run: List files that would be indexed without
             actually indexing.  Codebase only.
@@ -357,7 +357,7 @@ def handle_index(
             # We detected a running service, so enable fallback automatically.
             allow_fallback = True
 
-    if port is not None and _try_mcp_delegation(
+    if port is not None and _try_service_delegation(
         port, exclude, json_mode, index_type, rebuild, target, allow_fallback
     ):
         return

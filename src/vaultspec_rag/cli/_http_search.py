@@ -8,8 +8,11 @@ walks the exception chain to make that call.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Literal, cast
 
@@ -17,8 +20,6 @@ from ._core import logger
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
-    import errno
-
     if isinstance(exc, urllib.error.URLError):
         reason = getattr(exc, "reason", None)
         if isinstance(reason, ConnectionRefusedError):
@@ -58,7 +59,7 @@ def _do_http_call(
         body = e.read().decode("utf-8")
         try:
             return json.loads(body)
-        except:
+        except json.JSONDecodeError:
             return {"ok": False, "error": "http_error", "message": f"{e.code}: {body}"}
 
 
@@ -79,11 +80,67 @@ def _try_http_reindex(
         if _is_connection_refused(exc):
             logger.debug("HTTP reindex on port %s: connection refused (%s)", port, exc)
             return None
+        cls = exc.__class__.__name__
         return {
             "ok": False,
             "error": "http_call_failed",
-            "message": f"HTTP reindex on port {port} failed: {exc.__class__.__name__}: {exc}",
+            "message": f"HTTP reindex on port {port} failed: {cls}: {exc}",
         }
+
+
+def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
+    """Append ?project_root=... to base when args contains it."""
+    project_root = args.get("project_root")
+    if project_root:
+        return base + "?project_root=" + urllib.parse.quote(str(project_root))
+    return base
+
+
+def _route_admin_tool(
+    tool_name: str,
+    args: dict[str, Any],
+    port: int,
+) -> dict[str, Any] | None:
+    """Map an admin tool name to an HTTP call and return the raw result."""
+    if tool_name == "get_logs":
+        url_path = "/logs"
+        if "lines" in args:
+            url_path += f"?lines={args['lines']}"
+        return _do_http_call(port, url_path, None)
+
+    if tool_name == "get_jobs":
+        url_path = "/jobs"
+        if "limit" in args:
+            url_path += f"?limit={args['limit']}"
+        return _do_http_call(port, url_path, None)
+
+    if tool_name == "get_index_status":
+        return _do_http_call(port, _admin_url_with_root("/status", args), None)
+
+    if tool_name == "get_code_file":
+        return _do_http_call(port, "/code-file", args)
+
+    if tool_name == "list_projects":
+        return _do_http_call(port, _admin_url_with_root("/projects", args), None)
+
+    if tool_name == "evict_project":
+        return _do_http_call(port, "/projects/evict", args)
+
+    if tool_name == "get_watcher_state":
+        return _do_http_call(port, _admin_url_with_root("/watcher", args), None)
+
+    if tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
+        verb = tool_name.split("_")[0]
+        return _do_http_call(port, f"/watcher/{verb}", args)
+
+    if tool_name == "get_service_state":
+        return _do_http_call(port, _admin_url_with_root("/service-state", args), None)
+
+    return {
+        "ok": False,
+        "error": "unknown_admin_tool",
+        "message": f"Tool {tool_name} not mapped",
+    }
 
 
 def _try_http_admin(
@@ -94,58 +151,7 @@ def _try_http_admin(
     if port is None:
         return None
     try:
-        # map admin tools to REST paths
-        if tool_name == "get_logs":
-            url_path = "/logs"
-            if "lines" in args:
-                url_path += f"?lines={args['lines']}"
-            res = _do_http_call(port, url_path, None)
-        elif tool_name == "get_jobs":
-            url_path = "/jobs"
-            if "limit" in args:
-                url_path += f"?limit={args['limit']}"
-            res = _do_http_call(port, url_path, None)
-        elif tool_name == "get_index_status":
-            url_path = "/status"
-            if args.get("project_root"):
-                import urllib.parse
-
-                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
-            res = _do_http_call(port, url_path, None)
-        elif tool_name == "get_code_file":
-            res = _do_http_call(port, "/code-file", args)
-        elif tool_name == "list_projects":
-            url_path = "/projects"
-            if args.get("project_root"):
-                import urllib.parse
-
-                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
-            res = _do_http_call(port, url_path, None)
-        elif tool_name == "evict_project":
-            res = _do_http_call(port, "/projects/evict", args)
-        elif tool_name == "get_watcher_state":
-            url_path = "/watcher"
-            if args.get("project_root"):
-                import urllib.parse
-
-                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
-            res = _do_http_call(port, url_path, None)
-        elif tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
-            res = _do_http_call(port, f"/watcher/{tool_name.split('_')[0]}", args)
-        elif tool_name == "get_service_state":
-            url_path = "/service-state"
-            if args.get("project_root"):
-                import urllib.parse
-
-                url_path += "?project_root=" + urllib.parse.quote(args["project_root"])
-            res = _do_http_call(port, url_path, None)
-        else:
-            # Fallback for others if any
-            res = {
-                "ok": False,
-                "error": "unknown_admin_tool",
-                "message": f"Tool {tool_name} not mapped",
-            }
+        res = _route_admin_tool(tool_name, args, port)
         return res if res is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
@@ -162,8 +168,6 @@ def _try_http_admin(
 
 
 def _get_search_timeout(timeout: float | None) -> float:
-    import os
-
     if timeout is None:
         env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
         if env_timeout:
@@ -335,8 +339,9 @@ def _try_http_search(
         if _is_connection_refused(exc):
             logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
             return None
+        cls = exc.__class__.__name__
         return {
             "ok": False,
             "error": "http_call_failed",
-            "message": f"HTTP search on port {port} failed: {exc.__class__.__name__}: {exc}",
+            "message": f"HTTP search on port {port} failed: {cls}: {exc}",
         }

@@ -93,7 +93,7 @@ def _emit_json_error_and_exit(
     Centralises the JSON error path so every command's failure
     branches converge on one shape. Used by the new `--json` wiring
     on every CLI command and by the JSON-mode branches of
-    ``_display_mcp_error`` / ``_display_port_unreachable_error``.
+    ``_display_service_error`` / ``_display_port_unreachable_error``.
     """
     _emit_json(
         False,
@@ -105,22 +105,22 @@ def _emit_json_error_and_exit(
     raise typer.Exit(code=code)
 
 
-def _display_mcp_error(
+def _display_service_error(
     payload: dict[str, object],
     *,
     json_mode: bool = False,
-    command: str = "mcp",
+    command: str = "service",
     exit_code: int = 1,
 ) -> None:
-    """Render a structured MCP error returned by the service fast path.
+    """Render a structured error returned by the RAG service fast path.
 
     When ``json_mode`` is True the helper emits the envelope and
     raises ``typer.Exit(exit_code)`` so callers don't have to thread
     the exit themselves. The Rich path retains its original behaviour
     (no exit; caller decides).
     """
-    error = str(payload.get("error", "mcp_error"))
-    message = str(payload.get("message", "MCP service returned an error."))
+    error = str(payload.get("error", "service_error"))
+    message = str(payload.get("message", "RAG service returned an error."))
     if json_mode:
         extra: dict[str, object] = {}
         db_path = payload.get("db_path")
@@ -154,7 +154,7 @@ def _display_mcp_error(
 def _display_search_results(
     results: list[dict[str, object]],
     search_type: str,
-    via: Literal["mcp", "in-process"] = "mcp",
+    via: Literal["service", "in-process"] = "service",
     *,
     no_truncate: bool = False,
 ) -> None:
@@ -165,7 +165,7 @@ def _display_search_results(
             ``snippet``, and optional ``line_start`` keys.
         search_type: Label for the table title (e.g.
             ``vault``, ``code``, ``all``).
-        via: Transport path indicator (e.g. ``mcp``, ``in-process``).
+        via: Transport path indicator (e.g. ``service``, ``in-process``).
         no_truncate: Bypass the 120-character snippet truncation
             so sibling files with long paths stay distinguishable.
 

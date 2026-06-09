@@ -1,7 +1,7 @@
 """Module-level singleton holder for the shared :class:`ServiceRegistry`.
 
 Breaks the cycle that would otherwise exist if both ``api.py`` and
-``mcp_server.py`` tried to import ``_registry`` from each other.  Both
+``server/_main.py`` tried to import ``_registry`` from each other.  Both
 modules depend on this one instead.
 """
 

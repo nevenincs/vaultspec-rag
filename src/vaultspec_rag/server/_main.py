@@ -1,4 +1,4 @@
-"""Console-script entry point for the MCP server.
+"""Console-script entry point for the RAG daemon.
 
 Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. ``main`` remains importable from the
@@ -23,7 +23,7 @@ logger = logging.getLogger("vaultspec_rag.server")
 def main(port: int | None = None) -> None:
     from vaultspec_rag.mcp import mcp
 
-    """Start the MCP server on stdio or HTTP transport.
+    """Start the RAG daemon on stdio or HTTP transport.
 
     In HTTP mode, builds a Starlette app that mounts the MCP
     streamable-HTTP transport at ``/mcp`` and a raw ``/health``
@@ -47,7 +47,7 @@ def main(port: int | None = None) -> None:
 
         parser = argparse.ArgumentParser(
             prog="vaultspec-search-mcp",
-            description="VaultSpec RAG MCP server",
+            description="VaultSpec RAG daemon",
         )
         parser.add_argument(
             "--port",

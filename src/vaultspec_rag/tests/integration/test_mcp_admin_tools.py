@@ -7,7 +7,8 @@ from vaultspec_rag.mcp._admin_tools import evict_project, list_projects
 pytestmark = [pytest.mark.subprocess_gpu]
 
 
-def test_list_projects_empty_registry(live_service) -> None:
+@pytest.mark.usefixtures("live_service")
+def test_list_projects_empty_registry() -> None:
     """With no slots, returns empty projects and config-matched caps."""
     from vaultspec_rag.config import get_config
 
@@ -19,6 +20,8 @@ def test_list_projects_empty_registry(live_service) -> None:
     assert result["idle_ttl_seconds"] == float(cfg.service_idle_ttl_seconds)
 
 
-def test_evict_project_unknown_returns_not_found(live_service, tmp_path) -> None:
-    result = asyncio.run(evict_project(str(tmp_path / "never-seen")))
-    assert result == {"evicted": False, "reason": "not_found"}
+@pytest.mark.usefixtures("live_service")
+def test_evict_project_unknown_returns_not_found(tmp_path) -> None:
+    target = str(tmp_path / "never-seen")
+    result = asyncio.run(evict_project(target))
+    assert result == {"root": target, "evicted": False, "reason": "not_found"}

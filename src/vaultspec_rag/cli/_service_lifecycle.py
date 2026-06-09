@@ -68,7 +68,7 @@ def service_start(
 ) -> None:
     """Start the background RAG service as a detached process.
 
-    Spawns the MCP server on the given port, polls ``/health``
+    Spawns the RAG service on the given port, polls ``/health``
     with exponential backoff until ready, and writes a status
     file to ``~/.vaultspec-rag/service.json``.
 

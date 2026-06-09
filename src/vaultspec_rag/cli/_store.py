@@ -56,7 +56,7 @@ def _open_vault_store(
                 (
                     f"The vault index at {exc.db_path} is currently in "
                     "use by another process. Stop the resident "
-                    "service / MCP server, or route through one running "
+                    "RAG service, or route through one running "
                     "vaultspec-rag service for concurrent access."
                 ),
                 1,
@@ -70,7 +70,7 @@ def _open_vault_store(
         _cli.console.print(
             f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
             "is currently in use by another process.\n\n"
-            "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
+            "  Another [cyan]vaultspec-rag[/] command, RAG service, "
             "or file watcher is likely running against this workspace.\n\n"
             "  Local-file-backed RAG storage cannot be opened by multiple "
             "processes at once. For concurrent agent searches, route every "

@@ -12,8 +12,8 @@ from typer.testing import CliRunner
 
 from ..cli import (
     _add_backend_contract_rows,
-    _display_mcp_error,
     _display_search_results,
+    _display_service_error,
     _health_probe,
     _is_our_service,
     _is_pid_alive,
@@ -839,8 +839,8 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "falling back to in-process" not in normalized
 
-    def test_search_results_via_mcp_indicator(self):
-        """via='mcp' does not render '(via MCP)' in the table title."""
+    def test_search_results_via_service_indicator(self):
+        """via='service' renders '(via service)' in the table title."""
         from io import StringIO
 
         from rich.console import Console
@@ -854,11 +854,11 @@ class TestSearchSafetyContract:
             _display_search_results(
                 [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
                 "code",
-                via="mcp",
+                via="service",
             )
         rendered = " ".join(out.getvalue().split())
         assert "Search Results: code" in rendered
-        assert "(via MCP)" not in rendered
+        assert "(via service)" in rendered
 
     def test_search_results_via_in_process_indicator(self):
         """via='in-process' renders '(via in-process)' in the title."""
@@ -1012,7 +1012,7 @@ class TestNoTruncateFlag:
             _display_search_results(
                 [{"path": "foo.py", "score": 0.9, "snippet": snippet}],
                 "code",
-                via="mcp",
+                via="service",
                 no_truncate=no_truncate,
             )
         # Strip Rich wrapping whitespace before substring matching.
@@ -1079,9 +1079,9 @@ class TestNoTruncateFlag:
         assert "supported; same-project local backend access serialized" in rendered
         assert "Storage Process Model" in rendered
 
-    def test_display_mcp_lock_error_renders_contract(self, capsys):
+    def test_display_service_lock_error_renders_contract(self, capsys):
         """Structured local-store errors show remediation and backend contract."""
-        _display_mcp_error(
+        _display_service_error(
             {
                 "ok": False,
                 "error": "local_store_locked",

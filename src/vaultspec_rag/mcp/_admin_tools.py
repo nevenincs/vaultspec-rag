@@ -17,9 +17,7 @@ from ._tools import _call_daemon
 
 
 @mcp.tool()
-async def list_projects(
-    project_root: str | None = None,
-) -> dict[str, Any]:
+async def list_projects() -> dict[str, Any]:
     """Return a snapshot of every active :class:`ProjectSlot`."""
     return _call_daemon("/projects")
 
@@ -33,7 +31,12 @@ async def evict_project(root: str) -> dict[str, Any]:
 @mcp.tool()
 async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
     """Report filesystem-watcher configuration and running state."""
-    return _call_daemon("/watcher")
+    path = "/watcher"
+    if project_root:
+        import urllib.parse
+
+        path += "?project_root=" + urllib.parse.quote(project_root)
+    return _call_daemon(path)
 
 
 @mcp.tool()

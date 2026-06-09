@@ -1,9 +1,9 @@
-"""MCP server for VaultSpec RAG search and retrieval.
+"""RAG daemon HTTP service for VaultSpec RAG search and retrieval.
 
 Exposes tools for searching vault and codebase, resources for
 retrieving full contents, and prompts for common RAG tasks.
 
-In HTTP mode the server runs inside a Starlette application with
+In HTTP mode the daemon runs inside a Starlette application with
 a ``service_lifespan`` that eagerly loads GPU models before
 accepting connections.  A raw ``/health`` endpoint is mounted
 alongside the MCP transport at ``/mcp``.

@@ -4,7 +4,7 @@ Provides a ``ServiceRegistry`` that holds a shared ``EmbeddingModel``
 and per-project ``ProjectSlot`` instances, each containing a
 ``VaultStore``, ``VaultSearcher``, ``VaultIndexer``, ``CodebaseIndexer``,
 and ``GraphCache``.  Designed to replace the scattered component
-initialization in ``api.py`` and ``mcp_server.py``.
+initialization in ``api.py`` and the RAG daemon (``server/_main.py``).
 """
 
 from __future__ import annotations

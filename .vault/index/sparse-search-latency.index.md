@@ -3,7 +3,7 @@ generated: true
 tags:
   - '#index'
   - '#sparse-search-latency'
-date: '2026-06-08'
+date: '2026-06-09'
 related:
   - '[[2026-06-07-sparse-search-latency-adr]]'
   - '[[2026-06-07-sparse-search-latency-research]]'
@@ -20,6 +20,15 @@ related:
   - '[[2026-06-08-sparse-search-latency-P04-S13]]'
   - '[[2026-06-08-sparse-search-latency-P04-S14]]'
   - '[[2026-06-08-sparse-search-latency-P04-summary]]'
+  - '[[2026-06-08-sparse-search-latency-P05-S16]]'
+  - '[[2026-06-08-sparse-search-latency-P05-S18]]'
+  - '[[2026-06-08-sparse-search-latency-P05-summary]]'
+  - '[[2026-06-08-sparse-search-latency-P06-S19]]'
+  - '[[2026-06-08-sparse-search-latency-P06-S20]]'
+  - '[[2026-06-08-sparse-search-latency-P06-S21]]'
+  - '[[2026-06-08-sparse-search-latency-P06-S22]]'
+  - '[[2026-06-08-sparse-search-latency-P06-S23]]'
+  - '[[2026-06-08-sparse-search-latency-P06-summary]]'
   - '[[2026-06-08-sparse-search-latency-code-review-audit]]'
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
@@ -53,6 +62,15 @@ Auto-generated index of all documents tagged with `#sparse-search-latency`.
 - `2026-06-08-sparse-search-latency-P04-S13` - `sparse-search-latency` `P04.S13`: Test suite harmonization
 - `2026-06-08-sparse-search-latency-P04-S14` - `sparse-search-latency` `P04.S14` execution
 - `2026-06-08-sparse-search-latency-P04-summary` - `sparse-search-latency` `P04` summary
+- `2026-06-08-sparse-search-latency-P05-S16` - `sparse-search-latency` P05.S16 - remove `_resources.py` server internal imports
+- `2026-06-08-sparse-search-latency-P05-S18` - `sparse-search-latency` P05.S18 - mcp/ import-isolation guard test
+- `2026-06-08-sparse-search-latency-P05-summary` - `sparse-search-latency` Phase P05 Summary
+- `2026-06-08-sparse-search-latency-P06-S19` - `sparse-search-latency` P06.S19 - server docstring deconflation
+- `2026-06-08-sparse-search-latency-P06-S20` - `sparse-search-latency` P06.S20 - rename CLI mcp\_\* identifiers to service\_\*
+- `2026-06-08-sparse-search-latency-P06-S21` - `sparse-search-latency` P06.S21 - fix CLI user-facing daemon strings
+- `2026-06-08-sparse-search-latency-P06-S22` - `sparse-search-latency` P06.S22 - registry/service stale module reference fix
+- `2026-06-08-sparse-search-latency-P06-S23` - `sparse-search-latency` P06.S23 - conflation guard test
+- `2026-06-08-sparse-search-latency-P06-summary` - `sparse-search-latency` Phase P06 Summary
 
 ### plan
 

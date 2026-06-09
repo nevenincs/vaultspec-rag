@@ -16,9 +16,9 @@ from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
 from ._http_search import _try_http_search
 from ._render import (
-    _display_mcp_error,
     _display_port_unreachable_error,
     _display_search_results,
+    _display_service_error,
     _emit_json,
     _emit_json_error_and_exit,
 )
@@ -38,16 +38,16 @@ def _suppress_hf_progress() -> None:
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 
-def _handle_mcp_results(
-    mcp_results: list | dict | None,
+def _handle_service_results(
+    service_results: list | dict | None,
     query: str,
     search_type: str,
     json_mode: bool,
     no_truncate: bool,
 ) -> None:
-    if isinstance(mcp_results, dict):
-        _display_mcp_error(
-            mcp_results,
+    if isinstance(service_results, dict):
+        _display_service_error(
+            service_results,
             json_mode=json_mode,
             command="search",
         )
@@ -59,20 +59,20 @@ def _handle_mcp_results(
             data={
                 "query": query,
                 "search_type": search_type,
-                "via": "mcp",
-                "results": list(mcp_results or []),
+                "via": "service",
+                "results": list(service_results or []),
             },
         )
         return
-    if not mcp_results:
+    if not service_results:
         _cli.console.print(
             f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
         )
         return
     _display_search_results(
-        mcp_results,
+        service_results,
         search_type,
-        via="mcp",
+        via="service",
         no_truncate=no_truncate,
     )
 
@@ -88,7 +88,7 @@ def _handle_vaultstore_locked_error(
                 f"The vault index at {exc.db_path} is currently in "
                 "use by another process. Current routing mode: "
                 "direct local-store search. Stop the resident "
-                "service / MCP server, or route through one running "
+                "service / RAG service, or route through one running "
                 "vaultspec-rag service for concurrent access "
                 "(e.g., using --port 8766)."
             ),
@@ -106,7 +106,7 @@ def _handle_vaultstore_locked_error(
         f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
         "is currently in use by another process "
         "(routing mode: direct local-store search).\n\n"
-        "  Another [cyan]vaultspec-rag[/] command, MCP server, HTTP service, "
+        "  Another [cyan]vaultspec-rag[/] command, RAG service, or file watcher "
         "or file watcher is likely running against this workspace.\n\n"
         "  Local-file-backed RAG storage cannot be opened by multiple "
         "processes at once. For concurrent agent searches, route every "
@@ -445,7 +445,7 @@ def handle_search(
     ] = False,
     port: Annotated[
         int | None,
-        typer.Option("--port", help="Port of running MCP server (fast path)."),
+        typer.Option("--port", help="Port of running RAG service (fast path)."),
     ] = None,
     allow_fallback: Annotated[
         bool,
@@ -498,7 +498,7 @@ def handle_search(
 ) -> None:
     """Search for relevant context in documentation or code.
 
-    When ``--port`` is given, delegates to a running MCP server.
+    When ``--port`` is given, delegates to a running RAG service.
     On dead/unreachable port, hard-fails with remediation unless
     ``--allow-fallback`` is set.
 
@@ -522,7 +522,7 @@ def handle_search(
         feature: Vault-search filter for feature tag.
         date: Vault-search filter for exact ISO date.
         tag: Vault-search filter for free-form tag.
-        port: Port of a running MCP server for fast-path
+        port: Port of a running RAG service for fast-path
             delegation.
         allow_fallback: Opt in to silent in-process fallback when
             ``--port`` is unreachable.
@@ -563,7 +563,7 @@ def handle_search(
             allow_fallback = True
 
     if port is not None:
-        mcp_results = _try_http_search(
+        service_results = _try_http_search(
             query,
             search_type,
             max_results,
@@ -584,8 +584,10 @@ def handle_search(
             dedup_locales=dedup_locales,
             prefer=prefer,
         )
-        if mcp_results is not None:
-            _handle_mcp_results(mcp_results, query, search_type, json_mode, no_truncate)
+        if service_results is not None:
+            _handle_service_results(
+                service_results, query, search_type, json_mode, no_truncate
+            )
             return
         if not allow_fallback:
             _display_port_unreachable_error(

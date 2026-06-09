@@ -1,4 +1,4 @@
-"""Pydantic response models for the MCP server.
+"""Pydantic response models for the RAG daemon.
 
 Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. These models serialize tool results

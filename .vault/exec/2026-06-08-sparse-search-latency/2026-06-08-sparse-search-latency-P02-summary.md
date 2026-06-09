@@ -11,9 +11,9 @@ related:
 
 ## Overview
 
-Phase P02 aimed to push path glob filtering down into Qdrant using native `MatchPattern` regex filters. The goal was to bypass slow post-query Python filtering. 
+Phase P02 aimed to push path glob filtering down into Qdrant using native `MatchPattern` regex filters. The goal was to bypass slow post-query Python filtering.
 
-However, during execution (Step S04), it was discovered that Qdrant 1.18.0 natively does not support a `MatchPattern` capability on payload fields via the `qdrant-client` library. The Python type checker and Pydantic models reject any `MatchPattern` payload filter structure. 
+However, during execution (Step S04), it was discovered that Qdrant 1.18.0 natively does not support a `MatchPattern` capability on payload fields via the `qdrant-client` library. The Python type checker and Pydantic models reject any `MatchPattern` payload filter structure.
 
 ## Action Taken
 

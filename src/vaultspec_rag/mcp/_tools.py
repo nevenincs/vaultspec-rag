@@ -48,10 +48,12 @@ def _call_daemon(path: str, payload: dict | None = None) -> dict:
         body = e.read().decode("utf-8")
         try:
             return json.loads(body)
-        except:
-            raise RuntimeError(f"REST API call to {url} failed with {e.code}: {body}")
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                f"REST API call to {url} failed with {e.code}: {body}"
+            ) from e
     except Exception as e:
-        raise RuntimeError(f"REST API call to {url} failed: {e}")
+        raise RuntimeError(f"REST API call to {url} failed: {e}") from e
 
 
 @mcp.tool()
