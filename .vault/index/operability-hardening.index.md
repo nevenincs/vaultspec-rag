@@ -20,6 +20,7 @@ related:
   - '[[2026-06-09-operability-hardening-W03-P06-S13]]'
   - '[[2026-06-09-operability-hardening-W03-P07-S14]]'
   - '[[2026-06-09-operability-hardening-W03-P08-S15]]'
+  - '[[2026-06-09-operability-hardening-W04-P09-S16]]'
   - '[[2026-06-09-operability-hardening-adr]]'
   - '[[2026-06-09-operability-hardening-plan]]'
   - '[[2026-06-09-operability-hardening-research]]'
@@ -52,6 +53,7 @@ Auto-generated index of all documents tagged with `#operability-hardening`.
 - `2026-06-09-operability-hardening-W03-P06-S13` - CLI help cleanup — operator-facing help, no leaked developer sections
 - `2026-06-09-operability-hardening-W03-P07-S14` - Author the indexing and retrieval architecture guide
 - `2026-06-09-operability-hardening-W03-P08-S15` - operator-persona testimonial end-to-end CLI integration tests
+- `2026-06-09-operability-hardening-W04-P09-S16` - `operability-hardening` W04.P09.S16 - verification and issue reconciliation
 
 ### plan
 
