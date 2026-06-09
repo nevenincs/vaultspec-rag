@@ -31,6 +31,7 @@ related:
   - '[[2026-06-08-sparse-search-latency-P06-summary]]'
   - '[[2026-06-08-sparse-search-latency-code-review-audit]]'
   - '[[2026-06-08-sparse-search-latency-plan]]'
+  - '[[2026-06-09-sparse-search-latency-research]]'
 ---
 
 # `sparse-search-latency` feature index
@@ -79,3 +80,4 @@ Auto-generated index of all documents tagged with `#sparse-search-latency`.
 ### research
 
 - `2026-06-07-sparse-search-latency-research` - `sparse-search-latency` research: `Scaling Bottlenecks`
+- `2026-06-09-sparse-search-latency-research` - `sparse-search-latency` research: `qdrant glob pushdown feasibility`

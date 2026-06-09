@@ -5,6 +5,7 @@ tags:
 date: '2026-06-07'
 related:
   - "[[2026-06-07-sparse-search-latency-research]]"
+  - '[[2026-06-09-sparse-search-latency-research]]'
 ---
 
 # `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `approved`)
