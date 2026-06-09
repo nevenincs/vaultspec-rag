@@ -1,28 +1,20 @@
-"""MCP resources and prompts.
+"""MCP resources and prompts — pure protocol adapter.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. Importing this module runs the
-``@mcp.resource()`` / ``@mcp.prompt()`` decorators. The HTTP-mode flag
-is read through the package alias so a test rebind of ``_http_mode`` is
-observed.
+The ``vault://`` resource and ``analyze_feature`` prompt delegate to the
+REST daemon via ``_call_daemon``.  No server internals are imported.
 """
 
 from __future__ import annotations
 
-from anyio.to_thread import run_sync as _run_in_thread
-
-import vaultspec_rag.server as _m
-
-from ..server._utils import _default_root
 from ._mcp import mcp
+from ._tools import _call_daemon
 
 
 @mcp.resource("vault://{doc_id}")
 async def get_vault_document(doc_id: str) -> str:
     """Retrieve the full content of a vault document by its stem ID.
 
-    Only available in stdio mode (single-project).  In HTTP mode,
-    use the ``search_vault`` tool with an explicit ``project_root``.
+    Delegates to the daemon's ``/vault-document`` REST endpoint.
 
     Args:
         doc_id: Relative path without extension (e.g.,
@@ -33,22 +25,16 @@ async def get_vault_document(doc_id: str) -> str:
 
     Raises:
         FileNotFoundError: If no document matches the given ID.
-        ValueError: If called in HTTP service mode.
-        RuntimeError: If RAG components fail to initialize.
+        RuntimeError: If the daemon is not running or the REST call
+            fails.
     """
-    if _m._http_mode:
-        msg = "Resource vault:// is only available in stdio mode (single-project)."
-        raise ValueError(msg)
-    root = _default_root()
-
-    def _run() -> str:
-        with _m._registry.lease(root) as slot:
-            doc = slot.store.get_by_id(doc_id)
-            if not doc:
-                raise FileNotFoundError(f"Document '{doc_id}' not found")
-            return doc.get("content", "")
-
-    return await _run_in_thread(_run)
+    res = _call_daemon("/vault-document", {"doc_id": doc_id})
+    if "content" in res:
+        return res["content"]
+    if res.get("error") == "not_found":
+        raise FileNotFoundError(f"Document '{doc_id}' not found")
+    # Structured error from daemon (registry_full, local_store_locked, etc.)
+    raise RuntimeError(res.get("message", f"Failed to fetch document '{doc_id}'"))
 
 
 @mcp.prompt()
@@ -64,12 +50,6 @@ def analyze_feature(feature_name: str) -> str:
         search vault ADRs, find codebase implementation, and
         summarize alignment.
     """
-    root_note = (
-        "\n\nNote: In HTTP service mode, you must include "
-        "`project_root` in every tool call."
-        if _m._http_mode
-        else ""
-    )
     return (
         f"Please analyze the implementation and documentation "
         f"for the '{feature_name}' feature.\n\n"
@@ -79,5 +59,4 @@ def analyze_feature(feature_name: str) -> str:
         f"implementation logic.\n"
         f"3. Summarize how the implementation aligns with "
         f"the original design specs."
-        f"{root_note}"
     )
