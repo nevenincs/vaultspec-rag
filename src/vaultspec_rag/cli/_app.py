@@ -29,7 +29,7 @@ app = typer.Typer(
 
 # Command Groups
 server_root_app = typer.Typer(
-    help="Manage the HTTP RAG service and MCP server.",
+    help="Manage the HTTP RAG service and the MCP protocol adapter.",
 )
 # Alias kept for backward-compatible decorator references in command modules.
 server_app = server_root_app

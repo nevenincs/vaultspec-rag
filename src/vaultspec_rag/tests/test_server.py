@@ -602,22 +602,27 @@ class TestHttpModeResolveRoot:
         with pytest.raises(ValueError, match="must not be empty"):
             _resolve_root("   ")
 
-    def test_vault_resource_raises_in_http_mode(self):
-        """get_vault_document should raise with resource-specific message."""
-        import vaultspec_rag.server as mod
+    def test_vault_document_requires_running_daemon(self, tmp_path):
+        """get_vault_document is a REST client; it errors when no daemon is up.
 
-        orig = mod._http_mode
-        mod._http_mode = True
+        Post-deconflation the resource delegates to the daemon's
+        ``/vault-document`` endpoint via ``_call_daemon``; with an empty
+        status dir (no ``service.json``) that raises a clear RuntimeError.
+        """
+        import os
+
+        from vaultspec_rag.mcp._resources import get_vault_document
+
+        prev = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
+        os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
         try:
-            with pytest.raises(
-                ValueError,
-                match="only available in stdio mode",
-            ):
-                from vaultspec_rag.mcp._resources import get_vault_document
-
+            with pytest.raises(RuntimeError, match="daemon is not running"):
                 _run(get_vault_document("adr/overview"))
         finally:
-            mod._http_mode = orig
+            if prev is None:
+                os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
+            else:
+                os.environ["VAULTSPEC_RAG_STATUS_DIR"] = prev
 
 
 class TestMainTransportSetup:

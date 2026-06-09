@@ -23,7 +23,7 @@ re-indexes on change. Default is **on**.
 - **DO use `--no-watch` (or `VAULTSPEC_RAG_WATCH_ENABLED=0`)** to make the
   service pull-only when you want manual or externally-scheduled indexing.
 - **DO check watcher state before assuming staleness:** run
-  `vaultspec-rag server service watcher status` (or the `get_watcher_state`
+  `vaultspec-rag server watcher status` (or the `get_watcher_state`
   MCP tool) instead of guessing whether the index is current.
 - **DO tune, don't disable, for noise:** raise `--watch-debounce-ms` /
   `--watch-cooldown-s` rather than turning the watcher off. `0` on either knob
@@ -86,29 +86,29 @@ Server management:
 server mcp start             Start the MCP server (stdio)
 server mcp stop              Stop the MCP server
 server mcp status            Show MCP server status
-server service start [--watch/--no-watch] [--watch-debounce-ms N]
-                     [--watch-cooldown-s S]
+server start [--watch/--no-watch] [--watch-debounce-ms N]
+             [--watch-cooldown-s S]
                              Start the HTTP RAG service. Watcher flags are
                              translated to VAULTSPEC_RAG_WATCH* env on the
                              daemon (it inherits only env). Unset flags leave
                              any operator-set env untouched.
-server service stop          Stop the HTTP RAG service
-server service status        Show service status. Exit codes: 0 running,
+server stop                  Stop the HTTP RAG service
+server status                Show service status. Exit codes: 0 running,
                              3 stopped (no service.json), 4 crashed or
                              divergent (file present but PID dead, port
                              silent, heartbeat stale, or PID reused).
                              Daemon writes last_heartbeat every 15s;
                              stale threshold 60s.
-server service warmup        Pre-load GPU models without serving
-server service projects list|evict   Inspect / evict project slots.
-server service info          Consolidated state: index counts + GPU + projects
+server warmup                Pre-load GPU models without serving
+server projects list|evict   Inspect / evict project slots.
+server info                  Consolidated state: index counts + GPU + projects
                              + watcher rollup (get_service_state).
-server service logs [--lines N]      Tail the service log (rotated-set aware).
-server service jobs [--limit N]      Recent + in-flight index/reindex activity.
-server service watcher status        Show watcher config + watched roots.
-server service watcher start <root>  Eagerly watch a root (no-op if disabled).
-server service watcher stop <root>   Stop watching a root (pull-only for it).
-server service watcher reconfigure <root> [--debounce-ms N] [--cooldown-s S]
+server logs [--lines N]      Tail the service log (rotated-set aware).
+server jobs [--limit N]      Recent + in-flight index/reindex activity.
+server watcher status        Show watcher config + watched roots.
+server watcher start <root>  Eagerly watch a root (no-op if disabled).
+server watcher stop <root>   Stop watching a root (pull-only for it).
+server watcher reconfigure <root> [--debounce-ms N] [--cooldown-s S]
                              Restart a root's watcher with new tuning.
 ```
 
@@ -149,9 +149,9 @@ The `vaultspec-search-mcp` server exposes the following tools:
 - `reindex_codebase(clean, project_root)` — re-index source code.
   Incremental by default; `clean=true` drops and rebuilds.
 - `list_projects()` — list active project slots (root, idle, refs);
-  mirrors `server service projects list`.
+  mirrors `server projects list`.
 - `evict_project(root)` — evict a project's resident slot; mirrors
-  `server service projects evict`.
+  `server projects evict`.
 - `get_watcher_state(project_root?)` — report watcher config
   (`watch_enabled`, `debounce_ms`, `cooldown_s`) and watched roots.
 - `start_watcher(root)` — eagerly start the watcher for a root
@@ -177,7 +177,7 @@ to analyze a feature across docs and code.
 - `vaultspec-search-mcp` — MCP server stdio mode
   (package: `vaultspec_rag.server:main`)
 - `vaultspec-rag server mcp start` — MCP server via CLI
-- `vaultspec-rag server service start` — HTTP RAG service
+- `vaultspec-rag server start` — HTTP RAG service
 
 ## Data Directory
 
