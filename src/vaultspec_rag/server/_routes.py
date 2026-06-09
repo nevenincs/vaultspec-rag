@@ -524,6 +524,52 @@ async def logs_json_route(request: Request) -> JSONResponse:
     return JSONResponse({"lines": body})
 
 
+async def vault_document_route(request: Request) -> JSONResponse:
+    """Token-gated ``POST /vault-document`` returning a single vault doc.
+
+    Accepts ``{"doc_id": "...", "project_root": "..."}`` and returns
+    ``{"content": "..."}`` on success, or
+    ``{"ok": false, "error": "not_found"}`` when no matching document
+    exists.
+
+    Args:
+        request: The incoming Starlette request.
+
+    Returns:
+        A ``JSONResponse`` with the document content, or a structured
+        error response.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    payload = await request.json()
+    doc_id = payload.get("doc_id")
+    project_root = payload.get("project_root")
+
+    if not doc_id:
+        return JSONResponse(
+            {"ok": False, "error": "bad_request", "message": "doc_id is required"},
+            status_code=400,
+        )
+
+    root = _resolve_root(project_root)
+
+    def _run() -> dict:
+        try:
+            with _m._registry.lease(root) as slot:
+                doc = slot.store.get_by_id(doc_id)
+                if not doc:
+                    return {"ok": False, "error": "not_found"}
+                return {"content": doc.get("content", "")}
+        except RegistryFullError as exc:
+            return _m._registry_full_error_dict(exc)
+        except VaultStoreLockedError as exc:
+            return _m._local_store_locked_error_dict(exc)
+
+    result = await _run_in_thread(_run)
+    return JSONResponse(result)
+
+
 ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),
     Route("/logs/json", logs_json_route, methods=["GET"]),
@@ -539,6 +585,7 @@ ROUTES: list[Route] = [
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
     Route("/service-state", get_service_state_route, methods=["GET"]),
     Route("/code-file", code_file_route, methods=["POST"]),
+    Route("/vault-document", vault_document_route, methods=["POST"]),
     Route("/benchmark", benchmark_route, methods=["POST"]),
     Route("/quality", quality_route, methods=["POST"]),
 ]
