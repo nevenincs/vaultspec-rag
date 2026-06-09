@@ -51,18 +51,18 @@ on Windows.
 
 Truthful exit codes, correct log routing, 400-not-500, and faster collection drop.
 
-- [ ] `W02.P03.S05` - Return non-zero exit when start is blocked by an occupied port; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `W02.P03.S06` - Route the logs admin tool to the JSON logs endpoint; `src/vaultspec_rag/cli/_http_search.py`.
-- [ ] `W02.P03.S07` - Convert missing project_root into a 400 with a clear message, not a 500; `src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_utils.py`.
-- [ ] `W02.P03.S08` - Remove the redundant pre-delete before dropping a collection; `src/vaultspec_rag/store.py`.
+- [x] `W02.P03.S05` - Return non-zero exit when start is blocked by an occupied port; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `W02.P03.S06` - Route the logs admin tool to the JSON logs endpoint; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `W02.P03.S07` - Convert missing project_root into a 400 with a clear message, not a 500; `src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_utils.py`.
+- [x] `W02.P03.S08` - Remove the redundant pre-delete before dropping a collection; `src/vaultspec_rag/store.py`.
 
 ### Phase `W02.P04` - Observability and Windows detach
 
 Orphan detection, token persistence, and Job-Object-safe detached spawning.
 
-- [ ] `W02.P04.S09` - Detect a healthy orphaned daemon via port probe when service.json is absent; `src/vaultspec_rag/cli/_service_lifecycle.py, src/vaultspec_rag/cli/_service_status.py`.
-- [ ] `W02.P04.S10` - Persist the service token into service.json during the start health-poll; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `W02.P04.S11` - Spawn the daemon with Windows Job-Object breakaway and an OSError fallback; `src/vaultspec_rag/cli/_process.py`.
+- [x] `W02.P04.S09` - Detect a healthy orphaned daemon via port probe when service.json is absent; `src/vaultspec_rag/cli/_service_lifecycle.py, src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W02.P04.S10` - Persist the service token into service.json during the start health-poll; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `W02.P04.S11` - Spawn the daemon with Windows Job-Object breakaway and an OSError fallback; `src/vaultspec_rag/cli/_process.py`.
 
 ## Wave `W03` - CLI UX and documentation
 

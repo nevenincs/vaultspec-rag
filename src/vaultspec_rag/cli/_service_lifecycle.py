@@ -13,7 +13,7 @@ from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ..config import EnvVar
+from ..config import EnvVar, get_config
 from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
 from ._process import (
@@ -29,8 +29,54 @@ from ._service_status import (
     _log_file,
     _read_service_status,
     _status_file,
+    _update_service_token,
     _write_service_status,
 )
+
+
+def _orphan_probe_port() -> int:
+    """Return the port to probe when no ``service.json`` is present.
+
+    Reads ``VAULTSPEC_RAG_PORT`` from the config (which checks the env var
+    first, then falls back to the compiled-in default of 8766).
+    """
+    return int(get_config().mcp_port)
+
+
+def _render_orphan_status_json(port: int, health: dict[str, Any]) -> None:
+    """Emit a JSON orphan-divergent envelope and exit with code 4."""
+    payload: dict[str, object] = {
+        "service_json_present": False,
+        "state": "orphaned",
+        "port": port,
+        "health": health,
+    }
+    _emit_json(
+        False,
+        "service.status",
+        error="orphaned",
+        message=f"No service.json but port {port} answers /health. "
+        "Service may be orphaned.",
+        data=payload,
+    )
+    raise typer.Exit(code=4)
+
+
+def _render_orphan_status_table(port: int, health: dict[str, Any]) -> None:
+    """Print an orphan-divergent status table and exit with code 4."""
+    table = Table(title="Service Status", show_header=False, padding=(0, 2))
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    table.add_row("Service JSON", "[red]missing[/]")
+    table.add_row("Port", str(port))
+    table.add_row(
+        "State",
+        "[yellow]orphaned[/] (no service.json but port answers /health)",
+    )
+    health_status = health.get("status", "unknown")
+    table.add_row("Health", str(health_status))
+    _cli.console.print(table)
+    raise typer.Exit(code=4)
 
 
 @server_app.command("start")
@@ -88,7 +134,7 @@ def service_start(
                 border_style="yellow",
             ),
         )
-        return
+        raise typer.Exit(code=1)
 
     # Check for existing service
     status = _read_service_status()
@@ -151,6 +197,12 @@ def service_start(
 
             health = _health_probe(port)
             if health is not None and health.get("status") == "ready":
+                # Persist the token from /health into service.json so
+                # auto-delegation auth works before the first heartbeat
+                # tick overwrites the file (S10 / #181 A5).
+                token_from_health = health.get("service_token")
+                if isinstance(token_from_health, str) and token_from_health:
+                    _update_service_token(token_from_health)
                 startup_s = time.perf_counter() - t0
                 _cli.console.print(
                     Panel(
@@ -189,6 +241,23 @@ def service_stop() -> None:
     """
     status = _read_service_status()
     if status is None:
+        # Orphan-detection fallback: if no service.json exists but the default
+        # port answers /health, surface the orphaned daemon so the operator
+        # knows it is running and can reclaim/kill it (S09 / #181 A1).
+        orphan_port = _orphan_probe_port()
+        orphan_health = _health_probe(orphan_port)
+        if orphan_health is not None and orphan_health.get("status") == "ready":
+            _cli.console.print(
+                Panel(
+                    f"No service.json but port {orphan_port} answers /health "
+                    f"(status: {orphan_health.get('status', 'unknown')}).\n"
+                    "Service may be orphaned. Kill it manually or reclaim "
+                    f"with: kill $(lsof -ti tcp:{orphan_port})",
+                    title="Service Stop — Orphaned Daemon Detected",
+                    border_style="yellow",
+                ),
+            )
+            raise typer.Exit(code=4)
         _cli.console.print(
             Panel(
                 "No service status file found. Service is not running.",
@@ -485,6 +554,18 @@ def service_status(
     status = _read_service_status()
 
     if status is None:
+        # Orphan-detection fallback: probe the default port to catch a
+        # running daemon that has no service.json (e.g. status dir was
+        # wiped). If the port answers /health, report divergent state
+        # (exit 4) so the operator can reclaim/kill it (S09 / #181 A1).
+        orphan_port = _orphan_probe_port()
+        orphan_health = _health_probe(orphan_port)
+        if orphan_health is not None and orphan_health.get("status") == "ready":
+            if json_mode:
+                _render_orphan_status_json(orphan_port, orphan_health)
+            else:
+                _render_orphan_status_table(orphan_port, orphan_health)
+            return  # unreachable — both helpers raise typer.Exit
         if json_mode:
             _emit_json(
                 False,
@@ -581,8 +662,6 @@ def service_warmup() -> None:
         raise typer.Exit(code=1) from None
 
     os.environ.setdefault(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT, "300")
-
-    from ..config import get_config
 
     cfg = get_config()
     models = [

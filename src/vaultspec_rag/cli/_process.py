@@ -330,6 +330,17 @@ def _service_child_env(
     return env
 
 
+# Windows process-creation flags used when spawning the detached daemon.
+# Defined as named constants so tests can assert their values without
+# hard-coding magic numbers.
+_WIN_CREATE_NEW_PROCESS_GROUP = 0x00000200
+_WIN_CREATE_NO_WINDOW = 0x08000000
+# Detaches the new process from the launching shell's Windows Job Object so the
+# daemon survives when the parent shell exits.  Some restricted Job Objects deny
+# breakaway; _spawn_service catches OSError and retries without this flag.
+_WIN_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
 def _resolve_daemon_interpreter() -> str:
     """Return the venv interpreter path for spawning the daemon.
 
@@ -383,14 +394,38 @@ def _spawn_service(
     )
     log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
     if sys.platform == "win32":
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=log_fd,
-            stderr=subprocess.STDOUT,
-            env=env,
-            creationflags=0x00000200 | 0x08000000,  # NEW_PROCESS_GROUP | NO_WINDOW
+        _flags_with_breakaway = (
+            _WIN_CREATE_NEW_PROCESS_GROUP
+            | _WIN_CREATE_NO_WINDOW
+            | _WIN_CREATE_BREAKAWAY_FROM_JOB
         )
+        _flags_without_breakaway = _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fd,
+                stderr=subprocess.STDOUT,
+                env=env,
+                creationflags=_flags_with_breakaway,
+            )
+        except OSError:
+            # The parent Job Object disallows breakaway (e.g., terminal emulators,
+            # CI runners, VS Code integrated terminal).  Fall back to spawning
+            # without the flag — no worse than the pre-fix behaviour, but the
+            # daemon may be killed when the launching shell exits.
+            logger.warning(
+                "CREATE_BREAKAWAY_FROM_JOB denied by parent Job Object; "
+                "daemon may be killed when the launching shell exits"
+            )
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fd,
+                stderr=subprocess.STDOUT,
+                env=env,
+                creationflags=_flags_without_breakaway,
+            )
     else:
         proc = subprocess.Popen(
             cmd,

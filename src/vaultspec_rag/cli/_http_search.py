@@ -96,6 +96,19 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
     return base
 
 
+def _logs_route_path(args: dict[str, Any]) -> str:
+    """Build the JSON logs route path (``?lines=N`` when provided).
+
+    The daemon's ``/logs/json`` route returns ``{"lines": [...]}`` which the
+    JSON-parsing ``_do_http_call`` can decode; the plaintext ``/logs`` route
+    would fail JSON decoding and silently yield no lines.
+    """
+    path = "/logs/json"
+    if "lines" in args:
+        path += f"?lines={args['lines']}"
+    return path
+
+
 def _route_admin_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -103,10 +116,7 @@ def _route_admin_tool(
 ) -> dict[str, Any] | None:
     """Map an admin tool name to an HTTP call and return the raw result."""
     if tool_name == "get_logs":
-        url_path = "/logs"
-        if "lines" in args:
-            url_path += f"?lines={args['lines']}"
-        return _do_http_call(port, url_path, None)
+        return _do_http_call(port, _logs_route_path(args), None)
 
     if tool_name == "get_jobs":
         url_path = "/jobs"

@@ -115,6 +115,38 @@ def _write_service_status(pid: int, port: int) -> None:
     os.replace(str(tmp), str(path))
 
 
+def _update_service_token(token: str) -> None:
+    """Persist *token* into the ``service_token`` field of ``service.json``.
+
+    Reads the current status file, merges the new token, and atomically
+    rewrites the file. A no-op (with a debug log) when the file is absent,
+    unreadable, or already carries the same token. Never raises so the
+    caller's normal flow is not interrupted.
+
+    Args:
+        token: ``service_token`` value from the ``/health`` response.
+
+    """
+    sf = _status_file()
+    if not sf.exists():
+        logger.debug("_update_service_token: service.json absent, skipping")
+        return
+    try:
+        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("_update_service_token: read failed: %s", exc, exc_info=True)
+        return
+    if data.get("service_token") == token:
+        return
+    data["service_token"] = token
+    tmp = sf.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(str(tmp), str(sf))
+    except OSError as exc:
+        logger.debug("_update_service_token: write failed: %s", exc, exc_info=True)
+
+
 def _read_service_status() -> dict[str, Any] | None:
     """Read and parse the service status file.
 

@@ -33,12 +33,29 @@ from ..logging_config import read_service_log
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
 from . import _jobs
-from ._utils import _clamp_top_k, _resolve_root, _validate_query
+from ._utils import (
+    ProjectRootRequiredError,
+    _clamp_top_k,
+    _resolve_root,
+    _validate_query,
+)
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+_BAD_REQUEST_MISSING_ROOT = JSONResponse(
+    {
+        "ok": False,
+        "error": "bad_request",
+        "message": (
+            "project_root is required - "
+            "supply it in the request body (POST) or as a query parameter (GET)."
+        ),
+    },
+    status_code=400,
+)
 
 # Default and clamp bounds for the ``?lines=`` query parameter.
 _DEFAULT_LOG_LINES = 200
@@ -212,7 +229,10 @@ async def search_route(request: Request) -> JSONResponse:
 
     top_k = _clamp_top_k(top_k)
     query = _validate_query(query)
-    root = _resolve_root(project_root)
+    try:
+        root = _resolve_root(project_root)
+    except ProjectRootRequiredError:
+        return _BAD_REQUEST_MISSING_ROOT
 
     def _run():
         import vaultspec_rag
@@ -283,7 +303,10 @@ async def reindex_route(request: Request) -> JSONResponse:
     clean = payload.get("clean", False)
     project_root = payload.get("project_root")
 
-    root = _resolve_root(project_root)
+    try:
+        root = _resolve_root(project_root)
+    except ProjectRootRequiredError:
+        return _BAD_REQUEST_MISSING_ROOT
     from ..jobs import start_reindex_codebase, start_reindex_vault
 
     if reindex_type == "vault":
@@ -427,7 +450,10 @@ async def get_service_state_route(request: Request) -> JSONResponse:
 
     from ._utils import _resolve_root
 
-    root = _resolve_root(project_root)
+    try:
+        root = _resolve_root(project_root)
+    except ProjectRootRequiredError:
+        return _BAD_REQUEST_MISSING_ROOT
 
     with _m._watcher_lock:
         watching_roots = [str(r) for r in _m._watcher_tasks]
@@ -450,7 +476,10 @@ async def code_file_route(request: Request) -> JSONResponse:
     project_root = payload.get("project_root")
     from ._utils import _resolve_root
 
-    root = _resolve_root(project_root)
+    try:
+        root = _resolve_root(project_root)
+    except ProjectRootRequiredError:
+        return _BAD_REQUEST_MISSING_ROOT
 
     def _run():
         try:
@@ -486,7 +515,10 @@ async def benchmark_route(request: Request) -> JSONResponse:
     n_queries = payload.get("n_queries", 20)
     from ._utils import _resolve_root
 
-    root = _resolve_root(project_root)
+    try:
+        root = _resolve_root(project_root)
+    except ProjectRootRequiredError:
+        return _BAD_REQUEST_MISSING_ROOT
 
     def _run():
         import vaultspec_rag
@@ -552,7 +584,10 @@ async def vault_document_route(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    root = _resolve_root(project_root)
+    try:
+        root = _resolve_root(project_root)
+    except ProjectRootRequiredError:
+        return _BAD_REQUEST_MISSING_ROOT
 
     def _run() -> dict:
         try:

@@ -22,6 +22,7 @@ from ..server import (
     HealthResponse,
     IndexResponse,
     IndexStatus,
+    ProjectRootRequiredError,
     SearchResponse,
     SearchResultItem,
     _clamp_top_k,
@@ -1140,3 +1141,218 @@ class TestDaemonLifecycleHelpers:
         ]
         assert first, "first shutdown should log"
         assert not second, "second shutdown should be suppressed"
+
+
+class TestProjectRootRequiredError:
+    """S07: ProjectRootRequiredError raised by _default_root in HTTP mode.
+
+    These tests verify the exception type contract without exercising
+    the full route stack (no GPU/Qdrant required).  Route-level 400
+    coverage (route returns 400, not 500) is exercised via the
+    Starlette TestClient against the affected handlers below.
+    """
+
+    def test_is_subclass_of_value_error(self):
+        """ProjectRootRequiredError must be a ValueError subtype."""
+        assert issubclass(ProjectRootRequiredError, ValueError)
+
+    def test_default_root_raises_project_root_required_in_http_mode(self):
+        import vaultspec_rag.server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(
+                ProjectRootRequiredError, match="project_root is required"
+            ):
+                _default_root()
+        finally:
+            mod._http_mode = orig
+
+    def test_resolve_root_none_raises_project_root_required_in_http_mode(self):
+        import vaultspec_rag.server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(
+                ProjectRootRequiredError, match="project_root is required"
+            ):
+                _resolve_root(None)
+        finally:
+            mod._http_mode = orig
+
+    def test_project_root_required_error_message_actionable(self):
+        """Error message must name the missing field."""
+        import vaultspec_rag.server as mod
+
+        orig = mod._http_mode
+        mod._http_mode = True
+        try:
+            with pytest.raises(ProjectRootRequiredError) as exc_info:
+                _resolve_root(None)
+            assert "project_root" in str(exc_info.value)
+        finally:
+            mod._http_mode = orig
+
+
+class TestRouteMissingProjectRoot:
+    """S07: Routes return HTTP 400 (not 500) when project_root is absent in HTTP mode.
+
+    The Starlette TestClient drives the route handlers synchronously.
+    Module state (``_http_mode`` and ``_SERVICE_TOKEN``) is set for the
+    duration of each test and restored in ``finally`` blocks.  No GPU,
+    no Qdrant, no model loading - the validation fires before any
+    model/store access.
+
+    The token gate (``require_token``) is satisfied by setting a known
+    token on ``_SERVICE_TOKEN`` and passing it as a bearer header so the
+    handler proceeds to the root-validation guard.
+    """
+
+    _TOKEN = "test-token-s07"
+
+    def _make_app(self):  # type: ignore[return]
+        from contextlib import asynccontextmanager
+
+        from starlette.applications import Starlette
+
+        from ..server._routes import ROUTES
+
+        @asynccontextmanager
+        async def _lifespan(_app):  # type: ignore[override]
+            yield
+
+        return Starlette(routes=ROUTES, lifespan=_lifespan)
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._TOKEN}"}
+
+    def test_search_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post(
+                "/search",
+                json={"query": "hello"},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
+    def test_reindex_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post(
+                "/reindex",
+                json={"type": "vault"},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
+    def test_service_state_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.get(
+                "/service-state",
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
+    def test_code_file_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post(
+                "/code-file",
+                json={"path": "src/main.py"},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
+    def test_vault_document_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post(
+                "/vault-document",
+                json={"doc_id": "adr/overview"},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token

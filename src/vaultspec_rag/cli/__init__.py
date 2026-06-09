@@ -114,6 +114,7 @@ from ._service_status import (
     _read_service_status,
     _status_dir,
     _status_file,
+    _update_service_token,
     _write_service_status,
 )
 from ._service_watcher import (
@@ -162,6 +163,7 @@ __all__ = [
     "_try_http_admin",
     "_try_http_reindex",
     "_try_http_search",
+    "_update_service_token",
     "_write_service_status",
     "app",
     "console",

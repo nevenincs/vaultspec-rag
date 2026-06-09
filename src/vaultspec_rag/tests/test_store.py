@@ -455,3 +455,97 @@ class TestQdrantServerMode:
         finally:
             store.close()
             reset_config()
+
+
+class TestDropTable:
+    """Real-Qdrant tests for drop_table / drop_code_table — no embeddings required."""
+
+    def test_drop_table_removes_vault_collection(self, tmp_path):
+        """drop_table() should delete the vault_docs collection and reset state."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_table()
+            assert store.client.collection_exists(store.TABLE_NAME)
+
+            store.drop_table()
+
+            assert not store.client.collection_exists(store.TABLE_NAME)
+            assert store._vault_ensured is False
+        finally:
+            store.close()
+
+    def test_drop_table_idempotent_on_missing_collection(self, tmp_path):
+        """drop_table() on a non-existent collection must not raise."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.drop_table()
+            assert store._vault_ensured is False
+        finally:
+            store.close()
+
+    def test_drop_table_then_recreate_works(self, tmp_path):
+        """After drop_table(), ensure_table() should recreate a fresh collection."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_table()
+            assert store.count() == 0
+
+            store.drop_table()
+            assert not store.client.collection_exists(store.TABLE_NAME)
+
+            store.ensure_table()
+            assert store.client.collection_exists(store.TABLE_NAME)
+            assert store.count() == 0
+        finally:
+            store.close()
+
+    def test_drop_code_table_removes_codebase_collection(self, tmp_path):
+        """drop_code_table() deletes the codebase_docs collection and resets state."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            assert store.client.collection_exists(store.CODE_TABLE_NAME)
+
+            store.drop_code_table()
+
+            assert not store.client.collection_exists(store.CODE_TABLE_NAME)
+            assert store._code_ensured is False
+        finally:
+            store.close()
+
+    def test_drop_code_table_idempotent_on_missing_collection(self, tmp_path):
+        """drop_code_table() on a non-existent collection must not raise."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.drop_code_table()
+            assert store._code_ensured is False
+        finally:
+            store.close()
+
+    def test_drop_code_table_then_recreate_works(self, tmp_path):
+        """After drop_code_table(), ensure_code_table() recreates a fresh collection."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            assert store.count_code() == 0
+
+            store.drop_code_table()
+            assert not store.client.collection_exists(store.CODE_TABLE_NAME)
+
+            store.ensure_code_table()
+            assert store.client.collection_exists(store.CODE_TABLE_NAME)
+            assert store.count_code() == 0
+        finally:
+            store.close()

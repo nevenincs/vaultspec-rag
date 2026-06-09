@@ -30,6 +30,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vaultspec_rag.server")
 
 
+class ProjectRootRequiredError(ValueError):
+    """Raised when a route requires ``project_root`` but none was supplied.
+
+    Distinct from plain :class:`ValueError` so route handlers can catch
+    it precisely and return HTTP 400 rather than leaking a 500.
+    """
+
+
 def _registry_full_error_dict(exc: RegistryFullError) -> dict[str, Any]:
     """Build the ADR D4 structured error dict for registry-full errors."""
     return {
@@ -85,15 +93,15 @@ def _default_root() -> Path:
         back to the current working directory.
 
     Raises:
-        ValueError: If called in HTTP mode (should never happen -
-            ``_resolve_root`` guards this).
+        ProjectRootRequiredError: If called in HTTP mode (should never
+            happen - ``_resolve_root`` guards this).
     """
     if _m._http_mode:
         msg = (
             "project_root is required in HTTP service mode - "
             "the multi-tenant service has no default project"
         )
-        raise ValueError(msg)
+        raise ProjectRootRequiredError(msg)
     from ..config import EnvVar
 
     root_env = os.environ.get(EnvVar.RAG_ROOT)
@@ -170,9 +178,11 @@ def _resolve_root(project_root: str | None) -> Path:
         Resolved ``Path`` for the project root.
 
     Raises:
+        ProjectRootRequiredError: If ``project_root`` is omitted in
+            HTTP mode.
         ValueError: If the resolved path has no ``.vault/``
-            subdirectory, or if ``project_root`` is omitted
-            in HTTP mode.
+            subdirectory, or ``project_root`` is an empty/whitespace
+            string.
     """
     if project_root is not None:
         if not project_root.strip():

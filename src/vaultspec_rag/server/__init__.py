@@ -96,6 +96,7 @@ from ._state import (
     reset_metrics,
 )
 from ._utils import (
+    ProjectRootRequiredError,
     _clamp_top_k,
     _default_root,
     _is_sensitive_path,
@@ -122,6 +123,7 @@ __all__ = [
     "HealthResponse",
     "IndexResponse",
     "IndexStatus",
+    "ProjectRootRequiredError",
     "SearchResponse",
     "SearchResultItem",
     "_clamp_top_k",
