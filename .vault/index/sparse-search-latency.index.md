@@ -29,6 +29,8 @@ related:
   - '[[2026-06-08-sparse-search-latency-P06-S22]]'
   - '[[2026-06-08-sparse-search-latency-P06-S23]]'
   - '[[2026-06-08-sparse-search-latency-P06-summary]]'
+  - '[[2026-06-08-sparse-search-latency-P07-S24]]'
+  - '[[2026-06-08-sparse-search-latency-P08-summary]]'
   - '[[2026-06-08-sparse-search-latency-code-review-audit]]'
   - '[[2026-06-08-sparse-search-latency-plan]]'
   - '[[2026-06-09-sparse-search-latency-research]]'
@@ -72,6 +74,8 @@ Auto-generated index of all documents tagged with `#sparse-search-latency`.
 - `2026-06-08-sparse-search-latency-P06-S22` - `sparse-search-latency` P06.S22 - registry/service stale module reference fix
 - `2026-06-08-sparse-search-latency-P06-S23` - `sparse-search-latency` P06.S23 - conflation guard test
 - `2026-06-08-sparse-search-latency-P06-summary` - `sparse-search-latency` Phase P06 Summary
+- `2026-06-08-sparse-search-latency-P07-S24` - `sparse-search-latency` P07.S24 - formal code review of deconflation diff
+- `2026-06-08-sparse-search-latency-P08-summary` - `sparse-search-latency` Phase P08 Summary — Empirical Service Validation
 
 ### plan
 

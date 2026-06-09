@@ -29,9 +29,8 @@ Exemptions
 
 Status
 ------
-This test is expected to **fail** until a sibling agent patches the remaining
-"MCP server" strings in cli/ and server/.  It is written against the intended
-end-state so CI enforces the constraint once the strings are fixed.
+Enforced invariant. The conflated strings in cli/ and server/ were corrected in
+the P06 deconflation; this guard keeps them from regressing.
 """
 
 from __future__ import annotations

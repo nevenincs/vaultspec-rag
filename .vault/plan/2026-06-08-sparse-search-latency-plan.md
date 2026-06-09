@@ -65,7 +65,7 @@ The `mcp/` package must be a pure protocol adapter: translate MCP stdio/HTTP req
 
 Purge all semantic conflation where "MCP server" is used to mean "REST daemon" or where function/variable/docstring names use `mcp` when they mean `service` or `daemon`. The CLI in-process fallback path is acceptable per existing ADRs and stays.
 
-- [x] `P06.S19` - Rename `server/__init__.py` docstring from "MCP server" to "RAG daemon HTTP service"; rename `_main.py` docstring from "Console-script entry point for the MCP server" to "Console-script entry point for the RAG daemon"; `src/vaultspec_rag/server/__init__.py, src/vaultspec_rag/server/_main.py, src/vaultspec_rag/server/_models.py, src/vaultspec_rag/server/_state.py`.
+- [x] `P06.S19` - Rename `server/__init__.py` docstring from "MCP server" to "RAG daemon HTTP service"; rename `_main.py` docstring from "Console-script entry point for the MCP server" to "Console-script entry point for the RAG daemon"; `src/vaultspec_rag/server/__init__.py`, `src/vaultspec_rag/server/_main.py`, `src/vaultspec_rag/server/_models.py`, `src/vaultspec_rag/server/_state.py`.
 - [x] `P06.S20` - Rename CLI identifiers: `_handle_mcp_results` → `_handle_service_results`, `mcp_results` → `service_results`, `_display_mcp_error` → `_display_service_error`, `_try_mcp_delegation` → `_try_service_delegation`, `_print_mcp_results` → `_print_service_results`; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_render.py`, `src/vaultspec_rag/cli/__init__.py`.
 - [x] `P06.S21` - Fix CLI user-facing strings: replace "Port of running MCP server" with "Port of running RAG service", replace `"via": "mcp"` with `"via": "service"`, fix all `--help` text and error messages that say "MCP server" when they mean the daemon; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_store.py`, `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P06.S22` - Fix stale docstring references: update `registry.py` and `service.py` docstrings that reference the deleted `mcp_server.py` module name; `src/vaultspec_rag/registry.py`, `src/vaultspec_rag/service.py`.
@@ -75,21 +75,21 @@ Purge all semantic conflation where "MCP server" is used to mean "REST daemon" o
 
 Formal vaultspec-code-reviewer pass on the P05/P06 deconflation diff before merge to main.
 
-- [ ] `P07.S24` - Run vaultspec-code-reviewer on the deconflation diff (commit 671dcd3); `src/vaultspec_rag/`.
+- [x] `P07.S24` - Run vaultspec-code-reviewer on the deconflation diff (commit 671dcd3); `src/vaultspec_rag/`.
 
 ### Phase `P08` - Empirical Service Validation
 
 Empirically validate the live RAG service end-to-end: lifecycle, index, search/filter, reindex/incremental, concurrency, eviction, local fallback, and degraded recovery.
 
-- [ ] `P08.S25` - Capture baseline service, index, GPU, project-slot, and watcher state; `src/vaultspec_rag/service.py`.
-- [ ] `P08.S26` - Validate service lifecycle: start detached, status, warmup, stop; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `P08.S27` - Validate indexing of vault docs and codebase via CLI and daemon REST; `src/vaultspec_rag/indexer/`.
-- [ ] `P08.S28` - Validate search and all filters for vault and codebase via delegation and REST; `src/vaultspec_rag/search/`.
-- [ ] `P08.S29` - Validate reindex and incremental watcher-driven update of changed sources; `src/vaultspec_rag/watcher.py`.
-- [ ] `P08.S30` - Validate concurrent multi-client requests against the running daemon; `src/vaultspec_rag/registry.py`.
-- [ ] `P08.S31` - Validate service vacate: project-slot eviction and clean stop releasing the Qdrant lock; `src/vaultspec_rag/cli/_service_projects.py`.
-- [ ] `P08.S32` - Validate local in-process fallback when the server is down or degraded; `src/vaultspec_rag/cli/_http_search.py`.
-- [ ] `P08.S33` - Validate degraded-server detection exit-4 and recovery on restart; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `P08.S25` - Capture baseline service, index, GPU, project-slot, and watcher state; `src/vaultspec_rag/service.py`.
+- [x] `P08.S26` - Validate service lifecycle: start detached, status, warmup, stop; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P08.S27` - Validate indexing of vault docs and codebase via CLI and daemon REST; `src/vaultspec_rag/indexer/`.
+- [x] `P08.S28` - Validate search and all filters for vault and codebase via delegation and REST; `src/vaultspec_rag/search/`.
+- [x] `P08.S29` - Validate reindex and incremental watcher-driven update of changed sources; `src/vaultspec_rag/watcher.py`.
+- [x] `P08.S30` - Validate concurrent multi-client requests against the running daemon; `src/vaultspec_rag/registry.py`.
+- [x] `P08.S31` - Validate service vacate: project-slot eviction and clean stop releasing the Qdrant lock; `src/vaultspec_rag/cli/_service_projects.py`.
+- [x] `P08.S32` - Validate local in-process fallback when the server is down or degraded; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `P08.S33` - Validate degraded-server detection exit-4 and recovery on restart; `src/vaultspec_rag/cli/_service_status.py`.
 
 ## Parallelization
 
