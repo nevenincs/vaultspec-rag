@@ -6,6 +6,7 @@ tags:
 date: '2026-06-09'
 related:
   - '[[2026-06-09-operability-hardening-adr]]'
+  - '[[2026-06-09-operability-hardening-plan]]'
   - '[[2026-06-09-operability-hardening-research]]'
 ---
 
@@ -18,6 +19,10 @@ Auto-generated index of all documents tagged with `#operability-hardening`.
 ### adr
 
 - `2026-06-09-operability-hardening-adr` - `operability-hardening` adr: `targeted service, runtime, and UX hardening` | (**status:** `accepted`)
+
+### plan
+
+- `2026-06-09-operability-hardening-plan` - `operability-hardening` `operability hardening` plan
 
 ### research
 
