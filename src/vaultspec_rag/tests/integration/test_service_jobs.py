@@ -5,7 +5,7 @@ Three layers, no mocks/skips/monkeypatch:
 - MCP: seed the real in-flight registry via ``_jobs.record_start`` /
   ``record_finish`` and assert the ``get_jobs`` tool returns the snapshot
   shape (and honours ``limit``); the registry is reset in teardown.
-- CLI: drive ``server service jobs`` through the real Typer app against a
+- CLI: drive ``server jobs`` through the real Typer app against a
   dead ``--port`` so ``_try_mcp_admin`` genuinely fails to connect, asserting
   the exit-3 + JSON envelope contract.
 - Starlette: exercise the real ``GET /jobs`` route through
@@ -148,7 +148,7 @@ async def test_get_jobs_non_positive_limit_is_empty(
 def test_jobs_not_running_json() -> None:
     result = runner.invoke(
         app,
-        ["server", "service", "jobs", "--port", _DEAD_PORT, "--json"],
+        ["server", "jobs", "--port", _DEAD_PORT, "--json"],
     )
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
@@ -158,19 +158,19 @@ def test_jobs_not_running_json() -> None:
 
 
 def test_jobs_not_running_prose() -> None:
-    result = runner.invoke(app, ["server", "service", "jobs", "--port", _DEAD_PORT])
+    result = runner.invoke(app, ["server", "jobs", "--port", _DEAD_PORT])
     assert result.exit_code == 3
     assert "not running" in result.stdout.lower()
 
 
 def test_jobs_subcommand_registered() -> None:
-    result = runner.invoke(app, ["server", "service", "jobs", "--help"])
+    result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
 
 
 def test_jobs_cli_mcp_parity() -> None:
     assert callable(admin.get_jobs)
-    help_result = runner.invoke(app, ["server", "service", "--help"])
+    help_result = runner.invoke(app, ["server", "--help"])
     assert help_result.exit_code == 0
     assert "jobs" in help_result.stdout
 

@@ -235,7 +235,15 @@ def _print_service_results(
     return True
 
 
-@app.command("index")
+@app.command(
+    "index",
+    help=(
+        "Build or update the vault and/or codebase search index. "
+        "Delegates to a running service when one is detected; falls back to "
+        "in-process GPU indexing otherwise. "
+        "See the indexing architecture guide: docs/indexing.md"
+    ),
+)
 def handle_index(
     ctx: typer.Context,
     index_type: Annotated[
@@ -312,33 +320,7 @@ def handle_index(
         ),
     ] = False,
 ) -> None:
-    """Index vault documents and/or codebase chunks.
-
-    When ``--port`` is given, delegates to a running RAG service
-    via ``_try_http_reindex``. On dead/unreachable port, hard-fails
-    with remediation unless ``--allow-fallback`` is set.
-
-    Args:
-        ctx: Typer context carrying ``CLIState``.
-        index_type: What to index: ``vault``, ``code``, or
-            ``all``.
-        model: Override the default embedding model name.
-        rebuild: Drop the selected index collections before re-indexing.
-        port: Port of a running RAG service for fast-path
-            delegation.
-        dry_run: List files that would be indexed without
-            actually indexing.  Codebase only.
-        exclude: Ad-hoc exclusion patterns (gitignore syntax,
-            repeatable).  Combined with ``.vaultragignore``.
-        allow_fallback: Opt in to silent in-process fallback when
-            ``--port`` is unreachable.
-        verbose: Re-enable HuggingFace tqdm progress bars.
-
-    Raises:
-        typer.Exit: On GPU errors, locked index files, or
-            unreachable ``--port`` without ``--allow-fallback``.
-
-    """
+    """Index vault documents and/or codebase chunks."""
     if not verbose:
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj
@@ -478,7 +460,15 @@ def _try_in_process_indexing(
     _cli.console.print(table)
 
 
-@app.command("clean")
+@app.command(
+    "clean",
+    help=(
+        "Drop selected index collections without re-indexing. "
+        "Does not load models or touch the GPU — only clears Qdrant collections "
+        "and metadata sidecars. "
+        "See the indexing architecture guide: docs/indexing.md"
+    ),
+)
 def handle_clean(
     ctx: typer.Context,
     clean_type: Annotated[
@@ -511,12 +501,7 @@ def handle_clean(
         ),
     ] = False,
 ) -> None:
-    """Drop selected index collections without re-indexing.
-
-    This command does not load embedding models, walk the vault, scan
-    the codebase, or touch GPUs. It drops and re-creates the selected
-    Qdrant collections and clears the matching metadata sidecar files.
-    """
+    """Drop selected index collections without re-indexing."""
     state: CLIState = ctx.obj
     target = state.target
     if json_mode and not yes:

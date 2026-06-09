@@ -246,7 +246,7 @@ class TestServerCommands:
     def test_server_help(self):
         result = runner.invoke(app, ["server", "--help"])
         assert result.exit_code == 0
-        assert "service" in result.output
+        assert "start" in result.output
         assert "mcp" in result.output
 
     def test_mcp_help(self):
@@ -275,7 +275,7 @@ class TestServerCommands:
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0
             assert (
                 "not running" in result.output.lower() or "No service" in result.output
@@ -289,11 +289,47 @@ class TestServerCommands:
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 3
             assert "stopped" in result.output.lower()
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+
+
+class TestServerRoutingFlattened:
+    """Verify the flattened `server` command surface (W03.P05.S12 #169).
+
+    The `service` nesting level is removed; lifecycle commands and
+    sub-groups now live directly under `server`.  `server mcp` is
+    unchanged.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_server_start_help(self):
+        result = runner.invoke(app, ["server", "start", "--help"])
+        assert result.exit_code == 0, result.output
+
+    def test_server_status_help(self):
+        result = runner.invoke(app, ["server", "status", "--help"])
+        assert result.exit_code == 0, result.output
+
+    def test_server_watcher_status_help(self):
+        result = runner.invoke(app, ["server", "watcher", "status", "--help"])
+        assert result.exit_code == 0, result.output
+
+    def test_server_projects_list_help(self):
+        result = runner.invoke(app, ["server", "projects", "list", "--help"])
+        assert result.exit_code == 0, result.output
+
+    def test_server_mcp_start_help(self):
+        result = runner.invoke(app, ["server", "mcp", "start", "--help"])
+        assert result.exit_code == 0, result.output
+
+    def test_server_service_not_a_command(self):
+        """The `service` nesting level must no longer exist."""
+        result = runner.invoke(app, ["server", "service", "--help"])
+        assert result.exit_code != 0
 
 
 class TestServiceLifecycleHelpers:
@@ -397,7 +433,7 @@ class TestServiceLifecycleHelpers:
             ).isoformat(timespec="seconds")
             sf.write_text(json.dumps(data), encoding="utf-8")
 
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 4
             # Port 1 likely yields "crashed (port silent)" first because
             # port-not-listening is checked before heartbeat staleness in
@@ -977,6 +1013,104 @@ class TestSearchSafetyContract:
         assert "timed out after" in msg
 
 
+_FORBIDDEN_DOCSTRING_TOKENS = ("Args:", "Raises:", "CLIState", " ctx ")
+
+
+class TestHelpCleanup:
+    """Verify --help output is operator-facing and free of developer sections.
+
+    Each test invokes the command's --help via CliRunner and asserts:
+    - No developer docstring tokens (Args:, Raises:, CLIState, ctx).
+    - The operator summary is present.
+
+    W03.P06.S13 (#170).
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def _assert_clean(self, result) -> None:
+        """Shared guard: no forbidden tokens in help output."""
+        out = result.output
+        for token in _FORBIDDEN_DOCSTRING_TOKENS:
+            assert token not in out, (
+                f"Forbidden token {token!r} found in help output:\n{out}"
+            )
+
+    def test_index_help_clean(self):
+        result = runner.invoke(app, ["index", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "Build or update" in result.output
+
+    def test_index_help_cross_ref(self):
+        """index --help must reference docs/indexing.md."""
+        result = runner.invoke(app, ["index", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "docs/indexing.md" in result.output
+
+    def test_clean_help_clean(self):
+        result = runner.invoke(app, ["clean", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "Drop selected" in result.output
+
+    def test_clean_help_cross_ref(self):
+        """clean --help must reference docs/indexing.md."""
+        result = runner.invoke(app, ["clean", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "docs/indexing.md" in result.output
+
+    def test_search_help_clean(self):
+        result = runner.invoke(app, ["search", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "hybrid" in result.output.lower() or "Search" in result.output
+
+    def test_search_help_panels(self):
+        """search --help must show Code filters and Vault filters panels."""
+        result = runner.invoke(app, ["search", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Code filters" in result.output
+        assert "Vault filters" in result.output
+
+    def test_status_help_clean(self):
+        result = runner.invoke(app, ["status", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "index" in result.output.lower() or "GPU" in result.output.lower()
+
+    def test_status_help_cross_ref(self):
+        """status --help must reference docs/indexing.md."""
+        result = runner.invoke(app, ["status", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "docs/indexing.md" in result.output
+
+    def test_server_start_help_clean(self):
+        result = runner.invoke(app, ["server", "start", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        out = result.output.lower()
+        assert "detached" in out or "background" in out
+
+    def test_server_warmup_help_clean(self):
+        result = runner.invoke(app, ["server", "warmup", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "model" in result.output.lower() or "GPU" in result.output
+
+    def test_server_warmup_help_cross_ref(self):
+        """server warmup --help must reference docs/indexing.md."""
+        result = runner.invoke(app, ["server", "warmup", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "docs/indexing.md" in result.output
+
+    def test_mcp_start_help_clean(self):
+        result = runner.invoke(app, ["server", "mcp", "start", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "stdio" in result.output.lower() or "MCP" in result.output
+
+
 class TestCleanRequiredTarget:
     """Clean target is required (no default)."""
 
@@ -1177,7 +1311,7 @@ class TestWinShutdownLog:
         tmp_path: Path,
         monkeypatch,
     ):
-        """End-to-end: ``server service stop`` on win32 appends the line."""
+        """End-to-end: ``server stop`` on win32 appends the line."""
         from .. import cli
 
         status_dir = tmp_path / "status"
@@ -1200,7 +1334,7 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "win32")
 
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
@@ -1234,7 +1368,7 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
             monkeypatch.setattr(cli.sys, "platform", "linux")
 
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
 
             # No CLI-emitted line on POSIX.
@@ -1435,7 +1569,7 @@ class TestServiceDaemonHelpers:
             sf = tmp_path / "service.json"
             assert sf.exists()
 
-            result = runner.invoke(app, ["server", "service", "stop"])
+            result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0
             out = result.output.lower()
             assert "no longer running" in out or "cleaned" in out
@@ -1455,7 +1589,7 @@ class TestServiceDaemonHelpers:
             sf = tmp_path / "service.json"
             assert sf.exists()
 
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 4
             lower = result.output.lower()
             assert "crashed" in lower or "stale" in lower
@@ -1547,7 +1681,7 @@ class TestServiceDaemonHelpers:
             data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
             sf.write_text(json.dumps(data), encoding="utf-8")
 
-            result = runner.invoke(app, ["server", "service", "status"])
+            result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0
             assert "Projects" in result.output
@@ -1579,12 +1713,12 @@ def _find_free_port() -> int:
 
 
 class TestServiceProjectsCli:
-    """In-process CLI coverage for `service projects list|evict`."""
+    """In-process CLI coverage for `server projects list|evict`."""
 
     def test_projects_list_help_renders(self) -> None:
         result = runner.invoke(
             app,
-            ["server", "service", "projects", "list", "--help"],
+            ["server", "projects", "list", "--help"],
         )
         assert result.exit_code == 0
         assert "project slots" in result.output.lower()
@@ -1592,7 +1726,7 @@ class TestServiceProjectsCli:
     def test_projects_evict_help_renders(self) -> None:
         result = runner.invoke(
             app,
-            ["server", "service", "projects", "evict", "--help"],
+            ["server", "projects", "evict", "--help"],
         )
         assert result.exit_code == 0
         assert "Evict" in result.output or "evict" in result.output
@@ -1601,7 +1735,7 @@ class TestServiceProjectsCli:
         port = _find_free_port()
         result = runner.invoke(
             app,
-            ["server", "service", "projects", "list", "--port", str(port)],
+            ["server", "projects", "list", "--port", str(port)],
         )
         assert result.exit_code == 3
 
@@ -1611,7 +1745,6 @@ class TestServiceProjectsCli:
             app,
             [
                 "server",
-                "service",
                 "projects",
                 "evict",
                 "/some/root",
@@ -2087,7 +2220,7 @@ class TestJsonOutputMode:
         try:
             result = runner.invoke(
                 app,
-                ["server", "service", "status", "--json"],
+                ["server", "status", "--json"],
             )
             assert result.exit_code == 3
             env = self._parse_envelope(result.output)
@@ -2103,7 +2236,7 @@ class TestJsonOutputMode:
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             _write_service_status(pid=99999999, port=8766)
-            result = runner.invoke(app, ["server", "service", "status", "--json"])
+            result = runner.invoke(app, ["server", "status", "--json"])
             assert result.exit_code == 4
             env = self._parse_envelope(result.output)
             assert env["ok"] is False
@@ -2196,7 +2329,7 @@ class TestJsonStdoutPurityAcrossCommands:
     # (id, argv-after-binary, expected_exit_code_predicate)
     _SCENARIOS: typing.ClassVar = [
         # service status with no daemon - exit 3, ok=false envelope
-        ("service-status-stopped", ["server", "service", "status", "--json"]),
+        ("service-status-stopped", ["server", "status", "--json"]),
         # search filter mismatch - exit 2, ok=false envelope
         (
             "search-filter-mismatch",

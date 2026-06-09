@@ -53,7 +53,7 @@ _SERVICE_TOKEN: str = ""
 
 # Heartbeat contract. The daemon writes ``last_heartbeat`` to
 # service.json every _HEARTBEAT_INTERVAL_SECONDS so
-# ``vaultspec-rag server service status`` can detect a stale file
+# ``vaultspec-rag server status`` can detect a stale file
 # (process killed without running atexit / signal handlers -
 # SIGKILL, OOM, kernel panic). The CLI flags the file stale when
 # the age exceeds _HEARTBEAT_STALENESS_SECONDS. Four beats per

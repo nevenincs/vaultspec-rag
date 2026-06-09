@@ -1,8 +1,8 @@
 """Typer application objects, sub-app nesting, state, and root callback.
 
 This submodule MUST be imported first by the package ``__init__`` so
-the ``app`` / ``server_app`` / ``mcp_app`` / ``service_app`` /
-``service_projects_app`` / ``service_watcher_app`` objects exist and
+the ``app`` / ``server_root_app`` / ``server_app`` / ``mcp_app`` /
+``server_projects_app`` / ``server_watcher_app`` objects exist and
 are nested before any command submodule's ``@*.command()`` decorator
 runs.
 """
@@ -28,8 +28,11 @@ app = typer.Typer(
 )
 
 # Command Groups
-server_root_app = typer.Typer(help="Manage local or containerized RAG services.")
-server_app = typer.Typer(help="Manage the HTTP RAG service.")
+server_root_app = typer.Typer(
+    help="Manage the HTTP RAG service and MCP server.",
+)
+# Alias kept for backward-compatible decorator references in command modules.
+server_app = server_root_app
 mcp_app = typer.Typer(help="Control the Model Context Protocol (MCP) server.")
 server_projects_app = typer.Typer(
     help="Inspect and evict project slots on a running RAG service.",
@@ -39,10 +42,9 @@ server_watcher_app = typer.Typer(
 )
 
 app.add_typer(server_root_app, name="server")
-server_root_app.add_typer(server_app, name="service")
 server_root_app.add_typer(mcp_app, name="mcp")
-server_app.add_typer(server_projects_app, name="projects")
-server_app.add_typer(server_watcher_app, name="watcher")
+server_root_app.add_typer(server_projects_app, name="projects")
+server_root_app.add_typer(server_watcher_app, name="watcher")
 
 
 class CLIState:
@@ -73,15 +75,7 @@ class CLIState:
 
 
 def version_callback(value: bool) -> None:
-    """Show the version and exit when ``--version`` is passed.
-
-    Args:
-        value: True when the ``--version`` flag is provided.
-
-    Raises:
-        typer.Exit: Exits after printing the version.
-
-    """
+    """Print the installed vaultspec-rag version and exit."""
     if value:
         import importlib.metadata
 
@@ -168,27 +162,7 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """Global callback that configures logging and workspace.
-
-    Args:
-        ctx: Typer context carrying invoked subcommand info.
-        target: Directory containing ``.vault`` and
-            ``.vaultspec``. Resolved to absolute path.
-        verbose: Enable INFO-level logging.
-        debug: Enable DEBUG-level logging.
-        data_dir: Override RAG data root directory.
-        qdrant_dir: Override Qdrant storage subdirectory.
-        index_meta: Override vault index metadata filename.
-        code_index_meta: Override code index metadata filename.
-        status_dir: Override service status directory.
-        log_file: Override service log filename.
-        _version: Eagerly print version and exit.
-
-    Raises:
-        typer.Exit: On workspace resolution failure (code 1)
-            or when no subcommand is given (code 0).
-
-    """
+    """Configure logging, resolve workspace, and dispatch to a subcommand."""
     configure_logging(debug=debug, level="INFO" if verbose else None)
 
     # Wire CLI overrides into the config system.

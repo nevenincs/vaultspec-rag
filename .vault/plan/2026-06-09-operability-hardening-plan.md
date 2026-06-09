@@ -73,25 +73,25 @@ persona UX tests.
 
 Collapse server service into server while preserving the genuine server mcp group.
 
-- [ ] `W03.P05.S12` - Collapse server service commands into server, preserving server mcp; `src/vaultspec_rag/cli/_app.py`.
+- [x] `W03.P05.S12` - Collapse server service commands into server, preserving server mcp; `src/vaultspec_rag/cli/_app.py`.
 
 ### Phase `W03.P06` - CLI help cleanup
 
 Move user-facing help into explicit Typer help and strip developer docstring sections.
 
-- [ ] `W03.P06.S13` - Move user-facing help into explicit Typer help and rich_help_panel and strip developer docstring sections; `src/vaultspec_rag/cli/`.
+- [x] `W03.P06.S13` - Move user-facing help into explicit Typer help and rich_help_panel and strip developer docstring sections; `src/vaultspec_rag/cli/`.
 
 ### Phase `W03.P07` - Indexing architecture documentation
 
 Author a grounded indexing and retrieval guide and cross-reference it from help.
 
-- [ ] `W03.P07.S14` - Author the indexing and retrieval architecture guide and cross-reference from help; `docs/indexing.md`.
+- [x] `W03.P07.S14` - Author the indexing and retrieval architecture guide and cross-reference from help; `docs/indexing.md`.
 
 ### Phase `W03.P08` - Testimonial CLI tests
 
 Operator-persona end-to-end integration tests over the cleaned CLI, no mocks.
 
-- [ ] `W03.P08.S15` - Add operator-persona testimonial end-to-end CLI integration tests; `src/vaultspec_rag/tests/integration/`.
+- [x] `W03.P08.S15` - Add operator-persona testimonial end-to-end CLI integration tests; `src/vaultspec_rag/tests/integration/`.
 
 ## Wave `W04` - Verification
 

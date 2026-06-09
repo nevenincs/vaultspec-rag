@@ -15,7 +15,14 @@ from ..config import EnvVar
 from ._app import mcp_app
 
 
-@mcp_app.command("start")
+@mcp_app.command(
+    "start",
+    help=(
+        "Start the MCP server in the foreground. "
+        "Uses stdio transport by default (for LLM tool integration); "
+        "pass --port to run HTTP instead."
+    ),
+)
 def mcp_start(
     ctx: typer.Context,
     port: Annotated[
@@ -23,22 +30,7 @@ def mcp_start(
         typer.Option("--port", help="Run on HTTP port instead of stdio"),
     ] = None,
 ) -> None:
-    """Start the MCP server in the foreground.
-
-    Launches the Model Context Protocol (MCP) server which provides tools for
-    searching and reindexing the RAG engine. By default uses stdio transport
-    (suitable for LLM integration), or HTTP on the specified port for standalone
-    use. Propagates the ``--target`` root option to the server via the
-    ``VAULTSPEC_ROOT`` environment variable.
-
-    Args:
-        ctx: Typer context for reading root ``--target`` parameter.
-        port: TCP port for HTTP transport. If omitted, uses stdio.
-
-    Raises:
-        SystemExit: When the MCP server process exits (typically via Ctrl+C).
-
-    """
+    """Start the MCP server in the foreground."""
     from ..server import main as run_mcp
 
     # Propagate --target to the MCP server via env var (stdio only).

@@ -301,7 +301,14 @@ def _render_in_process_results(
     _cli.console.print(table)
 
 
-@app.command("search")
+@app.command(
+    "search",
+    help=(
+        "Search vault documents or source code using hybrid dense+sparse embeddings. "
+        "Delegates to a running service when one is detected; falls back to "
+        "in-process GPU search otherwise."
+    ),
+)
 def handle_search(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
@@ -328,6 +335,7 @@ def handle_search(
         typer.Option(
             "--language",
             help="Code-search filter: programming language (e.g. 'python').",
+            rich_help_panel="Code filters",
         ),
     ] = None,
     path: Annotated[
@@ -337,6 +345,7 @@ def handle_search(
             help=(
                 "Code-search filter: exact project-relative file path (KEYWORD match)."
             ),
+            rich_help_panel="Code filters",
         ),
     ] = None,
     include_paths: Annotated[
@@ -348,6 +357,7 @@ def handle_search(
                 "keep results whose project-relative path matches "
                 "at least one pattern. Use with --type code."
             ),
+            rich_help_panel="Code filters",
         ),
     ] = None,
     exclude_paths: Annotated[
@@ -359,6 +369,7 @@ def handle_search(
                 "drop results whose project-relative path matches "
                 "any pattern. Use with --type code."
             ),
+            rich_help_panel="Code filters",
         ),
     ] = None,
     dedup_locales: Annotated[
@@ -368,8 +379,9 @@ def handle_search(
             help=(
                 "Code-search post-process: collapse near-tie locale "
                 "variants (e.g. locales/{en,es}.yml) into one canonical "
-                "result. Use with --type code (#121)."
+                "result. Use with --type code."
             ),
+            rich_help_panel="Code filters",
         ),
     ] = False,
     prefer: Annotated[
@@ -379,8 +391,9 @@ def handle_search(
             help=(
                 "Code-search post-process: nudge results matching the "
                 "given category up (and others down) after rerank. One "
-                "of 'prod', 'tests', 'docs'. Use with --type code (#122)."
+                "of 'prod', 'tests', 'docs'. Use with --type code."
             ),
+            rich_help_panel="Code filters",
         ),
     ] = None,
     node_type: Annotated[
@@ -388,6 +401,7 @@ def handle_search(
         typer.Option(
             "--node-type",
             help="Code-search filter: AST node type.",
+            rich_help_panel="Code filters",
         ),
     ] = None,
     function_name: Annotated[
@@ -395,6 +409,7 @@ def handle_search(
         typer.Option(
             "--function-name",
             help="Code-search filter: function/method name.",
+            rich_help_panel="Code filters",
         ),
     ] = None,
     class_name: Annotated[
@@ -402,13 +417,15 @@ def handle_search(
         typer.Option(
             "--class-name",
             help="Code-search filter: class/struct name.",
+            rich_help_panel="Code filters",
         ),
     ] = None,
     doc_type: Annotated[
         str | None,
         typer.Option(
             "--doc-type",
-            help=("Vault-search filter: vault doc type (e.g. 'adr', 'plan')."),
+            help="Vault-search filter: vault doc type (e.g. 'adr', 'plan').",
+            rich_help_panel="Vault filters",
         ),
     ] = None,
     feature: Annotated[
@@ -416,6 +433,7 @@ def handle_search(
         typer.Option(
             "--feature",
             help="Vault-search filter: feature tag (kebab-case).",
+            rich_help_panel="Vault filters",
         ),
     ] = None,
     date: Annotated[
@@ -423,6 +441,7 @@ def handle_search(
         typer.Option(
             "--date",
             help="Vault-search filter: exact ISO date (yyyy-mm-dd).",
+            rich_help_panel="Vault filters",
         ),
     ] = None,
     tag: Annotated[
@@ -430,6 +449,7 @@ def handle_search(
         typer.Option(
             "--tag",
             help="Vault-search filter: free-form tag (without #).",
+            rich_help_panel="Vault filters",
         ),
     ] = None,
     no_truncate: Annotated[
@@ -496,44 +516,7 @@ def handle_search(
         ),
     ] = None,
 ) -> None:
-    """Search for relevant context in documentation or code.
-
-    When ``--port`` is given, delegates to a running RAG service.
-    On dead/unreachable port, hard-fails with remediation unless
-    ``--allow-fallback`` is set.
-
-    Args:
-        ctx: Typer context carrying ``CLIState``.
-        query: The search query text.
-        search_type: Search source: ``vault`` or ``code``.
-        max_results: Maximum number of results to return.
-        language: Code-search filter for programming language.
-        path: Code-search filter for exact project-relative file path.
-        include_paths: Repeatable fnmatch globs; results whose
-            project-relative path matches at least one pattern are
-            kept (post-query filter, code search only).
-        exclude_paths: Repeatable fnmatch globs; results whose
-            project-relative path matches any pattern are dropped
-            (post-query filter, code search only).
-        node_type: Code-search filter for AST node type.
-        function_name: Code-search filter for function/method name.
-        class_name: Code-search filter for class/struct name.
-        doc_type: Vault-search filter for vault doc type.
-        feature: Vault-search filter for feature tag.
-        date: Vault-search filter for exact ISO date.
-        tag: Vault-search filter for free-form tag.
-        port: Port of a running RAG service for fast-path
-            delegation.
-        allow_fallback: Opt in to silent in-process fallback when
-            ``--port`` is unreachable.
-        verbose: Re-enable HuggingFace tqdm progress bars.
-
-    Raises:
-        typer.Exit: On GPU initialization errors, filter/search-type
-            mismatch, or unreachable ``--port`` without
-            ``--allow-fallback``.
-
-    """
+    """Search vault documents or source code."""
     if not verbose:
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj

@@ -79,7 +79,14 @@ def _render_orphan_status_table(port: int, health: dict[str, Any]) -> None:
     raise typer.Exit(code=4)
 
 
-@server_app.command("start")
+@server_app.command(
+    "start",
+    help=(
+        "Start the background RAG service as a detached process. "
+        "Polls /health until ready and writes a status record to "
+        "~/.vaultspec-rag/service.json."
+    ),
+)
 def service_start(
     port: Annotated[
         int,
@@ -112,19 +119,7 @@ def service_start(
         ),
     ] = None,
 ) -> None:
-    """Start the background RAG service as a detached process.
-
-    Spawns the RAG service on the given port, polls ``/health``
-    with exponential backoff until ready, and writes a status
-    file to ``~/.vaultspec-rag/service.json``.
-
-    Args:
-        port: TCP port (default 8766 or ``VAULTSPEC_RAG_PORT``).
-
-    Raises:
-        typer.Exit: On failure to start or timeout.
-
-    """
+    """Start the background RAG service as a detached process."""
     # Port-level guard: prevents concurrent start races (ADR D1)
     if not _port_is_available(port):
         _cli.console.print(
@@ -633,19 +628,17 @@ def service_status(
     )
 
 
-@server_app.command("warmup")
+@server_app.command(
+    "warmup",
+    help=(
+        "Pre-download GPU model files to the HuggingFace cache. "
+        "Run once before the first index to avoid model-download latency at "
+        "search time. "
+        "See the indexing architecture guide: docs/indexing.md"
+    ),
+)
 def service_warmup() -> None:
-    """Pre-download GPU model files to the HuggingFace cache.
-
-    Checks CUDA availability, then downloads each of the three
-    model repositories (dense, sparse, reranker) if not already
-    cached. Reports per-model status.
-
-    Raises:
-        typer.Exit: If CUDA is not available or huggingface_hub
-            is not installed.
-
-    """
+    """Pre-download GPU model files to the HuggingFace cache."""
     try:
         import torch
     except ImportError:

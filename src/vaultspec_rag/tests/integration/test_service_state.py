@@ -6,7 +6,7 @@ Two layers, no mocks/skips/monkeypatch:
   global registry with a real GPU-backed slot (reusing the session-scoped
   ``embedding_model`` fixture and the global-registry pattern from
   ``test_watcher_control.py``) and assert the consolidated shape.
-- CLI: drive ``server service info`` through the real Typer app against a dead
+- CLI: drive ``server info`` through the real Typer app against a dead
   ``--port`` so ``_try_mcp_admin`` genuinely fails to connect, asserting the
   exit-3 + JSON envelope contract.
 """
@@ -100,7 +100,7 @@ async def test_get_service_state_consolidated_shape(
 def test_info_not_running_json() -> None:
     result = runner.invoke(
         app,
-        ["server", "service", "info", "--port", _DEAD_PORT, "--json"],
+        ["server", "info", "--port", _DEAD_PORT, "--json"],
     )
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
@@ -110,19 +110,19 @@ def test_info_not_running_json() -> None:
 
 
 def test_info_not_running_prose() -> None:
-    result = runner.invoke(app, ["server", "service", "info", "--port", _DEAD_PORT])
+    result = runner.invoke(app, ["server", "info", "--port", _DEAD_PORT])
     assert result.exit_code == 3
     assert "not running" in result.stdout.lower()
 
 
 def test_info_subcommand_registered() -> None:
-    result = runner.invoke(app, ["server", "service", "info", "--help"])
+    result = runner.invoke(app, ["server", "info", "--help"])
     assert result.exit_code == 0
 
 
 def test_info_cli_mcp_parity() -> None:
     # The consolidated read must exist as an MCP tool AND a CLI subcommand.
     assert callable(admin.get_service_state)
-    help_result = runner.invoke(app, ["server", "service", "--help"])
+    help_result = runner.invoke(app, ["server", "--help"])
     assert help_result.exit_code == 0
     assert "info" in help_result.stdout

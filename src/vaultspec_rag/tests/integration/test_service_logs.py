@@ -10,7 +10,7 @@ Three layers, no mocks/skips/monkeypatch:
   from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` - 401 without token,
   200 text with token.
 - MCP + CLI parity: the real ``get_logs`` tool returns ``{"lines": [...]}`` and
-  ``server service logs`` reports exit 3 against a dead port.
+  ``server logs`` reports exit 3 against a dead port.
 """
 
 from __future__ import annotations
@@ -199,7 +199,7 @@ async def test_get_logs_tool_returns_lines(live_service: tuple[int, Path]) -> No
 def test_logs_not_running_json() -> None:
     result = runner.invoke(
         app,
-        ["server", "service", "logs", "--port", _DEAD_PORT, "--json"],
+        ["server", "logs", "--port", _DEAD_PORT, "--json"],
     )
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
@@ -209,18 +209,18 @@ def test_logs_not_running_json() -> None:
 
 
 def test_logs_not_running_prose() -> None:
-    result = runner.invoke(app, ["server", "service", "logs", "--port", _DEAD_PORT])
+    result = runner.invoke(app, ["server", "logs", "--port", _DEAD_PORT])
     assert result.exit_code == 3
     assert "not running" in result.stdout.lower()
 
 
 def test_logs_subcommand_registered() -> None:
-    result = runner.invoke(app, ["server", "service", "logs", "--help"])
+    result = runner.invoke(app, ["server", "logs", "--help"])
     assert result.exit_code == 0
 
 
 def test_logs_cli_mcp_parity() -> None:
     assert callable(admin.get_logs)
-    help_result = runner.invoke(app, ["server", "service", "--help"])
+    help_result = runner.invoke(app, ["server", "--help"])
     assert help_result.exit_code == 0
     assert "logs" in help_result.stdout

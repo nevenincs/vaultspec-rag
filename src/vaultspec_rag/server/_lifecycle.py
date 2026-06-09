@@ -98,7 +98,7 @@ def _heartbeat_tick_sync() -> None:
     loop.
 
     Exits silently when service.json is missing (the CLI parent may
-    have unlinked it during ``server service stop`` - the heartbeat
+    have unlinked it during ``server stop`` - the heartbeat
     loop will exit on the next tick).
     """
     path = _m._status_file_path()

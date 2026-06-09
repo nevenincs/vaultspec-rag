@@ -132,7 +132,7 @@ class TestRulePropagatesToAllProviders:
             "search",
             "status",
             "server mcp start",
-            "server service start",
+            "server start",
         ):
             assert cmd in content, f"CLI command '{cmd}' not documented in rule"
 

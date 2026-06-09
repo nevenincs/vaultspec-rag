@@ -1,4 +1,4 @@
-"""CLI tests for the `server service watcher` subcommands (plan P04).
+"""CLI tests for the `server watcher` subcommands (plan P04).
 
 Verifies the CLI plumbing for the watcher-control parity surface: the
 service-unreachable path (exit code 3 + JSON envelope) for every
@@ -23,10 +23,10 @@ runner = CliRunner()
 _DEAD_PORT = "59231"
 
 _WATCHER_COMMANDS = [
-    ["server", "service", "watcher", "status"],
-    ["server", "service", "watcher", "start", "/tmp/x"],
-    ["server", "service", "watcher", "stop", "/tmp/x"],
-    ["server", "service", "watcher", "reconfigure", "/tmp/x"],
+    ["server", "watcher", "status"],
+    ["server", "watcher", "start", "/tmp/x"],
+    ["server", "watcher", "stop", "/tmp/x"],
+    ["server", "watcher", "reconfigure", "/tmp/x"],
 ]
 
 
@@ -47,7 +47,7 @@ def test_watcher_command_not_running_prose(argv: list[str]) -> None:
 
 
 def test_watcher_subcommands_registered() -> None:
-    result = runner.invoke(app, ["server", "service", "watcher", "--help"])
+    result = runner.invoke(app, ["server", "watcher", "--help"])
     assert result.exit_code == 0
     for name in ("status", "start", "stop", "reconfigure"):
         assert name in result.stdout
@@ -68,7 +68,7 @@ def test_cli_mcp_control_parity() -> None:
         "reconfigure_watcher",
     ):
         assert tool in tools
-    help_result = runner.invoke(app, ["server", "service", "watcher", "--help"])
+    help_result = runner.invoke(app, ["server", "watcher", "--help"])
     assert help_result.exit_code == 0
     for name in ("status", "start", "stop", "reconfigure"):
         assert name in help_result.stdout

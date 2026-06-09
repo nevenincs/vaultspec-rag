@@ -474,7 +474,7 @@ class ServiceRegistry:
         """Manually evict *root* atomically.
 
         Used by the ``evict_project`` MCP admin tool and the
-        ``vaultspec-rag server service projects evict`` CLI command.  All
+        ``vaultspec-rag server projects evict`` CLI command.  All
         decisions (existence + busy check + pop) happen under
         ``self._lock`` so a concurrent :meth:`lease` cannot race the
         evict.  Teardown runs outside the lock per the same protocol

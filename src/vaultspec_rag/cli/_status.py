@@ -17,7 +17,13 @@ from ._render import (
 )
 
 
-@app.command("status")
+@app.command(
+    "status",
+    help=(
+        "Show index document counts, storage path, and GPU device info. "
+        "See the indexing architecture guide: docs/indexing.md"
+    ),
+)
 def handle_status(
     ctx: typer.Context,
     json_mode: Annotated[
@@ -31,16 +37,7 @@ def handle_status(
         ),
     ] = False,
 ) -> None:
-    """Show RAG engine status, storage metrics, and GPU info.
-
-    Args:
-        ctx: Typer context carrying ``CLIState``.
-        json_mode: Emit a JSON envelope to stdout for agent/CI use.
-
-    Raises:
-        typer.Exit: On missing GPU dependencies.
-
-    """
+    """Show RAG engine status, storage metrics, and GPU info."""
     state: CLIState = ctx.obj
     target = state.target
 
