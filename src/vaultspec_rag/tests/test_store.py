@@ -16,6 +16,41 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 
+class TestInterpreterIsSupported:
+    """Pure-function tests for _interpreter_is_supported."""
+
+    def test_cpython_313_is_supported(self):
+        from ..store import _interpreter_is_supported
+
+        assert _interpreter_is_supported((3, 13, 11)) is True
+
+    def test_cpython_313_zero_is_supported(self):
+        from ..store import _interpreter_is_supported
+
+        assert _interpreter_is_supported((3, 13, 0)) is True
+
+    def test_cpython_314_is_not_supported(self):
+        from ..store import _interpreter_is_supported
+
+        assert _interpreter_is_supported((3, 14, 0)) is False
+
+    def test_cpython_315_is_not_supported(self):
+        from ..store import _interpreter_is_supported
+
+        assert _interpreter_is_supported((3, 15, 0)) is False
+
+    def test_cpython_312_is_not_supported(self):
+        """3.12 pre-dates the pinned floor and is also rejected."""
+        from ..store import _interpreter_is_supported
+
+        assert _interpreter_is_supported((3, 12, 0)) is False
+
+    def test_cpython_4_x_is_not_supported(self):
+        from ..store import _interpreter_is_supported
+
+        assert _interpreter_is_supported((4, 0, 0)) is False
+
+
 class TestStoreHelpers:
     """Tests for store utility functions and edge cases."""
 

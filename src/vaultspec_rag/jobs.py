@@ -223,6 +223,7 @@ def start_reindex_vault(root: Path, clean: bool) -> str:
 
             def _bg_run() -> None:
                 try:
+                    get_registry().load_model()
                     with get_registry().lease(root) as slot:
                         if clean:
                             result = slot.vault_indexer.full_index(
@@ -272,6 +273,7 @@ def start_reindex_codebase(root: Path, clean: bool) -> str:
 
             def _bg_run() -> None:
                 try:
+                    get_registry().load_model()
                     with get_registry().lease(root) as slot:
                         if clean:
                             result = slot.code_indexer.full_index(

@@ -32,15 +32,15 @@ foundational for all live-service work.
 Spawn the daemon under the project venv interpreter and guard against incompatible
 interpreters.
 
-- [ ] `W01.P01.S01` - Spawn the daemon with the project venv interpreter, not ambient sys.executable; `src/vaultspec_rag/cli/_process.py`.
-- [ ] `W01.P01.S02` - Add a defensive interpreter-version guard with an actionable error; `src/vaultspec_rag/store.py`.
+- [x] `W01.P01.S01` - Spawn the daemon with the project venv interpreter, not ambient sys.executable; `src/vaultspec_rag/cli/_process.py`.
+- [x] `W01.P01.S02` - Add a defensive interpreter-version guard with an actionable error; `src/vaultspec_rag/store.py`.
 
 ### Phase `W01.P02` - Model-load resilience
 
 Fail fast with remediation on gated models and ensure the in-process path loads the model.
 
-- [ ] `W01.P02.S03` - Wrap gated-model construction to fail fast with HF_TOKEN remediation; `src/vaultspec_rag/embeddings.py`.
-- [ ] `W01.P02.S04` - Idempotently load the embedding model before lease in background reindex; `src/vaultspec_rag/jobs.py`.
+- [x] `W01.P02.S03` - Wrap gated-model construction to fail fast with HF_TOKEN remediation; `src/vaultspec_rag/embeddings.py`.
+- [x] `W01.P02.S04` - Idempotently load the embedding model before lease in background reindex; `src/vaultspec_rag/jobs.py`.
 
 ## Wave `W02` - Service lifecycle and management hardening
 

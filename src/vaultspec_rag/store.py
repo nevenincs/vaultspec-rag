@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Sequence
     from uuid import UUID
 
     from qdrant_client import QdrantClient
@@ -130,12 +131,48 @@ def _suppress_local_qdrant_warnings():
         yield
 
 
+def _interpreter_is_supported(version_info: Sequence[int | str]) -> bool:
+    """Return True when *version_info* is compatible with the pinned stack.
+
+    The pinned stack requires CPython 3.13.x (``requires-python = ">=3.13"`` in
+    ``pyproject.toml``).  CPython 3.14+ breaks ``qdrant_client`` at import time via a
+    ``protobuf`` metaclass incompatibility; the guard in ``_check_rag_deps`` converts
+    that opaque ``TypeError`` into an actionable ``RuntimeError`` before the import is
+    ever attempted.
+
+    Args:
+        version_info: A ``(major, minor, ...)`` tuple — pass ``sys.version_info`` or a
+            plain ``(major, minor, micro)`` tuple in tests.
+
+    Returns:
+        ``True`` for 3.13.x, ``False`` for anything < 3.13 or >= 3.14.
+    """
+    major, minor = int(version_info[0]), int(version_info[1])
+    return major == 3 and minor == 13
+
+
 def _check_rag_deps() -> None:
-    """Raise ImportError if qdrant-client is not installed.
+    """Raise if the interpreter is unsupported or qdrant-client is not installed.
+
+    The guard runs *before* importing ``qdrant_client`` so that a CPython 3.14+
+    interpreter produces an actionable ``RuntimeError`` rather than the opaque
+    ``TypeError: Metaclasses with custom tp_new are not supported`` that protobuf
+    raises on import.
 
     Raises:
+        RuntimeError: If the running interpreter is not CPython 3.13.x.
         ImportError: If ``qdrant-client`` is not available.
     """
+    import sys
+
+    if not _interpreter_is_supported(sys.version_info):
+        raise RuntimeError(
+            "vaultspec-rag requires CPython 3.13.x (requires-python = '>=3.13,<3.14' "
+            "in pyproject.toml).  The running interpreter is "
+            f"{sys.version!r}.  "
+            "Run the service via 'uv run vaultspec-rag ...' so that uv selects the "
+            "pinned interpreter from the project's virtual environment."
+        )
     try:
         import qdrant_client
 

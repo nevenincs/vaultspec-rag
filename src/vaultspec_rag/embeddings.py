@@ -36,6 +36,31 @@ class SparseResult:
     values: list[float]
 
 
+def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
+    """Re-raise a HuggingFace gated/missing repo error as an actionable RuntimeError.
+
+    Maps ``huggingface_hub.errors.GatedRepoError`` and
+    ``RepositoryNotFoundError`` to a ``RuntimeError`` that names the model,
+    explains the remediation, and includes the model URL. All other exceptions
+    are left untouched (not caught by callers of this helper).
+
+    Args:
+        model_id: The HuggingFace model identifier that caused the error.
+        exc: The original ``GatedRepoError`` or ``RepositoryNotFoundError``.
+
+    Raises:
+        RuntimeError: Always, with actionable remediation message.
+    """
+    from huggingface_hub.errors import GatedRepoError
+
+    kind = "gated" if isinstance(exc, GatedRepoError) else "inaccessible or not found"
+    raise RuntimeError(
+        f"Model '{model_id}' is {kind} on HuggingFace Hub. "
+        f"Set the HF_TOKEN environment variable or run `huggingface-cli login` "
+        f"to authenticate. Model URL: https://huggingface.co/{model_id}",
+    ) from exc
+
+
 def _check_rag_deps() -> None:
     """Verify GPU RAG dependencies are installed.
 
@@ -245,11 +270,18 @@ class EmbeddingModel:
                 logger.info("Dense model loaded via ONNX backend (%s)", onnx_file)
                 return model
 
-        return SentenceTransformer(
-            dense_name,
-            model_kwargs=model_kwargs,
-            processor_kwargs={"padding_side": "left"},
-        )
+        try:
+            return SentenceTransformer(
+                dense_name,
+                model_kwargs=model_kwargs,
+                processor_kwargs={"padding_side": "left"},
+            )
+        except Exception as exc:
+            from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+            if isinstance(exc, (GatedRepoError, RepositoryNotFoundError)):
+                _raise_for_hf_access(dense_name, exc)
+            raise
 
     def __init__(self, model_name: str | None = None) -> None:
         """Load dense and sparse models onto GPU.
@@ -323,11 +355,18 @@ class EmbeddingModel:
         )
 
         t0 = time.perf_counter()
-        self._sparse_model = SparseEncoder(
-            sparse_name,
-            device="cuda",
-            model_kwargs={"torch_dtype": torch.float16},
-        )
+        try:
+            self._sparse_model = SparseEncoder(
+                sparse_name,
+                device="cuda",
+                model_kwargs={"torch_dtype": torch.float16},
+            )
+        except Exception as exc:
+            from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+            if isinstance(exc, (GatedRepoError, RepositoryNotFoundError)):
+                _raise_for_hf_access(sparse_name, exc)
+            raise
         # Do NOT override the sparse model's max_seq_length: SPLADE
         # is BERT-based and has max_position_embeddings=512. Setting
         # it to 2048 causes a position-embedding shape mismatch at

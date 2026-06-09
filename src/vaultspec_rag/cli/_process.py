@@ -17,6 +17,7 @@ import os
 import signal
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.error
 import urllib.request
@@ -329,6 +330,30 @@ def _service_child_env(
     return env
 
 
+def _resolve_daemon_interpreter() -> str:
+    """Return the venv interpreter path for spawning the daemon.
+
+    Uses ``sysconfig.get_path("scripts")`` to locate the venv Scripts/bin
+    directory and returns the ``python.exe`` (win32) or ``python`` binary
+    inside it.  Falls back to ``sys.executable`` when the venv scripts
+    directory cannot be determined or the expected binary is absent — this
+    keeps the spawn working in editable installs and bare-interpreter
+    invocations at the cost of not guaranteeing the venv Python.
+
+    Why not ``sys.executable`` directly: on Windows, ``sys.executable``
+    can resolve to the system launcher (Python 3.14) rather than the
+    project-pinned venv (3.13), triggering a ``protobuf`` metaclass
+    ``TypeError`` on daemon import.
+    """
+    scripts = sysconfig.get_path("scripts")
+    if scripts:
+        name = "python.exe" if sys.platform == "win32" else "python"
+        candidate = Path(scripts) / name
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
+
+
 def _spawn_service(
     port: int,
     log_path: Path,
@@ -349,7 +374,8 @@ def _spawn_service(
         PID of the spawned process.
 
     """
-    cmd = [sys.executable, "-m", "vaultspec_rag.server", "--port", str(port)]
+    interpreter = _resolve_daemon_interpreter()
+    cmd = [interpreter, "-m", "vaultspec_rag.server", "--port", str(port)]
     env = _service_child_env(
         watch=watch,
         watch_debounce_ms=watch_debounce_ms,
