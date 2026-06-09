@@ -328,19 +328,26 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    project_root = request.query_params.get("project_root")
     from ..config import get_config
 
     cfg = get_config()
     with _m._watcher_lock:
         roots = [str(p) for p in _m._watcher_tasks]
-    return JSONResponse(
-        {
-            "watch_enabled": bool(cfg.watch_enabled),
-            "debounce_ms": int(cfg.watch_debounce_ms),
-            "cooldown_s": float(cfg.watch_cooldown_s),
-            "watched_roots": sorted(roots),
-        }
-    )
+
+    state = {
+        "watch_enabled": bool(cfg.watch_enabled),
+        "debounce_ms": int(cfg.watch_debounce_ms),
+        "cooldown_s": float(cfg.watch_cooldown_s),
+        "watching": sorted(roots),
+    }
+
+    if project_root is not None:
+        from pathlib import Path
+
+        state["running"] = str(Path(project_root).resolve()) in roots
+
+    return JSONResponse(state)
 
 
 async def start_watcher_route(request: Request) -> JSONResponse:
@@ -374,8 +381,10 @@ async def stop_watcher_route(request: Request) -> JSONResponse:
     from pathlib import Path
 
     target = Path(root).resolve()
-    stopped = _m._stop_watcher(target)
-    return JSONResponse({"root": str(target), "stopped": stopped})
+    with _m._watcher_lock:
+        was_running = target in _m._watcher_tasks
+    _m._stop_watcher(target)
+    return JSONResponse({"root": str(target), "stopped": was_running})
 
 
 async def reconfigure_watcher_route(request: Request) -> JSONResponse:
@@ -388,10 +397,25 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
     cooldown_s = payload.get("cooldown_s")
     from pathlib import Path
 
+    from ..config import get_config
+
+    cfg = get_config()
     target = Path(root).resolve()
     _m._stop_watcher(target)
-    _m._ensure_watcher(target, debounce_ms=debounce_ms, cooldown_s=cooldown_s)
-    return JSONResponse({"ok": True, "message": f"Watcher reconfigured for {root}"})
+    restarted = _m._ensure_watcher(
+        target, debounce_ms=debounce_ms, cooldown_s=cooldown_s
+    )
+
+    db_ms = int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
+    db_cs = float(cooldown_s) if cooldown_s is not None else float(cfg.watch_cooldown_s)
+    return JSONResponse(
+        {
+            "root": str(target),
+            "restarted": bool(restarted),
+            "debounce_ms": db_ms,
+            "cooldown_s": db_cs,
+        }
+    )
 
 
 async def get_service_state_route(request: Request) -> JSONResponse:

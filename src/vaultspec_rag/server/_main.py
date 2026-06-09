@@ -99,6 +99,14 @@ def main(port: int | None = None) -> None:
 
             return _wrapper
 
+        from ..jobs import register_on_job_complete
+
+        def _on_reindex_complete(duration_s: float) -> None:
+            _m.incr("reindex_total")
+            _m.observe("reindex_last_duration_seconds", duration_s)
+
+        register_on_job_complete(_on_reindex_complete)
+
         # ``/health`` stays UNGATED (registered here, not in
         # ``_routes``); the P03 read-only routes (e.g. token-gated
         # ``/logs``) register from ``_routes.ROUTES`` on this same inner

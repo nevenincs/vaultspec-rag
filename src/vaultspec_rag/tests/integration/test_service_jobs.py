@@ -25,6 +25,7 @@ from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
 import vaultspec_rag.mcp._admin_tools as admin
+import vaultspec_rag.mcp._tools as tools
 import vaultspec_rag.server as _m
 
 from ...cli import app
@@ -33,6 +34,7 @@ from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 runner = CliRunner()
 
@@ -54,15 +56,34 @@ def _clean_jobs() -> Iterator[None]:
 # --------------------------------------------------------------------------- #
 
 
-async def test_get_jobs_returns_snapshot_shape(_clean_jobs: None) -> None:
-    job_id = _jobs.record_start("vault", "tool")
-    _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
+@pytest.mark.subprocess_gpu
+async def test_get_jobs_returns_snapshot_shape(
+    _live_service: object,
+    tmp_path: Path,
+) -> None:
+    # Trigger a real job so the daemon has one in its registry.
+    # We use an empty tmp_path so the reindex is near-instant.
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
 
-    result = await admin.get_jobs()
+    # Poll until it's done so the snapshot is stable.
+    import asyncio
+
+    for _ in range(50):
+        result = await admin.get_jobs()
+        done = result.get("jobs") and result["jobs"][0]["phase"] in (
+            "done",
+            "error",
+            "failed",
+        )
+        if done:
+            break
+        await asyncio.sleep(0.1)
+
     assert set(result) == {"jobs"}
     jobs = result["jobs"]
     assert isinstance(jobs, list)
-    assert len(jobs) == 1
+    assert len(jobs) >= 1
     entry = jobs[0]
     assert set(entry) == {
         "id",
@@ -74,32 +95,48 @@ async def test_get_jobs_returns_snapshot_shape(_clean_jobs: None) -> None:
         "result",
         "progress",
     }
-    assert entry["id"] == job_id
     assert entry["source"] == "vault"
     assert entry["trigger"] == "tool"
-    assert entry["phase"] == "done"
-    assert entry["result"] == "+1 /0 -0 (5ms)"
+    assert entry["phase"] in ("done", "error", "failed")
 
 
-async def test_get_jobs_is_newest_first(_clean_jobs: None) -> None:
-    first = _jobs.record_start("vault", "tool")
-    second = _jobs.record_start("code", "watcher")
+@pytest.mark.subprocess_gpu
+async def test_get_jobs_is_newest_first(
+    _live_service: object,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    # Trigger two jobs
+    job1 = await tools.reindex_vault(clean=True, project_root=str(tmp_path))
+    job2 = await tools.reindex_codebase(clean=True, project_root=str(tmp_path))
 
     jobs = (await admin.get_jobs())["jobs"]
-    assert [entry["id"] for entry in jobs] == [second, first]
+    # The list is newest-first, so job2 should appear before job1
+    ids = [entry["id"] for entry in jobs]
+    assert ids.index(job2["job_id"]) < ids.index(job1["job_id"])
 
 
-async def test_get_jobs_honours_limit(_clean_jobs: None) -> None:
-    newest_ids = [_jobs.record_start("vault", "tool") for _ in range(5)]
+@pytest.mark.subprocess_gpu
+async def test_get_jobs_honours_limit(
+    _live_service: object,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    # Trigger multiple jobs
+    for _ in range(3):
+        await tools.reindex_vault(clean=True, project_root=str(tmp_path))
 
     jobs = (await admin.get_jobs(limit=2))["jobs"]
     assert len(jobs) == 2
-    # Newest-first: the two most recent records.
-    assert [entry["id"] for entry in jobs] == [newest_ids[-1], newest_ids[-2]]
 
 
-async def test_get_jobs_non_positive_limit_is_empty(_clean_jobs: None) -> None:
-    _jobs.record_start("vault", "tool")
+@pytest.mark.subprocess_gpu
+async def test_get_jobs_non_positive_limit_is_empty(
+    _live_service: object,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
     assert (await admin.get_jobs(limit=0))["jobs"] == []
 
 

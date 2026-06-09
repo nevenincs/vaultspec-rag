@@ -52,12 +52,34 @@ Fix all 43 failing tests caused by the CLI refactor drift and the new MCP REST b
 - [x] `P04.S13` - Fix CLI test drift and MCP tool REST boundary tests; `src/vaultspec_rag/tests/`.
 - [x] `P04.S14` - Fix MCP Starlette mount missing `streamable_http_app` and Typer CLI handler regression; `src/vaultspec_rag/server/_main.py`.
 
+### Phase `P05` - MCP Business Logic Elimination
+
+The `mcp/` package must be a pure protocol adapter: translate MCP stdio/HTTP requests into REST calls to the daemon. No direct imports from `server`, `store`, `service`, or `registry`.
+
+- [ ] `P05.S15` - Remove `_resources.py` direct Qdrant access: replace `_m._registry.lease(root)` + `slot.store.get_by_id()` with a REST call to a new `/vault-document` daemon endpoint; `src/vaultspec_rag/mcp/_resources.py`, `src/vaultspec_rag/server/_routes.py`.
+- [ ] `P05.S16` - Remove `_resources.py` server internal imports: eliminate `import vaultspec_rag.server as _m`, `from ..server._utils import _default_root`, and `_m._http_mode` reads; `src/vaultspec_rag/mcp/_resources.py`.
+- [ ] `P05.S17` - Add `/vault-document` REST route to daemon serving document content by stem ID; `src/vaultspec_rag/server/_routes.py`.
+- [ ] `P05.S18` - Integration tests asserting `mcp/` has zero imports from `server/`, `store`, `service`, or `registry`; `src/vaultspec_rag/tests/`.
+
+### Phase `P06` - Semantic Deconflation of MCP/Service Naming
+
+Purge all semantic conflation where "MCP server" is used to mean "REST daemon" or where function/variable/docstring names use `mcp` when they mean `service` or `daemon`. The CLI in-process fallback path is acceptable per existing ADRs and stays.
+
+- [ ] `P06.S19` - Rename `server/__init__.py` docstring from "MCP server" to "RAG daemon HTTP service"; rename `_main.py` docstring from "Console-script entry point for the MCP server" to "Console-script entry point for the RAG daemon"; `src/vaultspec_rag/server/__init__.py`, `src/vaultspec_rag/server/_main.py`, `src/vaultspec_rag/server/_models.py`, `src/vaultspec_rag/server/_state.py`.
+- [ ] `P06.S20` - Rename CLI identifiers: `_handle_mcp_results` → `_handle_service_results`, `mcp_results` → `service_results`, `_display_mcp_error` → `_display_service_error`, `_try_mcp_delegation` → `_try_service_delegation`, `_print_mcp_results` → `_print_service_results`; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_render.py`, `src/vaultspec_rag/cli/__init__.py`.
+- [ ] `P06.S21` - Fix CLI user-facing strings: replace "Port of running MCP server" with "Port of running RAG service", replace `"via": "mcp"` with `"via": "service"`, fix all `--help` text and error messages that say "MCP server" when they mean the daemon; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_store.py`, `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [ ] `P06.S22` - Fix stale docstring references: update `registry.py` and `service.py` docstrings that reference the deleted `mcp_server.py` module name; `src/vaultspec_rag/registry.py`, `src/vaultspec_rag/service.py`.
+- [ ] `P06.S23` - Integration test asserting no `.py` file in `cli/` or `server/` contains the string "MCP server" in docstrings, help text, or user-facing output (the `mcp/` package itself is exempt); `src/vaultspec_rag/tests/`.
+
 ## Parallelization
 
 - Phases `P01` and `P02` modify different orthogonal paths within the search implementation. They can be implemented sequentially or in parallel without conflict.
+- Phases `P05` and `P06` are sequential: P05 (MCP deconflation) must land first so the MCP package stops importing server internals, then P06 (naming) is a safe cosmetic sweep.
 
 ## Verification
 
 - Running codebase search with `--no-sparse` (or `sparse_enabled=False`) skips the SPLADE encoding and executes in ~0.5s instead of ~20s.
 - `include_paths` and `exclude_paths` glob parameters continue to correctly filter results, but the filtering executes natively inside Qdrant.
 - Integration tests and search unit tests fully pass.
+- `mcp/` imports nothing from `server/`, `store`, `service`, or `registry`.
+- No `.py` file outside `mcp/` uses "MCP server" in docstrings or user-facing strings.
