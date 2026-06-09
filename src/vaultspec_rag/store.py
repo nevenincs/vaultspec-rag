@@ -167,8 +167,8 @@ def _check_rag_deps() -> None:
 
     if not _interpreter_is_supported(sys.version_info):
         raise RuntimeError(
-            "vaultspec-rag requires CPython 3.13.x (requires-python = '>=3.13,<3.14' "
-            "in pyproject.toml).  The running interpreter is "
+            "vaultspec-rag requires CPython 3.13.x (>=3.13,<3.14); CPython 3.14+ "
+            "breaks qdrant-client at import.  The running interpreter is "
             f"{sys.version!r}.  "
             "Run the service via 'uv run vaultspec-rag ...' so that uv selects the "
             "pinned interpreter from the project's virtual environment."

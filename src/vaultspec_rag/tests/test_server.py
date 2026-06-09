@@ -1259,6 +1259,32 @@ class TestRouteMissingProjectRoot:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
 
+    def test_benchmark_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post(
+                "/benchmark",
+                json={},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
     def test_reindex_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
 

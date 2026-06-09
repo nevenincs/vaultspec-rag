@@ -187,6 +187,6 @@ def _resolve_root(project_root: str | None) -> Path:
     if project_root is not None:
         if not project_root.strip():
             msg = "project_root must not be empty"
-            raise ValueError(msg)
+            raise ProjectRootRequiredError(msg)
         return _validate_vault_root(Path(project_root).resolve())
     return _default_root()
