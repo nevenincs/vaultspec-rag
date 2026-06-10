@@ -34,51 +34,6 @@ from ._service_status import (
 )
 
 
-def _orphan_probe_port() -> int:
-    """Return the port to probe when no ``service.json`` is present.
-
-    Reads ``VAULTSPEC_RAG_PORT`` from the config (which checks the env var
-    first, then falls back to the compiled-in default of 8766).
-    """
-    return int(get_config().mcp_port)
-
-
-def _render_orphan_status_json(port: int, health: dict[str, Any]) -> None:
-    """Emit a JSON orphan-divergent envelope and exit with code 4."""
-    payload: dict[str, object] = {
-        "service_json_present": False,
-        "state": "orphaned",
-        "port": port,
-        "health": health,
-    }
-    _emit_json(
-        False,
-        "service.status",
-        error="orphaned",
-        message=f"No service.json but port {port} answers /health. "
-        "Service may be orphaned.",
-        data=payload,
-    )
-    raise typer.Exit(code=4)
-
-
-def _render_orphan_status_table(port: int, health: dict[str, Any]) -> None:
-    """Print an orphan-divergent status table and exit with code 4."""
-    table = Table(title="Service Status", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Service JSON", "[red]missing[/]")
-    table.add_row("Port", str(port))
-    table.add_row(
-        "State",
-        "[yellow]orphaned[/] (no service.json but port answers /health)",
-    )
-    health_status = health.get("status", "unknown")
-    table.add_row("Health", str(health_status))
-    _cli.console.print(table)
-    raise typer.Exit(code=4)
-
-
 @server_app.command(
     "start",
     help=(
@@ -236,23 +191,9 @@ def service_stop() -> None:
     """
     status = _read_service_status()
     if status is None:
-        # Orphan-detection fallback: if no service.json exists but the default
-        # port answers /health, surface the orphaned daemon so the operator
-        # knows it is running and can reclaim/kill it (S09 / #181 A1).
-        orphan_port = _orphan_probe_port()
-        orphan_health = _health_probe(orphan_port)
-        if orphan_health is not None and orphan_health.get("status") == "ready":
-            _cli.console.print(
-                Panel(
-                    f"No service.json but port {orphan_port} answers /health "
-                    f"(status: {orphan_health.get('status', 'unknown')}).\n"
-                    "Service may be orphaned. Kill it manually or reclaim "
-                    f"with: kill $(lsof -ti tcp:{orphan_port})",
-                    title="Service Stop — Orphaned Daemon Detected",
-                    border_style="yellow",
-                ),
-            )
-            raise typer.Exit(code=4)
+        # No service.json => nothing to stop for this config. We do NOT probe
+        # the port: on the shared default port another project's healthy
+        # service would otherwise be misreported as this config's orphan.
         _cli.console.print(
             Panel(
                 "No service status file found. Service is not running.",
@@ -549,18 +490,13 @@ def service_status(
     status = _read_service_status()
 
     if status is None:
-        # Orphan-detection fallback: probe the default port to catch a
-        # running daemon that has no service.json (e.g. status dir was
-        # wiped). If the port answers /health, report divergent state
-        # (exit 4) so the operator can reclaim/kill it (S09 / #181 A1).
-        orphan_port = _orphan_probe_port()
-        orphan_health = _health_probe(orphan_port)
-        if orphan_health is not None and orphan_health.get("status") == "ready":
-            if json_mode:
-                _render_orphan_status_json(orphan_port, orphan_health)
-            else:
-                _render_orphan_status_table(orphan_port, orphan_health)
-            return  # unreachable — both helpers raise typer.Exit
+        # No service.json in the configured status dir => this config's
+        # service is stopped (exit 3), per the documented contract (exit 4
+        # is reserved for a *present* service.json that diverges). We do
+        # NOT probe the port here: on the shared default port another
+        # project's healthy service would otherwise be misreported as this
+        # config's orphan/divergent state (a multi-project false positive).
+        # `server start` keeps its own port guard against double-starts.
         if json_mode:
             _emit_json(
                 False,

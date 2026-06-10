@@ -14,17 +14,11 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
-import typer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-from ..cli._service_lifecycle import (
-    _orphan_probe_port,
-    _render_orphan_status_json,
-    _render_orphan_status_table,
-)
 from ..cli._service_status import _update_service_token
 from ..config import EnvVar, reset_config
 
@@ -47,56 +41,6 @@ def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
         else:
             os.environ[EnvVar.STATUS_DIR.value] = prev
         reset_config()
-
-
-# ---------------------------------------------------------------------------
-# S09: orphan render helpers raise typer.Exit(code=4)
-# ---------------------------------------------------------------------------
-
-
-class TestOrphanRenderExitCodes:
-    """Both orphan render helpers must raise typer.Exit(code=4) — S09 / #181 A1."""
-
-    def test_render_orphan_json_exits_4(self) -> None:
-        health: dict[str, object] = {"status": "ready"}
-        with pytest.raises(typer.Exit) as exc_info:
-            _render_orphan_status_json(8766, health)
-        assert exc_info.value.exit_code == 4
-
-    def test_render_orphan_table_exits_4(self) -> None:
-        health: dict[str, object] = {"status": "ready"}
-        with pytest.raises(typer.Exit) as exc_info:
-            _render_orphan_status_table(8766, health)
-        assert exc_info.value.exit_code == 4
-
-
-# ---------------------------------------------------------------------------
-# S09: _orphan_probe_port returns an int from config
-# ---------------------------------------------------------------------------
-
-
-class TestOrphanProbePort:
-    """_orphan_probe_port must return the configured port as an int."""
-
-    def test_returns_positive_int(self) -> None:
-        port = _orphan_probe_port()
-        assert isinstance(port, int)
-        assert port > 0
-
-    def test_respects_env_override(self) -> None:
-        """VAULTSPEC_RAG_PORT is propagated through config into the helper."""
-        prev = os.environ.get(EnvVar.PORT.value)
-        os.environ[EnvVar.PORT.value] = "19991"
-        reset_config()
-        try:
-            port = _orphan_probe_port()
-            assert port == 19991
-        finally:
-            if prev is None:
-                os.environ.pop(EnvVar.PORT.value, None)
-            else:
-                os.environ[EnvVar.PORT.value] = prev
-            reset_config()
 
 
 # ---------------------------------------------------------------------------
