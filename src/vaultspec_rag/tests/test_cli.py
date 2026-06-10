@@ -2639,7 +2639,10 @@ class TestBenchmarkAndQualityCommands:
         assert result.exit_code == 0
         assert len(called) == 1
         assert "PASS" in result.output
-        assert "100%" in result.output
+        import re
+
+        output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
+        assert "100%" in output
 
     def test_quality_command_delegation_fail(self, tmp_path, monkeypatch):
         (tmp_path / ".vaultspec").mkdir()
@@ -2670,4 +2673,7 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 1
         assert "FAILED" in result.output
-        assert "50%" in result.output
+        import re
+
+        output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
+        assert "50%" in output
