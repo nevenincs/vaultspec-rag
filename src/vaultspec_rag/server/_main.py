@@ -25,8 +25,6 @@ logger = logging.getLogger("vaultspec_rag.server")
 
 
 def main(port: int | None = None) -> None:
-    from ..mcp import mcp
-
     """Start the RAG daemon on stdio or HTTP transport.
 
     In HTTP mode, builds a Starlette app that mounts the MCP
@@ -61,6 +59,19 @@ def main(port: int | None = None) -> None:
         )
         args = parser.parse_args()
         port = args.port
+
+    try:
+        from ..mcp import mcp
+    except ImportError as exc:  # missing mcp, or a broken Windows pywin32 link
+        raise RuntimeError(
+            "The RAG server requires the 'mcp' package, which failed to "
+            f"import ({exc}). On Windows under uv this is usually pywin32's "
+            "post-install step not having run (a known mcp/pywin32 issue, "
+            "upstream modelcontextprotocol/python-sdk#2233): run "
+            "`python -m pywin32_postinstall -install` in this environment. If "
+            "'mcp' is missing entirely, reinstall vaultspec-rag (mcp is a core "
+            "dependency)."
+        ) from exc
 
     _m._http_mode = port is not None
 
