@@ -20,7 +20,9 @@ from ...config import EnvVar, reset_config
 @pytest.mark.integration
 class TestDenseBackendFallback:
     @pytest.mark.timeout(300)
-    def test_onnx_backend_falls_back_to_torch(self, caplog) -> None:
+    def test_onnx_backend_falls_back_to_torch(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from ... import EmbeddingModel
 
         prev = os.environ.get(EnvVar.DENSE_BACKEND.value)

@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 pytestmark = [pytest.mark.robustness]
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ...embeddings import EmbeddingModel
+    from ...store import VaultStore
+    from ..conftest import RagComponentsWithManifest
 
 
 # ---- Robustness Tests ----
@@ -19,7 +28,9 @@ class TestRobustness:
 
     # -- Document edge cases --
 
-    def test_stories_without_frontmatter_skipped(self, rag_components):
+    def test_stories_without_frontmatter_skipped(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         """Files in .vault/stories/ have no YAML frontmatter.
 
         Since DocType enum doesn't include 'stories', get_doc_type returns None
@@ -28,16 +39,18 @@ class TestRobustness:
         The synthetic corpus does not ship story files, so this test
         creates them on the fly inside the fixture's vault root.
         """
-        from vaultspec_core.vaultcore import scan_vault
+        from vaultspec_core.vaultcore import (
+            scan_vault,  # pyright: ignore[reportMissingTypeStubs]
+        )
 
         from ... import prepare_document
 
-        root = rag_components["root"]
+        root: Path = rag_components["root"]
 
         # Create a stories subdirectory with a frontmatter-less markdown file.
-        stories_dir = root / ".vault" / "stories"
+        stories_dir: Path = root / ".vault" / "stories"
         stories_dir.mkdir(parents=True, exist_ok=True)
-        (stories_dir / "tale-of-the-fox.md").write_text(
+        stories_dir.joinpath("tale-of-the-fox.md").write_text(
             "# The Fox\n\nOnce upon a time there was a clever fox.\n",
             encoding="utf-8",
         )
@@ -52,16 +65,20 @@ class TestRobustness:
                 f"but prepare_document returned a doc"
             )
 
-    def test_audit_nonstandard_frontmatter_indexed(self, rag_components):
+    def test_audit_nonstandard_frontmatter_indexed(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         """audit/2026-01-24-nexus-pipeline-audit.md has 'related:' key
         instead of 'tags:' array. DocType.AUDIT exists, so get_doc_type
         returns AUDIT and the doc is indexed despite nonstandard frontmatter.
         """
-        from vaultspec_core.vaultcore import scan_vault
+        from vaultspec_core.vaultcore import (
+            scan_vault,  # pyright: ignore[reportMissingTypeStubs]
+        )
 
         from ... import prepare_document
 
-        root = rag_components["root"]
+        root: Path = rag_components["root"]
         audit_paths = [p for p in scan_vault(root) if "audit" in p.parts]
         assert len(audit_paths) > 0, "Should find audit files in scanner output"
 
@@ -74,7 +91,9 @@ class TestRobustness:
 
     # -- Graph re-ranking edge cases --
 
-    def test_graph_reranking_with_orphans(self, rag_components):
+    def test_graph_reranking_with_orphans(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         """Orphaned docs (no in-links) should still appear in results.
 
         Graph re-ranking should boost well-connected docs but not
@@ -82,9 +101,9 @@ class TestRobustness:
         """
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         # Use a broad query that should match many docs.

@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ...embeddings import EmbeddingModel
+    from ...search import SearchResult
+    from ...store import VaultStore
+    from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.quality]
 
@@ -20,13 +30,13 @@ class TestHelpfulness:
 
     # -- Known-answer precision --
 
-    def test_search_finds_audit_docs(self, rag_components):
+    def test_search_finds_audit_docs(self, rag_components: RagComponentsWithManifest):
         """'audit report security compliance' should surface audit docs."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("audit report security compliance", top_k=10)
@@ -36,13 +46,15 @@ class TestHelpfulness:
             f"Expected an audit doc in top 10, got: {result_ids}"
         )
 
-    def test_search_finds_architecture_docs(self, rag_components):
+    def test_search_finds_architecture_docs(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """'architecture decision trade-offs' should surface ADR docs."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("architecture decision trade-offs", top_k=10)
@@ -54,13 +66,13 @@ class TestHelpfulness:
             f"got: {[(r.id, r.doc_type) for r in results]}"
         )
 
-    def test_search_finds_plan_docs(self, rag_components):
+    def test_search_finds_plan_docs(self, rag_components: RagComponentsWithManifest):
         """'implementation plan milestones' should surface plan docs."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault(
@@ -75,14 +87,14 @@ class TestHelpfulness:
             f"got: {[(r.id, r.doc_type) for r in results]}"
         )
 
-    def test_search_needle_precision(self, rag_components):
+    def test_search_needle_precision(self, rag_components: RagComponentsWithManifest):
         """Searching for a needle keyword should surface the exact document."""
         from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         # Pick the first needle from the manifest
@@ -98,13 +110,15 @@ class TestHelpfulness:
             f"got: {result_ids}"
         )
 
-    def test_search_irrelevant_type_returns_empty(self, rag_components):
+    def test_search_irrelevant_type_returns_empty(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """Searching for content that belongs to no indexed doc_type returns empty."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("croissant boulangerie patisserie", top_k=5)
@@ -118,13 +132,15 @@ class TestHelpfulness:
 
     # -- Filter correctness --
 
-    def test_type_filter_excludes_others(self, rag_components):
+    def test_type_filter_excludes_others(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """'type:adr architecture' should return ONLY adr docs."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("type:adr architecture", top_k=10)
@@ -135,17 +151,17 @@ class TestHelpfulness:
                 f"Expected doc_type 'adr', got '{r.doc_type}' for {r.id}"
             )
 
-    def test_feature_filter_narrows(self, rag_components):
+    def test_feature_filter_narrows(self, rag_components: RagComponentsWithManifest):
         """'feature:<feature> ...' should return ONLY docs with that feature."""
         from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         # Pick a feature that has docs in the corpus
-        target_feature = manifest.docs[0].feature
+        target_feature: str = manifest.docs[0].feature
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault(
             f"feature:{target_feature} implementation",
@@ -158,13 +174,13 @@ class TestHelpfulness:
                 f"Expected feature '{target_feature}', got '{r.feature}' for {r.id}"
             )
 
-    def test_date_filter_prefix(self, rag_components):
+    def test_date_filter_prefix(self, rag_components: RagComponentsWithManifest):
         """'date:2026-01-01 ...' should return docs dated 2026-01-01."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("date:2026-01-01 architecture", top_k=10)
@@ -175,19 +191,19 @@ class TestHelpfulness:
                 f"Expected date starting with '2026-01-01', got '{r.date}' for {r.id}"
             )
 
-    def test_combined_filters(self, rag_components):
+    def test_combined_filters(self, rag_components: RagComponentsWithManifest):
         """'type:adr feature:<feature>' should return the intersection."""
         from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         # Find a feature that has an ADR doc
         adr_docs = [d for d in manifest.docs if d.doc_type == "adr"]
         assert adr_docs, "Synthetic corpus must have ADR docs"
-        target_feature = adr_docs[0].feature
+        target_feature: str = adr_docs[0].feature
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault(
@@ -206,14 +222,14 @@ class TestHelpfulness:
 
     # -- Ranking quality --
 
-    def test_needle_ranks_high(self, rag_components):
+    def test_needle_ranks_high(self, rag_components: RagComponentsWithManifest):
         """A needle keyword should rank its target doc in top 3."""
         from ... import VaultSearcher
 
         manifest = rag_components["manifest"]
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
 
@@ -230,7 +246,9 @@ class TestHelpfulness:
                 tested += 1
         assert tested > 0, "Should have tested at least one needle"
 
-    def test_authority_boost_measurable(self, rag_components_full):
+    def test_authority_boost_measurable(
+        self, rag_components_full: RagComponentsWithManifest
+    ):
         """Well-linked docs should have higher scores than orphan docs.
 
         The graph re-ranker applies authority boost: score *= (1 + 0.1 * in_links).
@@ -239,28 +257,30 @@ class TestHelpfulness:
 
         Requires the full corpus for meaningful authority signal.
         """
-        from vaultspec_core.graph import VaultGraph
+        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]
+            VaultGraph,
+        )
 
         from ... import VaultSearcher
 
-        model = rag_components_full["model"]
-        store = rag_components_full["store"]
-        root = rag_components_full["root"]
+        model: EmbeddingModel = rag_components_full["model"]
+        store: VaultStore = rag_components_full["store"]
+        root: Path = rag_components_full["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("implementation plan architecture", top_k=15)
 
         assert len(results) >= 2, "Need at least 2 results to compare authority"
 
-        graph = VaultGraph(root)
+        graph = VaultGraph(root)  # pyright: ignore[reportUnknownVariableType]  # vaultspec_core ships no stubs
 
-        linked = []
-        orphans = []
+        linked: list[SearchResult] = []
+        orphans: list[SearchResult] = []
         for r in results:
-            node = graph.nodes.get(r.id)
-            if node and len(node.in_links) >= 2:
+            node = graph.nodes.get(r.id)  # pyright: ignore[reportUnknownMemberType]  # vaultspec_core ships no stubs
+            if node and len(node.in_links) >= 2:  # pyright: ignore[reportUnknownMemberType]  # vaultspec_core ships no stubs
                 linked.append(r)
-            elif node and len(node.in_links) == 0:
+            elif node and len(node.in_links) == 0:  # pyright: ignore[reportUnknownMemberType]  # vaultspec_core ships no stubs
                 orphans.append(r)
 
         if linked and orphans:
@@ -271,13 +291,15 @@ class TestHelpfulness:
                 f"than orphans (avg={avg_orphan:.4f}) on average"
             )
 
-    def test_results_have_positive_scores(self, rag_components):
+    def test_results_have_positive_scores(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """All results from any query should have score > 0."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
 
@@ -289,13 +311,15 @@ class TestHelpfulness:
                     f"Query '{q}': result {r.id} has non-positive score {r.score}"
                 )
 
-    def test_more_results_with_higher_limit(self, rag_components):
+    def test_more_results_with_higher_limit(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """top_k=10 should return >= len(top_k=3) results."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results_3 = searcher.search_vault("implementation plan", top_k=3)
@@ -308,16 +332,18 @@ class TestHelpfulness:
 
     # -- Negative tests --
 
-    def test_irrelevant_query_low_scores(self, rag_components):
+    def test_irrelevant_query_low_scores(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """'quantum physics dark matter' has no vault relevance.
 
         Should return empty or results with very low scores.
         """
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("quantum physics dark matter", top_k=5)
@@ -331,13 +357,13 @@ class TestHelpfulness:
                     f"lower than relevant query score ({relevant[0].score:.4f})"
                 )
 
-    def test_nonsense_query(self, rag_components):
+    def test_nonsense_query(self, rag_components: RagComponentsWithManifest):
         """'asdfghjkl zxcvbnm' should return empty or very low absolute scores."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         results = searcher.search_vault("asdfghjkl zxcvbnm", top_k=5)

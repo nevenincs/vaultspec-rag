@@ -9,14 +9,24 @@ from __future__ import annotations
 
 import statistics
 import time
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from ...progress import NullProgressReporter
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ...embeddings import EmbeddingModel
+    from ...indexer import IndexResult, VaultIndexer
+    from ...search import VaultSearcher
+
 
 @pytest.mark.performance
-def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
+def test_bench_embedding_throughput(
+    model: EmbeddingModel, n_docs: int = 50
+) -> dict[str, Any]:
     """Time embedding N synthetic documents."""
     texts = [
         f"Document {i}: Architecture decision about component {i} "
@@ -37,10 +47,10 @@ def test_bench_embedding_throughput(model, n_docs: int = 50) -> dict:
 
 @pytest.mark.performance
 @pytest.mark.usefixtures("root", "model", "store")
-def test_bench_full_index(indexer) -> dict:
+def test_bench_full_index(indexer: VaultIndexer) -> dict[str, Any]:
     """Time full_index() on the entire vault corpus."""
     start = time.perf_counter()
-    result = indexer.full_index(reporter=NullProgressReporter())
+    result: IndexResult = indexer.full_index(reporter=NullProgressReporter())
     elapsed = time.perf_counter() - start
 
     return {
@@ -52,10 +62,10 @@ def test_bench_full_index(indexer) -> dict:
 
 
 @pytest.mark.performance
-def test_bench_incremental_noop(indexer) -> dict:
+def test_bench_incremental_noop(indexer: VaultIndexer) -> dict[str, Any]:
     """Time incremental_index() when nothing has changed."""
     start = time.perf_counter()
-    result = indexer.incremental_index(reporter=NullProgressReporter())
+    result: IndexResult = indexer.incremental_index(reporter=NullProgressReporter())
     elapsed = time.perf_counter() - start
 
     return {
@@ -66,7 +76,9 @@ def test_bench_incremental_noop(indexer) -> dict:
 
 
 @pytest.mark.performance
-def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
+def test_bench_search_latency(
+    searcher: VaultSearcher, n_queries: int = 20
+) -> dict[str, Any]:
     """Measure search latency distribution over N queries."""
     queries = [
         "architecture decision",
@@ -94,7 +106,7 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
     # Warmup
     searcher.search_vault("warmup", top_k=1)
 
-    latencies = []
+    latencies: list[float] = []
     for i in range(n_queries):
         q = queries[i % len(queries)]
         start = time.perf_counter()
@@ -114,20 +126,20 @@ def test_bench_search_latency(searcher, n_queries: int = 20) -> dict:
 
 
 @pytest.mark.performance
-def test_bench_memory(root) -> dict:
+def test_bench_memory(root: Path) -> dict[str, Any]:
     """Measure GPU VRAM and Qdrant disk size. Requires CUDA GPU."""
-    import torch
+    import torch  # pyright: ignore[reportMissingTypeStubs]  # torch ships no stubs
 
-    result = {}
-    result["gpu_name"] = torch.cuda.get_device_name(0)
-    result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
-    result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
+    result: dict[str, Any] = {}
+    result["gpu_name"] = torch.cuda.get_device_name(0)  # pyright: ignore[reportUnknownMemberType]  # torch stub incomplete
+    result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)  # pyright: ignore[reportUnknownMemberType]
+    result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)  # pyright: ignore[reportUnknownMemberType]
 
     # Qdrant disk size
     from ...config import get_config
 
     cfg = get_config()
-    qdrant_dir = root / cfg.data_dir / cfg.qdrant_dir
+    qdrant_dir: Path = root / cfg.data_dir / cfg.qdrant_dir
     if qdrant_dir.exists():
         total_bytes = sum(
             f.stat().st_size for f in qdrant_dir.rglob("*") if f.is_file()

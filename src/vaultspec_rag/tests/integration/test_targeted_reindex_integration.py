@@ -11,25 +11,40 @@ Real GPU + real Qdrant, no mocks/skips, per the project test mandate.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
-from vaultspec_core.config import reset_config
-from vaultspec_core.vaultcore import scan_vault
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+    reset_config,
+)
+from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]
+    scan_vault,
+)
 
 from ...config import get_config
 from ...config import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
 from ..corpus import build_synthetic_vault
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ...embeddings import EmbeddingModel
+    from ...indexer import CodebaseIndexer, VaultIndexer
+    from ...store import VaultStore
+
 pytestmark = [pytest.mark.integration]
 
 
-def _vault_doc_id(path, docs_dir) -> str:
+def _vault_doc_id(path: Path, docs_dir: Path) -> str:
     """Mirror the indexer's path -> doc-id scheme for assertions."""
     rel = str(path.relative_to(docs_dir)).replace("\\", "/")
     return rel.rsplit(".", 1)[0] if "." in rel else rel
 
 
-def _build_vault(root, model, *, n_docs: int = 6):
+def _build_vault(
+    root: Path, model: EmbeddingModel, *, n_docs: int = 6
+) -> tuple[VaultStore, VaultIndexer]:
     """Build and fully index a small synthetic vault at *root*."""
     from ... import VaultIndexer, VaultStore
 
@@ -46,7 +61,9 @@ class TestVaultScopedReindex:
     """Scoped vault reindex processes only the changed paths."""
 
     @pytest.mark.timeout(180)
-    def test_edit_reindexes_only_the_named_path(self, embedding_model, tmp_path):
+    def test_edit_reindexes_only_the_named_path(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             docs_dir = tmp_path / get_config().docs_dir
@@ -87,7 +104,9 @@ class TestVaultScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_delete_removes_only_that_doc(self, embedding_model, tmp_path):
+    def test_delete_removes_only_that_doc(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             docs_dir = tmp_path / get_config().docs_dir
@@ -115,7 +134,9 @@ class TestVaultScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_path_outside_vault_is_noop(self, embedding_model, tmp_path):
+    def test_path_outside_vault_is_noop(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             meta_before = indexer._load_meta()
@@ -136,7 +157,9 @@ class TestVaultScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_argument_less_call_still_full_scans(self, embedding_model, tmp_path):
+    def test_argument_less_call_still_full_scans(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             # No changed_paths: the full-scan path runs and finds nothing new.
@@ -149,7 +172,9 @@ class TestVaultScopedReindex:
             store.close()
 
 
-def _build_code(root, model):
+def _build_code(
+    root: Path, model: EmbeddingModel
+) -> tuple[VaultStore, CodebaseIndexer, Path, Path]:
     """Build a tiny source tree and fully index it at *root*."""
     from ... import CodebaseIndexer, VaultStore
 
@@ -172,7 +197,9 @@ class TestCodeScopedReindex:
     """Scoped codebase reindex processes only the changed files."""
 
     @pytest.mark.timeout(180)
-    def test_edit_reindexes_only_the_named_file(self, embedding_model, tmp_path):
+    def test_edit_reindexes_only_the_named_file(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, code_indexer, a, b = _build_code(tmp_path, embedding_model)
         try:
             a_rel = str(a.relative_to(tmp_path)).replace("\\", "/")
@@ -198,7 +225,9 @@ class TestCodeScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_delete_removes_only_that_file(self, embedding_model, tmp_path):
+    def test_delete_removes_only_that_file(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, code_indexer, a, b = _build_code(tmp_path, embedding_model)
         try:
             a_rel = str(a.relative_to(tmp_path)).replace("\\", "/")
@@ -220,7 +249,9 @@ class TestCodeScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_gitignored_file_is_noop(self, embedding_model, tmp_path):
+    def test_gitignored_file_is_noop(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, code_indexer, _a, _b = _build_code(tmp_path, embedding_model)
         try:
             (tmp_path / ".gitignore").write_text("pkg/ignored.py\n", encoding="utf-8")

@@ -8,7 +8,7 @@ import typing
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from ..cli import (
     _add_backend_contract_rows,
@@ -764,7 +764,9 @@ class TestMcpFastPath:
         )
         assert result is None
 
-    def test_live_but_broken_returns_structured_error(self, monkeypatch):
+    def test_live_but_broken_returns_structured_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Non-connection-refused exception yields ok=False dict, not None.
 
         Without this discrimination the caller would treat a
@@ -775,7 +777,7 @@ class TestMcpFastPath:
 
         from .. import cli as cli_mod
 
-        def _boom(*_args, **_kwargs):
+        def _boom(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("synthetic live-but-broken tool failure")
 
         monkeypatch.setattr("vaultspec_rag.cli._http_search._do_http_call", _boom)
@@ -792,12 +794,14 @@ class TestMcpFastPath:
         assert result.get("error") == "http_call_failed"
         assert "synthetic live-but-broken" in str(result.get("message", ""))
 
-    def test_live_but_broken_reindex_returns_structured_error(self, monkeypatch):
+    def test_live_but_broken_reindex_returns_structured_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Same discrimination for _try_http_reindex."""
 
         from .. import cli as cli_mod
 
-        def mock_timeout(*_a, **_kw):
+        def mock_timeout(*_a: object, **_kw: object) -> None:
             raise TimeoutError("synthetic mcp timeout")
 
         monkeypatch.setattr(
@@ -814,12 +818,14 @@ class TestMcpFastPath:
         assert result.get("ok") is False
         assert result.get("error") == "http_call_failed"
 
-    def test_connection_refused_still_returns_none(self, monkeypatch):
+    def test_connection_refused_still_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Explicit ConnectionRefusedError must keep the dead-service path."""
 
         from .. import cli as cli_mod
 
-        def _refuse(*_args, **_kwargs):
+        def _refuse(*_args: object, **_kwargs: object) -> None:
             raise ConnectionRefusedError("port closed")
 
         monkeypatch.setattr("vaultspec_rag.cli._http_search._do_http_call", _refuse)
@@ -839,7 +845,7 @@ class TestSearchSafetyContract:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_search_port_dead_default_fails_hard(self, tmp_path):
+    def test_search_port_dead_default_fails_hard(self, tmp_path: Path):
         """--port unreachable + no --allow-fallback exits non-zero."""
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -857,7 +863,7 @@ class TestSearchSafetyContract:
         assert "unreachable" in result.output.lower()
         assert "allow-fallback" in result.output.lower()
 
-    def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path):
+    def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path: Path):
         """--allow-fallback does NOT emit the legacy fallthrough warning."""
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -917,7 +923,7 @@ class TestSearchSafetyContract:
         assert "Search Results: code" in rendered
         assert "(via in-process)" in rendered
 
-    def test_suppress_hf_progress_sets_env(self, monkeypatch):
+    def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
         from ..cli import _suppress_hf_progress
 
@@ -927,13 +933,15 @@ class TestSearchSafetyContract:
         assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
         assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
 
-    def test_search_locked_store_raises_actionable_error(self, tmp_path, monkeypatch):
+    def test_search_locked_store_raises_actionable_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         """Locked store in direct search prints a friendly routing-mode message."""
         from ..store import VaultStoreLockedError
 
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_search(*_args, **_kwargs):
+        def mock_search(*_args: object, **_kwargs: object) -> None:
             raise VaultStoreLockedError(str(tmp_path / "db"))
 
         monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
@@ -954,7 +962,9 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "routing mode: direct local-store search" in normalized
 
-    def test_search_locked_store_json_mode(self, tmp_path, monkeypatch):
+    def test_search_locked_store_json_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         """Locked store in direct search under --json outputs local_store_locked."""
         import json
 
@@ -962,7 +972,7 @@ class TestSearchSafetyContract:
 
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_search(*_args, **_kwargs):
+        def mock_search(*_args: object, **_kwargs: object) -> None:
             raise VaultStoreLockedError(str(tmp_path / "db"))
 
         monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
@@ -986,11 +996,13 @@ class TestSearchSafetyContract:
         assert data["error"] == "local_store_locked"
         assert "direct local-store search" in data["message"]
 
-    def test_search_mcp_timeout_diagnostics(self, tmp_path, monkeypatch):
+    def test_search_mcp_timeout_diagnostics(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         """Timeout in client inside _try_http_search returns http_search_timeout."""
         from ..cli import _try_http_search
 
-        def mock_timeout(*_args, **_kwargs):
+        def mock_timeout(*_args: object, **_kwargs: object) -> None:
             raise TimeoutError("connection timed out")
 
         monkeypatch.setattr(
@@ -1028,7 +1040,7 @@ class TestHelpCleanup:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _assert_clean(self, result) -> None:
+    def _assert_clean(self, result: Result) -> None:
         """Shared guard: no forbidden tokens in help output."""
         out = result.output
         for token in _FORBIDDEN_DOCSTRING_TOKENS:
@@ -1116,7 +1128,7 @@ class TestCleanRequiredTarget:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_clean_no_target_errors(self, tmp_path):
+    def test_clean_no_target_errors(self, tmp_path: Path):
         """`vaultspec-rag clean` without a target exits non-zero."""
         result = runner.invoke(
             app,
@@ -1213,7 +1225,9 @@ class TestNoTruncateFlag:
         assert "supported; same-project local backend access serialized" in rendered
         assert "Storage Process Model" in rendered
 
-    def test_display_service_lock_error_renders_contract(self, capsys):
+    def test_display_service_lock_error_renders_contract(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
         """Structured local-store errors show remediation and backend contract."""
         _display_service_error(
             {
@@ -1250,7 +1264,7 @@ class TestWinShutdownLog:
     def test_append_writes_expected_format(
         self,
         tmp_path: Path,
-        monkeypatch,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         from .. import cli
 
@@ -1276,8 +1290,8 @@ class TestWinShutdownLog:
     def test_append_oserror_is_suppressed_and_debug_logged(
         self,
         tmp_path: Path,
-        monkeypatch,
-        caplog,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ):
         """OSError on the append must NOT crash the shutdown path.
 
@@ -1309,7 +1323,7 @@ class TestWinShutdownLog:
     def test_service_stop_emits_log_on_win32(
         self,
         tmp_path: Path,
-        monkeypatch,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end: ``server stop`` on win32 appends the line."""
         from .. import cli
@@ -1327,11 +1341,19 @@ class TestWinShutdownLog:
             # Treat the current process as the service so service_stop
             # walks past the validation guard, into the stubbed termination,
             # the unlink, and the new log-append branch we want to exercise.
-            monkeypatch.setattr(cli, "_is_our_service", lambda *_a, **_kw: True)
-            monkeypatch.setattr(cli, "_terminate_pid", lambda _pid: None)
+            def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
+                return True
+
+            def _stub_terminate_pid(_pid: int) -> None: ...
+
+            def _stub_is_pid_alive(_pid: int) -> bool:
+                return False
+
+            monkeypatch.setattr(cli, "_is_our_service", _stub_is_our_service)
+            monkeypatch.setattr(cli, "_terminate_pid", _stub_terminate_pid)
             # The post-terminate poll iterates until _is_pid_alive returns
             # False; stub False so the wait collapses immediately.
-            monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
+            monkeypatch.setattr(cli, "_is_pid_alive", _stub_is_pid_alive)
             monkeypatch.setattr(cli.sys, "platform", "win32")
 
             result = runner.invoke(app, ["server", "stop"])
@@ -1351,7 +1373,7 @@ class TestWinShutdownLog:
     def test_service_stop_skips_log_on_posix(
         self,
         tmp_path: Path,
-        monkeypatch,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """POSIX path keeps the daemon-side lifecycle finally as source of truth."""
         from .. import cli
@@ -1363,9 +1385,18 @@ class TestWinShutdownLog:
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
         try:
             _write_service_status(pid=os.getpid(), port=18999)
-            monkeypatch.setattr(cli, "_is_our_service", lambda *_a, **_kw: True)
-            monkeypatch.setattr(cli, "_terminate_pid", lambda _pid: None)
-            monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: False)
+
+            def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
+                return True
+
+            def _stub_terminate_pid(_pid: int) -> None: ...
+
+            def _stub_is_pid_alive(_pid: int) -> bool:
+                return False
+
+            monkeypatch.setattr(cli, "_is_our_service", _stub_is_our_service)
+            monkeypatch.setattr(cli, "_terminate_pid", _stub_terminate_pid)
+            monkeypatch.setattr(cli, "_is_pid_alive", _stub_is_pid_alive)
             monkeypatch.setattr(cli.sys, "platform", "linux")
 
             result = runner.invoke(app, ["server", "stop"])
@@ -1390,36 +1421,48 @@ class TestServiceTokenIdentity:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_token_match_returns_true(self, monkeypatch):
+    def test_token_match_returns_true(self, monkeypatch: pytest.MonkeyPatch):
         from .. import cli
 
-        monkeypatch.setattr(
-            cli,
-            "_health_probe",
-            lambda _port: {"service_token": "abc"},
-        )
-        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        def _probe_abc(_port: int) -> dict[str, object]:
+            return {"service_token": "abc"}
+
+        def _alive(_pid: int) -> bool:
+            return True
+
+        monkeypatch.setattr(cli, "_health_probe", _probe_abc)
+        monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         assert cli._is_our_service(123, port=8766, expected_token="abc")
 
-    def test_token_mismatch_returns_false(self, monkeypatch):
+    def test_token_mismatch_returns_false(self, monkeypatch: pytest.MonkeyPatch):
         from .. import cli
 
-        monkeypatch.setattr(
-            cli,
-            "_health_probe",
-            lambda _port: {"service_token": "abc"},
-        )
-        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        def _probe_abc(_port: int) -> dict[str, object]:
+            return {"service_token": "abc"}
+
+        def _alive(_pid: int) -> bool:
+            return True
+
+        monkeypatch.setattr(cli, "_health_probe", _probe_abc)
+        monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # Token mismatch is authoritative - return False regardless of
         # whether the executable-name check would have passed.
         assert not cli._is_our_service(123, port=8766, expected_token="xyz")
 
-    def test_token_absent_in_response_falls_back(self, monkeypatch, caplog):
+    def test_token_absent_in_response_falls_back(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
         """Pre-upgrade daemon (no token in response) → exe-name fallback."""
         from .. import cli
 
-        monkeypatch.setattr(cli, "_health_probe", lambda _port: {})
-        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        def _probe_empty(_port: int) -> dict[str, object]:
+            return {}
+
+        def _alive(_pid: int) -> bool:
+            return True
+
+        monkeypatch.setattr(cli, "_health_probe", _probe_empty)
+        monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # On Windows the exe-name check inspects the running pytest
         # process (always "python") so this hits the True branch.
         # No-swallow rule: the fallback must debug-log.

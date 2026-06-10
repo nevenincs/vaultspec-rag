@@ -10,8 +10,16 @@ import sys
 import threading
 import typing
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+    from pathlib import Path
+
+    import httpx
+    from starlette.applications import Starlette
 
 from vaultspec_rag.mcp._mcp import mcp
 from vaultspec_rag.mcp._resources import analyze_feature
@@ -36,13 +44,13 @@ from ..server import (
 pytestmark = [pytest.mark.unit]
 
 
-def _run(coro):
+def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
 
 
 @asynccontextmanager
-async def _empty_lifespan(_app):
+async def _empty_lifespan(_app: object) -> typing.AsyncGenerator[None]:
     yield
 
 
@@ -353,57 +361,57 @@ class TestPydanticModels:
 class TestPathTraversalValidation:
     """Test path validation logic used by get_code_file."""
 
-    def test_traversal_with_dotdot_detected(self, tmp_path):
+    def test_traversal_with_dotdot_detected(self, tmp_path: Path) -> None:
         """Paths with .. that escape the root should be caught."""
-        root_resolved = tmp_path.resolve()
+        root_resolved: Path = tmp_path.resolve()
         malicious = "../../etc/passwd"
-        full_path = (root_resolved / malicious).resolve()
+        full_path: Path = (root_resolved / malicious).resolve()
         assert not full_path.is_relative_to(root_resolved)
 
-    def test_valid_relative_path_passes(self, tmp_path):
+    def test_valid_relative_path_passes(self, tmp_path: Path) -> None:
         """A normal relative path should stay within root."""
-        root_resolved = tmp_path.resolve()
+        root_resolved: Path = tmp_path.resolve()
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("x = 1", encoding="utf-8")
-        full_path = (root_resolved / "src/main.py").resolve()
+        full_path: Path = (root_resolved / "src/main.py").resolve()
         assert full_path.is_relative_to(root_resolved)
 
-    def test_symlink_escaping_root_detected(self, tmp_path):
+    def test_symlink_escaping_root_detected(self, tmp_path: Path) -> None:
         """A symlink pointing outside the workspace should be caught."""
         import os
 
-        root_resolved = tmp_path.resolve()
-        link_path = tmp_path / "escape_link"
+        root_resolved: Path = tmp_path.resolve()
+        link_path: Path = tmp_path / "escape_link"
         try:
             os.symlink(tmp_path.parent, link_path)
         except OSError:
             pytest.fail("Cannot create symlink - test requires symlink support")
-        full_path = (root_resolved / "escape_link" / "other_file.txt").resolve()
+        full_path: Path = (root_resolved / "escape_link" / "other_file.txt").resolve()
         assert not full_path.is_relative_to(root_resolved)
 
 
 class TestVaultBoundaryValidation:
     """SEC-001: _validate_vault_root rejects paths without .vault/."""
 
-    def test_valid_vault_root(self, tmp_path):
+    def test_valid_vault_root(self, tmp_path: Path) -> None:
         (tmp_path / ".vault").mkdir()
         result = _validate_vault_root(tmp_path)
         assert result == tmp_path
 
-    def test_missing_vault_raises(self, tmp_path):
+    def test_missing_vault_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match=r"no \.vault/ directory"):
             _validate_vault_root(tmp_path)
 
-    def test_nonexistent_path_raises(self, tmp_path):
-        fake = tmp_path / "does-not-exist"
+    def test_nonexistent_path_raises(self, tmp_path: Path) -> None:
+        fake: Path = tmp_path / "does-not-exist"
         with pytest.raises(ValueError, match=r"no \.vault/ directory"):
             _validate_vault_root(fake)
 
-    def test_resolve_root_rejects_non_vault(self, tmp_path):
+    def test_resolve_root_rejects_non_vault(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match=r"no \.vault/ directory"):
             _resolve_root(str(tmp_path))
 
-    def test_resolve_root_accepts_vault(self, tmp_path):
+    def test_resolve_root_accepts_vault(self, tmp_path: Path) -> None:
         (tmp_path / ".vault").mkdir()
         result = _resolve_root(str(tmp_path))
         assert result == tmp_path.resolve()
@@ -434,7 +442,7 @@ class TestSensitiveFileDenyList:
             "app.secrets.yaml",
         ],
     )
-    def test_sensitive_paths_blocked(self, path):
+    def test_sensitive_paths_blocked(self, path: str) -> None:
         assert _is_sensitive_path(path) is True
 
     @pytest.mark.parametrize(
@@ -452,7 +460,7 @@ class TestSensitiveFileDenyList:
             ".github/workflows/ci.yml",
         ],
     )
-    def test_safe_paths_allowed(self, path):
+    def test_safe_paths_allowed(self, path: str) -> None:
         assert _is_sensitive_path(path) is False
 
     def test_backslash_normalization(self):
@@ -482,7 +490,7 @@ class TestClampTopK:
 class TestResolveRoot:
     """Test the _resolve_root and _default_root helpers."""
 
-    def test_resolve_root_explicit(self, tmp_path):
+    def test_resolve_root_explicit(self, tmp_path: Path) -> None:
         (tmp_path / ".vault").mkdir()
         result = _resolve_root(str(tmp_path))
         assert result == tmp_path.resolve()
@@ -499,7 +507,7 @@ class TestResolveRoot:
             if orig is not None:
                 os.environ[EnvVar.RAG_ROOT] = orig
 
-    def test_resolve_root_from_env(self, tmp_path):
+    def test_resolve_root_from_env(self, tmp_path: Path) -> None:
         (tmp_path / ".vault").mkdir()
         orig = os.environ.get(EnvVar.RAG_ROOT)
         os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
@@ -512,7 +520,7 @@ class TestResolveRoot:
             else:
                 os.environ.pop(EnvVar.RAG_ROOT, None)
 
-    def test_default_root_from_env(self, tmp_path):
+    def test_default_root_from_env(self, tmp_path: Path) -> None:
         (tmp_path / ".vault").mkdir()
         orig = os.environ.get(EnvVar.RAG_ROOT)
         os.environ[EnvVar.RAG_ROOT] = str(tmp_path)
@@ -562,7 +570,7 @@ class TestHttpModeResolveRoot:
         finally:
             mod._http_mode = orig
 
-    def test_resolve_root_explicit_works_in_http_mode(self, tmp_path):
+    def test_resolve_root_explicit_works_in_http_mode(self, tmp_path: Path) -> None:
         import vaultspec_rag.server as mod
 
         (tmp_path / ".vault").mkdir()
@@ -574,7 +582,7 @@ class TestHttpModeResolveRoot:
         finally:
             mod._http_mode = orig
 
-    def test_resolve_root_env_ignored_in_http_mode(self, tmp_path):
+    def test_resolve_root_env_ignored_in_http_mode(self, tmp_path: Path) -> None:
         """Even with VAULTSPEC_RAG_ROOT set, HTTP mode rejects None."""
         import vaultspec_rag.server as mod
 
@@ -602,7 +610,7 @@ class TestHttpModeResolveRoot:
         with pytest.raises(ValueError, match="must not be empty"):
             _resolve_root("   ")
 
-    def test_vault_document_requires_running_daemon(self, tmp_path):
+    def test_vault_document_requires_running_daemon(self, tmp_path: Path) -> None:
         """get_vault_document is a REST client; it errors when no daemon is up.
 
         Post-deconflation the resource delegates to the daemon's
@@ -628,13 +636,15 @@ class TestHttpModeResolveRoot:
 class TestMainTransportSetup:
     """Verify main() correctly sets transport mode and lifecycle hooks."""
 
-    def test_http_mode_flag_for_http(self):
+    def test_http_mode_flag_for_http(self) -> None:
         """port=8888 → _http_mode=True."""
+        from typing import cast
+
         import vaultspec_rag.server as mod
 
         orig = mod._http_mode
         try:
-            port = 8888
+            port: int | None = cast("int | None", 8888)
             mod._http_mode = port is not None
             assert mod._http_mode is True
         finally:
@@ -707,9 +717,9 @@ class TestHealthHandler:
             lifespan=_empty_lifespan,
         )
         client = TestClient(app)
-        resp = client.get("/health")
+        resp = cast("httpx.Response", client.get("/health"))
         assert resp.status_code == 200
-        data = resp.json()
+        data: dict[str, Any] = cast("dict[str, Any]", resp.json())
         assert "status" in data
         assert "cuda" in data
         assert "models_loaded" in data
@@ -746,8 +756,8 @@ class TestHealthHandler:
                 lifespan=_empty_lifespan,
             )
             client = TestClient(app)
-            resp = client.get("/health")
-            data = resp.json()
+            resp = cast("httpx.Response", client.get("/health"))
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["status"] == "error"
             assert data["models_loaded"] is False
         finally:
@@ -769,7 +779,9 @@ class TestHealthInfoReduction:
             lifespan=_empty_lifespan,
         )
         client = TestClient(app)
-        data = client.get("/health").json()
+        data: dict[str, Any] = cast(
+            "dict[str, Any]", cast("httpx.Response", client.get("/health")).json()
+        )
         assert "projects" not in data
         assert "project_count" in data
         assert isinstance(data["project_count"], int)
@@ -785,7 +797,9 @@ class TestHealthInfoReduction:
             lifespan=_empty_lifespan,
         )
         client = TestClient(app)
-        data = client.get("/health").json()
+        data: dict[str, Any] = cast(
+            "dict[str, Any]", cast("httpx.Response", client.get("/health")).json()
+        )
         assert "gpu_name" not in data
 
     def test_index_status_no_gpu_name(self):
@@ -796,7 +810,10 @@ class TestHealthInfoReduction:
             storage_path="/tmp/db",
             target_dir="/tmp/ws",
         )
-        assert not hasattr(status, "gpu_name") or "gpu_name" not in status.model_fields
+        assert (
+            not hasattr(status, "gpu_name")
+            or "gpu_name" not in IndexStatus.model_fields
+        )
 
 
 class TestMultiProjectWatcher:
@@ -833,7 +850,7 @@ class TestMultiProjectWatcher:
 
         _stop_all_watchers()  # must not raise
 
-    def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path):
+    def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path: Path) -> None:
         """Stopping a watcher for a root that was never started is safe."""
         from ..server import _stop_watcher
 
@@ -869,12 +886,12 @@ class TestRegistryFullErrorShape:
         assert isinstance(result["busy_projects"], list)
         assert result["message"]  # non-empty message
 
-    def test_local_store_locked_error_dict_shape(self, tmp_path) -> None:
+    def test_local_store_locked_error_dict_shape(self, tmp_path: Path) -> None:
         """Local Qdrant lock contention returns an actionable MCP payload."""
         from ..server import _local_store_locked_error_dict
         from ..store import VaultStoreLockedError
 
-        db_path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
+        db_path: Path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
         exc = VaultStoreLockedError(str(db_path))
         result = _local_store_locked_error_dict(exc)
 
@@ -930,24 +947,30 @@ class TestMcpPathRewrite:
         # just defined and ignored.
         assert "uvicorn.run(\n                _mcp_no_redirect" in source
 
-    def test_path_rewrite_logic(self):
+    def test_path_rewrite_logic(self) -> None:
         """The ASGI rewrite promotes bare /mcp to /mcp/, leaves other paths."""
-        captured: dict[str, dict[str, object]] = {}
+        captured: dict[str, dict[str, Any]] = {}
 
-        async def _stub_app(scope, _receive, _send):
+        async def _stub_app(scope: dict[str, Any], _receive: Any, _send: Any) -> None:
             captured["scope"] = scope
 
-        async def _wrapper(scope, receive, send):
+        async def _wrapper(scope: dict[str, Any], receive: Any, send: Any) -> None:
             if scope["type"] == "http" and scope.get("path") == "/mcp":
                 scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
             await _stub_app(scope, receive, send)
+
+        def _noop_receive() -> None:
+            return None
+
+        def _noop_send(_m: Any) -> None:
+            return None
 
         # Bare /mcp gets rewritten.
         asyncio.run(
             _wrapper(
                 {"type": "http", "path": "/mcp", "raw_path": b"/mcp"},
-                lambda: None,
-                lambda _m: None,
+                _noop_receive,
+                _noop_send,
             ),
         )
         assert captured["scope"]["path"] == "/mcp/"
@@ -957,8 +980,8 @@ class TestMcpPathRewrite:
         asyncio.run(
             _wrapper(
                 {"type": "http", "path": "/mcp/", "raw_path": b"/mcp/"},
-                lambda: None,
-                lambda _m: None,
+                _noop_receive,
+                _noop_send,
             ),
         )
         assert captured["scope"]["path"] == "/mcp/"
@@ -967,8 +990,8 @@ class TestMcpPathRewrite:
         asyncio.run(
             _wrapper(
                 {"type": "http", "path": "/health", "raw_path": b"/health"},
-                lambda: None,
-                lambda _m: None,
+                _noop_receive,
+                _noop_send,
             ),
         )
         assert captured["scope"]["path"] == "/health"
@@ -1217,7 +1240,7 @@ class TestRouteMissingProjectRoot:
 
     _TOKEN = "test-token-s07"
 
-    def _make_app(self):  # type: ignore[return]
+    def _make_app(self) -> Starlette:
         from contextlib import asynccontextmanager
 
         from starlette.applications import Starlette
@@ -1225,7 +1248,7 @@ class TestRouteMissingProjectRoot:
         from ..server._routes import ROUTES
 
         @asynccontextmanager
-        async def _lifespan(_app):  # type: ignore[override]
+        async def _lifespan(_app: object) -> typing.AsyncGenerator[None]:
             yield
 
         return Starlette(routes=ROUTES, lifespan=_lifespan)

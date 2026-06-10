@@ -26,6 +26,10 @@ from ...progress import NullProgressReporter
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pytest import TempPathFactory
+
+    from ...store import CodeChunk
+
 # A non-trivial module: multiple classes and functions with real nesting so
 # tree-sitter parsing + the recursive Python traversal cost is meaningful.
 _MODULE_TEMPLATE = '''"""Synthetic module {i} for chunking benchmark."""
@@ -119,7 +123,7 @@ def _chunk_with_workers(
     indexer: CodebaseIndexer,
     paths: list[Path],
     workers: int,
-) -> tuple[list, float]:
+) -> tuple[list[CodeChunk], float]:
     prev = os.environ.get(EnvVar.INDEX_CHUNK_WORKERS.value)
     os.environ[EnvVar.INDEX_CHUNK_WORKERS.value] = str(workers)
     reset_config()
@@ -137,9 +141,9 @@ def _chunk_with_workers(
 
 
 @pytest.mark.performance
-def test_parallel_chunking_beats_serial(tmp_path_factory) -> None:
+def test_parallel_chunking_beats_serial(tmp_path_factory: TempPathFactory) -> None:
     n_files = 2000
-    root = tmp_path_factory.mktemp("bench-chunk")
+    root: Path = tmp_path_factory.mktemp("bench-chunk")
     _build_code_tree(root, n_files)
 
     indexer = _chunk_only_indexer(root)

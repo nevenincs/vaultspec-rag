@@ -5,7 +5,14 @@ Tests updated for Qdrant-backed store (replacing LanceDB).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
 
@@ -16,12 +23,14 @@ pytestmark = [pytest.mark.integration]
 class TestVaultStore:
     """Tests for the Qdrant store with actual data."""
 
-    def test_store_has_documents(self, rag_components):
+    def test_store_has_documents(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         store = rag_components["store"]
         count = store.count()
         assert count > 0, "Store should have documents after indexing"
 
-    def test_get_all_ids(self, rag_components):
+    def test_get_all_ids(self, rag_components: RagComponentsWithManifest) -> None:
         store = rag_components["store"]
         ids = store.get_all_ids()
         assert len(ids) > 0
@@ -30,7 +39,7 @@ class TestVaultStore:
             assert isinstance(doc_id, str)
             assert len(doc_id) > 0
 
-    def test_vault_store_context_manager(self, tmp_path):
+    def test_vault_store_context_manager(self, tmp_path: Path) -> None:
         """VaultStore should support the context manager protocol."""
         from ... import VaultStore
 
@@ -40,7 +49,7 @@ class TestVaultStore:
         # After exiting context, client should be released
         assert store._client is None
 
-    def test_vault_store_locked_raises_typed_exception(self, tmp_path):
+    def test_vault_store_locked_raises_typed_exception(self, tmp_path: Path) -> None:
         """Opening the same Qdrant storage twice must raise VaultStoreLockedError."""
         from ...store import VaultStore, VaultStoreLockedError
 
@@ -53,13 +62,15 @@ class TestVaultStore:
         finally:
             first.close()
 
-    def test_hybrid_search_returns_results(self, rag_components):
+    def test_hybrid_search_returns_results(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         model = rag_components["model"]
         store = rag_components["store"]
 
         query_vec = model.encode_query("architecture decision")
         results = store.hybrid_search(
-            query_vector=query_vec,
+            query_vector=query_vec.tolist(),
             _query_text="architecture decision",
             limit=5,
         )
@@ -69,7 +80,9 @@ class TestVaultStore:
             assert "id" in r
             assert "path" in r
 
-    def test_delete_documents_removes_from_store(self, rag_components):
+    def test_delete_documents_removes_from_store(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         """R26-M3: delete_documents removes a doc so it's no longer searchable."""
         store = rag_components["store"]
         model = rag_components["model"]
@@ -113,7 +126,9 @@ class TestVaultStore:
         )
         store.upsert_documents([reinsert])
 
-    def test_hybrid_search_with_sparse_vector(self, rag_components):
+    def test_hybrid_search_with_sparse_vector(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         """R26-M5: hybrid_search with dense+sparse exercises RRF fusion."""
         model = rag_components["model"]
         store = rag_components["store"]
@@ -133,7 +148,9 @@ class TestVaultStore:
             assert "id" in r
             assert "_relevance_score" in r
 
-    def test_search_empty_store(self, tmp_path, rag_components):
+    def test_search_empty_store(
+        self, tmp_path: Path, rag_components: RagComponentsWithManifest
+    ) -> None:
         """Searching a fresh VaultStore with no indexed docs should return
         empty results without crashing.
         """

@@ -6,7 +6,12 @@ src/vaultspec/rag/tests/test_query.py
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from ..conftest import RagComponentsWithManifest as _RagComponents
 
 pytestmark = [pytest.mark.integration]
 
@@ -17,7 +22,7 @@ pytestmark = [pytest.mark.integration]
 class TestVaultSearch:
     """End-to-end search tests against real indexed vault data."""
 
-    def test_search_returns_results(self, rag_components):
+    def test_search_returns_results(self, rag_components: _RagComponents):
         from ... import VaultSearcher
 
         model = rag_components["model"]
@@ -34,7 +39,7 @@ class TestVaultSearch:
             assert r.path
             assert r.score > 0
 
-    def test_search_results_are_sorted_by_score(self, rag_components):
+    def test_search_results_are_sorted_by_score(self, rag_components: _RagComponents):
         from ... import VaultSearcher
 
         model = rag_components["model"]
@@ -47,7 +52,7 @@ class TestVaultSearch:
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
 
-    def test_search_with_type_filter(self, rag_components):
+    def test_search_with_type_filter(self, rag_components: _RagComponents):
         from ... import VaultSearcher
 
         model = rag_components["model"]
@@ -61,7 +66,7 @@ class TestVaultSearch:
         for r in results:
             assert r.doc_type == "adr", f"Expected adr, got {r.doc_type} for {r.id}"
 
-    def test_search_respects_limit(self, rag_components):
+    def test_search_respects_limit(self, rag_components: _RagComponents):
         from ... import VaultSearcher
 
         model = rag_components["model"]
@@ -73,7 +78,7 @@ class TestVaultSearch:
 
         assert len(results) <= 3
 
-    def test_search_result_has_snippet(self, rag_components):
+    def test_search_result_has_snippet(self, rag_components: _RagComponents):
         from ... import VaultSearcher
 
         model = rag_components["model"]
@@ -86,7 +91,7 @@ class TestVaultSearch:
         if results:
             assert isinstance(results[0].snippet, str)
 
-    def test_vault_search_paths_are_markdown(self, rag_components):
+    def test_vault_search_paths_are_markdown(self, rag_components: _RagComponents):
         """All vault search result paths should point to .md files."""
         from ... import VaultSearcher
 
@@ -101,7 +106,7 @@ class TestVaultSearch:
         for r in results:
             assert r.path.endswith(".md"), f"Expected .md path, got {r.path}"
 
-    def test_vault_search_snippets_nonempty(self, rag_components):
+    def test_vault_search_snippets_nonempty(self, rag_components: _RagComponents):
         """Vault search snippets must contain actual document text."""
         from ... import VaultSearcher
 
@@ -116,7 +121,7 @@ class TestVaultSearch:
         for r in results:
             assert len(r.snippet.strip()) > 0, f"Result {r.id} has empty snippet"
 
-    def test_vault_search_scores_bounded(self, rag_components):
+    def test_vault_search_scores_bounded(self, rag_components: _RagComponents):
         """All vault search result scores should be positive floats."""
         from ... import VaultSearcher
 
@@ -132,7 +137,7 @@ class TestVaultSearch:
             assert isinstance(r.score, float)
             assert r.score > 0, f"Result {r.id} has non-positive score {r.score}"
 
-    def test_search_with_relevance_feedback(self, rag_components):
+    def test_search_with_relevance_feedback(self, rag_components: _RagComponents):
         """Verify that passing like_ids and unlike_ids is accepted and
         changes scoring/ordering.
         """
@@ -174,7 +179,7 @@ class TestVaultSearch:
 class TestSearchEdgeCases:
     """Edge cases for search operations."""
 
-    def test_encode_query_respects_sparse_enabled(self, rag_components):
+    def test_encode_query_respects_sparse_enabled(self, rag_components: _RagComponents):
         """When sparse_enabled is False, _encode_query should return None for
         sparse vector."""
         from ... import VaultSearcher
@@ -190,7 +195,7 @@ class TestSearchEdgeCases:
         assert sparse is None
         assert isinstance(dense, list)
 
-    def test_encode_query_sparse_enabled_true(self, rag_components):
+    def test_encode_query_sparse_enabled_true(self, rag_components: _RagComponents):
         """When sparse_enabled is True, _encode_query should return a sparse vector."""
         from ... import VaultSearcher
 
@@ -205,7 +210,7 @@ class TestSearchEdgeCases:
         assert sparse is not None
         assert hasattr(sparse, "indices")
 
-    def test_empty_query(self, rag_components):
+    def test_empty_query(self, rag_components: _RagComponents):
         """VaultSearcher.search_vault('') should not crash."""
         from ... import VaultSearcher
 
@@ -219,7 +224,7 @@ class TestSearchEdgeCases:
         # or empty list -- but must not crash
         assert isinstance(results, list)
 
-    def test_filter_only_query_returns_results(self, rag_components):
+    def test_filter_only_query_returns_results(self, rag_components: _RagComponents):
         """'type:adr' with no text should return ADR docs, not crash."""
         from ... import VaultSearcher
 
@@ -235,7 +240,7 @@ class TestSearchEdgeCases:
             for r in results:
                 assert r.doc_type == "adr"
 
-    def test_invalid_filter_value(self, rag_components):
+    def test_invalid_filter_value(self, rag_components: _RagComponents):
         """'type:nonexistent' should return empty results, not crash."""
         from ... import VaultSearcher
 
@@ -248,7 +253,7 @@ class TestSearchEdgeCases:
         assert isinstance(results, list)
         assert len(results) == 0
 
-    def test_special_characters_in_query(self, rag_components):
+    def test_special_characters_in_query(self, rag_components: _RagComponents):
         """Query with quotes, brackets, and special chars should not crash."""
         from ... import VaultSearcher
 
@@ -268,7 +273,7 @@ class TestSearchEdgeCases:
             results = searcher.search_vault(q, top_k=3)
             assert isinstance(results, list), f"Query '{q}' should not crash"
 
-    def test_very_long_query(self, rag_components):
+    def test_very_long_query(self, rag_components: _RagComponents):
         """A 500+ character query should work within limits."""
         from ... import VaultSearcher
 
@@ -281,7 +286,7 @@ class TestSearchEdgeCases:
         results = searcher.search_vault(long_query, top_k=5)
         assert isinstance(results, list)
 
-    def test_sql_injection_in_filter_value(self, rag_components):
+    def test_sql_injection_in_filter_value(self, rag_components: _RagComponents):
         """Filter values with SQL injection characters should not crash.
         Qdrant uses typed filters, so injection is not possible, but
         adversarial inputs should still produce empty results gracefully.
@@ -307,7 +312,9 @@ class TestSearchEdgeCases:
         results = searcher.search_vault("architecture", top_k=3)
         assert len(results) > 0, "Store should still work after adversarial queries"
 
-    def test_search_vault_sparse_disabled_end_to_end(self, rag_components):
+    def test_search_vault_sparse_disabled_end_to_end(
+        self, rag_components: _RagComponents
+    ):
         """search_vault with sparse_enabled=False should return results without
         crashing."""
         from ... import VaultSearcher
@@ -323,7 +330,9 @@ class TestSearchEdgeCases:
         assert isinstance(results, list)
         assert len(results) > 0
 
-    def test_search_codebase_sparse_disabled_end_to_end(self, rag_components):
+    def test_search_codebase_sparse_disabled_end_to_end(
+        self, rag_components: _RagComponents
+    ):
         """search_codebase with sparse_enabled=False should return results without
         crashing."""
         from ... import VaultSearcher
@@ -342,7 +351,7 @@ class TestSearchEdgeCases:
 class TestRerank:
     """Live integration tests for VaultSearcher._rerank on GPU."""
 
-    def test_rerank_disabled_returns_top_k(self, rag_components):
+    def test_rerank_disabled_returns_top_k(self, rag_components: _RagComponents):
         """When reranker is disabled, _rerank just slices to top_k."""
         from ...search import VaultSearcher
 
@@ -380,7 +389,9 @@ class TestRerank:
         # Scores should be unchanged (no reranking applied)
         assert out[0].score == search_results[0].score
 
-    def test_rerank_enabled_resorts_by_crossencoder(self, rag_components):
+    def test_rerank_enabled_resorts_by_crossencoder(
+        self, rag_components: _RagComponents
+    ):
         """When reranker is enabled, CrossEncoder rescores and reorders."""
         from ...search import VaultSearcher
 
@@ -423,7 +434,7 @@ class TestRerank:
         # Results should be sorted descending by score
         assert out[0].score >= out[1].score >= out[2].score
 
-    def test_rerank_single_result_skipped(self, rag_components):
+    def test_rerank_single_result_skipped(self, rag_components: _RagComponents):
         """Reranking is skipped when there is only 1 result."""
         from ... import SearchResult
         from ...search import VaultSearcher

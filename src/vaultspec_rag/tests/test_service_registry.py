@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from ..embeddings import EmbeddingModel
+    from ..search import SearchResult
+
 pytestmark = [pytest.mark.integration]
 
 
@@ -41,7 +44,7 @@ def _make_vault_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def registry(embedding_model) -> Iterator[ServiceRegistry]:
+def registry(embedding_model: EmbeddingModel) -> Iterator[ServiceRegistry]:
     """Provide a ServiceRegistry with the session-scoped model pre-loaded.
 
     Reuses the session-scoped ``embedding_model`` fixture from conftest
@@ -189,7 +192,7 @@ class TestCloseAll:
 
     def test_close_all_clears_state(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         # Use a separate registry to avoid corrupting the shared fixture
@@ -387,7 +390,7 @@ class TestMultiProjectSearch:
     ) -> None:
         """Two threads searching different projects concurrently."""
         _root_a, slot_a, _root_b, slot_b = two_projects
-        results: dict[str, list] = {}
+        results: dict[str, list[SearchResult]] = {}
         barrier = threading.Barrier(2)
 
         def search(slot: ProjectSlot, query: str, key: str) -> None:
@@ -420,7 +423,7 @@ class TestMultiProjectSearch:
     ) -> None:
         """Four threads (2 per project) all complete with valid results."""
         _root_a, slot_a, _root_b, slot_b = two_projects
-        results: dict[str, list] = {}
+        results: dict[str, list[SearchResult]] = {}
         barrier = threading.Barrier(4)
 
         def search(slot: ProjectSlot, query: str, key: str) -> None:
@@ -540,7 +543,7 @@ class TestSharedReranker:
 
     def test_close_all_clears_reranker(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = ServiceRegistry()
@@ -641,7 +644,7 @@ class TestPerRootLocks:
 
     def test_close_all_clears_root_locks(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = ServiceRegistry()
@@ -660,7 +663,7 @@ class TestLeaseApi:
 
     def _reg(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         *,
         max_projects: int,
         idle_ttl: float,
@@ -673,7 +676,7 @@ class TestLeaseApi:
 
     def test_lease_increments_refcount(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
@@ -687,7 +690,7 @@ class TestLeaseApi:
 
     def test_lease_decrements_on_exit(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
@@ -701,7 +704,7 @@ class TestLeaseApi:
 
     def test_peek_does_not_change_refcount(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
@@ -718,7 +721,7 @@ class TestLeaseApi:
 
     def test_sweep_evicts_idle(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         # Large TTL so the first lease doesn't immediately sweep itself;
@@ -742,7 +745,7 @@ class TestLeaseApi:
 
     def test_lru_admission_evicts_oldest(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=2, idle_ttl=0)
@@ -767,7 +770,7 @@ class TestLeaseApi:
 
     def test_lru_full_raises(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=1, idle_ttl=0)
@@ -791,7 +794,7 @@ class TestLeaseApi:
 
     def test_acquire_blocks_during_shutdown(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
@@ -813,7 +816,7 @@ class TestLeaseApi:
 
     def test_close_all_drains_then_force(
         self,
-        embedding_model,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)

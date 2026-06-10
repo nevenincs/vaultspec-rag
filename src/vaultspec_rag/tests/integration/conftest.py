@@ -7,7 +7,18 @@ indexing on top of vault indexing.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
+    from pytest import FixtureRequest, TempPathFactory
+
+    from ...embeddings import EmbeddingModel
+    from ..conftest import RagComponentsWithManifest
 
 from ...progress import NullProgressReporter
 from ..conftest import _index_corpus
@@ -15,26 +26,38 @@ from ..corpus import build_synthetic_vault
 
 
 @pytest.fixture(scope="session")
-def rag_components_with_code(embedding_model, tmp_path_factory):
+def rag_components_with_code(
+    embedding_model: EmbeddingModel,
+    tmp_path_factory: TempPathFactory,
+) -> Generator[RagComponentsWithManifest]:
     """RAG components with vault + codebase indexed.
 
     Creates a synthetic vault and indexes both vault docs and any
     source files present under the synthetic project root.
     """
-    root = tmp_path_factory.mktemp("integ-code-vault")
+    root: Path = tmp_path_factory.mktemp("integ-code-vault")
     manifest = build_synthetic_vault(root, n_docs=24, seed=200)
     components = _index_corpus(root, embedding_model)
 
     code_indexer = components["code_indexer"]
     code_indexer.full_index(reporter=NullProgressReporter())
 
-    yield {**components, "manifest": manifest}
+    yield cast(
+        "RagComponentsWithManifest",
+        components.__class__(  # type: ignore[call-arg]
+            **components,  # type: ignore[misc]
+            manifest=manifest,
+        ),
+    )
 
     components["store"].close()
 
 
 @pytest.fixture
-def live_service(request, tmp_path):
+def live_service(
+    request: FixtureRequest,
+    tmp_path: Path,
+) -> Generator[tuple[int, Path]]:
     """Provides a running real background service and its temp status directory."""
     from ...cli import _spawn_service, _terminate_pid, _write_service_status
     from ._helpers import _get_ephemeral_port, _poll_health, _service_env

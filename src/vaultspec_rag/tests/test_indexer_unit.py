@@ -1,10 +1,13 @@
 """Unit tests for rag.indexer - extraction and doc preparation (no GPU)."""
 
 import hashlib
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from vaultspec_core.config import reset_config
+from vaultspec_core.config import (
+    reset_config,  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+)
 
 from .. import IndexResult, prepare_document
 from ..config import reset_config as reset_rag_config
@@ -20,16 +23,17 @@ from ..indexer import (
     _extract_title,
     _is_binary,
 )
+from .corpus import CorpusManifest
 
 pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture(autouse=True)
-def _reset_cfg():
-    reset_config()
+def _reset_cfg() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
     reset_rag_config()
     yield
-    reset_config()
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
     reset_rag_config()
 
 
@@ -88,7 +92,7 @@ class TestIndexResult:
 
 
 class TestPrepareDocument:
-    def test_prepares_valid_document(self, synthetic_vault):
+    def test_prepares_valid_document(self, synthetic_vault: CorpusManifest) -> None:
         root = synthetic_vault.root
         # Pick the first ADR doc from the manifest.
         adr_docs = [d for d in synthetic_vault.docs if d.doc_type == "adr"]
@@ -102,7 +106,7 @@ class TestPrepareDocument:
         assert len(doc.title) > 0
         assert doc.vector == []
 
-    def test_returns_doc_for_audit_dir(self, synthetic_vault):
+    def test_returns_doc_for_audit_dir(self, synthetic_vault: CorpusManifest) -> None:
         root = synthetic_vault.root
         audit_docs = [d for d in synthetic_vault.docs if d.doc_type == "audit"]
         assert len(audit_docs) > 0, "Synthetic vault must contain audit docs"
@@ -112,7 +116,9 @@ class TestPrepareDocument:
         )
         assert doc.doc_type == "audit"
 
-    def test_returns_none_for_nonexistent_file(self, synthetic_vault):
+    def test_returns_none_for_nonexistent_file(
+        self, synthetic_vault: CorpusManifest
+    ) -> None:
         root = synthetic_vault.root
         missing = root / ".vault" / "adr" / "nonexistent-doc-that-does-not-exist.md"
         doc = prepare_document(missing, root)
@@ -863,13 +869,13 @@ class TestForceSplitNonAscii:
 class TestCodebaseMetaRoundTrip:
     """R10-M1/M2: _write_meta and _load_meta correctly persist hash metadata."""
 
-    def test_write_meta_persists_hashes_to_disk(self, tmp_path):
+    def test_write_meta_persists_hashes_to_disk(self, tmp_path: Path) -> None:
         """_write_meta writes a JSON file that _load_meta can read back."""
         import json
 
         from ..indexer import CodebaseIndexer
 
-        meta_path = tmp_path / ".rag" / "codebase_meta.json"
+        meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
         indexer = object.__new__(CodebaseIndexer)
         indexer._meta_path = meta_path
 
@@ -880,11 +886,11 @@ class TestCodebaseMetaRoundTrip:
         on_disk = json.loads(meta_path.read_text(encoding="utf-8"))
         assert on_disk == hashes
 
-    def test_load_meta_returns_written_hashes(self, tmp_path):
+    def test_load_meta_returns_written_hashes(self, tmp_path: Path) -> None:
         """_load_meta round-trips what _write_meta wrote."""
         from ..indexer import CodebaseIndexer
 
-        meta_path = tmp_path / ".rag" / "codebase_meta.json"
+        meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
         indexer = object.__new__(CodebaseIndexer)
         indexer._meta_path = meta_path
 
@@ -893,11 +899,11 @@ class TestCodebaseMetaRoundTrip:
         loaded = indexer._load_meta()
         assert loaded == hashes
 
-    def test_load_meta_returns_empty_when_missing(self, tmp_path):
+    def test_load_meta_returns_empty_when_missing(self, tmp_path: Path) -> None:
         """_load_meta returns {} when no meta file exists."""
         from ..indexer import CodebaseIndexer
 
-        meta_path = tmp_path / ".rag" / "codebase_meta.json"
+        meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
         indexer = object.__new__(CodebaseIndexer)
         indexer._meta_path = meta_path
 

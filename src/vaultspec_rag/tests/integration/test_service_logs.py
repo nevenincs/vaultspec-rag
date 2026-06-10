@@ -16,12 +16,15 @@ Three layers, no mocks/skips/monkeypatch:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
+
+if TYPE_CHECKING:
+    import httpx
 
 import vaultspec_rag.mcp._admin_tools as admin
 import vaultspec_rag.server as _m
@@ -93,7 +96,7 @@ def test_read_service_log_empty_dir(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
+@pytest.fixture  # pyright: ignore[reportUnusedFunction]
 def _routes_app(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
     """Build a real Starlette app from the read-only ROUTES.
 
@@ -131,7 +134,7 @@ def test_logs_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = client.get("/logs")
+    response = cast("httpx.Response", client.get("/logs"))
     assert response.status_code == 401
     payload = response.json()
     assert payload["ok"] is False
@@ -142,7 +145,9 @@ def test_logs_route_401_with_wrong_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = client.get("/logs", headers={"Authorization": "Bearer wrong"})
+    response = cast(
+        "httpx.Response", client.get("/logs", headers={"Authorization": "Bearer wrong"})
+    )
     assert response.status_code == 401
 
 
@@ -150,7 +155,10 @@ def test_logs_route_200_with_bearer_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get("/logs", headers={"Authorization": f"Bearer {token}"})
+    response = cast(
+        "httpx.Response",
+        client.get("/logs", headers={"Authorization": f"Bearer {token}"}),
+    )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert response.text == "line-a\nline-b"
@@ -160,7 +168,7 @@ def test_logs_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get("/logs", params={"token": token})
+    response = cast("httpx.Response", client.get("/logs", params={"token": token}))
     assert response.status_code == 200
     assert response.text == "line-a\nline-b"
 
@@ -169,9 +177,12 @@ def test_logs_route_respects_lines_param(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get(
-        "/logs",
-        params={"token": token, "lines": "1"},
+    response = cast(
+        "httpx.Response",
+        client.get(
+            "/logs",
+            params={"token": token, "lines": "1"},
+        ),
     )
     assert response.status_code == 200
     assert response.text == "line-b"

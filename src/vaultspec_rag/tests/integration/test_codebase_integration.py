@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, TypedDict
+
 import pytest
 
 from ...progress import NullProgressReporter
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
+    from ...embeddings import EmbeddingModel
+    from ...indexer import CodebaseIndexer
+    from ...store import VaultStore
+    from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
 
@@ -41,8 +52,19 @@ def fibonacci(n: int) -> int:
 '''
 
 
+class _CodeProject(TypedDict):
+    code_indexer: CodebaseIndexer
+    store: VaultStore
+    model: EmbeddingModel
+    root: Path
+    src_dir: Path
+
+
 @pytest.fixture
-def code_project(rag_components, tmp_path):
+def code_project(
+    rag_components: RagComponentsWithManifest,
+    tmp_path: Path,
+) -> Generator[_CodeProject]:
     """Create a temp project with Python source files and a CodebaseIndexer.
 
     Yields a dict with code_indexer, store, model, root, and the source dir.
@@ -58,13 +80,13 @@ def code_project(rag_components, tmp_path):
     store = VaultStore(tmp_path)
     code_indexer = CodebaseIndexer(tmp_path, model, store)
 
-    yield {
-        "code_indexer": code_indexer,
-        "store": store,
-        "model": model,
-        "root": tmp_path,
-        "src_dir": src_dir,
-    }
+    yield _CodeProject(
+        code_indexer=code_indexer,
+        store=store,
+        model=model,
+        root=tmp_path,
+        src_dir=src_dir,
+    )
 
     store.close()
 
@@ -73,7 +95,7 @@ class TestCodebaseFullIndex:
     """Tests for CodebaseIndexer.full_index with real source files."""
 
     @pytest.mark.timeout(120)
-    def test_full_index_produces_chunks(self, code_project):
+    def test_full_index_produces_chunks(self, code_project: _CodeProject) -> None:
         result = code_project["code_indexer"].full_index(
             reporter=NullProgressReporter()
         )
@@ -82,13 +104,13 @@ class TestCodebaseFullIndex:
         assert result.duration_ms >= 0
 
     @pytest.mark.timeout(120)
-    def test_full_index_chunks_in_store(self, code_project):
+    def test_full_index_chunks_in_store(self, code_project: _CodeProject) -> None:
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
         store = code_project["store"]
         assert store.count_code() > 0
 
     @pytest.mark.timeout(120)
-    def test_full_index_idempotent(self, code_project):
+    def test_full_index_idempotent(self, code_project: _CodeProject) -> None:
         indexer = code_project["code_indexer"]
         store = code_project["store"]
 
@@ -101,7 +123,9 @@ class TestCodebaseFullIndex:
         assert first_count == second_count
 
     @pytest.mark.timeout(180)
-    def test_rebuild_vault_preserves_code_collection(self, code_project):
+    def test_rebuild_vault_preserves_code_collection(
+        self, code_project: _CodeProject
+    ) -> None:
         """drop_table on vault must not touch code chunks.
 
         A whole-directory rmtree on the shared Qdrant path would
@@ -141,7 +165,9 @@ class TestCodebaseIncrementalIndex:
     """Tests for CodebaseIndexer.incremental_index."""
 
     @pytest.mark.timeout(120)
-    def test_incremental_after_full_no_changes(self, code_project):
+    def test_incremental_after_full_no_changes(
+        self, code_project: _CodeProject
+    ) -> None:
         indexer = code_project["code_indexer"]
         indexer.full_index(reporter=NullProgressReporter())
 
@@ -150,7 +176,7 @@ class TestCodebaseIncrementalIndex:
         assert result.removed == 0
 
     @pytest.mark.timeout(120)
-    def test_incremental_detects_new_file(self, code_project):
+    def test_incremental_detects_new_file(self, code_project: _CodeProject) -> None:
         indexer = code_project["code_indexer"]
         store = code_project["store"]
         src_dir = code_project["src_dir"]
@@ -169,7 +195,7 @@ class TestCodebaseSearch:
     """Tests for searching indexed codebase chunks."""
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_returns_results(self, code_project):
+    def test_search_codebase_returns_results(self, code_project: _CodeProject) -> None:
         from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
@@ -184,7 +210,9 @@ class TestCodebaseSearch:
         assert all(r.source == "codebase" for r in results)
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_exclude_path_glob(self, code_project):
+    def test_search_codebase_exclude_path_glob(
+        self, code_project: _CodeProject
+    ) -> None:
         """--exclude-path drops matching files post-query."""
         from ... import VaultSearcher
 
@@ -220,7 +248,9 @@ class TestCodebaseSearch:
         )
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_include_path_glob(self, code_project):
+    def test_search_codebase_include_path_glob(
+        self, code_project: _CodeProject
+    ) -> None:
         """--include-path keeps only matching files post-query."""
         from ... import VaultSearcher
 
@@ -248,7 +278,9 @@ class TestCodebaseSearch:
             )
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_with_language_filter(self, code_project):
+    def test_search_codebase_with_language_filter(
+        self, code_project: _CodeProject
+    ) -> None:
         from ... import VaultSearcher
 
         code_project["code_indexer"].full_index(reporter=NullProgressReporter())
@@ -268,7 +300,9 @@ class TestCodebaseSearch:
             assert r.language == "python"
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_finds_calculator_class(self, code_project):
+    def test_search_codebase_finds_calculator_class(
+        self, code_project: _CodeProject
+    ) -> None:
         """Search for 'calculator' returns results with Calculator class content."""
         from ... import VaultSearcher
 
@@ -287,7 +321,9 @@ class TestCodebaseSearch:
         )
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_results_have_line_numbers(self, code_project):
+    def test_search_codebase_results_have_line_numbers(
+        self, code_project: _CodeProject
+    ) -> None:
         """Codebase search results must include line_start metadata."""
         from ... import VaultSearcher
 
@@ -305,7 +341,9 @@ class TestCodebaseSearch:
             assert r.line_start >= 1
 
     @pytest.mark.timeout(120)
-    def test_search_codebase_snippet_contains_source_code(self, code_project):
+    def test_search_codebase_snippet_contains_source_code(
+        self, code_project: _CodeProject
+    ) -> None:
         """Snippets should contain actual source code, not empty strings."""
         from ... import VaultSearcher
 
@@ -327,7 +365,9 @@ class TestCodebaseIncrementalModifyDelete:
     """Incremental indexing detects file modifications and deletions."""
 
     @pytest.mark.timeout(120)
-    def test_incremental_detects_modified_file(self, code_project):
+    def test_incremental_detects_modified_file(
+        self, code_project: _CodeProject
+    ) -> None:
         """Modifying a source file triggers updated > 0 on incremental re-index."""
         indexer = code_project["code_indexer"]
         src_dir = code_project["src_dir"]
@@ -350,7 +390,7 @@ class TestCodebaseIncrementalModifyDelete:
             sample.write_text(original, encoding="utf-8")
 
     @pytest.mark.timeout(120)
-    def test_incremental_detects_deleted_file(self, code_project):
+    def test_incremental_detects_deleted_file(self, code_project: _CodeProject) -> None:
         """Removing a source file triggers removed > 0 on incremental re-index."""
         indexer = code_project["code_indexer"]
         store = code_project["store"]
@@ -390,8 +430,8 @@ class TestVaultragignore:
 
     @pytest.mark.timeout(120)
     def test_vaultragignore_excludes_file_from_full_index(
-        self, rag_components, tmp_path
-    ):
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
         """Files matching .vaultragignore are not indexed."""
         from ... import CodebaseIndexer, VaultStore
 
@@ -421,8 +461,8 @@ class TestVaultragignore:
 
     @pytest.mark.timeout(120)
     def test_removing_vaultragignore_includes_previously_excluded(
-        self, rag_components, tmp_path
-    ):
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
         """Removing .vaultragignore causes previously excluded files to appear."""
         from ... import CodebaseIndexer, VaultStore
 
@@ -457,8 +497,8 @@ class TestVaultragignore:
 
     @pytest.mark.timeout(120)
     def test_vaultragignore_negation_cannot_override_gitignore(
-        self, rag_components, tmp_path
-    ):
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
         """D1: .vaultragignore negation cannot un-ignore .gitignore entries."""
         from ... import CodebaseIndexer, VaultStore
 
@@ -486,7 +526,9 @@ class TestVaultragignore:
             store.close()
 
     @pytest.mark.timeout(120)
-    def test_extra_excludes_applied_in_full_index(self, rag_components, tmp_path):
+    def test_extra_excludes_applied_in_full_index(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
         """CLI --exclude patterns flow through extra_excludes to full_index."""
         from ... import CodebaseIndexer, VaultStore
 

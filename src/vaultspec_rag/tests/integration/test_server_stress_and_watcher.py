@@ -9,10 +9,17 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import pytest
 
 from ... import CodebaseIndexer, VaultIndexer, VaultStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ...embeddings import EmbeddingModel
+
 from ...graph_cache import GraphCache
 from ...progress import NullProgressReporter
 from ...store import VaultStoreLockedError
@@ -24,7 +31,7 @@ pytestmark = [pytest.mark.integration]
 class TestLocalConcurrencyLocks:
     """Verifies concurrency safety and locking policy in local file mode."""
 
-    def test_local_mode_multi_process_raises_lock_error(self, tmp_path):
+    def test_local_mode_multi_process_raises_lock_error(self, tmp_path: Path) -> None:
         """Assert that two distinct VaultStore instances on the same path
 
         trigger VaultStoreLockedError.
@@ -37,7 +44,7 @@ class TestLocalConcurrencyLocks:
         finally:
             store1.close()
 
-    def test_local_mode_in_process_concurrency_serialized(self, tmp_path):
+    def test_local_mode_in_process_concurrency_serialized(self, tmp_path: Path) -> None:
         """Assert that multiple threads using the same VaultStore instance
 
         are serialized via RLock.
@@ -46,7 +53,7 @@ class TestLocalConcurrencyLocks:
         store.ensure_table()
         store.ensure_code_table()
 
-        errors = []
+        errors: list[Exception] = []
         search_started = threading.Event()
         search_finished = threading.Event()
 
@@ -86,18 +93,20 @@ class TestLocalConcurrencyLocks:
 
 
 @pytest.mark.asyncio
-async def test_watcher_detects_and_indexes_file(tmp_path, embedding_model):
+async def test_watcher_detects_and_indexes_file(
+    tmp_path: Path, embedding_model: EmbeddingModel
+) -> None:
     """Verify that writing a physical vault file triggers the watcher
 
     and updates search results.
     """
     # 1. Setup watched directories
-    vault_dir = tmp_path / ".vault"
-    adr_dir = vault_dir / "adr"
+    vault_dir: Path = tmp_path / ".vault"
+    adr_dir: Path = vault_dir / "adr"
     adr_dir.mkdir(parents=True)
 
     # Write initial file to establish the table schema
-    init_file = adr_dir / "init.md"
+    init_file: Path = adr_dir / "init.md"
     init_text = (
         "---\n"
         "tags: ['#adr', '#initial']\n"
@@ -112,8 +121,8 @@ async def test_watcher_detects_and_indexes_file(tmp_path, embedding_model):
 
     # 2. Setup RAG components
     store = VaultStore(tmp_path)
-    vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
-    code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+    vault_indexer: VaultIndexer = VaultIndexer(tmp_path, embedding_model, store)
+    code_indexer: CodebaseIndexer = CodebaseIndexer(tmp_path, embedding_model, store)
     graph_cache = GraphCache()
 
     # Build the initial index so the table exists

@@ -107,7 +107,7 @@ class TestOrphanProbePort:
 class TestUpdateServiceToken:
     """_update_service_token persists the token from /health into service.json."""
 
-    def _make_status_file(self, status_dir: Path, data: dict) -> Path:
+    def _make_status_file(self, status_dir: Path, data: dict[str, object]) -> Path:
         sf = status_dir / "service.json"
         sf.write_text(json.dumps(data), encoding="utf-8")
         return sf

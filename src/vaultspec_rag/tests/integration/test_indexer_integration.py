@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from ...progress import NullProgressReporter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pytest import TempPathFactory
+
+    from ...embeddings import EmbeddingModel
+    from ..conftest import RagComponentsWithManifest
+
 
 pytestmark = [pytest.mark.integration]
 
@@ -15,7 +26,7 @@ class TestVaultIndexer:
     """Tests for the indexing pipeline with real vault data."""
 
     @pytest.mark.timeout(60)
-    def test_full_index_counts(self, rag_components):
+    def test_full_index_counts(self, rag_components: RagComponentsWithManifest) -> None:
         result = rag_components["index_result"]
         assert result.total > 0
         assert result.added > 0
@@ -23,13 +34,17 @@ class TestVaultIndexer:
         assert result.device == "cuda"
 
     @pytest.mark.timeout(60)
-    def test_index_matches_store_count(self, rag_components):
+    def test_index_matches_store_count(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         result = rag_components["index_result"]
         store = rag_components["store"]
         assert result.total == store.count()
 
     @pytest.mark.timeout(300)
-    def test_incremental_index_no_changes(self, rag_components_full):
+    def test_incremental_index_no_changes(
+        self, rag_components_full: RagComponentsWithManifest
+    ) -> None:
         """Incremental index with no changes should report zero additions.
 
         Requires full corpus because incremental_index() scans the full
@@ -51,12 +66,16 @@ class TestDocumentPreparation:
     """Tests for individual document preparation."""
 
     @pytest.mark.timeout(60)
-    def test_prepare_real_document(self, rag_components):
-        from vaultspec_core.vaultcore import scan_vault
+    def test_prepare_real_document(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
+        from vaultspec_core.vaultcore import (
+            scan_vault,  # pyright: ignore[reportMissingTypeStubs]
+        )
 
         from ... import prepare_document
 
-        root = rag_components["root"]
+        root: Path = rag_components["root"]
         docs = list(scan_vault(root))
         assert len(docs) > 0, "Synthetic vault should have documents"
 
@@ -68,14 +87,18 @@ class TestDocumentPreparation:
         assert doc.content
 
     @pytest.mark.timeout(300)
-    def test_prepare_all_documents(self, rag_components):
-        from vaultspec_core.vaultcore import scan_vault
+    def test_prepare_all_documents(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
+        from vaultspec_core.vaultcore import (
+            scan_vault,  # pyright: ignore[reportMissingTypeStubs]
+        )
 
         from ... import prepare_document
         from ...config import get_config
 
-        root = rag_components["root"]
-        docs_dir = root / get_config().docs_dir
+        root: Path = rag_components["root"]
+        docs_dir: Path = root / get_config().docs_dir
         prepared = 0
         skipped = 0
         for path in scan_vault(root):
@@ -98,16 +121,18 @@ class TestIndexEdgeCases:
     """Edge cases for indexing operations."""
 
     @pytest.mark.timeout(300)
-    def test_double_full_index_idempotent(self, rag_components_full):
+    def test_double_full_index_idempotent(
+        self, rag_components_full: RagComponentsWithManifest
+    ) -> None:
         """Two full_index() calls should yield the same document count."""
         indexer = rag_components_full["indexer"]
         store = rag_components_full["store"]
 
-        first_count = store.count()
+        first_count: int = store.count()
 
         # Run full index again
         result = indexer.full_index(reporter=NullProgressReporter())
-        second_count = store.count()
+        second_count: int = store.count()
 
         assert first_count == second_count, (
             f"Full index should be idempotent: {first_count} vs {second_count}"
@@ -115,7 +140,9 @@ class TestIndexEdgeCases:
         assert result.total == second_count
 
     @pytest.mark.timeout(300)
-    def test_incremental_after_full_stable(self, rag_components_full):
+    def test_incremental_after_full_stable(
+        self, rag_components_full: RagComponentsWithManifest
+    ) -> None:
         """Incremental index after full should report zero changes."""
         indexer = rag_components_full["indexer"]
         result = indexer.incremental_index(reporter=NullProgressReporter())
@@ -127,9 +154,9 @@ class TestIndexEdgeCases:
     @pytest.mark.timeout(300)
     def test_full_index_clean_on_empty_corpus_purges_all(
         self,
-        embedding_model,
-        tmp_path_factory,
-    ):
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
+    ) -> None:
         """Regression guard for F3.10 / F3.11: a clean full_index on a
         vault whose every source file has been deleted must leave the
         collection empty. Previously the empty-docs early-return
@@ -139,7 +166,7 @@ class TestIndexEdgeCases:
         from ...store import VaultStore
         from ..corpus import build_synthetic_vault
 
-        root = tmp_path_factory.mktemp("full-index-empty-regression")
+        root: Path = tmp_path_factory.mktemp("full-index-empty-regression")
         manifest = build_synthetic_vault(root, n_docs=6, seed=310)
         store = VaultStore(root)
         try:
@@ -170,11 +197,16 @@ class TestIndexEdgeCases:
             store.close()
 
     @pytest.mark.timeout(300)
-    def test_all_synthetic_docs_have_frontmatter(self, rag_components):
+    def test_all_synthetic_docs_have_frontmatter(
+        self, rag_components: RagComponentsWithManifest
+    ) -> None:
         """All synthetic vault docs should have valid frontmatter (tags + date)."""
-        from vaultspec_core.vaultcore import parse_vault_metadata, scan_vault
+        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]
+            parse_vault_metadata,
+            scan_vault,
+        )
 
-        root = rag_components["root"]
+        root: Path = rag_components["root"]
         for path in scan_vault(root):
             content = path.read_text(encoding="utf-8")
             metadata, _body = parse_vault_metadata(content)
@@ -187,12 +219,16 @@ class TestIncrementalModifyAndDelete:
     """R26-M4: incremental_index detects modified and deleted vault files."""
 
     @pytest.mark.timeout(300)
-    def test_incremental_detects_modified_file(self, rag_components_full):
+    def test_incremental_detects_modified_file(
+        self, rag_components_full: RagComponentsWithManifest
+    ) -> None:
         """Modifying a file's content triggers an update on incremental re-index."""
-        from vaultspec_core.vaultcore import scan_vault
+        from vaultspec_core.vaultcore import (
+            scan_vault,  # pyright: ignore[reportMissingTypeStubs]
+        )
 
         indexer = rag_components_full["indexer"]
-        root = rag_components_full["root"]
+        root: Path = rag_components_full["root"]
 
         # Pick the first vault doc
         paths = list(scan_vault(root))
@@ -215,19 +251,23 @@ class TestIncrementalModifyAndDelete:
             indexer.incremental_index(reporter=NullProgressReporter())
 
     @pytest.mark.timeout(300)
-    def test_incremental_detects_deleted_file(self, rag_components_full):
+    def test_incremental_detects_deleted_file(
+        self, rag_components_full: RagComponentsWithManifest
+    ) -> None:
         """Removing a file from disk triggers a removal on incremental re-index."""
-        from vaultspec_core.vaultcore import scan_vault
+        from vaultspec_core.vaultcore import (
+            scan_vault,  # pyright: ignore[reportMissingTypeStubs]
+        )
 
         indexer = rag_components_full["indexer"]
-        root = rag_components_full["root"]
+        root: Path = rag_components_full["root"]
         store = rag_components_full["store"]
 
         paths = list(scan_vault(root))
         assert len(paths) > 0
         target = paths[0]
         original_content = target.read_text(encoding="utf-8")
-        count_before = store.count()
+        count_before: int = store.count()
 
         try:
             target.unlink()

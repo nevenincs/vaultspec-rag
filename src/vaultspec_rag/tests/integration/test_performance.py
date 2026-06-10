@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from ...progress import NullProgressReporter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import numpy as np
+    from pytest import TempPathFactory
+
+    from ...embeddings import EmbeddingModel
+    from ...indexer import IndexResult, VaultIndexer
+    from ...store import VaultStore
+    from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.performance]
 
@@ -20,7 +33,7 @@ class TestPerformance:
 
     # -- Timing tests --
 
-    def test_single_query_latency(self, rag_components):
+    def test_single_query_latency(self, rag_components: RagComponentsWithManifest):
         """End-to-end search should complete within 2 seconds.
 
         Note: _fts_dirty starts True on VaultStore init, so the first
@@ -31,9 +44,9 @@ class TestPerformance:
 
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
 
@@ -49,15 +62,15 @@ class TestPerformance:
             f"Single query took {elapsed_ms:.0f}ms, expected < 2000ms"
         )
 
-    def test_batch_query_latency(self, rag_components):
+    def test_batch_query_latency(self, rag_components: RagComponentsWithManifest):
         """5 sequential vault queries should complete within 5 seconds total."""
         import time
 
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
         queries = [
@@ -80,14 +93,14 @@ class TestPerformance:
             f"5 queries took {elapsed_ms:.0f}ms, expected < 5000ms"
         )
 
-    def test_query_embedding_latency(self, rag_components):
+    def test_query_embedding_latency(self, rag_components: RagComponentsWithManifest):
         """Single query embedding should complete within 500ms."""
         import time
 
-        model = rag_components["model"]
+        model: EmbeddingModel = rag_components["model"]
 
         start = time.perf_counter()
-        vec = model.encode_query("test query for latency")
+        vec: np.ndarray = model.encode_query("test query for latency")
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert vec.shape == (model.dimension,)
@@ -113,13 +126,13 @@ class TestPerformance:
 
     # -- Resource tests --
 
-    def test_store_disk_footprint(self, rag_components_full):
+    def test_store_disk_footprint(self, rag_components_full: RagComponentsWithManifest):
         """The Qdrant data directory should be under 50MB for the full corpus."""
         from ...config import get_config
 
         cfg = get_config()
-        root = rag_components_full["root"]
-        db_dir = root / cfg.data_dir / cfg.qdrant_dir
+        root: Path = rag_components_full["root"]
+        db_dir: Path = root / cfg.data_dir / cfg.qdrant_dir
         assert db_dir.exists(), f"db_dir does not exist: {db_dir}"
 
         total_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
@@ -127,38 +140,45 @@ class TestPerformance:
 
         assert total_mb < 50, f"Qdrant directory is {total_mb:.1f}MB, expected < 50MB"
 
-    def test_index_result_has_timing(self, rag_components):
+    def test_index_result_has_timing(self, rag_components: RagComponentsWithManifest):
         """IndexResult should report valid timing metadata."""
-        result = rag_components["index_result"]
+        result: IndexResult = rag_components["index_result"]
 
         assert result.duration_ms > 0, "duration_ms should be positive"
         assert result.duration_ms < 900_000, (
             f"Indexing took {result.duration_ms}ms (15 min), seems too long"
         )
 
-    def test_document_count_matches_vault(self, rag_components_full):
+    def test_document_count_matches_vault(
+        self, rag_components_full: RagComponentsWithManifest
+    ):
         """Indexed count should match scannable docs with valid DocType."""
-        from vaultspec_core.vaultcore import get_doc_type, scan_vault
+        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]
+            get_doc_type,
+            scan_vault,
+        )
 
-        root = rag_components_full["root"]
-        store = rag_components_full["store"]
+        root: Path = rag_components_full["root"]
+        store: VaultStore = rag_components_full["store"]
 
         valid_count = sum(
             1 for p in scan_vault(root) if get_doc_type(p, root) is not None
         )
-        indexed_count = store.count()
+        indexed_count: int = store.count()
 
         assert indexed_count == valid_count, (
             f"Store has {indexed_count} docs, vault has {valid_count} valid docs"
         )
 
-    def test_graph_cache_reused_across_searches(self, rag_components):
+    def test_graph_cache_reused_across_searches(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """VaultSearcher should reuse cached VaultGraph across searches."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store)
 
@@ -172,13 +192,13 @@ class TestPerformance:
 
         assert graph1 is graph2, "Graph should be reused across searches"
 
-    def test_graph_cache_ttl_expiry(self, rag_components):
+    def test_graph_cache_ttl_expiry(self, rag_components: RagComponentsWithManifest):
         """VaultSearcher with TTL=0 should rebuild graph on every search."""
         from ... import VaultSearcher
 
-        model = rag_components["model"]
-        store = rag_components["store"]
-        root = rag_components["root"]
+        model: EmbeddingModel = rag_components["model"]
+        store: VaultStore = rag_components["store"]
+        root: Path = rag_components["root"]
 
         searcher = VaultSearcher(root, model, store, graph_ttl_seconds=0)
 
@@ -190,7 +210,9 @@ class TestPerformance:
 
         assert graph1 is not graph2, "Graph should be rebuilt with TTL=0"
 
-    def test_graph_rebuild_cost_per_query(self, rag_components):
+    def test_graph_rebuild_cost_per_query(
+        self, rag_components: RagComponentsWithManifest
+    ):
         """Measure the cost of VaultGraph construction, which is rebuilt on
         every search call by rerank_with_graph(). VaultGraph reads every
         file in the vault twice (metadata + links pass). This test documents
@@ -198,15 +220,17 @@ class TestPerformance:
         """
         import time
 
-        from vaultspec_core.graph import VaultGraph
+        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]
+            VaultGraph,
+        )
 
-        root = rag_components["root"]
+        root: Path = rag_components["root"]
 
         start = time.perf_counter()
-        graph = VaultGraph(root)
+        graph = VaultGraph(root)  # pyright: ignore[reportUnknownVariableType]
         graph_ms = (time.perf_counter() - start) * 1000
 
-        assert len(graph.nodes) > 0
+        assert len(graph.nodes) > 0  # pyright: ignore[reportUnknownMemberType]
         # Document the cost - this is informational, threshold is generous
         # since graph rebuild happens on every search query
         assert graph_ms < 2000, (
@@ -215,9 +239,9 @@ class TestPerformance:
 
     def test_vault_full_index_peak_rss_bounded(
         self,
-        embedding_model,
-        tmp_path_factory,
-        monkeypatch,
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Vault full_index must not leak - RSS delta and wall time bounded.
 
@@ -248,7 +272,7 @@ class TestPerformance:
         # probe never bleeds into parallel pytest-xdist workers.
         monkeypatch.setenv("VAULTSPEC_RAG_MEMORY_PROBE", "1")
 
-        root = tmp_path_factory.mktemp("vault-leak-regression")
+        root: Path = tmp_path_factory.mktemp("vault-leak-regression")
         build_synthetic_vault(root, n_docs=135, seed=68)
 
         store = VaultStore(root)
@@ -268,8 +292,8 @@ class TestPerformance:
                 wall_seconds = time.perf_counter() - start
                 probe.checkpoint("after-index")
 
-            baseline_mb = probe.samples[0].rss_mb
-            delta_mb = probe.peak_rss_mb - baseline_mb
+            baseline_mb: float = probe.samples[0].rss_mb
+            delta_mb: float = probe.peak_rss_mb - baseline_mb
             assert result.added >= 120, (
                 f"Expected ~135 docs indexed, got {result.added}"
             )
@@ -294,7 +318,9 @@ class TestPerformance:
         finally:
             store.close()
 
-    def test_incremental_noop_latency(self, rag_components_full):
+    def test_incremental_noop_latency(
+        self, rag_components_full: RagComponentsWithManifest
+    ):
         """Incremental index with no changes should be fast (< 3s).
 
         Requires full corpus because incremental_index() scans the full
@@ -302,7 +328,7 @@ class TestPerformance:
         """
         import time
 
-        indexer = rag_components_full["indexer"]
+        indexer: VaultIndexer = rag_components_full["indexer"]
 
         start = time.perf_counter()
         result = indexer.incremental_index(reporter=NullProgressReporter())

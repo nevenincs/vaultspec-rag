@@ -18,11 +18,17 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
 
 from ...cli import app
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pytest import TempPathFactory
 
 pytestmark = [pytest.mark.integration]
 
@@ -178,12 +184,12 @@ class TestSearchPowerUser:
         )
 
     @pytest.mark.subprocess_gpu
-    def test_live_code_search(self, tmp_path_factory) -> None:
+    def test_live_code_search(self, tmp_path_factory: TempPathFactory) -> None:
         """Real in-process GPU search returns non-empty ranked output."""
         import subprocess
         import sys
 
-        root = tmp_path_factory.mktemp("testimonial-code-search")
+        root: Path = tmp_path_factory.mktemp("testimonial-code-search")
 
         # Build a minimal synthetic vault so the workspace resolver succeeds
         # and there is at least one source file to find.
@@ -303,7 +309,7 @@ class TestServiceOperator:
             f"Expected 'No such command' error for 'server service':\n{r.output}"
         )
 
-    def test_server_status_no_service(self, tmp_path) -> None:
+    def test_server_status_no_service(self, tmp_path: Path) -> None:
         """``server status`` exits 3 and reports 'stopped' when no daemon is running."""
         from ._helpers import _service_env
 
@@ -325,7 +331,7 @@ class TestServiceOperator:
             f"Expected 'stopped'/'missing' in status output:\n{obs.output}"
         )
 
-    def test_server_logs_no_service(self, tmp_path) -> None:
+    def test_server_logs_no_service(self, tmp_path: Path) -> None:
         """``server logs`` exits 3 with a remediation message when down."""
         from ._helpers import _service_env
 
@@ -345,7 +351,7 @@ class TestServiceOperator:
         )
         assert obs.output.strip(), "Expected non-empty output (remediation hint)"
 
-    def test_server_jobs_no_service(self, tmp_path) -> None:
+    def test_server_jobs_no_service(self, tmp_path: Path) -> None:
         """``server jobs`` exits 3 with a remediation message when down."""
         from ._helpers import _service_env
 
@@ -365,7 +371,7 @@ class TestServiceOperator:
         )
         assert obs.output.strip(), "Expected non-empty output (remediation hint)"
 
-    def test_server_watcher_status_no_service(self, tmp_path) -> None:
+    def test_server_watcher_status_no_service(self, tmp_path: Path) -> None:
         """``server watcher status`` exits 3 when no daemon is running."""
         from ._helpers import _service_env
 
@@ -384,7 +390,7 @@ class TestServiceOperator:
             f"Expected exit 3, got {obs.exit_code}:\n{obs.output}"
         )
 
-    def test_server_projects_list_no_service(self, tmp_path) -> None:
+    def test_server_projects_list_no_service(self, tmp_path: Path) -> None:
         """``server projects list`` exits 3 when no daemon is running."""
         from ._helpers import _service_env
 
@@ -406,7 +412,9 @@ class TestServiceOperator:
     # -- live daemon: subprocess_gpu ----------------------------------------
 
     @pytest.mark.subprocess_gpu
-    def test_server_lifecycle_and_observability(self, live_service) -> None:
+    def test_server_lifecycle_and_observability(
+        self, live_service: tuple[int, Path]
+    ) -> None:
         """Exercise the flattened lifecycle over a running daemon.
 
         Uses the ``live_service`` fixture which spawns a real GPU-backed

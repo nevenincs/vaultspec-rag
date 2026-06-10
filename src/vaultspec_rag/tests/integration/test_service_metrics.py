@@ -17,8 +17,9 @@ Three layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+import httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-@pytest.fixture
+@pytest.fixture  # pyright: ignore[reportUnusedFunction]
 def _clean_metrics() -> Iterator[None]:
     """Zero the metrics holder before and after each test."""
     server.reset_metrics()
@@ -42,7 +43,7 @@ def _clean_metrics() -> Iterator[None]:
     server.reset_metrics()
 
 
-@pytest.fixture
+@pytest.fixture  # pyright: ignore[reportUnusedFunction]
 def _clean_watchers() -> Iterator[None]:
     """Stop any watcher the search/reindex paths started as a side effect."""
     yield
@@ -107,7 +108,6 @@ def test_reset_zeroes_counters(_clean_metrics: None) -> None:
 # Integration (GPU): real tool paths increment the inline counters            #
 # --------------------------------------------------------------------------- #
 
-import httpx  # noqa: E402
 
 import vaultspec_rag.mcp._admin_tools as admin_tools  # noqa: E402
 
@@ -140,7 +140,7 @@ async def test_search_vault_increments_counter(
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
-    job_id = response["job_id"]
+    job_id: str = response["job_id"]
     for _ in range(50):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
@@ -178,7 +178,7 @@ async def test_reindex_vault_increments_counter(
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
-    job_id = response["job_id"]
+    job_id: str = response["job_id"]
     for _ in range(50):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
@@ -195,7 +195,7 @@ async def test_reindex_vault_increments_counter(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
+@pytest.fixture  # pyright: ignore[reportUnusedFunction]
 def _routes_app(_clean_metrics: None) -> Iterator[tuple[TestClient, str]]:
     """Build a real Starlette app from the read-only ROUTES.
 
@@ -222,7 +222,7 @@ def test_metrics_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = client.get("/metrics")
+    response = cast("httpx.Response", client.get("/metrics"))
     assert response.status_code == 401
     payload = response.json()
     assert payload["ok"] is False
@@ -233,7 +233,10 @@ def test_metrics_route_401_with_wrong_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = client.get("/metrics", headers={"Authorization": "Bearer wrong"})
+    response = cast(
+        "httpx.Response",
+        client.get("/metrics", headers={"Authorization": "Bearer wrong"}),
+    )
     assert response.status_code == 401
 
 
@@ -241,10 +244,13 @@ def test_metrics_route_200_with_bearer_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get("/metrics", headers={"Authorization": f"Bearer {token}"})
+    response = cast(
+        "httpx.Response",
+        client.get("/metrics", headers={"Authorization": f"Bearer {token}"}),
+    )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    body = response.text
+    body: str = response.text
     assert "vaultspec_rag_search_total 3" in body
     assert "vaultspec_rag_reindex_total 1" in body
     assert "# TYPE vaultspec_rag_search_total counter" in body
@@ -254,6 +260,6 @@ def test_metrics_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get("/metrics", params={"token": token})
+    response = cast("httpx.Response", client.get("/metrics", params={"token": token}))
     assert response.status_code == 200
     assert "vaultspec_rag_search_total 3" in response.text

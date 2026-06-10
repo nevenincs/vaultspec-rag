@@ -8,16 +8,22 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
 
 from ..corpus import build_synthetic_vault
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pytest import TempPathFactory
+
 pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture(scope="session")
-def cli_vault(tmp_path_factory):
+def cli_vault(tmp_path_factory: TempPathFactory) -> Path:
     """Session-scoped synthetic vault for CLI subprocess tests.
 
     No VaultStore is opened here - the CLI subprocess will create
@@ -32,7 +38,7 @@ def _run_cli(
     *args: str,
     cwd: str | None = None,
     timeout: int = 300,
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run a vaultspec-rag CLI command via the installed entry point."""
     import os
 
@@ -61,7 +67,7 @@ class TestCLIStatus:
     """Tests for ``vaultspec-rag status``."""
 
     @pytest.mark.timeout(60)
-    def test_status_shows_gpu_info(self, cli_vault):
+    def test_status_shows_gpu_info(self, cli_vault: Path) -> None:
         """``vaultspec-rag status`` should display CUDA GPU information."""
         root = str(cli_vault)
         result = _run_cli("--target", root, "status", cwd=root)
@@ -69,7 +75,7 @@ class TestCLIStatus:
         assert "cuda" in result.stdout.lower() or "GPU" in result.stdout
 
     @pytest.mark.timeout(60)
-    def test_status_shows_document_counts(self, cli_vault):
+    def test_status_shows_document_counts(self, cli_vault: Path) -> None:
         """``vaultspec-rag status`` should show document count digits."""
         root = str(cli_vault)
         result = _run_cli("--target", root, "status", cwd=root)
@@ -87,7 +93,7 @@ class TestCLIIndex:
     """
 
     @pytest.mark.timeout(300)
-    def test_index_vault_produces_summary(self, cli_vault):
+    def test_index_vault_produces_summary(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type vault`` should print a summary."""
         root = str(cli_vault)
         result = _run_cli("--target", root, "index", "--type", "vault", cwd=root)
@@ -95,7 +101,7 @@ class TestCLIIndex:
         assert "Indexing Summary" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_rebuild_flag_works(self, cli_vault):
+    def test_index_rebuild_flag_works(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type vault --rebuild`` exits zero."""
         root = str(cli_vault)
         result = _run_cli(
@@ -111,7 +117,7 @@ class TestCLIIndex:
         assert "Vault" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_code_produces_summary(self, cli_vault):
+    def test_index_code_produces_summary(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type code`` prints summary."""
         root = str(cli_vault)
         result = _run_cli("--target", root, "index", "--type", "code", cwd=root)
@@ -120,7 +126,7 @@ class TestCLIIndex:
         assert "Codebase" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_all_produces_both_rows(self, cli_vault):
+    def test_index_all_produces_both_rows(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type all`` shows Vault and Codebase."""
         root = str(cli_vault)
         result = _run_cli("--target", root, "index", "--type", "all", cwd=root)
@@ -142,7 +148,7 @@ class TestCLISearch:
     """
 
     @pytest.mark.timeout(300)
-    def test_search_vault_returns_results(self, cli_vault):
+    def test_search_vault_returns_results(self, cli_vault: Path) -> None:
         """``vaultspec-rag search`` should return ranked results."""
         root = str(cli_vault)
         # Ensure indexed first
@@ -158,7 +164,7 @@ class TestCLISearch:
         assert "Score" in result.stdout or "0." in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_search_no_results_for_gibberish(self, cli_vault):
+    def test_search_no_results_for_gibberish(self, cli_vault: Path) -> None:
         """Searching for nonsense should not crash."""
         root = str(cli_vault)
         result = _run_cli(
@@ -171,7 +177,7 @@ class TestCLISearch:
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
     @pytest.mark.timeout(300)
-    def test_search_code_type_exits_zero(self, cli_vault):
+    def test_search_code_type_exits_zero(self, cli_vault: Path) -> None:
         """``vaultspec-rag search --type code`` should exit cleanly."""
         root = str(cli_vault)
         result = _run_cli(

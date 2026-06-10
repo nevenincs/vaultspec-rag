@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import typing
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    import ast
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -17,7 +22,7 @@ pytestmark = [pytest.mark.unit]
 class TestBlake2bFileHashing:
     """ADR: blake2b-file-hashing - file hashes must use blake2b, not sha256."""
 
-    def test_vault_indexer_meta_uses_blake2b_hashes(self, tmp_path):
+    def test_vault_indexer_meta_uses_blake2b_hashes(self, tmp_path: Path) -> None:
         """VaultIndexer._save_meta produces blake2b hex digests (128 chars)."""
         from ..indexer import VaultIndexer
 
@@ -37,7 +42,7 @@ class TestBlake2bFileHashing:
             f"Expected blake2b (128 hex chars), got {len(digest)} chars"
         )
 
-    def test_codebase_indexer_meta_uses_blake2b_hashes(self, tmp_path):
+    def test_codebase_indexer_meta_uses_blake2b_hashes(self, tmp_path: Path) -> None:
         """CodebaseIndexer._write_meta produces blake2b hex digests."""
         from ..indexer import CodebaseIndexer
 
@@ -62,53 +67,53 @@ class TestBlake2bFileHashing:
 class TestMCPAsyncTools:
     """ADR: mcp-sync-tools (superseded) - MCP tools must be async def + anyio."""
 
-    def test_search_vault_is_async(self):
-        import asyncio
+    def test_search_vault_is_async(self) -> None:
+        import inspect
 
         from vaultspec_rag.mcp._tools import search_vault
 
-        assert asyncio.iscoroutinefunction(search_vault)
+        assert inspect.iscoroutinefunction(search_vault)
 
-    def test_search_codebase_is_async(self):
-        import asyncio
+    def test_search_codebase_is_async(self) -> None:
+        import inspect
 
         from vaultspec_rag.mcp._tools import search_codebase
 
-        assert asyncio.iscoroutinefunction(search_codebase)
+        assert inspect.iscoroutinefunction(search_codebase)
 
-    def test_reindex_vault_is_async(self):
-        import asyncio
+    def test_reindex_vault_is_async(self) -> None:
+        import inspect
 
         from vaultspec_rag.mcp._tools import reindex_vault
 
-        assert asyncio.iscoroutinefunction(reindex_vault)
+        assert inspect.iscoroutinefunction(reindex_vault)
 
-    def test_reindex_codebase_is_async(self):
-        import asyncio
+    def test_reindex_codebase_is_async(self) -> None:
+        import inspect
 
         from vaultspec_rag.mcp._tools import reindex_codebase
 
-        assert asyncio.iscoroutinefunction(reindex_codebase)
+        assert inspect.iscoroutinefunction(reindex_codebase)
 
-    def test_get_index_status_is_async(self):
-        import asyncio
+    def test_get_index_status_is_async(self) -> None:
+        import inspect
 
         from vaultspec_rag.mcp._tools import get_index_status
 
-        assert asyncio.iscoroutinefunction(get_index_status)
+        assert inspect.iscoroutinefunction(get_index_status)
 
-    def test_get_code_file_is_async(self):
-        import asyncio
+    def test_get_code_file_is_async(self) -> None:
+        import inspect
 
         from vaultspec_rag.mcp._tools import get_code_file
 
-        assert asyncio.iscoroutinefunction(get_code_file)
+        assert inspect.iscoroutinefunction(get_code_file)
 
 
 class TestPathResolveCache:
     """ADR: registry normalizes with Path.resolve() for cache consistency."""
 
-    def test_relative_and_dot_relative_same_engine(self, tmp_path):
+    def test_relative_and_dot_relative_same_engine(self, tmp_path: Path) -> None:
         """Path('./x') and Path('x') resolve to the same registry key."""
         from ..registry import get_registry
 
@@ -186,7 +191,7 @@ class TestEmbeddingModelLoadArguments:
         return ast.parse(source)
 
     @staticmethod
-    def _call_kwargs(tree, call_name: str) -> dict[str, object]:
+    def _call_kwargs(tree: ast.AST, call_name: str) -> dict[str, object]:
         import ast
 
         for node in ast.walk(tree):

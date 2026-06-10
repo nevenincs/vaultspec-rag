@@ -14,13 +14,15 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from vaultspec_core.config import reset_config
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+    reset_config,
+)
 
 from ...cli import _health_probe, _is_pid_alive
 from ...config import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Generator, Mapping
     from pathlib import Path
 
 __all__ = [
@@ -66,7 +68,7 @@ def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
 def _service_env(
     tmp_path: Path,
     env_overrides: Mapping[str, str] | None = None,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Isolate service state files to *tmp_path*.
 
     Sets ``VAULTSPEC_RAG_STATUS_DIR`` (and any additional
@@ -84,7 +86,7 @@ def _service_env(
             saved[k] = os.environ.get(k)
             os.environ[k] = v
 
-    reset_config()
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
     reset_rag_config()
     try:
         yield
@@ -94,5 +96,5 @@ def _service_env(
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = prev
-        reset_config()
+        reset_config()  # pyright: ignore[reportMissingTypeStubs]
         reset_rag_config()

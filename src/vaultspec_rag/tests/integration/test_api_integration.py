@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from ...progress import NullProgressReporter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..conftest import RagComponentsWithManifest as _RagComponents
 
 pytestmark = [pytest.mark.integration]
 
@@ -20,7 +27,7 @@ class TestRAGAPI:
     fixture.
     """
 
-    def test_search_returns_results(self, rag_components):
+    def test_search_returns_results(self, rag_components: _RagComponents):
         """rag.api.search returns SearchResult list.
 
         Uses the session-scoped rag_components to ensure indexed data
@@ -40,7 +47,7 @@ class TestRAGAPI:
         assert hasattr(results[0], "id")
         assert hasattr(results[0], "score")
 
-    def test_search_with_type_filter(self, rag_components):
+    def test_search_with_type_filter(self, rag_components: _RagComponents):
         """rag.api.search filters by doc_type."""
         from ... import VaultSearcher
 
@@ -53,7 +60,7 @@ class TestRAGAPI:
         for r in results:
             assert r.doc_type == "adr"
 
-    def test_index_incremental(self, rag_components_full):
+    def test_index_incremental(self, rag_components_full: _RagComponents):
         """Incremental index via fixture indexer returns valid result.
 
         Uses the fixture's own indexer to avoid Qdrant lock contention
@@ -64,14 +71,14 @@ class TestRAGAPI:
         assert result.total > 0
         assert result.duration_ms >= 0
 
-    def test_index_full(self, rag_components_full):
+    def test_index_full(self, rag_components_full: _RagComponents):
         """Full index via fixture indexer rebuilds index."""
         indexer = rag_components_full["indexer"]
         result = indexer.full_index(reporter=NullProgressReporter())
         assert result.total > 0
         assert result.added > 0
 
-    def test_get_document_existing(self, rag_components):
+    def test_get_document_existing(self, rag_components: _RagComponents):
         """Store.get_by_id returns dict for known doc.
 
         Uses the fixture's store directly.
@@ -89,13 +96,13 @@ class TestRAGAPI:
         assert "content" in result
         assert "doc_type" in result
 
-    def test_get_document_nonexistent(self, rag_components):
+    def test_get_document_nonexistent(self, rag_components: _RagComponents):
         """Store.get_by_id returns None for unknown doc."""
         store = rag_components["store"]
         result = store.get_by_id("nonexistent-doc-that-does-not-exist")
         assert result is None
 
-    def test_list_documents(self, rag_components):
+    def test_list_documents(self, rag_components: _RagComponents):
         """Store.list_all_documents returns all indexed docs."""
         store = rag_components["store"]
         docs = store.list_all_documents()
@@ -104,7 +111,7 @@ class TestRAGAPI:
         assert all("doc_type" in d for d in docs)
         assert all("title" in d for d in docs)
 
-    def test_list_documents_type_filter(self, rag_components):
+    def test_list_documents_type_filter(self, rag_components: _RagComponents):
         """Store.list_all_documents filters by doc_type."""
         store = rag_components["store"]
         docs = store.list_all_documents(doc_type="adr")
@@ -112,7 +119,7 @@ class TestRAGAPI:
         for d in docs:
             assert d["doc_type"] == "adr"
 
-    def test_indexed_docs_have_related_field(self, rag_components):
+    def test_indexed_docs_have_related_field(self, rag_components: _RagComponents):
         """Indexed documents carry the ``related`` payload field."""
         store = rag_components["store"]
         docs = store.list_all_documents()
@@ -121,12 +128,14 @@ class TestRAGAPI:
             assert "related" in d, f"Doc {d['id']} missing 'related' field"
             assert isinstance(d["related"], list)
 
-    def test_get_status(self, rag_components):
+    def test_get_status(self, rag_components: _RagComponents):
         """Vault metrics and store count reflect indexed data."""
         root = rag_components["root"]
         store = rag_components["store"]
 
-        from vaultspec_core.metrics import get_vault_metrics
+        from vaultspec_core.metrics import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
+            get_vault_metrics,
+        )
 
         metrics = get_vault_metrics(root)
 
@@ -134,7 +143,7 @@ class TestRAGAPI:
         assert metrics.total_features > 0
         assert store.count() > 0
 
-    def test_facade_end_to_end(self, tmp_path):
+    def test_facade_end_to_end(self, tmp_path: Path):
         """Test the public API facade functions end-to-end against a fresh directory."""
         import vaultspec_rag
 

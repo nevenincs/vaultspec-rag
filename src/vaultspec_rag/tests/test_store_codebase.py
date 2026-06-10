@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
+    from .conftest import RagComponentsWithManifest
+
+
 import pytest
 
 from ..store import CodeChunk, VaultStore
@@ -10,7 +19,7 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def tmp_vault_store(tmp_path):
+def tmp_vault_store(tmp_path: Path) -> Generator[VaultStore]:
     """Fixture for a temporary VaultStore."""
     store = VaultStore(tmp_path)
     yield store
@@ -20,18 +29,23 @@ def tmp_vault_store(tmp_path):
 class TestStoreCodebase:
     """Tests for codebase-specific store operations using real embeddings."""
 
-    def test_ensure_code_table(self, tmp_vault_store):
+    def test_ensure_code_table(self, tmp_vault_store: VaultStore) -> None:
         """ensure_code_table should create the codebase_docs collection."""
         tmp_vault_store.ensure_code_table()
-        assert tmp_vault_store._client.collection_exists(
+        assert tmp_vault_store._client is not None
+        assert tmp_vault_store._client.collection_exists(  # pyright: ignore[reportUnknownMemberType]
             tmp_vault_store.CODE_TABLE_NAME,
         )
 
-    def test_upsert_code_chunks(self, tmp_vault_store, rag_components):
+    def test_upsert_code_chunks(
+        self,
+        tmp_vault_store: VaultStore,
+        rag_components: RagComponentsWithManifest,
+    ) -> None:
         """upsert_code_chunks should add and retrieve chunks."""
         model = rag_components["model"]
         text = "print('hello')"
-        vector = model.encode_documents([text]).tolist()[0]
+        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])  # pyright: ignore[reportUnknownMemberType]
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
@@ -52,7 +66,7 @@ class TestStoreCodebase:
         ids = tmp_vault_store.get_all_code_ids()
         assert "src/main.py:1-10" in ids
 
-    def test_build_code_filter(self):
+    def test_build_code_filter(self) -> None:
         """_build_code_filter should build correct Qdrant filter for codebase."""
         from qdrant_client import models
 
@@ -67,11 +81,15 @@ class TestStoreCodebase:
         }
         assert keys == {"language", "path"}
 
-    def test_delete_code_chunks(self, tmp_vault_store, rag_components):
+    def test_delete_code_chunks(
+        self,
+        tmp_vault_store: VaultStore,
+        rag_components: RagComponentsWithManifest,
+    ) -> None:
         """delete_code_chunks should remove code chunks by ID."""
         model = rag_components["model"]
         text = "test"
-        vector = model.encode_documents([text]).tolist()[0]
+        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])  # pyright: ignore[reportUnknownMemberType]
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(

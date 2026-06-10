@@ -12,6 +12,7 @@ decoupled producer/consumer must hold:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +22,9 @@ from ...config import EnvVar, reset_config
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from pytest import TempPathFactory
+
+    from ...embeddings import EmbeddingModel
 
 _MODULE = '''"""Module {i}."""
 
@@ -74,14 +77,14 @@ class TestPipelineParity:
     @pytest.mark.timeout(300)
     def test_parallel_pipeline_matches_serial(
         self,
-        embedding_model,
-        tmp_path_factory,
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
     ) -> None:
-        root = tmp_path_factory.mktemp("gpu-pipe-src")
+        root: Path = tmp_path_factory.mktemp("gpu-pipe-src")
         _make_tree(root, 60)
 
-        serial_store = VaultStore(tmp_path_factory.mktemp("gpu-pipe-serial"))
-        parallel_store = VaultStore(tmp_path_factory.mktemp("gpu-pipe-parallel"))
+        serial_store = VaultStore(Path(tmp_path_factory.mktemp("gpu-pipe-serial")))
+        parallel_store = VaultStore(Path(tmp_path_factory.mktemp("gpu-pipe-parallel")))
         try:
             serial_ix = CodebaseIndexer(root, embedding_model, serial_store)
             parallel_ix = CodebaseIndexer(root, embedding_model, parallel_store)
@@ -117,16 +120,16 @@ class TestConsumerFailurePropagates:
     @pytest.mark.timeout(180)
     def test_dimension_mismatch_raises(
         self,
-        embedding_model,
-        tmp_path_factory,
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
     ) -> None:
-        root = tmp_path_factory.mktemp("gpu-pipe-failsrc")
+        root: Path = tmp_path_factory.mktemp("gpu-pipe-failsrc")
         _make_tree(root, 40)
         # A store whose code collection expects the wrong vector width: the
         # consumer encodes real 1024-dim vectors, Qdrant rejects them on upsert.
         # This is a genuine failure (no mock); it must propagate and not hang.
         bad_store = VaultStore(
-            tmp_path_factory.mktemp("gpu-pipe-bad"),
+            Path(tmp_path_factory.mktemp("gpu-pipe-bad")),
             embedding_dim=128,
         )
         try:

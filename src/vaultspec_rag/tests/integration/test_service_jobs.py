@@ -17,12 +17,15 @@ Three layers, no mocks/skips/monkeypatch:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
+
+if TYPE_CHECKING:
+    import httpx
 
 import vaultspec_rag.mcp._admin_tools as admin
 import vaultspec_rag.mcp._tools as tools
@@ -43,7 +46,7 @@ runner = CliRunner()
 _DEAD_PORT = "59235"
 
 
-@pytest.fixture
+@pytest.fixture  # pyright: ignore[reportUnusedFunction]
 def _clean_jobs() -> Iterator[None]:
     """Reset the in-flight registry before and after each test."""
     _jobs.reset()
@@ -69,6 +72,7 @@ async def test_get_jobs_returns_snapshot_shape(
     # Poll until it's done so the snapshot is stable.
     import asyncio
 
+    result: dict[str, Any] = {}
     for _ in range(50):
         result = await admin.get_jobs()
         done = result.get("jobs") and result["jobs"][0]["phase"] in (
@@ -81,10 +85,10 @@ async def test_get_jobs_returns_snapshot_shape(
         await asyncio.sleep(0.1)
 
     assert set(result) == {"jobs"}
-    jobs = result["jobs"]
+    jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
     assert len(jobs) >= 1
-    entry = jobs[0]
+    entry: dict[str, Any] = jobs[0]
     assert set(entry) == {
         "id",
         "source",
@@ -180,7 +184,7 @@ def test_jobs_cli_mcp_parity() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
+@pytest.fixture  # pyright: ignore[reportUnusedFunction]
 def _routes_app(_clean_jobs: None) -> Iterator[tuple[TestClient, str]]:
     """Build a real Starlette app from the read-only ROUTES.
 
@@ -206,9 +210,9 @@ def test_jobs_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = client.get("/jobs")
+    response = cast("httpx.Response", client.get("/jobs"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 401
-    payload = response.json()
+    payload: dict[str, Any] = response.json()
     assert payload["ok"] is False
     assert payload["error"] == "unauthorized"
 
@@ -217,7 +221,9 @@ def test_jobs_route_401_with_wrong_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = client.get("/jobs", headers={"Authorization": "Bearer wrong"})
+    response = cast(
+        "httpx.Response", client.get("/jobs", headers={"Authorization": "Bearer wrong"})
+    )  # pyright: ignore[reportUnknownMemberType]
     assert response.status_code == 401
 
 
@@ -225,10 +231,13 @@ def test_jobs_route_200_with_bearer_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get("/jobs", headers={"Authorization": f"Bearer {token}"})
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", headers={"Authorization": f"Bearer {token}"}),
+    )  # pyright: ignore[reportUnknownMemberType]
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    payload = response.json()
+    payload: dict[str, Any] = response.json()
     assert set(payload) == {"jobs"}
     assert len(payload["jobs"]) == 1
     assert payload["jobs"][0]["source"] == "vault"
@@ -239,7 +248,7 @@ def test_jobs_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = client.get("/jobs", params={"token": token})
+    response = cast("httpx.Response", client.get("/jobs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1
 
@@ -250,6 +259,8 @@ def test_jobs_route_respects_limit_param(
     # Seed a second record so a limit=1 actually trims.
     _jobs.record_start("code", "watcher")
     client, token = _routes_app
-    response = client.get("/jobs", params={"token": token, "limit": "1"})
+    response = cast(
+        "httpx.Response", client.get("/jobs", params={"token": token, "limit": "1"})
+    )  # pyright: ignore[reportUnknownMemberType]
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1

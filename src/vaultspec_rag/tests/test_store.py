@@ -10,8 +10,15 @@ import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from ..store import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -152,7 +159,7 @@ class TestStoreHelpers:
 class TestStoreLocalWarnings:
     """Qdrant local-mode warning handling."""
 
-    def test_payload_index_warning_is_suppressed(self, tmp_path):
+    def test_payload_index_warning_is_suppressed(self, tmp_path: Path) -> None:
         from ..store import VaultStore
 
         with warnings.catch_warnings(record=True) as caught:
@@ -189,7 +196,12 @@ class TestStoreLocalWarnings:
 class TestStoreLocalClientSerialization:
     """Real local-Qdrant client calls serialize on the store client lock."""
 
-    def _assert_call_waits_for_store_lock(self, tmp_path, store_call, expected) -> None:
+    def _assert_call_waits_for_store_lock(
+        self,
+        tmp_path: Path,
+        store_call: Callable[[VaultStore], object],
+        expected: object,
+    ) -> None:
         from ..store import VaultStore
 
         store = VaultStore(tmp_path)
@@ -208,7 +220,7 @@ class TestStoreLocalClientSerialization:
             def worker() -> None:
                 started.set()
                 try:
-                    result = store_call(store)
+                    result: object = store_call(store)
                     assert result == expected
                 except BaseException as exc:  # pragma: no cover - reported below
                     errors.append(exc)
@@ -234,7 +246,7 @@ class TestStoreLocalClientSerialization:
                 store._client_lock.release()
             store.close()
 
-    def test_vault_hybrid_search_waits_for_store_lock(self, tmp_path):
+    def test_vault_hybrid_search_waits_for_store_lock(self, tmp_path: Path) -> None:
         from ..store import EMBEDDING_DIM
 
         self._assert_call_waits_for_store_lock(
@@ -247,7 +259,7 @@ class TestStoreLocalClientSerialization:
             [],
         )
 
-    def test_codebase_hybrid_search_waits_for_store_lock(self, tmp_path):
+    def test_codebase_hybrid_search_waits_for_store_lock(self, tmp_path: Path) -> None:
         from ..store import EMBEDDING_DIM
 
         self._assert_call_waits_for_store_lock(
@@ -260,7 +272,7 @@ class TestStoreLocalClientSerialization:
             [],
         )
 
-    def test_count_waits_for_store_lock(self, tmp_path):
+    def test_count_waits_for_store_lock(self, tmp_path: Path) -> None:
         self._assert_call_waits_for_store_lock(
             tmp_path,
             lambda store: store.count(),
@@ -273,7 +285,7 @@ class TestStoreLocalClientSerialization:
         vector[active_index % dim] = 1.0
         return vector
 
-    def _seed_searchable_points(self, store, dim: int) -> None:
+    def _seed_searchable_points(self, store: VaultStore, dim: int) -> None:
         from ..store import CodeChunk, VaultDocument
 
         store.upsert_documents(
@@ -317,7 +329,9 @@ class TestStoreLocalClientSerialization:
             ],
         )
 
-    def test_parallel_hybrid_searches_complete_without_qdrant_errors(self, tmp_path):
+    def test_parallel_hybrid_searches_complete_without_qdrant_errors(
+        self, tmp_path: Path
+    ) -> None:
         from ..store import VaultStore
 
         dim = 8
@@ -402,8 +416,8 @@ class TestQdrantServerMode:
     """Integration/unit tests for Qdrant Server Mode and Quantization Config."""
 
     def test_server_mode_bypasses_file_lock_and_configures_properties(
-        self, tmp_path, monkeypatch
-    ):
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When VAULTSPEC_RAG_QDRANT_URL is set, VaultStore bypasses FileLock."""
         from ..config import reset_config
         from ..store import VaultStore
@@ -430,7 +444,9 @@ class TestQdrantServerMode:
         finally:
             reset_config()
 
-    def test_quantization_configs_built_correctly(self, tmp_path, monkeypatch):
+    def test_quantization_configs_built_correctly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Verify qdrant_quantization builds correct models configs."""
         from ..config import reset_config
         from ..store import VaultStore
@@ -460,7 +476,7 @@ class TestQdrantServerMode:
 class TestDropTable:
     """Real-Qdrant tests for drop_table / drop_code_table — no embeddings required."""
 
-    def test_drop_table_removes_vault_collection(self, tmp_path):
+    def test_drop_table_removes_vault_collection(self, tmp_path: Path) -> None:
         """drop_table() should delete the vault_docs collection and reset state."""
         from ..store import VaultStore
 
@@ -476,7 +492,7 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_table_idempotent_on_missing_collection(self, tmp_path):
+    def test_drop_table_idempotent_on_missing_collection(self, tmp_path: Path) -> None:
         """drop_table() on a non-existent collection must not raise."""
         from ..store import VaultStore
 
@@ -487,7 +503,7 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_table_then_recreate_works(self, tmp_path):
+    def test_drop_table_then_recreate_works(self, tmp_path: Path) -> None:
         """After drop_table(), ensure_table() should recreate a fresh collection."""
         from ..store import VaultStore
 
@@ -505,7 +521,7 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_code_table_removes_codebase_collection(self, tmp_path):
+    def test_drop_code_table_removes_codebase_collection(self, tmp_path: Path) -> None:
         """drop_code_table() deletes the codebase_docs collection and resets state."""
         from ..store import VaultStore
 
@@ -521,7 +537,9 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_code_table_idempotent_on_missing_collection(self, tmp_path):
+    def test_drop_code_table_idempotent_on_missing_collection(
+        self, tmp_path: Path
+    ) -> None:
         """drop_code_table() on a non-existent collection must not raise."""
         from ..store import VaultStore
 
@@ -532,7 +550,7 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_code_table_then_recreate_works(self, tmp_path):
+    def test_drop_code_table_then_recreate_works(self, tmp_path: Path) -> None:
         """After drop_code_table(), ensure_code_table() recreates a fresh collection."""
         from ..store import VaultStore
 

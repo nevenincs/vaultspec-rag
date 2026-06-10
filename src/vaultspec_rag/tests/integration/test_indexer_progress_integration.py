@@ -7,12 +7,20 @@ synthetic vault and codebase fixtures on the real GPU. No mocks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
 
 from ...indexer import CodebaseIndexer, VaultIndexer
 from ...store import VaultStore
 from ..corpus import build_synthetic_vault
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pytest import TempPathFactory
+
+    from ...embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.integration]
 
@@ -84,8 +92,12 @@ def _assert_phase_balanced(events: list[ProgressEvent]) -> None:
 
 class TestVaultIndexerProgress:
     @pytest.mark.timeout(300)
-    def test_full_index_emits_expected_phases(self, embedding_model, tmp_path_factory):
-        root = tmp_path_factory.mktemp("progress-vault")
+    def test_full_index_emits_expected_phases(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
+    ) -> None:
+        root: Path = tmp_path_factory.mktemp("progress-vault")
         build_synthetic_vault(root, n_docs=8, seed=101)
 
         store = VaultStore(root)
@@ -132,8 +144,12 @@ class TestVaultIndexerProgress:
 
 class TestCodebaseIndexerProgress:
     @pytest.mark.timeout(300)
-    def test_full_index_emits_expected_phases(self, embedding_model, tmp_path_factory):
-        root = tmp_path_factory.mktemp("progress-code")
+    def test_full_index_emits_expected_phases(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
+    ) -> None:
+        root: Path = tmp_path_factory.mktemp("progress-code")
         build_synthetic_vault(root, n_docs=4, seed=202)
 
         src = root / "pkg"
