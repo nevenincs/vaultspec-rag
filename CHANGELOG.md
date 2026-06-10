@@ -1,43 +1,45 @@
 # Changelog
 
-## [0.2.18](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.17...vaultspec-rag-v0.2.18) (2026-06-10)
-
+## [0.2.19](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.18...vaultspec-rag-v0.2.19) (2026-06-10)
 
 ### Bug Fixes
 
-* **cli:** report stopped, not orphaned, when no service.json is present ([83033be](https://github.com/wgergely/vaultspec-rag/commit/83033bef15c5bda41c1aa4dcf54aebb045bc6320))
+- **packaging:** declare mcp as a core dependency (#182) ([4e4af36](https://github.com/wgergely/vaultspec-rag/commit/4e4af369105fd0ef1ba32e75767ce64951783ff1))
+
+## [0.2.18](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.17...vaultspec-rag-v0.2.18) (2026-06-10)
+
+### Bug Fixes
+
+- **cli:** report stopped, not orphaned, when no service.json is present ([83033be](https://github.com/wgergely/vaultspec-rag/commit/83033bef15c5bda41c1aa4dcf54aebb045bc6320))
 
 ## [0.2.17](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.16...vaultspec-rag-v0.2.17) (2026-06-10)
 
-
 ### Features
 
-* **arch:** CLI/MCP Decoupling, Qdrant Server Mode, and Stress Testing ([438faf2](https://github.com/wgergely/vaultspec-rag/commit/438faf2e900c5e91a386dc5216ca81d5df521a76))
-* **config:** add sparse_enabled toggle ([10ba167](https://github.com/wgergely/vaultspec-rag/commit/10ba167da216caaaf8d7a29b61f507fe88583903))
-* **mcp:** rewrite MCP admin tools to consume REST daemon endpoints ([377b780](https://github.com/wgergely/vaultspec-rag/commit/377b78046ec1ed50877e3a15c0ce8602273fe074))
-* **search:** skip SPLADE when sparse_enabled is false ([e33cb78](https://github.com/wgergely/vaultspec-rag/commit/e33cb7831bb411a7db35c3c1d14a6d4c858f8d75))
-* **server:** add /vault-document REST route (P05.S17) ([cf249af](https://github.com/wgergely/vaultspec-rag/commit/cf249af4a732e12d197c59421756da2519552ea6))
-* **W01:** runtime correctness — venv interpreter, guard, gated model, bg load ([dbebd62](https://github.com/wgergely/vaultspec-rag/commit/dbebd628b96c2d8abdeb47b03fd1f146b1f49580))
-* **W02:** service lifecycle + management hardening ([a2984e7](https://github.com/wgergely/vaultspec-rag/commit/a2984e7bc52c02b135ddf6f34a54e05e98e63121))
-* **W03:** CLI flatten, help cleanup, indexing docs, testimonial tests ([b7e82c6](https://github.com/wgergely/vaultspec-rag/commit/b7e82c6aa85fa4673a385151b962f632e71b744a))
-
+- **arch:** CLI/MCP Decoupling, Qdrant Server Mode, and Stress Testing ([438faf2](https://github.com/wgergely/vaultspec-rag/commit/438faf2e900c5e91a386dc5216ca81d5df521a76))
+- **config:** add sparse_enabled toggle ([10ba167](https://github.com/wgergely/vaultspec-rag/commit/10ba167da216caaaf8d7a29b61f507fe88583903))
+- **mcp:** rewrite MCP admin tools to consume REST daemon endpoints ([377b780](https://github.com/wgergely/vaultspec-rag/commit/377b78046ec1ed50877e3a15c0ce8602273fe074))
+- **search:** skip SPLADE when sparse_enabled is false ([e33cb78](https://github.com/wgergely/vaultspec-rag/commit/e33cb7831bb411a7db35c3c1d14a6d4c858f8d75))
+- **server:** add /vault-document REST route (P05.S17) ([cf249af](https://github.com/wgergely/vaultspec-rag/commit/cf249af4a732e12d197c59421756da2519552ea6))
+- **W01:** runtime correctness — venv interpreter, guard, gated model, bg load ([dbebd62](https://github.com/wgergely/vaultspec-rag/commit/dbebd628b96c2d8abdeb47b03fd1f146b1f49580))
+- **W02:** service lifecycle + management hardening ([a2984e7](https://github.com/wgergely/vaultspec-rag/commit/a2984e7bc52c02b135ddf6f34a54e05e98e63121))
+- **W03:** CLI flatten, help cleanup, indexing docs, testimonial tests ([b7e82c6](https://github.com/wgergely/vaultspec-rag/commit/b7e82c6aa85fa4673a385151b962f632e71b744a))
 
 ### Bug Fixes
 
-* address comprehensive code review findings ([f57b67b](https://github.com/wgergely/vaultspec-rag/commit/f57b67bed140c124c34d038bf4a64c205793e43f))
-* **mcp:** restore decoupled admin routes ([335e9a9](https://github.com/wgergely/vaultspec-rag/commit/335e9a9c2babd0bf2786a2aecee9d4bb1b1c9ee6))
-* **search:** route directly to dense queries when sparse vector is disabled ([7913e16](https://github.com/wgergely/vaultspec-rag/commit/7913e160e8133c8bb15a6ee28c081839940e46cb))
-* **server:** use streamable_http_app instead of get_starlette_app in _main.py ([e4ce681](https://github.com/wgergely/vaultspec-rag/commit/e4ce681b88aab849a3717d8698fb07a23fe5f900))
-* **ty:** bypass fastmcp get_starlette_app type hint missing and harmonize test suite ([2c79d74](https://github.com/wgergely/vaultspec-rag/commit/2c79d74bce6339c04656feaa6c3deb55e6a1aeda))
-* **W03:** flatten follow-ups — builtin rule, app help wording, stale test ([fc7b0bb](https://github.com/wgergely/vaultspec-rag/commit/fc7b0bbd2a753a0585dea3562e76833862735128))
-* **W04:** address code-review nits ([f997e92](https://github.com/wgergely/vaultspec-rag/commit/f997e9276c465819a0a6deeda296408642ccf492))
+- address comprehensive code review findings ([f57b67b](https://github.com/wgergely/vaultspec-rag/commit/f57b67bed140c124c34d038bf4a64c205793e43f))
+- **mcp:** restore decoupled admin routes ([335e9a9](https://github.com/wgergely/vaultspec-rag/commit/335e9a9c2babd0bf2786a2aecee9d4bb1b1c9ee6))
+- **search:** route directly to dense queries when sparse vector is disabled ([7913e16](https://github.com/wgergely/vaultspec-rag/commit/7913e160e8133c8bb15a6ee28c081839940e46cb))
+- **server:** use streamable_http_app instead of get_starlette_app in \_main.py ([e4ce681](https://github.com/wgergely/vaultspec-rag/commit/e4ce681b88aab849a3717d8698fb07a23fe5f900))
+- **ty:** bypass fastmcp get_starlette_app type hint missing and harmonize test suite ([2c79d74](https://github.com/wgergely/vaultspec-rag/commit/2c79d74bce6339c04656feaa6c3deb55e6a1aeda))
+- **W03:** flatten follow-ups — builtin rule, app help wording, stale test ([fc7b0bb](https://github.com/wgergely/vaultspec-rag/commit/fc7b0bbd2a753a0585dea3562e76833862735128))
+- **W04:** address code-review nits ([f997e92](https://github.com/wgergely/vaultspec-rag/commit/f997e9276c465819a0a6deeda296408642ccf492))
 
 ## [0.2.16](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.15...vaultspec-rag-v0.2.16) (2026-06-05)
 
-
 ### Features
 
-* **arch:** decouple CLI/MCP and standardize into backend facade APIs ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([a87987b](https://github.com/wgergely/vaultspec-rag/commit/a87987b065cfa23b23254a095c6103879ab9ce24))
+- **arch:** decouple CLI/MCP and standardize into backend facade APIs ([#160](https://github.com/wgergely/vaultspec-rag/issues/160), [#162](https://github.com/wgergely/vaultspec-rag/issues/162)) ([a87987b](https://github.com/wgergely/vaultspec-rag/commit/a87987b065cfa23b23254a095c6103879ab9ce24))
 
 ## [0.2.15](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.14...vaultspec-rag-v0.2.15) (2026-06-04)
 
