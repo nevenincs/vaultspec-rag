@@ -77,6 +77,20 @@ jobs:
       - name: Markdown
         run: just dev lint markdown
 
+      # Baseline-calibrated gate: thresholds sit at today's worst offender
+      # (cognitive<=20, xenon absolute/modules<=C, average<=A) so this stays
+      # green until the remediation campaign ratchets them down.
+      - name: Complexity gate
+        run: just dev lint complexity
+
+      # Report-only signals (always exit 0): module LOC and strict-mode type
+      # errors are baseline data for the remediation campaign, not gates.
+      - name: Module length (report-only)
+        run: just dev lint module-length
+
+      - name: Strict types (report-only)
+        run: just dev lint type-strict
+
   tests:
     name: Tests
     runs-on: ubuntu-latest

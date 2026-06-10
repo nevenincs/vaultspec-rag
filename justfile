@@ -1,8 +1,9 @@
 set positional-arguments := false
-set shell := ["pwsh.exe", "-NoProfile", "-Command"]
+set shell := ["pwsh", "-NoProfile", "-Command"]
+set windows-shell := ["pwsh.exe", "-NoProfile", "-Command"]
 
 export VIRTUAL_ENV := justfile_directory() + "/.venv"
-export PATH := VIRTUAL_ENV + "/Scripts;" + env_var('PATH')
+export PATH := if os_family() == "windows" { VIRTUAL_ENV + "/Scripts;" + env_var('PATH') } else { VIRTUAL_ENV + "/bin:" + env_var('PATH') }
 
 default:
   @just --list
@@ -36,16 +37,21 @@ prod *args='':
 #   test      pytest
 #   build     uv build
 #   precommit pre-commit hook management (install, upgrade, run)
+#   health    aggregate code-health report (complexity, LOC, MI, strict types)
 #
 # Examples:
 #   just dev deps sync
 #   just dev lint
 #   just dev lint type
+#   just dev lint complexity
+#   just dev lint type-strict
+#   just dev lint module-length
 #   just dev fix
 #   just dev fix python
 #   just dev audit deps
 #   just dev test python
 #   just dev build python
+#   just dev health
 # ===========================================================================
 
 # dev - development toolchain (linters, formatters, tests, builds)
@@ -58,9 +64,10 @@ dev target *args='':
     "test" { just _dev-test {{args}} ; break } \
     "build" { just _dev-build {{args}} ; break } \
     "precommit" { just _dev-precommit {{args}} ; break } \
+    "health" { just _dev-health {{args}} ; break } \
     default { \
       Write-Host "unknown dev target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: deps lint fix audit test build precommit" -ForegroundColor Red ; \
+      Write-Host "  targets: deps lint fix audit test build precommit health" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
@@ -99,7 +106,7 @@ _dev-deps target='sync':
 
 _dev-lint target='all':
   switch ("{{target}}") { \
-    "python" { uv run ruff check src ; break } \
+    "python" { uv run ruff check src tools ; break } \
     "type" { uv run python -m ty check src/vaultspec_rag ; break } \
     "links" { \
       if (Get-Command lychee -ErrorAction SilentlyContinue) { \
@@ -141,7 +148,18 @@ _dev-lint target='all':
       break \
     } \
     "complexity" { \
-      uv run flake8 --select=CCR --max-cognitive-complexity=15 src ; \
+      uv run python tools/complexity_gate.py ; \
+      break \
+    } \
+    "type-strict" { \
+      uv run basedpyright ; \
+      if ($LASTEXITCODE -ne 0) { \
+        Write-Host "type-strict is REPORT-ONLY until the remediation campaign (ty remains the gate)" -ForegroundColor Yellow \
+      } ; \
+      exit 0 \
+    } \
+    "module-length" { \
+      uv run python tools/module_length.py ; \
       break \
     } \
     "absolute-imports" { \
@@ -168,11 +186,15 @@ _dev-lint target='all':
       just _dev-lint absolute-imports ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint complexity ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      just _dev-lint module-length ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      just _dev-lint type-strict ; \
       break \
     } \
     default { \
       Write-Host "unknown dev lint target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python type links toml markdown workflow complexity absolute-imports all" -ForegroundColor Red ; \
+      Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length absolute-imports all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
@@ -180,9 +202,9 @@ _dev-lint target='all':
 _dev-fix target='all':
   switch ("{{target}}") { \
     "python" { \
-      uv run ruff format src ; \
+      uv run ruff format src tools ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      uv run ruff check --fix src ; \
+      uv run ruff check --fix src tools ; \
       break \
     } \
     "toml" { \
@@ -253,6 +275,12 @@ _dev-build target:
       exit 1 \
     } \
   }
+
+# Aggregate code-health report: worst offenders per dimension (cyclomatic,
+# cognitive, function limits, module LOC, maintainability, strict types).
+# Measurement only — always exits 0. Pass --fast to skip basedpyright.
+_dev-health *args='':
+  uv run python tools/health_report.py {{args}}
 
 _dev-precommit target='run':
   switch ("{{target}}") { \

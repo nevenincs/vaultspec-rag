@@ -63,7 +63,6 @@ version = "0.2.16"
   Repository = "https://github.com/wgergely/vaultspec-rag"
 
   [project.optional-dependencies]
-  mcp = ["mcp>=1.26.0"]
   dev = [
     "mcp>=1.26.0",
     "pytest>=9.0.3",
@@ -80,10 +79,12 @@ version = "0.2.16"
     "mdformat-gfm>=1.0.0",
     "pymarkdownlnt>=0.9.0",
   ]
+  mcp = ["mcp>=1.26.0"]
 
 [dependency-groups]
 dev = [
   "mcp>=1.26.0",
+  "basedpyright>=1.39",
   "flake8>=7.3.0",
   "flake8-cognitive-complexity>=0.1.0",
   "identify>=2.0.0",
@@ -166,27 +167,49 @@ line-length = 88
 target-version = "py313"
 
   [tool.ruff.lint]
+  # NOTE: preview is deliberately OFF here — enabling it globally changes the
+  # behavior of stable rules (e.g. F401 submodule tracking) and surfaces
+  # findings in src/ owned by the remediation campaign. The preview-only
+  # nesting-depth rule (PLR1702) is gated separately via
+  # tools/complexity_gate.py with a scoped `--select PLR1702 --preview` run.
   ignore = ["TID252"]
   select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "ARG", # flake8-unused-arguments
-    "SIM", # flake8-simplify
-    "TCH", # flake8-type-checking
-    "RUF", # ruff-specific rules
-    "N",   # pep8-naming
-    "TID", # flake8-tidy-imports
-    "C90", # mccabe complexity
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # flake8-bugbear
+    "C4",      # flake8-comprehensions
+    "UP",      # pyupgrade
+    "ARG",     # flake8-unused-arguments
+    "SIM",     # flake8-simplify
+    "TCH",     # flake8-type-checking
+    "RUF",     # ruff-specific rules
+    "N",       # pep8-naming
+    "TID",     # flake8-tidy-imports
+    "C90",     # mccabe complexity
+    "PLR0911", # too-many-return-statements
+    "PLR0912", # too-many-branches
+    "PLR0913", # too-many-arguments
+    "PLR0915", # too-many-statements
   ]
   unfixable = ["B"]
 
     [tool.ruff.lint.mccabe]
     max-complexity = 15
+
+    # BASELINE-CALIBRATED gates (captured 2026-06-10): each threshold sits at
+    # the current worst offender so the gate is green today and can only be
+    # ratcheted DOWN by the remediation campaign. Never raise these.
+    # Ruff defaults: max-args=5, max-returns=6, max-branches=12,
+    # max-statements=50, max-nested-blocks=5.
+    # max-nested-blocks feeds PLR1702 (preview-only), which is enforced by
+    # tools/complexity_gate.py via `ruff check --select PLR1702 --preview`.
+    [tool.ruff.lint.pylint]
+    max-args = 23         # baseline worst: 23 (44 functions exceed default 5)
+    max-nested-blocks = 6 # baseline worst: 6 (indexer/_streaming.py)
+    max-returns = 10      # baseline worst: 10 (8 functions exceed default 6)
+    max-statements = 58   # baseline worst: 58 (3 functions exceed default 50)
 
 
     [tool.ruff.lint.isort]
@@ -198,3 +221,19 @@ target-version = "py313"
 [tool.ty.environment]
 python-version = "3.13"
 root = [".", "src"]
+
+# Strict-mode type health REPORT (report-only until the remediation campaign;
+# `ty` stays the gating checker in pre-commit/CI). Run via
+# `just dev lint type-strict` or `just dev health`.
+[tool.basedpyright]
+include = ["src/vaultspec_rag"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+
+  # Tests legitimately reach into the private internals of the modules they
+  # exercise, so reportPrivateUsage is a trust-boundary false positive inside
+  # the test tree (fixing it by making internals public would damage the
+  # design). Every other strict rule stays ON for tests.
+  [[tool.basedpyright.executionEnvironments]]
+  root = "src/vaultspec_rag/tests"
+  reportPrivateUsage = false
