@@ -7,10 +7,7 @@ related:
   - '[[2026-06-01-module-split-adr]]'
 ---
 
-
-
 # `comprehensive-code-review` Code Review
-
 
 ## Execution Paths & Latency-001 | HIGH | Unnecessary loop blocking in Qdrant scrolls
 

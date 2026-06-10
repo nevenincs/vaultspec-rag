@@ -8,7 +8,7 @@ related:
   - '[[2026-06-09-sparse-search-latency-research]]'
 ---
 
-# `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `approved`)
+# `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `accepted`)
 
 > **Approval Granted**: The blocked status of this ADR was lifted following the successful implementation of the MCP vs. Server terminological deconflation (Issues #167, #168, #169). The CLI and MCP layers are now fully decoupled, satisfying the prerequisite for proceeding with latency optimizations.
 

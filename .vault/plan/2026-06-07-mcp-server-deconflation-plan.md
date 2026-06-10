@@ -9,7 +9,6 @@ related:
   - '[[2026-06-07-mcp-server-deconflation-research]]'
 ---
 
-
 # `mcp-server-deconflation` `MCP and Server Deconflation` plan
 
 ## Description
