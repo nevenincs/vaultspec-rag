@@ -171,7 +171,7 @@ class TestParseVaultMetadataUnit:
 
     def test_unicode_content_in_parser(self):
         """French accented chars should not crash parse_vault_metadata."""
-        from vaultspec_core.vaultcore import parse_vault_metadata
+        from vaultspec_core.vaultcore import parse_vault_metadata  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         french_content = (
             "# Chapitre 1 : La M\u00e9lancolie de Croustillant\n\n"
@@ -185,7 +185,7 @@ class TestParseVaultMetadataUnit:
 
     def test_feature_key_frontmatter_parsed(self):
         """Documents using 'feature:' key should not crash the parser."""
-        from vaultspec_core.vaultcore import parse_vault_metadata
+        from vaultspec_core.vaultcore import parse_vault_metadata  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         content = (
             "---\n"
@@ -203,7 +203,7 @@ class TestParseVaultMetadataUnit:
 
     def test_content_with_embedded_yaml_separators(self):
         """Internal --- should not be confused with frontmatter."""
-        from vaultspec_core.vaultcore import parse_vault_metadata
+        from vaultspec_core.vaultcore import parse_vault_metadata  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         content = (
             "# Some Research Doc\n\n"
@@ -219,7 +219,7 @@ class TestParseVaultMetadataUnit:
 
     def test_content_with_code_block_yaml_separators(self):
         """--- inside code blocks should not confuse the parser."""
-        from vaultspec_core.vaultcore import parse_vault_metadata
+        from vaultspec_core.vaultcore import parse_vault_metadata  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         content = (
             "---\n"

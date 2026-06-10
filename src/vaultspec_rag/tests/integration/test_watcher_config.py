@@ -42,7 +42,8 @@ def _restore_env(var: EnvVar, prev: str | None) -> None:
 
 
 @pytest.fixture
-def _clean_watchers() -> Iterator[None]:
+def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     reset_config()
     yield
     server._stop_all_watchers()

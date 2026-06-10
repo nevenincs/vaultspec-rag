@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -21,7 +22,7 @@ def test_list_projects_empty_registry() -> None:
 
 
 @pytest.mark.usefixtures("live_service")
-def test_evict_project_unknown_returns_not_found(tmp_path) -> None:
+def test_evict_project_unknown_returns_not_found(tmp_path: Path) -> None:
     target = str(tmp_path / "never-seen")
     result = asyncio.run(evict_project(target))
     assert result == {"root": target, "evicted": False, "reason": "not_found"}

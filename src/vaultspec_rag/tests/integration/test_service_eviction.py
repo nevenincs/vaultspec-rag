@@ -26,6 +26,7 @@ from ._helpers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
     from pathlib import Path
 
 pytestmark = [pytest.mark.integration]
@@ -86,7 +87,7 @@ async def _call_tool(
         return {}
 
 
-def _run(coro) -> dict[str, Any]:
+def _run(coro: Coroutine[object, object, dict[str, Any]]) -> dict[str, Any]:
     return asyncio.run(coro)
 
 
@@ -259,6 +260,7 @@ def test_evict_busy_returns_busy(tmp_path: Path) -> None:
             worker.start()
             try:
                 saw_busy = False
+                result: dict[str, Any] = {}
                 for _ in range(20):
                     result = _run(
                         _call_tool(

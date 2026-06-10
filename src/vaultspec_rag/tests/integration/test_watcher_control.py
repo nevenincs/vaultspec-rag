@@ -27,13 +27,17 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration]
 
 
-def _set_env(var: EnvVar, value: str) -> str | None:
+def _set_env(  # pyright: ignore[reportUnusedFunction]
+    var: EnvVar, value: str
+) -> str | None:
     prev = os.environ.get(var.value)
     os.environ[var.value] = value
     return prev
 
 
-def _restore_env(var: EnvVar, prev: str | None) -> None:
+def _restore_env(  # pyright: ignore[reportUnusedFunction]
+    var: EnvVar, prev: str | None
+) -> None:
     if prev is None:
         os.environ.pop(var.value, None)
     else:
@@ -41,7 +45,8 @@ def _restore_env(var: EnvVar, prev: str | None) -> None:
 
 
 @pytest.fixture
-def _clean_watchers() -> Iterator[None]:
+def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     reset_config()
     yield
     server._stop_all_watchers()

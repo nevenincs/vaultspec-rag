@@ -153,10 +153,7 @@ _dev-lint target='all':
     } \
     "type-strict" { \
       uv run basedpyright ; \
-      if ($LASTEXITCODE -ne 0) { \
-        Write-Host "type-strict is REPORT-ONLY until the remediation campaign (ty remains the gate)" -ForegroundColor Yellow \
-      } ; \
-      exit 0 \
+      break \
     } \
     "module-length" { \
       uv run python tools/module_length.py ; \

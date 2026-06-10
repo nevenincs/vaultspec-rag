@@ -8,11 +8,16 @@ torch/CUDA failure and prints the matching message before exiting.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import typer
 
 import vaultspec_rag.cli as _cli
 
 from ._core import logger
+
+if TYPE_CHECKING:
+    from typing import NoReturn
 
 __all__ = [
     "_cpu_only_message",
@@ -94,7 +99,7 @@ def _no_gpu_message() -> str:
     )
 
 
-def _handle_gpu_error(exc: Exception) -> None:
+def _handle_gpu_error(exc: Exception) -> NoReturn:
     """Print an actionable message for torch / CUDA failures and exit.
 
     Distinguishes three failure states so the remediation hint matches

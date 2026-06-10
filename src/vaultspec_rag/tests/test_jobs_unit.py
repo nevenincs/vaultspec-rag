@@ -34,7 +34,9 @@ pytestmark = [pytest.mark.unit]
 # ---------------------------------------------------------------------------
 
 
-def _function_node_named(tree: ast.Module, name: str) -> ast.FunctionDef:
+def _function_node_named(  # pyright: ignore[reportUnusedFunction]
+    tree: ast.Module, name: str
+) -> ast.FunctionDef:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
@@ -51,6 +53,8 @@ def _call_names_in_order(func_node: ast.FunctionDef) -> list[str]:
                     names.append(attr)
                 case ast.Name(id=name):
                     names.append(name)
+                case _:
+                    pass
     return names
 
 

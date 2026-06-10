@@ -109,7 +109,12 @@ def rag_components(
     components = _index_corpus(synthetic_vault.root, embedding_model)
 
     yield RagComponentsWithManifest(
-        **components,  # type: ignore[misc]
+        model=components["model"],
+        store=components["store"],
+        indexer=components["indexer"],
+        code_indexer=components["code_indexer"],
+        index_result=components["index_result"],
+        root=components["root"],
         manifest=synthetic_vault,
     )
 
@@ -133,7 +138,12 @@ def rag_components_full(
     components = _index_corpus(root, embedding_model)
 
     yield RagComponentsWithManifest(
-        **components,  # type: ignore[misc]
+        model=components["model"],
+        store=components["store"],
+        indexer=components["indexer"],
+        code_indexer=components["code_indexer"],
+        index_result=components["index_result"],
+        root=components["root"],
         manifest=manifest,
     )
 

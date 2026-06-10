@@ -14,7 +14,8 @@ from ..config import EnvVar, get_config, reset_config
 
 
 @pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:
+def _reset_config_around_each_test(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     reset_config()
     yield
     reset_config()

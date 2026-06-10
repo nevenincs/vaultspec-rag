@@ -67,7 +67,7 @@ class TestGraphCacheGet:
         result = cache.get(tmp_path)
         # VaultGraph succeeds on a dir with no .vault/ - returns a graph
         # with zero nodes rather than raising.
-        from vaultspec_core.graph import VaultGraph
+        from vaultspec_core.graph import VaultGraph  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         assert isinstance(result, VaultGraph)
 
@@ -158,7 +158,7 @@ class TestGraphCacheFailureRecovery:
         result = cache.get(root)
         assert result is not None
         # Verify it actually built a graph (not just returned stale None)
-        from vaultspec_core.graph import VaultGraph
+        from vaultspec_core.graph import VaultGraph  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         assert isinstance(result, VaultGraph)
 
@@ -185,7 +185,7 @@ class TestGraphCacheConcurrentInvalidate:
     pytestmark: ClassVar = [pytest.mark.unit]
 
     def test_invalidate_during_concurrent_get(self, tmp_path: Path):
-        from vaultspec_core.graph import VaultGraph
+        from vaultspec_core.graph import VaultGraph  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         root = _make_vault_dir(tmp_path)
         gc = GraphCache(ttl_seconds=300.0)
@@ -218,7 +218,7 @@ class TestVaultSearcherGraphProvider:
     pytestmark: ClassVar = [pytest.mark.unit]
 
     def test_get_graph_uses_provider(self, tmp_path: Path):
-        from vaultspec_core.graph import VaultGraph
+        from vaultspec_core.graph import VaultGraph  # noqa: I001  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
 
         root = _make_vault_dir(tmp_path)
         graph_instance = VaultGraph(root)

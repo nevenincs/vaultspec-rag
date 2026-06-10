@@ -222,9 +222,9 @@ target-version = "py313"
 python-version = "3.13"
 root = [".", "src"]
 
-# Strict-mode type health REPORT (report-only until the remediation campaign;
-# `ty` stays the gating checker in pre-commit/CI). Run via
-# `just dev lint type-strict` or `just dev health`.
+# Strict-mode type checking — now GATING (the burndown reached zero on
+# 2026-06-10). `ty` remains the fast pre-commit gate; basedpyright gates in CI
+# and `just dev lint all`. Run via `just dev lint type-strict` or `just dev health`.
 [tool.basedpyright]
 include = ["src/vaultspec_rag"]
 pythonVersion = "3.13"

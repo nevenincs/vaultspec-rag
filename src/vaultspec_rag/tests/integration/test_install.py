@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ _RAG_RULE_REL = Path(".vaultspec") / "rules" / "rules" / "vaultspec-rag.builtin.
 _RAG_MCP_REL = Path(".vaultspec") / "rules" / "mcps" / "vaultspec-rag.builtin.json"
 
 
-def _read_mcp_json(target: Path) -> dict:
+def _read_mcp_json(target: Path) -> dict[str, Any]:
     return json.loads((target / ".mcp.json").read_text(encoding="utf-8"))
 
 

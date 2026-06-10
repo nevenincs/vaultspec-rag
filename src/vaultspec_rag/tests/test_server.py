@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 if TYPE_CHECKING:
+    import logging
     from collections.abc import Coroutine
     from pathlib import Path
 
@@ -715,8 +716,8 @@ class TestHealthHandler:
             routes=[Route("/health", health_handler)],
             lifespan=_empty_lifespan,
         )
-        client = TestClient(app)
-        resp = cast("httpx.Response", client.get("/health"))
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        resp: httpx.Response = client.get("/health")
         assert resp.status_code == 200
         data: dict[str, Any] = cast("dict[str, Any]", resp.json())
         assert "status" in data
@@ -754,8 +755,8 @@ class TestHealthHandler:
                 routes=[Route("/health", health_handler)],
                 lifespan=_empty_lifespan,
             )
-            client = TestClient(app)
-            resp = cast("httpx.Response", client.get("/health"))
+            client: httpx.Client = cast("httpx.Client", TestClient(app))
+            resp: httpx.Response = client.get("/health")
             data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["status"] == "error"
             assert data["models_loaded"] is False
@@ -777,10 +778,8 @@ class TestHealthInfoReduction:
             routes=[Route("/health", health_handler)],
             lifespan=_empty_lifespan,
         )
-        client = TestClient(app)
-        data: dict[str, Any] = cast(
-            "dict[str, Any]", cast("httpx.Response", client.get("/health")).json()
-        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
         assert "projects" not in data
         assert "project_count" in data
         assert isinstance(data["project_count"], int)
@@ -795,10 +794,8 @@ class TestHealthInfoReduction:
             routes=[Route("/health", health_handler)],
             lifespan=_empty_lifespan,
         )
-        client = TestClient(app)
-        data: dict[str, Any] = cast(
-            "dict[str, Any]", cast("httpx.Response", client.get("/health")).json()
-        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
         assert "gpu_name" not in data
 
     def test_index_status_no_gpu_name(self):
@@ -1001,24 +998,28 @@ class TestDaemonLifecycleHelpers:
 
     def test_lifecycle_log_emits_warning_with_structured_format(
         self,
-        caplog,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from ..server import _lifecycle_log
 
         with caplog.at_level("WARNING", logger="vaultspec_rag.server"):
             _lifecycle_log("startup", pid=42, port=8766)
 
-        records = [r for r in caplog.records if r.name == "vaultspec_rag.server"]
+        records: list[logging.LogRecord] = [
+            r for r in caplog.records if r.name == "vaultspec_rag.server"
+        ]
         assert records, "lifecycle log did not surface on the expected logger"
-        rec = records[-1]
+        rec: logging.LogRecord = records[-1]
         assert rec.levelname == "WARNING"
-        rendered = rec.getMessage()
+        rendered: str = rec.getMessage()
         assert "service.lifecycle" in rendered
         assert "event=startup" in rendered
         assert "pid=42" in rendered
         assert "port=8766" in rendered
 
-    def test_heartbeat_tick_sync_no_status_file(self, tmp_path, monkeypatch) -> None:
+    def test_heartbeat_tick_sync_no_status_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Missing service.json → no-op (no exception, no file created)."""
         from .. import server
 
@@ -1033,15 +1034,15 @@ class TestDaemonLifecycleHelpers:
 
     def test_heartbeat_tick_sync_writes_last_heartbeat(
         self,
-        tmp_path,
-        monkeypatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Existing service.json gets last_heartbeat merged in atomically."""
         from datetime import UTC, datetime
 
         from .. import server
 
-        sf = tmp_path / "service.json"
+        sf: Path = tmp_path / "service.json"
         sf.write_text(
             json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
             encoding="utf-8",
@@ -1050,21 +1051,21 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync()
 
-        data = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["pid"] == 1
         assert data["port"] == 2
         assert data["started_at"] == "x"
         assert "last_heartbeat" in data
         # Parses as a valid ISO-8601 timestamp.
-        ts = datetime.fromisoformat(data["last_heartbeat"])
+        ts = datetime.fromisoformat(cast("str", data["last_heartbeat"]))
         assert ts.tzinfo is not None
         delta = (datetime.now(UTC) - ts).total_seconds()
         assert -1 < delta < 5
 
     def test_heartbeat_tick_sync_merges_service_token(
         self,
-        tmp_path,
-        monkeypatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Non-empty _SERVICE_TOKEN gets written into the heartbeat.
 
@@ -1074,7 +1075,7 @@ class TestDaemonLifecycleHelpers:
         """
         from .. import server
 
-        sf = tmp_path / "service.json"
+        sf: Path = tmp_path / "service.json"
         sf.write_text(
             json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
             encoding="utf-8",
@@ -1084,18 +1085,18 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync()
 
-        data = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["service_token"] == "deadbeef" * 4
 
     def test_heartbeat_tick_sync_skips_empty_token(
         self,
-        tmp_path,
-        monkeypatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Empty _SERVICE_TOKEN must not overwrite an existing token."""
         from .. import server
 
-        sf = tmp_path / "service.json"
+        sf: Path = tmp_path / "service.json"
         # Simulate a service.json that already has a token (e.g.
         # written by a previous tick that fired before this guard
         # check was introduced).
@@ -1115,14 +1116,14 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync()
 
-        data = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
         # Token preserved - empty token guard prevents the overwrite.
         assert data["service_token"] == "previous-token"
 
     def test_unlink_status_file_silently_missing_is_noop(
         self,
-        tmp_path,
-        monkeypatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Calling cleanup with no file does not raise."""
         from .. import server
@@ -1136,14 +1137,14 @@ class TestDaemonLifecycleHelpers:
 
     def test_record_shutdown_is_idempotent(
         self,
-        tmp_path,
-        monkeypatch,
-        caplog,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """First call wins; subsequent calls do not log or unlink twice."""
         from .. import server
 
-        sf = tmp_path / "service.json"
+        sf: Path = tmp_path / "service.json"
         sf.write_text(json.dumps({"pid": 1, "port": 2}), encoding="utf-8")
         monkeypatch.setattr(server, "_status_file_path", lambda: sf)
         # Reset the module-level guard so this test is isolated.
@@ -1154,13 +1155,13 @@ class TestDaemonLifecycleHelpers:
             assert not sf.exists()
             server._record_shutdown("test-second")
 
-        first = [
+        first: list[logging.LogRecord] = [
             r
             for r in caplog.records
             if r.name == "vaultspec_rag.server"
             and "reason=test-first" in r.getMessage()
         ]
-        second = [
+        second: list[logging.LogRecord] = [
             r
             for r in caplog.records
             if r.name == "vaultspec_rag.server"
@@ -1266,14 +1267,16 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client = TestClient(app, raise_server_exceptions=False)
-            resp = client.post(
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.post(
                 "/search",
                 json={"query": "hello"},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data = resp.json()
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
             assert "project_root" in data["message"]
@@ -1292,14 +1295,16 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client = TestClient(app, raise_server_exceptions=False)
-            resp = client.post(
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.post(
                 "/benchmark",
                 json={},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data = resp.json()
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
             assert "project_root" in data["message"]
@@ -1318,14 +1323,16 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client = TestClient(app, raise_server_exceptions=False)
-            resp = client.post(
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.post(
                 "/reindex",
                 json={"type": "vault"},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data = resp.json()
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
             assert "project_root" in data["message"]
@@ -1344,13 +1351,15 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client = TestClient(app, raise_server_exceptions=False)
-            resp = client.get(
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.get(
                 "/service-state",
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data = resp.json()
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
             assert "project_root" in data["message"]
@@ -1369,14 +1378,16 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client = TestClient(app, raise_server_exceptions=False)
-            resp = client.post(
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.post(
                 "/code-file",
                 json={"path": "src/main.py"},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data = resp.json()
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
             assert "project_root" in data["message"]
@@ -1395,14 +1406,16 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client = TestClient(app, raise_server_exceptions=False)
-            resp = client.post(
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.post(
                 "/vault-document",
                 json={"doc_id": "adr/overview"},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data = resp.json()
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
             assert "project_root" in data["message"]

@@ -26,6 +26,7 @@ from ._service_status import _default_service_port
 
 if TYPE_CHECKING:
     import pathlib
+    from typing import NoReturn
 
     from ..search import SearchResult
 
@@ -86,7 +87,7 @@ def _handle_service_results(
 
 def _handle_vaultstore_locked_error(
     exc: VaultStoreLockedError, json_mode: bool
-) -> None:
+) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
             "search",

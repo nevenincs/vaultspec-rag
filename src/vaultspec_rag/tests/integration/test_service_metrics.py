@@ -35,16 +35,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-@pytest.fixture  # pyright: ignore[reportUnusedFunction]
-def _clean_metrics() -> Iterator[None]:
+@pytest.fixture
+def _clean_metrics(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     """Zero the metrics holder before and after each test."""
     server.reset_metrics()
     yield
     server.reset_metrics()
 
 
-@pytest.fixture  # pyright: ignore[reportUnusedFunction]
-def _clean_watchers() -> Iterator[None]:
+@pytest.fixture
+def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     """Stop any watcher the search/reindex paths started as a side effect."""
     yield
     server._stop_all_watchers()
@@ -140,7 +142,7 @@ async def test_search_vault_increments_counter(
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
-    job_id: str = response["job_id"]
+    job_id: str = cast("str", response["job_id"])
     for _ in range(50):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
@@ -178,7 +180,7 @@ async def test_reindex_vault_increments_counter(
 
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
-    job_id: str = response["job_id"]
+    job_id: str = cast("str", response["job_id"])
     for _ in range(50):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
@@ -195,8 +197,10 @@ async def test_reindex_vault_increments_counter(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture  # pyright: ignore[reportUnusedFunction]
-def _routes_app(_clean_metrics: None) -> Iterator[tuple[TestClient, str]]:
+@pytest.fixture
+def _routes_app(  # pyright: ignore[reportUnusedFunction]
+    _clean_metrics: None,
+) -> Iterator[tuple[TestClient, str]]:
     """Build a real Starlette app from the read-only ROUTES.
 
     Sets a known ``_SERVICE_TOKEN`` on the package namespace (the route's
@@ -222,7 +226,7 @@ def test_metrics_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = cast("httpx.Response", client.get("/metrics"))
+    response = cast("httpx.Response", client.get("/metrics"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 401
     payload = response.json()
     assert payload["ok"] is False
@@ -235,7 +239,7 @@ def test_metrics_route_401_with_wrong_token(
     client, _token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/metrics", headers={"Authorization": "Bearer wrong"}),
+        client.get("/metrics", headers={"Authorization": "Bearer wrong"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 401
 
@@ -246,7 +250,7 @@ def test_metrics_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/metrics", headers={"Authorization": f"Bearer {token}"}),
+        client.get("/metrics", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
@@ -260,6 +264,6 @@ def test_metrics_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = cast("httpx.Response", client.get("/metrics", params={"token": token}))
+    response = cast("httpx.Response", client.get("/metrics", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 200
     assert "vaultspec_rag_search_total 3" in response.text

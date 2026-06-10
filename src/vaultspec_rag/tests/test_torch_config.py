@@ -261,7 +261,7 @@ def test_apply_then_remove_semantic_round_trip(tmp_path: Path) -> None:
     # Project table survives intact.
     assert final_parsed["project"] == orig_parsed["project"]
     # No [tool.uv] residue.
-    assert "tool" not in final_parsed or "uv" not in final_parsed.get("tool", {})
+    assert "tool" not in final_parsed or "uv" not in final_parsed.get("tool", {})  # pyright: ignore[reportUnknownMemberType]  # tomlkit has no stubs
 
 
 def test_remove_preserves_user_trivia_on_sibling_index_entries(

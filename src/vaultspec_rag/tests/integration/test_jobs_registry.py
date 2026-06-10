@@ -15,7 +15,7 @@ Two layers, no mocks/skips/monkeypatch:
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -31,7 +31,8 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def _clean_jobs() -> Iterator[None]:
+def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     """Reset the registry before/after each test and stop any watcher.
 
     The reindex tools start a filesystem watcher via ``_ensure_watcher``
@@ -214,7 +215,7 @@ async def test_reindex_vault_records_finished_tool_job(
     assert "job_id" in response
 
     # Wait for background job to finish
-    job_id = response["job_id"]
+    job_id: str = cast("str", response["job_id"])
     for _ in range(50):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
@@ -250,7 +251,7 @@ async def test_reindex_codebase_records_finished_tool_job(
     assert "job_id" in response
 
     # Wait for background job to finish
-    job_id = response["job_id"]
+    job_id: str = cast("str", response["job_id"])
     for _ in range(50):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]

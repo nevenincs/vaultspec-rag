@@ -37,7 +37,8 @@ _DEAD_PORT = "59233"
 
 
 @pytest.fixture
-def _clean_watchers() -> Iterator[None]:
+def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
+) -> Iterator[None]:
     """Stop any watcher the consolidated read may have started as a side effect."""
     yield
     server._stop_all_watchers()

@@ -96,8 +96,10 @@ def test_read_service_log_empty_dir(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture  # pyright: ignore[reportUnusedFunction]
-def _routes_app(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
+@pytest.fixture
+def _routes_app(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path,
+) -> Iterator[tuple[TestClient, str]]:
     """Build a real Starlette app from the read-only ROUTES.
 
     Sets a known ``_SERVICE_TOKEN`` on the package namespace (the route's
@@ -134,7 +136,7 @@ def test_logs_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = cast("httpx.Response", client.get("/logs"))
+    response = cast("httpx.Response", client.get("/logs"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 401
     payload = response.json()
     assert payload["ok"] is False
@@ -146,7 +148,8 @@ def test_logs_route_401_with_wrong_token(
 ) -> None:
     client, _token = _routes_app
     response = cast(
-        "httpx.Response", client.get("/logs", headers={"Authorization": "Bearer wrong"})
+        "httpx.Response",
+        client.get("/logs", headers={"Authorization": "Bearer wrong"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 401
 
@@ -157,7 +160,7 @@ def test_logs_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/logs", headers={"Authorization": f"Bearer {token}"}),
+        client.get("/logs", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
@@ -168,7 +171,7 @@ def test_logs_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = cast("httpx.Response", client.get("/logs", params={"token": token}))
+    response = cast("httpx.Response", client.get("/logs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 200
     assert response.text == "line-a\nline-b"
 
@@ -179,7 +182,7 @@ def test_logs_route_respects_lines_param(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get(
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
             "/logs",
             params={"token": token, "lines": "1"},
         ),

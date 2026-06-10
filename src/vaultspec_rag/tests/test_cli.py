@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner, Result
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+    reset_config as reset_base_config,
+)
 
 from ..cli import (
     _add_backend_contract_rows,
@@ -23,6 +26,7 @@ from ..cli import (
     app,
 )
 from ..config import EnvVar
+from ..config import reset_config as reset_rag_config
 from ..torch_config import TorchConfigAction
 
 pytestmark = [pytest.mark.unit]
@@ -274,6 +278,8 @@ class TestServerCommands:
         status_dir = tmp_path / "status"
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
         try:
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0
@@ -282,18 +288,24 @@ class TestServerCommands:
             )
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
 
     def test_service_status_no_status_file(self, tmp_path: Path):
         """No status file → exit 3 (stopped)."""
         status_dir = tmp_path / "status"
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
         try:
             result = runner.invoke(app, ["server", "status"])
             assert result.exit_code == 3
             assert "stopped" in result.output.lower()
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
 
 
 class TestServerRoutingFlattened:
@@ -1482,28 +1494,41 @@ class TestServiceTokenIdentity:
         # Sanity: a result was returned (didn't raise).
         assert isinstance(result, bool)
 
-    def test_no_token_in_status_skips_token_check(self, monkeypatch):
+    def test_no_token_in_status_skips_token_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """No expected_token (pre-upgrade service.json) → exe-name only."""
         from .. import cli
 
-        probe_called = {"n": 0}
+        probe_called: dict[str, int] = {"n": 0}
 
-        def _probe(_port):
+        def _probe(_port: int) -> dict[str, str]:
             probe_called["n"] += 1
             return {"service_token": "irrelevant"}
 
+        def _alive_stub(_pid: int) -> bool:
+            return True
+
         monkeypatch.setattr(cli, "_health_probe", _probe)
-        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub)
         # No expected_token → don't probe.
         cli._is_our_service(os.getpid(), port=8766, expected_token=None)
         assert probe_called["n"] == 0
 
-    def test_health_probe_failure_falls_back(self, monkeypatch):
+    def test_health_probe_failure_falls_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Network failure on /health → exe-name fallback, no exception."""
         from .. import cli
 
-        monkeypatch.setattr(cli, "_health_probe", lambda _port: None)
-        monkeypatch.setattr(cli, "_is_pid_alive", lambda _pid: True)
+        def _probe_none(_port: int) -> None:
+            return None
+
+        def _alive_stub2(_pid: int) -> bool:
+            return True
+
+        monkeypatch.setattr(cli, "_health_probe", _probe_none)
+        monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub2)
         # Should fall back without raising.
         result = cli._is_our_service(
             os.getpid(),
@@ -2232,7 +2257,7 @@ class TestJsonOutputMode:
         assert env["ok"] is False
         assert env["error"] == "invalid_filter_for_search_type"
 
-    def test_search_json_port_unreachable_envelope(self, tmp_path):
+    def test_search_json_port_unreachable_envelope(self, tmp_path: Path) -> None:
         """--port unreachable yields port_unreachable envelope, exit 1."""
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -2260,6 +2285,8 @@ class TestJsonOutputMode:
         # on the developer machine's ambient ~/.vaultspec-rag/ service state;
         # a running service would otherwise return exit 0 here.
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        reset_base_config()
+        reset_rag_config()
         try:
             result = runner.invoke(
                 app,
@@ -2273,6 +2300,8 @@ class TestJsonOutputMode:
             assert env["data"]["service_json_present"] is False
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
 
     def test_service_status_json_crashed_envelope(self, tmp_path: Path):
         """File present + dead PID: exit 4 + ok=false + state=crashed_*."""
@@ -2301,7 +2330,7 @@ class TestJsonOutputMode:
         assert env["ok"] is False
         assert env["error"] == "json_requires_yes"
 
-    def test_envelope_is_pure_stdout_no_rich_bytes(self, tmp_path):
+    def test_envelope_is_pure_stdout_no_rich_bytes(self, tmp_path: Path) -> None:
         """Output is a single parseable JSON document, no Rich box chars."""
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -2413,14 +2442,16 @@ class TestJsonStdoutPurityAcrossCommands:
         _SCENARIOS,
         ids=[s[0] for s in _SCENARIOS],
     )
-    def test_envelope_is_pure_json(self, scenario_id, argv, tmp_path):
+    def test_envelope_is_pure_json(
+        self, scenario_id: str, argv: list[str], tmp_path: Path
+    ) -> None:
         """Every --json invocation: parseable JSON, no Rich glyphs, no ANSI."""
         import subprocess
         import sys
 
         (tmp_path / ".vaultspec").mkdir()
         (tmp_path / ".vault").mkdir()
-        full_argv = [
+        full_argv: list[str] = [
             sys.executable,
             "-m",
             "vaultspec_rag",
@@ -2462,27 +2493,37 @@ class TestAutoDelegation:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_search_auto_delegates_when_service_running(self, tmp_path, monkeypatch):
+    def test_search_auto_delegates_when_service_running(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """If service is running, search auto-delegates to it."""
         (tmp_path / ".vaultspec").mkdir()
+
+        def _stub_read_status() -> dict[str, object]:
+            return {"pid": 12345, "port": 8766, "service_token": "token123"}
+
+        def _stub_is_our_service_search(
+            _pid: int, _port: int, _expected_token: str | None
+        ) -> bool:
+            return True
 
         # Mock _read_service_status to return active port and pid
         monkeypatch.setattr(
             "vaultspec_rag.cli._read_service_status",
-            lambda: {"pid": 12345, "port": 8766, "service_token": "token123"},
+            _stub_read_status,
         )
         # Mock _is_our_service to return True
         monkeypatch.setattr(
             "vaultspec_rag.cli._is_our_service",
-            lambda _pid, _port, _expected_token: True,
+            _stub_is_our_service_search,
         )
 
         # Mock _try_http_search to return dummy results (so we know it got called)
-        called = []
+        called: list[int] = []
 
-        def mock_try_search(*args, **_kwargs):
+        def mock_try_search(*args: object, **_kwargs: object) -> dict[str, object]:
             # args: query, search_type, max_results, port, target
-            called.append(args[3])
+            called.append(int(typing.cast("str | int", args[3])))
             return {"ok": True, "results": []}
 
         monkeypatch.setattr(
@@ -2501,22 +2542,34 @@ class TestAutoDelegation:
         assert len(called) == 1
         assert called[0] == 8766
 
-    def test_index_auto_delegates_when_service_running(self, tmp_path, monkeypatch):
+    def test_index_auto_delegates_when_service_running(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """If service is running, index auto-delegates to it."""
         (tmp_path / ".vaultspec").mkdir()
 
+        def _stub_read_status_idx() -> dict[str, object]:
+            return {"pid": 12345, "port": 8766, "service_token": "token123"}
+
+        def _stub_is_our_service_idx(
+            _pid: int, _port: int, _expected_token: str | None
+        ) -> bool:
+            return True
+
         monkeypatch.setattr(
             "vaultspec_rag.cli._read_service_status",
-            lambda: {"pid": 12345, "port": 8766, "service_token": "token123"},
+            _stub_read_status_idx,
         )
         monkeypatch.setattr(
             "vaultspec_rag.cli._is_our_service",
-            lambda _pid, _port, _expected_token: True,
+            _stub_is_our_service_idx,
         )
 
-        called = []
+        called: list[tuple[str, int]] = []
 
-        def mock_try_reindex(tool_name, _rebuild, port, _target):
+        def mock_try_reindex(
+            tool_name: str, _rebuild: bool, port: int, _target: str
+        ) -> dict[str, object]:
             called.append((tool_name, port))
             return {
                 "ok": True,
@@ -2548,12 +2601,14 @@ class TestAutoDelegation:
 class TestBenchmarkAndQualityCommands:
     """Tests for the benchmark and quality subcommands, asserting delegation to APIs."""
 
-    def test_benchmark_command_delegation(self, tmp_path, monkeypatch):
+    def test_benchmark_command_delegation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         (tmp_path / ".vaultspec").mkdir()
 
-        called = []
+        called: list[tuple[object, object]] = []
 
-        def mock_run_benchmark(root, n_queries):
+        def mock_run_benchmark(root: object, n_queries: object) -> dict[str, object]:
             called.append((root, n_queries))
             return {
                 "p50": 1.2,
@@ -2586,10 +2641,12 @@ class TestBenchmarkAndQualityCommands:
         assert "512.0 MB" in result.output
         assert "42" in result.output
 
-    def test_benchmark_empty_vault(self, tmp_path, monkeypatch):
+    def test_benchmark_empty_vault(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_run_benchmark(*args, **kwargs):
+        def mock_run_benchmark(*args: object, **kwargs: object) -> None:
             del args, kwargs
             raise ValueError("No vault documents indexed.")
 
@@ -2606,12 +2663,14 @@ class TestBenchmarkAndQualityCommands:
         assert result.exit_code == 1
         assert "No vault documents indexed" in result.output
 
-    def test_quality_command_delegation_pass(self, tmp_path, monkeypatch):
+    def test_quality_command_delegation_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         (tmp_path / ".vaultspec").mkdir()
 
-        called = []
+        called: list[bool] = []
 
-        def mock_run_quality_probe():
+        def mock_run_quality_probe() -> dict[str, object]:
             called.append(True)
             return {
                 "passed": 8,
@@ -2644,10 +2703,12 @@ class TestBenchmarkAndQualityCommands:
         output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
         assert "100%" in output
 
-    def test_quality_command_delegation_fail(self, tmp_path, monkeypatch):
+    def test_quality_command_delegation_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_run_quality_probe():
+        def mock_run_quality_probe() -> dict[str, object]:
             return {
                 "passed": 4,
                 "total": 8,

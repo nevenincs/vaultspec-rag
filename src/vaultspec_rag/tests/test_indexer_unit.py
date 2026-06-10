@@ -5,8 +5,8 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from vaultspec_core.config import (
-    reset_config,  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    reset_config,
 )
 
 from .. import IndexResult, prepare_document
@@ -29,7 +29,8 @@ pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture(autouse=True)
-def _reset_cfg() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _reset_cfg(  # pyright: ignore[reportUnusedFunction]
+) -> Generator[None]:
     reset_config()  # pyright: ignore[reportMissingTypeStubs]
     reset_rag_config()
     yield
