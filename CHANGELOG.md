@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.18](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.17...vaultspec-rag-v0.2.18) (2026-06-10)
+
+
+### Bug Fixes
+
+* **cli:** report stopped, not orphaned, when no service.json is present ([83033be](https://github.com/wgergely/vaultspec-rag/commit/83033bef15c5bda41c1aa4dcf54aebb045bc6320))
+
 ## [0.2.17](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.16...vaultspec-rag-v0.2.17) (2026-06-10)
 
 
