@@ -42,12 +42,14 @@ from ._vault_prep import IndexResult
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Iterable, Iterator
+    from multiprocessing.context import BaseContext
 
     import pathspec
 
     from ..embeddings import EmbeddingModel
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultStore
+    from ._chunk_worker import FileChunkResult
 
 logger = logging.getLogger(__name__)
 
@@ -520,7 +522,7 @@ class CodebaseIndexer:
     def _drain_pool(
         self,
         workers: int,
-        ctx: multiprocessing.context.BaseContext,
+        ctx: BaseContext,
         paths_iter: Iterator[pathlib.Path],
         window: int,
         meta: dict[str, str],
@@ -561,16 +563,16 @@ class CodebaseIndexer:
 
     def _process_future(
         self,
-        fut: Future,
+        fut: Future[FileChunkResult | None],
         pool: ProcessPoolExecutor,
-        pending: set[Future],
+        pending: set[Future[FileChunkResult | None]],
         paths_iter: Iterator[pathlib.Path],
         meta: dict[str, str],
         put_fn: Callable[[list[CodeChunk]], bool],
         reporter: ProgressReporter,
     ) -> tuple[bool, int]:
         try:
-            res = fut.result()
+            res: FileChunkResult | None = fut.result()
         except BrokenProcessPool:
             raise
         except Exception:

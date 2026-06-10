@@ -17,8 +17,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import override
 
-from vaultspec_core.logging_config import configure_logging as _core_configure_logging
-from vaultspec_core.logging_config import get_console, reset_logging
+from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    configure_logging as _core_configure_logging,
+)
+from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    get_console,
+    reset_logging,
+)
 
 __all__ = [
     "DaemonRotatingFileHandler",

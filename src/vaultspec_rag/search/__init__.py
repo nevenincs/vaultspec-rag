@@ -16,9 +16,9 @@ from __future__ import annotations
 from ._models import ParsedQuery, SearchResult
 from ._parsing import parse_query
 from ._postprocess import (
-    _classify_chunk_type,
-    _collapse_locale_variants,
-    _locale_variant_key,
+    _classify_chunk_type,  # pyright: ignore[reportPrivateUsage]  # deliberately re-exported as public API; tests import by this name
+    _collapse_locale_variants,  # pyright: ignore[reportPrivateUsage]  # deliberately re-exported as public API; tests import by this name
+    _locale_variant_key,  # pyright: ignore[reportPrivateUsage]  # deliberately re-exported as public API; tests import by this name
 )
 from ._rerank import rerank_with_graph
 from ._searcher import VaultSearcher

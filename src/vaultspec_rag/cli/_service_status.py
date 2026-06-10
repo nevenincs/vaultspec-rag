@@ -13,11 +13,22 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import vaultspec_rag.cli as _cli
 
 from ._core import logger
+
+__all__ = [
+    "_append_lifecycle_shutdown_log",
+    "_default_service_port",
+    "_log_file",
+    "_read_service_status",
+    "_status_dir",
+    "_status_file",
+    "_update_service_token",
+    "_write_service_status",
+]
 
 
 def _status_dir() -> Path:
@@ -159,10 +170,10 @@ def _read_service_status() -> dict[str, Any] | None:
     if not sf.exists():
         return None
     try:
-        data = json.loads(sf.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or "pid" not in data or "port" not in data:
+        raw: object = json.loads(sf.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or "pid" not in raw or "port" not in raw:
             return None
-        return data
+        return cast("dict[str, Any]", raw)
     except (json.JSONDecodeError, OSError) as exc:
         logger.debug("service status file %s unreadable: %s", sf, exc, exc_info=True)
         return None

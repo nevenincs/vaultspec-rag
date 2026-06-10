@@ -14,10 +14,10 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     from sentence_transformers import CrossEncoder
@@ -31,7 +31,15 @@ from .graph_cache import GraphCache
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ProjectSlot", "RegistryFullError", "ServiceRegistry"]
+__all__ = ["ProjectSlot", "RegistryFullError", "ServiceHealth", "ServiceRegistry"]
+
+
+class ServiceHealth(TypedDict):
+    """Diagnostic status returned by :meth:`ServiceRegistry.health`."""
+
+    model_loaded: bool
+    project_count: int
+    projects: list[str]
 
 
 class RegistryFullError(Exception):
@@ -258,7 +266,7 @@ class ServiceRegistry:
     # -- lease API ---------------------------------------------------------
 
     @contextlib.contextmanager
-    def lease(self, root: Path) -> Iterator[ProjectSlot]:
+    def lease(self, root: Path) -> Generator[ProjectSlot]:
         """Acquire a refcounted lease against the slot for *root*.
 
         Use as ``with registry.lease(root) as slot: ...``.  On enter,
@@ -652,7 +660,7 @@ class ServiceRegistry:
 
     # -- introspection -----------------------------------------------------
 
-    def health(self) -> dict:
+    def health(self) -> ServiceHealth:
         """Return a status dict for diagnostics.
 
         Returns:

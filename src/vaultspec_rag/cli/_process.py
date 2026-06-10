@@ -30,6 +30,19 @@ import vaultspec_rag.cli as _cli
 from ..config import EnvVar
 from ._core import logger
 
+__all__ = [
+    "_HEARTBEAT_STALENESS_SECONDS",
+    "_health_probe",
+    "_heartbeat_age_seconds",
+    "_is_our_service",
+    "_is_pid_alive",
+    "_port_is_available",
+    "_port_is_listening",
+    "_service_child_env",
+    "_spawn_service",
+    "_terminate_pid",
+]
+
 
 def _is_pid_alive(pid: int) -> bool:
     """Check whether a process with the given PID is still running.

@@ -14,6 +14,12 @@ from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
+__all__ = [
+    "_truncate_root",
+    "service_projects_evict",
+    "service_projects_list",
+]
+
 
 def _humanize_idle(seconds: float) -> str:
     """Format an idle duration as ``1h 5m``, ``2m 14s``, or ``12s``."""
@@ -104,7 +110,7 @@ def service_projects_list(
 
     raw_projects = result.get("projects")
     projects: list[object] = (
-        list(raw_projects) if isinstance(raw_projects, list) else []
+        cast("list[object]", raw_projects) if isinstance(raw_projects, list) else []
     )
     max_projects = result.get("max_projects", 0)
     idle_ttl = result.get("idle_ttl_seconds", 0)

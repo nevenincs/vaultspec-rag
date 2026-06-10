@@ -7,7 +7,7 @@ packages cannot silently diverge.
 
 from __future__ import annotations
 
-from vaultspec_core.config.workspace import (
+from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     GitInfo,
     LayoutMode,
     WorkspaceError,

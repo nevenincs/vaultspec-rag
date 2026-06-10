@@ -14,6 +14,13 @@ import vaultspec_rag.cli as _cli
 
 from ._core import logger
 
+__all__ = [
+    "_cpu_only_message",
+    "_handle_gpu_error",
+    "_no_gpu_message",
+    "_no_torch_message",
+]
+
 
 def _cpu_only_message() -> str:
     """Return the CPU_ONLY remediation copy as a Rich-markup string.
@@ -119,13 +126,13 @@ def _handle_gpu_error(exc: Exception) -> None:
             import torch
 
             diagnosis = diagnose_torch(torch.version.cuda, torch.cuda.is_available())
-        except Exception as exc:
+        except Exception as _diag_exc:
             # Broad except: torch import succeeded but probing the
             # CUDA state failed in an unexpected way (driver
             # mismatch, opaque ABI error). Treat as "no torch" for
             # diagnosis purposes; debug-log so the swallow stays
             # observable per the no-swallow rule.
-            logger.debug("torch CUDA diagnosis failed: %s", exc, exc_info=True)
+            logger.debug("torch CUDA diagnosis failed: %s", _diag_exc, exc_info=True)
             diagnosis = TorchDiagnosis.NO_TORCH
 
     if diagnosis == TorchDiagnosis.NO_TORCH:

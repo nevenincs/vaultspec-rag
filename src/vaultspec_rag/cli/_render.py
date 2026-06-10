@@ -19,6 +19,17 @@ import vaultspec_rag.cli as _cli
 
 from ..capabilities import backend_capabilities_dict
 
+__all__ = [
+    "_add_backend_contract_rows",
+    "_display_port_unreachable_error",
+    "_display_search_results",
+    "_display_service_error",
+    "_emit_json",
+    "_emit_json_error_and_exit",
+    "_render_install_report",
+    "_render_uninstall_report",
+]
+
 
 def _capability_value(caps: dict[str, object], key: str) -> str:
     """Return a capability value as display text."""

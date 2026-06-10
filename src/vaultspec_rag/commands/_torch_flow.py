@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["_run_torch_config_install", "_run_torch_config_uninstall"]
+
 
 def _confirm_torch_patch(
     pyproject: Path,

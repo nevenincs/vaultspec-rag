@@ -16,7 +16,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
-from vaultspec_core.vaultcore import get_doc_type, scan_vault
+from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
+    get_doc_type,
+    scan_vault,
+)
 
 from ._streaming import _stream_encode_and_upsert_vault
 from ._vault_prep import IndexResult, prepare_document
@@ -441,11 +444,12 @@ class VaultIndexer:
         reporter.phase_start("parse documents", len(to_index_ids))
         if to_index_ids:
             paths_to_index = [id_to_path[d] for d in to_index_ids]
+
+            def _prep(p: pathlib.Path) -> VaultDocument | None:
+                return prepare_document(p, self.root_dir)
+
             with ThreadPoolExecutor() as pool:
-                for doc in pool.map(
-                    lambda p: prepare_document(p, self.root_dir),
-                    paths_to_index,
-                ):
+                for doc in pool.map(_prep, paths_to_index):
                     if doc is not None:
                         docs_to_index.append(doc)
                     reporter.advance()

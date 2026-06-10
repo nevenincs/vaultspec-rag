@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from vaultspec_core.core.commands import sync_provider
+from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+    sync_provider,
+)
 
 from ..builtins import seed_builtins
 from ._models import InstallReport

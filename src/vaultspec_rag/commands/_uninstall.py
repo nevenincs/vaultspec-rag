@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
-from vaultspec_core.core.commands import sync_provider
+from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+    sync_provider,
+)
 
 from ._models import (
     _RAG_MCP_REL_PATH,
@@ -172,7 +175,7 @@ def uninstall_run(
     return report
 
 
-def _rmtree_safe_onexc(_func, path, exc) -> None:
+def _rmtree_safe_onexc(_func: object, path: str | bytes, exc: BaseException) -> None:
     """``shutil.rmtree`` error handler (Python 3.12+ ``onexc`` form)
     that unlinks symlinks instead of following them.
 
@@ -182,7 +185,7 @@ def _rmtree_safe_onexc(_func, path, exc) -> None:
     receives the exception instance directly instead of an
     ``exc_info`` tuple.
     """
-    p = Path(path)
+    p = Path(os.fsdecode(path))
     if p.is_symlink():
         try:
             p.unlink()

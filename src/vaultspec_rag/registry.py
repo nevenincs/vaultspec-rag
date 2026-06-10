@@ -13,7 +13,7 @@ from .service import ServiceRegistry
 
 __all__ = ["get_registry", "reset_registry"]
 
-_REGISTRY: ServiceRegistry | None = None
+_registry: ServiceRegistry | None = None
 _REGISTRY_LOCK = threading.Lock()
 
 
@@ -26,13 +26,13 @@ def get_registry() -> ServiceRegistry:
     Returns:
         The singleton ``ServiceRegistry`` instance.
     """
-    global _REGISTRY
-    if _REGISTRY is not None:
-        return _REGISTRY
+    global _registry
+    if _registry is not None:
+        return _registry
     with _REGISTRY_LOCK:
-        if _REGISTRY is None:
-            _REGISTRY = ServiceRegistry()
-        return _REGISTRY
+        if _registry is None:
+            _registry = ServiceRegistry()
+        return _registry
 
 
 def reset_registry() -> None:
@@ -42,8 +42,8 @@ def reset_registry() -> None:
     drops the reference so the next ``get_registry()`` call builds a
     fresh instance.  Safe to call when no registry exists.
     """
-    global _REGISTRY
+    global _registry
     with _REGISTRY_LOCK:
-        if _REGISTRY is not None:
-            _REGISTRY.close_all()
-            _REGISTRY = None
+        if _registry is not None:
+            _registry.close_all()
+            _registry = None

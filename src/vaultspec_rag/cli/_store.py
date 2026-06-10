@@ -14,6 +14,8 @@ from ._render import _emit_json_error_and_exit
 if TYPE_CHECKING:
     from pathlib import Path
 
+__all__ = ["_open_vault_store"]
+
 
 def _open_vault_store(
     target: Path,

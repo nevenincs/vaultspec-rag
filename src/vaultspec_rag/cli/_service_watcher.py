@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.table import Table
@@ -56,7 +56,7 @@ def service_watcher_status(
         return
     raw_watching = result.get("watching")
     watching: list[object] = (
-        list(raw_watching) if isinstance(raw_watching, list) else []
+        cast("list[object]", raw_watching) if isinstance(raw_watching, list) else []
     )
     enabled = bool(result.get("watch_enabled", False))
     if json_mode:

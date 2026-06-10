@@ -7,14 +7,14 @@ canonical cu130 block. Never writes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import tomlkit
 from tomlkit import TOMLDocument
 from tomlkit.items import AoT, InlineTable, Table
 
 from ._constants import (
-    _TABLE_LIKE_TYPES,
+    _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
     CU130_INDEX_NAME,
     CU130_INDEX_URL,
     CU130_MARKER,
@@ -27,7 +27,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _detect_crlf(pyproject: Path) -> bool:
+def _tget(mapping: TableLike | TOMLDocument, key: str) -> object:
+    """Typed wrapper for tomlkit Container.get() which returns Unknown.
+
+    tomlkit's Container inherits from an unparameterised dict, so
+    .get() has return type ``Unknown | None`` in strict mode.
+    Centralising the cast here keeps all other call sites clean.
+    """
+    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
+
+
+def detect_crlf(pyproject: Path) -> bool:
     """Return True when ``pyproject`` uses CRLF line endings on disk.
 
     Sniffs the raw bytes (not the decoded text) so the answer is the
@@ -46,7 +56,7 @@ def _detect_crlf(pyproject: Path) -> bool:
         return False
 
 
-def _load(pyproject: Path) -> TOMLDocument | None:
+def load_pyproject(pyproject: Path) -> TOMLDocument | None:
     """Load and parse the pyproject.toml, or return None if absent.
 
     Reads with ``utf-8-sig`` so a leading UTF-8 BOM (``U+FEFF``) is
@@ -67,7 +77,7 @@ def _load(pyproject: Path) -> TOMLDocument | None:
         raise
 
 
-def _tool_uv(doc: TOMLDocument) -> TableLike | None:
+def get_tool_uv_table(doc: TOMLDocument) -> TableLike | None:
     """Return the ``[tool.uv]`` table, or None.
 
     Narrowed to either :class:`tomlkit.items.Table` or
@@ -77,16 +87,16 @@ def _tool_uv(doc: TOMLDocument) -> TableLike | None:
     dominant ``[tool.*]`` layout in real-world pyprojects. Both expose
     the same Mapping surface we touch.
     """
-    tool = doc.get("tool")
+    tool = _tget(doc, "tool")
     if not isinstance(tool, _TABLE_LIKE_TYPES):
         return None
-    uv = tool.get("uv")
+    uv = _tget(tool, "uv")
     if not isinstance(uv, _TABLE_LIKE_TYPES):
         return None
     return uv
 
 
-def _indices(doc: TOMLDocument) -> AoT | None:
+def get_indices_aot(doc: TOMLDocument) -> AoT | None:
     """Return the ``[[tool.uv.index]]`` array-of-tables, or None.
 
     Returns None if the key is absent OR if it exists but is not an
@@ -96,10 +106,10 @@ def _indices(doc: TOMLDocument) -> AoT | None:
     in :func:`_classify` catches non-AoT shapes separately via a
     direct ``uv.get("index")`` probe.
     """
-    uv = _tool_uv(doc)
+    uv = get_tool_uv_table(doc)
     if uv is None:
         return None
-    idx = uv.get("index")
+    idx = _tget(uv, "index")
     if not isinstance(idx, AoT):
         return None
     return idx
@@ -118,16 +128,17 @@ def _torch_sources(doc: TOMLDocument) -> Any:
     that tomlkit returns as :class:`tomlkit.items.InlineTable`. All
     three expose the ``.get(key)`` Mapping surface we exercise here.
     """
-    uv = _tool_uv(doc)
+    uv = get_tool_uv_table(doc)
     if uv is None:
         return None
-    sources = uv.get("sources")
+    sources = _tget(uv, "sources")
     if not isinstance(sources, _TABLE_LIKE_TYPES):
         return None
-    return sources.get("torch")
+    result: Any = _tget(sources, "torch")
+    return result
 
 
-def _index_match(entry: Table | InlineTable | dict) -> str:
+def match_index_entry(entry: TableLike) -> str:
     """Classify one ``[[tool.uv.index]]`` entry against the canonical cu130.
 
     Returns ``"canonical"`` if the entry has our name, our url, and
@@ -135,17 +146,19 @@ def _index_match(entry: Table | InlineTable | dict) -> str:
     disagrees on url/explicit; ``""`` if the entry is unrelated (name
     does not match).
     """
-    name = entry.get("name")
+    name = _tget(entry, "name")
     if name != CU130_INDEX_NAME:
         return ""
-    url = entry.get("url")
-    explicit = entry.get("explicit", False)
+    url = _tget(entry, "url")
+    explicit = _tget(entry, "explicit")
+    if explicit is None:
+        explicit = False
     if url == CU130_INDEX_URL and bool(explicit):
         return "canonical"
     return "conflict"
 
 
-def _source_match(entry: InlineTable | dict) -> str:
+def match_source_entry(entry: TableLike) -> str:
     """Classify one ``torch`` source entry against the canonical cu130.
 
     Returns ``"canonical"`` if the entry matches our ``index`` and
@@ -153,17 +166,17 @@ def _source_match(entry: InlineTable | dict) -> str:
     if the entry references our index name but disagrees; ``""`` if
     the entry is unrelated (different index).
     """
-    idx = entry.get("index")
+    idx = _tget(entry, "index")
     if idx != CU130_INDEX_NAME:
         return ""
-    marker = entry.get("marker")
-    extras = set(entry.keys()) - {"index", "marker"}
+    marker = _tget(entry, "marker")
+    extras = set(cast("dict[str, object]", entry).keys()) - {"index", "marker"}  # pyright: ignore[reportUnknownMemberType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
     if marker == CU130_MARKER and not extras:
         return "canonical"
     return "conflict"
 
 
-def _check_index_shape(raw_index: Any, conflicts: list[str]) -> bool:
+def _check_index_shape(raw_index: object, conflicts: list[str]) -> bool:
     if raw_index is not None and not isinstance(raw_index, AoT):
         if isinstance(raw_index, list):
             conflicts.append(
@@ -183,10 +196,10 @@ def _check_index_shape(raw_index: Any, conflicts: list[str]) -> bool:
 def _eval_index_entries(indices: AoT, conflicts: list[str]) -> tuple[bool, bool]:
     canonical_seen = False
     conflict_seen = False
-    for entry in indices:
-        if not isinstance(entry, Table | InlineTable | dict):
+    for entry in indices:  # pyright: ignore[reportUnknownVariableType]  # tomlkit AoT yields Unknown
+        if not isinstance(entry, _TABLE_LIKE_TYPES):
             continue
-        m = _index_match(entry)
+        m = match_index_entry(entry)
         if m == "canonical":
             canonical_seen = True
         elif m == "conflict":
@@ -210,13 +223,13 @@ def _classify_indices(
     """
     conflicts: list[str] = []
 
-    uv = _tool_uv(doc)
-    raw_index = uv.get("index") if uv is not None else None
+    uv = get_tool_uv_table(doc)
+    raw_index: object = _tget(uv, "index") if uv is not None else None
 
     if not _check_index_shape(raw_index, conflicts):
         return None, False, conflicts
 
-    indices = _indices(doc)
+    indices = get_indices_aot(doc)
     if indices is not None:
         canonical_seen, conflict_seen = _eval_index_entries(indices, conflicts)
         return canonical_seen, conflict_seen, conflicts
@@ -243,7 +256,7 @@ def _classify_sources(
     # syntactically legal TOML but semantically nonsense for uv.
     # Treat as CUSTOMISED so apply_patch refuses before the
     # mutation helpers inherit a value they cannot recurse into.
-    if not isinstance(torch_srcs, InlineTable | Table | list | dict):
+    if not isinstance(torch_srcs, (InlineTable, Table, list, dict)):
         conflicts.append(
             f"[tool.uv.sources] torch is a "
             f"{type(torch_srcs).__name__}, not an array or table"
@@ -254,7 +267,9 @@ def _classify_sources(
     # spelled as its own section) cannot be promoted into a TOML
     # array - arrays can only hold inline tables. Treat as
     # CUSTOMISED so apply never tries to rewrite it.
-    if isinstance(torch_srcs, Table) and not isinstance(torch_srcs, InlineTable | list):
+    if isinstance(torch_srcs, Table) and not isinstance(
+        torch_srcs, (InlineTable, list)
+    ):
         conflicts.append(
             "[tool.uv.sources.torch] is a standard table; "
             "rag's apply_patch expects an inline-table array"
@@ -264,14 +279,15 @@ def _classify_sources(
     canonical_seen = False
     conflict_seen = False
     # torch source may be a single inline table or a list of them.
+    entries: list[object]
     if isinstance(torch_srcs, list):
-        entries: list = list(torch_srcs)
+        entries = list(cast("list[object]", torch_srcs))
     else:
-        entries = [torch_srcs]
+        entries = [cast("object", torch_srcs)]
     for entry in entries:
-        if not isinstance(entry, InlineTable | Table | dict):
+        if not isinstance(entry, _TABLE_LIKE_TYPES):
             continue
-        m = _source_match(entry)
+        m = match_source_entry(entry)
         if m == "canonical":
             canonical_seen = True
         elif m == "conflict":
@@ -283,7 +299,7 @@ def _classify_sources(
     return canonical_seen, conflict_seen, conflicts
 
 
-def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
+def classify_doc(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     """Inspect the loaded doc and return (state, conflicts).
 
     Delegates the per-section classification to
@@ -315,13 +331,13 @@ def _classify(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
     return TorchConfigState.MISSING, []
 
 
-def _is_half_applied(doc: TOMLDocument) -> bool:
+def is_half_applied(doc: TOMLDocument) -> bool:
     """Return True for the half-applied no-conflict state.
 
     Half-applied = exactly one of ``[[tool.uv.index]]`` /
     ``[tool.uv.sources]`` carries a rag-canonical entry; the other
     half is simply absent (no non-canonical entry, no unsupported
-    shape, no per-half conflict). :func:`_classify` returns
+    shape, no per-half conflict). :func:`classify_doc` returns
     ``CUSTOMISED`` on this state out of caution for the apply path
     (we refuse to "complete" a half-applied state automatically),
     but :func:`remove_patch` can safely drop the canonical half -
@@ -351,8 +367,8 @@ def detect_state(pyproject: Path) -> TorchConfigState:
             invalid TOML. Callers should surface this as a hard error
             - there is no safe way to edit a corrupt file.
     """
-    doc = _load(pyproject)
+    doc = load_pyproject(pyproject)
     if doc is None:
         return TorchConfigState.NO_PROJECT_FILE
-    state, _ = _classify(doc)
+    state, _ = classify_doc(doc)
     return state

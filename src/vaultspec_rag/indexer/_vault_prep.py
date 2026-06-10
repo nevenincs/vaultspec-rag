@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from vaultspec_core.vaultcore import (
+from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
     DocType,
     get_doc_type,
     parse_vault_metadata,
@@ -24,6 +24,13 @@ if TYPE_CHECKING:
     import pathlib
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "IndexResult",
+    "_extract_feature",
+    "_extract_title",
+    "prepare_document",
+]
 
 
 @dataclass

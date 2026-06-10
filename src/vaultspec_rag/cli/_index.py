@@ -149,7 +149,7 @@ def _try_service_delegation(
 
 
 def _print_service_async_results(
-    v_data: dict | None, c_data: dict | None, json_mode: bool
+    v_data: dict[str, object] | None, c_data: dict[str, object] | None, json_mode: bool
 ) -> bool:
     if json_mode:
         _emit_json(
@@ -176,7 +176,7 @@ def _print_service_async_results(
 
 
 def _print_service_results(
-    v_data: dict | None, c_data: dict | None, json_mode: bool
+    v_data: dict[str, object] | None, c_data: dict[str, object] | None, json_mode: bool
 ) -> bool:
     is_async = False
     for data in (v_data, c_data):

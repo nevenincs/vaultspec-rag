@@ -14,6 +14,18 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+__all__ = [
+    "ProjectRootRequiredError",
+    "_clamp_top_k",
+    "_default_root",
+    "_is_sensitive_path",
+    "_local_store_locked_error_dict",
+    "_registry_full_error_dict",
+    "_resolve_root",
+    "_validate_query",
+    "_validate_vault_root",
+]
+
 import vaultspec_rag.server as _m
 
 from ..capabilities import backend_capabilities_dict

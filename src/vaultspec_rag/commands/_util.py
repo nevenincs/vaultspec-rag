@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__all__ = ["_exception_caused_by"]
+
 
 def _exception_caused_by(exc: BaseException, target_type: type) -> bool:
     """Return True if any exception in ``exc``'s ``__cause__`` /

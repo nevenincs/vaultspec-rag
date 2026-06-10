@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import typer
 
@@ -20,6 +20,18 @@ import vaultspec_rag.cli as _cli
 from ..config import EnvVar
 from ..logging_config import configure_logging
 from ..workspace import WorkspaceError, WorkspaceLayout, resolve_workspace
+
+__all__ = [
+    "CLIState",
+    "_global_target",
+    "app",
+    "main",
+    "mcp_app",
+    "server_app",
+    "server_projects_app",
+    "server_watcher_app",
+    "version_callback",
+]
 
 app = typer.Typer(
     help="VaultSpec RAG: Unified search over documentation and code.",
@@ -227,7 +239,8 @@ def _global_target(ctx: typer.Context) -> Path | None:
     """
     obj = ctx.obj
     if isinstance(obj, dict):
-        value = obj.get("target")
+        obj_dict = cast("dict[str, object]", obj)
+        value = obj_dict.get("target")
         if isinstance(value, Path):
             return value
     return None

@@ -13,7 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 from ._mcp import mcp
-from ._tools import _call_daemon
+from ._tools import (
+    _call_daemon,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module intentional import
+)
 
 
 @mcp.tool()

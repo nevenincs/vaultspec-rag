@@ -84,7 +84,9 @@ def service_jobs(
         return
 
     raw_jobs = result.get("jobs")
-    jobs: list[object] = list(raw_jobs) if isinstance(raw_jobs, list) else []
+    jobs: list[object] = (
+        cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
+    )
     if not jobs:
         _cli.console.print("[dim]No recent jobs.[/]")
         return

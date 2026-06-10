@@ -45,7 +45,7 @@ from ._constants import (
 )
 from ._diagnose import diagnose_torch
 from ._direct_dep import (
-    _is_torch_requirement,
+    _is_torch_requirement,  # pyright: ignore[reportPrivateUsage]  # test-facing re-export of intra-package helper
     ensure_direct_torch_dep,
     has_direct_torch_dep,
     remove_managed_direct_torch_dep,

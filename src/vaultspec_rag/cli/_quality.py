@@ -33,6 +33,7 @@ def handle_quality() -> None:
             results = run_quality_probe()
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
+        return
 
     table = Table(
         title="Quality Probes - Synthetic Corpus",

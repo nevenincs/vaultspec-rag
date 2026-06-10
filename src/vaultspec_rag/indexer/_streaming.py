@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "_release_cuda_cache",
+    "_stream_encode_and_upsert_codebase",
+    "_stream_encode_and_upsert_vault",
+    "encode_and_upsert_code_slice",
+]
+
 
 def _release_cuda_cache() -> None:
     """Return unused CUDA caching-allocator blocks to the driver.

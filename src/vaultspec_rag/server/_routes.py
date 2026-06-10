@@ -21,7 +21,7 @@ from __future__ import annotations
 import hmac
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -589,7 +589,7 @@ async def vault_document_route(request: Request) -> JSONResponse:
     except ProjectRootRequiredError:
         return _BAD_REQUEST_MISSING_ROOT
 
-    def _run() -> dict:
+    def _run() -> dict[str, Any]:
         try:
             with _m._registry.lease(root) as slot:
                 doc = slot.store.get_by_id(doc_id)

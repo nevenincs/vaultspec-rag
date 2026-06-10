@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .config import EnvVar
 
@@ -116,11 +116,11 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
     if tocsr is not None:
         # scipy sparse matrix
         csr = tocsr()
-        results = []
+        results: list[SparseResult] = []
         for i in range(csr.shape[0]):
             row = csr.getrow(i)
-            indices = row.indices.tolist()
-            values = row.data.tolist()
+            indices = cast("list[int]", row.indices.tolist())
+            values = cast("list[float]", row.data.tolist())
             results.append(SparseResult(indices=indices, values=values))
         return results
 
@@ -133,8 +133,8 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
         for i in range(dense.shape[0]):
             row = dense[i]
             nz = row.nonzero(as_tuple=True)[0]
-            indices = nz.tolist()
-            values = row[nz].tolist()
+            indices = cast("list[int]", nz.tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
+            values = cast("list[float]", row[nz].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
             results.append(SparseResult(indices=indices, values=values))
         return results
 
@@ -146,8 +146,8 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
     for i in range(arr.shape[0]):
         row = arr[i]
         nz = row.nonzero()[0]
-        indices = nz.tolist()
-        values = row[nz].tolist()
+        indices = cast("list[int]", nz.tolist())
+        values = cast("list[float]", row[nz].tolist())
         results.append(SparseResult(indices=indices, values=values))
     return results
 
@@ -441,7 +441,7 @@ class EmbeddingModel:
 
         while True:
             try:
-                embeddings = self._dense_model.encode(
+                embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
                     truncated,
                     batch_size=batch_size,
                     show_progress_bar=len(truncated) > 100,
@@ -474,7 +474,7 @@ class EmbeddingModel:
         """
         import numpy as np
 
-        embeddings = self._dense_model.encode(
+        embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
             [query],
             prompt_name="query",
             normalize_embeddings=True,

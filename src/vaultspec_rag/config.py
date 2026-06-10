@@ -11,8 +11,12 @@ import os
 from enum import StrEnum
 from typing import Any, ClassVar
 
-from vaultspec_core.config import VaultSpecConfig as BaseConfig
-from vaultspec_core.config import get_config as get_base_config
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    VaultSpecConfig as BaseConfig,
+)
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    get_config as get_base_config,
+)
 
 logger = logging.getLogger(__name__)
 

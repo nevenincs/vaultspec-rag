@@ -12,15 +12,20 @@ import threading
 import warnings
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Sequence
+    from collections.abc import Generator, Sequence
     from uuid import UUID
 
     from qdrant_client import QdrantClient
-    from qdrant_client.http.models import Filter
+    from qdrant_client.http.models.models import (
+        Condition,
+        Filter,
+        Record,
+        ScoredPoint,
+    )
 
     from .embeddings import SparseResult
 
@@ -115,7 +120,7 @@ EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
 
 
 @contextmanager
-def _suppress_local_qdrant_warnings():
+def _suppress_local_qdrant_warnings() -> Generator[None]:
     """Suppress Qdrant local-mode warnings that are not actionable per call."""
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -289,12 +294,13 @@ class VaultStore:
 
         self.root_dir = _pathlib.Path(root_dir)
         self._client_lock = threading.RLock()
+        self._client: QdrantClient | None = None
 
         if cfg.qdrant_url:
             self.db_path = cfg.qdrant_url
             self._lock_helper = None
             try:
-                self._client: QdrantClient | None = _QdrantClient(
+                self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
                 )
@@ -311,7 +317,7 @@ class VaultStore:
                 raise VaultStoreLockedError(str(self.db_path))
             try:
                 with _suppress_local_qdrant_warnings():
-                    self._client: QdrantClient | None = _QdrantClient(
+                    self._client = _QdrantClient(
                         path=str(self.db_path),
                     )
             except RuntimeError as exc:
@@ -407,8 +413,6 @@ class VaultStore:
         with self._client_lock:
             if self.client.collection_exists(name):
                 return
-
-            from typing import Any
 
             kwargs: dict[str, Any] = {}
             if quantization_config is not None:
@@ -521,9 +525,9 @@ class VaultStore:
 
         from qdrant_client import models
 
-        points = []
+        points: list[Any] = []
         for doc in docs:
-            vector: dict = {
+            vector: dict[str, Any] = {
                 "dense": doc.vector,
             }
             if doc.sparse_indices:
@@ -568,9 +572,9 @@ class VaultStore:
 
         from qdrant_client import models
 
-        points = []
+        points: list[Any] = []
         for chunk in chunks:
-            vector: dict = {
+            vector: dict[str, Any] = {
                 "dense": chunk.vector,
             }
             if chunk.sparse_indices:
@@ -673,17 +677,18 @@ class VaultStore:
             Set of string IDs extracted from point payloads.
         """
         ids: set[str] = set()
-        offset = None
+        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         while True:
             with self._client_lock:
-                points, next_offset = self.client.scroll(
+                records, next_offset = self.client.scroll(
                     collection_name=collection,
                     limit=1000,
                     offset=offset,
                     with_payload=[id_field],
                     with_vectors=False,
                 )
-            for point in points:
+            point: Record
+            for point in records:
                 if point.payload and id_field in point.payload:
                     ids.add(str(point.payload[id_field]))
             if next_offset is None:
@@ -721,10 +726,10 @@ class VaultStore:
         )
 
         ids: list[str] = []
-        offset = None
+        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         while True:
             with self._client_lock:
-                points, next_offset = self.client.scroll(
+                records, next_offset = self.client.scroll(
                     collection_name=self.CODE_TABLE_NAME,
                     scroll_filter=scroll_filter,
                     limit=1000,
@@ -732,7 +737,8 @@ class VaultStore:
                     with_payload=["chunk_id"],
                     with_vectors=False,
                 )
-            for point in points:
+            point: Record
+            for point in records:
                 if point.payload and "chunk_id" in point.payload:
                     ids.append(str(point.payload["chunk_id"]))
             if next_offset is None:
@@ -760,7 +766,7 @@ class VaultStore:
             self.ensure_code_table()
             return self.client.count(collection_name=self.CODE_TABLE_NAME).count
 
-    def get_by_id(self, doc_id: str) -> dict | None:
+    def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
         """Retrieve a single document by ID, or ``None`` if not found.
 
         Args:
@@ -773,22 +779,23 @@ class VaultStore:
         with self._client_lock:
             self.ensure_table()
             point_id = self._stable_id(doc_id)
-            points = self.client.retrieve(
+            records: list[Record] = self.client.retrieve(
                 collection_name=self.TABLE_NAME,
                 ids=[point_id],
                 with_payload=True,
                 with_vectors=False,
             )
-            if not points:
+            if not records:
                 return None
-            payload = dict(points[0].payload) if points[0].payload else {}
+            raw = records[0].payload
+            payload: dict[str, Any] = dict(raw) if raw else {}
             payload["id"] = payload.pop("doc_id", doc_id)
             return payload
 
     def list_all_documents(
         self,
         doc_type: str | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Return all vault documents via scroll, optionally filtered.
 
         Args:
@@ -802,7 +809,7 @@ class VaultStore:
         with self._client_lock:
             self.ensure_table()
 
-        scroll_filter = None
+        scroll_filter: Filter | None = None
         if doc_type:
             scroll_filter = models.Filter(
                 must=[
@@ -813,11 +820,11 @@ class VaultStore:
                 ],
             )
 
-        docs: list[dict] = []
-        offset = None
+        docs: list[dict[str, Any]] = []
+        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         while True:
             with self._client_lock:
-                points, next_offset = self.client.scroll(
+                records, next_offset = self.client.scroll(
                     collection_name=self.TABLE_NAME,
                     scroll_filter=scroll_filter,
                     limit=1000,
@@ -825,8 +832,9 @@ class VaultStore:
                     with_payload=True,
                     with_vectors=False,
                 )
-            for point in points:
-                payload = dict(point.payload) if point.payload else {}
+            point: Record
+            for point in records:
+                payload: dict[str, Any] = dict(point.payload) if point.payload else {}
                 payload["id"] = payload.pop("doc_id", str(point.id))
                 docs.append(payload)
             if next_offset is None:
@@ -844,7 +852,7 @@ class VaultStore:
         sparse_vector: SparseResult | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Execute hybrid dense + sparse search with RRF on vault_docs.
 
         Args:
@@ -868,18 +876,14 @@ class VaultStore:
             UnexpectedResponse: Logged and caught internally;
                 triggers dense-only fallback.
         """
-        from qdrant_client import models
-
         query_filter = self._build_filter(filters)
-        dense_vec = (
-            query_vector if isinstance(query_vector, list) else query_vector.tolist()
-        )
-        dense_query = self._build_dense_query(dense_vec, like_ids, unlike_ids, models)
-        prefetch = self._build_prefetch(
-            dense_query, sparse_vector, query_filter, limit, models
+        dense_vec: list[float] = query_vector
+        dense_query: Any = self._build_dense_query(dense_vec, like_ids, unlike_ids)
+        prefetch: list[Any] = self._build_prefetch(
+            dense_query, sparse_vector, query_filter, limit
         )
         scored_points = self._execute_hybrid_query(
-            self.TABLE_NAME, False, prefetch, dense_query, query_filter, limit, models
+            self.TABLE_NAME, False, prefetch, dense_query, query_filter, limit
         )
 
         return self._points_to_dicts(scored_points, "doc_id")
@@ -894,7 +898,7 @@ class VaultStore:
         sparse_vector: SparseResult | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Execute hybrid dense + sparse search with RRF on codebase_docs.
 
         Args:
@@ -918,15 +922,11 @@ class VaultStore:
             UnexpectedResponse: Logged and caught internally;
                 triggers dense-only fallback.
         """
-        from qdrant_client import models
-
         query_filter = self._build_code_filter(filters)
-        dense_vec = (
-            query_vector if isinstance(query_vector, list) else query_vector.tolist()
-        )
-        dense_query = self._build_dense_query(dense_vec, like_ids, unlike_ids, models)
-        prefetch = self._build_prefetch(
-            dense_query, sparse_vector, query_filter, limit, models
+        dense_vec: list[float] = query_vector
+        dense_query: Any = self._build_dense_query(dense_vec, like_ids, unlike_ids)
+        prefetch: list[Any] = self._build_prefetch(
+            dense_query, sparse_vector, query_filter, limit
         )
         scored_points = self._execute_hybrid_query(
             self.CODE_TABLE_NAME,
@@ -935,7 +935,6 @@ class VaultStore:
             dense_query,
             query_filter,
             limit,
-            models,
         )
 
         return self._points_to_dicts(scored_points, "chunk_id")
@@ -945,12 +944,11 @@ class VaultStore:
         dense_vec: list[float],
         like_ids: list[str | int] | None,
         unlike_ids: list[str | int] | None,
-        models,
-    ):
+    ) -> Any:
         if not like_ids and not unlike_ids:
             return dense_vec
 
-        from typing import Any
+        from qdrant_client import models
 
         pos: list[Any] = [dense_vec]
         if like_ids:
@@ -971,13 +969,14 @@ class VaultStore:
 
     def _build_prefetch(
         self,
-        dense_query,
-        sparse_vector,
-        query_filter,
+        dense_query: Any,
+        sparse_vector: SparseResult | None,
+        query_filter: Filter | None,
         limit: int,
-        models,
-    ):
-        prefetch = [
+    ) -> list[Any]:
+        from qdrant_client import models
+
+        prefetch: list[Any] = [
             models.Prefetch(
                 query=dense_query,
                 using="dense",
@@ -1004,12 +1003,12 @@ class VaultStore:
         self,
         collection_name: str,
         is_codebase: bool,
-        prefetch,
-        dense_query,
-        query_filter,
+        prefetch: list[Any],
+        dense_query: Any,
+        query_filter: Filter | None,
         limit: int,
-        models,
-    ):
+    ) -> list[ScoredPoint]:
+        from qdrant_client import models
         from qdrant_client.http.exceptions import (
             ResponseHandlingException,
             UnexpectedResponse,
@@ -1029,7 +1028,7 @@ class VaultStore:
                     limit=limit,
                     query_filter=query_filter,
                 )
-                return results.points
+                return results.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
 
             try:
                 results = self.client.query_points(
@@ -1038,7 +1037,7 @@ class VaultStore:
                     query=models.RrfQuery(rrf=models.Rrf(k=60)),
                     limit=limit,
                 )
-                return results.points
+                return results.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
             except (
                 UnexpectedResponse,
                 ResponseHandlingException,
@@ -1055,10 +1054,12 @@ class VaultStore:
                     limit=limit,
                     query_filter=query_filter,
                 )
-                return fallback.points
+                return fallback.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
 
     @staticmethod
-    def _points_to_dicts(scored_points: list, id_field: str) -> list[dict]:
+    def _points_to_dicts(
+        scored_points: list[ScoredPoint], id_field: str
+    ) -> list[dict[str, Any]]:
         """Convert Qdrant ScoredPoint list to result dicts.
 
         Args:
@@ -1070,9 +1071,9 @@ class VaultStore:
             List of dicts with payload fields, ``id``, and
             ``_relevance_score``.
         """
-        results = []
+        results: list[dict[str, Any]] = []
         for point in scored_points:
-            row = dict(point.payload) if point.payload else {}
+            row: dict[str, Any] = dict(point.payload) if point.payload else {}
             if id_field not in row:
                 logger.warning(
                     "Point %s missing id field '%s'",
@@ -1102,7 +1103,7 @@ class VaultStore:
             return None
         from qdrant_client import models
 
-        conditions: list = []
+        conditions: list[Condition] = []
         for key, value in filters.items():
             if not value:
                 continue
@@ -1152,7 +1153,7 @@ class VaultStore:
             return None
         from qdrant_client import models
 
-        conditions: list = []
+        conditions: list[Condition] = []
         for key, value in filters.items():
             if key in (
                 "language",

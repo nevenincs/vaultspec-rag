@@ -16,6 +16,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "LANGUAGE_MAP",
+    "SUPPORTED_EXTENSIONS",
+    "_CLASS_LIKE_NODES",
+    "_CONTAINER_NODES",
+    "_FUNCTION_LIKE_NODES",
+    "_MAX_FILE_SIZE",
+    "_TOP_LEVEL_NODES",
+    "TextSplitter",
+    "_is_binary",
+]
+
 
 class TextSplitter:
     """Structure-aware text splitter for code and markdown.
@@ -94,7 +106,7 @@ class TextSplitter:
         ]
 
     def _merge_splits(self, splits: list[str], separator: str) -> list[str]:
-        final_chunks = []
+        final_chunks: list[str] = []
         current_chunk = ""
 
         for s in splits:
@@ -128,7 +140,7 @@ class TextSplitter:
         splits = remaining_text.split(separator)
         final_chunks = self._merge_splits(splits, separator)
 
-        processed = []
+        processed: list[str] = []
         for c in final_chunks:
             if len(c) > self.chunk_size:
                 processed.extend(self._recursive_split(c, seps[1:]))

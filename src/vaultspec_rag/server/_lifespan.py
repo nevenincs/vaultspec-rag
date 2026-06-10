@@ -25,7 +25,7 @@ import vaultspec_rag.server as _m
 from ..capabilities import backend_capabilities_dict
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
 
     from starlette.applications import Starlette
     from starlette.requests import Request
@@ -34,7 +34,7 @@ logger = logging.getLogger("vaultspec_rag.server")
 
 
 @asynccontextmanager
-async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
+async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     """Eagerly load GPU models before accepting connections.
 
     Startup loads the shared ``EmbeddingModel`` with per-stage
@@ -67,7 +67,7 @@ async def service_lifespan(_app: Starlette) -> AsyncIterator[None]:
     logger.info("HF cache: %s", hf_home)
 
     # Wire watcher lifecycle into registry so close_project() stops watchers
-    _m._registry._on_close_project = _m._stop_watcher
+    _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
 
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
     t0 = time.perf_counter()

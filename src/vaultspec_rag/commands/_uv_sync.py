@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
     from ._models import InstallReport
 
+__all__ = ["_classify_uv_sync_result", "_run_uv_sync_torch"]
+
 
 def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
     """Shell out to ``uv sync --reinstall-package torch``.

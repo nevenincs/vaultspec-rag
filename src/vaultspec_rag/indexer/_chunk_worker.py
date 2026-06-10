@@ -58,7 +58,7 @@ def _get_chunker() -> ASTChunker:
     """Return the per-process reusable :class:`ASTChunker`, building it once."""
     global _CHUNKER
     if _CHUNKER is None:
-        _CHUNKER = ASTChunker()
+        _CHUNKER = ASTChunker()  # pyright: ignore[reportConstantRedefinition]  # mutable per-process cache, not a true constant
     return _CHUNKER
 
 

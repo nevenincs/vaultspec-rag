@@ -20,9 +20,9 @@ if sys.platform == "win32":
     from io import TextIOWrapper
 
     if isinstance(sys.stdout, TextIOWrapper):
-        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")  # pyright: ignore[reportUnknownMemberType]  # TextIOWrapper stubs leave _BufferT_co unbound after isinstance
     if isinstance(sys.stderr, TextIOWrapper):
-        sys.stderr.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")  # pyright: ignore[reportUnknownMemberType]  # same
 
 from dotenv import load_dotenv
 

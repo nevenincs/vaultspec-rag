@@ -21,12 +21,21 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from ._models import SearchResult
 
+__all__ = [
+    "GLOB_FETCH_MULTIPLIER",
+    "PREFER_CATEGORIES",
+    "PREFER_SCORE_NUDGE",
+    "_classify_chunk_type",
+    "_collapse_locale_variants",
+    "_locale_variant_key",
+]
+
 # When --include-path / --exclude-path are active the post-query
 # fnmatch filter may discard the majority of candidates. Overfetch
 # aggressively so top_k is still satisfied for common glob shapes.
 # Module-level constant so it can be tuned later without changing
 # the call site. See cli-path-glob ADR.
-_GLOB_FETCH_MULTIPLIER = 10
+GLOB_FETCH_MULTIPLIER = 10
 
 # Locale-variant dedup window. Two results whose paths share a
 # locale stem AND whose scores are within this window collapse to
@@ -38,7 +47,7 @@ _LOCALE_DEDUP_SCORE_WINDOW = 0.10
 # --prefer prod/tests/docs score nudge magnitude. Roughly one
 # rank-gap in a typical top-k - re-orders ties without making
 # off-category results jump rank.
-_PREFER_SCORE_NUDGE = 0.05
+PREFER_SCORE_NUDGE = 0.05
 
 # Path-extension/regex constants for locale detection.
 _LOCALE_FILE_EXTS: frozenset[str] = frozenset(
@@ -63,7 +72,7 @@ _TESTS_BASENAME_PATTERNS: tuple[str, ...] = ("test_*", "*_test.*", "*_spec.*")
 _DOCS_DIR_NAMES: frozenset[str] = frozenset({"docs", "doc"})
 _DOCS_BASENAME_PATTERNS: tuple[str, ...] = ("readme*", "changelog*")
 _DOCS_FILE_EXTS: frozenset[str] = frozenset({"md", "rst", "adoc"})
-_PREFER_CATEGORIES: tuple[str, ...] = ("prod", "tests", "docs")
+PREFER_CATEGORIES: tuple[str, ...] = ("prod", "tests", "docs")
 
 
 def _locale_variant_key(path: str) -> str | None:

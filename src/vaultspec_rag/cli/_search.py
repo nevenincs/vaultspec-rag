@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 from rich.table import Table
@@ -24,6 +24,13 @@ from ._render import (
 )
 from ._service_status import _default_service_port
 
+if TYPE_CHECKING:
+    import pathlib
+
+    from ..search import SearchResult
+
+__all__ = ["_suppress_hf_progress", "handle_search"]
+
 
 def _suppress_hf_progress() -> None:
     """Silence HuggingFace and sentence-transformers tqdm bars.
@@ -39,7 +46,7 @@ def _suppress_hf_progress() -> None:
 
 
 def _handle_service_results(
-    service_results: list | dict | None,
+    service_results: list[dict[str, object]] | dict[str, object] | None,
     query: str,
     search_type: str,
     json_mode: bool,
@@ -126,25 +133,25 @@ def _handle_vaultstore_locked_error(
 
 
 def _try_in_process_search(
-    target,
-    query,
-    search_type,
-    max_results,
-    language,
-    path,
-    node_type,
-    function_name,
-    class_name,
-    include_paths,
-    exclude_paths,
-    dedup_locales,
-    prefer,
-    doc_type,
-    feature,
-    date,
-    tag,
-    json_mode,
-):
+    target: pathlib.Path,
+    query: str,
+    search_type: str,
+    max_results: int,
+    language: str | None,
+    path: str | None,
+    node_type: str | None,
+    function_name: str | None,
+    class_name: str | None,
+    include_paths: list[str] | None,
+    exclude_paths: list[str] | None,
+    dedup_locales: bool,
+    prefer: str | None,
+    doc_type: str | None,
+    feature: str | None,
+    date: str | None,
+    tag: str | None,
+    json_mode: bool,
+) -> list[SearchResult]:
     import vaultspec_rag
 
     try:
@@ -182,6 +189,7 @@ def _try_in_process_search(
         return results
     except VaultStoreLockedError as exc:
         _handle_vaultstore_locked_error(exc, json_mode)
+        return []
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
         return []
@@ -255,7 +263,7 @@ def _validate_and_handle_filters(
 
 
 def _render_in_process_results(
-    results: list,
+    results: list[SearchResult],
     query: str,
     search_type: str,
     json_mode: bool,

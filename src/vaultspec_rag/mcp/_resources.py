@@ -7,7 +7,9 @@ REST daemon via ``_call_daemon``.  No server internals are imported.
 from __future__ import annotations
 
 from ._mcp import mcp
-from ._tools import _call_daemon
+from ._tools import (
+    _call_daemon,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module intentional import
+)
 
 
 @mcp.resource("vault://{doc_id}")
@@ -30,11 +32,11 @@ async def get_vault_document(doc_id: str) -> str:
     """
     res = _call_daemon("/vault-document", {"doc_id": doc_id})
     if "content" in res:
-        return res["content"]
+        return str(res["content"])
     if res.get("error") == "not_found":
         raise FileNotFoundError(f"Document '{doc_id}' not found")
     # Structured error from daemon (registry_full, local_store_locked, etc.)
-    raise RuntimeError(res.get("message", f"Failed to fetch document '{doc_id}'"))
+    raise RuntimeError(str(res.get("message", f"Failed to fetch document '{doc_id}'")))
 
 
 @mcp.prompt()

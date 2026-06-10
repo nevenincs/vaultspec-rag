@@ -120,7 +120,7 @@ def index_codebase(
     registry.load_model(model_name)
     with registry.lease(root) as slot:
         if extra_excludes is not None:
-            slot.code_indexer._extra_excludes = extra_excludes
+            slot.code_indexer._extra_excludes = extra_excludes  # pyright: ignore[reportPrivateUsage]  # api.py owns the slot and sets per-call excludes
         if full or clean:
             return slot.code_indexer.full_index(clean=clean, reporter=rep)
         return slot.code_indexer.incremental_index(reporter=rep)
@@ -278,7 +278,8 @@ def list_documents(
     """
     root = _resolve(root_dir)
     with get_registry().lease(root) as slot:
-        return slot.store.list_all_documents(doc_type=doc_type)
+        raw = slot.store.list_all_documents(doc_type=doc_type)
+        return cast("list[dict[str, object]]", raw)
 
 
 def get_related(
@@ -387,7 +388,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
         pass
 
     cuda_available = torch is not None and torch.cuda.is_available()
-    if cuda_available:
+    if cuda_available and torch is not None:
         gpu_name = torch.cuda.get_device_name(0)
         props = torch.cuda.get_device_properties(0)
         vram_mb = props.total_memory // (1024 * 1024)
@@ -402,7 +403,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     from .store import VaultStore
 
     registry = get_registry()
-    slot = registry._projects.get(root)
+    slot = registry._projects.get(root)  # pyright: ignore[reportPrivateUsage]  # get_status reads slot.store without acquiring a lease to avoid model init
     if slot is not None:
         store = slot.store
         own_store = False
@@ -661,7 +662,7 @@ def get_service_state(
     registry = get_registry()
     snapshot = registry.snapshot()
     wall_now = datetime.now().astimezone()
-    projects = []
+    projects: list[dict[str, object]] = []
     for entry in snapshot:
         idle_s = float(entry["idle_seconds"])
         last_access_wall = wall_now.timestamp() - idle_s

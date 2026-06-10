@@ -18,6 +18,13 @@ from typing import Any, Literal, cast
 
 from ._core import logger
 
+__all__ = [
+    "_is_connection_refused",
+    "_try_http_admin",
+    "_try_http_reindex",
+    "_try_http_search",
+]
+
 
 def _is_connection_refused(exc: BaseException) -> bool:
     if isinstance(exc, urllib.error.URLError):
@@ -33,15 +40,18 @@ def _is_connection_refused(exc: BaseException) -> bool:
 
 
 def _do_http_call(
-    port: int, path: str, payload: dict | None, timeout: float | None = None
-) -> dict | None:
+    port: int,
+    path: str,
+    payload: dict[str, object] | None,
+    timeout: float | None = None,
+) -> dict[str, object] | None:
     from ._service_status import _read_service_status
 
     status = _read_service_status()
     token = status.get("service_token", status.get("token", "")) if status else ""
 
     url = f"http://127.0.0.1:{port}{path}"
-    headers = {}
+    headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
@@ -54,11 +64,11 @@ def _do_http_call(
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
         try:
-            return json.loads(body)
+            return cast("dict[str, object]", json.loads(body))
         except json.JSONDecodeError:
             return {"ok": False, "error": "http_error", "message": f"{e.code}: {body}"}
 
@@ -71,7 +81,11 @@ def _try_http_reindex(
 ) -> dict[str, object] | None:
     try:
         search_type = "vault" if "vault" in tool_name else "codebase"
-        payload = {"type": search_type, "clean": clean, "project_root": project_root}
+        payload: dict[str, object] = {
+            "type": search_type,
+            "clean": clean,
+            "project_root": project_root,
+        }
         res = _do_http_call(port, "/reindex", payload)
         if res is not None:
             return res
@@ -327,7 +341,7 @@ def _try_http_search(
         if res and res.get("ok") is False:
             return res
         if res and "results" in res:
-            return res["results"]
+            return cast("list[dict[str, object]]", res["results"])
         return []
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)

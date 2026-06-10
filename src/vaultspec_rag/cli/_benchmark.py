@@ -53,6 +53,7 @@ def handle_benchmark(
         raise
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
+        return
 
     table = Table(
         title=f"Search Latency - {n_queries} queries",

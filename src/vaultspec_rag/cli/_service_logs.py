@@ -8,7 +8,7 @@ exit code 3.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
@@ -57,7 +57,9 @@ def service_logs(
         return
 
     raw_lines = result.get("lines")
-    log_lines: list[object] = list(raw_lines) if isinstance(raw_lines, list) else []
+    log_lines: list[object] = (
+        cast("list[object]", raw_lines) if isinstance(raw_lines, list) else []
+    )
     if not log_lines:
         _cli.console.print("[dim]No log lines available.[/]")
         return

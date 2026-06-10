@@ -93,7 +93,10 @@ from ._render import (
     _render_install_report,
     _render_uninstall_report,
 )
-from ._search import _suppress_hf_progress, handle_search
+from ._search import (
+    _suppress_hf_progress,  # pyright: ignore[reportPrivateUsage]  # _search lacks __all__; re-exported intentionally
+    handle_search,
+)
 from ._service_info import service_info
 from ._service_jobs import service_jobs
 from ._service_lifecycle import (

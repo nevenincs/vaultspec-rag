@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from anyio.to_thread import run_sync as _run_in_thread
-from watchfiles import Change, awatch
+from watchfiles import (
+    Change,
+    awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles awatch return type is partially stubbed
+)
 
 from . import jobs as _jobs
 

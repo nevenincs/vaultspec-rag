@@ -76,7 +76,9 @@ def service_info(
     table.add_row("GPU VRAM (GB)", str(index.get("vram_gb", "?")))
 
     raw_slots = projects_data.get("projects")
-    slots: list[object] = list(raw_slots) if isinstance(raw_slots, list) else []
+    slots: list[object] = (
+        cast("list[object]", raw_slots) if isinstance(raw_slots, list) else []
+    )
     table.add_row(
         "Project slots",
         f"{len(slots)}/{projects_data.get('max_projects', '?')}",
@@ -85,7 +87,7 @@ def service_info(
     enabled = bool(watcher.get("watch_enabled", False))
     raw_watching = watcher.get("watching")
     watching: list[object] = (
-        list(raw_watching) if isinstance(raw_watching, list) else []
+        cast("list[object]", raw_watching) if isinstance(raw_watching, list) else []
     )
     table.add_row(
         "Watcher",

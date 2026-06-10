@@ -18,7 +18,9 @@ import logging
 from importlib import resources
 from pathlib import Path
 
-from vaultspec_core.core.helpers import atomic_write
+from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    atomic_write,
+)
 
 logger = logging.getLogger(__name__)
 

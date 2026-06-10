@@ -64,6 +64,7 @@ def handle_status(
         raise typer.Exit(code=1) from None
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
+        return
 
     cuda_available = bool(status["cuda"])
     gpu_name = cast("Any", status["gpu_name"])

@@ -27,6 +27,27 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
+__all__ = [
+    "_HEARTBEAT_INTERVAL_SECONDS",
+    "_HEARTBEAT_STALENESS_SECONDS",
+    "_MAX_QUERY_LEN",
+    "_SENSITIVE_DIRS",
+    "_SENSITIVE_PATTERNS",
+    "_SERVICE_TOKEN",
+    "_http_mode",
+    "_registry",
+    "_shutdown_hooks_installed",
+    "_shutdown_recorded",
+    "_start_time",
+    "_watcher_lock",
+    "_watcher_stops",
+    "_watcher_tasks",
+    "incr",
+    "observe",
+    "render_prometheus",
+    "reset_metrics",
+]
+
 from ..registry import get_registry
 
 if TYPE_CHECKING:

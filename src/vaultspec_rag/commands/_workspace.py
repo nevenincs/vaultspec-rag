@@ -4,8 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vaultspec_core.config.workspace import resolve_workspace
-from vaultspec_core.core.types import init_paths
+from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]
+    resolve_workspace,
+)
+from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+    init_paths,
+)
+
+__all__ = [
+    "_ensure_workspace_dirs",
+    "_init_core_context",
+    "_resolve_target",
+]
 
 
 def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:

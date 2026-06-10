@@ -12,8 +12,12 @@ the active transport mode.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import vaultspec_rag.server as _m
+
+if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ._lifespan import health_handler, service_lifespan
 
@@ -91,8 +95,8 @@ def main(port: int | None = None) -> None:
 
         from ._routes import ROUTES as READ_ONLY_ROUTES
 
-        def _mcp_no_redirect(app):
-            async def _wrapper(scope, receive, send):
+        def _mcp_no_redirect(app: ASGIApp) -> ASGIApp:
+            async def _wrapper(scope: Scope, receive: Receive, send: Send) -> None:
                 if scope["type"] == "http" and scope.get("path") == "/mcp":
                     scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
                 await app(scope, receive, send)
@@ -137,7 +141,7 @@ def main(port: int | None = None) -> None:
         # Without this, the first tool call hits "EmbeddingModel not loaded"
         # because ServiceRegistry.lease()/peek_project() require a loaded model.
         _m._registry.load_model()
-        _m._registry._on_close_project = _m._stop_watcher
+        _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
         try:
             mcp.run(transport="stdio")
         finally:

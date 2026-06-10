@@ -11,15 +11,16 @@ from __future__ import annotations
 
 import json
 import urllib.error
-import urllib.parse
 import urllib.request
 from typing import Any
 
-from ..cli._service_status import _read_service_status
+from ..cli import (
+    _read_service_status,  # pyright: ignore[reportPrivateUsage]  # intra-package: cli __all__ explicitly re-exports this symbol
+)
 from ._mcp import mcp
 
 
-def _call_daemon(path: str, payload: dict | None = None) -> dict:
+def _call_daemon(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     status = _read_service_status()
     if not status or "port" not in status:
         raise RuntimeError(
@@ -30,7 +31,7 @@ def _call_daemon(path: str, payload: dict | None = None) -> dict:
     token = status.get("service_token", status.get("token", ""))
 
     url = f"http://127.0.0.1:{port}{path}"
-    headers = {}
+    headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
@@ -146,9 +147,9 @@ async def get_code_file(
         "/code-file", {k: v for k, v in payload.items() if v is not None}
     )
     if "content" in res:
-        return res["content"]
+        return str(res["content"])
     if "error" in res:
-        raise ValueError(res["error"])
+        raise ValueError(str(res["error"]))
     return ""
 
 

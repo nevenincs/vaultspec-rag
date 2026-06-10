@@ -649,7 +649,11 @@ def service_warmup() -> None:
         _handle_gpu_error(RuntimeError("CUDA runtime unavailable"))
 
     try:
-        from huggingface_hub import get_token, snapshot_download, try_to_load_from_cache
+        from huggingface_hub import (
+            get_token,
+            snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
+            try_to_load_from_cache,
+        )
     except ImportError:
         _cli.console.print("[bold red]Error:[/] huggingface_hub is not installed.")
         raise typer.Exit(code=1) from None

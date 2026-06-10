@@ -17,6 +17,17 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+__all__ = [
+    "_heartbeat_loop",
+    "_heartbeat_tick_sync",
+    "_install_daemon_shutdown_hooks",
+    "_lifecycle_log",
+    "_record_shutdown",
+    "_resolve_log_path",
+    "_status_file_path",
+    "_unlink_status_file_silently",
+]
+
 import vaultspec_rag.server as _m
 
 from ._state import _HEARTBEAT_INTERVAL_SECONDS

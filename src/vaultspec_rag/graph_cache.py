@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import pathlib
 
-    from vaultspec_core.graph import VaultGraph
+    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        VaultGraph,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +44,8 @@ class GraphCache:
         if ttl_seconds is None:
             from .config import get_config
 
-            ttl_seconds = get_config().graph_ttl_seconds
-        self._ttl_seconds = ttl_seconds
+            ttl_seconds = float(get_config().graph_ttl_seconds)
+        self._ttl_seconds: float = ttl_seconds
         self._graph: VaultGraph | None = None
         self._root: pathlib.Path | None = None
         self._built_at: float = 0.0
@@ -79,7 +81,9 @@ class GraphCache:
         with self._lock:
             if not self._is_stale(root_dir):
                 return self._graph
-            from vaultspec_core.graph import VaultGraph
+            from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+                VaultGraph,
+            )
 
             try:
                 self._graph = VaultGraph(root_dir)

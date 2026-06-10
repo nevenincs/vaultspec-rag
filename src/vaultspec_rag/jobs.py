@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -169,7 +169,7 @@ def snapshot() -> list[dict[str, object]]:
             item = dict(record)
             prog = record.get("progress")
             if isinstance(prog, dict):
-                item["progress"] = dict(prog)
+                item["progress"] = dict(cast("dict[str, object]", prog))
             copied.append(item)
         return copied
 

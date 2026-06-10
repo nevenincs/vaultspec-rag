@@ -9,15 +9,17 @@ content via tomlkit's round-trip semantics.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final, cast
 
 import tomlkit
 from tomlkit import TOMLDocument
-from tomlkit.items import AoT, InlineTable, Table
-from vaultspec_core.core.helpers import atomic_write
+from tomlkit.items import AoT, InlineTable
+from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeStubs]
+    atomic_write,
+)
 
 from ._constants import (
-    _TABLE_LIKE_TYPES,
+    _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
     CU130_INDEX_NAME,
     CU130_INDEX_URL,
     CU130_MARKER,
@@ -28,19 +30,29 @@ from ._constants import (
     TorchConfigState,
 )
 from ._inspect import (
-    _classify,
-    _detect_crlf,
-    _index_match,
-    _indices,
-    _is_half_applied,
-    _load,
-    _source_match,
-    _tool_uv,
+    classify_doc,
+    detect_crlf,
     detect_state,
+    get_indices_aot,
+    get_tool_uv_table,
+    is_half_applied,
+    load_pyproject,
+    match_index_entry,
+    match_source_entry,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _tget(mapping: TableLike | TOMLDocument, key: str) -> object:
+    """Typed wrapper for tomlkit Container.get() which returns Unknown.
+
+    tomlkit's Container inherits from an unparameterised dict, so
+    .get() has return type ``Unknown | None`` in strict mode.
+    Centralising the cast here keeps all other call sites clean.
+    """
+    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
 
 
 def manual_snippet() -> str:
@@ -99,12 +111,12 @@ def apply_patch(pyproject: Path) -> PatchReport:
     rest of the document via tomlkit's round-trip semantics.
     """
     report = PatchReport(action=TorchConfigAction.SKIPPED, path=pyproject)
-    doc = _load(pyproject)
+    doc = load_pyproject(pyproject)
     if doc is None:
         report.action = TorchConfigAction.ABSENT
         return report
 
-    state, conflicts = _classify(doc)
+    state, conflicts = classify_doc(doc)
     if state == TorchConfigState.CANONICAL:
         report.action = TorchConfigAction.ALREADY
         return report
@@ -114,7 +126,7 @@ def apply_patch(pyproject: Path) -> PatchReport:
         return report
 
     # MISSING → write.
-    uses_crlf = _detect_crlf(pyproject)
+    uses_crlf = detect_crlf(pyproject)
     original_bytes = pyproject.read_bytes()
     _ensure_tool_uv_index(doc)
     _ensure_torch_source(doc)
@@ -151,12 +163,12 @@ def remove_patch(pyproject: Path) -> PatchReport:
     user-owned content outside the cu130 block is preserved.
     """
     report = PatchReport(action=TorchConfigAction.SKIPPED, path=pyproject)
-    doc = _load(pyproject)
+    doc = load_pyproject(pyproject)
     if doc is None:
         report.action = TorchConfigAction.ABSENT
         return report
 
-    state, conflicts = _classify(doc)
+    state, conflicts = classify_doc(doc)
     if state == TorchConfigState.MISSING:
         report.action = TorchConfigAction.ABSENT
         return report
@@ -167,7 +179,7 @@ def remove_patch(pyproject: Path) -> PatchReport:
         # to "complete" it, but the present half IS rag's canonical
         # shape - uninstall can safely drop it. Without this branch
         # uninstall leaves an orphan rag-named entry behind. TOML-02.
-        if _is_half_applied(doc):
+        if is_half_applied(doc):
             # Fall through to the normal CANONICAL→remove path. The
             # per-half drop helpers (``_drop_cu130_index`` /
             # ``_drop_torch_source``) are no-ops on absent halves.
@@ -182,7 +194,7 @@ def remove_patch(pyproject: Path) -> PatchReport:
     # byte-identical to the pre-apply content) holds - tomlkit's
     # ``dumps`` always emits a single trailing LF, which can append
     # one extra byte if the original ended without one. BEHAV-01.
-    uses_crlf = _detect_crlf(pyproject)
+    uses_crlf = detect_crlf(pyproject)
     original_bytes = pyproject.read_bytes()
     _drop_cu130_index(doc)
     _drop_torch_source(doc)
@@ -235,8 +247,8 @@ def _match_trailing_newline(
     return stripped + eol * original_trail
 
 
-def _write_doc_preserving_shape(pyproject: Path, doc: TOMLDocument) -> None:
-    uses_crlf = _detect_crlf(pyproject)
+def write_doc_preserving_shape(pyproject: Path, doc: TOMLDocument) -> None:
+    uses_crlf = detect_crlf(pyproject)
     original_bytes = pyproject.read_bytes()
     new_text = tomlkit.dumps(doc)
     tomlkit.parse(new_text)
@@ -282,7 +294,7 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
     existing array-of-tables if one is present.
     """
     uv = _get_or_create_tool_uv(doc)
-    existing = uv.get("index")
+    existing: object = _tget(uv, "index")
     entry = tomlkit.table()
     entry["name"] = CU130_INDEX_NAME
     entry["url"] = CU130_INDEX_URL
@@ -293,15 +305,15 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
         # before the next top-level section, so no manual trivia
         # override is needed.
         aot = tomlkit.aot()
-        aot.append(entry)
+        aot.append(entry)  # pyright: ignore[reportUnknownMemberType]  # tomlkit AoT.append
         uv["index"] = aot
         return
 
-    # Defensive: _classify already rejects single-table forms as
+    # Defensive: classify_doc already rejects single-table forms as
     # CUSTOMISED so apply_patch never reaches this function in that
     # case. Guard anyway - silently-wrong mutation is the worst
     # outcome for a user-owned file.
-    if not isinstance(existing, AoT | list):
+    if not isinstance(existing, (AoT, list)):
         raise TypeError(
             "pyproject.toml [tool.uv.index] is not an array-of-tables; "
             "refuse to mutate to avoid producing invalid TOML"
@@ -312,9 +324,9 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
     # lands flush against the following section header and produces
     # a noisy git diff that breaks the "preserve user formatting"
     # reason for using tomlkit. TOML-04.
-    last_value = entry.value._body[-1][1]
+    last_value = entry.value.body[-1][1]
     last_value.trivia.trail = "\n\n"
-    existing.append(entry)
+    cast("list[object]", existing).append(entry)
 
 
 def _ensure_torch_source(doc: TOMLDocument) -> None:
@@ -335,22 +347,22 @@ def _ensure_torch_source(doc: TOMLDocument) -> None:
     inline["index"] = CU130_INDEX_NAME
     inline["marker"] = CU130_MARKER
 
-    current = sources.get("torch")
+    current: object = _tget(sources, "torch")
     if current is None:
         arr = tomlkit.array()
-        arr.append(inline)
+        arr.append(inline)  # pyright: ignore[reportUnknownMemberType]  # tomlkit Array
         arr.multiline(True)
         sources["torch"] = arr
         return
 
     if isinstance(current, list):
-        current.append(inline)
+        cast("list[object]", current).append(inline)
         return
 
     # Promotion: existing single inline-table → array of two inline
     # tables. Only valid when `current` is an InlineTable; a standard
     # Table (e.g. ``[tool.uv.sources.torch]`` section form) cannot be
-    # nested inside a TOML array. _classify already rejects that
+    # nested inside a TOML array. classify_doc already rejects that
     # shape as CUSTOMISED; guard anyway for defence-in-depth.
     if not isinstance(current, InlineTable):
         raise TypeError(
@@ -359,8 +371,8 @@ def _ensure_torch_source(doc: TOMLDocument) -> None:
             "(would produce invalid TOML)"
         )
     arr = tomlkit.array()
-    arr.append(current)
-    arr.append(inline)
+    arr.append(current)  # pyright: ignore[reportUnknownMemberType]  # tomlkit Array
+    arr.append(inline)  # pyright: ignore[reportUnknownMemberType]  # tomlkit Array
     arr.multiline(True)
     sources["torch"] = arr
 
@@ -369,11 +381,11 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
     """Remove the canonical cu130 entry from ``[[tool.uv.index]]``.
 
     OutOfOrderTableProxy quirk applies here too: re-fetch ``uv`` via
-    :func:`_tool_uv` immediately before ``del uv["index"]`` instead of
+    :func:`get_tool_uv_table` immediately before ``del uv["index"]`` instead of
     holding a stale reference, so a freshly-constructed proxy carries
     consistent internal table positions.
     """
-    indices = _indices(doc)
+    indices = get_indices_aot(doc)
     if indices is None:
         return
     # Iterate backwards and pop in-place so user trivia (comments,
@@ -381,49 +393,51 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
     # entries is preserved. Rebuilding the AoT from scratch would
     # strip that metadata.
     for i in range(len(indices) - 1, -1, -1):
-        entry = indices[i]
-        if isinstance(entry, Table | InlineTable | dict) and _index_match(entry) == (
-            "canonical"
-        ):
+        raw_entry: object = cast("object", indices[i])  # pyright: ignore[reportUnknownMemberType]  # tomlkit AoT element
+        if not isinstance(raw_entry, _TABLE_LIKE_TYPES):
+            continue
+        if match_index_entry(raw_entry) == "canonical":
             indices.pop(i)
     if len(indices) == 0:
-        uv = _tool_uv(doc)
+        uv = get_tool_uv_table(doc)
         if uv is not None:
             del uv["index"]
 
 
-def _drop_canonical_torch_entry(sources: Any) -> None:
+def _drop_canonical_torch_entry(sources: object) -> None:
     if not isinstance(sources, _TABLE_LIKE_TYPES):
         return
-    torch_entry = sources.get("torch")
+    torch_entry: object = _tget(sources, "torch")
     if torch_entry is None:
         return
 
-    if isinstance(torch_entry, InlineTable | dict) and not isinstance(
-        torch_entry, list
-    ):
-        if _source_match(torch_entry) == "canonical":
+    if isinstance(torch_entry, _TABLE_LIKE_TYPES) and not isinstance(torch_entry, list):
+        if match_source_entry(torch_entry) == "canonical":
             del sources["torch"]
     elif isinstance(torch_entry, list):
-        for i in range(len(torch_entry) - 1, -1, -1):
-            e = torch_entry[i]
-            if isinstance(e, InlineTable | dict) and _source_match(e) == "canonical":
-                torch_entry.pop(i)
-        if len(torch_entry) == 0:
+        torch_list = cast("list[object]", torch_entry)
+        for i in range(len(torch_list) - 1, -1, -1):
+            e: object = torch_list[i]
+            if (
+                isinstance(e, _TABLE_LIKE_TYPES)
+                and match_source_entry(e) == "canonical"
+            ):
+                torch_list.pop(i)  # pyright: ignore[reportUnknownMemberType]  # tomlkit list
+        if len(torch_list) == 0:
             del sources["torch"]
 
 
-def _cleanup_empty_sources(doc: TOMLDocument, sources: Any) -> None:
+def _cleanup_empty_sources(doc: TOMLDocument, sources: object) -> None:
     if isinstance(sources, _TABLE_LIKE_TYPES) and not sources:
-        uv = _tool_uv(doc)
+        uv = get_tool_uv_table(doc)
         if uv is not None:
             del uv["sources"]
 
 
 def _cleanup_empty_uv_tables(doc: TOMLDocument) -> None:
-    uv = _tool_uv(doc)
+    uv = get_tool_uv_table(doc)
     if uv is not None and not uv:
-        tool = doc.get("tool")
+        tool: object = _tget(doc, "tool")
         if isinstance(tool, _TABLE_LIKE_TYPES):
             del tool["uv"]
             if not tool:
@@ -447,10 +461,10 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     re-fetching the proxy from its parent before each cascade-stage
     deletion (``del uv["sources"]`` → re-fetch → ``del tool["uv"]``).
     """
-    uv = _tool_uv(doc)
+    uv = get_tool_uv_table(doc)
     if uv is None:
         return
-    sources = uv.get("sources")
+    sources: object = _tget(uv, "sources")
 
     _drop_canonical_torch_entry(sources)
     _cleanup_empty_sources(doc, sources)

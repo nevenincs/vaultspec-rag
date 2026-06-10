@@ -14,6 +14,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+__all__ = [
+    "_ensure_watcher",
+    "_stop_all_watchers",
+    "_stop_watcher",
+]
+
 import vaultspec_rag.server as _m
 
 if TYPE_CHECKING:
@@ -67,7 +73,7 @@ def _ensure_watcher(
     with _m._watcher_lock:
         if root in _m._watcher_tasks:
             return True
-        if _m._registry._shutting_down:
+        if getattr(_m._registry, "_shutting_down", False):
             return False
 
         from ..watcher import watch_and_reindex

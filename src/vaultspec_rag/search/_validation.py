@@ -25,7 +25,7 @@ class InvalidFilterForSearchTypeError(ValueError):
 
 
 def _format_flags(names: list[str]) -> list[str]:
-    flags = []
+    flags: list[str] = []
     for name in names:
         flag = name.replace("_", "-")
         if not flag.startswith("--"):
@@ -85,20 +85,20 @@ def validate_search_filters(
         name for name, val in vault_filter_fields if val is not None
     ]
 
-    glob_filters_supplied = []
+    glob_filters_supplied: list[str] = []
     if include_paths:
         glob_filters_supplied.append("include_path")
     if exclude_paths:
         glob_filters_supplied.append("exclude_path")
 
-    postproc_supplied = []
+    postproc_supplied: list[str] = []
     if dedup_locales:
         postproc_supplied.append("dedup_locales")
     if prefer is not None:
         postproc_supplied.append("prefer")
 
     if search_type != "code":
-        offending = []
+        offending: list[str] = []
         offending.extend(code_filters_supplied)
         offending.extend(glob_filters_supplied)
         offending.extend(postproc_supplied)

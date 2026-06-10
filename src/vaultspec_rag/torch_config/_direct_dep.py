@@ -9,7 +9,7 @@ it, adds or removes the direct entry under a marker key.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import tomlkit
 from packaging.requirements import InvalidRequirement, Requirement
@@ -17,18 +17,28 @@ from packaging.utils import canonicalize_name
 from tomlkit import TOMLDocument
 
 from ._constants import (
-    _MANAGED_DIRECT_DEP_KEY,
-    _TABLE_LIKE_TYPES,
+    _MANAGED_DIRECT_DEP_KEY,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
+    _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
     DIRECT_TORCH_REQUIREMENT,
     DirectTorchDepReport,
     TableLike,
     logger,
 )
-from ._inspect import _load
-from ._mutate import _write_doc_preserving_shape
+from ._inspect import load_pyproject
+from ._mutate import write_doc_preserving_shape
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _tget(mapping: TableLike | TOMLDocument, key: str) -> object:
+    """Typed wrapper for tomlkit Container.get() which returns Unknown.
+
+    tomlkit's Container inherits from an unparameterised dict, so
+    .get() has return type ``Unknown | None`` in strict mode.
+    Centralising the cast here keeps all other call sites clean.
+    """
+    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
 
 
 def _is_torch_requirement(req: object) -> bool:
@@ -65,7 +75,7 @@ def _is_torch_requirement(req: object) -> bool:
     return canonicalize_name(parsed.name) == "torch"
 
 
-def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, Any]]:
+def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, list[object]]]:
     """Yield ``(label, sequence)`` for every direct-dependency surface.
 
     Covers the four common shapes a consumer can declare torch in:
@@ -91,11 +101,11 @@ def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, Any]]:
     suggested fix (``add to [project].dependencies``) would break their
     build.
     """
-    found: list[tuple[str, Any]] = []
+    found: list[tuple[str, list[object]]] = []
 
     _extract_pep_deps(doc, found)
 
-    tool = doc.get("tool")
+    tool = _tget(doc, "tool")
     if not isinstance(tool, _TABLE_LIKE_TYPES):
         return found
 
@@ -107,105 +117,129 @@ def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, Any]]:
     return found
 
 
-def _extract_pep_optional_deps(project: Any, found: list[tuple[str, Any]]) -> None:
-    optional = project.get("optional-dependencies")
+def _extract_pep_optional_deps(
+    project: TableLike, found: list[tuple[str, list[object]]]
+) -> None:
+    optional = _tget(project, "optional-dependencies")
     if isinstance(optional, _TABLE_LIKE_TYPES):
-        for name, group in optional.items():
+        for name, group in optional.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
             if isinstance(group, list):
-                found.append((f"[project.optional-dependencies].{name}", group))
+                found.append(
+                    (
+                        f"[project.optional-dependencies].{name}",
+                        cast("list[object]", group),
+                    )
+                )
 
 
-def _extract_pep_groups(doc: TOMLDocument, found: list[tuple[str, Any]]) -> None:
-    groups = doc.get("dependency-groups")
+def _extract_pep_groups(
+    doc: TOMLDocument, found: list[tuple[str, list[object]]]
+) -> None:
+    groups = _tget(doc, "dependency-groups")
     if isinstance(groups, _TABLE_LIKE_TYPES):
-        for name, group in groups.items():
+        for name, group in groups.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
             if isinstance(group, list):
-                found.append((f"[dependency-groups].{name}", group))
+                found.append(
+                    (f"[dependency-groups].{name}", cast("list[object]", group))
+                )
 
 
-def _extract_pep_deps(doc: TOMLDocument, found: list[tuple[str, Any]]) -> None:
-    project = doc.get("project")
+def _extract_pep_deps(doc: TOMLDocument, found: list[tuple[str, list[object]]]) -> None:
+    project = _tget(doc, "project")
     if isinstance(project, _TABLE_LIKE_TYPES):
-        deps = project.get("dependencies")
+        deps = _tget(project, "dependencies")
         if isinstance(deps, list):
-            found.append(("[project].dependencies", deps))
+            found.append(("[project].dependencies", cast("list[object]", deps)))
         _extract_pep_optional_deps(project, found)
     _extract_pep_groups(doc, found)
 
 
-def _extract_uv_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
-    uv = tool.get("uv")
+def _extract_uv_deps(tool: TableLike, found: list[tuple[str, list[object]]]) -> None:
+    uv = _tget(tool, "uv")
     if isinstance(uv, _TABLE_LIKE_TYPES):
-        uv_dev = uv.get("dev-dependencies")
+        uv_dev = _tget(uv, "dev-dependencies")
         if isinstance(uv_dev, list):
-            found.append(("[tool.uv].dev-dependencies", uv_dev))
+            found.append(("[tool.uv].dev-dependencies", cast("list[object]", uv_dev)))
 
 
-def _extract_poetry_groups(poetry: Any, found: list[tuple[str, Any]]) -> None:
-    pgroups = poetry.get("group")
+def _extract_poetry_groups(
+    poetry: TableLike, found: list[tuple[str, list[object]]]
+) -> None:
+    pgroups = _tget(poetry, "group")
     if not isinstance(pgroups, _TABLE_LIKE_TYPES):
         return
-    for gname, gtable in pgroups.items():
+    for gname, gtable in pgroups.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
         if not isinstance(gtable, _TABLE_LIKE_TYPES):
             continue
-        gdeps = gtable.get("dependencies")
+        gdeps = _tget(gtable, "dependencies")
         if isinstance(gdeps, _TABLE_LIKE_TYPES):
             found.append(
                 (
                     f"[tool.poetry.group.{gname}.dependencies]",
-                    list(gdeps.keys()),
+                    list(gdeps.keys()),  # pyright: ignore[reportUnknownArgumentType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
                 )
             )
 
 
-def _extract_poetry_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
-    poetry = tool.get("poetry")
+def _extract_poetry_deps(
+    tool: TableLike, found: list[tuple[str, list[object]]]
+) -> None:
+    poetry = _tget(tool, "poetry")
     if not isinstance(poetry, _TABLE_LIKE_TYPES):
         return
-    pdeps = poetry.get("dependencies")
+    pdeps = _tget(poetry, "dependencies")
     if isinstance(pdeps, _TABLE_LIKE_TYPES):
-        found.append(("[tool.poetry.dependencies]", list(pdeps.keys())))
-    pdev = poetry.get("dev-dependencies")
+        found.append(("[tool.poetry.dependencies]", list(pdeps.keys())))  # pyright: ignore[reportUnknownArgumentType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
+    pdev = _tget(poetry, "dev-dependencies")
     if isinstance(pdev, _TABLE_LIKE_TYPES):
-        found.append(("[tool.poetry.dev-dependencies]", list(pdev.keys())))
+        found.append(("[tool.poetry.dev-dependencies]", list(pdev.keys())))  # pyright: ignore[reportUnknownArgumentType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
     _extract_poetry_groups(poetry, found)
 
 
-def _extract_pdm_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
-    pdm = tool.get("pdm")
+def _extract_pdm_deps(tool: TableLike, found: list[tuple[str, list[object]]]) -> None:
+    pdm = _tget(tool, "pdm")
     if isinstance(pdm, _TABLE_LIKE_TYPES):
-        pdm_dev = pdm.get("dev-dependencies")
+        pdm_dev = _tget(pdm, "dev-dependencies")
         if isinstance(pdm_dev, _TABLE_LIKE_TYPES):
-            for gname, gdeps in pdm_dev.items():
+            for gname, gdeps in pdm_dev.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
                 if isinstance(gdeps, list):
-                    found.append((f"[tool.pdm.dev-dependencies].{gname}", gdeps))
+                    found.append(
+                        (
+                            f"[tool.pdm.dev-dependencies].{gname}",
+                            cast("list[object]", gdeps),
+                        )
+                    )
 
 
-def _extract_hatch_env(ename: str, etable: Any, found: list[tuple[str, Any]]) -> None:
+def _extract_hatch_env(
+    ename: object, etable: object, found: list[tuple[str, list[object]]]
+) -> None:
     if not isinstance(etable, _TABLE_LIKE_TYPES):
         return
     for key in ("dependencies", "extra-dependencies"):
-        edeps = etable.get(key)
+        edeps = _tget(etable, key)
         if isinstance(edeps, list):
-            found.append((f"[tool.hatch.envs.{ename}].{key}", edeps))
+            found.append(
+                (f"[tool.hatch.envs.{ename}].{key}", cast("list[object]", edeps))
+            )
         elif isinstance(edeps, _TABLE_LIKE_TYPES):
             found.append(
                 (
                     f"[tool.hatch.envs.{ename}.{key}]",
-                    list(edeps.keys()),
+                    list(edeps.keys()),  # pyright: ignore[reportUnknownArgumentType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
                 )
             )
 
 
-def _extract_hatch_deps(tool: Any, found: list[tuple[str, Any]]) -> None:
-    hatch = tool.get("hatch")
+def _extract_hatch_deps(tool: TableLike, found: list[tuple[str, list[object]]]) -> None:
+    hatch = _tget(tool, "hatch")
     if not isinstance(hatch, _TABLE_LIKE_TYPES):
         return
-    envs = hatch.get("envs")
+    envs = _tget(hatch, "envs")
     if not isinstance(envs, _TABLE_LIKE_TYPES):
         return
-    for ename, etable in envs.items():
-        _extract_hatch_env(ename, etable, found)
+    for ename, etable in envs.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
+        _extract_hatch_env(cast("object", ename), cast("object", etable), found)  # pyright: ignore[reportUnknownArgumentType]  # tomlkit Unknown iteration values
 
 
 def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
@@ -228,7 +262,7 @@ def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
         surfaces parse errors elsewhere).
     """
     try:
-        doc = _load(pyproject)
+        doc = load_pyproject(pyproject)
     except Exception as exc:
         # Broad except: install flow surfaces parse errors elsewhere
         # via a dedicated diagnostic. Here we only need a
@@ -245,10 +279,10 @@ def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
 
 
 def _tool_vaultspec_rag(doc: TOMLDocument) -> TableLike | None:
-    tool = doc.get("tool")
+    tool = _tget(doc, "tool")
     if not isinstance(tool, _TABLE_LIKE_TYPES):
         return None
-    rag = tool.get("vaultspec-rag")
+    rag = _tget(tool, "vaultspec-rag")
     if not isinstance(rag, _TABLE_LIKE_TYPES):
         return None
     return rag
@@ -272,20 +306,24 @@ def _clear_managed_direct_dep_marker(doc: TOMLDocument) -> None:
 
 def _managed_direct_dep_marker(doc: TOMLDocument) -> bool:
     rag = _tool_vaultspec_rag(doc)
-    return bool(rag is not None and rag.get(_MANAGED_DIRECT_DEP_KEY) is True)
+    marker: object = _tget(rag, _MANAGED_DIRECT_DEP_KEY) if rag is not None else None
+    return marker is True
 
 
-def _project_dependencies(doc: TOMLDocument) -> tuple[list | None, str, list[str]]:
+def _project_dependencies(
+    doc: TOMLDocument,
+) -> tuple[list[object] | None, str, list[str]]:
     project = doc.setdefault("project", tomlkit.table())
     if not isinstance(project, _TABLE_LIKE_TYPES):
         return None, "", ["[project] is not a table"]
-    deps = project.get("dependencies")
+    deps = _tget(project, "dependencies")
     if deps is None:
-        deps = tomlkit.array()
-        project["dependencies"] = deps
+        new_arr = tomlkit.array()
+        project["dependencies"] = new_arr
+        deps = new_arr
     if not isinstance(deps, list):
         return None, "", ["[project].dependencies is not an array"]
-    return deps, "[project].dependencies", []
+    return cast("list[object]", deps), "[project].dependencies", []
 
 
 def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
@@ -297,7 +335,7 @@ def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
     no-op and uv keeps resolving the CPU wheel from PyPI.
     """
     report = DirectTorchDepReport(action="skipped", path=pyproject)
-    doc = _load(pyproject)
+    doc = load_pyproject(pyproject)
     if doc is None:
         report.action = "absent"
         return report
@@ -316,7 +354,7 @@ def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
 
     deps.append(DIRECT_TORCH_REQUIREMENT)
     _set_managed_direct_dep_marker(doc)
-    _write_doc_preserving_shape(pyproject, doc)
+    write_doc_preserving_shape(pyproject, doc)
     report.action = "applied"
     report.location = location
     return report
@@ -325,7 +363,7 @@ def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
 def remove_managed_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
     """Remove the direct ``torch`` dependency only when rag added it."""
     report = DirectTorchDepReport(action="skipped", path=pyproject)
-    doc = _load(pyproject)
+    doc = load_pyproject(pyproject)
     if doc is None:
         report.action = "absent"
         return report
@@ -340,15 +378,15 @@ def remove_managed_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
 
     for index, entry in enumerate(list(deps)):
         if entry == DIRECT_TORCH_REQUIREMENT:
-            deps.pop(index)
+            deps.pop(index)  # pyright: ignore[reportUnknownMemberType]  # tomlkit list
             _clear_managed_direct_dep_marker(doc)
-            _write_doc_preserving_shape(pyproject, doc)
+            write_doc_preserving_shape(pyproject, doc)
             report.action = "removed"
             report.location = location
             return report
 
     _clear_managed_direct_dep_marker(doc)
-    _write_doc_preserving_shape(pyproject, doc)
+    write_doc_preserving_shape(pyproject, doc)
     report.action = "absent"
     report.location = location
     return report

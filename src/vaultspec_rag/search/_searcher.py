@@ -13,16 +13,16 @@ import logging
 import threading
 import time
 from contextlib import nullcontext
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ._models import ParsedQuery, SearchResult
 from ._parsing import parse_query
 from ._postprocess import (
-    _GLOB_FETCH_MULTIPLIER,
-    _PREFER_CATEGORIES,
-    _PREFER_SCORE_NUDGE,
-    _classify_chunk_type,
-    _collapse_locale_variants,
+    GLOB_FETCH_MULTIPLIER,
+    PREFER_CATEGORIES,
+    PREFER_SCORE_NUDGE,
+    _classify_chunk_type,  # pyright: ignore[reportPrivateUsage]  # intra-package intentional re-export
+    _collapse_locale_variants,  # pyright: ignore[reportPrivateUsage]  # intra-package intentional re-export
 )
 from ._rerank import rerank_with_graph
 
@@ -31,7 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sentence_transformers import CrossEncoder
-    from vaultspec_core.graph import VaultGraph
+    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        VaultGraph,
+    )
 
     from ..embeddings import EmbeddingModel, SparseResult
     from ..store import VaultStore
@@ -91,13 +93,16 @@ class VaultSearcher:
         from ..config import get_config
 
         cfg = get_config()
-        if graph_ttl_seconds is None:
-            graph_ttl_seconds = cfg.graph_ttl_seconds
+        resolved_ttl: float = (
+            graph_ttl_seconds
+            if graph_ttl_seconds is not None
+            else float(cfg.graph_ttl_seconds)
+        )
         self.root_dir = root_dir
         self.model = model
         self.store = store
         self._graph_provider = graph_provider
-        self._graph_ttl = graph_ttl_seconds
+        self._graph_ttl: float = resolved_ttl
         self._cached_graph: VaultGraph | None = None
         self._graph_built_at: float = 0.0
         self._graph_lock = threading.Lock()
@@ -180,14 +185,16 @@ class VaultSearcher:
         reranker = self._get_reranker()
         pairs = [(query, r.snippet) for r in results]
         batch_size = get_config().reranker_batch_size
+        scores: list[float] = []
         with self._gpu_lock if self._gpu_lock is not None else nullcontext():
             while True:
                 try:
-                    scores = reranker.predict(
+                    raw_scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete
                         pairs,
                         batch_size=batch_size,
                         show_progress_bar=False,
                     )
+                    scores = [float(s) for s in raw_scores]
                     break
                 except torch.cuda.OutOfMemoryError:
                     torch.cuda.empty_cache()
@@ -199,7 +206,7 @@ class VaultSearcher:
                         batch_size,
                     )
         for result, score in zip(results, scores, strict=True):
-            result.score = float(score)
+            result.score = score
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:top_k]
 
@@ -217,7 +224,9 @@ class VaultSearcher:
         if self._graph_provider is not None:
             return self._graph_provider()
 
-        from vaultspec_core.graph import VaultGraph as _VaultGraph
+        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+            VaultGraph as _VaultGraph,
+        )
 
         now = time.monotonic()
         if self._cached_graph is None or (now - self._graph_built_at) > self._graph_ttl:
@@ -290,30 +299,34 @@ class VaultSearcher:
 
         # Fetch extra candidates when reranker will narrow them down
         fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
-        raw_results = self.store.hybrid_search(
-            query_vector=query_vector,
-            _query_text=query_text,
-            filters=store_filters or None,
-            limit=fetch_limit,
-            sparse_vector=sparse_vector,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+        raw_results: list[dict[str, object]] = cast(
+            "list[dict[str, object]]",
+            self.store.hybrid_search(
+                query_vector=query_vector,
+                _query_text=query_text,
+                filters=store_filters or None,
+                limit=fetch_limit,
+                sparse_vector=sparse_vector,
+                like_ids=like_ids,
+                unlike_ids=unlike_ids,
+            ),
         )
 
-        results = []
+        results: list[SearchResult] = []
         for r in raw_results:
-            score = r.get("_relevance_score", 0.0)
+            raw_score = r.get("_relevance_score", 0.0)
+            score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
             results.append(
                 SearchResult(
-                    id=r["id"],
-                    path=r["path"],
-                    title=r.get("title", ""),
-                    score=float(score),
-                    snippet=r.get("content", "")[:200].strip(),
+                    id=str(r["id"]),
+                    path=str(r["path"]),
+                    title=str(r.get("title", "")),
+                    score=score,
+                    snippet=str(r.get("content", ""))[:200].strip(),
                     source="vault",
-                    doc_type=r.get("doc_type", ""),
-                    feature=r.get("feature", ""),
-                    date=r.get("date", ""),
+                    doc_type=str(r.get("doc_type", "")),
+                    feature=str(r.get("feature", "")),
+                    date=str(r.get("date", "")),
                 ),
             )
 
@@ -348,13 +361,13 @@ class VaultSearcher:
 
     def _filter_raw_codebase_results(
         self,
-        raw_results: list[dict],
+        raw_results: list[dict[str, object]],
         include_norm: list[str],
         exclude_norm: list[str],
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         if not include_norm and not exclude_norm:
             return raw_results
-        filtered: list[dict] = []
+        filtered: list[dict[str, object]] = []
         for r in raw_results:
             path_value = str(r.get("path", ""))
             if include_norm and not any(
@@ -368,24 +381,38 @@ class VaultSearcher:
             filtered.append(r)
         return filtered
 
-    def _map_codebase_results(self, raw_results: list[dict]) -> list[SearchResult]:
-        results = []
+    def _map_codebase_results(
+        self, raw_results: list[dict[str, object]]
+    ) -> list[SearchResult]:
+        results: list[SearchResult] = []
         for r in raw_results:
-            score = r.get("_relevance_score", 0.0)
+            raw_score = r.get("_relevance_score", 0.0)
+            score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+            r_id = str(r["id"])
+            r_path = str(r["path"])
+            snippet = str(r.get("content", ""))[:200].strip()
+            language = str(r.get("language", ""))
+            line_start = r.get("line_start")
+            line_end = r.get("line_end")
+            node_type = r.get("node_type")
+            function_name = r.get("function_name")
+            class_name = r.get("class_name")
             results.append(
                 SearchResult(
-                    id=r["id"],
-                    path=r["path"],
-                    title=r["path"],
-                    score=float(score),
-                    snippet=r.get("content", "")[:200].strip(),
+                    id=r_id,
+                    path=r_path,
+                    title=r_path,
+                    score=score,
+                    snippet=snippet,
                     source="codebase",
-                    language=r.get("language", ""),
-                    line_start=r.get("line_start"),
-                    line_end=r.get("line_end"),
-                    node_type=r.get("node_type"),
-                    function_name=r.get("function_name"),
-                    class_name=r.get("class_name"),
+                    language=language,
+                    line_start=int(line_start) if isinstance(line_start, int) else None,
+                    line_end=int(line_end) if isinstance(line_end, int) else None,
+                    node_type=str(node_type) if node_type is not None else None,
+                    function_name=(
+                        str(function_name) if function_name is not None else None
+                    ),
+                    class_name=str(class_name) if class_name is not None else None,
                 ),
             )
         return results
@@ -393,14 +420,14 @@ class VaultSearcher:
     def _apply_prefer_nudge(
         self, results: list[SearchResult], prefer: str | None
     ) -> None:
-        if prefer not in _PREFER_CATEGORIES:
+        if prefer not in PREFER_CATEGORIES:
             return
         for r in results:
             category = _classify_chunk_type(r.path)
             if category == prefer:
-                r.score += _PREFER_SCORE_NUDGE
+                r.score += PREFER_SCORE_NUDGE
             else:
-                r.score -= _PREFER_SCORE_NUDGE
+                r.score -= PREFER_SCORE_NUDGE
         results.sort(key=lambda r: r.score, reverse=True)
 
     def _search_codebase_encoded(
@@ -449,7 +476,7 @@ class VaultSearcher:
                 locale-variant paths after rerank - the highest
                 scoring entry wins, the others drop.
             prefer: When set to ``"prod"`` / ``"tests"`` /
-                ``"docs"``, apply ``±_PREFER_SCORE_NUDGE`` to
+                ``"docs"``, apply ``±PREFER_SCORE_NUDGE`` to
                 results based on path-derived category after
                 rerank, then re-sort. Opt-in; default is no
                 preference.
@@ -478,17 +505,20 @@ class VaultSearcher:
         has_glob_filter = bool(include_norm or exclude_norm)
 
         if has_glob_filter:
-            fetch_limit = max(top_k * _GLOB_FETCH_MULTIPLIER, 50)
+            fetch_limit = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
         else:
             fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
-        raw_results = self.store.hybrid_search_codebase(
-            query_vector=query_vector,
-            _query_text=query_text,
-            filters=store_filters or None,
-            limit=fetch_limit,
-            sparse_vector=sparse_vector,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+        raw_results: list[dict[str, object]] = cast(
+            "list[dict[str, object]]",
+            self.store.hybrid_search_codebase(
+                query_vector=query_vector,
+                _query_text=query_text,
+                filters=store_filters or None,
+                limit=fetch_limit,
+                sparse_vector=sparse_vector,
+                like_ids=like_ids,
+                unlike_ids=unlike_ids,
+            ),
         )
 
         # Post-query glob filter. Runs before SearchResult / rerank
@@ -501,7 +531,7 @@ class VaultSearcher:
         results = self._map_codebase_results(raw_results)
         results = self._rerank(query_text, results, top_k)
 
-        # --prefer post-rerank score nudge. Apply ±_PREFER_SCORE_NUDGE
+        # --prefer post-rerank score nudge. Apply ±PREFER_SCORE_NUDGE
         # based on path-derived category, then re-sort. The
         # CrossEncoder's query-relevance scoring runs first; user
         # preference re-orders ties and near-ties only.

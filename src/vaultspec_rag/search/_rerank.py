@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import pathlib
 
-    from vaultspec_core.graph import VaultGraph
+    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        VaultGraph,
+    )
 
     from ._models import ParsedQuery, SearchResult
 
@@ -74,7 +76,9 @@ def rerank_with_graph(
         return results
 
     if graph is None:
-        from vaultspec_core.graph import VaultGraph as _VaultGraph
+        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+            VaultGraph as _VaultGraph,
+        )
 
         try:
             graph = _VaultGraph(root_dir)

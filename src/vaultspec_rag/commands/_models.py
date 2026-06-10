@@ -18,6 +18,13 @@ from ..torch_config import TorchConfigAction
 
 ConfirmFn = Callable[[str], bool]
 
+__all__ = [
+    "_RAG_MCP_REL_PATH",
+    "_RAG_RULE_REL_PATH",
+    "ConfirmFn",
+    "InstallReport",
+    "UninstallReport",
+]
 
 # Names of the bundled rag enrollment artefacts (relative to
 # ``.vaultspec/rules/``). Defined here once so install and uninstall
