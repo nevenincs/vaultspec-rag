@@ -28,7 +28,7 @@ jobs:
 
       - name: Lint GitHub Actions workflows
         run: |
-          bash <(curl -SFs https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint
 
   lint-and-type:
