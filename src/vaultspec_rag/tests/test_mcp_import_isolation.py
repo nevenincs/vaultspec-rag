@@ -7,7 +7,7 @@ and inspects the AST for forbidden imports — no runtime import is performed.
 
 Covered patterns:
   absolute:  ``import vaultspec_rag.server``
-             ``from vaultspec_rag.server import X``
+             ``from vaultspec_rag[.]server import X``
              ``from vaultspec_rag import store``
   relative:  ``from ..server import X``
              ``from ..registry import X``   (any depth)
@@ -94,7 +94,7 @@ def test_mcp_file_does_not_import_server_internals(src_file: Path) -> None:
                 if _absolute_name_is_forbidden(alias.name):
                     violations.append(f"line {node.lineno}: import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
-            # Absolute import: ``from vaultspec_rag.server import X``
+            # Absolute import: ``from vaultspec_rag[.]server import X``
             if node.level == 0 and node.module is not None:
                 if _absolute_name_is_forbidden(node.module):
                     names = ", ".join(a.name for a in node.names)

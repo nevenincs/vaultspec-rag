@@ -58,7 +58,7 @@ def test_cli_mcp_control_parity() -> None:
     # CLI subcommand (the cli-mcp-control-parity contract).
     import asyncio
 
-    from vaultspec_rag.mcp import mcp
+    from ..mcp import mcp
 
     tools = [t.name for t in asyncio.run(mcp.list_tools())]
     for tool in (

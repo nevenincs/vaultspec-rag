@@ -70,42 +70,42 @@ class TestMCPAsyncTools:
     def test_search_vault_is_async(self) -> None:
         import inspect
 
-        from vaultspec_rag.mcp._tools import search_vault
+        from ..mcp._tools import search_vault
 
         assert inspect.iscoroutinefunction(search_vault)
 
     def test_search_codebase_is_async(self) -> None:
         import inspect
 
-        from vaultspec_rag.mcp._tools import search_codebase
+        from ..mcp._tools import search_codebase
 
         assert inspect.iscoroutinefunction(search_codebase)
 
     def test_reindex_vault_is_async(self) -> None:
         import inspect
 
-        from vaultspec_rag.mcp._tools import reindex_vault
+        from ..mcp._tools import reindex_vault
 
         assert inspect.iscoroutinefunction(reindex_vault)
 
     def test_reindex_codebase_is_async(self) -> None:
         import inspect
 
-        from vaultspec_rag.mcp._tools import reindex_codebase
+        from ..mcp._tools import reindex_codebase
 
         assert inspect.iscoroutinefunction(reindex_codebase)
 
     def test_get_index_status_is_async(self) -> None:
         import inspect
 
-        from vaultspec_rag.mcp._tools import get_index_status
+        from ..mcp._tools import get_index_status
 
         assert inspect.iscoroutinefunction(get_index_status)
 
     def test_get_code_file_is_async(self) -> None:
         import inspect
 
-        from vaultspec_rag.mcp._tools import get_code_file
+        from ..mcp._tools import get_code_file
 
         assert inspect.iscoroutinefunction(get_code_file)
 
@@ -365,7 +365,7 @@ class TestCliMcpFastPath:
     def test_do_http_call_uses_urllib(self):
         import inspect
 
-        from vaultspec_rag.cli._http_search import _do_http_call
+        from ..cli._http_search import _do_http_call
 
         src = inspect.getsource(_do_http_call)
         assert "urllib.request" in src, (

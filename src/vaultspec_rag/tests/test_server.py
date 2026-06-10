@@ -21,10 +21,9 @@ if TYPE_CHECKING:
     import httpx
     from starlette.applications import Starlette
 
-from vaultspec_rag.mcp._mcp import mcp
-from vaultspec_rag.mcp._resources import analyze_feature
-
 from ..config import EnvVar
+from ..mcp._mcp import mcp
+from ..mcp._resources import analyze_feature
 from ..server import (
     BackendCapabilities,
     HealthResponse,
@@ -619,7 +618,7 @@ class TestHttpModeResolveRoot:
         """
         import os
 
-        from vaultspec_rag.mcp._resources import get_vault_document
+        from ..mcp._resources import get_vault_document
 
         prev = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
         os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)

@@ -25,7 +25,7 @@ logger = logging.getLogger("vaultspec_rag.server")
 
 
 def main(port: int | None = None) -> None:
-    from vaultspec_rag.mcp import mcp
+    from ..mcp import mcp
 
     """Start the RAG daemon on stdio or HTTP transport.
 
