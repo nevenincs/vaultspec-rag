@@ -88,6 +88,7 @@ def _try_http_reindex(
             "type": search_type,
             "clean": clean,
             "project_root": project_root,
+            "initiator_kind": "cli",
         }
         res = _do_http_call(port, "/reindex", payload)
         if res is not None:
@@ -137,11 +138,20 @@ def _route_admin_tool(
 
     if tool_name == "get_jobs":
         url_path = "/jobs"
+        allowed = {
+            "limit",
+            "phase",
+            "source",
+            "trigger",
+            "query",
+            "failed",
+            "job_id",
+            "since",
+        }
         params = {
             key: value
             for key, value in args.items()
-            if key in {"limit", "phase", "source", "trigger", "query"}
-            and value is not None
+            if key in allowed and value is not None
         }
         if params:
             url_path += "?" + urllib.parse.urlencode(params)

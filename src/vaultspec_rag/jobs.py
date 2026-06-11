@@ -64,13 +64,23 @@ def register_on_job_complete(callback: Callable[[float], None]) -> None:
     _on_job_complete_callbacks.append(callback)
 
 
-def record_start(source: Source, trigger: Trigger) -> str:
+def record_start(
+    source: Source,
+    trigger: Trigger,
+    *,
+    project_root: Path | None = None,
+    command: str | None = None,
+    initiator_kind: str | None = None,
+) -> str:
     """Append a new ``running`` activity record and return its stable id.
 
     Args:
         source: ``"vault"`` or ``"code"`` - the corpus being (re)indexed.
         trigger: ``"tool"`` (a reindex MCP tool call) or ``"watcher"``
             (the filesystem watcher reindex loop).
+        project_root: Optional workspace root the job acts on.
+        command: Optional service-domain command name.
+        initiator_kind: Optional caller identity, e.g. CLI, MCP, or watcher.
 
     Returns:
         The record's stable ``id`` (a uuid4 hex string) to pass to
@@ -86,6 +96,11 @@ def record_start(source: Source, trigger: Trigger) -> str:
         "finished_at": None,
         "result": None,
         "progress": None,
+        "initiator": {
+            "kind": initiator_kind or trigger,
+            "command": command or f"{trigger}_{source}_index",
+            "project_root": str(project_root) if project_root is not None else None,
+        },
     }
     with _lock:
         _records.append(record)
@@ -170,6 +185,9 @@ def snapshot() -> list[dict[str, object]]:
             prog = record.get("progress")
             if isinstance(prog, dict):
                 item["progress"] = dict(cast("dict[str, object]", prog))
+            initiator = record.get("initiator")
+            if isinstance(initiator, dict):
+                item["initiator"] = dict(cast("dict[str, object]", initiator))
             copied.append(item)
         return copied
 
@@ -212,9 +230,17 @@ class JobProgressReporter:
         pass
 
 
-def start_reindex_vault(root: Path, clean: bool) -> str:
+def start_reindex_vault(
+    root: Path, clean: bool, *, initiator_kind: str = "service"
+) -> str:
     """Start a background vault reindexing task and return the job_id."""
-    job_id = record_start("vault", "tool")
+    job_id = record_start(
+        "vault",
+        "tool",
+        project_root=root,
+        command="reindex_vault",
+        initiator_kind=initiator_kind,
+    )
     record_progress(job_id, "queued")
 
     async def run_indexing_bg() -> None:
@@ -262,9 +288,20 @@ def start_reindex_vault(root: Path, clean: bool) -> str:
     return job_id
 
 
-def start_reindex_codebase(root: Path, clean: bool) -> str:
+def start_reindex_codebase(
+    root: Path,
+    clean: bool,
+    *,
+    initiator_kind: str = "service",
+) -> str:
     """Start a background codebase reindexing task and return the job_id."""
-    job_id = record_start("code", "tool")
+    job_id = record_start(
+        "code",
+        "tool",
+        project_root=root,
+        command="reindex_codebase",
+        initiator_kind=initiator_kind,
+    )
     record_progress(job_id, "queued")
 
     async def run_indexing_bg() -> None:

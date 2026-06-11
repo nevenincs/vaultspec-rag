@@ -77,6 +77,9 @@ async def get_jobs(
     source: str | None = None,
     trigger: str | None = None,
     query: str | None = None,
+    failed: bool = False,
+    job_id: str | None = None,
+    since: float | None = None,
 ) -> dict[str, Any]:
     """Return recent index/reindex activity from the in-flight registry."""
     import urllib.parse
@@ -93,6 +96,12 @@ async def get_jobs(
         params["trigger"] = trigger
     if query:
         params["query"] = query
+    if failed:
+        params["failed"] = "true"
+    if job_id:
+        params["job_id"] = job_id
+    if since is not None:
+        params["since"] = since
     if params:
         path += "?" + urllib.parse.urlencode(params)
     return _call_daemon(path)

@@ -17,6 +17,7 @@ Three layers, no mocks/skips/monkeypatch:
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -90,7 +91,7 @@ async def test_get_jobs_returns_snapshot_shape(
     assert isinstance(jobs, list)
     assert len(jobs) >= 1
     entry: dict[str, Any] = jobs[0]
-    assert set(entry) == {
+    assert {
         "id",
         "source",
         "trigger",
@@ -99,10 +100,15 @@ async def test_get_jobs_returns_snapshot_shape(
         "finished_at",
         "result",
         "progress",
-    }
+        "initiator",
+        "runtime_seconds",
+        "last_progress_age_seconds",
+    } <= set(entry)
     assert entry["source"] == "vault"
     assert entry["trigger"] == "tool"
     assert entry["phase"] in ("done", "error", "failed")
+    assert entry["initiator"]["project_root"] == str(tmp_path)
+    assert entry["initiator"]["kind"] == "mcp"
 
 
 @pytest.mark.subprocess_gpu
@@ -189,6 +195,9 @@ def test_jobs_subcommand_registered() -> None:
     assert "--phase" in result.stdout
     assert "--running" in result.stdout
     assert "--query" in result.stdout
+    assert "--failed" in result.stdout
+    assert "--job-id" in result.stdout
+    assert "--since" in result.stdout
 
 
 def test_jobs_cli_mcp_parity() -> None:
@@ -345,3 +354,76 @@ def test_jobs_route_accepts_codebase_source_alias(
     ids = [job["id"] for job in payload["jobs"]]
     assert running_id in ids
     assert payload["filters"]["source"] == "code"
+
+
+def test_jobs_route_filters_failed_job_id_and_since(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    failed_id = _jobs.record_start("code", "tool")
+    _jobs.record_finish(failed_id, error="boom")
+    _jobs.record_finish(_jobs.record_start("vault", "watcher"), result="old")
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get(
+            "/jobs",
+            params={
+                "token": token,
+                "failed": "true",
+                "job_id": failed_id[:8],
+                "since": "60",
+            },
+        ),
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["returned"] == 1
+    job = payload["jobs"][0]
+    assert job["id"] == failed_id
+    assert job["phase"] == "error"
+    assert isinstance(job["runtime_seconds"], float)
+    assert payload["filters"]["failed"] is True
+    assert payload["filters"]["job_id"] == failed_id[:8]
+    assert payload["filters"]["since"] == 60.0
+
+
+def test_jobs_route_since_uses_progress_update_time(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start("code", "tool")
+    time.sleep(0.2)
+    _jobs.record_progress(running_id, "embed", completed=1, total=10)
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "since": "0.1"}),
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    ids = [job["id"] for job in payload["jobs"]]
+    assert running_id in ids
+
+
+def test_jobs_route_job_id_prefix_can_return_multiple_matches(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    ids_by_prefix: dict[str, list[str]] = {}
+    for _ in range(17):
+        job_id = _jobs.record_start("vault", "tool")
+        ids_by_prefix.setdefault(job_id[:1], []).append(job_id)
+    prefix = next(prefix for prefix, ids in ids_by_prefix.items() if len(ids) > 1)
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "job_id": prefix}),
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["returned"] >= 2
+    assert all(str(job["id"]).startswith(prefix) for job in payload["jobs"])

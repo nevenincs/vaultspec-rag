@@ -178,6 +178,16 @@ def _clamp_limit(raw: str | None) -> int | None:
         return None
 
 
+def _parse_since_seconds(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
 def _normalise_filter_value(raw: str | None) -> str | None:
     """Return a stripped lower-case query filter or ``None`` when absent."""
     if raw is None:
@@ -208,6 +218,57 @@ def _job_progress_text(record: dict[str, object]) -> str:
     return " ".join(parts)
 
 
+def _job_updated_timestamp(record: dict[str, object]) -> float | None:
+    progress = record.get("progress")
+    if isinstance(progress, dict):
+        last_updated = progress.get("last_updated")
+        if isinstance(last_updated, int | float):
+            return float(last_updated)
+    timestamp = record.get("finished_at") or record.get("started_at")
+    if isinstance(timestamp, int | float):
+        return float(timestamp)
+    return None
+
+
+def _job_runtime_seconds(record: dict[str, object], now: float) -> float | None:
+    started_at = record.get("started_at")
+    if not isinstance(started_at, int | float):
+        return None
+    finished_at = record.get("finished_at")
+    end = float(finished_at) if isinstance(finished_at, int | float) else now
+    return max(0.0, end - float(started_at))
+
+
+def _job_last_progress_age_seconds(
+    record: dict[str, object],
+    now: float,
+) -> float | None:
+    progress = record.get("progress")
+    if not isinstance(progress, dict):
+        return None
+    last_updated = progress.get("last_updated")
+    if not isinstance(last_updated, int | float):
+        return None
+    return max(0.0, now - float(last_updated))
+
+
+def _job_with_liveness(
+    record: dict[str, object],
+    *,
+    now: float,
+) -> dict[str, object]:
+    enriched = dict(record)
+    enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
+    enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
+    return enriched
+
+
+def _job_id_matches(record: dict[str, object], job_id: str | None) -> bool:
+    if job_id is None:
+        return True
+    return str(record.get("id", "")).startswith(job_id)
+
+
 def _job_matches(
     record: dict[str, object],
     *,
@@ -215,7 +276,19 @@ def _job_matches(
     source: str | None,
     trigger: str | None,
     query: str | None,
+    failed: bool,
+    job_id: str | None,
+    since_seconds: float | None,
+    now: float,
 ) -> bool:
+    if not _job_id_matches(record, job_id):
+        return False
+    if failed and str(record.get("phase", "")).lower() not in ("error", "failed"):
+        return False
+    if since_seconds is not None:
+        timestamp = _job_updated_timestamp(record)
+        if timestamp is None or timestamp < now - since_seconds:
+            return False
     if phase is not None and str(record.get("phase", "")).lower() != phase:
         return False
     if source is not None and str(record.get("source", "")).lower() != source:
@@ -340,8 +413,16 @@ async def jobs_route(request: Request) -> JSONResponse:
     source = _normalise_job_source_filter(request.query_params.get("source"))
     trigger = _normalise_filter_value(request.query_params.get("trigger"))
     query = _normalise_filter_value(request.query_params.get("query"))
+    job_id = _normalise_filter_value(request.query_params.get("job_id"))
+    failed = _normalise_filter_value(request.query_params.get("failed")) in (
+        "1",
+        "true",
+        "yes",
+    )
+    since_seconds = _parse_since_seconds(request.query_params.get("since"))
+    now = time.time()
     filtered_records = [
-        record
+        _job_with_liveness(record, now=now)
         for record in records
         if _job_matches(
             record,
@@ -349,6 +430,10 @@ async def jobs_route(request: Request) -> JSONResponse:
             source=source,
             trigger=trigger,
             query=query,
+            failed=failed,
+            job_id=job_id,
+            since_seconds=since_seconds,
+            now=now,
         )
     ]
     filtered_records = _prioritise_running_jobs(filtered_records)
@@ -366,6 +451,9 @@ async def jobs_route(request: Request) -> JSONResponse:
                 "source": source,
                 "trigger": trigger,
                 "query": query,
+                "failed": failed,
+                "job_id": job_id,
+                "since": since_seconds,
                 "limit": limit,
             },
         }
@@ -513,6 +601,12 @@ async def reindex_route(request: Request) -> JSONResponse:
     reindex_type = payload.get("type", "vault")
     clean = payload.get("clean", False)
     project_root = payload.get("project_root")
+    raw_initiator = payload.get("initiator_kind", "service")
+    initiator_kind = (
+        str(raw_initiator)
+        if raw_initiator in ("cli", "mcp", "service", "watcher")
+        else "service"
+    )
 
     try:
         root = _resolve_root(project_root)
@@ -521,9 +615,9 @@ async def reindex_route(request: Request) -> JSONResponse:
     from ..jobs import start_reindex_codebase, start_reindex_vault
 
     if reindex_type == "vault":
-        job_id = start_reindex_vault(root, clean)
+        job_id = start_reindex_vault(root, clean, initiator_kind=initiator_kind)
     else:
-        job_id = start_reindex_codebase(root, clean)
+        job_id = start_reindex_codebase(root, clean, initiator_kind=initiator_kind)
 
     _m._ensure_watcher(root)
     return JSONResponse({"ok": True, "job_id": job_id, "status": "queued"})

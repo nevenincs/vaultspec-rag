@@ -159,7 +159,12 @@ async def reindex_vault(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index vault documentation (incremental by default)."""
-    payload = {"type": "vault", "clean": clean, "project_root": project_root}
+    payload = {
+        "type": "vault",
+        "clean": clean,
+        "project_root": project_root,
+        "initiator_kind": "mcp",
+    }
     return _call_daemon("/reindex", {k: v for k, v in payload.items() if v is not None})
 
 
@@ -169,5 +174,10 @@ async def reindex_codebase(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index the source codebase (incremental by default)."""
-    payload = {"type": "codebase", "clean": clean, "project_root": project_root}
+    payload = {
+        "type": "codebase",
+        "clean": clean,
+        "project_root": project_root,
+        "initiator_kind": "mcp",
+    }
     return _call_daemon("/reindex", {k: v for k, v in payload.items() if v is not None})

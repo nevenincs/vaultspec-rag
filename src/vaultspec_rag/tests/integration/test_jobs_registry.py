@@ -123,11 +123,19 @@ def test_snapshot_is_newest_first(_clean_jobs: None) -> None:
 
 
 def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
-    _jobs.record_start("vault", "tool")
+    _jobs.record_start("vault", "tool", command="reindex_vault")
     snap = _jobs.snapshot()
     snap[0]["phase"] = "tampered"
+    initiator = snap[0]["initiator"]
+    assert isinstance(initiator, dict)
+    initiator = cast("dict[str, object]", initiator)
+    initiator["command"] = "tampered"
 
     assert _jobs.snapshot()[0]["phase"] == "running"
+    next_initiator = _jobs.snapshot()[0]["initiator"]
+    assert isinstance(next_initiator, dict)
+    next_initiator = cast("dict[str, object]", next_initiator)
+    assert next_initiator["command"] == "reindex_vault"
 
 
 def test_registry_is_bounded(_clean_jobs: None) -> None:
@@ -173,7 +181,7 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
     # unique ids, and a consistent phase/result pairing.
     seen_ids: set[str] = set()
     for entry in snap:
-        assert set(entry) == {
+        assert {
             "id",
             "source",
             "trigger",
@@ -182,7 +190,8 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
             "finished_at",
             "result",
             "progress",
-        }
+            "initiator",
+        } <= set(entry)
         entry_id = entry["id"]
         assert isinstance(entry_id, str)
         assert entry_id not in seen_ids

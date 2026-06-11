@@ -89,6 +89,55 @@ timeout. That respected the no-fakes rule, but it did not cover diagnostic probe
 **Disposition:** Fixed. Added a real network test for unavailable diagnostic probes
 without mocks, fakes, stubs, monkeypatching, skips, or xfails.
 
+### CR-8 | HIGH | Jobs `--since` ignored progress update time
+
+The first focused jobs-inspection implementation described `--since` as jobs updated
+within the last N seconds, but the route filtered only by `finished_at` or `started_at`.
+Long-running jobs with fresh progress could disappear from the liveness view once their
+start time aged out.
+
+**Disposition:** Fixed. The jobs route now uses `progress.last_updated` first, then
+falls back to `finished_at` or `started_at`. Added a real route test that starts a job,
+waits, records progress, and verifies the job is included by a short `since` window.
+
+### CR-9 | MEDIUM | Job-id prefix detail could hide ambiguous matches
+
+`server jobs --job-id <prefix>` rendered the first matching job in prose mode even when
+the prefix matched multiple jobs. JSON returned all matches, but the human detail view
+could point an operator at the wrong job.
+
+**Disposition:** Fixed. Prose detail mode now exits with an invalid-filter error when a
+job-id prefix matches multiple jobs and renders the matching table so the operator can
+choose a longer prefix. The route test now verifies job-id prefixes can return multiple
+matches.
+
+### CR-10 | MEDIUM | Nested initiator metadata was not copied out of the registry
+
+Adding `initiator` introduced a nested dictionary that `snapshot()` did not copy. In-process
+consumers could mutate a snapshot and corrupt live registry metadata.
+
+**Disposition:** Fixed. `snapshot()` now copies nested `initiator` dictionaries. The
+registry independence test mutates the copied initiator and verifies the live registry is
+unchanged.
+
+### CR-11 | MEDIUM | Jobs initiator kind collapsed CLI and MCP into `tool`
+
+Tool-triggered jobs initially reported `initiator.kind: tool`, which did not distinguish
+CLI-started reindexing from MCP-started reindexing.
+
+**Disposition:** Fixed for service-delegated CLI and MCP reindexing. CLI reindex payloads
+now send `initiator_kind=cli`, MCP reindex tools send `initiator_kind=mcp`, and `/reindex`
+passes that identity into the job registry. Watcher jobs remain `watcher`; service/default
+jobs remain `service`. The MCP integration test asserts `mcp`; manual CLI testing confirms
+`cli`.
+
+### CR-12 | LOW | CLI `--since 0` did not round-trip
+
+The CLI dropped optional values using truthiness, so `server jobs --since 0` omitted the
+filter while MCP and direct HTTP could send `since=0`.
+
+**Disposition:** Fixed. CLI jobs argument construction now preserves zero-valued options.
+
 ## Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`
