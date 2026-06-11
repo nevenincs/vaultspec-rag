@@ -197,7 +197,7 @@ def test_service_status_running(
         while time.monotonic() < deadline:
             result2 = runner.invoke(
                 app,
-                ["server", "service", "status"],
+                ["server", "status"],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
             output = result2.stdout or ""
@@ -206,6 +206,19 @@ def test_service_status_running(
             time.sleep(1.0)
         assert str(port) in output, f"Expected port {port} in output: {output!r}"
         assert "running" in output.lower(), f"Expected 'running' in output: {output!r}"
+
+        json_result = runner.invoke(
+            app,
+            ["server", "status", "--json"],
+            env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+        )
+        assert json_result.exit_code == 0
+        payload = json.loads(json_result.stdout)
+        data = payload["data"]
+        assert data["state"] == "running"
+        operational = data["operational"]
+        assert operational["jobs"]["available"] is True
+        assert "next_action" in operational
 
 
 @pytest.mark.subprocess_gpu

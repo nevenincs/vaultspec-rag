@@ -16,6 +16,7 @@ import vaultspec_rag.cli as _cli
 from ..config import EnvVar, get_config
 from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
+from ._http_search import _try_http_admin
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
     _health_probe,
@@ -353,6 +354,7 @@ def _render_status_json(
     state: str,
     exit_code: int,
     health: dict[str, object] | None,
+    operational: dict[str, object] | None,
 ) -> None:
     payload: dict[str, object] = {
         "service_json_present": True,
@@ -369,6 +371,8 @@ def _render_status_json(
     }
     if isinstance(health, dict):
         payload["health"] = health
+    if isinstance(operational, dict):
+        payload["operational"] = operational
     _emit_json(
         exit_code == 0,
         "service.status",
@@ -408,6 +412,93 @@ def _add_health_rows(
         table.add_row("Health", "[yellow]unreachable[/]")
 
 
+def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(result, dict):
+        return {"available": False}
+    if result.get("ok") is False:
+        return {
+            "available": False,
+            "error": result.get("error", "service_error"),
+            "message": result.get("message", "Jobs route returned an error."),
+        }
+    summary = result.get("summary")
+    summary_dict = (
+        cast("dict[str, object]", summary) if isinstance(summary, dict) else {}
+    )
+    return {
+        "available": True,
+        "running": summary_dict.get("running", 0),
+        "total": result.get("total", 0),
+        "returned": result.get("returned", 0),
+        "phases": summary_dict.get("phases", {}),
+        "sources": summary_dict.get("sources", {}),
+        "triggers": summary_dict.get("triggers", {}),
+    }
+
+
+def _status_jobs_summary(port: int, port_listening: bool) -> dict[str, object]:
+    if not port_listening:
+        return {"available": False}
+    try:
+        return _jobs_summary_from_result(
+            _try_http_admin("get_jobs", {"limit": 5}, port),
+        )
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": exc.__class__.__name__,
+            "message": str(exc),
+        }
+
+
+def _status_next_action(
+    state: str,
+    health: dict[str, object] | None,
+    jobs: dict[str, object],
+) -> str:
+    if state != "running":
+        return "vaultspec-rag server logs --lines 80"
+    if not isinstance(health, dict) or health.get("status") != "ready":
+        return "vaultspec-rag server health"
+    running_jobs = jobs.get("running")
+    if isinstance(running_jobs, int) and running_jobs > 0:
+        return "vaultspec-rag server jobs --running"
+    return "vaultspec-rag server info --project-root <path>"
+
+
+def _status_operational_summary(
+    state: str,
+    port: int,
+    port_listening: bool,
+    health: dict[str, object] | None,
+) -> dict[str, object]:
+    jobs = _status_jobs_summary(port, port_listening)
+    return {
+        "jobs": jobs,
+        "next_action": _status_next_action(state, health, jobs),
+    }
+
+
+def _add_operational_rows(
+    table: Table,
+    operational: dict[str, object] | None,
+) -> None:
+    if not isinstance(operational, dict):
+        return
+    jobs = operational.get("jobs")
+    if isinstance(jobs, dict):
+        if jobs.get("available") is True:
+            table.add_row(
+                "Jobs",
+                f"{jobs.get('running', 0)} running; {jobs.get('total', 0)} total",
+            )
+        else:
+            table.add_row("Jobs", "[yellow]unavailable[/]")
+    next_action = operational.get("next_action")
+    if next_action:
+        table.add_row("Next action", str(next_action))
+
+
 def _render_status_table(
     pid: int,
     port: int,
@@ -421,6 +512,7 @@ def _render_status_table(
     state_label: str,
     exit_code: int,
     health: dict[str, object] | None,
+    operational: dict[str, object] | None,
 ) -> None:
     table = Table(title="Service Status", show_header=False, padding=(0, 2))
     table.add_column("Key", style="bold")
@@ -453,6 +545,7 @@ def _render_status_table(
     table.add_row("State", state_label)
 
     _add_health_rows(table, health, port_listening)
+    _add_operational_rows(table, operational)
 
     _cli.console.print(table)
     if exit_code != 0:
@@ -601,6 +694,7 @@ def service_status(
     ) = _evaluate_service_signals(status)
 
     health = _health_probe(port) if port_listening else None
+    operational = _status_operational_summary(state, port, port_listening, health)
 
     if json_mode:
         _render_status_json(
@@ -616,6 +710,7 @@ def service_status(
             state,
             exit_code,
             health,
+            operational,
         )
         return
 
@@ -632,6 +727,7 @@ def service_status(
         state_label,
         exit_code,
         health,
+        operational,
     )
 
 

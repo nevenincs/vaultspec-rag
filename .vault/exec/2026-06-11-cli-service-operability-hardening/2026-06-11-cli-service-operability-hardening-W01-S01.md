@@ -31,3 +31,27 @@ Implemented the first convergence slice for service health and service state.
 ## Outcome
 
 The CLI now has a direct local health entry point and `server info` produces actionable failure when project context is missing.
+
+## Follow-Up: Canonical Status Enrichment
+
+`server status` now carries a lightweight operational summary in addition to the
+status-file/process/health checks:
+
+- JSON includes `operational.jobs` with availability, running count, total count, and
+  phase/source/trigger summaries from the service jobs route.
+- JSON includes `operational.next_action`.
+- Human output includes `Jobs` and `Next action` rows.
+- `/health` remains readiness-only.
+
+Manual persona check:
+
+- `uv run vaultspec-rag server status --json`
+- `uv run vaultspec-rag server status`
+
+Observed against resident service PID `29376` on port `8766`:
+
+- state `running`
+- health `ready`
+- backend contract visible
+- jobs `0 running; 10 total`
+- next action `vaultspec-rag server info --project-root <path>`
