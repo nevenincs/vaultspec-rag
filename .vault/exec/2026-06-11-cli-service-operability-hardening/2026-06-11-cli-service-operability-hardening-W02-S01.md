@@ -82,3 +82,33 @@ Post-review corrections:
 ## Deferred
 
 The registry still lacks OS user, wrapper identity, PID, and memory fields, so those cannot be truthfully surfaced yet.
+
+## Follow-Up: Logs Filtering Parity
+
+Implemented a small logs parity slice so operators can narrow the service log without
+dumping the whole tail:
+
+- `GET /logs` and `GET /logs/json` accept `job_id` and `contains` query filters.
+- `vaultspec-rag server logs` exposes `--job-id` and `--contains`.
+- MCP `get_logs` accepts the same optional filters.
+- JSON log responses now include `lines`, `total`, and `filters`.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/cli/_http_search.py src/vaultspec_rag/cli/_service_logs.py src/vaultspec_rag/mcp/_admin_tools.py src/vaultspec_rag/tests/integration/test_service_logs.py src/vaultspec_rag/tests/test_http_search_routing.py`
+- `uv run ty check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/cli/_http_search.py src/vaultspec_rag/cli/_service_logs.py src/vaultspec_rag/mcp/_admin_tools.py src/vaultspec_rag/tests/integration/test_service_logs.py src/vaultspec_rag/tests/test_http_search_routing.py`
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_logs.py src/vaultspec_rag/tests/test_http_search_routing.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag server status --json --port 8766`
+- `uv run vaultspec-rag server logs --json --lines 80 --contains service.lifecycle --port 8766`
+- `uv run vaultspec-rag server logs --lines 80 --contains service.lifecycle --port 8766`
+- `uv run vaultspec-rag server logs --json --lines 80 --job-id nonexistent-job --port 8766`
+
+Observed against current resident service PID `64688` on port `8766`:
+
+- Filtered JSON included `filters: {"contains": "service.lifecycle"}` and a bounded
+  `total`.
+- Human output only showed matching lifecycle lines.
+- A non-matching `--job-id` returned `ok: true` with `lines: []`, `total: 0`, and the
+  selected filter metadata.

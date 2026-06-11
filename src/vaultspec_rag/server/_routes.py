@@ -142,6 +142,38 @@ def _clamp_lines(raw: str | None) -> int:
     return min(value, _MAX_LOG_LINES)
 
 
+def _filter_log_lines(
+    lines: list[str],
+    *,
+    job_id: str | None = None,
+    contains: str | None = None,
+) -> list[str]:
+    job_filter = job_id.strip().lower() if job_id else None
+    contains_filter = contains.strip().lower() if contains else None
+    if not job_filter and not contains_filter:
+        return lines
+    filtered: list[str] = []
+    for line in lines:
+        lowered = line.lower()
+        if job_filter and job_filter not in lowered:
+            continue
+        if contains_filter and contains_filter not in lowered:
+            continue
+        filtered.append(line)
+    return filtered
+
+
+def _log_filters_from_request(request: Request) -> dict[str, str]:
+    filters: dict[str, str] = {}
+    job_id = request.query_params.get("job_id")
+    contains = request.query_params.get("contains")
+    if job_id and job_id.strip():
+        filters["job_id"] = job_id.strip()
+    if contains and contains.strip():
+        filters["contains"] = contains.strip()
+    return filters
+
+
 async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     """Token-gated read-only ``GET /logs`` returning recent log text.
 
@@ -160,8 +192,11 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     if denied is not None:
         return denied
     lines = _clamp_lines(request.query_params.get("lines"))
-    body = "\n".join(read_service_log(lines))
-    return PlainTextResponse(body)
+    filters = _log_filters_from_request(request)
+    body_lines = read_service_log(lines)
+    if filters:
+        body_lines = _filter_log_lines(body_lines, **filters)
+    return PlainTextResponse("\n".join(body_lines))
 
 
 def _clamp_limit(raw: str | None) -> int | None:
@@ -857,8 +892,11 @@ async def logs_json_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
     lines = _clamp_lines(request.query_params.get("lines"))
+    filters = _log_filters_from_request(request)
     body = read_service_log(lines)
-    return JSONResponse({"lines": body})
+    if filters:
+        body = _filter_log_lines(body, **filters)
+    return JSONResponse({"lines": body, "total": len(body), "filters": filters})
 
 
 async def vault_document_route(request: Request) -> JSONResponse:

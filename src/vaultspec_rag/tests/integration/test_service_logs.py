@@ -111,7 +111,13 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
 
     from ...config import EnvVar, reset_config
 
-    (tmp_path / "service.log").write_text("line-a\nline-b\n", encoding="utf-8")
+    (tmp_path / "service.log").write_text(
+        "line-a\n"
+        "job_id=abc123 phase=running message=started\n"
+        "job_id=def456 phase=done message=finished\n"
+        "line-b\n",
+        encoding="utf-8",
+    )
 
     prev_token = _m._SERVICE_TOKEN
     prev_env = os.environ.get(EnvVar.STATUS_DIR.value)
@@ -164,7 +170,12 @@ def test_logs_route_200_with_bearer_token(
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.text == "line-a\nline-b"
+    assert response.text == (
+        "line-a\n"
+        "job_id=abc123 phase=running message=started\n"
+        "job_id=def456 phase=done message=finished\n"
+        "line-b"
+    )
 
 
 def test_logs_route_200_with_query_token(
@@ -173,7 +184,12 @@ def test_logs_route_200_with_query_token(
     client, token = _routes_app
     response = cast("httpx.Response", client.get("/logs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 200
-    assert response.text == "line-a\nline-b"
+    assert response.text == (
+        "line-a\n"
+        "job_id=abc123 phase=running message=started\n"
+        "job_id=def456 phase=done message=finished\n"
+        "line-b"
+    )
 
 
 def test_logs_route_respects_lines_param(
@@ -189,6 +205,39 @@ def test_logs_route_respects_lines_param(
     )
     assert response.status_code == 200
     assert response.text == "line-b"
+
+
+def test_logs_route_filters_by_job_id(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/logs",
+            params={"token": token, "lines": "10", "job_id": "abc123"},
+        ),
+    )
+    assert response.status_code == 200
+    assert response.text == "job_id=abc123 phase=running message=started"
+
+
+def test_logs_json_route_filters_by_contains(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/logs/json",
+            params={"token": token, "lines": "10", "contains": "finished"},
+        ),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["lines"] == ["job_id=def456 phase=done message=finished"]
+    assert payload["total"] == 1
+    assert payload["filters"] == {"contains": "finished"}
 
 
 # --------------------------------------------------------------------------- #

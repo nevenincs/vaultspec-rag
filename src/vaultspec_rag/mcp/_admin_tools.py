@@ -65,9 +65,20 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_logs(lines: int = 200) -> dict[str, Any]:
+async def get_logs(
+    lines: int = 200,
+    job_id: str | None = None,
+    contains: str | None = None,
+) -> dict[str, Any]:
     """Return the last *lines* of the rotated service log."""
-    return _call_daemon(f"/logs/json?lines={lines}")
+    import urllib.parse
+
+    params: dict[str, object] = {"lines": lines}
+    if job_id:
+        params["job_id"] = job_id
+    if contains:
+        params["contains"] = contains
+    return _call_daemon("/logs/json?" + urllib.parse.urlencode(params))
 
 
 @mcp.tool()

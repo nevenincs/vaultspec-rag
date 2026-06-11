@@ -26,6 +26,14 @@ def service_logs(
         int,
         typer.Option("--lines", help="Number of trailing log lines to show."),
     ] = 200,
+    job_id: Annotated[
+        str | None,
+        typer.Option("--job-id", help="Only show lines containing this job id."),
+    ] = None,
+    contains: Annotated[
+        str | None,
+        typer.Option("--contains", help="Only show lines containing this text."),
+    ] = None,
     port: Annotated[
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
@@ -37,7 +45,12 @@ def service_logs(
 ) -> None:
     """Show the last N lines of the running service's rotated log."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_http_admin("get_logs", {"lines": lines}, resolved_port)
+    args: dict[str, object] = {"lines": lines}
+    if job_id:
+        args["job_id"] = job_id
+    if contains:
+        args["contains"] = contains
+    result = _try_http_admin("get_logs", args, resolved_port)
     if result is None:
         if json_mode:
             _emit_json_error_and_exit(
