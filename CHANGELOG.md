@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.20](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.19...vaultspec-rag-v0.2.20) (2026-06-11)
+
+
+### Features
+
+* generic document-preprocessing hook infrastructure ([#185](https://github.com/wgergely/vaultspec-rag/issues/185)) ([#187](https://github.com/wgergely/vaultspec-rag/issues/187)) ([a6d6f12](https://github.com/wgergely/vaultspec-rag/commit/a6d6f122ea506cbd99d9010562d369ff6aec6193))
+
 ## [0.2.19](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.18...vaultspec-rag-v0.2.19) (2026-06-10)
 
 ### Bug Fixes
