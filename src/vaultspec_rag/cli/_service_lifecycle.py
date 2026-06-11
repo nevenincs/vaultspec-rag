@@ -455,15 +455,18 @@ def _status_next_action(
     state: str,
     health: dict[str, object] | None,
     jobs: dict[str, object],
+    *,
+    port: int | None = None,
 ) -> str:
+    port_arg = f" --port {port}" if port is not None else ""
     if state != "running":
-        return "vaultspec-rag server logs --lines 80"
+        return f"vaultspec-rag server logs --lines 80{port_arg}"
     if not isinstance(health, dict) or health.get("status") != "ready":
-        return "vaultspec-rag server health"
+        return f"vaultspec-rag server health{port_arg}"
     running_jobs = jobs.get("running")
     if isinstance(running_jobs, int) and running_jobs > 0:
-        return "vaultspec-rag server jobs --running"
-    return "vaultspec-rag server info --project-root <path>"
+        return f"vaultspec-rag server jobs --running{port_arg}"
+    return f'vaultspec-rag search "<query>" --type code{port_arg} --timeout 120'
 
 
 def _status_operational_summary(
@@ -471,11 +474,18 @@ def _status_operational_summary(
     port: int,
     port_listening: bool,
     health: dict[str, object] | None,
+    *,
+    explicit_port: bool = False,
 ) -> dict[str, object]:
     jobs = _status_jobs_summary(port, port_listening)
     return {
         "jobs": jobs,
-        "next_action": _status_next_action(state, health, jobs),
+        "next_action": _status_next_action(
+            state,
+            health,
+            jobs,
+            port=port if explicit_port else None,
+        ),
     }
 
 
@@ -570,6 +580,80 @@ def _render_health_table(port: int, health: dict[str, object]) -> None:
     _cli.console.print(table)
 
 
+def _render_port_only_status(
+    port: int,
+    *,
+    json_mode: bool,
+) -> None:
+    port_listening = _port_is_listening(port)
+    health = _health_probe(port) if port_listening else None
+    state = (
+        "running"
+        if isinstance(health, dict) and health.get("status") == "ready"
+        else "stopped"
+        if not port_listening
+        else "unreachable"
+    )
+    exit_code = 0 if state == "running" else 3 if state == "stopped" else 4
+    operational = _status_operational_summary(
+        state,
+        port,
+        port_listening,
+        health,
+        explicit_port=True,
+    )
+    payload: dict[str, object] = {
+        "service_json_present": False,
+        "pid": None,
+        "port": port,
+        "pid_alive": None,
+        "pid_matches_service": None,
+        "port_listening": port_listening,
+        "heartbeat_age_seconds": None,
+        "heartbeat_stale": None,
+        "service_token_match": None,
+        "state": state,
+    }
+    if isinstance(health, dict):
+        payload["health"] = health
+    payload["operational"] = operational
+
+    if json_mode:
+        _emit_json(
+            exit_code == 0,
+            "service.status",
+            data=payload,
+            **(
+                {"error": state, "message": f"Service state: {state}"}
+                if exit_code != 0
+                else {}
+            ),
+        )
+        if exit_code != 0:
+            raise typer.Exit(code=exit_code)
+        return
+
+    table = Table(title="Service Status", show_header=False, padding=(0, 2))
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    table.add_row("Service JSON", "[yellow]missing[/]")
+    table.add_row("PID", "n/a")
+    table.add_row("Port", str(port))
+    table.add_row(
+        "Port Listening",
+        "[green]yes[/]" if port_listening else "[red]no[/]",
+    )
+    table.add_row(
+        "State",
+        "[green]running[/]" if state == "running" else f"[red]{state}[/]",
+    )
+    _add_health_rows(table, health, port_listening)
+    _add_operational_rows(table, operational)
+    _cli.console.print(table)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
 @server_app.command("health")
 def service_health(
     port: Annotated[
@@ -624,6 +708,10 @@ def service_health(
 
 @server_app.command("status")
 def service_status(
+    requested_port: Annotated[
+        int | None,
+        typer.Option("--port", help="Service port (defaults to running service)."),
+    ] = None,
     json_mode: Annotated[
         bool,
         typer.Option(
@@ -654,6 +742,9 @@ def service_status(
     status = _read_service_status()
 
     if status is None:
+        if requested_port is not None:
+            _render_port_only_status(requested_port, json_mode=json_mode)
+            return
         # No service.json in the configured status dir => this config's
         # service is stopped (exit 3), per the documented contract (exit 4
         # is reserved for a *present* service.json that diverges). We do
@@ -680,7 +771,7 @@ def service_status(
 
     (
         pid,
-        port,
+        status_file_port,
         started_at,
         pid_alive,
         pid_is_ours,
@@ -693,13 +784,38 @@ def service_status(
         exit_code,
     ) = _evaluate_service_signals(status)
 
-    health = _health_probe(port) if port_listening else None
-    operational = _status_operational_summary(state, port, port_listening, health)
+    target_port = requested_port if requested_port is not None else status_file_port
+    if requested_port is not None:
+        port_listening = _port_is_listening(target_port) if pid_alive else False
+        state, state_label, exit_code = _compute_state(
+            pid_alive,
+            pid_is_ours,
+            port_listening,
+            heartbeat_stale,
+        )
+        raw_token = status.get("service_token")
+        expected_token = raw_token if isinstance(raw_token, str) else None
+        token_match = _compute_token_match(
+            expected_token,
+            pid_alive,
+            port_listening,
+            target_port,
+        )
+    health = _health_probe(target_port) if port_listening else None
+    operational = _status_operational_summary(
+        state,
+        target_port,
+        port_listening,
+        health,
+        explicit_port=requested_port is not None,
+    )
 
     if json_mode:
+        if target_port != status_file_port and isinstance(operational, dict):
+            operational["status_file_port"] = status_file_port
         _render_status_json(
             pid,
-            port,
+            target_port,
             started_at,
             pid_alive,
             pid_is_ours,
@@ -714,9 +830,13 @@ def service_status(
         )
         return
 
+    if target_port != status_file_port:
+        _cli.console.print(
+            f"[yellow]Status file port is {status_file_port}; probing {target_port}.[/]"
+        )
     _render_status_table(
         pid,
-        port,
+        target_port,
         started_at,
         pid_alive,
         pid_is_ours,

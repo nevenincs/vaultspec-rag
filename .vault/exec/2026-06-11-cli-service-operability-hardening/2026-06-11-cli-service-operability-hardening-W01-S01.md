@@ -55,3 +55,37 @@ Observed against resident service PID `29376` on port `8766`:
 - backend contract visible
 - jobs `0 running; 10 total`
 - next action `vaultspec-rag server info --project-root <path>`
+
+## Follow-Up: Status Port Parity
+
+Manual timeout remediation exposed that `server status` did not accept the same `--port`
+option as `server health`, `server jobs`, `server logs`, and service-backed `search`.
+That forced operators to remember one exception in the status surface.
+
+Implemented:
+
+- `vaultspec-rag server status --port <port>` now works.
+- If `service.json` exists, `--port` selects the network probe target used for health
+  and jobs.
+- If `service.json` is missing, `--port` performs a port-only status check against the
+  localhost service and returns structured status instead of immediately reporting
+  stopped.
+- The default `next_action` no longer recommends `server info`; when the service is
+  healthy and idle, it recommends a service-backed search command with the selected
+  port.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/cli/_service_lifecycle.py src/vaultspec_rag/tests/test_cli.py`
+- `uv run ty check src/vaultspec_rag/cli/_service_lifecycle.py src/vaultspec_rag/tests/test_cli.py`
+- `uv run pytest src/vaultspec_rag/tests/test_cli.py::TestServiceDaemonHelpers::test_service_status_port_only_json src/vaultspec_rag/tests/test_cli.py::TestServiceDaemonHelpers::test_service_status_renders_health_contract`
+- `uv run vaultspec-rag server status --json --port 8766`
+- `uv run vaultspec-rag server status --port 8766`
+- `uv run vaultspec-rag server health --json --port 8766`
+
+Observed against resident service PID `66728` on port `8766`:
+
+- `server status --port 8766` exits 0 in JSON and human modes.
+- JSON includes `operational.next_action`:
+  `vaultspec-rag search "<query>" --type code --port 8766 --timeout 120`.
+- Human output includes the same next action without recommending `server info`.

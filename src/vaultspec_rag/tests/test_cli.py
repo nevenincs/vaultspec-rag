@@ -1790,6 +1790,72 @@ class TestServiceDaemonHelpers:
             server.server_close()
             thread.join(timeout=5)
 
+    def test_service_status_port_only_json(self, tmp_path: Path):
+        """server status --port can inspect a reachable service without service.json."""
+        import http.server
+        import json
+        import threading
+
+        class _StatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/health":
+                    payload = {
+                        "status": "ready",
+                        "cuda": True,
+                        "models_loaded": True,
+                        "project_count": 1,
+                        "backend_capabilities": {
+                            "same_project_search_strategy": "serialized",
+                            "cross_project_search_strategy": "parallel",
+                            "local_storage_process_model": "exclusive",
+                        },
+                    }
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _StatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port), "--json"],
+            )
+
+            assert result.exit_code == 0
+            envelope = json.loads(result.stdout)
+            data = envelope["data"]
+            assert data["service_json_present"] is False
+            assert data["port"] == port
+            assert data["state"] == "running"
+            operational = data["operational"]
+            assert f"--port {port}" in operational["next_action"]
+            assert "server info" not in operational["next_action"]
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
 
 def _find_free_port() -> int:
     """Bind to an ephemeral port, close, and return the number.
