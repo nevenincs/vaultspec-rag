@@ -642,3 +642,57 @@ The epic is complete only when all of the following are true:
 
 Wave 01 should precede the others because names and ownership boundaries determine how
 jobs, search freshness, and timeout diagnostics should be exposed.
+
+## Execution Summary: Wave 05 Integration
+
+Status as of 2026-06-12:
+
+- Status convergence shipped and pushed:
+  - `server status --port <port>` is supported.
+  - `server status` no longer recommends `server info` as the healthy idle next action.
+  - stale `service.json` no longer blocks an explicit healthy localhost port.
+- Jobs operability shipped and pushed:
+  - bounded jobs list,
+  - focused `--job-id` inspection,
+  - `--running`, `--failed`, `--since`, source/trigger/query filters,
+  - initiator and liveness fields.
+- Logs parity shipped and pushed:
+  - `GET /logs`, `GET /logs/json`, CLI `server logs`, and MCP `get_logs` share
+    `job_id` and `contains` filters.
+  - filtered log requests search a bounded maximum window before returning the requested
+    filtered tail.
+- Search freshness and timeout diagnostics shipped and pushed:
+  - service search responses include `index_state`, empty-result diagnostics, and coarse
+    route timing.
+  - timeout errors include health/jobs/backpressure diagnostics and next actions.
+  - redundant cold pre-search status work was removed; manual cold search showed
+    near-zero `status_seconds`, while remaining cold cost is inside `search_seconds`.
+- Code review completed:
+  - CR-13 and CR-14 were found in W05 review and fixed before final push.
+- Codified project rules:
+  - `service-domain-owns-operability`,
+  - `cli-operability-needs-persona-tests`,
+  - `operator-views-are-bounded`.
+
+Manual integration persona:
+
+- Persona: new maintainer using only `vaultspec-rag` to diagnose and search this repo.
+- Commands exercised against resident service PID `62940` on port `8766`:
+  - `uv run vaultspec-rag server status --json --port 8766`
+  - `uv run vaultspec-rag server status --port 8766`
+  - `uv run vaultspec-rag server jobs --limit 5 --port 8766`
+  - `uv run vaultspec-rag server logs --json --lines 1 --contains service.lifecycle --port 8766`
+  - `uv run vaultspec-rag search "server status jobs logs search timeout diagnostics" --type code --json --max-results 2 --port 8766 --timeout 180`
+- Observed:
+  - status reported healthy service state and a valid port-specific next action,
+  - jobs were bounded and current-state oriented,
+  - filtered logs returned a matching lifecycle line even with `--lines 1`,
+  - service search returned indexed target metadata and timing.
+
+Remaining deferred work:
+
+- True queue wait is still not measured.
+- Embedding, Qdrant query, rerank, and graph-rerank phase timings are still conflated
+  inside `search_seconds`.
+- The jobs registry still lacks OS user, wrapper identity, PID, process memory, and GPU
+  memory fields.
