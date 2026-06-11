@@ -545,9 +545,6 @@ async def search_route(request: Request) -> JSONResponse:
 
         try:
             phase_started = time.perf_counter()
-            status = vaultspec_rag.get_status(root)
-            status_seconds = time.perf_counter() - phase_started
-            phase_started = time.perf_counter()
             if search_type == "vault":
                 results = vaultspec_rag.search_vault(
                     root,
@@ -578,6 +575,9 @@ async def search_route(request: Request) -> JSONResponse:
                     unlike_ids=payload.get("unlike_ids"),
                 )
             search_seconds = time.perf_counter() - phase_started
+            phase_started = time.perf_counter()
+            status = vaultspec_rag.get_status(root)
+            status_seconds = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
             from ._models import SearchResultItem
 

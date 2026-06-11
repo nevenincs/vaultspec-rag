@@ -132,5 +132,37 @@ state cannot be established.
 - Embedding, Qdrant query, rerank, and graph rerank phase timings are still conflated
   inside `search_seconds`.
 - Search while indexing still needs a controlled manual reproduction.
-- `server status` still lacks a port override, which may be acceptable but must be
-  settled in the status convergence work.
+- `server status --port` was later implemented in the status convergence follow-up.
+
+## Follow-Up: Avoid Redundant Cold Status Work
+
+Manual measurement after a daemon restart showed the first service-backed search paying a
+visible pre-search status cost:
+
+- `status_seconds`: about 1.56s
+- `search_seconds`: about 6.82s
+- `server_total_seconds`: about 8.38s
+
+The route previously called `get_status(root)` before search. On a cold project, that can
+open/count the local Qdrant store before the actual search loads the same project slot.
+The route now performs the search first and gathers status afterward, so index-state
+metadata can reuse the loaded project slot.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run ty check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag search "search route timing embedding qdrant rerank phase attribution" --type code --json --max-results 3 --port 8766 --timeout 180`
+- repeated the same search once warm.
+
+Observed against current resident service PID `50236` on port `8766`:
+
+- Cold search after the change reported `status_seconds` about 0.0004s and
+  `server_total_seconds` about 7.62s.
+- Warm repeated search reported `server_total_seconds` about 0.86s.
+- Remaining cold latency is inside `search_seconds`, so true embedding/Qdrant/rerank
+  attribution still requires a service-domain diagnostic search API rather than wrapper
+  timing around the public list-returning search functions.
