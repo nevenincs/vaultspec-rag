@@ -9,7 +9,7 @@ both indexers.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
@@ -45,6 +45,10 @@ class IndexResult:
         duration_ms: Wall-clock time for the operation in milliseconds.
         device: Compute device used for embeddings (e.g. ``"cuda"``).
         files: Number of files processed (for codebase indexing).
+        preprocess_skipped: Number of files a document-preprocessing rule
+            skipped this run (``on_error=skip``), surfaced so coverage gaps are
+            never silent (#185, D11).
+        preprocess_failures: ``"rel_path: reason"`` for each skipped file.
     """
 
     total: int
@@ -54,6 +58,8 @@ class IndexResult:
     duration_ms: int
     device: str
     files: int = 0
+    preprocess_skipped: int = 0
+    preprocess_failures: list[str] = field(default_factory=list)
 
 
 def _extract_title(body: str) -> str:

@@ -242,9 +242,14 @@ _dev-fix target='all':
     } \
   }
 
+# --ignore-until-fixed suppresses an advisory ONLY while no upstream fix exists,
+# re-activating automatically once one ships. GHSA-rrmf-rvhw-rf47 (CVE-2025-3000)
+# is a torch.jit.script memory-corruption advisory with no fix release; vaultspec-rag
+# never calls torch.jit.script, and torch is the pinned GPU dependency, so it cannot
+# be pinned away. Remove this when torch publishes a patched release.
 _dev-audit target:
   switch ("{{target}}") { \
-    "deps" { uv audit --locked --preview-features audit ; break } \
+    "deps" { uv audit --locked --preview-features audit --ignore-until-fixed GHSA-rrmf-rvhw-rf47 ; break } \
     default { \
       Write-Host "unknown dev audit target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: deps" -ForegroundColor Red ; \

@@ -41,6 +41,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _format_locator(payload: dict[str, object]) -> str | None:
+    """Render a preprocess result's split locator into a readable string (#185).
+
+    Combines the ``locator_kind`` with whichever of ``locator_value_int`` /
+    ``locator_value_str`` is present, e.g. ``"page 12"`` or ``"sheet Summary"``.
+    Returns ``None`` for ordinary code chunks (no locator kind).
+    """
+    kind = payload.get("locator_kind")
+    if not isinstance(kind, str) or not kind:
+        return None
+    value = _locator_component(payload, "locator_value_int", "locator_value_str")
+    if value is None:
+        return kind
+    end = _locator_component(payload, "locator_end_int", "locator_end_str")
+    if end is not None:
+        return f"{kind} {value}-{end}"
+    return f"{kind} {value}"
+
+
+def _locator_component(
+    payload: dict[str, object], int_key: str, str_key: str
+) -> str | None:
+    """Return the int or str locator component as a display string, or None."""
+    value_int = payload.get(int_key)
+    if isinstance(value_int, int) and not isinstance(value_int, bool):
+        return str(value_int)
+    value_str = payload.get(str_key)
+    if isinstance(value_str, str) and value_str:
+        return value_str
+    return None
+
+
 class VaultGraphError(RuntimeError):
     """Raised when the VaultGraph fails to initialize."""
 
@@ -397,6 +429,9 @@ class VaultSearcher:
             node_type = r.get("node_type")
             function_name = r.get("function_name")
             class_name = r.get("class_name")
+            source_path = r.get("source_path")
+            preprocessor_id = r.get("preprocessor_id")
+            anchor = r.get("anchor")
             results.append(
                 SearchResult(
                     id=r_id,
@@ -413,6 +448,12 @@ class VaultSearcher:
                         str(function_name) if function_name is not None else None
                     ),
                     class_name=str(class_name) if class_name is not None else None,
+                    source_path=str(source_path) if source_path is not None else None,
+                    preprocessor_id=(
+                        str(preprocessor_id) if preprocessor_id is not None else None
+                    ),
+                    anchor=str(anchor) if anchor is not None else None,
+                    locator=_format_locator(r),
                 ),
             )
         return results

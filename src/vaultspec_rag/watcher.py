@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
+    from .indexer._preprocess_config import PreprocessConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,12 @@ _CODE_EXTENSIONS = frozenset(
         ".kt",
         ".lua",
         ".zig",
+        # Plain-text/markup tails added to LANGUAGE_MAP (#185 adjacent ask) so a
+        # watched edit to one triggers a reindex like any other source file.
+        ".txt",
+        ".xml",
+        ".xsd",
+        ".properties",
     }
 )
 
@@ -74,43 +81,47 @@ def _is_vault_change(path: Path, vault_dir: Path) -> bool:
     return path.suffix in _VAULT_EXTENSIONS
 
 
-def _is_code_change(path: Path, root_dir: Path, vault_dir: Path) -> bool:
+def _is_code_change(
+    path: Path,
+    root_dir: Path,
+    vault_dir: Path,
+    preprocess_config: PreprocessConfig | None = None,
+) -> bool:
     """Return True if path is a source file outside the vault directory.
+
+    A file whose extension is in ``_CODE_EXTENSIONS`` qualifies, and so does a
+    file matched by a preprocess rule even when its extension is unsupported
+    (#185, D8) - otherwise a watched ``.pdf`` change would never trigger a
+    reindex. Ignore filtering still happens downstream in the indexer scan.
 
     Args:
         path: The changed file path.
         root_dir: Project root directory.
         vault_dir: Vault directory to exclude.
+        preprocess_config: Resolved preprocess rules for the root, if any.
 
     Returns:
-        True if path is an indexable source file outside vault_dir
-        and inside root_dir, False otherwise.
+        True if path is an indexable source or preprocessable file outside
+        vault_dir and inside root_dir, False otherwise.
     """
-    if path.suffix not in _CODE_EXTENSIONS:
-        return False
     try:
         path.relative_to(vault_dir)
         return False  # Inside vault - not a code change
     except ValueError as exc:
-        # Expected when path is outside vault - fall through to
-        # the root-dir check below.
         logger.debug(
-            "watcher code-path: %s not under vault %s: %s",
-            path,
-            vault_dir,
-            exc,
+            "watcher code-path: %s not under vault %s: %s", path, vault_dir, exc
         )
     try:
-        path.relative_to(root_dir)
+        rel = path.relative_to(root_dir)
     except ValueError as exc:
-        logger.debug(
-            "watcher code-path: %s not under root %s: %s",
-            path,
-            root_dir,
-            exc,
-        )
+        logger.debug("watcher code-path: %s not under root %s: %s", path, root_dir, exc)
         return False
-    return True
+    if path.suffix in _CODE_EXTENSIONS:
+        return True
+    if preprocess_config is not None:
+        rel_posix = str(rel).replace("\\", "/")
+        return preprocess_config.match(rel_posix) is not None
+    return False
 
 
 async def watch_and_reindex(
@@ -172,6 +183,10 @@ async def watch_and_reindex(
 
     pending_vault: set[Path] = set()
     pending_code: set[Path] = set()
+    # Resolved once at watcher start so a watched change to a preprocessable
+    # file (e.g. a .pdf) routes through the same debounce/cooldown machinery
+    # (#185, D8). A rule added mid-session is picked up on the next restart.
+    preprocess_config = code_indexer.preprocess_config()
 
     try:
         async for changes in awatch(
@@ -180,7 +195,7 @@ async def watch_and_reindex(
             stop_event=stop_event,
             watch_filter=lambda _change, path: (
                 _is_vault_change(Path(path), vault_dir)
-                or _is_code_change(Path(path), root_dir, vault_dir)
+                or _is_code_change(Path(path), root_dir, vault_dir, preprocess_config)
             ),
         ):
             for change_type, path_str in changes:
@@ -188,7 +203,7 @@ async def watch_and_reindex(
                 if change_type in (Change.added, Change.modified, Change.deleted):
                     if _is_vault_change(path, vault_dir):
                         pending_vault.add(path)
-                    elif _is_code_change(path, root_dir, vault_dir):
+                    elif _is_code_change(path, root_dir, vault_dir, preprocess_config):
                         pending_code.add(path)
 
             now = time.monotonic()
@@ -338,11 +353,14 @@ async def _process_code_changes(
         )
         _last_code_index = time.monotonic()
         pending_code = set()
+        skipped_suffix = (
+            f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
+        )
         _jobs.record_finish(
             active_code_job,
             result=(
                 f"+{result.added} /{result.updated} "
-                f"-{result.removed} ({result.duration_ms}ms)"
+                f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
             ),
         )
         logger.info(

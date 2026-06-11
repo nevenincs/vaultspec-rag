@@ -190,8 +190,16 @@ def _display_search_results(
         snippet_raw = str(r.get("snippet", "")).replace("\n", " ")
         snippet = snippet_raw if no_truncate else snippet_raw[:120]
         location = str(r.get("path", ""))
+        # Preprocess-hook results carry a deep-link anchor / locator (#185);
+        # prefer them over the line number so hits point into the source.
+        anchor = r.get("anchor")
+        locator = r.get("locator")
         line_start = r.get("line_start")
-        if line_start:
+        if anchor:
+            location = str(anchor)
+        elif locator:
+            location += f" ({locator})"
+        elif line_start:
             location += f":{line_start}"
         raw_score = r.get("score", 0.0)
         score = float(raw_score) if isinstance(raw_score, (int, float, str)) else 0.0

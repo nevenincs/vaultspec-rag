@@ -14,28 +14,33 @@ A flag passed on the command line always wins. An exported environment variable 
 
 Every `VAULTSPEC_RAG_*` variable recognised by the loader, taken verbatim from the `EnvVar` enum and `_RAG_DEFAULTS` in `src/vaultspec_rag/config.py`.
 
-| Variable                                    | Type    | Default                   | Controls                                                        | CLI override                          |
-| ------------------------------------------- | ------- | ------------------------- | --------------------------------------------------------------- | ------------------------------------- |
-| `VAULTSPEC_RAG_ROOT`                        | path    | current working directory | Project root used to resolve `.vault/` and indexing scope       | `--target`                            |
-| `VAULTSPEC_RAG_DATA_DIR`                    | path    | `.vault/data/search-data` | Directory holding the Qdrant store and index metadata           | `--data-dir`                          |
-| `VAULTSPEC_RAG_QDRANT_DIR`                  | path    | `qdrant`                  | Qdrant subdirectory inside the data dir                         | `--qdrant-dir`                        |
-| `VAULTSPEC_RAG_INDEX_META`                  | path    | `index_meta.json`         | Vault index metadata filename inside the data dir               | `--index-meta`                        |
-| `VAULTSPEC_RAG_CODE_INDEX_META`             | path    | `code_index_meta.json`    | Codebase index metadata filename inside the data dir            | `--code-index-meta`                   |
-| `VAULTSPEC_RAG_STATUS_DIR`                  | path    | `~/.vaultspec-rag`        | Directory for service status, pid, and lock files               | `--status-dir`                        |
-| `VAULTSPEC_RAG_LOG_FILE`                    | path    | `service.log`             | Log filename inside the status dir                              | `--log-file`                          |
-| `VAULTSPEC_RAG_PORT`                        | integer | `8766`                    | HTTP port for the service and MCP fast path                     | `--port`                              |
-| `VAULTSPEC_RAG_LOG_LEVEL`                   | string  | `WARNING`                 | Root logger level                                               | `--verbose` (INFO), `--debug` (DEBUG) |
-| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS`    | integer | `1800`                    | Seconds an idle project engine is kept resident before eviction | none                                  |
-| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`        | integer | `16`                      | Maximum simultaneously cached project engines                   | none                                  |
-| `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES`       | integer | `10485760`                | Rotating log file size cap, in bytes (10 MB)                    | none                                  |
-| `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT`    | integer | `5`                       | Number of rotated log backups retained                          | none                                  |
-| `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE`        | integer | `64`                      | Outer batch size fed to the embedding pipeline                  | none                                  |
-| `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` | integer | `8`                       | Inner sub-batch size passed to `SentenceTransformer.encode()`   | none                                  |
-| `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`    | integer | `2048`                    | Hard cap on sequence length advertised to the model             | none                                  |
-| `VAULTSPEC_RAG_MAX_EMBED_CHARS`             | integer | `8000`                    | Character cap applied to each text before encoding              | none                                  |
-| `VAULTSPEC_RAG_WATCH_ENABLED`               | boolean | `1` (on)                  | Filesystem auto-reindex watcher on/off (`0` = pull-only)        | `--watch` / `--no-watch`              |
-| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS`           | integer | `2000`                    | Debounce window coalescing change events before reindex (ms)    | `--watch-debounce-ms`                 |
-| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`            | float   | `30`                      | Per-source re-index cooldown after a completed run (s)          | `--watch-cooldown-s`                  |
+| Variable                                     | Type    | Default                   | Controls                                                        | CLI override                          |
+| -------------------------------------------- | ------- | ------------------------- | --------------------------------------------------------------- | ------------------------------------- |
+| `VAULTSPEC_RAG_ROOT`                         | path    | current working directory | Project root used to resolve `.vault/` and indexing scope       | `--target`                            |
+| `VAULTSPEC_RAG_DATA_DIR`                     | path    | `.vault/data/search-data` | Directory holding the Qdrant store and index metadata           | `--data-dir`                          |
+| `VAULTSPEC_RAG_QDRANT_DIR`                   | path    | `qdrant`                  | Qdrant subdirectory inside the data dir                         | `--qdrant-dir`                        |
+| `VAULTSPEC_RAG_INDEX_META`                   | path    | `index_meta.json`         | Vault index metadata filename inside the data dir               | `--index-meta`                        |
+| `VAULTSPEC_RAG_CODE_INDEX_META`              | path    | `code_index_meta.json`    | Codebase index metadata filename inside the data dir            | `--code-index-meta`                   |
+| `VAULTSPEC_RAG_STATUS_DIR`                   | path    | `~/.vaultspec-rag`        | Directory for service status, pid, and lock files               | `--status-dir`                        |
+| `VAULTSPEC_RAG_LOG_FILE`                     | path    | `service.log`             | Log filename inside the status dir                              | `--log-file`                          |
+| `VAULTSPEC_RAG_PORT`                         | integer | `8766`                    | HTTP port for the service and MCP fast path                     | `--port`                              |
+| `VAULTSPEC_RAG_LOG_LEVEL`                    | string  | `WARNING`                 | Root logger level                                               | `--verbose` (INFO), `--debug` (DEBUG) |
+| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS`     | integer | `1800`                    | Seconds an idle project engine is kept resident before eviction | none                                  |
+| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`         | integer | `16`                      | Maximum simultaneously cached project engines                   | none                                  |
+| `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES`        | integer | `10485760`                | Rotating log file size cap, in bytes (10 MB)                    | none                                  |
+| `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT`     | integer | `5`                       | Number of rotated log backups retained                          | none                                  |
+| `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE`         | integer | `64`                      | Outer batch size fed to the embedding pipeline                  | none                                  |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`  | integer | `8`                       | Inner sub-batch size passed to `SentenceTransformer.encode()`   | none                                  |
+| `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`     | integer | `2048`                    | Hard cap on sequence length advertised to the model             | none                                  |
+| `VAULTSPEC_RAG_MAX_EMBED_CHARS`              | integer | `8000`                    | Character cap applied to each text before encoding              | none                                  |
+| `VAULTSPEC_RAG_WATCH_ENABLED`                | boolean | `1` (on)                  | Filesystem auto-reindex watcher on/off (`0` = pull-only)        | `--watch` / `--no-watch`              |
+| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS`            | integer | `2000`                    | Debounce window coalescing change events before reindex (ms)    | `--watch-debounce-ms`                 |
+| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`             | float   | `30`                      | Per-source re-index cooldown after a completed run (s)          | `--watch-cooldown-s`                  |
+| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760`                | Cap on text a preprocess hook may emit per file (bytes)         | -                                     |
+| `VAULTSPEC_RAG_HTML_STRIP`                   | bool    | `1`                       | Strip tags from `.html` to plain text before chunking           | -                                     |
+
+See [Preprocessing hooks](preprocessing-hooks.md) for the `.vaultragpreprocess.toml` rule
+format and the preprocessor output schema.
 
 ## Examples
 

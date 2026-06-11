@@ -236,6 +236,17 @@ class CodeChunk:
         vector: Dense embedding vector.
         sparse_indices: Sparse vector indices (SPLADE).
         sparse_values: Sparse vector values (SPLADE).
+        source_path: For a chunk produced by a preprocess hook, the original
+            source file path (e.g. a PDF). ``None`` for ordinary code chunks.
+        preprocessor_id: The id of the preprocessor that produced this chunk,
+            if any (#185 document-preprocessing hooks).
+        anchor: A deep-link into the source's own addressing scheme
+            (e.g. ``doc.pdf#page=12``), if any.
+        locator_kind: The locator kind (``page``/``sheet``/``line``/...), if any.
+        locator_value_int: Numeric locator value (page/line/byte/char), if any.
+        locator_value_str: String locator value (e.g. a sheet name), if any.
+        locator_end_int: Numeric end of a range locator (e.g. pages 1-3), if any.
+        locator_end_str: String end of a range locator, if any.
     """
 
     id: str
@@ -250,6 +261,14 @@ class CodeChunk:
     vector: list[float] = field(default_factory=list)
     sparse_indices: list[int] = field(default_factory=list)
     sparse_values: list[float] = field(default_factory=list)
+    source_path: str | None = None
+    preprocessor_id: str | None = None
+    anchor: str | None = None
+    locator_kind: str | None = None
+    locator_value_int: int | None = None
+    locator_value_str: str | None = None
+    locator_end_int: int | None = None
+    locator_end_str: str | None = None
 
 
 class VaultStore:
@@ -499,6 +518,13 @@ class VaultStore:
                 "function_name",
                 "class_name",
                 "node_type",
+                # Document-preprocessing hook payload (#185). The split
+                # locator keeps a typed index per value kind (D12): numeric
+                # kinds (page/line/byte/char) go to locator_value_int below,
+                # string kinds (sheet) to locator_value_str here.
+                "preprocessor_id",
+                "locator_kind",
+                "locator_value_str",
             ):
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
@@ -506,12 +532,13 @@ class VaultStore:
                         field_name=fname,
                         field_schema=models.PayloadSchemaType.KEYWORD,
                     )
-            with _suppress_local_qdrant_warnings():
-                self.client.create_payload_index(
-                    collection_name=self.CODE_TABLE_NAME,
-                    field_name="line_start",
-                    field_schema=models.PayloadSchemaType.INTEGER,
-                )
+            for fname in ("line_start", "locator_value_int"):
+                with _suppress_local_qdrant_warnings():
+                    self.client.create_payload_index(
+                        collection_name=self.CODE_TABLE_NAME,
+                        field_name=fname,
+                        field_schema=models.PayloadSchemaType.INTEGER,
+                    )
             self._code_ensured = True
 
     def upsert_documents(self, docs: list[VaultDocument]) -> None:
@@ -596,6 +623,14 @@ class VaultStore:
                         "node_type": chunk.node_type,
                         "function_name": chunk.function_name,
                         "class_name": chunk.class_name,
+                        "source_path": chunk.source_path,
+                        "preprocessor_id": chunk.preprocessor_id,
+                        "anchor": chunk.anchor,
+                        "locator_kind": chunk.locator_kind,
+                        "locator_value_int": chunk.locator_value_int,
+                        "locator_value_str": chunk.locator_value_str,
+                        "locator_end_int": chunk.locator_end_int,
+                        "locator_end_str": chunk.locator_end_str,
                     },
                 ),
             )

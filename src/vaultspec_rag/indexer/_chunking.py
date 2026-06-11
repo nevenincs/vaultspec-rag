@@ -181,6 +181,13 @@ LANGUAGE_MAP: dict[str, tuple[str, str | None]] = {
     ".html": ("html", None),
     ".css": ("css", None),
     ".kt": ("kotlin", "kotlin"),
+    # Plain-text tails (#185 adjacent ask): no useful AST, handled by the
+    # TextSplitter. XML/XSD keep a distinct language label so they stay
+    # queryable as `lang:xml` even though they fall back to text separators.
+    ".txt": ("text", None),
+    ".properties": ("text", None),
+    ".xml": ("xml", None),
+    ".xsd": ("xml", None),
 }
 
 SUPPORTED_EXTENSIONS: set[str] = set(LANGUAGE_MAP.keys())

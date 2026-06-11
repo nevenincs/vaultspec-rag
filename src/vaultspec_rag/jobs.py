@@ -284,11 +284,17 @@ def start_reindex_codebase(root: Path, clean: bool) -> str:
                             result = slot.code_indexer.incremental_index(
                                 reporter=JobProgressReporter(job_id)
                             )
+                        skipped_suffix = (
+                            f" ~{result.preprocess_skipped}"
+                            if result.preprocess_skipped
+                            else ""
+                        )
                         record_finish(
                             job_id,
                             result=(
                                 f"+{result.added} /{result.updated} "
                                 f"-{result.removed} ({result.duration_ms}ms)"
+                                f"{skipped_suffix}"
                             ),
                         )
                 except Exception as exc:

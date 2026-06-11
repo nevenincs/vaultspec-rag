@@ -44,6 +44,11 @@ class SearchResultItem(BaseModel):
             tree-sitter. None if not applicable.
         class_name: Class or struct name extracted by
             tree-sitter. None if not applicable.
+        source_path: Original source file for a preprocess-hook result
+            (e.g. a PDF). None for ordinary results (#185).
+        preprocessor_id: Id of the preprocessor that produced this result.
+        anchor: Deep-link into the source's own addressing scheme.
+        locator: Human-readable locator (e.g. ``"page 12"``).
     """
 
     model_config = {"from_attributes": True}
@@ -63,6 +68,10 @@ class SearchResultItem(BaseModel):
     node_type: str | None = None
     function_name: str | None = None
     class_name: str | None = None
+    source_path: str | None = None
+    preprocessor_id: str | None = None
+    anchor: str | None = None
+    locator: str | None = None
 
 
 class SearchResponse(BaseModel):

@@ -224,7 +224,7 @@ class TestLanguageMap:
         assert grammar == "tsx"
 
     def test_all_extensions_count(self):
-        assert len(SUPPORTED_EXTENSIONS) >= 25
+        assert len(SUPPORTED_EXTENSIONS) >= 29
 
     def test_go_extension(self):
         assert ".go" in SUPPORTED_EXTENSIONS
@@ -234,6 +234,16 @@ class TestLanguageMap:
 
     def test_csharp_extension(self):
         assert ".cs" in SUPPORTED_EXTENSIONS
+
+    def test_plain_text_extensions_added(self):
+        # #185 adjacent ask: plain-text tails index as text (grammar None).
+        assert LANGUAGE_MAP[".txt"] == ("text", None)
+        assert LANGUAGE_MAP[".properties"] == ("text", None)
+
+    def test_xml_extensions_added(self):
+        # #185 adjacent ask: XML/XSD keep a distinct queryable language label.
+        assert LANGUAGE_MAP[".xml"] == ("xml", None)
+        assert LANGUAGE_MAP[".xsd"] == ("xml", None)
 
 
 class TestBinaryDetection:

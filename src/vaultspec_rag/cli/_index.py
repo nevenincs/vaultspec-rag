@@ -427,6 +427,10 @@ def _try_in_process_indexing(
                 "removed": c_res.removed,
                 "total": c_res.total,
                 "duration_ms": c_res.duration_ms,
+                # Preprocess-hook coverage (#185, D11): never let a skipped
+                # file be silently absent from the index report.
+                "preprocess_skipped": c_res.preprocess_skipped,
+                "preprocess_failures": c_res.preprocess_failures,
             }
         )
 

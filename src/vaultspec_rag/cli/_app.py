@@ -27,6 +27,7 @@ __all__ = [
     "app",
     "main",
     "mcp_app",
+    "preprocess_app",
     "server_app",
     "server_projects_app",
     "server_watcher_app",
@@ -52,11 +53,15 @@ server_projects_app = typer.Typer(
 server_watcher_app = typer.Typer(
     help="Inspect and control the filesystem auto-reindex watcher.",
 )
+preprocess_app = typer.Typer(
+    help="Inspect and validate document-preprocessing rules (#185).",
+)
 
 app.add_typer(server_root_app, name="server")
 server_root_app.add_typer(mcp_app, name="mcp")
 server_root_app.add_typer(server_projects_app, name="projects")
 server_root_app.add_typer(server_watcher_app, name="watcher")
+app.add_typer(preprocess_app, name="preprocess")
 
 
 class CLIState:

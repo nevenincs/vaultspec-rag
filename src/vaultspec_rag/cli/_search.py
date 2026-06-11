@@ -302,9 +302,16 @@ def _render_in_process_results(
     for r in results:
         snippet_raw = r.snippet.replace("\n", " ")
         snippet = snippet_raw if no_truncate else snippet_raw[:120]
-        location = r.path
-        if r.line_start:
-            location += f":{r.line_start}"
+        # Preprocess-hook results carry a deep-link anchor / locator (#185);
+        # prefer them over the line number so hits point into the source.
+        if r.anchor:
+            location = r.anchor
+        elif r.locator:
+            location = f"{r.path} ({r.locator})"
+        elif r.line_start:
+            location = f"{r.path}:{r.line_start}"
+        else:
+            location = r.path
         table.add_row(f"{r.score:.2f}", location, snippet)
 
     _cli.console.print(table)

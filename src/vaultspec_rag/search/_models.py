@@ -65,6 +65,14 @@ class SearchResult:
             results only.
         class_name: Name of the enclosing class, if any.  Codebase
             results only.
+        source_path: Original source file for a preprocess-hook result
+            (e.g. a PDF). ``None`` for ordinary results (#185).
+        preprocessor_id: Id of the preprocessor that produced this result,
+            if any.
+        anchor: Deep-link into the source's own addressing scheme
+            (e.g. ``doc.pdf#page=12``), if any.
+        locator: Human-readable locator (e.g. ``"page 12"``,
+            ``"sheet Summary"``), if any.
     """
 
     id: str
@@ -82,3 +90,7 @@ class SearchResult:
     node_type: str | None = None
     function_name: str | None = None
     class_name: str | None = None
+    source_path: str | None = None
+    preprocessor_id: str | None = None
+    anchor: str | None = None
+    locator: str | None = None

@@ -48,6 +48,7 @@ Both packages live side by side in the same project. You can use vaultspec-core 
 - [Service mode](docs/service-mode.md) - keep models warm in a background service for faster queries.
 - [MCP integration](docs/mcp.md) - expose search to Claude Code and other MCP clients.
 - [Automation](docs/automation.md) - reindex on file changes and wire searches into scripts.
+- [Preprocessing hooks](docs/preprocessing-hooks.md) - index PDFs, spreadsheets, and other formats by registering your own extractor.
 
 ### Reference
 

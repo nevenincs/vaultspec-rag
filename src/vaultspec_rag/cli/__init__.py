@@ -71,6 +71,11 @@ from ._http_search import (
 from ._index import handle_clean, handle_index
 from ._install import handle_install, handle_uninstall
 from ._mcp_admin import mcp_start, mcp_status, mcp_stop
+from ._preprocess import (
+    handle_preprocess_check,
+    handle_preprocess_list,
+    handle_preprocess_run_one,
+)
 from ._process import (
     _health_probe,
     _heartbeat_age_seconds,
@@ -174,6 +179,9 @@ __all__ = [
     "handle_clean",
     "handle_index",
     "handle_install",
+    "handle_preprocess_check",
+    "handle_preprocess_list",
+    "handle_preprocess_run_one",
     "handle_quality",
     "handle_search",
     "handle_status",
