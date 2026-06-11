@@ -89,3 +89,9 @@ Observed against resident service PID `66728` on port `8766`:
 - JSON includes `operational.next_action`:
   `vaultspec-rag search "<query>" --type code --port 8766 --timeout 120`.
 - Human output includes the same next action without recommending `server info`.
+
+Post-review correction:
+
+- `server status --port` now handles stale `service.json` before evaluating the recorded
+  PID. A healthy explicit localhost port no longer exits 4 just because the status file
+  contains a dead prior daemon PID.

@@ -112,3 +112,10 @@ Observed against current resident service PID `64688` on port `8766`:
 - Human output only showed matching lifecycle lines.
 - A non-matching `--job-id` returned `ok: true` with `lines: []`, `total: 0`, and the
   selected filter metadata.
+
+Post-review correction:
+
+- Filtered log requests now search the bounded maximum log window before applying the
+  requested tail size. This prevents `server logs --job-id <id>` from returning empty
+  just because unrelated recent log noise pushed the matching job line outside the last
+  N unfiltered lines.

@@ -193,9 +193,11 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
         return denied
     lines = _clamp_lines(request.query_params.get("lines"))
     filters = _log_filters_from_request(request)
-    body_lines = read_service_log(lines)
+    read_limit = _MAX_LOG_LINES if filters else lines
+    body_lines = read_service_log(read_limit)
     if filters:
         body_lines = _filter_log_lines(body_lines, **filters)
+        body_lines = body_lines[-lines:]
     return PlainTextResponse("\n".join(body_lines))
 
 
@@ -893,9 +895,11 @@ async def logs_json_route(request: Request) -> JSONResponse:
         return denied
     lines = _clamp_lines(request.query_params.get("lines"))
     filters = _log_filters_from_request(request)
-    body = read_service_log(lines)
+    read_limit = _MAX_LOG_LINES if filters else lines
+    body = read_service_log(read_limit)
     if filters:
         body = _filter_log_lines(body, **filters)
+        body = body[-lines:]
     return JSONResponse({"lines": body, "total": len(body), "filters": filters})
 
 

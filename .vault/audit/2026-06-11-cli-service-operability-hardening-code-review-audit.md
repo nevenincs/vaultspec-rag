@@ -138,6 +138,42 @@ filter while MCP and direct HTTP could send `since=0`.
 
 **Disposition:** Fixed. CLI jobs argument construction now preserves zero-valued options.
 
+### CR-13 | MEDIUM | `server status --port` can ignore a healthy explicit port
+
+`server status --port <port>` still gates the explicit-port probe on the PID recorded in
+the current `service.json`. If that file is stale or belongs to a dead prior daemon,
+`src/vaultspec_rag/cli/_service_lifecycle.py` sets `port_listening` to `False` before
+probing the requested port, then reports `crashed_pid_dead` and recommends
+`server logs --port <port>` even when `/health` on that port is ready.
+
+This breaks the status/health parity goal from the status convergence ADR: an operator
+who follows timeout remediation to inspect a known port can get a failed canonical
+status result while `server health --port <port>` would succeed against the same service.
+The port-only fallback only works when `service.json` is missing, not when it is stale.
+
+**Disposition:** Fixed. Explicit `server status --port` handling now runs before
+status-file signal evaluation. A stale `service.json` no longer blocks probing the
+requested port, and the regression test covers a dead PID in `service.json` with a
+healthy explicit localhost service.
+
+### CR-14 | MEDIUM | Log filters can miss matching job lines outside the unfiltered tail
+
+The new `/logs` and `/logs/json` filters read only the last requested `lines` first and
+then apply `job_id`/`contains` filtering in `src/vaultspec_rag/server/_routes.py`. That
+means `server logs --job-id <id>` with the default limit can return an empty success
+response if the job line is just outside the last 200 unfiltered lines, even though the
+operator supplied the exact job id.
+
+This weakens the jobs/logs join promised by the jobs operability ADR. The matching log
+line can be buried by unrelated watcher or lifecycle noise, and the JSON contract reports
+`total: 0` for the filtered tail rather than making clear that the full log was not
+searched. The added tests keep matching lines inside the requested tail, so they do not
+cover this operator failure mode.
+
+**Disposition:** Fixed. Filtered log requests now read the bounded maximum log window,
+apply `job_id`/`contains`, then return the last requested filtered lines. The regression
+test covers a matching job line outside the requested unfiltered tail.
+
 ## Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`

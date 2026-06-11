@@ -222,6 +222,21 @@ def test_logs_route_filters_by_job_id(
     assert response.text == "job_id=abc123 phase=running message=started"
 
 
+def test_logs_route_filter_searches_before_tail_limit(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/logs",
+            params={"token": token, "lines": "1", "job_id": "abc123"},
+        ),
+    )
+    assert response.status_code == 200
+    assert response.text == "job_id=abc123 phase=running message=started"
+
+
 def test_logs_json_route_filters_by_contains(
     _routes_app: tuple[TestClient, str],
 ) -> None:

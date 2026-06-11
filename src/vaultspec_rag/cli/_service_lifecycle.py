@@ -654,6 +654,101 @@ def _render_port_only_status(
         raise typer.Exit(code=exit_code)
 
 
+def _explicit_port_state(
+    port_listening: bool,
+    health: dict[str, object] | None,
+) -> tuple[str, str, int, bool]:
+    if isinstance(health, dict) and health.get("status") == "ready":
+        return "running", "[green]running[/]", 0, False
+    if port_listening:
+        return "unreachable", "[red]unreachable[/]", 4, False
+    return "stopped", "[red]stopped[/]", 3, False
+
+
+def _status_response_token_match(
+    expected_token: str | None,
+    health: dict[str, object] | None,
+) -> bool | None:
+    response_token = health.get("service_token") if isinstance(health, dict) else None
+    if isinstance(response_token, str) and expected_token:
+        return bool(response_token) and response_token == expected_token
+    return None
+
+
+def _render_explicit_port_status(
+    status: dict[str, Any],
+    target_port: int,
+    *,
+    json_mode: bool,
+) -> None:
+    pid = int(status.get("pid", 0))
+    status_file_port = int(status.get("port", 0))
+    started_at = str(status.get("started_at", "unknown"))
+    raw_token = status.get("service_token")
+    expected_token = raw_token if isinstance(raw_token, str) else None
+    pid_alive = _cli._is_pid_alive(pid)
+    pid_is_ours = (
+        _cli._is_our_service(pid, port=status_file_port, expected_token=expected_token)
+        if pid_alive
+        else False
+    )
+    heartbeat_age = _heartbeat_age_seconds(status)
+    port_listening = _port_is_listening(target_port)
+    health = _health_probe(target_port) if port_listening else None
+    state, state_label, exit_code, heartbeat_stale = _explicit_port_state(
+        port_listening,
+        health,
+    )
+    token_match = _status_response_token_match(expected_token, health)
+    operational = _status_operational_summary(
+        state,
+        target_port,
+        port_listening,
+        health,
+        explicit_port=True,
+    )
+    if target_port != status_file_port:
+        operational["status_file_port"] = status_file_port
+
+    if json_mode:
+        _render_status_json(
+            pid,
+            target_port,
+            started_at,
+            pid_alive,
+            pid_is_ours,
+            port_listening,
+            heartbeat_age,
+            heartbeat_stale,
+            token_match,
+            state,
+            exit_code,
+            health,
+            operational,
+        )
+        return
+
+    if target_port != status_file_port:
+        _cli.console.print(
+            f"[yellow]Status file port is {status_file_port}; probing {target_port}.[/]"
+        )
+    _render_status_table(
+        pid,
+        target_port,
+        started_at,
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_age,
+        heartbeat_stale,
+        token_match,
+        state_label,
+        exit_code,
+        health,
+        operational,
+    )
+
+
 @server_app.command("health")
 def service_health(
     port: Annotated[
@@ -769,6 +864,10 @@ def service_status(
         _cli.console.print(table)
         raise typer.Exit(code=3)
 
+    if requested_port is not None:
+        _render_explicit_port_status(status, requested_port, json_mode=json_mode)
+        return
+
     (
         pid,
         status_file_port,
@@ -784,35 +883,17 @@ def service_status(
         exit_code,
     ) = _evaluate_service_signals(status)
 
-    target_port = requested_port if requested_port is not None else status_file_port
-    if requested_port is not None:
-        port_listening = _port_is_listening(target_port) if pid_alive else False
-        state, state_label, exit_code = _compute_state(
-            pid_alive,
-            pid_is_ours,
-            port_listening,
-            heartbeat_stale,
-        )
-        raw_token = status.get("service_token")
-        expected_token = raw_token if isinstance(raw_token, str) else None
-        token_match = _compute_token_match(
-            expected_token,
-            pid_alive,
-            port_listening,
-            target_port,
-        )
+    target_port = status_file_port
     health = _health_probe(target_port) if port_listening else None
     operational = _status_operational_summary(
         state,
         target_port,
         port_listening,
         health,
-        explicit_port=requested_port is not None,
+        explicit_port=False,
     )
 
     if json_mode:
-        if target_port != status_file_port and isinstance(operational, dict):
-            operational["status_file_port"] = status_file_port
         _render_status_json(
             pid,
             target_port,
@@ -830,10 +911,6 @@ def service_status(
         )
         return
 
-    if target_port != status_file_port:
-        _cli.console.print(
-            f"[yellow]Status file port is {status_file_port}; probing {target_port}.[/]"
-        )
     _render_status_table(
         pid,
         target_port,
