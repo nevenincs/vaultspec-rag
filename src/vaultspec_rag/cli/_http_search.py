@@ -350,7 +350,7 @@ def _try_http_search(
         if res and res.get("ok") is False:
             return res
         if res and "results" in res:
-            return cast("list[dict[str, object]]", res["results"])
+            return res
         return []
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)

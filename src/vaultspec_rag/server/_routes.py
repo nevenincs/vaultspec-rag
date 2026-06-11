@@ -57,6 +57,18 @@ _BAD_REQUEST_MISSING_ROOT = JSONResponse(
     status_code=400,
 )
 
+
+def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": "bad_request",
+            "message": str(exc),
+        },
+        status_code=400,
+    )
+
+
 # Default and clamp bounds for the ``?lines=`` query parameter.
 _DEFAULT_LOG_LINES = 200
 _MAX_LOG_LINES = 5_000
@@ -254,6 +266,57 @@ def _prioritise_running_jobs(
     )
 
 
+def _search_index_state(
+    *,
+    status: dict[str, Any],
+    requested_root: object,
+    search_type: object,
+) -> dict[str, object]:
+    indexed_target = str(status.get("target_dir", ""))
+    requested_target = str(requested_root)
+    source = "code" if search_type in ("code", "codebase") else "vault"
+    indexed_count = (
+        int(status.get("code_count", 0))
+        if source == "code"
+        else int(status.get("vault_count", 0))
+    )
+    return {
+        "source": source,
+        "indexed_count": indexed_count,
+        "vault_count": int(status.get("vault_count", 0)),
+        "code_count": int(status.get("code_count", 0)),
+        "indexed_target_root": indexed_target,
+        "requested_target_root": requested_target,
+        "target_matches": indexed_target == requested_target,
+        "status": "missing" if indexed_count == 0 else "available",
+    }
+
+
+def _empty_search_diagnostics(
+    index_state: dict[str, object],
+    *,
+    port: int | None,
+) -> dict[str, object]:
+    if index_state["indexed_count"] == 0:
+        reason = "index_missing"
+        message = f"No indexed {index_state['source']} items are available."
+    else:
+        reason = "no_match"
+        message = "The index is available, but no indexed item matched the query."
+
+    source = index_state["source"]
+    port_suffix = f" --port {port}" if port is not None else ""
+    return {
+        "reason": reason,
+        "message": message,
+        "remediation": [
+            f"vaultspec-rag index --type {source}{port_suffix}",
+            "vaultspec-rag server status",
+            "vaultspec-rag server jobs --running",
+        ],
+    }
+
+
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
@@ -351,11 +414,14 @@ async def search_route(request: Request) -> JSONResponse:
         root = _resolve_root(project_root)
     except ProjectRootRequiredError:
         return _BAD_REQUEST_MISSING_ROOT
+    except ValueError as exc:
+        return _bad_request_invalid_root(exc)
 
     def _run():
         import vaultspec_rag
 
         try:
+            status = vaultspec_rag.get_status(root)
             if search_type == "vault":
                 results = vaultspec_rag.search_vault(
                     root,
@@ -396,6 +462,11 @@ async def search_route(request: Request) -> JSONResponse:
             return {
                 "results": items,
                 "summary": f"Found {len(results)} relevant items.",
+                "index_state": _search_index_state(
+                    status=status,
+                    requested_root=root,
+                    search_type=search_type,
+                ),
             }
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
@@ -407,6 +478,11 @@ async def search_route(request: Request) -> JSONResponse:
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", time.perf_counter() - started)
     if "results" in result:
+        if not result["results"]:
+            result["empty"] = _empty_search_diagnostics(
+                result.get("index_state", {}),
+                port=request.url.port,
+            )
         _m._ensure_watcher(root)
     return JSONResponse(result)
 

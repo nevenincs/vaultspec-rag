@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import typer
 from rich.table import Table
@@ -54,6 +54,15 @@ def _handle_service_results(
     no_truncate: bool,
 ) -> None:
     if isinstance(service_results, dict):
+        if "results" in service_results:
+            _handle_service_success(
+                service_results,
+                query,
+                search_type,
+                json_mode,
+                no_truncate,
+            )
+            return
         _display_service_error(
             service_results,
             json_mode=json_mode,
@@ -83,6 +92,68 @@ def _handle_service_results(
         via="service",
         no_truncate=no_truncate,
     )
+
+
+def _handle_service_success(
+    payload: dict[str, object],
+    query: str,
+    search_type: str,
+    json_mode: bool,
+    no_truncate: bool,
+) -> None:
+    raw_results = payload.get("results")
+    results = (
+        list(cast("list[dict[str, object]]", raw_results))
+        if isinstance(raw_results, list)
+        else []
+    )
+    if json_mode:
+        data = dict(payload)
+        data["query"] = query
+        data["search_type"] = search_type
+        data["via"] = "service"
+        _emit_json(True, "search", data=data)
+        return
+    if not results:
+        _render_empty_service_results(payload, query, search_type)
+        return
+    _display_search_results(
+        results,
+        search_type,
+        via="service",
+        no_truncate=no_truncate,
+    )
+
+
+def _render_empty_service_results(
+    payload: dict[str, object],
+    query: str,
+    search_type: str,
+) -> None:
+    _cli.console.print(
+        f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+    )
+    empty = payload.get("empty")
+    if isinstance(empty, dict):
+        message = str(empty.get("message", "No matching indexed items found."))
+        reason = str(empty.get("reason", "no_match"))
+        _cli.console.print(f"[bold]Reason:[/] {message} [dim]({reason})[/]")
+        remediation = empty.get("remediation")
+        if isinstance(remediation, list) and remediation:
+            _cli.console.print("[bold]Next actions:[/]")
+            for item in remediation:
+                _cli.console.print(f"  - {item}")
+    index_state = payload.get("index_state")
+    if isinstance(index_state, dict):
+        indexed = index_state.get("indexed_count", "?")
+        requested = index_state.get("requested_target_root", "?")
+        indexed_target = index_state.get("indexed_target_root", "?")
+        _cli.console.print(
+            "[dim]"
+            f"indexed_count={indexed}; requested_target={requested}; "
+            f"indexed_target={indexed_target}"
+            "[/]"
+        )
 
 
 def _handle_vaultstore_locked_error(
