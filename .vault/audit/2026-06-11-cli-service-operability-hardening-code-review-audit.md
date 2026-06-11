@@ -48,16 +48,59 @@ empty result.
 **Disposition:** Fixed. `source=codebase` now normalises to `source=code`; response
 metadata reports the normalised filter.
 
+### CR-4 | HIGH | Timeout diagnostics could fail while explaining a timeout
+
+`_timeout_diagnostics` called `/health` and `/jobs` with bounded HTTP probes, but those
+probes could raise network exceptions. Because `_try_http_search` returned the diagnostic
+payload directly from its timeout handlers, a busy or unreachable service could still
+produce an unstructured exception instead of the promised `http_search_timeout` JSON
+contract.
+
+**Disposition:** Fixed. Health and jobs probes now catch diagnostic-probe failures and
+return `available: false` with an error class and message. A real network regression test
+uses an unused localhost port and verifies the timeout envelope survives unavailable
+diagnostic probes.
+
+### CR-5 | MEDIUM | Backpressure diagnostics overstated what the jobs probe knew
+
+The first Wave 04 implementation treated the sampled `/jobs?limit=5&phase=running`
+response as authoritative and derived `active_indexing_conflict` from the returned row
+count. That could undercount running jobs and could report false confidence when the jobs
+probe failed.
+
+**Disposition:** Fixed. Running count now prefers `summary.running` from the jobs route,
+structured jobs errors become `available: false`, and `active_indexing_conflict` is
+`null` when the probe cannot establish the count.
+
+### CR-6 | LOW | Coarse timing does not satisfy full phase attribution
+
+Wave 04 now emits `status_seconds`, `search_seconds`, `serialization_seconds`, and
+`server_total_seconds`, but `search_seconds` still conflates embedding, Qdrant query,
+rerank, graph rerank, and post-processing work.
+
+**Disposition:** Accepted residual risk. The Wave 04 execution record already defers true
+queue wait and internal phase timings to a later instrumentation slice.
+
+### CR-7 | LOW | Timeout tests covered happy diagnostics before probe failure
+
+The initial live-service timeout test used an idle service and an unrealistically short
+timeout. That respected the no-fakes rule, but it did not cover diagnostic probe failure.
+
+**Disposition:** Fixed. Added a real network test for unavailable diagnostic probes
+without mocks, fakes, stubs, monkeypatching, skips, or xfails.
+
 ## Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_state.py`
 - `uv run pytest src/vaultspec_rag/tests/test_cli.py -k SearchTimeoutDefaults`
 - `uv run ruff check` on touched files.
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
 - Manual restarted-service checks:
   - `uv run vaultspec-rag server health --json`
   - `uv run vaultspec-rag index --type code --port 8766 --json`
   - `uv run vaultspec-rag server jobs --source codebase --limit 5 --json`
+  - `uv run vaultspec-rag search "intentional short timeout diagnostics" --type code --json --max-results 2 --port 8766 --timeout 0.000001`
 
 ## Residual risks
 

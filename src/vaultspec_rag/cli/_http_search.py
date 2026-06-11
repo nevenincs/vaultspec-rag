@@ -212,28 +212,72 @@ def _get_search_timeout(timeout: float | None) -> float:
     return timeout
 
 
+def _probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
+    logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
+    return {
+        "available": False,
+        "error": exc.__class__.__name__,
+        "message": str(exc),
+    }
+
+
 def _running_jobs_summary(port: int) -> dict[str, object]:
-    jobs = _do_http_call(port, "/jobs?limit=5&phase=running", None, timeout=1.0)
+    try:
+        jobs = _do_http_call(port, "/jobs?limit=5&phase=running", None, timeout=1.0)
+    except Exception as exc:
+        return _probe_unavailable("jobs", exc)
     if not isinstance(jobs, dict):
         return {"available": False}
+    if jobs.get("ok") is False:
+        return {
+            "available": False,
+            "error": jobs.get("error", "service_error"),
+            "message": jobs.get("message", "Jobs probe returned an error."),
+        }
     raw_jobs = jobs.get("jobs")
+    summary = jobs.get("summary")
+    running_count: object = jobs.get("returned", 0)
+    if isinstance(summary, dict):
+        running_count = summary.get("running", running_count)
     return {
         "available": True,
-        "running_count": jobs.get("returned", 0),
+        "running_count": running_count,
         "jobs": raw_jobs if isinstance(raw_jobs, list) else [],
     }
 
 
 def _health_summary(port: int) -> dict[str, object]:
-    health = _do_http_call(port, "/health", None, timeout=1.0)
+    try:
+        health = _do_http_call(port, "/health", None, timeout=1.0)
+    except Exception as exc:
+        return _probe_unavailable("health", exc)
     if not isinstance(health, dict):
         return {"available": False}
+    if health.get("ok") is False:
+        return {
+            "available": False,
+            "error": health.get("error", "service_error"),
+            "message": health.get("message", "Health probe returned an error."),
+        }
     return {
         "available": True,
         "status": health.get("status", "unknown"),
         "project_count": health.get("project_count", 0),
         "backend_capabilities": health.get("backend_capabilities", {}),
     }
+
+
+def _active_indexing_conflict(running_count: object) -> bool | None:
+    if isinstance(running_count, bool):
+        return None
+    if isinstance(running_count, int):
+        return running_count > 0
+    if isinstance(running_count, str):
+        try:
+            return int(running_count) > 0
+        except ValueError:
+            return None
+    return None
 
 
 def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
@@ -263,7 +307,8 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
             "jobs": jobs,
             "backpressure": {
                 "same_project_search_strategy": strategy,
-                "active_indexing_conflict": running_count not in (0, "0", "unknown"),
+                "active_indexing_conflict": _active_indexing_conflict(running_count),
+                "observation": "jobs endpoint snapshot",
             },
         },
         "remediation": [

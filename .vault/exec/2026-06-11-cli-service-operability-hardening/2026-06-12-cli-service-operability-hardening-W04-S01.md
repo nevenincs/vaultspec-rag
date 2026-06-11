@@ -117,6 +117,15 @@ This slice makes timeout failures actionable without adding more competing statu
 interfaces. It does not yet solve performance or true queue attribution. It exposes the
 current server-bound cost clearly enough for the next performance and backpressure slice.
 
+## Post-Review Corrections
+
+Code review found that timeout diagnostic probes could throw while handling the original
+timeout. The probe path now catches health/jobs probe failures and returns
+`available: false` inside the structured `http_search_timeout` payload. Review also found
+that `active_indexing_conflict` overstated confidence when the jobs probe failed. The
+diagnostic now uses `summary.running` when available and reports `null` when conflict
+state cannot be established.
+
 ## Deferred
 
 - True queue wait is still not measured.

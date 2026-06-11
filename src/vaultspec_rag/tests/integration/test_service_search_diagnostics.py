@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ...cli._http_search import _do_http_call, _try_http_search
+from ...cli._http_search import _do_http_call, _timeout_diagnostics, _try_http_search
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -112,9 +113,31 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     remediation = result["remediation"]
     assert health["status"] == "ready"
     assert jobs["available"] is True
+    backpressure = cast("dict[str, object]", diagnostics["backpressure"])
+    assert backpressure["active_indexing_conflict"] is False
     assert isinstance(remediation, list)
     assert "vaultspec-rag server status" in remediation
     assert any("server jobs --running" in str(item) for item in remediation)
+
+
+def _unused_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_timeout_diagnostics_survive_unavailable_probe_port() -> None:
+    result = _timeout_diagnostics(_unused_local_port(), 0.01)
+
+    assert result["ok"] is False
+    assert result["error"] == "http_search_timeout"
+    diagnostics = cast("dict[str, object]", result["diagnostics"])
+    health = cast("dict[str, object]", diagnostics["health"])
+    jobs = cast("dict[str, object]", diagnostics["jobs"])
+    backpressure = cast("dict[str, object]", diagnostics["backpressure"])
+    assert health["available"] is False
+    assert jobs["available"] is False
+    assert backpressure["active_indexing_conflict"] is None
 
 
 @pytest.mark.subprocess_gpu
