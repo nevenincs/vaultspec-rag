@@ -32,6 +32,9 @@ def test_empty_service_search_reports_missing_index(
 
     assert isinstance(result, dict)
     assert result["results"] == []
+    timing = cast("dict[str, object]", result["timing"])
+    assert isinstance(timing["search_seconds"], float)
+    assert timing["timing_scope"] == "server_route"
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
     assert index_state["source"] == "vault"
@@ -79,6 +82,39 @@ def test_direct_http_code_search_reports_code_index_state(
     remediation = empty["remediation"]
     assert isinstance(remediation, list)
     assert any("index --type code" in str(item) for item in remediation)
+
+
+@pytest.mark.subprocess_gpu
+def test_service_search_short_timeout_reports_operational_diagnostics(
+    live_service: tuple[int, Path],
+    tmp_path: Path,
+) -> None:
+    port, _status_dir = live_service
+    root = tmp_path / "timeout-project"
+    (root / ".vault").mkdir(parents=True)
+
+    result = _try_http_search(
+        "this request intentionally has an unrealistically short timeout",
+        "vault",
+        3,
+        port,
+        str(root),
+        timeout=0.000001,
+    )
+
+    assert isinstance(result, dict)
+    assert result["ok"] is False
+    assert result["error"] == "http_search_timeout"
+    assert result["timeout_seconds"] == 0.000001
+    diagnostics = cast("dict[str, object]", result["diagnostics"])
+    health = cast("dict[str, object]", diagnostics["health"])
+    jobs = cast("dict[str, object]", diagnostics["jobs"])
+    remediation = result["remediation"]
+    assert health["status"] == "ready"
+    assert jobs["available"] is True
+    assert isinstance(remediation, list)
+    assert "vaultspec-rag server status" in remediation
+    assert any("server jobs --running" in str(item) for item in remediation)
 
 
 @pytest.mark.subprocess_gpu

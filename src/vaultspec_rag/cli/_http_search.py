@@ -212,6 +212,68 @@ def _get_search_timeout(timeout: float | None) -> float:
     return timeout
 
 
+def _running_jobs_summary(port: int) -> dict[str, object]:
+    jobs = _do_http_call(port, "/jobs?limit=5&phase=running", None, timeout=1.0)
+    if not isinstance(jobs, dict):
+        return {"available": False}
+    raw_jobs = jobs.get("jobs")
+    return {
+        "available": True,
+        "running_count": jobs.get("returned", 0),
+        "jobs": raw_jobs if isinstance(raw_jobs, list) else [],
+    }
+
+
+def _health_summary(port: int) -> dict[str, object]:
+    health = _do_http_call(port, "/health", None, timeout=1.0)
+    if not isinstance(health, dict):
+        return {"available": False}
+    return {
+        "available": True,
+        "status": health.get("status", "unknown"),
+        "project_count": health.get("project_count", 0),
+        "backend_capabilities": health.get("backend_capabilities", {}),
+    }
+
+
+def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
+    health = _health_summary(port)
+    jobs = _running_jobs_summary(port)
+    caps = health.get("backend_capabilities")
+    if not isinstance(caps, dict):
+        caps = {}
+    running_count = jobs.get("running_count", "unknown")
+    status = health.get("status", "unknown")
+    strategy = caps.get("same_project_search_strategy", "unknown")
+    retry_timeout = max(DEFAULT_SEARCH_TIMEOUT_SECONDS, timeout * 2)
+    return {
+        "ok": False,
+        "error": "http_search_timeout",
+        "message": (
+            f"HTTP search on port {port} timed out after {timeout}s. "
+            "The service may still be processing the request. "
+            f"Service status={status}; running_jobs={running_count}; "
+            f"same_project_search_strategy={strategy}."
+        ),
+        "port": port,
+        "timeout_seconds": timeout,
+        "backend_capabilities": caps,
+        "diagnostics": {
+            "health": health,
+            "jobs": jobs,
+            "backpressure": {
+                "same_project_search_strategy": strategy,
+                "active_indexing_conflict": running_count not in (0, "0", "unknown"),
+            },
+        },
+        "remediation": [
+            f"vaultspec-rag search ... --port {port} --timeout {retry_timeout:g}",
+            "vaultspec-rag server status",
+            f"vaultspec-rag server jobs --running --port {port}",
+        ],
+    }
+
+
 def _build_http_search_payload(
     query: str,
     search_type: str,
@@ -354,21 +416,13 @@ def _try_http_search(
         return []
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)
-        return {
-            "ok": False,
-            "error": "http_search_timeout",
-            "message": f"HTTP search on port {port} timed out after {timeout}s.",
-        }
+        return _timeout_diagnostics(port, timeout)
     except Exception as exc:
         if isinstance(exc, TimeoutError) or (
             isinstance(exc, urllib.error.URLError)
             and isinstance(exc.reason, TimeoutError)
         ):
-            return {
-                "ok": False,
-                "error": "http_search_timeout",
-                "message": f"HTTP search on port {port} timed out after {timeout}s.",
-            }
+            return _timeout_diagnostics(port, timeout)
         if _is_connection_refused(exc):
             logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
             return None

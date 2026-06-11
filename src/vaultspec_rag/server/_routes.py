@@ -421,7 +421,10 @@ async def search_route(request: Request) -> JSONResponse:
         import vaultspec_rag
 
         try:
+            phase_started = time.perf_counter()
             status = vaultspec_rag.get_status(root)
+            status_seconds = time.perf_counter() - phase_started
+            phase_started = time.perf_counter()
             if search_type == "vault":
                 results = vaultspec_rag.search_vault(
                     root,
@@ -451,6 +454,8 @@ async def search_route(request: Request) -> JSONResponse:
                     like_ids=payload.get("like_ids"),
                     unlike_ids=payload.get("unlike_ids"),
                 )
+            search_seconds = time.perf_counter() - phase_started
+            phase_started = time.perf_counter()
             from ._models import SearchResultItem
 
             items = [
@@ -459,9 +464,17 @@ async def search_route(request: Request) -> JSONResponse:
                 )
                 for r in results
             ]
+            serialization_seconds = time.perf_counter() - phase_started
             return {
                 "results": items,
                 "summary": f"Found {len(results)} relevant items.",
+                "timing": {
+                    "status_seconds": status_seconds,
+                    "search_seconds": search_seconds,
+                    "serialization_seconds": serialization_seconds,
+                    "queue_wait_seconds": None,
+                    "timing_scope": "server_route",
+                },
                 "index_state": _search_index_state(
                     status=status,
                     requested_root=root,
@@ -475,9 +488,13 @@ async def search_route(request: Request) -> JSONResponse:
 
     started = time.perf_counter()
     result = await _run_in_thread(_run)
+    total_seconds = time.perf_counter() - started
     _m.incr("search_total")
-    _m.observe("search_last_duration_seconds", time.perf_counter() - started)
+    _m.observe("search_last_duration_seconds", total_seconds)
     if "results" in result:
+        timing = result.get("timing")
+        if isinstance(timing, dict):
+            timing["server_total_seconds"] = total_seconds
         if not result["results"]:
             result["empty"] = _empty_search_diagnostics(
                 result.get("index_state", {}),

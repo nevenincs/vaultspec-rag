@@ -134,12 +134,17 @@ def _display_service_error(
     message = str(payload.get("message", "RAG service returned an error."))
     if json_mode:
         extra: dict[str, object] = {}
-        db_path = payload.get("db_path")
-        if db_path is not None:
-            extra["db_path"] = db_path
-        caps = payload.get("backend_capabilities")
-        if isinstance(caps, dict):
-            extra["backend_capabilities"] = caps
+        for key in (
+            "db_path",
+            "backend_capabilities",
+            "diagnostics",
+            "port",
+            "timeout_seconds",
+            "remediation",
+        ):
+            value = payload.get(key)
+            if value is not None:
+                extra[key] = value
         _emit_json_error_and_exit(
             command,
             error,
@@ -153,6 +158,24 @@ def _display_service_error(
     db_path = payload.get("db_path")
     if db_path:
         _cli.console.print(f"[dim]db_path={db_path}[/]")
+    remediation = payload.get("remediation")
+    if isinstance(remediation, list) and remediation:
+        _cli.console.print("[bold]Next actions:[/]")
+        for item in remediation:
+            _cli.console.print(f"  - {item}")
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        health = diagnostics.get("health")
+        jobs = diagnostics.get("jobs")
+        if isinstance(health, dict):
+            _cli.console.print(
+                "[dim]"
+                f"service_status={health.get('status', 'unknown')}; "
+                f"project_count={health.get('project_count', '?')}"
+                "[/]"
+            )
+        if isinstance(jobs, dict):
+            _cli.console.print(f"[dim]running_jobs={jobs.get('running_count', '?')}[/]")
     caps = payload.get("backend_capabilities")
     if isinstance(caps, dict):
         table = Table(title="Backend Contract", show_header=False, padding=(0, 2))
