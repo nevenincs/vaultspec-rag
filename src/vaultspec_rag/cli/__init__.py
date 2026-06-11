@@ -105,6 +105,7 @@ from ._search import (
 from ._service_info import service_info
 from ._service_jobs import service_jobs
 from ._service_lifecycle import (
+    service_health,
     service_start,
     service_status,
     service_stop,
@@ -196,6 +197,7 @@ __all__ = [
     "server_app",
     "server_projects_app",
     "server_watcher_app",
+    "service_health",
     "service_info",
     "service_jobs",
     "service_logs",

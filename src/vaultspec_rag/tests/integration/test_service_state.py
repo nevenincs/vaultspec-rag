@@ -6,9 +6,9 @@ Two layers, no mocks/skips/monkeypatch:
   global registry with a real GPU-backed slot (reusing the session-scoped
   ``embedding_model`` fixture and the global-registry pattern from
   ``test_watcher_control.py``) and assert the consolidated shape.
-- CLI: drive ``server info`` through the real Typer app against a dead
-  ``--port`` so ``_try_mcp_admin`` genuinely fails to connect, asserting the
-  exit-3 + JSON envelope contract.
+- CLI: drive ``server info`` through the real Typer app with a project root,
+  then against a dead ``--port`` so the admin HTTP call genuinely fails to
+  connect, asserting the exit-3 + JSON envelope contract.
 """
 
 from __future__ import annotations
@@ -98,10 +98,30 @@ async def test_get_service_state_consolidated_shape(
 # --------------------------------------------------------------------------- #
 
 
-def test_info_not_running_json() -> None:
+def test_info_requires_project_root_json() -> None:
     result = runner.invoke(
         app,
         ["server", "info", "--port", _DEAD_PORT, "--json"],
+    )
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == "service.info"
+    assert payload["error"] == "project_root_required"
+
+
+def test_info_not_running_json(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "server",
+            "info",
+            "--port",
+            _DEAD_PORT,
+            "--project-root",
+            str(tmp_path),
+            "--json",
+        ],
     )
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
@@ -110,8 +130,18 @@ def test_info_not_running_json() -> None:
     assert payload["error"] == "service_not_running"
 
 
-def test_info_not_running_prose() -> None:
-    result = runner.invoke(app, ["server", "info", "--port", _DEAD_PORT])
+def test_info_not_running_prose(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "server",
+            "info",
+            "--port",
+            _DEAD_PORT,
+            "--project-root",
+            str(tmp_path),
+        ],
+    )
     assert result.exit_code == 3
     assert "not running" in result.stdout.lower()
 
@@ -127,3 +157,20 @@ def test_info_cli_mcp_parity() -> None:
     help_result = runner.invoke(app, ["server", "--help"])
     assert help_result.exit_code == 0
     assert "info" in help_result.stdout
+
+
+def test_health_not_running_json() -> None:
+    result = runner.invoke(
+        app,
+        ["server", "health", "--port", _DEAD_PORT, "--json"],
+    )
+    assert result.exit_code == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == "service.health"
+    assert payload["error"] == "service_not_running"
+
+
+def test_health_subcommand_registered() -> None:
+    result = runner.invoke(app, ["server", "health", "--help"])
+    assert result.exit_code == 0

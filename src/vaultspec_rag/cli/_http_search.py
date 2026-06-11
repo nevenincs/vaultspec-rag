@@ -19,11 +19,14 @@ from typing import Any, Literal, cast
 from ._core import logger
 
 __all__ = [
+    "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "_is_connection_refused",
     "_try_http_admin",
     "_try_http_reindex",
     "_try_http_search",
 ]
+
+DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
@@ -134,8 +137,14 @@ def _route_admin_tool(
 
     if tool_name == "get_jobs":
         url_path = "/jobs"
-        if "limit" in args:
-            url_path += f"?limit={args['limit']}"
+        params = {
+            key: value
+            for key, value in args.items()
+            if key in {"limit", "phase", "source", "trigger", "query"}
+            and value is not None
+        }
+        if params:
+            url_path += "?" + urllib.parse.urlencode(params)
         return _do_http_call(port, url_path, None)
 
     if tool_name == "get_index_status":
@@ -198,8 +207,8 @@ def _get_search_timeout(timeout: float | None) -> float:
             try:
                 return float(env_timeout)
             except ValueError:
-                return 10.0
-        return 10.0
+                return DEFAULT_SEARCH_TIMEOUT_SECONDS
+        return DEFAULT_SEARCH_TIMEOUT_SECONDS
     return timeout
 
 

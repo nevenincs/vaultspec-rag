@@ -527,7 +527,8 @@ def handle_search(
             "--timeout",
             help=(
                 "Connection and read timeout budget in seconds "
-                "for service-delegated searches."
+                "for service-delegated searches (default 300; "
+                "override with VAULTSPEC_RAG_SEARCH_TIMEOUT)."
             ),
         ),
     ] = None,

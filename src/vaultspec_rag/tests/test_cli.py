@@ -25,6 +25,7 @@ from ..cli import (
     _write_service_status,
     app,
 )
+from ..cli._http_search import DEFAULT_SEARCH_TIMEOUT_SECONDS, _get_search_timeout
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..torch_config import TorchConfigAction
@@ -32,6 +33,32 @@ from ..torch_config import TorchConfigAction
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+
+class TestSearchTimeoutDefaults:
+    """Tests for service-delegated search timeout defaults."""
+
+    def test_default_search_timeout_is_production_budget(self) -> None:
+        previous = os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
+        try:
+            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        finally:
+            if previous is not None:
+                os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
+
+    def test_invalid_env_timeout_uses_production_budget(self) -> None:
+        previous = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+        os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = "not-a-number"
+        try:
+            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        finally:
+            if previous is None:
+                os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
+            else:
+                os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
+
+    def test_explicit_timeout_still_wins(self) -> None:
+        assert _get_search_timeout(0.25) == 0.25
 
 
 class TestMainHelp:

@@ -71,11 +71,30 @@ async def get_logs(lines: int = 200) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_jobs(limit: int | None = None) -> dict[str, Any]:
+async def get_jobs(
+    limit: int | None = None,
+    phase: str | None = None,
+    source: str | None = None,
+    trigger: str | None = None,
+    query: str | None = None,
+) -> dict[str, Any]:
     """Return recent index/reindex activity from the in-flight registry."""
+    import urllib.parse
+
     path = "/jobs"
+    params: dict[str, object] = {}
     if limit is not None:
-        path += f"?limit={limit}"
+        params["limit"] = limit
+    if phase:
+        params["phase"] = phase
+    if source:
+        params["source"] = source
+    if trigger:
+        params["trigger"] = trigger
+    if query:
+        params["query"] = query
+    if params:
+        path += "?" + urllib.parse.urlencode(params)
     return _call_daemon(path)
 
 

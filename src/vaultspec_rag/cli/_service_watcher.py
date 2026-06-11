@@ -41,7 +41,7 @@ def _watcher_service_unreachable(
 def service_watcher_status(
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,
@@ -83,7 +83,7 @@ def service_watcher_start(
     root: Annotated[str, typer.Argument(help="Project root to watch.")],
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,
@@ -118,7 +118,7 @@ def service_watcher_stop(
     root: Annotated[str, typer.Argument(help="Project root to stop watching.")],
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,
@@ -155,7 +155,7 @@ def service_watcher_reconfigure(
     ] = None,
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,

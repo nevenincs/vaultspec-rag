@@ -92,7 +92,7 @@ def _print_projects_table(
 def service_projects_list(
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,
@@ -173,7 +173,7 @@ def service_projects_evict(
     root: Annotated[str, typer.Argument(help="Project root to evict.")],
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,

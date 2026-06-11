@@ -166,6 +166,94 @@ def _clamp_limit(raw: str | None) -> int | None:
         return None
 
 
+def _normalise_filter_value(raw: str | None) -> str | None:
+    """Return a stripped lower-case query filter or ``None`` when absent."""
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    return value or None
+
+
+def _normalise_job_source_filter(raw: str | None) -> str | None:
+    value = _normalise_filter_value(raw)
+    if value == "codebase":
+        return "code"
+    return value
+
+
+def _job_progress_text(record: dict[str, object]) -> str:
+    progress = record.get("progress")
+    if not isinstance(progress, dict):
+        return ""
+    step = progress.get("step")
+    completed = progress.get("completed")
+    total = progress.get("total")
+    parts = [str(step)] if step else []
+    if total is not None:
+        parts.append(f"{completed}/{total}")
+    elif completed is not None:
+        parts.append(str(completed))
+    return " ".join(parts)
+
+
+def _job_matches(
+    record: dict[str, object],
+    *,
+    phase: str | None,
+    source: str | None,
+    trigger: str | None,
+    query: str | None,
+) -> bool:
+    if phase is not None and str(record.get("phase", "")).lower() != phase:
+        return False
+    if source is not None and str(record.get("source", "")).lower() != source:
+        return False
+    if trigger is not None and str(record.get("trigger", "")).lower() != trigger:
+        return False
+    if query is None:
+        return True
+    haystack = " ".join(
+        [
+            str(record.get("id", "")),
+            str(record.get("source", "")),
+            str(record.get("trigger", "")),
+            str(record.get("phase", "")),
+            str(record.get("result", "")),
+            _job_progress_text(record),
+        ]
+    ).lower()
+    return query in haystack
+
+
+def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
+    phases: dict[str, int] = {}
+    sources: dict[str, int] = {}
+    triggers: dict[str, int] = {}
+    for record in records:
+        phase = str(record.get("phase", "unknown"))
+        source = str(record.get("source", "unknown"))
+        trigger = str(record.get("trigger", "unknown"))
+        phases[phase] = phases.get(phase, 0) + 1
+        sources[source] = sources.get(source, 0) + 1
+        triggers[trigger] = triggers.get(trigger, 0) + 1
+    return {
+        "phases": phases,
+        "sources": sources,
+        "triggers": triggers,
+        "running": phases.get("running", 0),
+    }
+
+
+def _prioritise_running_jobs(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Keep running work visible before completed history while preserving recency."""
+    return sorted(
+        records,
+        key=lambda record: 0 if record.get("phase") == "running" else 1,
+    )
+
+
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
@@ -185,10 +273,40 @@ async def jobs_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
     records = _jobs.snapshot()
+    phase = _normalise_filter_value(request.query_params.get("phase"))
+    source = _normalise_job_source_filter(request.query_params.get("source"))
+    trigger = _normalise_filter_value(request.query_params.get("trigger"))
+    query = _normalise_filter_value(request.query_params.get("query"))
+    filtered_records = [
+        record
+        for record in records
+        if _job_matches(
+            record,
+            phase=phase,
+            source=source,
+            trigger=trigger,
+            query=query,
+        )
+    ]
+    filtered_records = _prioritise_running_jobs(filtered_records)
     limit = _clamp_limit(request.query_params.get("limit"))
     if limit is not None:
-        records = records[:limit] if limit > 0 else []
-    return JSONResponse({"jobs": records})
+        filtered_records = filtered_records[:limit] if limit > 0 else []
+    return JSONResponse(
+        {
+            "jobs": filtered_records,
+            "total": len(records),
+            "returned": len(filtered_records),
+            "summary": _job_summary(records),
+            "filters": {
+                "phase": phase,
+                "source": source,
+                "trigger": trigger,
+                "query": query,
+                "limit": limit,
+            },
+        }
+    )
 
 
 async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:

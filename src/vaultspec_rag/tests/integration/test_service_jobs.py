@@ -62,7 +62,7 @@ def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
 
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_returns_snapshot_shape(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     # Trigger a real job so the daemon has one in its registry.
@@ -85,7 +85,7 @@ async def test_get_jobs_returns_snapshot_shape(
             break
         await asyncio.sleep(0.1)
 
-    assert set(result) == {"jobs"}
+    assert set(result) == {"jobs", "total", "returned", "summary", "filters"}
     jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
     assert len(jobs) >= 1
@@ -107,7 +107,7 @@ async def test_get_jobs_returns_snapshot_shape(
 
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_is_newest_first(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
@@ -123,7 +123,7 @@ async def test_get_jobs_is_newest_first(
 
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_honours_limit(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
@@ -136,8 +136,23 @@ async def test_get_jobs_honours_limit(
 
 
 @pytest.mark.subprocess_gpu
+async def test_get_jobs_filters_by_source(
+    live_service: tuple[int, Path],  # noqa: ARG001
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
+    await tools.reindex_codebase(clean=True, project_root=str(tmp_path))
+
+    jobs = (await admin.get_jobs(source="code"))["jobs"]
+
+    assert jobs
+    assert all(entry["source"] == "code" for entry in jobs)
+
+
+@pytest.mark.subprocess_gpu
 async def test_get_jobs_non_positive_limit_is_empty(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
@@ -171,6 +186,9 @@ def test_jobs_not_running_prose() -> None:
 def test_jobs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
+    assert "--phase" in result.stdout
+    assert "--running" in result.stdout
+    assert "--query" in result.stdout
 
 
 def test_jobs_cli_mcp_parity() -> None:
@@ -242,10 +260,11 @@ def test_jobs_route_200_with_bearer_token(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     payload: dict[str, Any] = response.json()
-    assert set(payload) == {"jobs"}
+    assert set(payload) == {"jobs", "total", "returned", "summary", "filters"}
     assert len(payload["jobs"]) == 1
     assert payload["jobs"][0]["source"] == "vault"
     assert payload["jobs"][0]["phase"] == "done"
+    assert payload["summary"]["running"] == 0
 
 
 def test_jobs_route_200_with_query_token(
@@ -269,3 +288,60 @@ def test_jobs_route_respects_limit_param(
     )
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1
+
+
+def test_jobs_route_prioritises_running_before_limit(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start("code", "watcher")
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "limit": "1"}),
+    )
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["jobs"][0]["id"] == running_id
+    assert payload["jobs"][0]["phase"] == "running"
+
+
+def test_jobs_route_filters_phase_source_trigger_and_query(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    _jobs.record_start("code", "watcher")
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(
+            "/jobs",
+            params={
+                "token": token,
+                "phase": "running",
+                "source": "code",
+                "trigger": "watcher",
+                "query": "code",
+            },
+        ),
+    )
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["returned"] == 1
+    assert payload["jobs"][0]["source"] == "code"
+    assert payload["jobs"][0]["trigger"] == "watcher"
+    assert payload["jobs"][0]["phase"] == "running"
+
+
+def test_jobs_route_accepts_codebase_source_alias(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start("code", "watcher")
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "source": "codebase"}),
+    )
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    ids = [job["id"] for job in payload["jobs"]]
+    assert running_id in ids
+    assert payload["filters"]["source"] == "code"

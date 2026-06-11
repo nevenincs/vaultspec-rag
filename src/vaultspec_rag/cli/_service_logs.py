@@ -1,7 +1,7 @@
 """``server logs``: tail the rotated service log.
 
 Tier-2a observability subcommand (``service-observability`` ADR, plan
-P03). Calls the ``get_logs`` MCP tool over the ``_try_http_admin`` seam
+P03). Calls the logs admin endpoint through the shared HTTP admin client
 and prints the lines (or the JSON envelope). Service-not-running yields
 exit code 3.
 """
@@ -28,7 +28,7 @@ def service_logs(
     ] = 200,
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
     json_mode: Annotated[
         bool,

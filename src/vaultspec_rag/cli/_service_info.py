@@ -1,14 +1,15 @@
 """``server info``: consolidated read-only service state.
 
 Tier-1 observability subcommand (``service-observability`` ADR, plan
-P02). Calls the ``get_service_state`` MCP tool over the
-``_try_http_admin`` seam and renders a Rich summary (or the JSON
-envelope). Service-not-running yields exit code 3.
+P02). Calls the service-state admin endpoint through the shared HTTP
+admin client and renders a Rich summary (or the JSON envelope).
+Service-not-running yields exit code 3.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from pathlib import Path
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 from rich.table import Table
@@ -24,9 +25,25 @@ from ._service_status import _default_service_port
 
 @server_app.command("info")
 def service_info(
+    ctx: typer.Context,
     port: Annotated[
         int | None,
-        typer.Option("--port", help="MCP port (defaults to running service)."),
+        typer.Option("--port", help="Service port (defaults to running service)."),
+    ] = None,
+    project_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--project-root",
+            "--root",
+            help=(
+                "Project root for the consolidated service state. "
+                "Defaults to global --target when provided."
+            ),
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
     ] = None,
     json_mode: Annotated[
         bool,
@@ -35,25 +52,88 @@ def service_info(
 ) -> None:
     """Show a consolidated snapshot of the running service's state."""
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_http_admin("get_service_state", {}, resolved_port)
+    if resolved_port is None:
+        _exit_service_info_not_running(json_mode)
+
+    effective_root = project_root or _global_target_from_context(ctx)
+    if effective_root is None:
+        _exit_project_root_required(json_mode)
+
+    result = _try_http_admin(
+        "get_service_state",
+        {"project_root": str(effective_root)},
+        resolved_port,
+    )
     if result is None:
-        if json_mode:
-            _emit_json_error_and_exit(
-                "service.info",
-                "service_not_running",
-                "Service is not running. Start it with `vaultspec-rag server start`.",
-                3,
-            )
-        _cli.console.print(
-            "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server start[/].",
-        )
-        raise typer.Exit(3)
+        _exit_service_info_not_running(json_mode)
+
+    if result.get("ok") is False:
+        _exit_service_info_error(result, json_mode)
 
     if json_mode:
         _emit_json(True, "service.info", data=result)
         return
 
+    _render_service_info_table(result)
+
+
+def _global_target_from_context(ctx: typer.Context) -> Path | None:
+    root_ctx = cast("Any", ctx.find_root())
+    obj = getattr(root_ctx, "obj", None)
+    if isinstance(obj, dict):
+        value = cast("dict[str, object]", obj).get("target")
+        if isinstance(value, Path):
+            return value
+    return None
+
+
+def _exit_service_info_not_running(json_mode: bool) -> NoReturn:
+    message = "Service is not running. Start it with `vaultspec-rag server start`."
+    if json_mode:
+        _emit_json_error_and_exit("service.info", "service_not_running", message, 3)
+    _cli.console.print(
+        "[red]Service is not running.[/] "
+        "Start it with [bold]vaultspec-rag server start[/].",
+    )
+    raise typer.Exit(3)
+
+
+def _exit_project_root_required(json_mode: bool) -> NoReturn:
+    message = (
+        "Project root is required. Pass global --target or "
+        "`vaultspec-rag server info --project-root <path>`."
+    )
+    if json_mode:
+        _emit_json_error_and_exit(
+            "service.info",
+            "project_root_required",
+            message,
+            2,
+        )
+    _cli.console.print(f"[bold red]Error:[/] {message}")
+    raise typer.Exit(2)
+
+
+def _exit_service_info_error(
+    result: dict[str, Any],
+    json_mode: bool,
+) -> NoReturn:
+    error = str(result.get("error", "service_error"))
+    message = str(result.get("message", "RAG service returned an error."))
+    if json_mode:
+        _emit_json_error_and_exit(
+            "service.info",
+            error,
+            message,
+            1,
+            data=result,
+        )
+    _cli.console.print(f"[bold red]Error:[/] {message}")
+    _cli.console.print(f"[dim]code={error}[/]")
+    raise typer.Exit(1)
+
+
+def _render_service_info_table(result: dict[str, Any]) -> None:
     raw_index = result.get("index")
     index = cast("dict[str, object]", raw_index) if isinstance(raw_index, dict) else {}
     raw_projects = result.get("projects")

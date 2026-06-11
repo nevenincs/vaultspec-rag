@@ -24,8 +24,9 @@ from ._process import (
     _port_is_listening,
     _spawn_service,
 )
-from ._render import _add_backend_contract_rows, _emit_json
+from ._render import _add_backend_contract_rows, _emit_json, _emit_json_error_and_exit
 from ._service_status import (
+    _default_service_port,
     _log_file,
     _read_service_status,
     _status_file,
@@ -456,6 +457,76 @@ def _render_status_table(
     _cli.console.print(table)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
+
+
+def _render_health_table(port: int, health: dict[str, object]) -> None:
+    table = Table(title="Service Health", show_header=False, padding=(0, 2))
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    table.add_row("Port", str(port))
+    table.add_row("Health", str(health.get("status", "unknown")))
+    table.add_row("CUDA", str(health.get("cuda", "unknown")))
+    table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
+    table.add_row("Projects", str(health.get("project_count", "unknown")))
+    uptime = health.get("uptime_s")
+    if isinstance(uptime, int | float):
+        table.add_row("Uptime", f"{float(uptime):.0f}s")
+    caps = health.get("backend_capabilities")
+    if isinstance(caps, dict):
+        _add_backend_contract_rows(table, cast("dict[str, object]", caps))
+    _cli.console.print(table)
+
+
+@server_app.command("health")
+def service_health(
+    port: Annotated[
+        int | None,
+        typer.Option("--port", help="Service port (defaults to running service)."),
+    ] = None,
+    json_mode: Annotated[
+        bool,
+        typer.Option("--json", help="Emit one JSON envelope instead of a table."),
+    ] = False,
+) -> None:
+    """Probe the resident service ``/health`` endpoint."""
+    resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        message = "Service is not running. Start it with `vaultspec-rag server start`."
+        if json_mode:
+            _emit_json_error_and_exit(
+                "service.health",
+                "service_not_running",
+                message,
+                3,
+            )
+        _cli.console.print(
+            "[red]Service is not running.[/] "
+            "Start it with [bold]vaultspec-rag server start[/].",
+        )
+        raise typer.Exit(3)
+
+    health = _health_probe(resolved_port)
+    if health is None:
+        message = (
+            f"Service on port {resolved_port} is unreachable. "
+            "Start it with `vaultspec-rag server start`."
+        )
+        if json_mode:
+            _emit_json_error_and_exit(
+                "service.health",
+                "service_not_running",
+                message,
+                3,
+                port=resolved_port,
+            )
+        _cli.console.print(f"[bold red]Error:[/] {message}")
+        raise typer.Exit(3)
+
+    if json_mode:
+        _emit_json(True, "service.health", data=health, port=resolved_port)
+        return
+
+    _render_health_table(resolved_port, health)
 
 
 @server_app.command("status")
