@@ -163,12 +163,14 @@ class VaultSpecConfigWrapper:
         # Inner sub-batch size passed to SentenceTransformer.encode().
         # SentenceTransformer sorts each call's input by sequence
         # length, then processes ``encode_batch_size``-item sub-batches
-        # of the sorted list. Smaller values produce tighter
-        # length-uniform sub-batches and dramatically reduce padding
-        # waste on variable-length corpora (e.g. vault docs ranging
-        # from 200 to 8000 chars). 8 is the empirical sweet spot for
-        # Qwen3-Embedding-0.6B on a 16 GB GPU. #68 wall-clock work.
-        "embedding_encode_batch_size": 8,
+        # of the sorted list. Vault inputs are heading-aware chunks
+        # capped at ``vault_chunk_chars`` (~750 BPE tokens) and
+        # length-sorted per slice, so padding waste is bounded and a
+        # larger sub-batch keeps the tensor cores fed. The OOM backoff
+        # in ``encode_documents`` halves this under memory pressure.
+        # (The former value of 8 dated from whole-document inputs that
+        # ranged from 200 to 8000 chars; #68 wall-clock work.)
+        "embedding_encode_batch_size": 32,
         "max_embed_chars": 8000,
         # Hard cap on the sequence length the model is allowed to
         # process. ``max_embed_chars=8000`` truncates text to ~2000
