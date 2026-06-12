@@ -29,7 +29,7 @@ _STALE_PROGRESS_SECONDS = 300.0
 
 def _format_seconds(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "?"
+        return "not reported"
     seconds = max(0, int(float(raw)))
     if seconds < 60:
         return f"{seconds}s"
@@ -42,13 +42,13 @@ def _format_seconds(raw: object) -> str:
 
 def _format_milliseconds(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "?"
+        return "not reported"
     return _format_seconds(float(raw) / 1000.0)
 
 
 def _format_mb(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "?"
+        return "not reported"
     return f"{float(raw):.1f} MB"
 
 
@@ -83,7 +83,7 @@ def _resource_summary(job: dict[str, object]) -> str:
 
 
 def _initiator_label(raw: object) -> str:
-    value = str(raw or "?")
+    value = str(raw or "not reported")
     if value == "watcher":
         return "automatic updates"
     if value in ("cli", "tool"):
@@ -92,7 +92,7 @@ def _initiator_label(raw: object) -> str:
 
 
 def _command_label(raw: object) -> str:
-    value = str(raw or "?")
+    value = str(raw or "request not reported")
     if value == "watcher_code_index":
         return "automatic code index update"
     if value == "watcher_vault_index":
@@ -107,7 +107,7 @@ def _command_label(raw: object) -> str:
 def _path_label(raw: object) -> str:
     value = str(raw or "")
     if not value:
-        return "?"
+        return "path not reported"
     parts = value.replace("\\", "/").rstrip("/").split("/")
     if ".venv" in parts:
         return "/".join(parts[parts.index(".venv") :])
@@ -124,7 +124,7 @@ def _job_is_waiting(job: dict[str, object]) -> bool:
 
 
 def _phase_label(job: dict[str, object]) -> str:
-    phase = str(job.get("phase", "?"))
+    phase = str(job.get("phase", "not-reported"))
     if phase in ("error", "failed"):
         return "FAILED"
     if _job_is_waiting(job):
@@ -186,7 +186,7 @@ def _project_root(job: dict[str, object]) -> str | None:
 
 
 def _source_label(job: dict[str, object]) -> str:
-    source = str(job.get("source", "?"))
+    source = str(job.get("source", "index"))
     if source == "code":
         return "code"
     if source == "vault":
@@ -290,19 +290,32 @@ def _job_summary_detail(job: dict[str, object]) -> str:
     phase = str(job.get("phase", ""))
     if phase == "running":
         detail = _human_progress(job)
-        runtime = _format_seconds(job.get("runtime_seconds"))
+        raw_runtime = job.get("runtime_seconds")
+        runtime_detail = (
+            f"running for {_format_seconds(raw_runtime)}"
+            if isinstance(raw_runtime, int | float)
+            else "runtime not reported"
+        )
         stale_progress = _stale_progress_label(job)
         if _job_is_waiting(job):
             if detail:
-                return f"{detail} for {runtime}"
-            return f"waiting for {runtime}"
+                return (
+                    f"{detail} for {_format_seconds(raw_runtime)}"
+                    if isinstance(raw_runtime, int | float)
+                    else f"{detail}; runtime not reported"
+                )
+            return (
+                f"waiting for {_format_seconds(raw_runtime)}"
+                if isinstance(raw_runtime, int | float)
+                else "waiting; runtime not reported"
+            )
         if detail:
             if stale_progress:
-                return f"{detail}; running for {runtime}; {stale_progress}"
-            return f"{detail}; running for {runtime}"
+                return f"{detail}; {runtime_detail}; {stale_progress}"
+            return f"{detail}; {runtime_detail}"
         if stale_progress:
-            return f"running for {runtime}; {stale_progress}"
-        return f"running for {runtime}"
+            return f"{runtime_detail}; {stale_progress}"
+        return runtime_detail
     if phase in ("error", "failed"):
         result = _human_result(job.get("result"))
         return f"error: {result}" if result else "error reported"

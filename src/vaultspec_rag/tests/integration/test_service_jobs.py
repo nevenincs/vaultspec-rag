@@ -560,6 +560,41 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert not leaked, f"internal or table fragments leaked: {leaked}"
 
 
+def test_jobs_sparse_service_payload_uses_reported_absence_language() -> None:
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "source": "code",
+                "trigger": "tool",
+                "phase": "running",
+                "progress": {"step": "embed", "completed": 1, "total": 2},
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 1, "phases": {"running": 1}},
+        "filters": {"limit": 1},
+    }
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "1", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    rows = _jobs_feed_rows(result.output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["time"] == "time not reported"
+    assert row["id"] == "not reported"
+    assert row["operation"] == "code index operation"
+    assert row["detail"] == (
+        "embedding source code sections 1 of 2; runtime not reported"
+    )
+    assert "?" not in result.output
+    assert "unknown" not in result.output.lower()
+
+
 def test_jobs_humanizes_disk_space_failures() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
