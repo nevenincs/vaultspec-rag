@@ -84,6 +84,8 @@ def _phase_label(job: dict[str, object]) -> str:
         return "FAILED"
     if phase == "running":
         return "running"
+    if phase == "done":
+        return "finished"
     return phase
 
 
@@ -268,6 +270,7 @@ def _filters_label(result: dict[str, object]) -> str:
         "since": "updated within",
     }
     values = {
+        "done": "finished",
         "watcher": "automatic updates",
         "tool": "manual request",
     }
@@ -333,9 +336,10 @@ def _resolve_jobs_phase(
     running: bool,
     json_mode: bool,
 ) -> str | None:
+    normalized_phase = _jobs_phase_value(phase)
     if not running:
-        return phase
-    if phase is not None and phase.lower() != "running":
+        return normalized_phase
+    if normalized_phase is not None and normalized_phase.lower() != "running":
         _exit_invalid_jobs_filter(json_mode)
     return "running"
 
@@ -371,6 +375,15 @@ def _jobs_trigger_value(trigger: str | None) -> str | None:
     return trigger
 
 
+def _jobs_phase_value(phase: str | None) -> str | None:
+    if phase is None:
+        return None
+    value = phase.strip().lower()
+    if value in ("finished", "complete", "completed"):
+        return "done"
+    return phase
+
+
 def _jobs_args(
     *,
     limit: int,
@@ -383,9 +396,10 @@ def _jobs_args(
     since: float | None,
 ) -> dict[str, object]:
     args: dict[str, object] = {"limit": limit}
+    normalized_phase = _jobs_phase_value(phase)
     normalized_trigger = _jobs_trigger_value(trigger)
     optional_args = {
-        "phase": phase,
+        "phase": normalized_phase,
         "source": source,
         "trigger": normalized_trigger,
         "query": query,
@@ -604,7 +618,7 @@ def service_jobs(
         str | None,
         typer.Option(
             "--phase",
-            help="Filter by job state, for example running, done, or failed.",
+            help="Filter by job state, for example running, finished, or failed.",
         ),
     ] = None,
     source: Annotated[

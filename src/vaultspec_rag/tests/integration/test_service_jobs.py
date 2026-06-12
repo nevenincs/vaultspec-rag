@@ -323,6 +323,8 @@ def test_jobs_subcommand_registered() -> None:
     assert "index update activity" in normalized
     assert "failed/error" not in result.stdout
     assert "Show only failed jobs" in result.stdout
+    assert "running, finished, or failed" in normalized
+    assert "running, done, or failed" not in normalized
 
 
 def test_jobs_filter_summary_uses_operator_language() -> None:
@@ -347,6 +349,15 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     assert "watcher" not in rendered
 
 
+def test_jobs_filter_summary_humanizes_finished_state() -> None:
+    from ...cli._service_jobs import _filters_label
+
+    rendered = _filters_label({"filters": {"phase": "done", "limit": 5}})
+
+    assert rendered == " filters: state=finished"
+    assert "state=done" not in rendered
+
+
 def test_jobs_trigger_filter_accepts_user_language() -> None:
     from ...cli._service_jobs import _jobs_args
 
@@ -362,6 +373,23 @@ def test_jobs_trigger_filter_accepts_user_language() -> None:
     )
 
     assert args["trigger"] == "watcher"
+
+
+def test_jobs_phase_filter_accepts_user_language() -> None:
+    from ...cli._service_jobs import _jobs_args
+
+    args = _jobs_args(
+        limit=5,
+        phase="finished",
+        source=None,
+        trigger=None,
+        query=None,
+        failed=False,
+        job_id=None,
+        since=None,
+    )
+
+    assert args["phase"] == "done"
 
 
 @pytest.mark.parametrize(
@@ -403,6 +431,8 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert "* " in output
     assert "! " in output
     assert "FAILED" in output
+    assert "finished code index refresh" in output
+    assert " done code index refresh" not in output
     assert "code index update" in output
     assert "watcher" not in output
     assert "added 3, updated 1, removed 0, finished in 22s" in output
