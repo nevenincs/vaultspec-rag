@@ -1391,7 +1391,10 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["status", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "index" in result.output.lower() or "GPU" in result.output.lower()
+        assert "index counts" in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "MCP" not in result.output
+        assert "get_index_status" not in result.output
 
     def test_status_help_cross_ref(self):
         """status --help must reference docs/indexing.md."""

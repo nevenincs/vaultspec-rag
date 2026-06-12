@@ -1,4 +1,4 @@
-"""``status`` command: GPU info, storage metrics, backend contract."""
+"""``status`` command: index counts, search data location, and GPU info."""
 
 from __future__ import annotations
 
@@ -37,11 +37,11 @@ def _render_status_text(
         else "no CUDA GPU available"
     )
     lines = [
-        f"Device: {device}",
-        f"Storage: {storage_path}",
+        f"GPU: {device}",
+        f"Search data: {storage_path}",
         f"Vault documents: {vault_count}",
         f"Codebase chunks: {code_count}",
-        f"Target: {target}",
+        f"Project: {target}",
     ]
     if service_port is not None:
         lines.append(f"Source: running service at http://127.0.0.1:{service_port}")
@@ -50,7 +50,7 @@ def _render_status_text(
             line,
             markup=False,
             highlight=False,
-            soft_wrap=line.startswith(("Storage:", "Target:", "Source:")),
+            soft_wrap=line.startswith(("Search data:", "Project:", "Source:")),
         )
 
 
@@ -96,7 +96,7 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
 @app.command(
     "status",
     help=(
-        "Show index document counts, storage path, and GPU device info. "
+        "Show index counts, search data location, and GPU device info. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -106,14 +106,11 @@ def handle_status(
         bool,
         typer.Option(
             "--json",
-            help=(
-                "Emit one JSON envelope to stdout instead of text. "
-                "Mirrors the MCP get_index_status response."
-            ),
+            help=("Emit JSON for scripts instead of human text."),
         ),
     ] = False,
 ) -> None:
-    """Show RAG engine status, storage metrics, and GPU info."""
+    """Show index counts, search data location, and GPU info."""
     state: CLIState = ctx.obj
     target = state.target
 

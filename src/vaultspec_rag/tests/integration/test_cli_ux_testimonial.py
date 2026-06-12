@@ -121,8 +121,10 @@ def _assert_status_output_is_plain(observations: list[_Observation]) -> None:
     assert "cuda" in status_out.lower() or "GPU" in status_out.lower(), (
         f"Expected GPU/CUDA info in status output:\n{status_out}"
     )
-    assert "Device:" in status_out
-    assert "Storage:" in status_out
+    assert "GPU:" in status_out
+    assert "Search data:" in status_out
+    assert "Device:" not in status_out
+    assert "Storage:" not in status_out
     assert "Search Concurrency" not in status_out
     for forbidden in ("┌", "└", "│"):
         assert forbidden not in status_out
