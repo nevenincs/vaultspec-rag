@@ -2910,8 +2910,31 @@ class TestRenderInstallReport:
             torch_config_action=TorchConfigAction.SKIPPED_EOF,
         )
         out = self._render(report)
-        # Action token survives.
-        assert "skipped-eof" in out
+        assert "PyTorch configuration: needs confirmation" in out
+
+    def test_dry_run_uses_operator_language(self) -> None:
+        from ..commands import InstallReport
+
+        report = InstallReport(
+            action="dry_run",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.DRY_RUN,
+            warnings=[
+                "dry-run: core sync_provider not invoked (would propagate "
+                "seeded files to .mcp.json and provider dirs)"
+            ],
+        )
+        out = self._render(report)
+        assert "PyTorch configuration: preview only" in out
+        assert "note: dry-run preview: would update tool integration files" in out
+        assert "warning: dry-run preview" not in out
+        for forbidden in (
+            "torch-config:",
+            "sync_provider",
+            "provider dirs",
+            "core sync",
+        ):
+            assert forbidden not in out
 
 
 class TestRenderUninstallReport:
@@ -2962,7 +2985,37 @@ class TestRenderUninstallReport:
             torch_config_action=TorchConfigAction.ERROR,
         )
         out = self._render(report)
-        assert "error" in out
+        assert "PyTorch configuration: error" in out
+
+    def test_dry_run_uses_operator_language(self) -> None:
+        from ..commands import UninstallReport
+
+        report = UninstallReport(
+            action="dry_run",
+            target=Path("."),
+            removed=[".vaultspec/rules/rules/vaultspec-rag.builtin.md"],
+            torch_config_action=TorchConfigAction.DRY_RUN,
+            torch_direct_dep_action="dry_run",
+            warnings=[
+                "dry-run: core sync_provider not invoked (would propagate "
+                "removal to .mcp.json and provider dirs)"
+            ],
+        )
+        out = self._render(report)
+        assert "would remove 1 bundled source file" in out
+        assert "removed 1 bundled source file" not in out
+        assert "PyTorch configuration: preview only" in out
+        assert "PyTorch dependency: preview only" in out
+        assert "note: dry-run preview: would remove tool integration files" in out
+        assert "warning: dry-run preview" not in out
+        for forbidden in (
+            "torch-config:",
+            "torch direct dependency:",
+            "sync_provider",
+            "provider dirs",
+            "core sync",
+        ):
+            assert forbidden not in out
 
 
 class TestInstallExitCodes:

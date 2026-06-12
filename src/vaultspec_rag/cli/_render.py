@@ -383,6 +383,67 @@ def _display_port_unreachable_error(
     )
 
 
+def _action_label(action: object) -> str:
+    labels = {
+        "applied": "applied",
+        "already": "already configured",
+        "conflict": "needs review",
+        "absent": "not found",
+        "removed": "removed",
+        "disabled": "disabled",
+        "dry_run": "preview only",
+        "declined": "declined",
+        "skipped": "not changed",
+        "skipped-non-tty": "needs confirmation",
+        "skipped-eof": "needs confirmation",
+        "error": "error",
+    }
+    text = str(action)
+    return labels.get(text, text.replace("_", " ").replace("-", " "))
+
+
+def _render_sync_summary(added: int, updated: int, removed: int) -> None:
+    parts = []
+    if added:
+        parts.append(f"added {added}")
+    if updated:
+        parts.append(f"updated {updated}")
+    if removed:
+        parts.append(f"removed {removed}")
+    if parts:
+        _cli.console.print(
+            f"tool integrations: {', '.join(parts)}",
+            markup=False,
+            highlight=False,
+        )
+
+
+def _counted(count: int, singular: str, plural: str | None = None) -> str:
+    return f"{count} {singular if count == 1 else plural or singular + 's'}"
+
+
+def _warning_text(warning: str) -> str:
+    if warning == (
+        "dry-run: core sync_provider not invoked (would propagate "
+        "seeded files to .mcp.json and provider dirs)"
+    ):
+        return "dry-run preview: would update tool integration files"
+    if warning == (
+        "dry-run: core sync_provider not invoked (would propagate "
+        "removal to .mcp.json and provider dirs)"
+    ):
+        return "dry-run preview: would remove tool integration files"
+    if warning.startswith("core sync failed:"):
+        return warning.replace("core sync", "tool integration sync", 1)
+    return warning
+
+
+def _print_warning_or_note(warning: object) -> None:
+    text = _warning_text(str(warning))
+    prefix = "note" if text.startswith("dry-run preview:") else "warning"
+    _cli.console.print(f"{prefix}: {text}", markup=False, highlight=False)
+
+
 def _render_install_report(report: Any) -> None:
     """Render an install report as plain CLI lines."""
     title = {
@@ -390,31 +451,35 @@ def _render_install_report(report: Any) -> None:
         "upgrade": "vaultspec-rag upgraded",
         "dry_run": "vaultspec-rag install (dry-run)",
     }.get(report.action, "vaultspec-rag install")
+    dry_run = report.action == "dry_run"
     _cli.console.print(title, markup=False, highlight=False)
     _cli.console.print(f"target: {report.target}", markup=False, highlight=False)
     if report.created_dirs:
-        _cli.console.print(f"created {len(report.created_dirs)} directories")
+        verb = "would create" if dry_run else "created"
+        _cli.console.print(
+            f"{verb} {_counted(len(report.created_dirs), 'directory', 'directories')}"
+        )
     if report.seeded:
-        _cli.console.print(f"seeded {len(report.seeded)} bundled files:")
+        verb = "would seed" if dry_run else "seeded"
+        _cli.console.print(f"{verb} {_counted(len(report.seeded), 'bundled file')}:")
         for rel in report.seeded:
             _cli.console.print(f"  + {rel}", markup=False, highlight=False)
     sync_added = sum(getattr(r, "added", 0) for r in report.sync_results)
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
-    if sync_added or sync_updated or sync_pruned:
-        _cli.console.print(
-            f"core sync: +{sync_added} ~{sync_updated} -{sync_pruned}",
-            markup=False,
-            highlight=False,
-        )
+    _render_sync_summary(sync_added, sync_updated, sync_pruned)
     tc_action = getattr(report, "torch_config_action", "skipped")
-    _cli.console.print(f"torch-config: {tc_action}", markup=False, highlight=False)
+    _cli.console.print(
+        f"PyTorch configuration: {_action_label(tc_action)}",
+        markup=False,
+        highlight=False,
+    )
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
         _cli.console.print(
-            f"torch direct dependency: {td_action}{suffix}",
+            f"PyTorch dependency: {_action_label(td_action)}{suffix}",
             markup=False,
             highlight=False,
         )
@@ -428,7 +493,7 @@ def _render_install_report(report: Any) -> None:
             highlight=False,
         )
     for warning in report.warnings:
-        _cli.console.print(f"warning: {warning}", markup=False, highlight=False)
+        _print_warning_or_note(warning)
 
 
 def _render_uninstall_report(report: Any) -> None:
@@ -437,29 +502,38 @@ def _render_uninstall_report(report: Any) -> None:
         "uninstall": "vaultspec-rag uninstalled",
         "dry_run": "vaultspec-rag uninstall (dry-run; use --force to apply)",
     }.get(report.action, "vaultspec-rag uninstall")
+    dry_run = report.action == "dry_run"
     _cli.console.print(title, markup=False, highlight=False)
     _cli.console.print(f"target: {report.target}", markup=False, highlight=False)
     if report.removed:
-        _cli.console.print(f"removed {len(report.removed)} bundled source files:")
+        verb = "would remove" if dry_run else "removed"
+        _cli.console.print(
+            f"{verb} {_counted(len(report.removed), 'bundled source file')}:"
+        )
         for rel in report.removed:
             _cli.console.print(f"  - {rel}", markup=False, highlight=False)
     if report.data_removed:
-        _cli.console.print("- .vault/data/ (rag index purged)")
+        verb = "would remove" if dry_run else "removed"
+        _cli.console.print(f"{verb} .vault/data/ index data")
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
-        _cli.console.print(f"core sync pruned: -{sync_pruned}")
+        _render_sync_summary(0, 0, sync_pruned)
     tc_action = getattr(report, "torch_config_action", "skipped")
-    _cli.console.print(f"torch-config: {tc_action}", markup=False, highlight=False)
+    _cli.console.print(
+        f"PyTorch configuration: {_action_label(tc_action)}",
+        markup=False,
+        highlight=False,
+    )
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
         _cli.console.print(
-            f"torch direct dependency: {td_action}{suffix}",
+            f"PyTorch dependency: {_action_label(td_action)}{suffix}",
             markup=False,
             highlight=False,
         )
     for conflict in getattr(report, "torch_config_conflicts", []):
         _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
     for warning in report.warnings:
-        _cli.console.print(f"warning: {warning}", markup=False, highlight=False)
+        _print_warning_or_note(warning)
