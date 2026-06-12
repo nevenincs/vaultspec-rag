@@ -92,7 +92,7 @@ def service_watcher_status(
         typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
-    """Show automatic index update settings and active roots."""
+    """Show automatic index update settings and projects."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("get_watcher_state", {}, resolved_port)
     if result is None:
@@ -110,7 +110,7 @@ def service_watcher_status(
     _cli.console.print(f"Automatic index updates: {mode}", markup=False)
     _print_update_timing(result)
     if not watching:
-        _cli.console.print("No roots currently have automatic index updates.")
+        _cli.console.print("No projects currently have automatic index updates.")
         return
     _cli.console.print(f"Projects updating automatically: {len(watching)}")
     for entry in watching:

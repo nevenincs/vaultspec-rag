@@ -9,18 +9,57 @@ genuinely fails to connect.
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
+import threading
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 runner = CliRunner()
 
 # A port with nothing listening: _try_mcp_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59231"
+
+
+class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
+    payloads: ClassVar[list[dict[str, object]]] = []
+
+    def do_GET(self) -> None:
+        payload = self.payloads[0]
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def log_message(self, format: str, *args: object) -> None:
+        _ = format, args
+
+
+@contextlib.contextmanager
+def _updates_http_server(
+    payload: dict[str, object],
+) -> Iterator[tuple[http.server.HTTPServer, int]]:
+    _UpdatesHTTPHandler.payloads = [payload]
+    server = http.server.HTTPServer(("127.0.0.1", 0), _UpdatesHTTPHandler)
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, port
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
 
 _UPDATES_COMMANDS = [
     ["server", "updates", "status"],
@@ -52,6 +91,7 @@ def test_updates_subcommands_registered() -> None:
     for name in ("status", "start", "stop", "reconfigure"):
         assert name in result.stdout
     assert "automatic index update" in result.stdout.lower()
+    assert "active roots" not in result.stdout.lower()
 
 
 @pytest.mark.parametrize(
@@ -70,6 +110,13 @@ def test_updates_help_uses_script_json_language(argv: list[str]) -> None:
     assert "JSON envelope" not in result.stdout
 
 
+def test_updates_status_help_uses_project_language() -> None:
+    result = runner.invoke(app, ["server", "updates", "status", "--help"])
+    assert result.exit_code == 0
+    assert "settings and projects" in result.stdout
+    assert "active roots" not in result.stdout.lower()
+
+
 def test_update_timing_output_uses_user_language(capsys) -> None:
     from ..cli._service_watcher import _print_update_timing
 
@@ -80,6 +127,24 @@ def test_update_timing_output_uses_user_language(capsys) -> None:
     assert "Same source: wait 30s before updating again." in output
     assert "debounce=" not in output
     assert "cooldown=" not in output
+
+
+def test_updates_status_empty_output_uses_project_language() -> None:
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "debounce_ms": 2000,
+        "cooldown_s": 30.0,
+        "watching": [],
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "status", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "No projects currently have automatic index updates." in result.output
+    assert "No roots" not in result.output
 
 
 def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
