@@ -2884,7 +2884,7 @@ class TestServiceDaemonHelpers:
             assert verbose.exit_code == 0
             verbose_expected = [
                 "Service status",
-                "Service file: present",
+                "Service record: present",
                 f"Process id: {os.getpid()}",
                 f"Address: http://127.0.0.1:{port}",
                 "Started:",
@@ -2918,6 +2918,7 @@ class TestServiceDaemonHelpers:
                 "Reranker loaded",
                 "Service token match",
                 "Service Token Match",
+                "Service file:",
                 "Current job: code index refresh (",
                 "─",
                 "│",
@@ -3123,7 +3124,7 @@ class TestServiceDaemonHelpers:
             )
 
             assert result.exit_code == 3
-            assert "Service file: missing" in result.output
+            assert "Service record: missing" in result.output
             assert "Process id: not recorded" in result.output
             assert f"Address: http://127.0.0.1:{port}" in result.output
             assert "Network: not checked" in result.output
@@ -3132,6 +3133,7 @@ class TestServiceDaemonHelpers:
             assert "Port listening" not in result.output
             assert "Port listening: yes" not in result.output
             assert "Port listening: no" not in result.output
+            assert "Service file:" not in result.output
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 

@@ -1040,7 +1040,7 @@ def _render_status_detail(
     operational: dict[str, object] | None,
 ) -> None:
     _cli.console.print("Service status")
-    _print_detail_line("Service file", "present")
+    _print_detail_line("Service record", "present")
     _print_detail_line("Process id", pid)
     _print_detail_line("Address", f"http://127.0.0.1:{port}")
     _print_detail_line("Started", _format_started_label(started_at))
@@ -1131,7 +1131,7 @@ def _render_port_only_status(
         return
 
     _cli.console.print("Service status")
-    _print_detail_line("Service file", "missing")
+    _print_detail_line("Service record", "missing")
     _print_detail_line("Process id", "not recorded")
     _print_detail_line("Address", f"http://127.0.0.1:{port}")
     _print_detail_line("Network", _network_label(port_listening, pid_alive=False))
@@ -1394,7 +1394,7 @@ def service_status(
             raise typer.Exit(code=3)
         if verbose:
             _cli.console.print("Service status")
-            _print_detail_line("Service file", "missing")
+            _print_detail_line("Service record", "missing")
             _print_detail_line("State", "stopped")
         else:
             _render_status_summary(
