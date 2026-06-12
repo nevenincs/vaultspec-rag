@@ -3189,6 +3189,36 @@ class TestServiceProjectsCli:
         assert "unexpected" not in result.output
         assert "{" not in result.output
 
+    def test_projects_unload_json_message_stays_user_facing(self) -> None:
+        server, thread, requests = _projects_unload_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "projects",
+                    "unload",
+                    r"example",
+                    "--port",
+                    str(server.server_port),
+                    "--json",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 1, result.output
+        assert requests == [{"root": r"example"}]
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["error"] == "unexpected_response"
+        assert r"example" in envelope["message"]
+        assert "vaultspec-rag server status" in envelope["message"]
+        assert "Eviction failed" not in envelope["message"]
+        assert "reason=" not in envelope["message"]
+
 
 class TestIndexSummaryCLI:
     """Human index summaries are covered through the CLI command surface."""

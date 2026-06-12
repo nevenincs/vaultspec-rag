@@ -182,6 +182,17 @@ def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:
     raise typer.Exit(3)
 
 
+def _project_unload_failure_message(root: str, reason: str) -> str:
+    if reason == "busy":
+        return f"Project is in use: {root}. Retry shortly."
+    if reason == "not_found":
+        return f"Project is not loaded: {root}."
+    return (
+        f"The service could not confirm that the project was unloaded: {root}. "
+        "Run `vaultspec-rag server status` and retry."
+    )
+
+
 def _handle_evict_json(
     evicted: bool, reason: str, root: str, result: dict[str, Any]
 ) -> None:
@@ -196,7 +207,7 @@ def _handle_evict_json(
     _emit_json_error_and_exit(
         "service.projects.evict",
         reason or "unexpected_response",
-        f"Eviction failed for {root}: reason={reason or 'unknown'}.",
+        _project_unload_failure_message(root, reason),
         exit_code,
         root=root,
         evicted=False,
@@ -241,16 +252,16 @@ def service_projects_evict(
         raise typer.Exit(0)
     if reason == "busy":
         _cli.console.print(
-            f"Project is in use: {project}. Retry shortly.",
-            markup=False,
+            _project_unload_failure_message(project, reason), markup=False
         )
         raise typer.Exit(1)
     if reason == "not_found":
-        _cli.console.print(f"Project is not loaded: {project}", markup=False)
+        _cli.console.print(
+            _project_unload_failure_message(project, reason), markup=False
+        )
         raise typer.Exit(2)
     _cli.console.print(
-        f"The service could not confirm that the project was unloaded: {project}. "
-        "Run `vaultspec-rag server status` and retry.",
+        _project_unload_failure_message(project, reason),
         markup=False,
         highlight=False,
     )
