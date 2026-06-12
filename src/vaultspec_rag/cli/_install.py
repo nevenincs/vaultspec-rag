@@ -167,7 +167,12 @@ def handle_install(
             confirm=confirm_fn,
         )
     except Exception as exc:
-        _cli.console.print(f"[bold red]install failed:[/] {exc}")
+        _cli.console.print(
+            f"Install failed: {exc}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         raise typer.Exit(code=1) from exc
 
     if json_output:
@@ -280,7 +285,12 @@ def handle_uninstall(
             assume_yes=yes,
         )
     except Exception as exc:
-        _cli.console.print(f"[bold red]uninstall failed:[/] {exc}")
+        _cli.console.print(
+            f"Uninstall failed: {exc}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         raise typer.Exit(code=1) from exc
 
     if json_output:

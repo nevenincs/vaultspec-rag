@@ -148,7 +148,7 @@ def service_start(
     delay = 0.1
     deadline = 300.0
     elapsed = 0.0
-    with _cli.console.status("[bold green]Starting service..."):
+    with _cli.console.status("Starting service..."):
         while elapsed < deadline:
             time.sleep(delay)
             elapsed = time.perf_counter() - t0
@@ -1280,7 +1280,7 @@ def service_warmup() -> None:
             continue
 
         try:
-            with _cli.console.status(f"[bold green]Downloading {label}..."):
+            with _cli.console.status(f"Downloading {label}..."):
                 snapshot_download(repo_id)
             _print_detail_line(label, f"{repo_id} downloaded")
         except Exception as exc:

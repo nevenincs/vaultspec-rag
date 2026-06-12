@@ -27,7 +27,7 @@ def handle_quality() -> None:
     from ..api import run_quality_probe
 
     try:
-        msg = "[bold green]Running quality probes on synthetic corpus..."
+        msg = "Running quality probes on synthetic corpus..."
         with _cli.console.status(msg):
             results = run_quality_probe()
     except (ImportError, RuntimeError) as e:
