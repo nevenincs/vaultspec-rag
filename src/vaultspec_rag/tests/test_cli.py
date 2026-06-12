@@ -485,6 +485,9 @@ class TestServerRoutingFlattened:
         result = runner.invoke(app, ["server", "status", "--help"])
         assert result.exit_code == 0, result.output
         assert "operator summary" in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
+        assert "full-fidelity" not in result.output
 
     def test_server_health_not_a_command(self):
         result = runner.invoke(app, ["server", "health", "--help"])

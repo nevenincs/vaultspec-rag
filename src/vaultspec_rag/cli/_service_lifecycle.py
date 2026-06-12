@@ -993,7 +993,7 @@ def service_health(
         bool,
         typer.Option(
             "--json",
-            help="Emit the full /health JSON envelope for automation.",
+            help="Emit JSON for scripts with health details.",
         ),
     ] = False,
 ) -> None:
@@ -1069,9 +1069,8 @@ def service_status(
         typer.Option(
             "--json",
             help=(
-                "Emit one full-fidelity JSON envelope to stdout instead of the "
-                "plain human summary. Preserves exit codes 0 (running) / 3 (stopped) "
-                "/ 4 (crashed-* or divergent)."
+                "Emit JSON for scripts instead of human text. Preserves exit "
+                "codes 0 (running), 3 (stopped), and 4 (crashed or divergent)."
             ),
         ),
     ] = False,
