@@ -25,20 +25,52 @@ from ._render import (
 from ._service_status import _default_service_port
 
 
+def _index_route_label(via: str) -> str:
+    if via == "service":
+        return "running service"
+    if via == "in-process":
+        return "this command"
+    return via.replace("-", " ")
+
+
+def _index_source_label(source: str) -> str:
+    if source == "codebase":
+        return "Source code"
+    if source == "vault":
+        return "Vault"
+    return source.replace("_", " ").capitalize()
+
+
+def _format_index_duration(raw: object) -> str:
+    if not isinstance(raw, int | float):
+        return "unknown"
+    milliseconds = max(0, int(raw))
+    if milliseconds < 1000:
+        return f"{milliseconds}ms"
+    seconds = milliseconds / 1000.0
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
+
+
 def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
-    _cli.console.print(f"Indexing summary: via={via}", markup=False, highlight=False)
+    _cli.console.print(
+        f"Indexing summary: ran in {_index_route_label(via)}.",
+        markup=False,
+        highlight=False,
+    )
     if not sources:
         _cli.console.print("No sources indexed.")
         return
     for row in sources:
         source = str(row.get("source", "unknown"))
-        label = source.capitalize()
+        label = _index_source_label(source)
         _cli.console.print(
-            f"{label}: added={row.get('added', 0)} "
-            f"updated={row.get('updated', 0)} "
-            f"removed={row.get('removed', 0)} "
-            f"total={row.get('total', 0)} "
-            f"time={row.get('duration_ms', 0)}ms",
+            f"{label}: added {row.get('added', 0)}; "
+            f"updated {row.get('updated', 0)}; "
+            f"removed {row.get('removed', 0)}; "
+            f"total {row.get('total', 0)}; "
+            f"finished in {_format_index_duration(row.get('duration_ms', 0))}",
             markup=False,
             highlight=False,
         )

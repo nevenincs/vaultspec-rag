@@ -2711,6 +2711,69 @@ class TestServiceProjectsCli:
         assert result.exit_code == 3
 
 
+class TestIndexSummaryRendering:
+    """Human index summaries avoid backend route and key-value notation."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def _render(self, via: str) -> str:
+        from io import StringIO
+
+        from rich.console import Console
+
+        from ..cli._index import _print_index_summary
+
+        out = StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "vaultspec_rag.cli.console",
+                Console(file=out, force_terminal=False, width=400),
+            )
+            _print_index_summary(
+                [
+                    {
+                        "source": "vault",
+                        "added": 1,
+                        "updated": 2,
+                        "removed": 3,
+                        "total": 6,
+                        "duration_ms": 1234,
+                    },
+                    {
+                        "source": "codebase",
+                        "added": 4,
+                        "updated": 5,
+                        "removed": 6,
+                        "total": 15,
+                        "duration_ms": 50,
+                    },
+                ],
+                via=via,
+            )
+        return out.getvalue()
+
+    def test_service_summary_uses_plain_language(self) -> None:
+        rendered = self._render("service")
+
+        assert "Indexing summary: ran in running service." in rendered
+        assert (
+            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2s"
+            in rendered
+        )
+        assert (
+            "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms"
+            in rendered
+        )
+        for forbidden in ("via=", "added=", "updated=", "removed=", "total=", "time="):
+            assert forbidden not in rendered
+
+    def test_local_summary_avoids_in_process_label(self) -> None:
+        rendered = self._render("in-process")
+
+        assert "Indexing summary: ran in this command." in rendered
+        assert "in-process" not in rendered
+
+
 class TestCpuOnlyMessageRendering:
     """Regression guard for literal TOML keys in the CPU_ONLY copy.
 
