@@ -154,6 +154,12 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
                     exc_info=True,
                 )
             _qr.set_active_supervisor(None)
+            # Undo the in-process env publish so an embedded caller
+            # that runs the lifespan and then continues in the same
+            # interpreter does not keep reading server mode against a
+            # now-dead port (the daemon process just exits, so this
+            # only matters for in-process reuse).
+            os.environ.pop(EnvVar.QDRANT_URL.value, None)
         logger.info("Service shutdown complete")
         _m._record_shutdown("clean")
 

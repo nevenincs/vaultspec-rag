@@ -169,6 +169,12 @@ class QdrantSupervisor:
         self.log_path = log_path
         self.restart_count = 0
         self._proc: subprocess.Popen[bytes] | None = None
+        # The Windows kill-on-close job handle is deliberately held for
+        # the supervisor's whole lifetime and never explicitly closed:
+        # the OS kills the child exactly when the last handle closes
+        # (on process exit), which IS the orphan guard. One job is
+        # created once and reused across restart(); a supervisor must
+        # therefore never be dropped-and-recreated while its child runs.
         self._job_handle: object | None = None
 
     @property

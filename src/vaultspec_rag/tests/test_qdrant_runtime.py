@@ -157,6 +157,112 @@ class TestVerifiedExtraction:
         )
 
 
+class TestPreExecDigestGuard:
+    """A tampered provisioned binary must be refused before execution."""
+
+    def test_corrupted_binary_refused_before_spawn(
+        self, isolated_status_dir: Path
+    ) -> None:
+        from ..config import get_config
+        from ..qdrant_runtime import start_supervised_from_config
+
+        _ = isolated_status_dir
+        version_dir = qdrant_bin_dir()
+        binary = _seed_verified_install(version_dir)
+        # Tamper with the binary AFTER the manifest recorded its digest:
+        # the pre-execution re-hash must now mismatch and refuse to run.
+        binary.write_bytes(b"tampered-after-manifest")
+
+        os.environ[EnvVar.QDRANT_SERVER.value] = "1"
+        get_config(None)
+        reset_config()
+        try:
+            with pytest.raises(RuntimeError, match="manifest digest"):
+                start_supervised_from_config()
+        finally:
+            os.environ.pop(EnvVar.QDRANT_SERVER.value, None)
+            reset_config()
+
+
+class TestDownloadGuards:
+    """The host/scheme pin is the security boundary; prove it refuses."""
+
+    def test_non_https_url_refused(self, tmp_path: Path) -> None:
+        import urllib.error
+
+        from ..qdrant_runtime import _provision
+
+        with pytest.raises(urllib.error.URLError, match="non-HTTPS"):
+            _provision._download(
+                "http://github.com/qdrant/qdrant/releases/x.zip",
+                tmp_path / "out.zip",
+            )
+        assert not (tmp_path / "out.zip").exists()
+
+    def test_cross_host_url_refused(self, tmp_path: Path) -> None:
+        import urllib.error
+
+        from ..qdrant_runtime import _provision
+
+        with pytest.raises(urllib.error.URLError, match="host"):
+            _provision._download(
+                "https://evil.example.com/qdrant.zip",
+                tmp_path / "out.zip",
+            )
+        assert not (tmp_path / "out.zip").exists()
+
+    def test_redirect_handler_rejects_downgrade_and_cross_host(self) -> None:
+        import urllib.error
+        from typing import Any, cast
+
+        from ..qdrant_runtime import _provision
+
+        handler = _provision._HostPinnedRedirect()
+        none = cast("Any", None)  # req/fp/headers are unused before the guard
+        # A redirect that downgrades to http on an allowed host must be
+        # refused as firmly as a cross-host redirect.
+        with pytest.raises(urllib.error.URLError, match="non-HTTPS"):
+            handler.redirect_request(
+                none,
+                none,
+                302,
+                "Found",
+                none,
+                "http://github.com/qdrant/qdrant/x.zip",
+            )
+        with pytest.raises(urllib.error.URLError, match="disallowed host"):
+            handler.redirect_request(
+                none,
+                none,
+                302,
+                "Found",
+                none,
+                "https://evil.example.com/x.zip",
+            )
+
+
+class TestArchiveTraversal:
+    """A malicious archive member must never escape the destination dir."""
+
+    def test_traversal_member_is_flattened(self, tmp_path: Path) -> None:
+        # A zip whose binary member carries a traversal path; the
+        # extractor matches on basename and writes to dest only.
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr(f"../../../../escape/{binary_filename()}", b"payload-x")
+        expected = file_sha256(archive)
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        binary, _ = extract_verified_archive(archive, expected, out_dir)
+
+        assert binary == out_dir / binary_filename()
+        assert binary.read_bytes() == b"payload-x"
+        # Nothing landed outside the destination directory.
+        assert not (tmp_path / "escape").exists()
+        assert not (tmp_path.parent / "escape").exists()
+
+
 def _seed_verified_install(version_dir: Path) -> Path:
     """Pre-seed a managed dir exactly as a verified provision leaves it."""
     version_dir.mkdir(parents=True, exist_ok=True)

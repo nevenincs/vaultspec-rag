@@ -262,7 +262,7 @@ def _stale_progress_label(job: dict[str, object]) -> str:
 def _human_result(raw: object) -> str:
     if not raw:
         return ""
-    result = str(raw)
+    result = " ".join(str(raw).split())
     if result == "watcher task cancelled":
         return "automatic update cancelled"
     if "[Errno 28]" in result or "No space left on device" in result:
@@ -286,44 +286,47 @@ def _human_result(raw: object) -> str:
     return ", ".join(parts)
 
 
+def _waiting_job_detail(detail: str, raw_runtime: object) -> str:
+    has_runtime = isinstance(raw_runtime, int | float)
+    if detail:
+        return (
+            f"{detail} for {_format_seconds(raw_runtime)}"
+            if has_runtime
+            else f"{detail}; runtime not reported"
+        )
+    return (
+        f"waiting for {_format_seconds(raw_runtime)}"
+        if has_runtime
+        else "waiting; runtime not reported"
+    )
+
+
+def _running_job_detail(job: dict[str, object]) -> str:
+    detail = _human_progress(job)
+    raw_runtime = job.get("runtime_seconds")
+    if _job_is_waiting(job):
+        return _waiting_job_detail(detail, raw_runtime)
+    runtime_detail = (
+        f"running for {_format_seconds(raw_runtime)}"
+        if isinstance(raw_runtime, int | float)
+        else "runtime not reported"
+    )
+    stale_progress = _stale_progress_label(job)
+    parts = [p for p in (detail, runtime_detail, stale_progress) if p]
+    return "; ".join(parts) if parts else runtime_detail
+
+
 def _job_summary_detail(job: dict[str, object]) -> str:
     phase = str(job.get("phase", ""))
     if phase == "running":
-        detail = _human_progress(job)
-        raw_runtime = job.get("runtime_seconds")
-        runtime_detail = (
-            f"running for {_format_seconds(raw_runtime)}"
-            if isinstance(raw_runtime, int | float)
-            else "runtime not reported"
-        )
-        stale_progress = _stale_progress_label(job)
-        if _job_is_waiting(job):
-            if detail:
-                return (
-                    f"{detail} for {_format_seconds(raw_runtime)}"
-                    if isinstance(raw_runtime, int | float)
-                    else f"{detail}; runtime not reported"
-                )
-            return (
-                f"waiting for {_format_seconds(raw_runtime)}"
-                if isinstance(raw_runtime, int | float)
-                else "waiting; runtime not reported"
-            )
-        if detail:
-            if stale_progress:
-                return f"{detail}; {runtime_detail}; {stale_progress}"
-            return f"{detail}; {runtime_detail}"
-        if stale_progress:
-            return f"{runtime_detail}; {stale_progress}"
-        return runtime_detail
+        return _running_job_detail(job)
     if phase in ("error", "failed"):
         result = _human_result(job.get("result"))
         return f"error: {result}" if result else "error reported"
     result = _human_result(job.get("result"))
     if result:
         return result
-    progress = _human_progress(job)
-    return progress
+    return _human_progress(job)
 
 
 def _human_sorted_jobs(jobs: list[object]) -> list[dict[str, object]]:
@@ -681,6 +684,61 @@ def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
     return "No recent jobs."
 
 
+def _render_job_progress_detail(job: dict[str, object]) -> None:
+    if str(job.get("phase", "")) == "running":
+        _cli.console.print(
+            "Last progress update: "
+            f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
+        )
+    stale_progress = _stale_progress_label(job)
+    if stale_progress:
+        _cli.console.print(f"Progress warning: {stale_progress}")
+    if isinstance(job.get("progress"), dict):
+        _cli.console.print(f"Progress: {_human_progress(job)}")
+
+
+def _render_job_initiator_detail(job: dict[str, object]) -> None:
+    initiator = job.get("initiator")
+    if not isinstance(initiator, dict):
+        return
+    initiator_data = cast("dict[str, object]", initiator)
+    _cli.console.print(f"Started by: {_initiator_label(initiator_data.get('kind'))}")
+    _cli.console.print(f"Request: {_command_label(initiator_data.get('command'))}")
+
+
+def _render_job_runtime_detail(job: dict[str, object]) -> None:
+    runtime = job.get("runtime")
+    if not isinstance(runtime, dict):
+        return
+    runtime_data = cast("dict[str, object]", runtime)
+    pid = runtime_data.get("pid")
+    if pid is not None:
+        _cli.console.print(f"Job process id: {pid}")
+    user = runtime_data.get("user")
+    if user:
+        _cli.console.print(f"User: {user}")
+    executable = runtime_data.get("executable")
+    if executable:
+        _cli.console.print(f"Python: {_path_label(executable)}")
+    virtual_env = runtime_data.get("virtual_env") or runtime_data.get("prefix")
+    if virtual_env:
+        _cli.console.print(f"Python environment: {_path_label(virtual_env)}")
+
+
+def _render_job_resource_detail(job: dict[str, object]) -> None:
+    resource_summary = _resource_summary(job)
+    if resource_summary:
+        _cli.console.print(f"Memory: {resource_summary}")
+
+
+def _render_job_result_detail(job: dict[str, object]) -> None:
+    result = job.get("result")
+    if not result:
+        return
+    label = "Error" if str(job.get("phase")) in ("error", "failed") else "Result"
+    _cli.console.print(f"{label}: {_human_result(result)}")
+
+
 def _render_job_detail(job: dict[str, object]) -> None:
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
@@ -690,42 +748,11 @@ def _render_job_detail(job: dict[str, object]) -> None:
         _cli.console.print(f"Project root: {root}")
     _cli.console.print(f"State: {_phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
-    if str(job.get("phase", "")) == "running":
-        _cli.console.print(
-            "Last progress update: "
-            f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
-        )
-    stale_progress = _stale_progress_label(job)
-    if stale_progress:
-        _cli.console.print(f"Progress warning: {stale_progress}")
-    initiator = job.get("initiator")
-    if isinstance(initiator, dict):
-        _cli.console.print(f"Started by: {_initiator_label(initiator.get('kind'))}")
-        _cli.console.print(f"Request: {_command_label(initiator.get('command'))}")
-    runtime = job.get("runtime")
-    if isinstance(runtime, dict):
-        pid = runtime.get("pid")
-        user = runtime.get("user")
-        if pid is not None:
-            _cli.console.print(f"Job process id: {pid}")
-        if user:
-            _cli.console.print(f"User: {user}")
-        executable = runtime.get("executable")
-        if executable:
-            _cli.console.print(f"Python: {_path_label(executable)}")
-        virtual_env = runtime.get("virtual_env") or runtime.get("prefix")
-        if virtual_env:
-            _cli.console.print(f"Python environment: {_path_label(virtual_env)}")
-    progress = job.get("progress")
-    if isinstance(progress, dict):
-        _cli.console.print(f"Progress: {_human_progress(job)}")
-    resource_summary = _resource_summary(job)
-    if resource_summary:
-        _cli.console.print(f"Memory: {resource_summary}")
-    result = job.get("result")
-    if result:
-        label = "Error" if str(job.get("phase")) in ("error", "failed") else "Result"
-        _cli.console.print(f"{label}: {_human_result(result)}")
+    _render_job_progress_detail(job)
+    _render_job_initiator_detail(job)
+    _render_job_runtime_detail(job)
+    _render_job_resource_detail(job)
+    _render_job_result_detail(job)
 
 
 def _render_jobs_result(

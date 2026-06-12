@@ -3984,26 +3984,38 @@ class TestServiceProjectsCli:
         assert result.exit_code == 0, result.output
         assert requests == ["/projects"]
         lines = _plain_lines(result.output)
-        assert "Loaded projects: 2/8." in lines
-        assert "Automatic unload: after 10m idle." in lines
-        assert "- Project: busy" in lines
-        assert r"Path: busy" in lines
-        assert "In use: 2 active service uses" in lines
-        assert "Last activity: 1m 5s ago" in lines
-        assert "Last used: 14:05:06" in lines
-        assert "- Project: ready" in lines
-        assert r"Path: ready" in lines
-        assert "In use: not currently in use" in lines
-        assert "Last activity: 4s ago" in lines
-        assert "Last used: no timestamp from service" in lines
-        assert not any("Handling 2 active requests" in line for line in lines)
-        assert not any(line.startswith("Requests:") for line in lines)
-        assert not any(line.startswith("Last request:") for line in lines)
-        assert not any("Available for new requests" in line for line in lines)
-        assert "Last used: not recorded" not in lines
-        assert not any("project handle" in line.lower() for line in lines)
-        assert not any("references" in line.lower() for line in lines)
-        assert not any(line in {"yes", "no"} for line in lines)
+        expected_present = [
+            "Loaded projects: 2/8.",
+            "Automatic unload: after 10m idle.",
+            "- Project: busy",
+            r"Path: busy",
+            "In use: 2 active service uses",
+            "Last activity: 1m 5s ago",
+            "Last used: 14:05:06",
+            "- Project: ready",
+            r"Path: ready",
+            "In use: not currently in use",
+            "Last activity: 4s ago",
+            "Last used: no timestamp from service",
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing operator lines: {missing}"
+        joined = "\n".join(lines).lower()
+        forbidden_substrings = [
+            "handling 2 active requests",
+            "available for new requests",
+            "last used: not recorded",
+            "project handle",
+            "references",
+        ]
+        leaked = [text for text in forbidden_substrings if text in joined]
+        assert not leaked, f"internal phrasing leaked: {leaked}"
+        leaked_prefixes = [
+            line
+            for line in lines
+            if line.startswith(("Requests:", "Last request:")) or line in {"yes", "no"}
+        ]
+        assert not leaked_prefixes, f"internal fields leaked: {leaked_prefixes}"
         _assert_no_table_borders(result.output)
 
     def test_projects_unload_unexpected_response_stays_actionable(self) -> None:

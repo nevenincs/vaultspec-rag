@@ -55,6 +55,10 @@ __all__ = [
 
 _DOWNLOAD_CHUNK_BYTES = 1 << 20
 _DOWNLOAD_TIMEOUT_SECONDS = 120.0
+# The release archives are ~30 MB; cap the stream well above that so a
+# host-pinned-but-defective response cannot fill the disk before the
+# SHA256 check would reject it (defense in depth behind the host pin).
+_MAX_DOWNLOAD_BYTES = 256 << 20
 
 
 class ChecksumMismatchError(RuntimeError):
@@ -94,7 +98,15 @@ class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
         headers: HTTPMessage,
         newurl: str,
     ) -> urllib.request.Request | None:
-        host = urllib.parse.urlparse(newurl).hostname or ""
+        parsed = urllib.parse.urlparse(newurl)
+        # A redirect must stay HTTPS: a downgrade to http on an allowed
+        # host would still strip TLS, so reject it as firmly as a
+        # cross-host redirect.
+        if parsed.scheme != "https":
+            raise urllib.error.URLError(
+                f"Redirect to non-HTTPS URL {newurl!r} rejected"
+            )
+        host = parsed.hostname or ""
         if host.lower() not in ALLOWED_DOWNLOAD_HOSTS:
             raise urllib.error.URLError(
                 f"Redirect to disallowed host {host!r} rejected "
@@ -123,7 +135,15 @@ def _download(url: str, dest: Path) -> None:
         opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as resp,
         dest.open("wb") as out,
     ):
-        shutil.copyfileobj(resp, out, _DOWNLOAD_CHUNK_BYTES)
+        written = 0
+        while chunk := resp.read(_DOWNLOAD_CHUNK_BYTES):
+            written += len(chunk)
+            if written > _MAX_DOWNLOAD_BYTES:
+                raise urllib.error.URLError(
+                    f"Download exceeded the {_MAX_DOWNLOAD_BYTES} byte cap; "
+                    "refusing to continue"
+                )
+            out.write(chunk)
 
 
 def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
