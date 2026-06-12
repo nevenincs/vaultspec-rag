@@ -844,6 +844,55 @@ Agent brief:
 - Use `uv run` or `uv run --no-sync` for project commands if local CLI examples are
   needed.
 
+### Phase W06.P06 - Redesign `search` Human Result Output
+
+Objective: Replace the fragile default `vaultspec-rag search` table with a mature,
+line-oriented result format that is stable, copyable, pipe-friendly, and consistent with
+the redesigned status, jobs, and logs surfaces.
+
+Progress tracking:
+
+- [ ] Remove Rich table rendering from default human search results.
+- [ ] Use a line-oriented default result shape based on mature CLI search conventions.
+- [ ] Keep source locations mechanically grabbable and never silently truncated.
+- [ ] Show rank as explicit ranking metadata, not as a source coordinate.
+- [ ] Keep numeric scores behind an explicit detail flag unless human review approves
+  showing them by default.
+- [ ] Keep `--json` envelope output stable and full-fidelity.
+- [ ] Preserve empty-result diagnostics and timeout diagnostics from earlier waves.
+- [ ] Ensure service-backed and local search share the same human output contract.
+- [ ] Add or update real-behavior tests for default output, JSON output, detail flags,
+  and no table/truncation regressions.
+- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+
+Agent brief:
+
+- Start with Phase `W06.P06`.
+- Treat W06.P05 research and human review feedback as accepted design input.
+- Own the search result rendering path only, primarily:
+  - `src/vaultspec_rag/cli/_render.py`,
+  - `src/vaultspec_rag/cli/_search.py` only if flags or command wiring are needed,
+  - focused tests under `src/vaultspec_rag/tests/`.
+- You are not alone in the codebase; other agents have active edits in status, jobs,
+  logs, server, logging, and tests. Do not revert or reformat unrelated work.
+- Match the conventions now being enrolled in other human CLI surfaces:
+  - plain text by default,
+  - no boxed tables or card layouts,
+  - short human labels only when labels clarify metadata,
+  - stable output that remains readable in narrow terminals,
+  - full-fidelity machine output behind `--json`,
+  - implementation metadata behind explicit flags.
+- Default output should be closer to `grep`/`ripgrep` result lines than to inventory
+  tables. Prefer a shape like:
+  `path[:line][:column]: rank=1 snippet text`
+- If source line numbers are unavailable, use the best stable locator already present
+  in the result, such as anchor, locator, path, or document id, without inventing fake
+  coordinates.
+- Do not silently truncate paths or snippets with ellipses in default output.
+- Do not conflate rank, result count, score, or source line number.
+- Add flags only where needed for the accepted design; avoid broad command tree churn.
+- Use `uv run` or `uv run --no-sync` for project commands.
+
 Pipeline:
 
 Hardening:
