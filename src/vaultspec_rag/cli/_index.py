@@ -526,8 +526,8 @@ def handle_clean(
         _emit_json_error_and_exit(
             "clean",
             "json_requires_yes",
-            "--json requires --yes; the interactive confirm would "
-            "corrupt the JSON stream on stdin.",
+            "--json requires --yes so the command can write one JSON result "
+            "without an interactive confirmation prompt.",
             2,
         )
     if not yes:

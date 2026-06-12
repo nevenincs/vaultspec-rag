@@ -4153,6 +4153,12 @@ class TestJsonOutputMode:
         env = self._parse_envelope(result.output)
         assert env["ok"] is False
         assert env["error"] == "json_requires_yes"
+        message = str(env["message"])
+        assert "--yes" in message
+        assert "one JSON result" in message
+        assert "interactive confirmation prompt" in message
+        assert "stdin" not in message
+        assert "corrupt" not in message
 
     def test_envelope_is_pure_stdout_no_rich_bytes(self, tmp_path: Path) -> None:
         """Output is a single parseable JSON document, no Rich box chars."""
