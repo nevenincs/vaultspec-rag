@@ -307,7 +307,8 @@ def test_jobs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
     normalized = " ".join(result.stdout.split())
-    assert "--phase" in result.stdout
+    assert "--state" in result.stdout
+    assert "--phase" not in result.stdout
     assert "--running" in result.stdout
     assert "--query" in result.stdout
     assert "--failed" in result.stdout
@@ -395,6 +396,41 @@ def test_jobs_phase_filter_accepts_user_language() -> None:
     )
 
     assert args["phase"] == "done"
+
+
+def test_jobs_state_option_replaces_phase_in_help_but_phase_still_parses() -> None:
+    with _jobs_http_server(
+        [{"jobs": [], "filters": {"phase": "done"}, "total": 0}]
+    ) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--port", str(port), "--phase", "finished"],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    assert "No matching jobs." in result.stdout
+
+
+def test_jobs_state_and_phase_conflict_is_actionable() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "server",
+            "jobs",
+            "--port",
+            _DEAD_PORT,
+            "--state",
+            "running",
+            "--phase",
+            "finished",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--state and --phase received different values" in result.stdout
 
 
 @pytest.mark.parametrize(

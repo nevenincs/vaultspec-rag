@@ -369,7 +369,7 @@ def _render_jobs_feed(
 
 
 def _exit_invalid_jobs_filter(json_mode: bool) -> NoReturn:
-    message = "--running cannot be combined with --phase unless it is running."
+    message = "--running cannot be combined with --state unless it is running."
     if json_mode:
         _emit_json_error_and_exit(
             "service.jobs",
@@ -406,7 +406,7 @@ def _resolve_jobs_filters(
         and resolved_phase is not None
         and resolved_phase not in ("error", "failed")
     ):
-        message = "--failed can only be combined with --phase error or failed."
+        message = "--failed can only be combined with --state failed."
         if json_mode:
             _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
         _cli.console.print(f"Error: {message}", markup=False, highlight=False)
@@ -432,6 +432,20 @@ def _jobs_phase_value(phase: str | None) -> str | None:
     if value in ("finished", "complete", "completed"):
         return "done"
     return phase
+
+
+def _jobs_state_filter(
+    state: str | None,
+    phase: str | None,
+    json_mode: bool,
+) -> str | None:
+    if state is not None and phase is not None and state.strip() != phase.strip():
+        message = "--state and --phase received different values; use --state."
+        if json_mode:
+            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
+        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+        raise typer.Exit(2)
+    return state if state is not None else phase
 
 
 def _jobs_args(
@@ -664,11 +678,19 @@ def service_jobs(
         int,
         typer.Option("--limit", help="Maximum number of matching jobs to show."),
     ] = 20,
+    state: Annotated[
+        str | None,
+        typer.Option(
+            "--state",
+            help="Filter by job state, for example running, finished, or failed.",
+        ),
+    ] = None,
     phase: Annotated[
         str | None,
         typer.Option(
             "--phase",
-            help="Filter by job state, for example running, finished, or failed.",
+            help="Legacy name for --state.",
+            hidden=True,
         ),
     ] = None,
     source: Annotated[
@@ -732,6 +754,7 @@ def service_jobs(
     ] = None,
 ) -> None:
     """Show recent index update activity from the running service."""
+    phase = _jobs_state_filter(state, phase, json_mode)
     phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
