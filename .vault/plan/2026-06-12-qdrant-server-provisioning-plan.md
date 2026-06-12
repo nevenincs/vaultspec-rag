@@ -24,7 +24,7 @@ Pin the server version and digests, resolve assets and binaries, and provision i
 Spawn and reap the loopback qdrant child safely on all platforms and namespace per-root collections in server mode
 
 - [x] `P02.S04` - Implement qdrant child supervision: loopback spawn with env-injected storage and ports, readyz poll with backoff, graceful terminate, and Windows kill-on-close Job Object; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `P02.S05` - Namespace store collections per root in server mode via a stable short-hash prefix with instance-resolved collection names, unit-tested for stability and local-mode invariance; `src/vaultspec_rag/store.py, src/vaultspec_rag/tests/test_store.py`.
+- [x] `P02.S05` - Namespace store collections per root in server mode via a stable short-hash prefix with instance-resolved collection names, unit-tested for stability and local-mode invariance; `src/vaultspec_rag/store.py, src/vaultspec_rag/tests/test_store.py`.
 
 ### Phase `P03` - Service lifecycle integration
 

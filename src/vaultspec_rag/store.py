@@ -32,7 +32,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CodeChunk", "VaultDocument", "VaultStore", "VaultStoreLockedError"]
+__all__ = [
+    "CodeChunk",
+    "VaultDocument",
+    "VaultStore",
+    "VaultStoreLockedError",
+    "root_collection_prefix",
+]
 
 
 class VaultStoreLockedError(RuntimeError):
@@ -118,6 +124,30 @@ class FileLock:
 
 
 EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
+
+
+def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
+    """Return the stable per-root collection prefix for server mode.
+
+    One shared qdrant server hosts every root's data, so each root's
+    collections are namespaced by a short hash of the resolved root
+    path. The hash input is case-normalised (Windows paths are
+    case-insensitive) and resolved (``./project`` and ``project``
+    collide deliberately) so the same root always lands in the same
+    collections across processes and sessions.
+
+    Args:
+        root_dir: Workspace root directory.
+
+    Returns:
+        A prefix of the form ``r{12-hex}_``.
+    """
+    import os
+    import pathlib as _pathlib
+
+    resolved = os.path.normcase(str(_pathlib.Path(root_dir).resolve()))
+    digest = hashlib.blake2b(resolved.encode("utf-8"), digest_size=6).hexdigest()
+    return f"r{digest}_"
 
 
 @contextmanager
@@ -330,6 +360,12 @@ class VaultStore:
     ``.vault/data/search-data/qdrant/``).  The collection ``vault_docs``
     holds one point per indexed document, and ``codebase_docs`` holds
     points per source code chunk.
+
+    In server mode (``cfg.qdrant_url`` set) one shared qdrant server
+    hosts every root, so the instance-level collection names gain a
+    stable per-root prefix (see :func:`root_collection_prefix`); the
+    class attributes below remain the bare local-mode names and the
+    suffix of the namespaced names.
     """
 
     TABLE_NAME = "vault_docs"
@@ -364,6 +400,14 @@ class VaultStore:
         cfg = get_config()
 
         self.root_dir = _pathlib.Path(root_dir)
+        self._server_mode = bool(cfg.qdrant_url)
+        # One shared qdrant server hosts every root's data, so server
+        # mode namespaces this root's collections with a stable
+        # per-root prefix; the bare names stay the suffix. Local mode
+        # keeps the bare names (one store per project data dir).
+        _prefix = root_collection_prefix(self.root_dir) if self._server_mode else ""
+        self.TABLE_NAME = _prefix + VaultStore.TABLE_NAME
+        self.CODE_TABLE_NAME = _prefix + VaultStore.CODE_TABLE_NAME
         # Locking is backend-aware and split per concern. The lifecycle
         # lock guards client open/close, collection create/drop, and the
         # ensure flags. Point operations take their collection's own
@@ -372,13 +416,13 @@ class VaultStore:
         # structures and sqlite connection), so vault and code traffic
         # never serialize against each other. A remote Qdrant server
         # handles its own concurrency, so server-mode point operations
-        # take no lock at all.
+        # take no lock at all. The lock dict is keyed by the resolved
+        # (possibly prefixed) collection names assigned above.
         self._lifecycle_lock = threading.RLock()
         self._collection_locks: dict[str, threading.RLock] = {
             self.TABLE_NAME: threading.RLock(),
             self.CODE_TABLE_NAME: threading.RLock(),
         }
-        self._server_mode = bool(cfg.qdrant_url)
         self._client: QdrantClient | None = None
 
         if cfg.qdrant_url:
