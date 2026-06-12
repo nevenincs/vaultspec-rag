@@ -310,8 +310,8 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
         "message": (
             f"The search request to the service on port {port} timed out "
             f"after {timeout:g} seconds. The service may still be working "
-            "on that request; check service status and running jobs before "
-            "retrying."
+            "on that request; check service status and running index jobs "
+            "before retrying."
         ),
         "port": port,
         "timeout_seconds": timeout,

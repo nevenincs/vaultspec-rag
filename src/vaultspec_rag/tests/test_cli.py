@@ -1261,10 +1261,12 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "search request to the service" in normalized
         assert "timed out after 0.001 seconds" in normalized
+        assert "running index jobs before retrying" in normalized
+        assert "running jobs before retrying" not in normalized
         assert "Service: reachable; ready for requests; 3 project(s) loaded" in (
             result.output
         )
-        assert "Work: no running jobs reported" in result.output
+        assert "Work: no running index jobs reported" in result.output
         assert f"vaultspec-rag server status --port {port}" in result.output
         assert f"vaultspec-rag server jobs --running --port {port}" in result.output
         for forbidden in (
@@ -1711,7 +1713,7 @@ class TestSearchResultRendering:
         out = capsys.readouterr().out
         assert "HTTP search on port 8766 timed out after 180.0s." in out
         assert "Service: status check timed out" in out
-        assert "Work: 2 running job(s) reported" in out
+        assert "Work: 2 running index job(s) reported" in out
         assert "vaultspec-rag server jobs --running --port 8766" in out
         assert "same_project_search_strategy" not in out
         assert "serialized" not in out
