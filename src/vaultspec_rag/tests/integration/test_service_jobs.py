@@ -710,6 +710,46 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert "cuda reserved" not in output
 
 
+def test_job_detail_only_reports_progress_freshness_while_running(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_job_detail
+
+    base_job = {
+        "id": "job1",
+        "source": "code",
+        "trigger": "watcher",
+        "runtime_seconds": 2.0,
+        "last_progress_age_seconds": 600.0,
+        "progress": {
+            "step": "embed + upsert chunks",
+            "completed": 0,
+            "total": 180,
+        },
+        "initiator": {
+            "kind": "watcher",
+            "command": "watcher_code_index",
+            "project_root": r"proj-a",
+        },
+    }
+
+    _render_job_detail({**base_job, "phase": "running"})
+    running_output = capsys.readouterr().out
+
+    _render_job_detail(
+        {
+            **base_job,
+            "id": "failed1",
+            "phase": "error",
+            "result": "[Errno 28] No space left on device",
+        }
+    )
+    failed_output = capsys.readouterr().out
+
+    assert "10m" in running_output
+    assert "10m" not in failed_output
+
+
 def test_jobs_json_preserves_raw_service_payload() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)

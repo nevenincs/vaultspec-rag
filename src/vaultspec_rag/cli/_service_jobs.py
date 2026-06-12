@@ -572,10 +572,11 @@ def _render_job_detail(job: dict[str, object]) -> None:
         _cli.console.print(f"Project root: {root}")
     _cli.console.print(f"State: {_phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
-    _cli.console.print(
-        "Last progress update: "
-        f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
-    )
+    if str(job.get("phase", "")) == "running":
+        _cli.console.print(
+            "Last progress update: "
+            f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
+        )
     stale_progress = _stale_progress_label(job)
     if stale_progress:
         _cli.console.print(f"Progress warning: {stale_progress}")
