@@ -360,6 +360,16 @@ def _filters_label(result: dict[str, object]) -> str:
     return f" Filtered by {'; '.join(visible)}." if visible else ""
 
 
+def _filter_line(result: dict[str, object]) -> str:
+    text = _filters_label(result).strip()
+    if not text:
+        return ""
+    prefix = "Filtered by "
+    if text.startswith(prefix):
+        text = text[len(prefix) :]
+    return text.removesuffix(".")
+
+
 def _render_jobs_feed(
     result: dict[str, object],
     jobs: list[object],
@@ -371,17 +381,24 @@ def _render_jobs_feed(
     returned = result.get("returned", len(jobs))
     sorted_jobs = _human_sorted_jobs(jobs)
     active, waiting, finished, failed = _shown_job_counts(sorted_jobs)
-    filter_text = _filters_label(result)
-    monitor_text = ""
-    if monitoring:
-        monitor_text = f" refreshed {time.strftime('%H:%M:%S', time.localtime())}"
+    _cli.console.print(f"Jobs on service port {port}", markup=False, highlight=False)
+    _cli.console.print(f"Shown: {returned} of {total}", markup=False, highlight=False)
     _cli.console.print(
-        f"Jobs on service port {port}: {returned}/{total} shown: "
-        f"{active} active, {waiting} waiting, {finished} finished, {failed} failed. "
-        f"Latest shown last.{filter_text}"
-        f"{monitor_text}",
-        soft_wrap=True,
+        f"States: {active} active, {waiting} waiting, "
+        f"{finished} finished, {failed} failed",
+        markup=False,
+        highlight=False,
     )
+    _cli.console.print("Order: latest shown last", markup=False, highlight=False)
+    filter_text = _filter_line(result)
+    if filter_text:
+        _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
+    if monitoring:
+        _cli.console.print(
+            f"Refreshed: {time.strftime('%H:%M:%S', time.localtime())}",
+            markup=False,
+            highlight=False,
+        )
     if monitoring:
         _cli.console.print("Watching; press Ctrl+C to stop.")
     for job in sorted_jobs:

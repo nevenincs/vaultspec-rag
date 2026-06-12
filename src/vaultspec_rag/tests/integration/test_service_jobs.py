@@ -484,9 +484,10 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert result.exit_code == 0, result.output
     output = result.output
     expected_lines = (
-        f"Jobs on service port {port}: 3/3 shown: "
-        "1 active, 0 waiting, 1 finished, 1 failed",
-        "Latest shown last",
+        f"Jobs on service port {port}",
+        "Shown: 3 of 3",
+        "States: 1 active, 0 waiting, 1 finished, 1 failed",
+        "Order: latest shown last",
         "for proj-a (job runjob12)",
         "for proj-b (job failjob1)",
         "for proj-c (job donejob1)",
@@ -501,6 +502,9 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     missing = [text for text in expected_lines if text not in output]
     assert not missing, f"missing feed content: {missing}"
     forbidden_fragments = (
+        "3/3 shown:",
+        "Latest shown last.",
+        "Filtered by",
         "project=",
         " project proj-",
         " id runjob12",
@@ -525,6 +529,8 @@ def test_jobs_humanizes_disk_space_failures() -> None:
     jobs = cast("list[dict[str, object]]", payload["jobs"])
     failed_job = jobs[1]
     failed_job["result"] = "[Errno 28] No space left on device"
+    filters = cast("dict[str, object]", payload["filters"])
+    filters["failed"] = True
 
     with _jobs_http_server([payload]) as (_server, port):
         result = runner.invoke(
@@ -533,6 +539,8 @@ def test_jobs_humanizes_disk_space_failures() -> None:
         )
 
     assert result.exit_code == 0, result.output
+    assert "Filter: failed only" in result.output
+    assert "Filtered by failed only" not in result.output
     assert "not enough disk space; free disk space and retry" in result.output
     assert "[Errno 28]" not in result.output
     assert "No space left on device" not in result.output
@@ -571,7 +579,8 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     )
 
     output = capsys.readouterr().out
-    assert "1/1 shown: 0 active, 1 waiting, 0 finished, 0 failed" in output
+    assert "Shown: 1 of 1" in output
+    assert "States: 0 active, 1 waiting, 0 finished, 0 failed" in output
     assert "1 running" not in output
     assert "~ " in output
     assert "* " not in output
