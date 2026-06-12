@@ -345,6 +345,7 @@ def test_jobs_subcommand_registered() -> None:
         "--since",
         "--watch",
         "--interval",
+        "--refresh-count",
     )
     missing = [flag for flag in expected_flags if flag not in result.stdout]
     assert not missing, f"missing flags in help: {missing}"
@@ -363,6 +364,8 @@ def test_jobs_help_uses_operator_language() -> None:
         "index update activity",
         "Show only failed jobs",
         "Show only active or waiting jobs",
+        "Continuously refresh the human jobs view",
+        "Stop --watch after this many refreshes",
         "running, finished, or failed",
     )
     missing = [phrase for phrase in expected_phrases if phrase not in normalized]

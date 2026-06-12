@@ -839,8 +839,7 @@ def service_jobs(
         int | None,
         typer.Option(
             "--refresh-count",
-            help="Stop --watch after N refreshes.",
-            hidden=True,
+            help="Stop --watch after this many refreshes.",
         ),
     ] = None,
 ) -> None:
