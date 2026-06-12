@@ -183,6 +183,7 @@ def _status_contract_server(
     last_progress_age_seconds: float = 2.0,
     *,
     extra_running_job: bool = False,
+    omit_project: bool = False,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a local HTTP service exposing /health and /jobs for status tests."""
     import http.server
@@ -198,6 +199,7 @@ def _status_contract_server(
                     running_job_started_at,
                     last_progress_age_seconds=last_progress_age_seconds,
                     extra_running_job=extra_running_job,
+                    omit_project=omit_project,
                 )
                 if self.path.startswith("/jobs")
                 else _status_contract_health_payload()
@@ -221,31 +223,32 @@ def _status_contract_jobs_payload(
     *,
     last_progress_age_seconds: float,
     extra_running_job: bool,
+    omit_project: bool,
 ) -> dict[str, object]:
-    jobs: list[dict[str, object]] = [
-        {
-            "id": "running-job",
-            "source": "code",
-            "trigger": "tool",
-            "phase": "running",
-            "started_at": started_at,
-            "finished_at": None,
-            "result": None,
-            "progress": {
-                "step": "embed",
-                "completed": 7,
-                "total": 20,
-            },
-            "last_progress_age_seconds": last_progress_age_seconds,
-            "initiator": {
-                "command": "reindex_codebase",
-                "project_root": (
-                    r"vaultspec-rag"
-                    r"\feature-server-supervision"
-                ),
-            },
+    running_job: dict[str, object] = {
+        "id": "running-job",
+        "source": "code",
+        "trigger": "tool",
+        "phase": "running",
+        "started_at": started_at,
+        "finished_at": None,
+        "result": None,
+        "progress": {
+            "step": "embed",
+            "completed": 7,
+            "total": 20,
         },
-    ]
+        "last_progress_age_seconds": last_progress_age_seconds,
+    }
+    if not omit_project:
+        running_job["initiator"] = {
+            "command": "reindex_codebase",
+            "project_root": (
+                r"vaultspec-rag"
+                r"\feature-server-supervision"
+            ),
+        }
+    jobs: list[dict[str, object]] = [running_job]
     if extra_running_job:
         jobs.append(
             {
@@ -3053,6 +3056,36 @@ class TestServiceDaemonHelpers:
             assert "embedding source code sections 7 of 20" in active_rows[1]
             assert all(row.count("no progress for") <= 1 for row in active_rows)
             assert "Current job:" not in result.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_omits_missing_current_job_project(self, tmp_path: Path):
+        import json
+
+        server, thread = _status_contract_server(omit_project=True)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            lines = _plain_lines(result.output)
+            assert "Current job:" in lines
+            assert "Operation: code index operation" in lines
+            assert not any(line.startswith("Project:") for line in lines)
+            assert "project not reported" not in result.output
+            assert "project unknown" not in result.output
         finally:
             server.shutdown()
             server.server_close()

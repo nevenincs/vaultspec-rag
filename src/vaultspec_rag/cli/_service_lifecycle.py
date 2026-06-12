@@ -609,7 +609,7 @@ def _job_progress_summary(job: dict[str, object]) -> str:
 def _job_command_name(job: dict[str, object]) -> str:
     operation = _operation_label(job)
     project = _project_label(job)
-    if project != "project unknown":
+    if project != "project not reported":
         return f"{operation} for {project}"
     return operation
 
@@ -677,7 +677,7 @@ def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
         f"  Operation: {_operation_label(job)}",
     ]
     project = _project_label(job)
-    if project != "project unknown":
+    if project != "project not reported":
         lines.append(f"  Project: {project}")
     lines.append(f"  Runtime: {runtime}")
     progress = _human_progress(job)
