@@ -382,18 +382,18 @@ class TestServiceOperator:
         )
         assert obs.output.strip(), "Expected non-empty output (remediation hint)"
 
-    def test_server_watcher_status_no_service(self, tmp_path: Path) -> None:
-        """``server watcher status`` exits 3 when no daemon is running."""
+    def test_server_updates_status_no_service(self, tmp_path: Path) -> None:
+        """``server updates status`` exits 3 when no daemon is running."""
         from ._helpers import _service_env
 
         with _service_env(tmp_path):
             r = runner.invoke(
                 app,
-                ["server", "watcher", "status"],
+                ["server", "updates", "status"],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
         obs = _Observation(
-            command=["server", "watcher", "status"],
+            command=["server", "updates", "status"],
             exit_code=r.exit_code,
             output=r.output,
         )
@@ -433,7 +433,7 @@ class TestServiceOperator:
             server status   → exit 0, 'running'
             server logs     → exit 0, non-empty output
             server jobs     → exit 0, non-empty output
-            server watcher status → exit 0, non-empty output
+            server updates status → exit 0, non-empty output
             server projects list  → exit 0, non-empty output
         """
         port, status_dir = live_service
@@ -445,7 +445,7 @@ class TestServiceOperator:
             ["server", "status"],
             ["server", "logs"],
             ["server", "jobs"],
-            ["server", "watcher", "status"],
+            ["server", "updates", "status"],
             ["server", "projects", "list"],
         ]:
             r = runner.invoke(app, cmd, env=env)

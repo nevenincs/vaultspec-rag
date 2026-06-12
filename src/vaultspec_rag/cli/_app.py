@@ -56,7 +56,7 @@ server_projects_app = typer.Typer(
     rich_markup_mode=None,
 )
 server_watcher_app = typer.Typer(
-    help="Inspect and control the filesystem auto-reindex watcher.",
+    help="Inspect and control automatic index updates.",
     rich_markup_mode=None,
 )
 preprocess_app = typer.Typer(
@@ -67,7 +67,8 @@ preprocess_app = typer.Typer(
 app.add_typer(server_root_app, name="server")
 server_root_app.add_typer(mcp_app, name="mcp")
 server_root_app.add_typer(server_projects_app, name="projects")
-server_root_app.add_typer(server_watcher_app, name="watcher")
+server_root_app.add_typer(server_watcher_app, name="updates")
+server_root_app.add_typer(server_watcher_app, name="watcher", hidden=True)
 app.add_typer(preprocess_app, name="preprocess")
 
 

@@ -491,9 +491,10 @@ class TestServerRoutingFlattened:
         assert result.exit_code != 0
         assert "No such command" in result.output
 
-    def test_server_watcher_status_help(self):
-        result = runner.invoke(app, ["server", "watcher", "status", "--help"])
+    def test_server_updates_status_help(self):
+        result = runner.invoke(app, ["server", "updates", "status", "--help"])
         assert result.exit_code == 0, result.output
+        assert "automatic index update" in result.output.lower()
 
     def test_server_projects_list_help(self):
         result = runner.invoke(app, ["server", "projects", "list", "--help"])

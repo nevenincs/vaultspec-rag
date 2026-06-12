@@ -1,6 +1,6 @@
-"""CLI tests for the `server watcher` subcommands (plan P04).
+"""CLI tests for automatic index update subcommands (plan P04).
 
-Verifies the CLI plumbing for the watcher-control parity surface: the
+Verifies the CLI plumbing for the automatic-index-update parity surface: the
 service-unreachable path (exit code 3 + JSON envelope) for every
 subcommand, and CLI<->MCP structural parity. No mocks: commands run
 through the real Typer app against a dead port so ``_try_mcp_admin``
@@ -22,16 +22,16 @@ runner = CliRunner()
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59231"
 
-_WATCHER_COMMANDS = [
-    ["server", "watcher", "status"],
-    ["server", "watcher", "start", "/tmp/x"],
-    ["server", "watcher", "stop", "/tmp/x"],
-    ["server", "watcher", "reconfigure", "/tmp/x"],
+_UPDATES_COMMANDS = [
+    ["server", "updates", "status"],
+    ["server", "updates", "start", "/tmp/x"],
+    ["server", "updates", "stop", "/tmp/x"],
+    ["server", "updates", "reconfigure", "/tmp/x"],
 ]
 
 
-@pytest.mark.parametrize("argv", _WATCHER_COMMANDS)
-def test_watcher_command_not_running_json(argv: list[str]) -> None:
+@pytest.mark.parametrize("argv", _UPDATES_COMMANDS)
+def test_updates_command_not_running_json(argv: list[str]) -> None:
     result = runner.invoke(app, [*argv, "--port", _DEAD_PORT, "--json"])
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
@@ -39,23 +39,35 @@ def test_watcher_command_not_running_json(argv: list[str]) -> None:
     assert payload["error"] == "service_not_running"
 
 
-@pytest.mark.parametrize("argv", _WATCHER_COMMANDS)
-def test_watcher_command_not_running_prose(argv: list[str]) -> None:
+@pytest.mark.parametrize("argv", _UPDATES_COMMANDS)
+def test_updates_command_not_running_prose(argv: list[str]) -> None:
     result = runner.invoke(app, [*argv, "--port", _DEAD_PORT])
     assert result.exit_code == 3
     assert "not running" in result.stdout.lower()
 
 
-def test_watcher_subcommands_registered() -> None:
-    result = runner.invoke(app, ["server", "watcher", "--help"])
+def test_updates_subcommands_registered() -> None:
+    result = runner.invoke(app, ["server", "updates", "--help"])
     assert result.exit_code == 0
     for name in ("status", "start", "stop", "reconfigure"):
         assert name in result.stdout
+    assert "automatic index update" in result.stdout.lower()
+
+
+def test_watcher_alias_hidden_but_still_compatible() -> None:
+    server_help = runner.invoke(app, ["server", "--help"])
+    assert server_help.exit_code == 0
+    assert "updates" in server_help.stdout
+    assert "watcher" not in server_help.stdout.lower()
+
+    legacy = runner.invoke(app, ["server", "watcher", "status", "--port", _DEAD_PORT])
+    assert legacy.exit_code == 3
+    assert "not running" in legacy.stdout.lower()
 
 
 def test_cli_mcp_control_parity() -> None:
-    # Every watcher-control capability must exist as an MCP tool AND a
-    # CLI subcommand (the cli-mcp-control-parity contract).
+    # Every backend watcher-control capability must remain available, while
+    # the CLI exposes it with human-facing "updates" language.
     import asyncio
 
     from ..mcp import mcp
@@ -68,7 +80,7 @@ def test_cli_mcp_control_parity() -> None:
         "reconfigure_watcher",
     ):
         assert tool in tools
-    help_result = runner.invoke(app, ["server", "watcher", "--help"])
+    help_result = runner.invoke(app, ["server", "updates", "--help"])
     assert help_result.exit_code == 0
     for name in ("status", "start", "stop", "reconfigure"):
         assert name in help_result.stdout

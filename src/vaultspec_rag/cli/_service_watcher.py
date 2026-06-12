@@ -1,4 +1,4 @@
-"""``server watcher`` commands: status, start, stop, reconfigure."""
+"""``server updates`` commands: automatic index update controls."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def service_watcher_status(
         typer.Option("--json", help="Emit one JSON envelope instead of text."),
     ] = False,
 ) -> None:
-    """Show watcher config and which roots are being watched."""
+    """Show automatic index update settings and active roots."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("get_watcher_state", {}, resolved_port)
     if result is None:
@@ -63,23 +63,23 @@ def service_watcher_status(
         return
     mode = "enabled" if enabled else "disabled (pull-only)"
     _cli.console.print(
-        f"Auto-reindex: {mode}  "
+        f"Automatic index updates: {mode}  "
         f"debounce={result.get('debounce_ms')}ms  "
         f"cooldown={result.get('cooldown_s')}s",
         markup=False,
         highlight=False,
     )
     if not watching:
-        _cli.console.print("No roots currently watched.")
+        _cli.console.print("No roots currently have automatic index updates.")
         return
-    _cli.console.print(f"Watched roots: {len(watching)}")
+    _cli.console.print(f"Roots with automatic index updates: {len(watching)}")
     for entry in watching:
         _cli.console.print(f"- {entry}", markup=False, highlight=False)
 
 
 @server_watcher_app.command("start")
 def service_watcher_start(
-    root: Annotated[str, typer.Argument(help="Project root to watch.")],
+    root: Annotated[str, typer.Argument(help="Project root to keep indexed.")],
     port: Annotated[
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
@@ -89,7 +89,7 @@ def service_watcher_start(
         typer.Option("--json", help="Emit one JSON envelope instead of prose."),
     ] = False,
 ) -> None:
-    """Eagerly start the watcher for a project root."""
+    """Start automatic index updates for a project root."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("start_watcher", {"root": root}, resolved_port)
     if result is None:
@@ -101,22 +101,28 @@ def service_watcher_start(
         _emit_json(True, "service.watcher.start", data=result)
         return
     if started:
-        _cli.console.print(f"Auto-reindex watching: {root}", markup=False)
+        _cli.console.print(f"Automatic index updates started for: {root}", markup=False)
     elif not enabled:
         _cli.console.print(
-            f"Auto-reindex is disabled (pull-only); not watching {root}. "
+            f"Automatic index updates are disabled; {root} will update on demand. "
             "Start the service with --watch to enable.",
             markup=False,
             highlight=False,
         )
     else:
-        _cli.console.print(f"Could not start auto-reindex for: {root}", markup=False)
+        _cli.console.print(
+            f"Could not start automatic index updates for: {root}",
+            markup=False,
+        )
     raise typer.Exit(0)
 
 
 @server_watcher_app.command("stop")
 def service_watcher_stop(
-    root: Annotated[str, typer.Argument(help="Project root to stop watching.")],
+    root: Annotated[
+        str,
+        typer.Argument(help="Project root to stop updating automatically."),
+    ],
     port: Annotated[
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
@@ -126,7 +132,7 @@ def service_watcher_stop(
         typer.Option("--json", help="Emit one JSON envelope instead of prose."),
     ] = False,
 ) -> None:
-    """Stop the watcher for a project root (pull-only for that root)."""
+    """Stop automatic index updates for a project root."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("stop_watcher", {"root": root}, resolved_port)
     if result is None:
@@ -137,9 +143,9 @@ def service_watcher_stop(
         _emit_json(True, "service.watcher.stop", data=result)
         return
     if stopped:
-        _cli.console.print(f"Stopped auto-reindex for: {root}", markup=False)
+        _cli.console.print(f"Automatic index updates stopped for: {root}", markup=False)
     else:
-        _cli.console.print(f"No watcher was running for: {root}")
+        _cli.console.print(f"No automatic index updates were running for: {root}")
     raise typer.Exit(0)
 
 
@@ -163,7 +169,7 @@ def service_watcher_reconfigure(
         typer.Option("--json", help="Emit one JSON envelope instead of prose."),
     ] = False,
 ) -> None:
-    """Restart a root's watcher with new debounce/cooldown values."""
+    """Change automatic index update debounce/cooldown settings."""
     resolved_port = port if port is not None else _default_service_port()
     args: dict[str, object] = {"root": root}
     if debounce_ms is not None:
@@ -184,7 +190,7 @@ def service_watcher_reconfigure(
         return
     if restarted:
         _cli.console.print(
-            f"Auto-reindex reconfigured for {root}: "
+            f"Automatic index updates reconfigured for {root}: "
             f"debounce={result.get('debounce_ms')}ms "
             f"cooldown={result.get('cooldown_s')}s",
             markup=False,
@@ -192,7 +198,7 @@ def service_watcher_reconfigure(
         )
     else:
         _cli.console.print(
-            f"Auto-reindex is disabled (pull-only); not watching {root}.",
+            f"Automatic index updates are disabled; {root} will update on demand.",
             markup=False,
             highlight=False,
         )
