@@ -880,7 +880,10 @@ def _status_health_label(
     port_listening: bool,
 ) -> str:
     if isinstance(health, dict):
-        status = str(health.get("status", "unknown"))
+        raw_status = health.get("status")
+        if not isinstance(raw_status, str) or not raw_status or raw_status == "unknown":
+            return "not reported by service"
+        status = raw_status
         if status == "ready":
             return "ready for requests"
         if status == "starting":

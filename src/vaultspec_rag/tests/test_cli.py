@@ -3487,6 +3487,59 @@ class TestServiceDaemonHelpers:
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
 
+    def test_service_status_missing_health_status_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        class _MissingHealthStatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/health":
+                    payload = {"uptime_s": 12}
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _MissingHealthStatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port)],
+            )
+
+            assert result.exit_code == 4, result.output
+            labels = _label_values(result.output)
+            assert labels["Server"] == "unreachable"
+            assert labels["Ready"] == "not reported by service"
+            assert labels["Uptime"] == "12s"
+            assert "unknown" not in result.output.lower()
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
     def test_service_status_port_only_verbose_uses_network_language(
         self, tmp_path: Path
     ) -> None:
