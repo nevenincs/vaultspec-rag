@@ -33,12 +33,15 @@ QDRANT_RELEASE_BASE_URL: Final[str] = (
 )
 
 #: Hosts a provisioning download may touch. GitHub serves release
-#: artifacts via a redirect to its object store; any redirect outside
-#: this set is rejected as a potential hijack.
+#: artifacts via a redirect to its object-store hosts (observed:
+#: ``release-assets.githubusercontent.com``; historically
+#: ``objects.githubusercontent.com``); any redirect outside this set
+#: is rejected as a potential hijack.
 ALLOWED_DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
     {
         "github.com",
         "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
     }
 )
 

@@ -44,7 +44,7 @@ Ship the server qdrant command group and the server start consent flags
 
 Prove the real binary round trip, measure local versus server, and run the operator persona pass
 
-- [ ] `P05.S10` - Integration test: provision the real binary, run a server-mode vault and code index plus hybrid search round trip on an ephemeral port with temp storage, assert per-root prefixes and clean child reaping; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
+- [x] `P05.S10` - Integration test: provision the real binary, run a server-mode vault and code index plus hybrid search round trip on an ephemeral port with temp storage, assert per-root prefixes and clean child reaping; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
 - [ ] `P05.S11` - Run the concurrency benchmark against this worktree corpus in local and server modes and record the qdrant-phase delta; `.vault/exec/2026-06-12-qdrant-server-provisioning/`.
 - [ ] `P05.S12` - Run the operator persona pass over the qdrant CLI surface in human and JSON modes and record observations; `.vault/exec/2026-06-12-qdrant-server-provisioning/`.
 

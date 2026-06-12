@@ -141,7 +141,10 @@ def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
     target_name = binary_filename()
     out_path = dest_dir / target_name
 
-    if archive.name.endswith(".zip"):
+    # The download stages the archive under an extra ``.partial``
+    # suffix; strip it before sniffing the archive format.
+    effective_name = archive.name.removesuffix(".partial")
+    if effective_name.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
             for info in zf.infolist():
                 if Path(info.filename).name == target_name and not info.is_dir():
@@ -314,7 +317,13 @@ def _download_and_install(
             sha256=expected_sha256,
             message=str(exc),
         )
-    except (OSError, urllib.error.URLError, RuntimeError) as exc:
+    except (
+        OSError,
+        urllib.error.URLError,
+        RuntimeError,
+        tarfile.TarError,
+        zipfile.BadZipFile,
+    ) as exc:
         archive.unlink(missing_ok=True)
         logger.error("qdrant provisioning failed: %s", exc)
         return ProvisionReport(
