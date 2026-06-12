@@ -73,6 +73,10 @@ class SearchResult:
             (e.g. ``doc.pdf#page=12``), if any.
         locator: Human-readable locator (e.g. ``"page 12"``,
             ``"sheet Summary"``), if any.
+        rerank_text: Full candidate content used as the CrossEncoder
+            input (the snippet is a display excerpt, not a scoring
+            proxy). ``None`` when the source row carried no content;
+            excluded from serialized result payloads.
     """
 
     id: str
@@ -94,3 +98,4 @@ class SearchResult:
     preprocessor_id: str | None = None
     anchor: str | None = None
     locator: str | None = None
+    rerank_text: str | None = None

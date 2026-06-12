@@ -62,6 +62,10 @@ class EnvVar(StrEnum):
     # Document-preprocessing hook knobs (#185).
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
+    # Vault document chunking knob.
+    VAULT_CHUNK_CHARS = "VAULTSPEC_RAG_VAULT_CHUNK_CHARS"
+    # Reranker input token bound.
+    RERANKER_MAX_LENGTH = "VAULTSPEC_RAG_RERANKER_MAX_LENGTH"
 
     QDRANT_URL = "VAULTSPEC_RAG_QDRANT_URL"
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
@@ -109,6 +113,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # Document-preprocessing hook knobs (#185).
     "preprocess_max_emitted_bytes": EnvVar.PREPROCESS_MAX_EMITTED_BYTES,
     "html_strip": EnvVar.HTML_STRIP,
+    # Vault chunking + reranker input knobs.
+    "vault_chunk_chars": EnvVar.VAULT_CHUNK_CHARS,
+    "reranker_max_length": EnvVar.RERANKER_MAX_LENGTH,
     "qdrant_url": EnvVar.QDRANT_URL,
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
@@ -209,6 +216,15 @@ class VaultSpecConfigWrapper:
         "reranker_enabled": True,
         "reranker_model": "BAAI/bge-reranker-v2-m3",
         "reranker_batch_size": 32,
+        # Token bound for CrossEncoder inputs. The reranker scores
+        # token-bounded full candidate content; its tokenizer truncates
+        # each (query, content) pair to this length. 1024 covers a
+        # 3000-char vault chunk or a 1500-char code chunk plus query.
+        "reranker_max_length": 1024,
+        # Heading-aware vault chunk budget in characters. One Qdrant
+        # point per chunk; ~3000 chars is ~750 BPE tokens, well inside
+        # the 2048-token encoder cap with the title header prepended.
+        "vault_chunk_chars": 3000,
         "mcp_port": 8766,
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,

@@ -18,7 +18,8 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     parse_vault_metadata,
 )
 
-from ..store import VaultDocument
+from ..store import VaultChunk, VaultDocument
+from ._chunking import TextSplitter
 
 if TYPE_CHECKING:
     import pathlib
@@ -30,6 +31,7 @@ __all__ = [
     "_extract_feature",
     "_extract_title",
     "prepare_document",
+    "split_document",
 ]
 
 
@@ -91,6 +93,53 @@ def _extract_feature(metadata_tags: list[str]) -> str:
         if not DocType.from_tag(tag):
             return tag.lstrip("#")
     return ""
+
+
+def split_document(
+    doc: VaultDocument,
+    chunk_chars: int,
+) -> list[VaultChunk]:
+    """Split a prepared document into heading-aware vault chunks.
+
+    Uses the markdown-separator ``TextSplitter`` with no overlap so the
+    chunks partition the body cleanly. A document whose body fits the
+    budget (or is empty) still yields exactly one chunk, keeping every
+    document findable by its title and metadata. The ordinal-0 chunk
+    carries the full body so retrieval-by-id stays byte-exact.
+
+    Args:
+        doc: Prepared document (vector fields are ignored).
+        chunk_chars: Maximum characters per chunk.
+
+    Returns:
+        Ordered list of ``VaultChunk`` with empty vectors.
+    """
+    splitter = TextSplitter(
+        chunk_size=max(1, chunk_chars),
+        chunk_overlap=0,
+        language="markdown",
+    )
+    pieces = [p for p in splitter.split_text(doc.content) if p.strip()]
+    if not pieces:
+        pieces = [doc.content]
+    chunk_count = len(pieces)
+    return [
+        VaultChunk(
+            doc_id=doc.id,
+            ordinal=ordinal,
+            chunk_count=chunk_count,
+            text=piece,
+            path=doc.path,
+            doc_type=doc.doc_type,
+            feature=doc.feature,
+            date=doc.date,
+            tags=doc.tags,
+            related=doc.related,
+            title=doc.title,
+            doc_content=doc.content if ordinal == 0 else None,
+        )
+        for ordinal, piece in enumerate(pieces)
+    ]
 
 
 def prepare_document(

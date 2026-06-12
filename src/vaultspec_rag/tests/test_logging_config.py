@@ -12,12 +12,43 @@ import pytest
 from ..logging_config import (
     DaemonRotatingFileHandler,
     install_daemon_log_rotation,
+    log_event,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_log_event_emits_parseable_message_and_extra_fields(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    event_logger = logging.getLogger("vaultspec_rag.tests.event")
+
+    with caplog.at_level(logging.INFO, logger="vaultspec_rag.tests.event"):
+        log_event(
+            event_logger,
+            "service.search",
+            "completed",
+            request_id="abc123",
+            root=tmp_path / "project with spaces",
+            results=2,
+            cache_hit=False,
+        )
+
+    record = caplog.records[-1]
+    rendered = record.getMessage()
+    assert rendered.startswith("service.search event=completed ")
+    assert "request_id=abc123" in rendered
+    assert "root=" in rendered
+    assert "project with spaces" in rendered
+    assert "results=2" in rendered
+    assert "cache_hit=false" in rendered
+    assert record.__dict__["vaultspec_event_namespace"] == "service.search"
+    assert record.__dict__["vaultspec_event"] == "completed"
+    assert record.__dict__["vaultspec_event_fields"]["request_id"] == "abc123"
 
 
 def _clear_root_handlers() -> list[logging.Handler]:

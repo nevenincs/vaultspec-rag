@@ -204,6 +204,7 @@ class ServiceRegistry:
                 cfg.reranker_model,
                 device="cuda",
                 activation_fn=torch.nn.Sigmoid(),
+                max_length=int(cfg.reranker_max_length),
             )
             logger.info(
                 "Shared CrossEncoder loaded on %s: %s",

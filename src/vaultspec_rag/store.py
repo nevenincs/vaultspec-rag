@@ -220,6 +220,57 @@ class VaultDocument:
 
 
 @dataclass
+class VaultChunk:
+    """One heading-aware chunk of a vault document.
+
+    Each chunk becomes one Qdrant point in ``vault_docs``. The parent
+    document's metadata is flattened onto every chunk so filters work
+    unchanged; ``doc_id`` groups chunks back into documents at search
+    time. The ordinal-0 chunk additionally carries ``doc_content``
+    (the full document body) so ``get_by_id`` can return the exact
+    original text without reassembling chunks.
+
+    Attributes:
+        doc_id: Parent document stem (the pre-chunking point identity).
+        ordinal: Zero-based chunk position within the document.
+        chunk_count: Total chunks the parent document produced.
+        text: This chunk's markdown text (stored as point ``content``).
+        path: Parent document's relative path.
+        doc_type: Parent document type string.
+        feature: Parent feature tag without the leading ``#``.
+        date: Parent ISO date string.
+        tags: Parent frontmatter tags.
+        related: Parent related wiki-link strings.
+        title: Parent document title.
+        doc_content: Full parent body; populated only on ordinal 0.
+        vector: Dense embedding vector.
+        sparse_indices: Sparse vector indices (SPLADE).
+        sparse_values: Sparse vector values (SPLADE).
+    """
+
+    doc_id: str
+    ordinal: int
+    chunk_count: int
+    text: str
+    path: str
+    doc_type: str
+    feature: str
+    date: str
+    tags: list[str]
+    related: list[str]
+    title: str
+    doc_content: str | None = None
+    vector: list[float] = field(default_factory=list)
+    sparse_indices: list[int] = field(default_factory=list)
+    sparse_values: list[float] = field(default_factory=list)
+
+    @property
+    def point_key(self) -> str:
+        """Stable string identity for this chunk's Qdrant point."""
+        return f"{self.doc_id}#c{self.ordinal}"
+
+
+@dataclass
 class CodeChunk:
     """Schema for a source code chunk in the vector store.
 
@@ -484,13 +535,21 @@ class VaultStore:
 
             self._ensure_collection(self.TABLE_NAME)
 
-            for fname in ("doc_type", "feature", "date", "tags"):
+            # ``doc_id`` backs delete-by-document and chunk grouping;
+            # ``chunk_ordinal`` backs the doc-level listing filter.
+            for fname in ("doc_type", "feature", "date", "tags", "doc_id"):
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
                         collection_name=self.TABLE_NAME,
                         field_name=fname,
                         field_schema=models.PayloadSchemaType.KEYWORD,
                     )
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.TABLE_NAME,
+                    field_name="chunk_ordinal",
+                    field_schema=models.PayloadSchemaType.INTEGER,
+                )
             self._vault_ensured = True
 
     def ensure_code_table(self) -> None:
@@ -588,6 +647,62 @@ class VaultStore:
             )
         logger.info("Upserted %d document(s)", len(docs))
 
+    def upsert_document_chunks(self, chunks: list[VaultChunk]) -> None:
+        """Insert or update vault chunks keyed by ``doc_id#c{ordinal}``.
+
+        The full document body travels only on the ordinal-0 chunk
+        (``doc_content``) so retrieval-by-id stays exact while the
+        per-chunk payload carries just its own text.
+
+        Args:
+            chunks: Vault chunks to insert or replace.
+        """
+        if not chunks:
+            return
+
+        from qdrant_client import models
+
+        points: list[Any] = []
+        for chunk in chunks:
+            vector: dict[str, Any] = {
+                "dense": chunk.vector,
+            }
+            if chunk.sparse_indices:
+                vector["sparse"] = models.SparseVector(
+                    indices=chunk.sparse_indices,
+                    values=chunk.sparse_values,
+                )
+            payload: dict[str, Any] = {
+                "doc_id": chunk.doc_id,
+                "chunk_ordinal": chunk.ordinal,
+                "chunk_count": chunk.chunk_count,
+                "path": chunk.path,
+                "doc_type": chunk.doc_type,
+                "feature": chunk.feature,
+                "date": chunk.date,
+                "tags": chunk.tags,
+                "related": chunk.related,
+                "title": chunk.title,
+                "content": chunk.text,
+            }
+            if chunk.ordinal == 0 and chunk.doc_content is not None:
+                payload["doc_content"] = chunk.doc_content
+            points.append(
+                models.PointStruct(
+                    id=self._stable_id(chunk.point_key),
+                    vector=vector,
+                    payload=payload,
+                ),
+            )
+
+        with self._client_lock:
+            self.ensure_table()
+            self.client.upsert(
+                collection_name=self.TABLE_NAME,
+                points=points,
+            )
+        logger.info("Upserted %d vault chunk(s)", len(chunks))
+
     def upsert_code_chunks(self, chunks: list[CodeChunk]) -> None:
         """Insert or update codebase chunks by ``id``.
 
@@ -644,7 +759,11 @@ class VaultStore:
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
 
     def delete_documents(self, ids: list[str]) -> None:
-        """Remove documents by their ``id`` values.
+        """Remove documents (every chunk) by their ``doc_id`` values.
+
+        Deletes by payload filter rather than point id so all chunks of
+        a document go together, and points written before chunking
+        (whose payload also carries ``doc_id``) are removed too.
 
         Args:
             ids: List of document stem IDs to delete.
@@ -655,10 +774,18 @@ class VaultStore:
 
         with self._client_lock:
             self.ensure_table()
-            point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
             self.client.delete(
                 collection_name=self.TABLE_NAME,
-                points_selector=models.PointIdsList(points=point_ids),
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="doc_id",
+                                match=models.MatchAny(any=list(ids)),
+                            ),
+                        ],
+                    ),
+                ),
             )
         logger.info("Deleted %d document(s)", len(ids))
 
@@ -690,6 +817,100 @@ class VaultStore:
         with self._client_lock:
             self.ensure_table()
             return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
+
+    def get_chunk_counts(
+        self,
+        doc_ids: set[str] | None = None,
+    ) -> dict[str, int]:
+        """Return the stored chunk count per vault document.
+
+        Points written before chunking carry no ordinal and count as a
+        single chunk. Used to detect documents that shrank between
+        index runs so their stale tail chunks can be purged.
+
+        Args:
+            doc_ids: When given, restrict the scan to these documents.
+
+        Returns:
+            Mapping of document stem ID to its stored chunk count.
+        """
+        from qdrant_client import models
+
+        scroll_filter: Filter | None = None
+        if doc_ids is not None:
+            if not doc_ids:
+                return {}
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="doc_id",
+                        match=models.MatchAny(any=sorted(doc_ids)),
+                    ),
+                ],
+            )
+
+        counts: dict[str, int] = {}
+        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        with self._client_lock:
+            self.ensure_table()
+        while True:
+            with self._client_lock:
+                records, next_offset = self.client.scroll(
+                    collection_name=self.TABLE_NAME,
+                    scroll_filter=scroll_filter,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["doc_id", "chunk_ordinal"],
+                    with_vectors=False,
+                )
+            point: Record
+            for point in records:
+                payload = point.payload or {}
+                doc_id = payload.get("doc_id")
+                if doc_id is None:
+                    continue
+                ordinal = payload.get("chunk_ordinal")
+                chunk_no = (ordinal + 1) if isinstance(ordinal, int) else 1
+                key = str(doc_id)
+                counts[key] = max(counts.get(key, 0), chunk_no)
+            if next_offset is None:
+                break
+            offset = next_offset
+        return counts
+
+    def delete_document_chunk_tail(self, doc_id: str, from_ordinal: int) -> None:
+        """Delete a document's chunks at or beyond *from_ordinal*.
+
+        Called after re-indexing a document that shrank: the upsert
+        overwrote ordinals below the new count, and this removes the
+        now-orphaned tail.
+
+        Args:
+            doc_id: Document stem whose tail chunks to remove.
+            from_ordinal: First ordinal to delete (the new chunk count).
+        """
+        from qdrant_client import models
+
+        with self._client_lock:
+            self.ensure_table()
+            self.client.delete(
+                collection_name=self.TABLE_NAME,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="doc_id",
+                                match=models.MatchValue(value=doc_id),
+                            ),
+                            models.FieldCondition(
+                                key="chunk_ordinal",
+                                range=models.Range(gte=from_ordinal),
+                            ),
+                        ],
+                    ),
+                ),
+            )
+        logger.info("Deleted chunk tail of %s from ordinal %d", doc_id, from_ordinal)
 
     def get_all_code_ids(self) -> set[str]:
         """Return the set of all code chunk ``id`` values in the store.
@@ -813,10 +1034,16 @@ class VaultStore:
         """
         with self._client_lock:
             self.ensure_table()
-            point_id = self._stable_id(doc_id)
+            # The head chunk (ordinal 0) carries the full body as
+            # ``doc_content``; fall back to the pre-chunking point id
+            # so stores written before chunking still resolve.
+            point_ids: list[int | str | UUID] = [
+                self._stable_id(f"{doc_id}#c0"),
+                self._stable_id(doc_id),
+            ]
             records: list[Record] = self.client.retrieve(
                 collection_name=self.TABLE_NAME,
-                ids=[point_id],
+                ids=point_ids,
                 with_payload=True,
                 with_vectors=False,
             )
@@ -825,6 +1052,11 @@ class VaultStore:
             raw = records[0].payload
             payload: dict[str, Any] = dict(raw) if raw else {}
             payload["id"] = payload.pop("doc_id", doc_id)
+            doc_content = payload.pop("doc_content", None)
+            if isinstance(doc_content, str):
+                payload["content"] = doc_content
+            payload.pop("chunk_ordinal", None)
+            payload.pop("chunk_count", None)
             return payload
 
     def list_all_documents(
@@ -844,16 +1076,28 @@ class VaultStore:
         with self._client_lock:
             self.ensure_table()
 
-        scroll_filter: Filter | None = None
+        # One row per document: match only head chunks (ordinal 0) or
+        # points written before chunking (no ordinal field at all).
+        head_or_legacy = models.Filter(
+            should=[
+                models.FieldCondition(
+                    key="chunk_ordinal",
+                    match=models.MatchValue(value=0),
+                ),
+                models.IsEmptyCondition(
+                    is_empty=models.PayloadField(key="chunk_ordinal"),
+                ),
+            ],
+        )
+        conditions: list[Condition] = [head_or_legacy]
         if doc_type:
-            scroll_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="doc_type",
-                        match=models.MatchValue(value=doc_type),
-                    ),
-                ],
+            conditions.append(
+                models.FieldCondition(
+                    key="doc_type",
+                    match=models.MatchValue(value=doc_type),
+                ),
             )
+        scroll_filter = models.Filter(must=conditions)
 
         docs: list[dict[str, Any]] = []
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
@@ -871,6 +1115,11 @@ class VaultStore:
             for point in records:
                 payload: dict[str, Any] = dict(point.payload) if point.payload else {}
                 payload["id"] = payload.pop("doc_id", str(point.id))
+                doc_content = payload.pop("doc_content", None)
+                if isinstance(doc_content, str):
+                    payload["content"] = doc_content
+                payload.pop("chunk_ordinal", None)
+                payload.pop("chunk_count", None)
                 docs.append(payload)
             if next_offset is None:
                 break

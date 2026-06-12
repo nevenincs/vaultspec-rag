@@ -73,6 +73,23 @@ def _locator_component(
     return None
 
 
+def _group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
+    """Collapse chunk-level vault hits to one result per document.
+
+    The vault collection stores one point per document chunk, so a
+    single document can occupy several candidate slots. The
+    best-scoring chunk represents its document (its snippet is the
+    matched passage); duplicates drop. Order follows the surviving
+    scores, descending.
+    """
+    best: dict[str, SearchResult] = {}
+    for result in results:
+        current = best.get(result.id)
+        if current is None or result.score > current.score:
+            best[result.id] = result
+    return sorted(best.values(), key=lambda r: r.score, reverse=True)
+
+
 def _record_seconds(
     timings: dict[str, float] | None,
     key: str,
@@ -200,6 +217,8 @@ class VaultSearcher:
             import torch
             from sentence_transformers import CrossEncoder
 
+            from ..config import get_config
+
             if not torch.cuda.is_available():
                 msg = (
                     "CUDA GPU required for CrossEncoder reranker. No CUDA device found."
@@ -209,6 +228,7 @@ class VaultSearcher:
                 self._reranker_model_name,
                 device="cuda",
                 activation_fn=torch.nn.Sigmoid(),
+                max_length=int(get_config().reranker_max_length),
             )
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
@@ -250,9 +270,15 @@ class VaultSearcher:
 
         from ..config import get_config
 
+        cfg = get_config()
         reranker = self._get_reranker()
-        pairs = [(query, r.snippet) for r in results]
-        batch_size = get_config().reranker_batch_size
+        # Score the real candidate content, not the 200-char display
+        # snippet. The character cap only bounds tokenizer work on
+        # oversized rows (~6 chars per BPE token is a safe ceiling);
+        # the model's own max_length does the exact token truncation.
+        char_cap = max(1, int(cfg.reranker_max_length)) * 6
+        pairs = [(query, (r.rerank_text or r.snippet)[:char_cap]) for r in results]
+        batch_size = cfg.reranker_batch_size
         scores: list[float] = []
         with self._gpu_section(timings):
             while True:
@@ -388,26 +414,32 @@ class VaultSearcher:
         for r in raw_results:
             raw_score = r.get("_relevance_score", 0.0)
             score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+            content = str(r.get("content", ""))
             results.append(
                 SearchResult(
                     id=str(r["id"]),
                     path=str(r["path"]),
                     title=str(r.get("title", "")),
                     score=score,
-                    snippet=str(r.get("content", ""))[:200].strip(),
+                    snippet=content[:200].strip(),
                     source="vault",
                     doc_type=str(r.get("doc_type", "")),
                     feature=str(r.get("feature", "")),
                     date=str(r.get("date", "")),
+                    rerank_text=content or None,
                 ),
             )
         _record_seconds(timings, "result_mapping_seconds", phase_started)
 
+        # Rerank a wider candidate set than top_k: grouping below can
+        # collapse several chunks of one document into a single row, so
+        # the post-group list must not start under-filled.
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, top_k, timings=timings)
+        results = self._rerank(query_text, results, top_k * 2, timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
 
         phase_started = time.perf_counter()
+        results = _group_chunks_by_document(results)
         graph = self._get_graph()
         results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
         _record_seconds(timings, "graph_rerank_seconds", phase_started)
@@ -417,7 +449,7 @@ class VaultSearcher:
                 + timings.get("rerank_seconds", 0.0)
                 + timings.get("graph_rerank_seconds", 0.0)
             )
-        return results
+        return results[:top_k]
 
     def _build_codebase_store_filters(
         self,
@@ -475,7 +507,8 @@ class VaultSearcher:
             score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
             r_id = str(r["id"])
             r_path = str(r["path"])
-            snippet = str(r.get("content", ""))[:200].strip()
+            content = str(r.get("content", ""))
+            snippet = content[:200].strip()
             language = str(r.get("language", ""))
             line_start = r.get("line_start")
             line_end = r.get("line_end")
@@ -507,6 +540,7 @@ class VaultSearcher:
                     ),
                     anchor=str(anchor) if anchor is not None else None,
                     locator=_format_locator(r),
+                    rerank_text=content or None,
                 ),
             )
         return results
@@ -666,6 +700,7 @@ class VaultSearcher:
         self,
         raw_query: str,
         *,
+        surface: str | None = None,
         timings: dict[str, float] | None = None,
     ) -> tuple[ParsedQuery, str, list[float], SparseResult | None]:
         """Parse and encode a query, returning shared components.
@@ -676,6 +711,8 @@ class VaultSearcher:
         Args:
             raw_query: Raw query string, possibly with filter
                 tokens.
+            surface: Target corpus kind (``"vault"`` or ``"code"``)
+                selecting the dense encoder's task instruction.
 
         Returns:
             Four-element tuple of (parsed_query, cleaned_text,
@@ -684,7 +721,10 @@ class VaultSearcher:
         parsed = parse_query(raw_query)
         query_text = parsed.text or raw_query
         with self._gpu_section(timings):
-            query_vector = self.model.encode_query(query_text).tolist()
+            query_vector = self.model.encode_query(
+                query_text,
+                surface=surface,
+            ).tolist()
             sparse_vector = (
                 self.model.encode_query_sparse(query_text)
                 if self._sparse_enabled
@@ -752,6 +792,7 @@ class VaultSearcher:
         phase_started = time.perf_counter()
         parsed, query_text, query_vector, sparse_vector = self._encode_query(
             raw_query,
+            surface="vault",
             timings=timings,
         )
         timings["embedding_seconds"] = time.perf_counter() - phase_started
@@ -856,6 +897,7 @@ class VaultSearcher:
         phase_started = time.perf_counter()
         parsed, query_text, query_vector, sparse_vector = self._encode_query(
             raw_query,
+            surface="code",
             timings=timings,
         )
         timings["embedding_seconds"] = time.perf_counter() - phase_started

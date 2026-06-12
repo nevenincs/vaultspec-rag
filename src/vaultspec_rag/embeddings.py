@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from .config import EnvVar
 
@@ -458,13 +458,35 @@ class EmbeddingModel:
                     batch_size,
                 )
 
-    def encode_query(self, query: str) -> np.ndarray:
+    #: Task-specific instruction prompts for the dense encoder. Qwen3
+    #: embeddings are instruction-tuned: telling the model what kind of
+    #: corpus the query targets measurably improves retrieval. Keys are
+    #: search surfaces; ``None``/unknown falls back to the model's
+    #: built-in generic ``query`` prompt.
+    QUERY_PROMPTS: ClassVar[dict[str, str]] = {
+        "vault": (
+            "Instruct: Given a documentation search query, retrieve "
+            "relevant project documentation passages that answer the "
+            "query\nQuery: "
+        ),
+        "code": (
+            "Instruct: Given a code search query, retrieve relevant "
+            "source code snippets that implement or relate to it"
+            "\nQuery: "
+        ),
+    }
+
+    def encode_query(self, query: str, *, surface: str | None = None) -> np.ndarray:
         """Encode a search query as a dense embedding on GPU.
 
-        Uses prompt_name="query" for Qwen3's instruction-based encoding.
+        Uses Qwen3's instruction-based encoding: a surface-specific
+        instruction when *surface* names one, otherwise the model's
+        built-in generic query prompt.
 
         Args:
             query: Natural language query string.
+            surface: Target corpus kind (``"vault"`` or ``"code"``),
+                or ``None`` for the generic prompt.
 
         Returns:
             numpy array of shape ``(dimension,)`` with normalized embedding.
@@ -474,11 +496,19 @@ class EmbeddingModel:
         """
         import numpy as np
 
-        embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
-            [query],
-            prompt_name="query",
-            normalize_embeddings=True,
-        )
+        prompt = self.QUERY_PROMPTS.get(surface) if surface else None
+        if prompt is not None:
+            embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                [query],
+                prompt=prompt,
+                normalize_embeddings=True,
+            )
+        else:
+            embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                [query],
+                prompt_name="query",
+                normalize_embeddings=True,
+            )
         return np.asarray(embeddings[0], dtype=np.float32)
 
     def encode_documents_sparse(
