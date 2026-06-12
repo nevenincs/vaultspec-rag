@@ -395,9 +395,8 @@ def _render_in_process_results(
 @app.command(
     "search",
     help=(
-        "Search vault documents or source code using hybrid dense+sparse embeddings. "
-        "Delegates to a running service when one is detected; falls back to "
-        "in-process GPU search otherwise."
+        "Search project documents or source code. Uses the running service "
+        "when available; otherwise runs the search locally."
     ),
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
@@ -408,7 +407,7 @@ def handle_search(
         Literal["vault", "code"],
         typer.Option(
             "--type",
-            help="Search source: 'vault' (docs) or 'code' (source).",
+            help="Search area: 'vault' for documents or 'code' for source files.",
             show_default=True,
         ),
     ] = "vault",
@@ -417,8 +416,8 @@ def handle_search(
         typer.Option(
             "--max-results",
             help=(
-                "Maximum number of results to return. Default 10 "
-                "to mitigate top-k crowding by near-duplicate chunks."
+                "Maximum number of results to show. Default 10 keeps the "
+                "output focused."
             ),
         ),
     ] = 10,
@@ -426,16 +425,14 @@ def handle_search(
         str | None,
         typer.Option(
             "--language",
-            help="Code-search filter: programming language (e.g. 'python').",
+            help="Only show code results in this programming language.",
         ),
     ] = None,
     path: Annotated[
         str | None,
         typer.Option(
             "--path",
-            help=(
-                "Code-search filter: exact project-relative file path (KEYWORD match)."
-            ),
+            help="Only show code results from this exact project-relative path.",
         ),
     ] = None,
     include_paths: Annotated[
@@ -443,9 +440,8 @@ def handle_search(
         typer.Option(
             "--include-path",
             help=(
-                "Code-search filter: repeatable fnmatch glob; "
-                "keep results whose project-relative path matches "
-                "at least one pattern. Use with --type code."
+                "Only show code results whose project-relative path matches "
+                "this glob. Repeat for multiple globs."
             ),
         ),
     ] = None,
@@ -454,9 +450,8 @@ def handle_search(
         typer.Option(
             "--exclude-path",
             help=(
-                "Code-search filter: repeatable fnmatch glob; "
-                "drop results whose project-relative path matches "
-                "any pattern. Use with --type code."
+                "Hide code results whose project-relative path matches this "
+                "glob. Repeat for multiple globs."
             ),
         ),
     ] = None,
@@ -464,71 +459,63 @@ def handle_search(
         bool,
         typer.Option(
             "--dedup-locales",
-            help=(
-                "Code-search post-process: collapse near-tie locale "
-                "variants (e.g. locales/{en,es}.yml) into one canonical "
-                "result. Use with --type code."
-            ),
+            help=("Collapse matching locale files into one representative result."),
         ),
     ] = False,
     prefer: Annotated[
         str | None,
         typer.Option(
             "--prefer",
-            help=(
-                "Code-search post-process: nudge results matching the "
-                "given category up (and others down) after rerank. One "
-                "of 'prod', 'tests', 'docs'. Use with --type code."
-            ),
+            help=("Prefer one kind of code result: 'prod', 'tests', or 'docs'."),
         ),
     ] = None,
     node_type: Annotated[
         str | None,
         typer.Option(
             "--node-type",
-            help="Code-search filter: AST node type.",
+            help="Only show code results with this syntax node type.",
         ),
     ] = None,
     function_name: Annotated[
         str | None,
         typer.Option(
             "--function-name",
-            help="Code-search filter: function/method name.",
+            help="Only show code results from this function or method.",
         ),
     ] = None,
     class_name: Annotated[
         str | None,
         typer.Option(
             "--class-name",
-            help="Code-search filter: class/struct name.",
+            help="Only show code results from this class or struct.",
         ),
     ] = None,
     doc_type: Annotated[
         str | None,
         typer.Option(
             "--doc-type",
-            help="Vault-search filter: vault doc type (e.g. 'adr', 'plan').",
+            help="Only show document results with this type, such as 'adr' or 'plan'.",
         ),
     ] = None,
     feature: Annotated[
         str | None,
         typer.Option(
             "--feature",
-            help="Vault-search filter: feature tag (kebab-case).",
+            help="Only show document results for this feature tag.",
         ),
     ] = None,
     date: Annotated[
         str | None,
         typer.Option(
             "--date",
-            help="Vault-search filter: exact ISO date (yyyy-mm-dd).",
+            help="Only show document results from this date (yyyy-mm-dd).",
         ),
     ] = None,
     tag: Annotated[
         str | None,
         typer.Option(
             "--tag",
-            help="Vault-search filter: free-form tag (without #).",
+            help="Only show document results with this tag, without '#'.",
         ),
     ] = None,
     show_scores: Annotated[
@@ -540,18 +527,15 @@ def handle_search(
     ] = False,
     port: Annotated[
         int | None,
-        typer.Option("--port", help="Port of running RAG service (fast path)."),
+        typer.Option("--port", help="Use the service running on this port."),
     ] = None,
     allow_fallback: Annotated[
         bool,
         typer.Option(
             "--allow-fallback",
             help=(
-                "When --port is given but the service is unreachable, "
-                "silently fall back to in-process search. Defaults off: "
-                "the CLI hard-fails with remediation instead, to avoid "
-                "re-entering the Qdrant lock that the resident service "
-                "is meant to own."
+                "If the selected service is unavailable, run the search "
+                "locally instead of stopping with an error."
             ),
         ),
     ] = False,
@@ -559,25 +543,14 @@ def handle_search(
         bool,
         typer.Option(
             "--verbose",
-            help=(
-                "Re-enable HuggingFace tqdm progress bars during "
-                "in-process model load and encode. Off by default to "
-                "keep search output script-friendly."
-            ),
+            help=("Show model loading and progress messages during local search."),
         ),
     ] = False,
     json_mode: Annotated[
         bool,
         typer.Option(
             "--json",
-            help=(
-                "Emit one JSON envelope to stdout instead of text. "
-                "Wraps results in "
-                '{"ok": true, "command": "search", "data": '
-                '{"results": [...]}}; errors use the matching '
-                '{"ok": false, "error", "message"} shape. Use this '
-                "for agent / CI consumption."
-            ),
+            help=("Emit JSON for scripts and automation instead of human text."),
         ),
     ] = False,
     timeout: Annotated[
@@ -586,7 +559,7 @@ def handle_search(
             "--timeout",
             help=(
                 "Connection and read timeout budget in seconds "
-                "for service-delegated searches (default 300; "
+                "for searches handled by the service (default 300; "
                 "override with VAULTSPEC_RAG_SEARCH_TIMEOUT)."
             ),
         ),
