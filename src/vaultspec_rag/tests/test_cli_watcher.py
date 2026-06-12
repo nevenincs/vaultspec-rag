@@ -68,14 +68,24 @@ _UPDATES_COMMANDS = [
     ["server", "updates", "reconfigure", "/tmp/x"],
 ]
 
+_UPDATES_COMMAND_IDS = {
+    "status": "service.updates.status",
+    "start": "service.updates.start",
+    "stop": "service.updates.stop",
+    "reconfigure": "service.updates.reconfigure",
+}
+
 
 @pytest.mark.parametrize("argv", _UPDATES_COMMANDS)
 def test_updates_command_not_running_json(argv: list[str]) -> None:
     result = runner.invoke(app, [*argv, "--port", _DEAD_PORT, "--json"])
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
+    command_name = argv[2]
     assert payload["ok"] is False
+    assert payload["command"] == _UPDATES_COMMAND_IDS[command_name]
     assert payload["error"] == "service_not_running"
+    assert "watcher" not in payload["command"]
 
 
 @pytest.mark.parametrize("argv", _UPDATES_COMMANDS)

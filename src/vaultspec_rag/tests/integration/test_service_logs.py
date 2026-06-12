@@ -455,6 +455,29 @@ def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
     assert "details=use --raw" not in output
 
 
+def test_logs_empty_output_routes_operator_to_next_commands() -> None:
+    with _logs_http_server([{"lines": [], "total": 0, "filters": {}}]) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--lines", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+    assert lines[0] == "No recent activity entries were returned."
+    assert "Next actions:" in lines
+    commands = [line for line in lines if line.startswith("vaultspec-rag ")]
+    assert {
+        f"vaultspec-rag server jobs --running --port {port}",
+        f"vaultspec-rag server status --port {port}",
+        f"vaultspec-rag server logs --raw --port {port}",
+    } == set(commands)
+    assert "No recent activity found" not in result.output
+
+
 def test_logs_raw_mode_preserves_log_lines() -> None:
     with _logs_http_server([_activity_payload()]) as (_server, port):
         result = runner.invoke(

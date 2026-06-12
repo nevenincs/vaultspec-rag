@@ -81,6 +81,12 @@ def _watcher_service_unreachable(
     raise typer.Exit(3)
 
 
+_UPDATES_STATUS_COMMAND = "service.updates.status"
+_UPDATES_START_COMMAND = "service.updates.start"
+_UPDATES_STOP_COMMAND = "service.updates.stop"
+_UPDATES_RECONFIGURE_COMMAND = "service.updates.reconfigure"
+
+
 @server_watcher_app.command("status")
 def service_watcher_status(
     port: Annotated[
@@ -96,7 +102,7 @@ def service_watcher_status(
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("get_watcher_state", {}, resolved_port)
     if result is None:
-        _watcher_service_unreachable("service.watcher.status", json_mode)
+        _watcher_service_unreachable(_UPDATES_STATUS_COMMAND, json_mode)
         return
     raw_watching = result.get("watching")
     watching: list[object] = (
@@ -104,7 +110,7 @@ def service_watcher_status(
     )
     enabled = bool(result.get("watch_enabled", False))
     if json_mode:
-        _emit_json(True, "service.watcher.status", data=result)
+        _emit_json(True, _UPDATES_STATUS_COMMAND, data=result)
         return
     mode = "enabled" if enabled else "disabled; indexes update when requested"
     _cli.console.print(f"Automatic index updates: {mode}", markup=False)
@@ -133,12 +139,12 @@ def service_watcher_start(
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("start_watcher", {"root": project}, resolved_port)
     if result is None:
-        _watcher_service_unreachable("service.watcher.start", json_mode, root=project)
+        _watcher_service_unreachable(_UPDATES_START_COMMAND, json_mode, root=project)
         return
     started = bool(result.get("started", False))
     enabled = bool(result.get("watch_enabled", False))
     if json_mode:
-        _emit_json(True, "service.watcher.start", data=result)
+        _emit_json(True, _UPDATES_START_COMMAND, data=result)
         return
     if started:
         _cli.console.print(
@@ -178,11 +184,11 @@ def service_watcher_stop(
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("stop_watcher", {"root": project}, resolved_port)
     if result is None:
-        _watcher_service_unreachable("service.watcher.stop", json_mode, root=project)
+        _watcher_service_unreachable(_UPDATES_STOP_COMMAND, json_mode, root=project)
         return
     stopped = bool(result.get("stopped", False))
     if json_mode:
-        _emit_json(True, "service.watcher.stop", data=result)
+        _emit_json(True, _UPDATES_STOP_COMMAND, data=result)
         return
     if stopped:
         _cli.console.print(
@@ -251,14 +257,14 @@ def service_watcher_reconfigure(
     result = _try_http_admin("reconfigure_watcher", args, resolved_port)
     if result is None:
         _watcher_service_unreachable(
-            "service.watcher.reconfigure",
+            _UPDATES_RECONFIGURE_COMMAND,
             json_mode,
             root=project,
         )
         return
     restarted = bool(result.get("restarted", False))
     if json_mode:
-        _emit_json(True, "service.watcher.reconfigure", data=result)
+        _emit_json(True, _UPDATES_RECONFIGURE_COMMAND, data=result)
         return
     if restarted:
         _cli.console.print(f"Automatic index updates reconfigured for: {project}")

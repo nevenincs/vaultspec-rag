@@ -274,12 +274,34 @@ def _render_raw_lines(log_lines: list[object]) -> None:
     sys.stdout.flush()
 
 
-def _render_activity_feed(log_lines: list[object]) -> None:
+def _render_no_activity_hint(port: int) -> None:
+    _cli.console.print(
+        "No recent activity entries were returned.",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _cli.console.print(
+        f"  vaultspec-rag server jobs --running --port {port}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"  vaultspec-rag server status --port {port}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"  vaultspec-rag server logs --raw --port {port}",
+        markup=False,
+        highlight=False,
+    )
+
+
+def _render_activity_feed(log_lines: list[object], *, port: int) -> None:
     activity_lines = _activity_feed_lines(log_lines)
     if not activity_lines:
-        _cli.console.print(
-            "No recent activity found. Run with --raw to inspect original log lines."
-        )
+        _render_no_activity_hint(port)
         return
     for line in activity_lines:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
@@ -314,6 +336,20 @@ def service_logs(
 ) -> None:
     """Show recent activity from the running service log."""
     resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "service.logs",
+                "service_not_running",
+                "Service is not running. Start it with `vaultspec-rag server start`.",
+                3,
+            )
+        _cli.console.print(
+            "Service is not running. Start it with `vaultspec-rag server start`.",
+            markup=False,
+            highlight=False,
+        )
+        raise typer.Exit(3)
     args: dict[str, object] = {"lines": lines}
     if job_id:
         args["job_id"] = job_id
@@ -344,11 +380,9 @@ def service_logs(
         cast("list[object]", raw_lines) if isinstance(raw_lines, list) else []
     )
     if not log_lines:
-        _cli.console.print(
-            "No recent activity found. Run with --raw to inspect original log lines."
-        )
+        _render_no_activity_hint(resolved_port)
         return
     if raw:
         _render_raw_lines(log_lines)
         return
-    _render_activity_feed(log_lines)
+    _render_activity_feed(log_lines, port=resolved_port)

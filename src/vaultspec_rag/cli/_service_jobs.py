@@ -24,6 +24,7 @@ _RESULT_RE = re.compile(
     r"^\+(?P<added>\d+)\s*/(?P<updated>\d+)\s*-(?P<removed>\d+)"
     r"\s*\((?P<duration_ms>\d+)ms\)(?:\s*~(?P<skipped>\d+))?$"
 )
+_STALE_PROGRESS_SECONDS = 300.0
 
 
 def _format_seconds(raw: object) -> str:
@@ -232,6 +233,17 @@ def _human_progress(job: dict[str, object]) -> str:
     return label
 
 
+def _stale_progress_label(job: dict[str, object]) -> str:
+    if str(job.get("phase", "")) != "running" or _job_is_waiting(job):
+        return ""
+    raw_age = job.get("last_progress_age_seconds")
+    if not isinstance(raw_age, int | float):
+        return ""
+    if float(raw_age) < _STALE_PROGRESS_SECONDS:
+        return ""
+    return f"no progress for {_format_seconds(raw_age)}"
+
+
 def _human_result(raw: object) -> str:
     if not raw:
         return ""
@@ -262,12 +274,17 @@ def _job_summary_detail(job: dict[str, object]) -> str:
     if phase == "running":
         detail = _human_progress(job)
         runtime = _format_seconds(job.get("runtime_seconds"))
+        stale_progress = _stale_progress_label(job)
         if _job_is_waiting(job):
             if detail:
                 return f"{detail} for {runtime}"
             return f"waiting for {runtime}"
         if detail:
+            if stale_progress:
+                return f"{detail}; running for {runtime}; {stale_progress}"
             return f"{detail}; running for {runtime}"
+        if stale_progress:
+            return f"running for {runtime}; {stale_progress}"
         return f"running for {runtime}"
     if phase in ("error", "failed"):
         result = _human_result(job.get("result"))
@@ -533,6 +550,9 @@ def _render_job_detail(job: dict[str, object]) -> None:
         "Last progress update: "
         f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
     )
+    stale_progress = _stale_progress_label(job)
+    if stale_progress:
+        _cli.console.print(f"Progress warning: {stale_progress}")
     initiator = job.get("initiator")
     if isinstance(initiator, dict):
         _cli.console.print(f"Started by: {_initiator_label(initiator.get('kind'))}")
