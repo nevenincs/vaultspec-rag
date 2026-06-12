@@ -205,13 +205,17 @@ def handle_preprocess_run_one(
     if json_mode:
         _emit_json(True, "preprocess run-one", data=data)
         return
-    _cli.console.print(f"Rule: {rule.pattern}", markup=False, highlight=False)
-    _cli.console.print(f"Result: {_format_preprocess_result(result.status)}")
+    _cli.console.print(
+        f"Matched rule: {rule.pattern}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(f"Outcome: {_format_preprocess_result(result.status)}")
     if result.reason:
-        _cli.console.print(f"Reason: {result.reason}")
+        _cli.console.print(f"Why: {result.reason}")
     if output is not None:
         content = _format_unit_count(unit_count) if output.units else "text output"
         _cli.console.print(
-            f"Extractor: {output.preprocessor_id} {output.preprocessor_version}"
+            f"Preprocessor: {output.preprocessor_id} {output.preprocessor_version}"
         )
-        _cli.console.print(f"Content: {content}")
+        _cli.console.print(f"Output: {content}")

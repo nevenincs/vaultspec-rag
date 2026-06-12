@@ -206,10 +206,14 @@ def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
     )
     assert result.exit_code == 0
-    assert "Rule: *.pdf" in result.output
-    assert "Result: preprocessed" in result.output
-    assert "Extractor: fake 1.0" in result.output
-    assert "Content: 1 extracted unit" in result.output
+    assert "Matched rule: *.pdf" in result.output
+    assert "Outcome: preprocessed" in result.output
+    assert "Preprocessor: fake 1.0" in result.output
+    assert "Output: 1 extracted unit" in result.output
+    assert "Rule:" not in result.output
+    assert "Result:" not in result.output
+    assert "Extractor:" not in result.output
+    assert "Content:" not in result.output
     assert "status ok" not in result.output
     assert "schema v" not in result.output
     assert "mode=" not in result.output
