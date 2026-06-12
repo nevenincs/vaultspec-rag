@@ -56,6 +56,16 @@ def _seed_qdrant_install(
     )
 
 
+def _closed_port() -> int:
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = int(sock.getsockname()[1])
+    sock.close()
+    return port
+
+
 def test_server_start_help_exposes_qdrant_options_in_operator_language() -> None:
     result = runner.invoke(app, ["server", "start", "--help"])
 
@@ -106,6 +116,33 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
         "Service child",
     ):
         assert old_term not in result.output
+
+
+def test_qdrant_status_is_actionable_when_installed_but_not_running(
+    tmp_path: Path,
+) -> None:
+    _seed_qdrant_install(tmp_path)
+    port = _closed_port()
+
+    result = runner.invoke(
+        app,
+        ["server", "qdrant", "status"],
+        env={
+            EnvVar.STATUS_DIR.value: str(tmp_path),
+            EnvVar.QDRANT_PORT.value: str(port),
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    labels = _labels(result.output)
+    assert labels["Install"] != "not installed"
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["State"] == f"Qdrant is not answering on http://127.0.0.1:{port}."
+    assert "Next action:" in result.output
+    assert "vaultspec-rag server start --qdrant" in result.output
+    assert "vaultspec-rag server qdrant install" not in result.output
+    assert "Installed versions:" in result.output
+    assert f"{QDRANT_SERVER_VERSION} - downloaded release (current)" in result.output
 
 
 def test_qdrant_install_dry_run_uses_install_language(tmp_path: Path) -> None:

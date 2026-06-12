@@ -46,6 +46,11 @@ def _readyz_probe(port: int) -> bool:
         return False
 
 
+def _print_next_action(command: str) -> None:
+    _print_line("Next action:")
+    _print_line(f"  {command}")
+
+
 def _action_label(action: object) -> str:
     return str(action).replace("_", " ")
 
@@ -185,14 +190,15 @@ def qdrant_status(
         _print_line(f"Install: {active['path']}")
     else:
         _print_line("Install: not installed")
-        _print_line("Next action:")
-        _print_line("  vaultspec-rag server qdrant install")
+        _print_next_action("vaultspec-rag server qdrant install")
     address = f"http://127.0.0.1:{payload['port']}"
     _print_line(f"Address: {address}")
     if payload["ready"]:
         _print_line(f"State: Qdrant is answering on {address}.")
     else:
         _print_line(f"State: Qdrant is not answering on {address}.")
+        if isinstance(active, dict):
+            _print_next_action("vaultspec-rag server start --qdrant")
     service = payload["service"]
     if isinstance(service, dict) and service.get("recorded"):
         alive = (
