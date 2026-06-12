@@ -1,4 +1,4 @@
-"""``server projects`` commands: list and evict project slots."""
+"""``server projects`` commands: list and unload active projects."""
 
 from __future__ import annotations
 
@@ -31,6 +31,23 @@ def _humanize_idle(seconds: float) -> str:
     h, rem = divmod(int(seconds), 3600)
     m = rem // 60
     return f"{h}h {m}m"
+
+
+def _humanize_duration(seconds: int) -> str:
+    """Format a configuration duration for user-facing output."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        minutes, remainder = divmod(seconds, 60)
+        if remainder:
+            return f"{minutes}m {remainder}s"
+        return f"{minutes}m"
+    hours, remainder = divmod(seconds, 3600)
+    minutes = remainder // 60
+    if minutes:
+        return f"{hours}h {minutes}m"
+    return f"{hours}h"
 
 
 def _truncate_root(root: str, width: int = 60) -> str:
@@ -67,8 +84,10 @@ def _project_summary(raw_entry: object) -> tuple[str, str] | None:
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
     last_access = hms or "unknown"
+    request_word = "request" if refs == 1 else "requests"
     metadata = (
-        f"idle {_humanize_idle(idle_s)}; references {refs}; last access {last_access}"
+        f"unused for {_humanize_idle(idle_s)}; in use by {refs} {request_word}; "
+        f"last used {last_access}"
     )
     return root_str, metadata
 
@@ -78,12 +97,15 @@ def _print_projects_summary(
 ) -> None:
     if not projects:
         _cli.console.print(
-            f"No active project slots. (0/{max_projects} slots, idle TTL {idle_ttl}s)",
+            "No projects are loaded. "
+            f"Capacity: 0/{max_projects}; unloaded after "
+            f"{_humanize_duration(idle_ttl)} unused.",
         )
         return
 
     _cli.console.print(
-        f"Active project slots: {len(projects)}/{max_projects}, idle TTL {idle_ttl}s",
+        f"Loaded projects: {len(projects)}/{max_projects}; unloaded after "
+        f"{_humanize_duration(idle_ttl)} unused.",
     )
     for raw_entry in projects:
         summary = _project_summary(raw_entry)
@@ -109,7 +131,7 @@ def service_projects_list(
         ),
     ] = False,
 ) -> None:
-    """List active project slots on a running RAG service."""
+    """List projects currently loaded by the running RAG service."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("list_projects", {}, resolved_port)
     if result is None:
@@ -176,9 +198,10 @@ def _handle_evict_json(
     )
 
 
-@server_projects_app.command("evict")
+@server_projects_app.command("evict", hidden=True)
+@server_projects_app.command("unload")
 def service_projects_evict(
-    root: Annotated[str, typer.Argument(help="Project root to evict.")],
+    root: Annotated[str, typer.Argument(help="Project root to unload.")],
     port: Annotated[
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
@@ -191,7 +214,7 @@ def service_projects_evict(
         ),
     ] = False,
 ) -> None:
-    """Evict a project slot on a running RAG service."""
+    """Unload a project from the running RAG service."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin(
         "evict_project",
@@ -208,13 +231,16 @@ def service_projects_evict(
         _handle_evict_json(evicted, reason, root, result)
 
     if evicted:
-        _cli.console.print(f"Project slot evicted: {root}", markup=False)
+        _cli.console.print(f"Project unloaded: {root}", markup=False)
         raise typer.Exit(0)
     if reason == "busy":
-        _cli.console.print(f"Project slot busy: {root}. Retry shortly.", markup=False)
+        _cli.console.print(
+            f"Project is in use: {root}. Retry shortly.",
+            markup=False,
+        )
         raise typer.Exit(1)
     if reason == "not_found":
-        _cli.console.print(f"Project slot not found: {root}", markup=False)
+        _cli.console.print(f"Project is not loaded: {root}", markup=False)
         raise typer.Exit(2)
     _cli.console.print(f"Unexpected response: {result}", markup=False)
     raise typer.Exit(1)

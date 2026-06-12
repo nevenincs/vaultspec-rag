@@ -52,7 +52,7 @@ mcp_app = typer.Typer(
     rich_markup_mode=None,
 )
 server_projects_app = typer.Typer(
-    help="Inspect and evict project slots on a running RAG service.",
+    help="Inspect and unload projects held by the running RAG service.",
     rich_markup_mode=None,
 )
 server_watcher_app = typer.Typer(

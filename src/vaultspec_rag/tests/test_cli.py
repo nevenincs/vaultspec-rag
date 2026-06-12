@@ -2251,7 +2251,7 @@ def _find_free_port() -> int:
 
 
 class TestServiceProjectsCli:
-    """In-process CLI coverage for `server projects list|evict`."""
+    """In-process CLI coverage for `server projects list|unload`."""
 
     def test_projects_list_help_renders(self) -> None:
         result = runner.invoke(
@@ -2259,15 +2259,52 @@ class TestServiceProjectsCli:
             ["server", "projects", "list", "--help"],
         )
         assert result.exit_code == 0
-        assert "project slots" in result.output.lower()
+        assert "projects currently loaded" in result.output.lower()
+        assert "project slots" not in result.output.lower()
+        projects_help = runner.invoke(app, ["server", "projects", "--help"])
+        assert projects_help.exit_code == 0
+        assert "unload" in projects_help.output.lower()
+        assert "evict" not in projects_help.output.lower()
 
-    def test_projects_evict_help_renders(self) -> None:
+    def test_projects_unload_help_renders(self) -> None:
+        result = runner.invoke(
+            app,
+            ["server", "projects", "unload", "--help"],
+        )
+        assert result.exit_code == 0
+        assert "Unload" in result.output or "unload" in result.output
+
+    def test_projects_evict_alias_remains_callable(self) -> None:
         result = runner.invoke(
             app,
             ["server", "projects", "evict", "--help"],
         )
         assert result.exit_code == 0
-        assert "Evict" in result.output or "evict" in result.output
+        assert "unload" in result.output.lower()
+
+    def test_projects_list_summary_uses_operator_language(self, capsys) -> None:
+        from ..cli._service_projects import _print_projects_summary
+
+        _print_projects_summary(
+            [
+                {
+                    "root": r"example",
+                    "idle_seconds": 125,
+                    "ref_count": 1,
+                    "last_access_iso": "2026-06-12T14:05:06Z",
+                }
+            ],
+            max_projects=16,
+            idle_ttl=1800,
+        )
+
+        out = capsys.readouterr().out
+        assert "Loaded projects: 1/16; unloaded after 30m unused." in out
+        assert r"- example" in out
+        assert "unused for 2m 5s; in use by 1 request; last used 14:05:06" in out
+        assert "project slots" not in out.lower()
+        assert "idle ttl" not in out.lower()
+        assert "references" not in out.lower()
 
     def test_projects_list_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
@@ -2284,7 +2321,7 @@ class TestServiceProjectsCli:
             [
                 "server",
                 "projects",
-                "evict",
+                "unload",
                 "/some/root",
                 "--port",
                 str(port),
