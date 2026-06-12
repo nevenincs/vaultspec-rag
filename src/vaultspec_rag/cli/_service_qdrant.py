@@ -241,7 +241,7 @@ def qdrant_clean(
     ] = False,
     yes: Annotated[
         bool,
-        typer.Option("--yes", help="Confirm deletion."),
+        typer.Option("--yes", help="Confirm deletion of managed Qdrant installs."),
     ] = False,
     dry_run: Annotated[
         bool,
@@ -279,7 +279,11 @@ def _render_clean_preview(
     json_mode: bool,
 ) -> None:
     """Render the gated/dry-run preview; exits 1 when --yes is missing."""
-    detail = "Dry run - nothing removed." if dry_run else "Re-run with --yes to delete."
+    detail = (
+        "Dry run - no managed Qdrant installs were removed."
+        if dry_run
+        else "Re-run with --yes to delete these managed Qdrant installs."
+    )
     if json_mode:
         _emit_json(
             True,
@@ -288,9 +292,9 @@ def _render_clean_preview(
         )
     else:
         if targets:
-            _print_line(f"Would remove: {', '.join(targets)}")
+            _print_line(f"Would remove installed Qdrant versions: {', '.join(targets)}")
         else:
-            _print_line("Nothing to remove.")
+            _print_line("No managed Qdrant installs would be removed.")
         _print_line(detail)
     if not dry_run and targets:
         raise typer.Exit(code=1)
