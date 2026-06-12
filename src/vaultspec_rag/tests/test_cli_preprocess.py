@@ -77,6 +77,17 @@ def _json(output: str) -> dict[str, Any]:
     raise AssertionError(msg)
 
 
+def _human_fields(output: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        label, sep, value = line.partition(": ")
+        assert sep, f"expected labeled CLI line, got {line!r}"
+        fields[label] = value
+    return fields
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -206,15 +217,10 @@ def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
     )
     assert result.exit_code == 0
-    assert "Matched rule: *.pdf" in result.output
-    assert "Outcome: preprocessed" in result.output
-    assert "Preprocessor: fake 1.0" in result.output
-    assert "Output: 1 extracted unit" in result.output
-    assert "Rule:" not in result.output
-    assert "Result:" not in result.output
-    assert "Extractor:" not in result.output
-    assert "Content:" not in result.output
-    assert "status ok" not in result.output
-    assert "schema v" not in result.output
-    assert "mode=" not in result.output
-    assert "unit(s)" not in result.output
+    fields = _human_fields(result.output)
+    assert fields == {
+        "Matched rule": "*.pdf",
+        "Outcome": "preprocessed",
+        "Preprocessor": "fake 1.0",
+        "Output": "1 extracted unit",
+    }

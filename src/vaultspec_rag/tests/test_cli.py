@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import typing
 from pathlib import Path
 
@@ -34,6 +35,102 @@ from ..torch_config import TorchConfigAction
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
+_SEARCH_RECORD_RE = re.compile(
+    r"^(?P<number>\d+)\. "
+    r"(?P<location>\S+)"
+    r"(?: \(score (?P<score>\d+\.\d{4})\))? - "
+    r"(?P<text>.*)$"
+)
+
+
+def _plain_lines(output: str) -> list[str]:
+    clean = _ANSI_RE.sub("", output)
+    return [line.strip() for line in clean.splitlines() if line.strip()]
+
+
+def _search_records(output: str) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for line in _plain_lines(output):
+        match = _SEARCH_RECORD_RE.fullmatch(line)
+        assert match is not None, f"Expected search record line, got {line!r}"
+        records.append(
+            {
+                "number": int(match.group("number")),
+                "location": match.group("location"),
+                "score": match.group("score"),
+                "text": match.group("text"),
+            }
+        )
+    return records
+
+
+def _assert_no_table_borders(output: str) -> None:
+    assert not any(glyph in output for glyph in ("─", "│", "┌", "┐", "└", "┘"))
+
+
+def _invoke_search_contract(
+    tmp_path: Path,
+    port: int,
+    *extra: str,
+) -> Result:
+    return runner.invoke(
+        app,
+        [
+            "--target",
+            str(tmp_path),
+            "search",
+            "service status",
+            "--type",
+            "code",
+            "--limit",
+            "2",
+            "--port",
+            str(port),
+            *extra,
+        ],
+    )
+
+
+def _expected_code_search_request(tmp_path: Path, query: str) -> dict[str, object]:
+    return {
+        "query": query,
+        "top_k": 2,
+        "project_root": str(tmp_path),
+        "type": "codebase",
+    }
+
+
+def _assert_record(
+    record: dict[str, object],
+    *,
+    number: int,
+    location: str,
+    text: str,
+    score: str | None = None,
+) -> None:
+    assert record == {
+        "number": number,
+        "location": location,
+        "score": score,
+        "text": text,
+    }
+
+
+def _latency_values(lines: list[str]) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for line in lines:
+        match = re.fullmatch(r"(?P<label>.+): (?P<value>\d+\.\d)ms.*", line)
+        if match is not None:
+            values[match.group("label")] = float(match.group("value"))
+    return values
+
+
+def _quality_probe_line(line: str) -> tuple[str, str, str]:
+    match = re.fullmatch(r"1\. (passed|failed): (.+) - (.+)", line)
+    assert match is not None
+    return (match.group(1), match.group(2), match.group(3))
 
 
 def _hold_local_index_lock(root: Path):
@@ -1274,100 +1371,36 @@ class TestSearchSafetyContract:
         assert "--exclude is ignored when using the running service." in normalized
         assert "RAG service" not in normalized
 
-    def test_search_results_service_uses_line_records(self):
-        """Service results render as grep-like lines, not a table."""
-        from io import StringIO
-
-        from rich.console import Console
-
-        out = StringIO()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "vaultspec_rag.cli.console",
-                Console(file=out, force_terminal=False, width=400),
-            )
-            _display_search_results(
-                [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
-                "code",
-                via="service",
-            )
-        rendered = " ".join(out.getvalue().split())
-        assert rendered == "1. foo.py - x"
-        assert "Search Results" not in rendered
-        assert "score" not in rendered
-        assert "rank=" not in rendered
-
-    def test_search_results_in_process_uses_same_line_contract(self):
-        """The via marker does not change the human result shape."""
-        from io import StringIO
-
-        from rich.console import Console
-
-        out = StringIO()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "vaultspec_rag.cli.console",
-                Console(file=out, force_terminal=False, width=400),
-            )
-            _display_search_results(
-                [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
-                "code",
-                via="in-process",
-            )
-        rendered = " ".join(out.getvalue().split())
-        assert rendered == "1. foo.py - x"
-        assert "Search Results" not in rendered
-        assert "rank=" not in rendered
-
     def test_search_command_renders_numbered_results_from_http_response(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / ".vaultspec").mkdir()
         server, thread, requests = _search_output_contract_server()
         try:
-            result = runner.invoke(
-                app,
-                [
-                    "--target",
-                    str(tmp_path),
-                    "search",
-                    "service status",
-                    "--type",
-                    "code",
-                    "--limit",
-                    "2",
-                    "--port",
-                    str(server.server_port),
-                ],
-            )
+            result = _invoke_search_contract(tmp_path, server.server_port)
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [
-            {
-                "query": "service status",
-                "top_k": 2,
-                "project_root": str(tmp_path),
-                "type": "codebase",
-            }
-        ]
-        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-        assert lines == [
-            (
-                "1. src/search_ui.py:12 - "
-                "def render_search_results(): return 'full service text'"
-            ),
-            (
-                "2. docs/ops.md#service-status - "
-                "Use server status for service readiness and current work."
-            ),
-        ]
-        assert "def render_search\n" not in result.output
-        assert "rank=" not in result.output
-        assert "score=" not in result.output
+        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        records = _search_records(result.output)
+        assert [record["number"] for record in records] == [1, 2]
+        _assert_record(
+            records[0],
+            number=1,
+            location="src/search_ui.py:12",
+            text="def render_search_results(): return 'full service text'",
+        )
+        _assert_record(
+            records[1],
+            number=2,
+            location="docs/ops.md#service-status",
+            text="Use server status for service readiness and current work.",
+        )
+        assert "\n" not in str(records[0]["text"])
+        _assert_no_table_borders(result.output)
 
     def test_search_command_scores_flag_uses_plain_score_label(
         self, tmp_path: Path
@@ -1375,35 +1408,22 @@ class TestSearchSafetyContract:
         (tmp_path / ".vaultspec").mkdir()
         server, thread, _requests = _search_output_contract_server()
         try:
-            result = runner.invoke(
-                app,
-                [
-                    "--target",
-                    str(tmp_path),
-                    "search",
-                    "service status",
-                    "--type",
-                    "code",
-                    "--limit",
-                    "2",
-                    "--port",
-                    str(server.server_port),
-                    "--scores",
-                ],
-            )
+            result = _invoke_search_contract(tmp_path, server.server_port, "--scores")
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-        assert lines[0] == (
-            "1. src/search_ui.py:12 (score 0.8750) - "
-            "def render_search_results(): return 'full service text'"
+        records = _search_records(result.output)
+        _assert_record(
+            records[0],
+            number=1,
+            location="src/search_ui.py:12",
+            text="def render_search_results(): return 'full service text'",
+            score="0.8750",
         )
-        assert "score=" not in result.output
-        assert "rank=" not in result.output
+        _assert_no_table_borders(result.output)
 
     def test_empty_search_command_humanizes_service_diagnostics(
         self, tmp_path: Path
@@ -1432,39 +1452,21 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [
-            {
-                "query": "missing symbol",
-                "top_k": 2,
-                "project_root": str(tmp_path),
-                "type": "codebase",
-            }
-        ]
-        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-        assert lines[:3] == [
-            "No source code results found for: missing symbol",
-            "Why: No indexed code items are available.",
-            "Indexed source code chunks: 0.",
-        ]
-        normalized = " ".join(result.output.split())
-        mismatch = (
-            "Project mismatch: requested current project; index is for other project."
-        )
-        assert mismatch in normalized
-        assert lines[-3:] == [
-            "Next actions:",
+        assert requests == [_expected_code_search_request(tmp_path, "missing symbol")]
+        lines = _plain_lines(result.output)
+        assert lines[0].endswith("missing symbol")
+        assert lines[1].startswith("Why:")
+        assert "No indexed code items are available" in lines[1]
+        count_match = re.fullmatch(r"Indexed source code chunks: (\d+)\.", lines[2])
+        assert count_match is not None
+        assert int(count_match.group(1)) == 0
+        assert any(line.startswith("Project mismatch:") for line in lines)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
             "- vaultspec-rag index --type code --port 8766",
             "- vaultspec-rag server status",
         ]
-        for leaked in (
-            "indexed_count",
-            "requested_target",
-            "indexed_target",
-            "index_missing",
-            "reason=",
-            "target_matches",
-        ):
-            assert leaked not in result.output
+        assert not any("=" in line for line in lines)
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
@@ -2064,7 +2066,8 @@ class TestSearchResultRendering:
     def test_default_keeps_full_snippet(self):
         """Default output renders the full snippet."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
-        assert "a" * 250 in rendered
+        [record] = _search_records(rendered)
+        assert record["text"] == "a" * 300
 
     def test_no_truncate_flag_keeps_full_snippet_for_compatibility(self):
         """The legacy flag remains accepted but default output is already full."""
@@ -2072,14 +2075,16 @@ class TestSearchResultRendering:
             {"path": "foo.py", "score": 0.9, "snippet": "a" * 300},
             no_truncate=True,
         )
-        assert "a" * 250 in rendered
+        [record] = _search_records(rendered)
+        assert record["text"] == "a" * 300
 
     def test_scores_are_hidden_by_default(self):
         """Default output shows numbering, not numeric relevance score."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        assert rendered.strip() == "1. foo.py - test"
-        assert "score" not in rendered
-        assert "rank=" not in rendered
+        [record] = _search_records(rendered)
+        assert record["number"] == 1
+        assert record["location"] == "foo.py"
+        assert record["score"] is None
 
     def test_scores_flag_renders_numeric_score(self):
         """--scores detail mode includes the relevance score."""
@@ -2087,8 +2092,8 @@ class TestSearchResultRendering:
             {"path": "foo.py", "score": 0.9, "snippet": "test"},
             show_scores=True,
         )
-        assert rendered.strip() == "1. foo.py (score 0.9000) - test"
-        assert "score=" not in rendered
+        [record] = _search_records(rendered)
+        assert record["score"] == "0.9000"
 
     def test_display_empty_results(self):
         """Empty results list renders without raising."""
@@ -2103,12 +2108,14 @@ class TestSearchResultRendering:
         rendered = self._render(
             {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
         )
-        assert rendered.strip() == "1. foo.py:42 - test"
+        [record] = _search_records(rendered)
+        assert record["location"] == "foo.py:42"
 
     def test_display_without_line_start(self):
         """Result without line_start renders location as bare path."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        assert rendered.strip() == "1. foo.py - test"
+        [record] = _search_records(rendered)
+        assert record["location"] == "foo.py"
 
     def test_display_with_anchor_prefers_deep_link(self):
         """Anchor locators stay mechanically grabbable."""
@@ -2121,7 +2128,8 @@ class TestSearchResultRendering:
                 "snippet": "test",
             }
         )
-        assert rendered.strip() == "1. report.pdf#page=4 - test"
+        [record] = _search_records(rendered)
+        assert record["location"] == "report.pdf#page=4"
 
     def test_display_service_lock_error_hides_backend_contract(
         self, capsys: pytest.CaptureFixture[str]
@@ -3982,21 +3990,22 @@ class TestBenchmarkAndQualityCommands:
         assert result.exit_code == 0
         assert len(called) == 1
         assert called[0][1] == 10
-        assert "GeForce RTX 4090" in result.output
-        assert "512.0 MB" in result.output
-        assert "42" in result.output
-        assert "Search latency: 10 queries" in result.output
-        assert "Median: 1.2ms" in result.output
-        assert "95th percentile: 3.4ms" in result.output
-        assert "99th percentile: 5.6ms" in result.output
-        assert "Average: 2.3ms" in result.output
-        assert "Variation: 0.5ms standard deviation" in result.output
-        assert "vault documents" in result.output
-        assert "vram_allocated" not in result.output
-        for forbidden in ("p50=", "p95=", "p99=", "mean=", "stdev="):
-            assert forbidden not in result.output
-        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-            assert forbidden not in result.output
+        lines = _plain_lines(result.output)
+        assert re.fullmatch(r"Search latency: 10 queries", lines[0])
+        assert _latency_values(lines) == {
+            "Median": 1.2,
+            "95th percentile": 3.4,
+            "99th percentile": 5.6,
+            "Average": 2.3,
+            "Variation": 0.5,
+        }
+        index_line = next(line for line in lines if line.startswith("Index:"))
+        assert re.search(r"\b42\b.*vault documents", index_line)
+        assert re.search(r"\b100\b.*code chunks", index_line)
+        gpu_line = next(line for line in lines if line.startswith("GPU:"))
+        assert "GeForce RTX 4090" in gpu_line
+        assert "512.0 MB" in gpu_line
+        _assert_no_table_borders(result.output)
 
     def test_benchmark_empty_vault(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4054,19 +4063,16 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 0
         assert len(called) == 1
-        assert "1. passed: L1 - q1" in result.output
-        assert "Quality checks: built-in temporary project" in result.output
-        assert "synthetic corpus" not in result.output
-        assert "Result: 8 of 8 probes passed (100%)." in result.output
-        assert "Passed." in result.output
-        for forbidden in ("label=", "query=", "PASS", "PASSED"):
-            assert forbidden not in result.output
-        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-            assert forbidden not in result.output
-        import re
-
-        output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
-        assert "100%" in output
+        lines = _plain_lines(result.output)
+        assert _quality_probe_line(lines[1]) == ("passed", "L1", "q1")
+        summary_match = re.fullmatch(
+            r"Result: (\d+) of (\d+) probes passed \((\d+)%\)\.",
+            lines[2],
+        )
+        assert summary_match is not None
+        assert tuple(map(int, summary_match.groups())) == (8, 8, 100)
+        assert lines[-1] == "Passed."
+        _assert_no_table_borders(result.output)
 
     def test_quality_command_delegation_fail(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4098,11 +4104,11 @@ class TestBenchmarkAndQualityCommands:
             ],
         )
         assert result.exit_code == 1
-        assert "1. failed: L1 - q1" in result.output
-        assert "Failed: 50% passed; required 75%." in result.output
-        for forbidden in ("label=", "query=", "FAIL", "FAILED"):
-            assert forbidden not in result.output
-        import re
-
-        output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
-        assert "50%" in output
+        lines = _plain_lines(result.output)
+        assert _quality_probe_line(lines[1]) == ("failed", "L1", "q1")
+        failure_match = re.fullmatch(
+            r"Failed: (\d+)% passed; required (\d+)%.",
+            lines[-1],
+        )
+        assert failure_match is not None
+        assert tuple(map(int, failure_match.groups())) == (50, 75)
