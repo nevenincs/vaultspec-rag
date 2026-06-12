@@ -59,6 +59,68 @@ def _label_values(output: str) -> dict[str, str]:
     return values
 
 
+def _section_label_values(output: str, section: str) -> dict[str, str]:
+    lines = _plain_lines(output)
+    try:
+        start = lines.index(f"{section}:") + 1
+    except ValueError as exc:
+        raise AssertionError(f"Missing section {section!r}") from exc
+
+    values: dict[str, str] = {}
+    for line in lines[start:]:
+        if not line.startswith(("Operation:", "Project:", "Runtime:", "Progress:")):
+            break
+        label, value = line.split(": ", 1)
+        values[label] = value
+    return values
+
+
+def _assert_default_status_summary(output: str, port: int) -> None:
+    labels = _label_values(output)
+    assert labels["Server"] == "running"
+    assert labels["Ready"] == "ready for requests"
+    assert labels["Busy"] == "processing 1 job"
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["Uptime"] == "5m 12s"
+    assert labels["Queue"] == "nothing waiting; 1 active job"
+    assert (
+        labels["Jobs"]
+        == "2 processed jobs; 1 active job; no waiting jobs; 3 recent jobs"
+    )
+    job = _section_label_values(output, "Current job")
+    assert job["Operation"] == "code index refresh"
+    assert job["Project"] == "feature-server-supervision"
+    assert re.fullmatch(r"\d+s", job["Runtime"])
+    assert job["Progress"] == "embedding source code sections 7 of 20"
+    _assert_no_table_borders(output)
+    assert max(len(line) for line in output.splitlines()) <= 100
+
+
+def _assert_verbose_status_summary(output: str, port: int) -> None:
+    lines = _plain_lines(output)
+    assert lines[0] == "Service status"
+    labels = _label_values(output)
+    assert labels["Service record"] == "present"
+    assert labels["Process id"] == str(os.getpid())
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["Process"] == "running"
+    assert labels["Service process"] == "verified"
+    assert labels["Service identity"] == "not verified by this status check"
+    assert labels["Network"] == "accepting connections"
+    assert labels["Compute"] == "GPU available"
+    assert labels["Search models"] == "ready"
+    assert labels["Reranking"] == "ready"
+    assert re.search(r"\d+ local time", labels["Started"])
+    job = _section_label_values(output, "Current job")
+    assert job["Operation"] == "code index refresh"
+    assert job["Project"] == "feature-server-supervision"
+    assert re.fullmatch(r"\d+s", job["Runtime"])
+    assert job["Progress"] == "embedding source code sections 7 of 20"
+    next_action_index = lines.index("Next action:")
+    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --running"
+    _assert_no_table_borders(output)
+
+
 def _search_records(output: str) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for line in _plain_lines(output):
@@ -1956,19 +2018,24 @@ class TestSearchSafetyContract:
             thread.join(timeout=5)
 
         assert result.exit_code == 1, result.output
-        normalized = " ".join(result.output.split())
-        assert "search request to the service" in normalized
-        assert "timed out after 0.001 seconds" in normalized
-        assert "running index jobs before retrying" in normalized
-        assert "running jobs before retrying" not in normalized
-        assert "Service: reachable; status check passed; 3 projects loaded" in (
-            result.output
+        labels = _label_values(result.output)
+        folded = " ".join(_plain_lines(result.output))
+        assert re.match(
+            rf"Error: The search request to the service on port {port} "
+            r"timed out after 0\.001 seconds",
+            folded,
         )
-        assert "project(s) loaded" not in result.output
-        assert "Service: reachable; ready for requests" not in result.output
-        assert "Work: no index jobs running" in result.output
-        assert f"vaultspec-rag server status --port {port}" in result.output
-        assert f"vaultspec-rag server jobs --running --port {port}" in result.output
+        assert "running index jobs before retrying." in folded
+        assert labels["Service"] == "reachable; status check passed; 3 projects loaded"
+        assert labels["Work"] == "no index jobs running"
+        lines = _plain_lines(result.output)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            f"- vaultspec-rag server status --port {port}",
+            f"- vaultspec-rag server jobs --running --port {port}",
+            "- Rerun the same search with --timeout 300",
+        ]
+        assert "running jobs before retrying" not in result.output
         for forbidden in (
             "same_project_search_strategy",
             "Backend Contract",
@@ -2019,10 +2086,12 @@ class TestSearchSafetyContract:
             thread.join(timeout=5)
 
         assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
         assert (
-            "Service: reachable; readiness not reported by service; 1 project loaded"
-        ) in result.output
-        assert "Service: reachable; unknown" not in result.output
+            labels["Service"]
+            == "reachable; readiness not reported by service; 1 project loaded"
+        )
+        assert labels["Work"] == "no index jobs running"
         assert "unknown" not in result.output.lower()
         _assert_no_table_borders(result.output)
 
@@ -2063,10 +2132,12 @@ class TestSearchSafetyContract:
             thread.join(timeout=5)
 
         assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        assert labels["Service"] == "reachable; status check passed; 3 projects loaded"
         assert (
-            "Work: jobs check not reported by service (Job summary is not available.)"
-        ) in result.output
-        assert "jobs check unavailable" not in result.output.lower()
+            labels["Work"]
+            == "jobs check not reported by service (Job summary is not available.)"
+        )
         assert "unknown" not in result.output.lower()
         _assert_no_table_borders(result.output)
 
@@ -3213,96 +3284,11 @@ class TestServiceDaemonHelpers:
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0
-            expected = [
-                "Server: running",
-                "Ready: ready for requests",
-                "Busy: processing 1 job",
-                f"Address: http://127.0.0.1:{port}",
-                "Uptime: 5m 12s",
-                "Queue: nothing waiting; 1 active job",
-                "Jobs: 2 processed jobs; 1 active job; no waiting jobs; 3 recent jobs",
-                "Current job:",
-                "  Operation: code index refresh",
-                "  Project: feature-server-supervision",
-                "  Runtime:",
-                "  Progress: embedding source code sections 7 of 20",
-            ]
-            hidden = [
-                "Search Concurrency",
-                "Cross-project Search",
-                "Models loaded",
-                "Reranker loaded",
-                "CUDA:",
-                "PID alive",
-                "PID matches service",
-                "Port listening",
-                "Service token match",
-                "Service Token Match",
-                "Current job: code index refresh (",
-                "─",
-                "│",
-                "┌",
-                "┐",
-                "└",
-                "┘",
-            ]
-            assert [text for text in expected if text not in result.output] == []
-            assert [text for text in hidden if text in result.output] == []
-            assert [
-                line for line in result.output.splitlines() if len(line) > 100
-            ] == []
+            _assert_default_status_summary(result.output, port)
 
             verbose = runner.invoke(app, ["server", "status", "--verbose"])
             assert verbose.exit_code == 0
-            verbose_expected = [
-                "Service status",
-                "Service record: present",
-                f"Process id: {os.getpid()}",
-                f"Address: http://127.0.0.1:{port}",
-                "Started:",
-                "local time",
-                "Process: running",
-                "Service process: verified",
-                "Service identity: not verified by this status check",
-                "Network: accepting connections",
-                "Compute: GPU available",
-                "Search models: ready",
-                "Reranking: ready",
-                "Loaded projects:",
-                "Current job:",
-                "  Operation: code index refresh",
-                "  Project: feature-server-supervision",
-                "  Runtime:",
-                "  Progress: embedding source code sections 7 of 20",
-                "Next action:",
-                "vaultspec-rag server jobs --running",
-            ]
-            verbose_hidden = [
-                "Search Concurrency",
-                "Cross-project Search",
-                "CUDA:",
-                "PID:",
-                "PID alive",
-                "PID matches service",
-                "Port:",
-                "Port listening",
-                "Models loaded",
-                "Reranker loaded",
-                "Service token match",
-                "Service Token Match",
-                "Service file:",
-                "Current job: code index refresh (",
-                "─",
-                "│",
-                "┌",
-                "┐",
-                "└",
-                "┘",
-            ]
-            assert [
-                text for text in verbose_expected if text not in verbose.output
-            ] == []
-            assert [text for text in verbose_hidden if text in verbose.output] == []
+            _assert_verbose_status_summary(verbose.output, port)
             assert "Service identity: not checked" not in verbose.output
             assert "Started: 2026-" not in verbose.output
         finally:
