@@ -56,6 +56,11 @@ def _truncate_root(root: str, width: int = 60) -> str:
     return "…" + root[-(width - 1) :]
 
 
+def _project_name(root: str) -> str:
+    parts = root.replace("\\", "/").rstrip("/").split("/")
+    return parts[-1] if parts and parts[-1] else root
+
+
 def _handle_list_not_running(json_mode: bool) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
@@ -72,7 +77,7 @@ def _handle_list_not_running(json_mode: bool) -> NoReturn:
     raise typer.Exit(3)
 
 
-def _project_summary(raw_entry: object) -> tuple[str, str] | None:
+def _project_summary(raw_entry: object) -> list[str] | None:
     if not isinstance(raw_entry, dict):
         return None
     entry = cast("dict[str, object]", raw_entry)
@@ -84,15 +89,18 @@ def _project_summary(raw_entry: object) -> tuple[str, str] | None:
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
     last_access = hms or "not recorded"
-    activity = (
-        "Available for new requests"
+    request_text = (
+        "none active"
         if refs <= 0
-        else f"Handling {refs} active request{'s' if refs != 1 else ''}"
+        else f"{refs} active request{'s' if refs != 1 else ''}"
     )
-    metadata = (
-        f"{activity}; idle for {_humanize_idle(idle_s)}; last request: {last_access}"
-    )
-    return root_str, metadata
+    return [
+        f"- Project: {_project_name(root_str)}",
+        f"  Path: {root_str}",
+        f"  Requests: {request_text}",
+        f"  Last activity: {_humanize_idle(idle_s)} ago",
+        f"  Last request: {last_access}",
+    ]
 
 
 def _print_projects_summary(
@@ -116,11 +124,13 @@ def _print_projects_summary(
     for raw_entry in projects:
         summary = _project_summary(raw_entry)
         if summary:
-            root, metadata = summary
-            _cli.console.print(
-                f"- {root}", markup=False, highlight=False, soft_wrap=True
-            )
-            _cli.console.print(f"  {metadata}", markup=False, highlight=False)
+            for line in summary:
+                _cli.console.print(
+                    line,
+                    markup=False,
+                    highlight=False,
+                    soft_wrap=True,
+                )
 
 
 @server_projects_app.command("list")

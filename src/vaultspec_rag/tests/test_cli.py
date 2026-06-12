@@ -3219,9 +3219,12 @@ class TestServiceProjectsCli:
         out = capsys.readouterr().out
         assert "Loaded projects: 1/16." in out
         assert "Automatic unload: after 30m idle." in out
-        assert r"- example" in out
-        assert "Handling 1 active request; idle for 2m 5s" in out
-        assert "last request: 14:05:06" in out
+        assert "- Project: example" in out
+        assert r"  Path: example" in out
+        assert "  Requests: 1 active request" in out
+        assert "  Last activity: 2m 5s ago" in out
+        assert "  Last request: 14:05:06" in out
+        assert "Handling 1 active request; idle for 2m 5s" not in out
         assert "in use:" not in out
         assert "yes" not in out.lower()
         assert "no" not in out.lower()
@@ -3271,8 +3274,18 @@ class TestServiceProjectsCli:
         lines = _plain_lines(result.output)
         assert "Loaded projects: 2/8." in lines
         assert "Automatic unload: after 10m idle." in lines
-        assert any("Handling 2 active requests" in line for line in lines)
-        assert any("Available for new requests" in line for line in lines)
+        assert "- Project: busy" in lines
+        assert r"Path: busy" in lines
+        assert "Requests: 2 active requests" in lines
+        assert "Last activity: 1m 5s ago" in lines
+        assert "Last request: 14:05:06" in lines
+        assert "- Project: ready" in lines
+        assert r"Path: ready" in lines
+        assert "Requests: none active" in lines
+        assert "Last activity: 4s ago" in lines
+        assert "Last request: 14:06:01" in lines
+        assert not any("Handling 2 active requests" in line for line in lines)
+        assert not any("Available for new requests" in line for line in lines)
         assert not any("in use:" in line or line in {"yes", "no"} for line in lines)
         _assert_no_table_borders(result.output)
 
