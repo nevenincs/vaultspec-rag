@@ -1610,7 +1610,7 @@ class TestSearchSafetyContract:
         assert lines[0].endswith("missing symbol")
         assert lines[1].startswith("Why:")
         assert "No indexed code items are available" in lines[1]
-        count_match = re.fullmatch(r"Indexed source code chunks: (\d+)\.", lines[2])
+        count_match = re.fullmatch(r"Indexed source code sections: (\d+)\.", lines[2])
         assert count_match is not None
         assert int(count_match.group(1)) == 0
         assert any(line.startswith("Project mismatch:") for line in lines)

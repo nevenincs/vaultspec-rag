@@ -171,7 +171,7 @@ def _search_type_result_label(search_type: str) -> str:
 
 def _search_type_count_label(search_type: str) -> str:
     if search_type in ("code", "codebase"):
-        return "source code chunks"
+        return "source code sections"
     if search_type == "vault":
         return "vault documents"
     return f"{search_type.replace('_', ' ')} items"
