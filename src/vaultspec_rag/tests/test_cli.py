@@ -1408,12 +1408,14 @@ class TestHelpCleanup:
         self._assert_clean(result)
         assert "hybrid" in result.output.lower() or "Search" in result.output
 
-    def test_search_help_panels(self):
-        """search --help must show Code filters and Vault filters panels."""
+    def test_search_help_filter_options_are_plain(self):
+        """search --help must list filters without Rich box panels."""
         result = runner.invoke(app, ["search", "--help"])
         assert result.exit_code == 0, result.output
-        assert "Code filters" in result.output
-        assert "Vault filters" in result.output
+        assert "--language" in result.output
+        assert "--doc-type" in result.output
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in result.output
 
     def test_status_help_clean(self):
         result = runner.invoke(app, ["status", "--help"])
@@ -2343,17 +2345,10 @@ class TestServiceProjectsCli:
 
 
 class TestCpuOnlyMessageRendering:
-    """Regression guard for Rich-markup escaping in the CPU_ONLY copy.
+    """Regression guard for literal TOML keys in the CPU_ONLY copy.
 
-    The CPU_ONLY remediation message uses ``markup=True`` to colourise
-    hints and embeds literal TOML keys (``[[tool.uv.index]]``,
-    ``[tool.uv.sources]``, ``[project].dependencies``,
-    ``[dependency-groups].dev``). Each opening ``[`` must be
-    backslash-escaped so Rich does not parse the TOML keys as markup
-    tags. This test renders the actual message via Rich and asserts the
-    user-visible bytes - without it, a future copy edit can silently
-    break the snippet shown to a user already looking at the wrong
-    wheel.
+    The CLI prints this message with Rich markup disabled so TOML keys,
+    dependency groups, and command lines stay literal in user output.
     """
 
     @staticmethod
@@ -2366,7 +2361,7 @@ class TestCpuOnlyMessageRendering:
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
-            _cpu_only_message(), markup=True
+            _cpu_only_message(), markup=False, highlight=False
         )
         return buf.getvalue()
 
@@ -2461,14 +2456,12 @@ class TestNoTorchMessageRendering:
 
 class TestRenderInstallReport:
     """CLI-01 regression: the install/uninstall warning loop must NOT
-    parse warning bodies as Rich markup. The transitive-dep warning
+    parse warning bodies as markup. The transitive-dep warning
     embeds literal ``[tool.uv.sources]``, ``[project].dependencies``,
     and ``[dependency-groups].dev``; uv stderr tails embed raw
     ``[…]`` tokens; raw exception messages embed ``[tool]`` strings
-    from the historic OutOfOrderTableProxy bug. Rendering any of these
-    via ``markup=True`` silently drops the bracketed substrings - a
-    direct repeat of the bug Gemini caught for the CPU_ONLY copy, in
-    a different channel.
+    from the historic OutOfOrderTableProxy bug. The report renderer
+    must preserve those bytes verbatim in captured CLI output.
     """
 
     @staticmethod

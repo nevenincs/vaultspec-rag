@@ -258,7 +258,7 @@ def _render_activity_feed(log_lines: list[object]) -> None:
     activity_lines = _activity_feed_lines(log_lines)
     if not activity_lines:
         _cli.console.print(
-            "[dim]No activity entries in log tail. Use --raw for diagnostic lines.[/]"
+            "No activity entries in log tail. Use --raw for diagnostic lines."
         )
         return
     for line in activity_lines:
@@ -309,8 +309,9 @@ def service_logs(
                 3,
             )
         _cli.console.print(
-            "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server start[/].",
+            "Service is not running. Start it with `vaultspec-rag server start`.",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(3)
 
@@ -323,7 +324,9 @@ def service_logs(
         cast("list[object]", raw_lines) if isinstance(raw_lines, list) else []
     )
     if not log_lines:
-        _cli.console.print("[dim]No log lines available.[/]")
+        _cli.console.print(
+            "No activity entries in log tail. Use --raw for diagnostic lines."
+        )
         return
     if raw:
         _render_raw_lines(log_lines)

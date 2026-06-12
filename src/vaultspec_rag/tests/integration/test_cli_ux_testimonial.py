@@ -170,7 +170,7 @@ class TestSearchPowerUser:
     pytestmark: typing.ClassVar = [pytest.mark.integration]
 
     def test_search_help(self) -> None:
-        """``search --help`` groups filters and contains no leaked tokens."""
+        """``search --help`` lists filters plainly and contains no leaked tokens."""
         r = runner.invoke(app, ["search", "--help"])
         obs = _Observation(
             command=["search", "--help"],
@@ -185,12 +185,14 @@ class TestSearchPowerUser:
             assert token not in obs.output, (
                 f"Forbidden token {token!r} leaked into search --help:\n{obs.output}"
             )
-        assert "Code filters" in obs.output, (
-            f"'Code filters' panel missing from search --help:\n{obs.output}"
-        )
-        assert "Vault filters" in obs.output, (
-            f"'Vault filters' panel missing from search --help:\n{obs.output}"
-        )
+        for option in ("--language", "--path", "--doc-type", "--feature"):
+            assert option in obs.output, (
+                f"Expected filter option {option!r} in search --help:\n{obs.output}"
+            )
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in obs.output, (
+                f"Box drawing {forbidden!r} leaked into search --help:\n{obs.output}"
+            )
 
     @pytest.mark.subprocess_gpu
     def test_live_code_search(self, tmp_path_factory: TempPathFactory) -> None:

@@ -119,16 +119,20 @@ def _display_service_error(
             **extra,
         )
         return
-    _cli.console.print(f"[bold red]Error:[/] {_human_service_error_message(message)}")
+    _cli.console.print(
+        f"Error: {_human_service_error_message(message)}",
+        markup=False,
+        highlight=False,
+    )
     if error != "http_search_timeout":
-        _cli.console.print(f"[dim]code={error}[/]")
+        _cli.console.print(f"Code: {error}", markup=False, highlight=False)
     db_path = payload.get("db_path")
     if db_path:
-        _cli.console.print(f"[dim]db_path={db_path}[/]")
+        _cli.console.print(f"DB path: {db_path}", markup=False, highlight=False)
     _display_service_diagnostic_summary(payload.get("diagnostics"))
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:
-        _cli.console.print("[bold]Next actions:[/]")
+        _cli.console.print("Next actions:")
         for item in remediation:
             _cli.console.print(f"  - {item}")
 
@@ -364,142 +368,97 @@ def _display_port_unreachable_error(
         )
         return
     _cli.console.print(
-        f"[bold red]Service on port {port} is unreachable.[/]\n"
-        f"[white]The CLI will not silently fall back to in-process "
+        f"Service on port {port} is unreachable.\n"
+        f"The CLI will not silently fall back to in-process "
         f"{command} because that would acquire the Qdrant lock and "
-        f"strand any other agent waiting on the resident service.[/]\n"
-        f"[bold]Remediation:[/]\n"
+        f"strand any other agent waiting on the resident service.\n"
+        f"Next actions:\n"
         f"  1. Check status:  vaultspec-rag server status\n"
         f"  2. Start service: vaultspec-rag server start\n"
         f"  3. Or opt in to in-process fallback: re-run with "
         f"--allow-fallback (single-agent use only).",
+        markup=False,
+        highlight=False,
     )
 
 
 def _render_install_report(report: Any) -> None:
-    """Render an install report to the Rich console."""
+    """Render an install report as plain CLI lines."""
     title = {
-        "install": "[bold green]vaultspec-rag installed[/]",
-        "upgrade": "[bold green]vaultspec-rag upgraded[/]",
-        "dry_run": "[bold yellow]vaultspec-rag install (dry-run)[/]",
-    }.get(report.action, "[bold]vaultspec-rag install[/]")
-    _cli.console.print(title)
-    _cli.console.print(f"target: [cyan]{report.target}[/]")
+        "install": "vaultspec-rag installed",
+        "upgrade": "vaultspec-rag upgraded",
+        "dry_run": "vaultspec-rag install (dry-run)",
+    }.get(report.action, "vaultspec-rag install")
+    _cli.console.print(title, markup=False, highlight=False)
+    _cli.console.print(f"target: {report.target}", markup=False, highlight=False)
     if report.created_dirs:
-        _cli.console.print(f"created [bold]{len(report.created_dirs)}[/] directories")
+        _cli.console.print(f"created {len(report.created_dirs)} directories")
     if report.seeded:
-        _cli.console.print(f"seeded [bold]{len(report.seeded)}[/] bundled files:")
+        _cli.console.print(f"seeded {len(report.seeded)} bundled files:")
         for rel in report.seeded:
-            _cli.console.print(f"  [green]+[/] {rel}")
+            _cli.console.print(f"  + {rel}", markup=False, highlight=False)
     sync_added = sum(getattr(r, "added", 0) for r in report.sync_results)
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_added or sync_updated or sync_pruned:
         _cli.console.print(
-            f"core sync: [green]+{sync_added}[/] "
-            f"[yellow]~{sync_updated}[/] [red]-{sync_pruned}[/]"
+            f"core sync: +{sync_added} ~{sync_updated} -{sync_pruned}",
+            markup=False,
+            highlight=False,
         )
     tc_action = getattr(report, "torch_config_action", "skipped")
-    tc_colour = {
-        "applied": "green",
-        "already": "cyan",
-        "dry_run": "yellow",
-        "disabled": "dim",
-        "declined": "yellow",
-        "conflict": "red",
-        "absent": "yellow",
-        "error": "red",
-        "skipped-non-tty": "yellow",
-        "skipped-eof": "yellow",
-    }.get(tc_action, "white")
-    _cli.console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    _cli.console.print(f"torch-config: {tc_action}", markup=False, highlight=False)
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
-        td_colour = {
-            "applied": "green",
-            "already": "cyan",
-            "dry_run": "yellow",
-            "conflict": "red",
-            "absent": "yellow",
-        }.get(td_action, "white")
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
         _cli.console.print(
-            f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}"
+            f"torch direct dependency: {td_action}{suffix}",
+            markup=False,
+            highlight=False,
         )
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Assemble the prefix and body as a single ``Text`` so Rich's
-        # word-wrapper can honour the leading two-space indent across
-        # wrapped continuation lines. Also keeps literal ``[…]``
-        # tokens in ``conflict`` verbatim - ``Text.assemble`` does not
-        # parse markup. CLI-05.
-        from rich.text import Text
-
-        _cli.console.print(Text.assemble("  ", ("conflict: ", "red"), conflict))
+        _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
     tsync = getattr(report, "torch_sync_action", "skipped")
     if tsync not in ("skipped",):
-        t_colour = {"succeeded": "green", "failed": "red"}.get(tsync, "yellow")
-        _cli.console.print(f"uv sync --reinstall-package torch: [{t_colour}]{tsync}[/]")
+        _cli.console.print(
+            f"uv sync --reinstall-package torch: {tsync}",
+            markup=False,
+            highlight=False,
+        )
     for warning in report.warnings:
-        # Warnings carry user-pyproject-derived strings (literal TOML
-        # keys like ``[tool.uv.sources]``, raw exception messages,
-        # tails of uv stderr) - Rich would parse those as markup tags
-        # and silently drop the bracketed tokens. Render the prefix
-        # with markup, then the body verbatim.
-        _cli.console.print("[yellow]warning:[/] ", end="")
-        _cli.console.print(warning, markup=False, highlight=False)
+        _cli.console.print(f"warning: {warning}", markup=False, highlight=False)
 
 
 def _render_uninstall_report(report: Any) -> None:
-    """Render an uninstall report to the Rich console."""
+    """Render an uninstall report as plain CLI lines."""
     title = {
-        "uninstall": "[bold green]vaultspec-rag uninstalled[/]",
-        "dry_run": "[bold yellow]vaultspec-rag uninstall (dry-run; "
-        "use --force to apply)[/]",
-    }.get(report.action, "[bold]vaultspec-rag uninstall[/]")
-    _cli.console.print(title)
-    _cli.console.print(f"target: [cyan]{report.target}[/]")
+        "uninstall": "vaultspec-rag uninstalled",
+        "dry_run": "vaultspec-rag uninstall (dry-run; use --force to apply)",
+    }.get(report.action, "vaultspec-rag uninstall")
+    _cli.console.print(title, markup=False, highlight=False)
+    _cli.console.print(f"target: {report.target}", markup=False, highlight=False)
     if report.removed:
-        _cli.console.print(
-            f"removed [bold]{len(report.removed)}[/] bundled source files:"
-        )
+        _cli.console.print(f"removed {len(report.removed)} bundled source files:")
         for rel in report.removed:
-            _cli.console.print(f"  [red]-[/] {rel}")
+            _cli.console.print(f"  - {rel}", markup=False, highlight=False)
     if report.data_removed:
-        _cli.console.print("[red]-[/] .vault/data/ (rag index purged)")
+        _cli.console.print("- .vault/data/ (rag index purged)")
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
-        _cli.console.print(f"core sync pruned: [red]-{sync_pruned}[/]")
+        _cli.console.print(f"core sync pruned: -{sync_pruned}")
     tc_action = getattr(report, "torch_config_action", "skipped")
-    tc_colour = {
-        "removed": "green",
-        "absent": "dim",
-        "dry_run": "yellow",
-        "skipped": "yellow",
-        "error": "red",
-    }.get(tc_action, "white")
-    _cli.console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    _cli.console.print(f"torch-config: {tc_action}", markup=False, highlight=False)
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
-        td_colour = {
-            "removed": "green",
-            "dry_run": "yellow",
-            "conflict": "red",
-            "absent": "dim",
-        }.get(td_action, "white")
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
         _cli.console.print(
-            f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}"
+            f"torch direct dependency: {td_action}{suffix}",
+            markup=False,
+            highlight=False,
         )
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Same Text.assemble treatment as the install side - see
-        # CLI-05 in _render_install_report for the rationale.
-        from rich.text import Text
-
-        _cli.console.print(Text.assemble("  ", ("conflict: ", "yellow"), conflict))
+        _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
     for warning in report.warnings:
-        # Same markup-leak guard as _render_install_report; see comment
-        # there for the rationale.
-        _cli.console.print("[yellow]warning:[/] ", end="")
-        _cli.console.print(warning, markup=False, highlight=False)
+        _cli.console.print(f"warning: {warning}", markup=False, highlight=False)

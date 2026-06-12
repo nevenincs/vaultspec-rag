@@ -9,7 +9,6 @@ import time
 from typing import Annotated, Any, cast
 
 import typer
-from rich.panel import Panel
 
 import vaultspec_rag.cli as _cli
 
@@ -59,6 +58,12 @@ def _status_metadata_from_health(
     }
 
 
+def _print_lifecycle_lines(title: str, *lines: str) -> None:
+    _cli.console.print(title, markup=False, highlight=False)
+    for line in lines:
+        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+
+
 @server_app.command(
     "start",
     help=(
@@ -102,13 +107,7 @@ def service_start(
     """Start the background RAG service as a detached process."""
     # Port-level guard: prevents concurrent start races (ADR D1)
     if not _port_is_available(port):
-        _cli.console.print(
-            Panel(
-                f"Port {port} is already in use.",
-                title="Service Start",
-                border_style="yellow",
-            ),
-        )
+        _print_lifecycle_lines("Service start failed", f"Port {port} is in use.")
         raise typer.Exit(code=1)
 
     # Check for existing service
@@ -125,13 +124,10 @@ def service_start(
         ):
             health = _health_probe(existing_port)
             if health is not None:
-                _cli.console.print(
-                    Panel(
-                        f"Service already running (PID {existing_pid}, "
-                        f"port {existing_port}).",
-                        title="Service Start",
-                        border_style="yellow",
-                    ),
+                _print_lifecycle_lines(
+                    "Service already running",
+                    f"PID: {existing_pid}",
+                    f"Port: {existing_port}",
                 )
                 return
         # Stale PID -- remove status file
@@ -160,13 +156,11 @@ def service_start(
             # Check if process died (port conflict, etc.)
             if not _cli._is_pid_alive(pid):
                 _status_file().unlink(missing_ok=True)
-                _cli.console.print(
-                    Panel(
-                        f"Service process exited immediately (PID {pid}).\n"
-                        f"Port {port} may be in use. Check {log_path}",
-                        title="Service Start Failed",
-                        border_style="red",
-                    ),
+                _print_lifecycle_lines(
+                    "Service start failed",
+                    f"PID: {pid}",
+                    f"Port: {port}",
+                    f"Log: {log_path}",
                 )
                 raise typer.Exit(code=1)
 
@@ -181,27 +175,23 @@ def service_start(
                 pid = _health_service_pid(health, pid)
                 _update_service_metadata(_status_metadata_from_health(health, pid=pid))
                 startup_s = time.perf_counter() - t0
-                _cli.console.print(
-                    Panel(
-                        f"PID: {pid}\n"
-                        f"Port: {port}\n"
-                        f"Startup: {startup_s:.1f}s\n"
-                        f"Log: {log_path}",
-                        title="Service Started",
-                        border_style="green",
-                    ),
+                _print_lifecycle_lines(
+                    "Service started",
+                    f"PID: {pid}",
+                    f"Port: {port}",
+                    f"Startup: {startup_s:.1f}s",
+                    f"Log: {log_path}",
                 )
                 return
 
             delay = min(delay * 2, 5.0)
 
-    _cli.console.print(
-        Panel(
-            f"Timed out waiting for service health after {deadline:.0f}s.\n"
-            f"PID {pid} is running but not ready. Check {log_path}",
-            title="Service Start Timeout",
-            border_style="red",
-        ),
+    _print_lifecycle_lines(
+        "Service start timed out",
+        f"Waited: {deadline:.0f}s",
+        f"PID: {pid}",
+        "State: process is running but not ready",
+        f"Log: {log_path}",
     )
     raise typer.Exit(code=1)
 
@@ -221,13 +211,7 @@ def service_stop() -> None:
         # No service.json => nothing to stop for this config. We do NOT probe
         # the port: on the shared default port another project's healthy
         # service would otherwise be misreported as this config's orphan.
-        _cli.console.print(
-            Panel(
-                "No service status file found. Service is not running.",
-                title="Service Stop",
-                border_style="yellow",
-            ),
-        )
+        _cli.console.print("Service is not running.")
         return
 
     pid = int(status["pid"])
@@ -236,12 +220,9 @@ def service_stop() -> None:
     expected_token = raw_token if isinstance(raw_token, str) else None
     if not _cli._is_our_service(pid, port=port, expected_token=expected_token):
         _status_file().unlink(missing_ok=True)
-        _cli.console.print(
-            Panel(
-                f"Service PID {pid} is no longer running. Cleaned up status file.",
-                title="Service Stop",
-                border_style="yellow",
-            ),
+        _print_lifecycle_lines(
+            "Service status cleaned",
+            f"PID {pid} is no longer running.",
         )
         return
 
@@ -267,13 +248,7 @@ def service_stop() -> None:
             pid=pid,
             platform="win32",
         )
-    _cli.console.print(
-        Panel(
-            f"Service stopped (PID {pid}).",
-            title="Service Stop",
-            border_style="green",
-        ),
-    )
+    _print_lifecycle_lines("Service stopped", f"PID: {pid}")
 
 
 def _compute_token_match(
@@ -304,20 +279,20 @@ def _compute_state(
         _status_file().unlink(missing_ok=True)
         return (
             "crashed_pid_dead",
-            "[red]crashed (PID dead, stale service.json cleaned)[/]",
+            "crashed (PID dead, stale service.json cleaned)",
             4,
         )
     if not pid_is_ours:
         return (
             "crashed_pid_reused",
-            "[red]crashed (PID reused by unrelated process)[/]",
+            "crashed (PID reused by unrelated process)",
             4,
         )
     if not port_listening:
-        return "crashed_port_silent", "[red]crashed (port silent)[/]", 4
+        return "crashed_port_silent", "crashed (port silent)", 4
     if heartbeat_stale:
-        return "crashed_heartbeat_stale", "[red]crashed (heartbeat stale)[/]", 4
-    return "running", "[green]running[/]", 0
+        return "crashed_heartbeat_stale", "crashed (heartbeat stale)", 4
+    return "running", "running", 0
 
 
 def _evaluate_service_signals(
@@ -872,9 +847,7 @@ def _render_port_only_status(
         return
 
     if not verbose:
-        rendered_state = (
-            "[green]running[/]" if state == "running" else f"[red]{state}[/]"
-        )
+        rendered_state = "running" if state == "running" else state
         _render_status_summary(
             state_label=rendered_state,
             port=port,
@@ -902,10 +875,10 @@ def _explicit_port_state(
     health: dict[str, object] | None,
 ) -> tuple[str, str, int, bool]:
     if isinstance(health, dict) and health.get("status") == "ready":
-        return "running", "[green]running[/]", 0, False
+        return "running", "running", 0, False
     if port_listening:
-        return "unreachable", "[red]unreachable[/]", 4, False
-    return "stopped", "[red]stopped[/]", 3, False
+        return "unreachable", "unreachable", 4, False
+    return "stopped", "stopped", 3, False
 
 
 def _status_response_token_match(
@@ -974,7 +947,9 @@ def _render_explicit_port_status(
 
     if target_port != status_file_port:
         _cli.console.print(
-            f"[yellow]Status file port is {status_file_port}; probing {target_port}.[/]"
+            f"Status file port is {status_file_port}; probing {target_port}.",
+            markup=False,
+            highlight=False,
         )
     if verbose:
         _render_status_detail(
@@ -1159,7 +1134,7 @@ def service_status(
             _print_detail_line("State", "stopped")
         else:
             _render_status_summary(
-                state_label="[red]stopped[/]",
+                state_label="stopped",
                 port=_default_service_port() or 8766,
                 port_listening=False,
                 health=None,
@@ -1262,7 +1237,7 @@ def service_warmup() -> None:
     try:
         import torch
     except ImportError:
-        _cli.console.print("[bold red]Error:[/] torch is not installed.")
+        _cli.console.print("Error: torch is not installed.")
         raise typer.Exit(code=1) from None
 
     if not torch.cuda.is_available():
@@ -1275,7 +1250,7 @@ def service_warmup() -> None:
             try_to_load_from_cache,
         )
     except ImportError:
-        _cli.console.print("[bold red]Error:[/] huggingface_hub is not installed.")
+        _cli.console.print("Error: huggingface_hub is not installed.")
         raise typer.Exit(code=1) from None
 
     os.environ.setdefault(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT, "300")

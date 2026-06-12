@@ -86,7 +86,9 @@ def _handle_service_results(
         return
     if not service_results:
         _cli.console.print(
-            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+            f"No {search_type} results found for: {query}",
+            markup=False,
+            highlight=False,
         )
         return
     _display_search_results(
@@ -140,16 +142,18 @@ def _render_empty_service_results(
     search_type: str,
 ) -> None:
     _cli.console.print(
-        f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+        f"No {search_type} results found for: {query}",
+        markup=False,
+        highlight=False,
     )
     empty = payload.get("empty")
     if isinstance(empty, dict):
         message = str(empty.get("message", "No matching indexed items found."))
         reason = str(empty.get("reason", "no_match"))
-        _cli.console.print(f"[bold]Reason:[/] {message} [dim]({reason})[/]")
+        _cli.console.print(f"Reason: {message} ({reason})", markup=False)
         remediation = empty.get("remediation")
         if isinstance(remediation, list) and remediation:
-            _cli.console.print("[bold]Next actions:[/]")
+            _cli.console.print("Next actions:")
             for item in remediation:
                 _cli.console.print(f"  - {item}")
     index_state = payload.get("index_state")
@@ -158,10 +162,10 @@ def _render_empty_service_results(
         requested = index_state.get("requested_target_root", "?")
         indexed_target = index_state.get("indexed_target_root", "?")
         _cli.console.print(
-            "[dim]"
             f"indexed_count={indexed}; requested_target={requested}; "
-            f"indexed_target={indexed_target}"
-            "[/]"
+            f"indexed_target={indexed_target}",
+            markup=False,
+            highlight=False,
         )
 
 
@@ -191,24 +195,25 @@ def _handle_vaultstore_locked_error(
             ],
         )
     _cli.console.print(
-        f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
-        "is currently in use by another process "
-        "(routing mode: direct local-store search).\n\n"
-        "  Another [cyan]vaultspec-rag[/] command, RAG service, or file watcher "
-        "or file watcher is likely running against this workspace.\n\n"
+        f"Error: The vault index at {exc.db_path} is currently in use by "
+        "another process (routing mode: direct local-store search).\n\n"
+        "  Another vaultspec-rag command, RAG service, or file watcher is "
+        "likely running against this workspace.\n\n"
         "  Local-file-backed RAG storage cannot be opened by multiple "
         "processes at once. For concurrent agent searches, route every "
-        "request through one running [cyan]vaultspec-rag[/] service.\n\n"
+        "request through one running vaultspec-rag service.\n\n"
         "  To resolve, do one of the following:\n"
         "    1. Wait for the other process to finish.\n"
         "    2. Route your search request through a running "
         "service on a port, e.g.:\n"
-        "         [cyan]vaultspec-rag search ... --port 8766[/]\n"
+        "         vaultspec-rag search ... --port 8766\n"
         "    3. Stop the running server:\n"
-        "         [cyan]vaultspec-rag server mcp stop[/]\n"
-        "         [cyan]vaultspec-rag server stop[/]\n"
+        "         vaultspec-rag server mcp stop\n"
+        "         vaultspec-rag server stop\n"
         "    4. If no vaultspec-rag process is alive, look for an "
-        "orphaned Python process holding the lock and stop it manually."
+        "orphaned Python process holding the lock and stop it manually.",
+        markup=False,
+        highlight=False,
     )
     raise typer.Exit(code=1) from exc
 
@@ -239,7 +244,7 @@ def _try_in_process_search(
         status_ctx = (
             contextlib.nullcontext()
             if json_mode
-            else _cli.console.status(f"[bold green]Searching {search_type}...")
+            else _cli.console.status(f"Searching {search_type}...")
         )
         with status_ctx:
             if search_type == "code":
@@ -326,7 +331,7 @@ def _validate_and_handle_filters(
                 2,
                 value=exc.prefer_value,
             )
-        _cli.console.print(f"[red]{msg}[/]")
+        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
         raise typer.Exit(code=2) from None
     except InvalidFilterForSearchTypeError as exc:
         msg = str(exc)
@@ -339,7 +344,7 @@ def _validate_and_handle_filters(
                 filter_kind=exc.filter_kind,
                 offending=exc.offending_filters,
             )
-        _cli.console.print(f"[red]{msg}[/]")
+        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
         raise typer.Exit(code=2) from None
 
 
@@ -369,7 +374,9 @@ def _render_in_process_results(
 
     if not results:
         _cli.console.print(
-            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+            f"No {search_type} results found for: {query}",
+            markup=False,
+            highlight=False,
         )
         return
 
@@ -420,7 +427,6 @@ def handle_search(
         typer.Option(
             "--language",
             help="Code-search filter: programming language (e.g. 'python').",
-            rich_help_panel="Code filters",
         ),
     ] = None,
     path: Annotated[
@@ -430,7 +436,6 @@ def handle_search(
             help=(
                 "Code-search filter: exact project-relative file path (KEYWORD match)."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
     include_paths: Annotated[
@@ -442,7 +447,6 @@ def handle_search(
                 "keep results whose project-relative path matches "
                 "at least one pattern. Use with --type code."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
     exclude_paths: Annotated[
@@ -454,7 +458,6 @@ def handle_search(
                 "drop results whose project-relative path matches "
                 "any pattern. Use with --type code."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
     dedup_locales: Annotated[
@@ -466,7 +469,6 @@ def handle_search(
                 "variants (e.g. locales/{en,es}.yml) into one canonical "
                 "result. Use with --type code."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = False,
     prefer: Annotated[
@@ -478,7 +480,6 @@ def handle_search(
                 "given category up (and others down) after rerank. One "
                 "of 'prod', 'tests', 'docs'. Use with --type code."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
     node_type: Annotated[
@@ -486,7 +487,6 @@ def handle_search(
         typer.Option(
             "--node-type",
             help="Code-search filter: AST node type.",
-            rich_help_panel="Code filters",
         ),
     ] = None,
     function_name: Annotated[
@@ -494,7 +494,6 @@ def handle_search(
         typer.Option(
             "--function-name",
             help="Code-search filter: function/method name.",
-            rich_help_panel="Code filters",
         ),
     ] = None,
     class_name: Annotated[
@@ -502,7 +501,6 @@ def handle_search(
         typer.Option(
             "--class-name",
             help="Code-search filter: class/struct name.",
-            rich_help_panel="Code filters",
         ),
     ] = None,
     doc_type: Annotated[
@@ -510,7 +508,6 @@ def handle_search(
         typer.Option(
             "--doc-type",
             help="Vault-search filter: vault doc type (e.g. 'adr', 'plan').",
-            rich_help_panel="Vault filters",
         ),
     ] = None,
     feature: Annotated[
@@ -518,7 +515,6 @@ def handle_search(
         typer.Option(
             "--feature",
             help="Vault-search filter: feature tag (kebab-case).",
-            rich_help_panel="Vault filters",
         ),
     ] = None,
     date: Annotated[
@@ -526,7 +522,6 @@ def handle_search(
         typer.Option(
             "--date",
             help="Vault-search filter: exact ISO date (yyyy-mm-dd).",
-            rich_help_panel="Vault filters",
         ),
     ] = None,
     tag: Annotated[
@@ -534,7 +529,6 @@ def handle_search(
         typer.Option(
             "--tag",
             help="Vault-search filter: free-form tag (without #).",
-            rich_help_panel="Vault filters",
         ),
     ] = None,
     show_scores: Annotated[
@@ -577,8 +571,8 @@ def handle_search(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Wraps results in "
+                "Emit one JSON envelope to stdout instead of text. "
+                "Wraps results in "
                 '{"ok": true, "command": "search", "data": '
                 '{"results": [...]}}; errors use the matching '
                 '{"ok": false, "error", "message"} shape. Use this '
@@ -707,5 +701,7 @@ def _validate_search_extra_args(ctx: typer.Context) -> None:
     if not extras or all(item == "--no-truncate" for item in extras):
         return
     unexpected = " ".join(extras)
-    _cli.console.print(f"[red]Unexpected search option(s): {unexpected}[/]")
+    _cli.console.print(
+        f"Unexpected search option(s): {unexpected}", markup=False, highlight=False
+    )
     raise typer.Exit(code=2)

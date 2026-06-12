@@ -45,8 +45,9 @@ def handle_benchmark(
     except ValueError as e:
         if "No vault documents" in str(e):
             _cli.console.print(
-                "[yellow]Warning:[/] No vault documents indexed. "
-                "Run [cyan]vaultspec-rag index[/] first.",
+                "Warning: No vault documents indexed. Run vaultspec-rag index first.",
+                markup=False,
+                highlight=False,
             )
             raise typer.Exit(code=1) from e
         raise

@@ -48,8 +48,9 @@ def _handle_list_not_running(json_mode: bool) -> NoReturn:
             3,
         )
     _cli.console.print(
-        "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server start[/].",
+        "Service is not running. Start it with `vaultspec-rag server start`.",
+        markup=False,
+        highlight=False,
     )
     raise typer.Exit(3)
 
@@ -146,8 +147,9 @@ def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:
             root=root,
         )
     _cli.console.print(
-        "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server start[/].",
+        "Service is not running. Start it with `vaultspec-rag server start`.",
+        markup=False,
+        highlight=False,
     )
     raise typer.Exit(3)
 
@@ -206,13 +208,13 @@ def service_projects_evict(
         _handle_evict_json(evicted, reason, root, result)
 
     if evicted:
-        _cli.console.print(f"[green]Evicted[/] project slot: {root}")
+        _cli.console.print(f"Project slot evicted: {root}", markup=False)
         raise typer.Exit(0)
     if reason == "busy":
-        _cli.console.print(f"[yellow]Slot busy[/]: {root} - retry shortly.")
+        _cli.console.print(f"Project slot busy: {root}. Retry shortly.", markup=False)
         raise typer.Exit(1)
     if reason == "not_found":
-        _cli.console.print(f"[red]Slot not found[/]: {root}")
+        _cli.console.print(f"Project slot not found: {root}", markup=False)
         raise typer.Exit(2)
-    _cli.console.print(f"[red]Unexpected response[/]: {result}")
+    _cli.console.print(f"Unexpected response: {result}", markup=False)
     raise typer.Exit(1)

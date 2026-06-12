@@ -52,9 +52,11 @@ def handle_status(
                 1,
             )
         _cli.console.print(
-            "[bold red]Error:[/] Cannot query index status - "
+            "Error: Cannot query index status - "
             f"another process holds the lock.\n{exc}\n"
-            "Close any other processes using the index and retry."
+            "Close any other processes using the index and retry.",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(code=1) from None
     except (ImportError, RuntimeError) as e:

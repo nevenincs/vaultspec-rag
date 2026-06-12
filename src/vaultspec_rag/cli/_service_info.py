@@ -89,10 +89,7 @@ def _exit_service_info_not_running(json_mode: bool) -> NoReturn:
     message = "Service is not running. Start it with `vaultspec-rag server start`."
     if json_mode:
         _emit_json_error_and_exit("service.info", "service_not_running", message, 3)
-    _cli.console.print(
-        "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server start[/].",
-    )
+    _cli.console.print(message, markup=False, highlight=False)
     raise typer.Exit(3)
 
 
@@ -108,7 +105,7 @@ def _exit_project_root_required(json_mode: bool) -> NoReturn:
             message,
             2,
         )
-    _cli.console.print(f"[bold red]Error:[/] {message}")
+    _cli.console.print(f"Error: {message}", markup=False, highlight=False)
     raise typer.Exit(2)
 
 
@@ -126,8 +123,8 @@ def _exit_service_info_error(
             1,
             data=result,
         )
-    _cli.console.print(f"[bold red]Error:[/] {message}")
-    _cli.console.print(f"[dim]code={error}[/]")
+    _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+    _cli.console.print(f"Code: {error}", markup=False, highlight=False)
     raise typer.Exit(1)
 
 

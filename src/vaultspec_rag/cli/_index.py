@@ -55,7 +55,7 @@ def _handle_dry_run(
                 "--dry-run only applies to codebase indexing.",
                 2,
             )
-        _cli.console.print("[yellow]--dry-run only applies to codebase indexing.[/]")
+        _cli.console.print("--dry-run only applies to codebase indexing.")
         raise typer.Exit(code=2)
     import vaultspec_rag
 
@@ -71,7 +71,7 @@ def _handle_dry_run(
             },
         )
         return
-    _cli.console.print(f"[bold]{len(files)}[/] files would be indexed:")
+    _cli.console.print(f"{len(files)} files would be indexed:")
     for f in sorted(files):
         _cli.console.print(f"  {f.relative_to(target)}")
 
@@ -103,9 +103,9 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
                 2,
                 remediation=remediation,
             )
-        _cli.console.print(f"[red]{msg}[/]")
+        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
         for line in remediation:
-            _cli.console.print(f"  [cyan]{line}[/]")
+            _cli.console.print(f"  {line}", markup=False, highlight=False)
         raise typer.Exit(code=2)
 
 
@@ -120,7 +120,7 @@ def _try_service_delegation(
 ) -> bool:
     if exclude and not json_mode:
         _cli.console.print(
-            "[yellow]--exclude is ignored when delegating to the RAG service.[/]",
+            "--exclude is ignored when delegating to the RAG service.",
         )
     do_vault = index_type in ("vault", "all")
     do_code = index_type in ("code", "all")
@@ -146,8 +146,10 @@ def _try_service_delegation(
         if isinstance(data, dict) and data.get("ok") is False:
             if not json_mode:
                 _cli.console.print(
-                    f"[red]Reindex {label} reported an error; "
-                    f"refusing to silently fall back.[/]",
+                    f"Reindex {label} reported an error; "
+                    "refusing to silently fall back.",
+                    markup=False,
+                    highlight=False,
                 )
             _display_service_error(data, json_mode=json_mode, command="index")
             raise typer.Exit(code=1)
@@ -183,13 +185,17 @@ def _print_service_async_results(
         return True
     if v_data:
         _cli.console.print(
-            f"Vault re-index job queued on service: [cyan]{v_data.get('job_id')}[/]"
+            f"Vault re-index job queued on service: {v_data.get('job_id')}",
+            markup=False,
+            highlight=False,
         )
     if c_data:
         _cli.console.print(
-            f"Codebase re-index job queued on service: [cyan]{c_data.get('job_id')}[/]"
+            f"Codebase re-index job queued on service: {c_data.get('job_id')}",
+            markup=False,
+            highlight=False,
         )
-    _cli.console.print("Check progress with: [bold]vaultspec-rag server jobs[/]")
+    _cli.console.print("Check progress with: vaultspec-rag server jobs")
     return True
 
 
@@ -311,8 +317,8 @@ def handle_index(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Wraps per-source summaries in "
+                "Emit one JSON envelope to stdout instead of text. "
+                "Wraps per-source summaries in "
                 '{"ok": true, "command": "index", "data": '
                 '{"sources": [...]}}. Use this for agent / CI '
                 "consumption."
@@ -398,9 +404,11 @@ def _try_in_process_indexing(
                     1,
                 )
             _cli.console.print(
-                f"[bold red]Error:[/] Cannot access the {index_type} "
-                f"collection - another process holds the lock.\n{exc}\n"
+                f"Error: Cannot access the {index_type} collection - "
+                f"another process holds the lock.\n{exc}\n"
                 "Close any other processes using the index and retry.",
+                markup=False,
+                highlight=False,
             )
             raise typer.Exit(code=1) from None
         except (ImportError, RuntimeError) as e:
@@ -479,8 +487,8 @@ def handle_clean(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Requires --yes (no interactive confirm) so "
+                "Emit one JSON envelope to stdout instead of text. "
+                "Requires --yes (no interactive confirm) so "
                 "the JSON stream stays uncorrupted."
             ),
         ),
@@ -503,7 +511,7 @@ def handle_clean(
             default=False,
         )
         if not confirmed:
-            _cli.console.print("[yellow]Clean cancelled.[/]")
+            _cli.console.print("Clean cancelled.")
             raise typer.Exit(code=1)
 
     import vaultspec_rag
@@ -519,9 +527,11 @@ def handle_clean(
                 1,
             )
         _cli.console.print(
-            "[bold red]Error:[/] Cannot clean the index - "
+            "Error: Cannot clean the index - "
             "another process holds the lock.\n"
-            f"{exc}\nClose any other processes using the index and retry."
+            f"{exc}\nClose any other processes using the index and retry.",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(code=1) from None
 

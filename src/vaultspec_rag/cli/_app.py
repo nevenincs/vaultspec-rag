@@ -36,25 +36,32 @@ __all__ = [
 
 app = typer.Typer(
     help="VaultSpec RAG: Unified search over documentation and code.",
-    rich_markup_mode="rich",
+    rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
 
 # Command Groups
 server_root_app = typer.Typer(
     help="Manage the HTTP RAG service and the MCP protocol adapter.",
+    rich_markup_mode=None,
 )
 # Alias kept for backward-compatible decorator references in command modules.
 server_app = server_root_app
-mcp_app = typer.Typer(help="Control the Model Context Protocol (MCP) server.")
+mcp_app = typer.Typer(
+    help="Control the Model Context Protocol (MCP) server.",
+    rich_markup_mode=None,
+)
 server_projects_app = typer.Typer(
     help="Inspect and evict project slots on a running RAG service.",
+    rich_markup_mode=None,
 )
 server_watcher_app = typer.Typer(
     help="Inspect and control the filesystem auto-reindex watcher.",
+    rich_markup_mode=None,
 )
 preprocess_app = typer.Typer(
     help="Inspect and validate document-preprocessing rules (#185).",
+    rich_markup_mode=None,
 )
 
 app.add_typer(server_root_app, name="server")
@@ -228,7 +235,7 @@ def main(
         layout = resolve_workspace(target_override=target)
         ctx.obj = CLIState(layout)
     except WorkspaceError as e:
-        _cli.console.print(f"[bold red]Error:[/] {e}")
+        _cli.console.print(f"Error: {e}", markup=False, highlight=False)
         raise typer.Exit(code=1) from None
 
 

@@ -70,19 +70,21 @@ def _open_vault_store(
                 ],
             )
         _cli.console.print(
-            f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
+            f"Error: The vault index at {exc.db_path} "
             "is currently in use by another process.\n\n"
-            "  Another [cyan]vaultspec-rag[/] command, RAG service, "
+            "  Another vaultspec-rag command, RAG service, "
             "or file watcher is likely running against this workspace.\n\n"
             "  Local-file-backed RAG storage cannot be opened by multiple "
             "processes at once. For concurrent agent searches, route every "
-            "request through one running [cyan]vaultspec-rag[/] service.\n\n"
+            "request through one running vaultspec-rag service.\n\n"
             "  To resolve, do one of the following:\n"
             "    1. Wait for the other process to finish.\n"
             "    2. Stop the running server:\n"
-            "         [cyan]vaultspec-rag server mcp stop[/]\n"
-            "         [cyan]vaultspec-rag server stop[/]\n"
+            "         vaultspec-rag server mcp stop\n"
+            "         vaultspec-rag server stop\n"
             "    3. If no vaultspec-rag process is alive, look for an "
             "orphaned Python process holding the lock and stop it manually.",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(code=1) from exc

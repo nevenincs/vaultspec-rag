@@ -101,13 +101,15 @@ def handle_preprocess_check(
                 str(exc),
                 1,
             )
-        _cli.console.print(f"[red]Invalid preprocess config:[/red] {exc}")
+        _cli.console.print(
+            f"Invalid preprocess config: {exc}", markup=False, highlight=False
+        )
         raise typer.Exit(code=1) from exc
     count = len(config.rules)
     if json_mode:
         _emit_json(True, "preprocess check", data={"valid": True, "rule_count": count})
         return
-    _cli.console.print(f"[green]OK[/green] - {count} valid preprocess rule(s).")
+    _cli.console.print(f"OK - {count} valid preprocess rule(s).")
 
 
 @preprocess_app.command(
@@ -150,7 +152,11 @@ def handle_preprocess_run_one(
                 str(exc),
                 1,
             )
-        _cli.console.print(f"[red]Preprocessor failed (on_error=fail):[/red] {exc}")
+        _cli.console.print(
+            f"Preprocessor failed (on_error=fail): {exc}",
+            markup=False,
+            highlight=False,
+        )
         raise typer.Exit(code=1) from exc
 
     output = result.output
@@ -168,7 +174,9 @@ def handle_preprocess_run_one(
         _emit_json(True, "preprocess run-one", data=data)
         return
     _cli.console.print(
-        f"Rule: [cyan]{rule.pattern}[/cyan] -> status [bold]{result.status}[/bold]"
+        f"Rule: {rule.pattern} -> status {result.status}",
+        markup=False,
+        highlight=False,
     )
     if result.reason:
         _cli.console.print(f"Reason: {result.reason}")

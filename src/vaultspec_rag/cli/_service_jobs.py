@@ -284,7 +284,7 @@ def _render_jobs_feed(
         soft_wrap=True,
     )
     if monitoring:
-        _cli.console.print("[dim]Watching; press Ctrl+C to stop.[/]")
+        _cli.console.print("Watching; press Ctrl+C to stop.")
     for job in _human_sorted_jobs(jobs):
         job_id = str(job.get("id", ""))[:8]
         _cli.console.print(
@@ -304,7 +304,7 @@ def _exit_invalid_jobs_filter(json_mode: bool) -> NoReturn:
             message,
             2,
         )
-    _cli.console.print(f"[bold red]Error:[/] {message}")
+    _cli.console.print(f"Error: {message}", markup=False, highlight=False)
     raise typer.Exit(2)
 
 
@@ -335,7 +335,7 @@ def _resolve_jobs_filters(
         message = "--failed cannot be combined with --phase outside error/failed."
         if json_mode:
             _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
-        _cli.console.print(f"[bold red]Error:[/] {message}")
+        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
         raise typer.Exit(2)
     return resolved_phase, failed
 
@@ -377,8 +377,9 @@ def _exit_jobs_not_running(json_mode: bool) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit("service.jobs", "service_not_running", message, 3)
     _cli.console.print(
-        "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server start[/].",
+        "Service is not running. Start it with `vaultspec-rag server start`.",
+        markup=False,
+        highlight=False,
     )
     raise typer.Exit(3)
 
@@ -440,15 +441,15 @@ def _render_jobs_result(
 ) -> None:
     jobs = _jobs_from_result(result)
     if not jobs:
-        _cli.console.print(
-            "[dim]No matching jobs.[/]" if job_id else "[dim]No recent jobs.[/]"
-        )
+        _cli.console.print("No matching jobs." if job_id else "No recent jobs.")
         return
     if job_id:
         if len(jobs) > 1:
             _cli.console.print(
-                f"[bold red]Error:[/] job id prefix [cyan]{job_id}[/] "
-                f"matches {len(jobs)} jobs. Use a longer prefix."
+                f"Error: job id prefix {job_id} matches {len(jobs)} jobs. "
+                "Use a longer prefix.",
+                markup=False,
+                highlight=False,
             )
             _render_jobs_feed(result, jobs, port=port)
             raise typer.Exit(2)
@@ -466,7 +467,7 @@ def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
         message = "--watch cannot be combined with --json."
     if json_mode:
         _emit_json_error_and_exit("service.jobs", "invalid_watch", message, 2)
-    _cli.console.print(f"[bold red]Error:[/] {message}")
+    _cli.console.print(f"Error: {message}", markup=False, highlight=False)
     raise typer.Exit(2)
 
 

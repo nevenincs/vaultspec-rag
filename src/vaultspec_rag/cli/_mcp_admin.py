@@ -37,14 +37,16 @@ def mcp_start(
     if root_target is not None:
         if port is not None:
             _cli.console.print(
-                "[yellow]Warning:[/] --target is ignored in HTTP mode "
-                "(project_root must be passed per-request)",
+                "Warning: --target is ignored in HTTP mode "
+                "(project_root must be passed per request).",
+                markup=False,
+                highlight=False,
             )
         else:
             os.environ[EnvVar.RAG_ROOT] = str(root_target)
 
     transport = f"streamable-http on port {port}" if port else "stdio"
-    _cli.console.print(f"[bold green]Launching FastMCP server ({transport})...[/]")
+    _cli.console.print(f"Launching MCP service ({transport})...", markup=False)
     run_mcp(port=port)
 
 

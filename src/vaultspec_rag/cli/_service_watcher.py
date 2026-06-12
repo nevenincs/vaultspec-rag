@@ -29,8 +29,9 @@ def _watcher_service_unreachable(
             **extra,
         )
     _cli.console.print(
-        "[red]Service is not running.[/] "
-        "Start it with [bold]vaultspec-rag server start[/].",
+        "Service is not running. Start it with `vaultspec-rag server start`.",
+        markup=False,
+        highlight=False,
     )
     raise typer.Exit(3)
 
@@ -62,9 +63,11 @@ def service_watcher_status(
         return
     mode = "enabled" if enabled else "disabled (pull-only)"
     _cli.console.print(
-        f"Auto-reindex: [bold]{mode}[/]  "
+        f"Auto-reindex: {mode}  "
         f"debounce={result.get('debounce_ms')}ms  "
         f"cooldown={result.get('cooldown_s')}s",
+        markup=False,
+        highlight=False,
     )
     if not watching:
         _cli.console.print("No roots currently watched.")
@@ -98,14 +101,16 @@ def service_watcher_start(
         _emit_json(True, "service.watcher.start", data=result)
         return
     if started:
-        _cli.console.print(f"[green]Watching[/]: {root}")
+        _cli.console.print(f"Auto-reindex watching: {root}", markup=False)
     elif not enabled:
         _cli.console.print(
-            f"[yellow]Auto-reindex is disabled[/] (pull-only); not watching {root}. "
+            f"Auto-reindex is disabled (pull-only); not watching {root}. "
             "Start the service with --watch to enable.",
+            markup=False,
+            highlight=False,
         )
     else:
-        _cli.console.print(f"[red]Could not start watcher[/]: {root}")
+        _cli.console.print(f"Could not start auto-reindex for: {root}", markup=False)
     raise typer.Exit(0)
 
 
@@ -132,7 +137,7 @@ def service_watcher_stop(
         _emit_json(True, "service.watcher.stop", data=result)
         return
     if stopped:
-        _cli.console.print(f"[green]Stopped[/] watching: {root}")
+        _cli.console.print(f"Stopped auto-reindex for: {root}", markup=False)
     else:
         _cli.console.print(f"No watcher was running for: {root}")
     raise typer.Exit(0)
@@ -179,12 +184,16 @@ def service_watcher_reconfigure(
         return
     if restarted:
         _cli.console.print(
-            f"[green]Reconfigured[/] {root}: "
+            f"Auto-reindex reconfigured for {root}: "
             f"debounce={result.get('debounce_ms')}ms "
             f"cooldown={result.get('cooldown_s')}s",
+            markup=False,
+            highlight=False,
         )
     else:
         _cli.console.print(
-            f"[yellow]Not restarted[/] (auto-reindex disabled): {root}",
+            f"Auto-reindex is disabled (pull-only); not watching {root}.",
+            markup=False,
+            highlight=False,
         )
     raise typer.Exit(0)
