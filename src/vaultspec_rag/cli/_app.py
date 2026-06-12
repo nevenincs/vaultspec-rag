@@ -145,7 +145,7 @@ def main(
         str | None,
         typer.Option(
             "--storage-dir",
-            help="Index storage directory relative to --data-dir",
+            help="Index data subdirectory relative to --data-dir",
         ),
     ] = None,
     qdrant_dir: Annotated[

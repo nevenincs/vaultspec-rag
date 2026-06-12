@@ -1758,7 +1758,7 @@ class TestHelpCleanup:
         assert "Manage the background search service" in result.output
         assert "Inspect and validate document preprocessing rules" in result.output
         assert "Index data directory" in result.output
-        assert "Index storage directory" in result.output
+        assert "Index data subdirectory" in result.output
         assert "service runtime files" in result.output
         assert "Service log filename inside --status-dir" in result.output
         assert "--storage-dir" in result.output
@@ -1766,6 +1766,7 @@ class TestHelpCleanup:
             "Qdrant",
             "Search data directory",
             "Search storage directory",
+            "Index storage directory",
             "service status files",
             "relative to --status-dir",
             "--qdrant-dir",
