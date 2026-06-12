@@ -1402,7 +1402,8 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
         normalized = " ".join(result.output.split())
-        assert "Delete selected search index data" in normalized
+        assert "Delete selected index data" in normalized
+        assert "search index data" not in normalized
         assert "Required so nothing is deleted by accident" in normalized
         for forbidden in ("Qdrant", "metadata sidecars", "collections", "footgun"):
             assert forbidden not in normalized
@@ -1654,6 +1655,7 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         assert "Set up vaultspec-rag in a workspace" in result.output
         assert "Emit JSON for scripts" in result.output
+        assert "use --yes or --no-torch-config" in result.output
         for forbidden in (
             "Torch-config gating",
             "MCP source files",
@@ -1661,6 +1663,8 @@ class TestHelpCleanup:
             "torch_config_action",
             "rag's bundled",
             "Output result as JSON",
+            "``--yes``",
+            "``--no-torch-config``",
         ):
             assert forbidden not in result.output
 

@@ -97,8 +97,8 @@ def handle_install(
 
     Creates the required workspace folders, installs bundled rules and
     integration files, and syncs the files used by supported tools. By default,
-    install asks before changing PyTorch package configuration; use ``--yes``
-    or ``--no-torch-config`` for non-interactive runs.
+    install asks before changing PyTorch package configuration; use --yes
+    or --no-torch-config for non-interactive runs.
     """
     import sys as _sys
 

@@ -1,4 +1,4 @@
-"""``index`` and ``clean`` commands: build or delete search index data."""
+"""``index`` and ``clean`` commands: build or delete index data."""
 
 from __future__ import annotations
 
@@ -449,7 +449,7 @@ def _try_in_process_indexing(
 @app.command(
     "clean",
     help=(
-        "Delete selected search index data without rebuilding it. "
+        "Delete selected index data without rebuilding it. "
         "Does not load models or use the GPU. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
@@ -484,7 +484,7 @@ def handle_clean(
         ),
     ] = False,
 ) -> None:
-    """Delete selected search index data without rebuilding it."""
+    """Delete selected index data without rebuilding it."""
     state: CLIState = ctx.obj
     target = state.target
     if json_mode and not yes:
