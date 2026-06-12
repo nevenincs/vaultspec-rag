@@ -1990,6 +1990,8 @@ class TestWinShutdownLog:
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
+            assert f"Process id: {os.getpid()}" in result.output
+            assert "PID:" not in result.output
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
             )
@@ -2033,6 +2035,8 @@ class TestWinShutdownLog:
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
+            assert f"Process id: {os.getpid()}" in result.output
+            assert "PID:" not in result.output
 
             # No CLI-emitted line on POSIX.
             assert not log_path.exists(), (
@@ -2261,6 +2265,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 0
             out = result.output.lower()
             assert "no longer running" in out or "cleaned" in out
+            assert "recorded process 99999999 is no longer running" in out
+            assert "pid:" not in out
             assert not sf.exists()
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)

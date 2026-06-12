@@ -66,6 +66,14 @@ def _print_lifecycle_lines(title: str, *lines: str) -> None:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
+def _process_line(pid: object) -> str:
+    return f"Process id: {pid}"
+
+
+def _address_line(port: object) -> str:
+    return f"Address: http://127.0.0.1:{port}"
+
+
 @server_app.command(
     "start",
     help=(
@@ -153,8 +161,8 @@ def service_start(
             if health is not None:
                 _print_lifecycle_lines(
                     "Service already running",
-                    f"PID: {existing_pid}",
-                    f"Port: {existing_port}",
+                    _process_line(existing_pid),
+                    _address_line(existing_port),
                 )
                 return
         # Stale PID -- remove status file
@@ -192,8 +200,8 @@ def service_start(
                 _status_file().unlink(missing_ok=True)
                 _print_lifecycle_lines(
                     "Service start failed",
-                    f"PID: {pid}",
-                    f"Port: {port}",
+                    _process_line(pid),
+                    _address_line(port),
                     f"Log: {log_path}",
                 )
                 raise typer.Exit(code=1)
@@ -211,8 +219,8 @@ def service_start(
                 startup_s = time.perf_counter() - t0
                 _print_lifecycle_lines(
                     "Service started",
-                    f"PID: {pid}",
-                    f"Port: {port}",
+                    _process_line(pid),
+                    _address_line(port),
                     f"Startup: {startup_s:.1f}s",
                     f"Log: {log_path}",
                 )
@@ -223,7 +231,7 @@ def service_start(
     _print_lifecycle_lines(
         "Service start timed out",
         f"Waited: {deadline:.0f}s",
-        f"PID: {pid}",
+        _process_line(pid),
         "State: process is running but not ready",
         f"Log: {log_path}",
     )
@@ -256,7 +264,7 @@ def service_stop() -> None:
         _status_file().unlink(missing_ok=True)
         _print_lifecycle_lines(
             "Service status cleaned",
-            f"PID {pid} is no longer running.",
+            f"Recorded process {pid} is no longer running.",
         )
         return
 
@@ -282,7 +290,7 @@ def service_stop() -> None:
             pid=pid,
             platform="win32",
         )
-    _print_lifecycle_lines("Service stopped", f"PID: {pid}")
+    _print_lifecycle_lines("Service stopped", _process_line(pid))
 
 
 def _compute_token_match(
