@@ -643,6 +643,16 @@ Progress tracking:
 - [ ] Add or update real-behavior tests for the human output contract.
 - [ ] Run manual CLI review and wait for human acceptance before closing the phase.
 
+Status/health convergence cluster:
+
+- [ ] Treat `server status` as the only default human-facing service-state command.
+- [ ] Keep backend `/health` as a readiness endpoint for automation and adapters.
+- [ ] Do not maintain a second rich human `server health` output that duplicates status.
+- [ ] If CLI `server health` remains, make it minimal and automation-oriented; otherwise
+  de-emphasize, alias, or remove it through an explicit compatibility path.
+- [ ] Ensure help text tells users to call `server status` when they want to know whether
+  the service is working or what to check next.
+
 Agent brief:
 
 - Start with Phase `W06.P01`.
@@ -658,6 +668,11 @@ Agent brief:
   - reserve process identity, token checks, model details, and backend capability
     metadata for advanced flags.
 - Do not broaden the command tree unless the human reviewer approves it.
+- Human review has approved a status-only human model:
+  - `server status` is the human operator surface,
+  - `/health` is backend/readiness parity,
+  - `server health` must not remain a parallel rich status display,
+  - literal route parity is less important than semantic parity for the CLI.
 - Do not change generated provider artifacts unless the project tooling requires it.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
