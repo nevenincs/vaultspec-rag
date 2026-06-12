@@ -384,7 +384,7 @@ def _display_port_unreachable_error(
                 f"Service on port {port} is unreachable. "
                 f"The CLI will not silently run {command} locally; "
                 f"start the service or re-run with "
-                f"--allow-fallback (single-agent use only)."
+                f"--allow-fallback (one local user only)."
             ),
             1,
             port=port,
@@ -399,7 +399,7 @@ def _display_port_unreachable_error(
         f"Service on port {port} is unreachable.\n"
         f"The CLI will not silently run {command} locally because that would "
         f"open the local search index directly "
-        f"and block other users or agents waiting on the service.\n"
+        f"and block other users waiting on the service.\n"
         f"Next actions:\n"
         f"  1. Check status:  vaultspec-rag server status\n"
         f"  2. Start service: vaultspec-rag server start\n"

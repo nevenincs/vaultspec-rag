@@ -1636,6 +1636,9 @@ class TestSearchSafetyContract:
         assert "unreachable" in normalized.lower()
         assert "allow-fallback" in normalized.lower()
         assert "local search index" in normalized
+        assert "one user only" in normalized
+        assert "agents waiting" not in normalized
+        assert "single-agent" not in normalized
         assert "Qdrant lock" not in normalized
         assert "in-process" not in normalized
 
@@ -4744,6 +4747,8 @@ class TestJsonOutputMode:
         assert env["error"] == "port_unreachable"
         assert env["port"] == 1
         assert "remediation" in env
+        assert "one local user only" in env["message"]
+        assert "single-agent" not in env["message"]
         assert "Qdrant lock" not in env["message"]
         assert "in-process" not in env["message"]
 
