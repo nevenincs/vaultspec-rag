@@ -153,30 +153,6 @@ def main(
             help="Index data subdirectory relative to --data-dir",
         ),
     ] = None,
-    qdrant_dir: Annotated[
-        str | None,
-        typer.Option(
-            "--qdrant-dir",
-            help="Legacy name for --storage-dir.",
-            hidden=True,
-        ),
-    ] = None,
-    index_meta: Annotated[
-        str | None,
-        typer.Option(
-            "--index-meta",
-            help="Document index state filename",
-            hidden=True,
-        ),
-    ] = None,
-    code_index_meta: Annotated[
-        str | None,
-        typer.Option(
-            "--code-index-meta",
-            help="Code index state filename",
-            hidden=True,
-        ),
-    ] = None,
     status_dir: Annotated[
         str | None,
         typer.Option(
@@ -211,13 +187,8 @@ def main(
     cli_overrides: dict[str, Any] = {}
     if data_dir is not None:
         cli_overrides["data_dir"] = data_dir
-    selected_storage_dir = storage_dir if storage_dir is not None else qdrant_dir
-    if selected_storage_dir is not None:
-        cli_overrides["qdrant_dir"] = selected_storage_dir
-    if index_meta is not None:
-        cli_overrides["index_metadata_file"] = index_meta
-    if code_index_meta is not None:
-        cli_overrides["code_index_metadata_file"] = code_index_meta
+    if storage_dir is not None:
+        cli_overrides["qdrant_dir"] = storage_dir
     if status_dir is not None:
         cli_overrides["status_dir"] = status_dir
     if log_file is not None:

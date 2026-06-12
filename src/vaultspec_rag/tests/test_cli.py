@@ -2359,11 +2359,19 @@ class TestHelpCleanup:
         ):
             assert forbidden not in result.output
 
-    def test_legacy_qdrant_dir_option_still_parses_hidden(self):
-        result = runner.invoke(app, ["--qdrant-dir", "legacy-storage", "--help"])
-        assert result.exit_code == 0, result.output
-        assert "--qdrant-dir" not in result.output
-        assert "--storage-dir" in result.output
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--qdrant-dir", "legacy-storage", "--help"],
+            ["--index-meta", "index.json", "--help"],
+            ["--code-index-meta", "code-index.json", "--help"],
+        ],
+    )
+    def test_removed_root_config_aliases_are_not_supported(self, argv: list[str]):
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
 
     def test_server_help_uses_user_facing_language(self):
         result = runner.invoke(app, ["server", "--help"])
