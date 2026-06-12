@@ -664,9 +664,12 @@ Status as of 2026-06-12:
 - Search freshness and timeout diagnostics shipped and pushed:
   - service search responses include `index_state`, empty-result diagnostics, and coarse
     route timing.
+  - search timing now includes model-load, project-lease, embedding, Qdrant, rerank, and
+    postprocess phase fields.
   - timeout errors include health/jobs/backpressure diagnostics and next actions.
   - redundant cold pre-search status work was removed; manual cold search showed
-    near-zero `status_seconds`, while remaining cold cost is inside `search_seconds`.
+    near-zero `status_seconds`, and remaining cold cost is now visible through setup and
+    search phase fields.
 - Code review completed:
   - CR-13 and CR-14 were found in W05 review and fixed before final push.
 - Codified project rules:
@@ -692,7 +695,5 @@ Manual integration persona:
 Remaining deferred work:
 
 - True queue wait is still not measured.
-- Embedding, Qdrant query, rerank, and graph-rerank phase timings are still conflated
-  inside `search_seconds`.
 - The jobs registry still lacks OS user, wrapper identity, PID, process memory, and GPU
   memory fields.

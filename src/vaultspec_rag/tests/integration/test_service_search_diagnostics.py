@@ -13,6 +13,30 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _assert_search_phase_timing(result: dict[str, object]) -> dict[str, object]:
+    timing = cast("dict[str, object]", result["timing"])
+    for key in (
+        "search_seconds",
+        "model_load_seconds",
+        "project_lease_seconds",
+        "embedding_seconds",
+        "qdrant_seconds",
+        "rerank_seconds",
+        "postprocess_seconds",
+    ):
+        assert isinstance(timing[key], float)
+    phases = cast("dict[str, object]", timing["phases"])
+    for key in (
+        "model_load_seconds",
+        "project_lease_seconds",
+        "embedding_seconds",
+        "qdrant_seconds",
+    ):
+        assert isinstance(phases[key], float)
+    assert timing["timing_scope"] == "server_route"
+    return timing
+
+
 @pytest.mark.subprocess_gpu
 def test_empty_service_search_reports_missing_index(
     live_service: tuple[int, Path],
@@ -33,9 +57,7 @@ def test_empty_service_search_reports_missing_index(
 
     assert isinstance(result, dict)
     assert result["results"] == []
-    timing = cast("dict[str, object]", result["timing"])
-    assert isinstance(timing["search_seconds"], float)
-    assert timing["timing_scope"] == "server_route"
+    _assert_search_phase_timing(result)
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
     assert index_state["source"] == "vault"
@@ -73,6 +95,7 @@ def test_direct_http_code_search_reports_code_index_state(
 
     assert isinstance(result, dict)
     assert result["results"] == []
+    _assert_search_phase_timing(result)
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
     assert index_state["source"] == "code"

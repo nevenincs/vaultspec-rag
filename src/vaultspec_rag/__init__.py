@@ -36,7 +36,9 @@ from .api import (
     run_quality_probe,
     scan_codebase_files,
     search_codebase,
+    search_codebase_timed,
     search_vault,
+    search_vault_timed,
 )
 from .embeddings import EmbeddingModel, SparseResult
 from .indexer import (
@@ -82,5 +84,7 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase_files",
     "search_codebase",
+    "search_codebase_timed",
     "search_vault",
+    "search_vault_timed",
 ]

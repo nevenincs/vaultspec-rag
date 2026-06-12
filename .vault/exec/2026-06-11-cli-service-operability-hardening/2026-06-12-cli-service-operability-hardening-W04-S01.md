@@ -129,8 +129,6 @@ state cannot be established.
 ## Deferred
 
 - True queue wait is still not measured.
-- Embedding, Qdrant query, rerank, and graph rerank phase timings are still conflated
-  inside `search_seconds`.
 - Search while indexing still needs a controlled manual reproduction.
 - `server status --port` was later implemented in the status convergence follow-up.
 
@@ -166,3 +164,46 @@ Observed against current resident service PID `50236` on port `8766`:
 - Remaining cold latency is inside `search_seconds`, so true embedding/Qdrant/rerank
   attribution still requires a service-domain diagnostic search API rather than wrapper
   timing around the public list-returning search functions.
+
+## Follow-Up: Search Phase Timing
+
+Added service-domain timed search variants for the HTTP route:
+
+- `search_vault_timed`,
+- `search_codebase_timed`,
+- `VaultSearcher.search_vault_timed`,
+- `VaultSearcher.search_codebase_timed`.
+
+The `/search` timing payload now reports:
+
+- `model_load_seconds`,
+- `project_lease_seconds`,
+- `embedding_seconds`,
+- `qdrant_seconds`,
+- `rerank_seconds`,
+- `postprocess_seconds`,
+- `serialization_seconds`,
+- `server_total_seconds`,
+- `phases` with detailed sub-phases such as `glob_filter_seconds`,
+  `result_mapping_seconds`, `prefer_seconds`, `dedup_seconds`, and
+  `graph_rerank_seconds` where applicable.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/search/_searcher.py src/vaultspec_rag/api.py src/vaultspec_rag/__init__.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run ty check src/vaultspec_rag/search/_searcher.py src/vaultspec_rag/api.py src/vaultspec_rag/__init__.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag search "phase timing embedding qdrant rerank postprocess" --type code --json --max-results 2 --port 8766 --timeout 180`
+- `uv run vaultspec-rag server status --json --port 8766`
+
+Observed against current resident service PID `58528` on port `8766`:
+
+- cold JSON search included all flat timing fields and the detailed `phases` map,
+- `embedding_seconds` was about 0.55s,
+- `qdrant_seconds` was about 0.40s,
+- `rerank_seconds` was about 0.095s,
+- `postprocess_seconds` was about 0.095s,
+- the remaining cold cost was attributable to setup fields, especially project/model
+  setup outside the core query phases.

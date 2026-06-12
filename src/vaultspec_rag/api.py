@@ -9,6 +9,7 @@ direct API consumers as well as MCP tool handlers.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .graph_cache import GraphCache
@@ -37,7 +38,9 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase_files",
     "search_codebase",
+    "search_codebase_timed",
     "search_vault",
+    "search_vault_timed",
 ]
 
 
@@ -179,6 +182,51 @@ def search_vault(
         )
 
 
+def search_vault_timed(
+    root_dir: pathlib.Path,
+    query: str,
+    *,
+    top_k: int = 5,
+    doc_type: str | None = None,
+    feature: str | None = None,
+    date: str | None = None,
+    tag: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Search the vault and return phase timings for service diagnostics."""
+    from .search import validate_search_filters
+
+    validate_search_filters(
+        "vault",
+        doc_type=doc_type,
+        feature=feature,
+        date=date,
+        tag=tag,
+    )
+    root = _resolve(root_dir)
+    registry = get_registry()
+    phase_started = time.perf_counter()
+    registry.load_model()
+    model_load_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
+    with registry.lease(root) as slot:
+        project_lease_seconds = time.perf_counter() - phase_started
+        results, timings = slot.searcher.search_vault_timed(
+            query,
+            top_k=top_k,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+    timings["model_load_seconds"] = model_load_seconds
+    timings["project_lease_seconds"] = project_lease_seconds
+    return results, timings
+
+
 def search_codebase(
     root_dir: pathlib.Path,
     query: str,
@@ -258,6 +306,66 @@ def search_codebase(
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
+
+
+def search_codebase_timed(
+    root_dir: pathlib.Path,
+    query: str,
+    *,
+    top_k: int = 5,
+    language: str | None = None,
+    path: str | None = None,
+    node_type: str | None = None,
+    function_name: str | None = None,
+    class_name: str | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+    dedup_locales: bool = False,
+    prefer: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Search codebase and return phase timings for service diagnostics."""
+    from .search import validate_search_filters
+
+    validate_search_filters(
+        "code",
+        language=language,
+        path=path,
+        node_type=node_type,
+        function_name=function_name,
+        class_name=class_name,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        dedup_locales=dedup_locales,
+        prefer=prefer,
+    )
+    root = _resolve(root_dir)
+    registry = get_registry()
+    phase_started = time.perf_counter()
+    registry.load_model()
+    model_load_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
+    with registry.lease(root) as slot:
+        project_lease_seconds = time.perf_counter() - phase_started
+        results, timings = slot.searcher.search_codebase_timed(
+            query,
+            top_k=top_k,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+    timings["model_load_seconds"] = model_load_seconds
+    timings["project_lease_seconds"] = project_lease_seconds
+    return results, timings
 
 
 def list_documents(

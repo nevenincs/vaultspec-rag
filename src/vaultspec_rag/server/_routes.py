@@ -548,7 +548,7 @@ async def search_route(request: Request) -> JSONResponse:
         try:
             phase_started = time.perf_counter()
             if search_type == "vault":
-                results = vaultspec_rag.search_vault(
+                results, phase_timing = vaultspec_rag.search_vault_timed(
                     root,
                     query,
                     top_k=top_k,
@@ -560,7 +560,7 @@ async def search_route(request: Request) -> JSONResponse:
                     unlike_ids=payload.get("unlike_ids"),
                 )
             else:
-                results = vaultspec_rag.search_codebase(
+                results, phase_timing = vaultspec_rag.search_codebase_timed(
                     root,
                     query,
                     top_k=top_k,
@@ -596,9 +596,16 @@ async def search_route(request: Request) -> JSONResponse:
                 "timing": {
                     "status_seconds": status_seconds,
                     "search_seconds": search_seconds,
+                    "model_load_seconds": phase_timing.get("model_load_seconds"),
+                    "project_lease_seconds": phase_timing.get("project_lease_seconds"),
+                    "embedding_seconds": phase_timing.get("embedding_seconds"),
+                    "qdrant_seconds": phase_timing.get("qdrant_seconds"),
+                    "rerank_seconds": phase_timing.get("rerank_seconds"),
+                    "postprocess_seconds": phase_timing.get("postprocess_seconds"),
                     "serialization_seconds": serialization_seconds,
                     "queue_wait_seconds": None,
                     "timing_scope": "server_route",
+                    "phases": phase_timing,
                 },
                 "index_state": _search_index_state(
                     status=status,

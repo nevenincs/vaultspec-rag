@@ -73,6 +73,15 @@ def _locator_component(
     return None
 
 
+def _record_seconds(
+    timings: dict[str, float] | None,
+    key: str,
+    started: float,
+) -> None:
+    if timings is not None:
+        timings[key] = time.perf_counter() - started
+
+
 class VaultGraphError(RuntimeError):
     """Raised when the VaultGraph fails to initialize."""
 
@@ -291,6 +300,7 @@ class VaultSearcher:
         tag: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Search vault using pre-encoded dense and sparse vectors.
 
@@ -331,6 +341,7 @@ class VaultSearcher:
 
         # Fetch extra candidates when reranker will narrow them down
         fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        phase_started = time.perf_counter()
         raw_results: list[dict[str, object]] = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search(
@@ -343,7 +354,9 @@ class VaultSearcher:
                 unlike_ids=unlike_ids,
             ),
         )
+        _record_seconds(timings, "qdrant_seconds", phase_started)
 
+        phase_started = time.perf_counter()
         results: list[SearchResult] = []
         for r in raw_results:
             raw_score = r.get("_relevance_score", 0.0)
@@ -361,10 +374,23 @@ class VaultSearcher:
                     date=str(r.get("date", "")),
                 ),
             )
+        _record_seconds(timings, "result_mapping_seconds", phase_started)
 
+        phase_started = time.perf_counter()
         results = self._rerank(query_text, results, top_k)
+        _record_seconds(timings, "rerank_seconds", phase_started)
+
+        phase_started = time.perf_counter()
         graph = self._get_graph()
-        return rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+        results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+        _record_seconds(timings, "graph_rerank_seconds", phase_started)
+        if timings is not None:
+            timings["postprocess_seconds"] = (
+                timings.get("result_mapping_seconds", 0.0)
+                + timings.get("rerank_seconds", 0.0)
+                + timings.get("graph_rerank_seconds", 0.0)
+            )
+        return results
 
     def _build_codebase_store_filters(
         self,
@@ -490,6 +516,7 @@ class VaultSearcher:
         prefer: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Search codebase using pre-encoded dense and sparse vectors.
 
@@ -549,6 +576,7 @@ class VaultSearcher:
             fetch_limit = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
         else:
             fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        phase_started = time.perf_counter()
         raw_results: list[dict[str, object]] = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search_codebase(
@@ -561,29 +589,49 @@ class VaultSearcher:
                 unlike_ids=unlike_ids,
             ),
         )
+        _record_seconds(timings, "qdrant_seconds", phase_started)
 
         # Post-query glob filter. Runs before SearchResult / rerank
         # so the CrossEncoder cost is proportional to the survivors,
         # not the over-fetched raw set.
+        phase_started = time.perf_counter()
         raw_results = self._filter_raw_codebase_results(
             raw_results, include_norm, exclude_norm
         )
+        _record_seconds(timings, "glob_filter_seconds", phase_started)
 
+        phase_started = time.perf_counter()
         results = self._map_codebase_results(raw_results)
+        _record_seconds(timings, "result_mapping_seconds", phase_started)
+
+        phase_started = time.perf_counter()
         results = self._rerank(query_text, results, top_k)
+        _record_seconds(timings, "rerank_seconds", phase_started)
 
         # --prefer post-rerank score nudge. Apply ±PREFER_SCORE_NUDGE
         # based on path-derived category, then re-sort. The
         # CrossEncoder's query-relevance scoring runs first; user
         # preference re-orders ties and near-ties only.
+        phase_started = time.perf_counter()
         self._apply_prefer_nudge(results, prefer)
+        _record_seconds(timings, "prefer_seconds", phase_started)
 
         # --dedup-locales collapse pass. Group results by locale
         # stem; within each group, near-tie scores (within
         # _LOCALE_DEDUP_SCORE_WINDOW) collapse to the highest-scoring
         # entry. Non-locale paths and singletons pass through.
+        phase_started = time.perf_counter()
         if dedup_locales:
             results = _collapse_locale_variants(results)
+        _record_seconds(timings, "dedup_seconds", phase_started)
+        if timings is not None:
+            timings["postprocess_seconds"] = (
+                timings.get("glob_filter_seconds", 0.0)
+                + timings.get("result_mapping_seconds", 0.0)
+                + timings.get("rerank_seconds", 0.0)
+                + timings.get("prefer_seconds", 0.0)
+                + timings.get("dedup_seconds", 0.0)
+            )
 
         return results
 
@@ -646,8 +694,36 @@ class VaultSearcher:
         Returns:
             Ranked list of vault SearchResult instances.
         """
+        results, _timings = self.search_vault_timed(
+            raw_query,
+            top_k=top_k,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+        return results
+
+    def search_vault_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        doc_type: str | None = None,
+        feature: str | None = None,
+        date: str | None = None,
+        tag: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
+    ) -> tuple[list[SearchResult], dict[str, float]]:
+        """Search vault and return phase timings for service diagnostics."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
         parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
-        return self._search_vault_encoded(
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        results = self._search_vault_encoded(
             query_vector,
             sparse_vector,
             parsed,
@@ -659,7 +735,9 @@ class VaultSearcher:
             tag=tag,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            timings=timings,
         )
+        return results, timings
 
     def search_codebase(
         self,
@@ -707,8 +785,46 @@ class VaultSearcher:
         Returns:
             Ranked list of codebase SearchResult instances.
         """
+        results, _timings = self.search_codebase_timed(
+            raw_query,
+            top_k=top_k,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+        return results
+
+    def search_codebase_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        language: str | None = None,
+        path: str | None = None,
+        node_type: str | None = None,
+        function_name: str | None = None,
+        class_name: str | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        dedup_locales: bool = False,
+        prefer: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
+    ) -> tuple[list[SearchResult], dict[str, float]]:
+        """Search codebase and return phase timings for service diagnostics."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
         parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
-        return self._search_codebase_encoded(
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        results = self._search_codebase_encoded(
             query_vector,
             sparse_vector,
             parsed,
@@ -725,4 +841,6 @@ class VaultSearcher:
             prefer=prefer,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            timings=timings,
         )
+        return results, timings
