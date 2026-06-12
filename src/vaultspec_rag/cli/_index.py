@@ -120,7 +120,7 @@ def _try_service_delegation(
 ) -> bool:
     if exclude and not json_mode:
         _cli.console.print(
-            "--exclude is ignored when delegating to the RAG service.",
+            "--exclude is ignored when using the running service.",
         )
     do_vault = index_type in ("vault", "all")
     do_code = index_type in ("code", "all")

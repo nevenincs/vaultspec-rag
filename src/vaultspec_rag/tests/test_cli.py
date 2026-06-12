@@ -1076,6 +1076,28 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "falling back to in-process" not in normalized
 
+    def test_index_exclude_warning_uses_running_service_language(self, tmp_path: Path):
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--port",
+                "1",
+                "--exclude",
+                "temp.py",
+            ],
+        )
+
+        assert result.exit_code != 0
+        normalized = " ".join(result.output.split())
+        assert "--exclude is ignored when using the running service." in normalized
+        assert "RAG service" not in normalized
+
     def test_search_results_service_uses_line_records(self):
         """Service results render as grep-like lines, not a table."""
         from io import StringIO
