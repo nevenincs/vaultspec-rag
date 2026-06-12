@@ -112,7 +112,7 @@ documents are carried in this plan's frontmatter `related:` chain.
 
 ## Steps
 
-Step rows live in the Wave blocks above (`W01`–`W05`).
+Step rows live in the Wave blocks above (`W01` - `W05`).
 
 ## Parallelization
 
@@ -131,7 +131,7 @@ minimal and additive.
 
 - Every wave: full unit suite (`uv run vaultspec-rag test`) green; ruff/ty/complexity
   pre-commit hooks pass on touched files; GPU integration tests run locally (real
-  GPU, real Qdrant — no mocks or skips).
+  GPU, real Qdrant - no mocks or skips).
 - W01/W05: the saturation matrix (same-root, cross-root, mixed, search-during-index)
   reports throughput and p50/p95 against the 6.3 GB two-root corpus; W05 must show
   improved saturated throughput, no deadlock or starvation, and
