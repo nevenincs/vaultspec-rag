@@ -806,3 +806,44 @@ Priority actions:
    logs, locks, and index metadata together.
 
 This audit should be treated as a product defect record generated from a real failed-and-recovered user session.
+
+## Implementation Progress Update - 2026-06-12
+
+The original testimonial remains the baseline failure record. The hardening epic has now
+implemented the following current-state improvements:
+
+- `server status` is the canonical operator view and supports explicit `--port` checks.
+- `server jobs` is bounded, running-first, filterable, and supports focused `--job-id`
+  inspection.
+- Job records include initiator, command, project root, liveness, OS user, serving PID,
+  executable/virtualenv context, RSS, CUDA allocated memory, and CUDA reserved memory.
+- `server logs` supports `--job-id` and `--contains`, with the same filters available
+  through the localhost routes and MCP adapter.
+- Service-backed search responses include `index_state`, empty-result diagnostics,
+  phase timing, numeric GPU queue wait, and `request_id`.
+- Timeout errors report service readiness, running jobs, backpressure hints, backend
+  concurrency strategy, and concrete next actions.
+- `/health`, heartbeat, `server start`, `server status`, and job runtime records now
+  agree on the serving daemon PID rather than the Windows launcher PID.
+- Search request ids are now joinable through `server logs --contains <request_id>`.
+
+Manual validation after the hardening changes used resident service PID `59728` on port
+`8766`:
+
+- `uv run vaultspec-rag search "request correlation logs" --type code --json --max-results 1 --port 8766 --timeout 180`
+- `uv run vaultspec-rag server logs --json --contains 1d11935dd18e4e258c955439653fb339 --lines 5 --port 8766`
+
+Observed result:
+
+- The search returned `request_id: 1d11935dd18e4e258c955439653fb339`.
+- The log query returned a structured `service.lifecycle event=search` line with the same
+  request id.
+
+Remaining product risk:
+
+- Cold service-backed search and live-service test setup still show high startup/setup
+  latency. This is now visible under `project_lease_seconds`, but it has not been
+  optimized in this epic slice.
+- The audit still recommends a future higher-level diagnostic/doctor flow. The current
+  implementation hardens the existing status/jobs/logs/search surfaces rather than adding
+  a new umbrella command.

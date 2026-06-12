@@ -21,6 +21,7 @@ from __future__ import annotations
 import hmac
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -561,6 +562,7 @@ async def search_route(request: Request) -> JSONResponse:
         return denied
 
     payload = await request.json()
+    request_id = uuid.uuid4().hex
     search_type = payload.get("type", "vault")
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
@@ -624,6 +626,7 @@ async def search_route(request: Request) -> JSONResponse:
             ]
             serialization_seconds = time.perf_counter() - phase_started
             return {
+                "request_id": request_id,
                 "results": items,
                 "summary": f"Found {len(results)} relevant items.",
                 "timing": {
@@ -660,6 +663,7 @@ async def search_route(request: Request) -> JSONResponse:
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     if "results" in result:
+        result["request_id"] = request_id
         timing = result.get("timing")
         if isinstance(timing, dict):
             timing["server_total_seconds"] = total_seconds
@@ -669,6 +673,16 @@ async def search_route(request: Request) -> JSONResponse:
                 port=request.url.port,
             )
         _m._ensure_watcher(root)
+        _m._lifecycle_log(
+            "search",
+            request_id=request_id,
+            search_type=search_type,
+            root=root,
+            results=len(result["results"])
+            if isinstance(result.get("results"), list)
+            else 0,
+            total_seconds=f"{total_seconds:.3f}",
+        )
     return JSONResponse(result)
 
 

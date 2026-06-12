@@ -235,3 +235,31 @@ Observed against resident service PID `18512` on port `8766`:
 - The manual run showed near-zero queue wait (`~0.000002s`) and cold cost remained under
   `project_lease_seconds` (`~6.53s`), confirming the remaining startup slowdown is setup
   latency, not observed GPU-lock contention.
+
+## Follow-Up: Search Request Correlation
+
+Added request correlation for service-backed search:
+
+- `/search` responses now include a stable `request_id`.
+- Successful search requests emit an operator-visible structured log line through the
+  existing `service.lifecycle` channel with `event=search`, `request_id`, search type,
+  root, result count, and total seconds.
+- The existing `server logs --contains <request_id>` path can now join a search response
+  back to the relevant service log line.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run ty check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run --no-sync python tools/complexity_gate.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag search "request correlation logs" --type code --json --max-results 1 --port 8766 --timeout 180`
+- `uv run vaultspec-rag server logs --json --contains 1d11935dd18e4e258c955439653fb339 --lines 5 --port 8766`
+
+Observed against resident service PID `59728` on port `8766`:
+
+- Search JSON returned request id `1d11935dd18e4e258c955439653fb339`.
+- `server logs --contains 1d11935dd18e4e258c955439653fb339` returned a structured
+  `service.lifecycle event=search` line with the same id.

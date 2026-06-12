@@ -674,6 +674,8 @@ Status as of 2026-06-12:
     search phase fields.
   - GPU-lock queue wait is measured as numeric `queue_wait_seconds` and
     `phases.gpu_queue_wait_seconds`.
+  - service-backed search responses include `request_id`, and the service logs emit
+    `service.lifecycle event=search request_id=<id>` for log correlation.
 - Process identity parity shipped:
   - `/health` reports serving PID and interpreter/venv context.
   - heartbeat and `server start` persist the serving daemon PID instead of the Windows
