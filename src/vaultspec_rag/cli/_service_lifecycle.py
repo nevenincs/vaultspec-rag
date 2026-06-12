@@ -719,8 +719,11 @@ def _status_jobs_label(jobs: dict[str, object] | None) -> str:
     phases = jobs.get("phases")
     total = jobs.get("total")
     running = jobs.get("running")
+    queued = jobs.get("queued")
     total_count = total if isinstance(total, int) else 0
     running_count = running if isinstance(running, int) else 0
+    queued_count = queued if isinstance(queued, int) else 0
+    active_count = max(0, running_count - queued_count)
     processed = max(0, total_count - running_count)
     if isinstance(phases, dict):
         phase_dict = cast("dict[str, object]", phases)
@@ -732,15 +735,20 @@ def _status_jobs_label(jobs: dict[str, object] | None) -> str:
         if phase_processed > 0:
             processed = phase_processed
     processed_word = "job" if processed == 1 else "jobs"
-    running_text = (
-        "none running"
-        if running_count == 0
-        else ("1 running" if running_count == 1 else f"{running_count} running")
+    active_text = (
+        "no active jobs"
+        if active_count == 0
+        else ("1 active job" if active_count == 1 else f"{active_count} active jobs")
+    )
+    waiting_text = (
+        "no waiting jobs"
+        if queued_count == 0
+        else ("1 waiting job" if queued_count == 1 else f"{queued_count} waiting jobs")
     )
     total_word = "job" if total_count == 1 else "jobs"
     return (
         f"{processed} processed {processed_word}; "
-        f"{running_text}; {total_count} recent {total_word}"
+        f"{active_text}; {waiting_text}; {total_count} recent {total_word}"
     )
 
 

@@ -2326,7 +2326,7 @@ class TestServiceDaemonHelpers:
                 f"Address: http://127.0.0.1:{port}",
                 "Uptime: 5m 12s",
                 "Queue: nothing waiting; 1 active job",
-                "Jobs: 2 processed jobs; 1 running; 3 recent jobs",
+                "Jobs: 2 processed jobs; 1 active job; no waiting jobs; 3 recent jobs",
                 "Current job: code index refresh (",
                 "embedding chunks 7 of 20",
             ]
@@ -2378,12 +2378,20 @@ class TestServiceDaemonHelpers:
             thread.join(timeout=5)
 
     def test_service_status_distinguishes_waiting_from_processing(self):
-        from ..cli._service_lifecycle import _status_busy_label, _status_queue_label
+        from ..cli._service_lifecycle import (
+            _status_busy_label,
+            _status_jobs_label,
+            _status_queue_label,
+        )
 
         jobs: dict[str, object] = {"available": True, "running": 1, "queued": 1}
 
         assert _status_busy_label(jobs) == "1 job waiting to write"
         assert _status_queue_label(jobs) == "1 waiting job; 0 active jobs"
+        assert (
+            _status_jobs_label({**jobs, "total": 3, "phases": {"done": 2}})
+            == "2 processed jobs; no active jobs; 1 waiting job; 3 recent jobs"
+        )
 
     def test_service_status_port_only_json(self, tmp_path: Path):
         """server status --port can inspect a reachable service without service.json."""
