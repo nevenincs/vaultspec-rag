@@ -30,25 +30,25 @@ Fix the critical quality defects: vault chunking (D7), rerank on real content (D
 
 Chunk vault documents into heading-aware points while preserving the doc-level search contract.
 
-- [ ] `W02.P02.S03` - Chunk vault documents with the heading-aware TextSplitter into one point per chunk carrying doc metadata, ordinal-derived stable IDs, and embed text separated from stored content; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `W02.P02.S04` - Add doc_id payload plumbing, delete-by-document filtering, and index schema version detection that triggers a one-time vault collection rebuild; `src/vaultspec_rag/store.py`.
-- [ ] `W02.P02.S05` - Group chunk hits per document in vault search with best-chunk scoring and matched-chunk snippets; `src/vaultspec_rag/search/_searcher.py`.
-- [ ] `W02.P02.S06` - Add unit and GPU integration tests for chunked vault indexing, grouped search, and rebuild-on-schema-bump; `src/vaultspec_rag/tests`.
+- [x] `W02.P02.S03` - Chunk vault documents with the heading-aware TextSplitter into one point per chunk carrying doc metadata, ordinal-derived stable IDs, and embed text separated from stored content; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `W02.P02.S04` - Add doc_id payload plumbing, delete-by-document filtering, and index schema version detection that triggers a one-time vault collection rebuild; `src/vaultspec_rag/store.py`.
+- [x] `W02.P02.S05` - Group chunk hits per document in vault search with best-chunk scoring and matched-chunk snippets; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `W02.P02.S06` - Add unit and GPU integration tests for chunked vault indexing, grouped search, and rebuild-on-schema-bump; `src/vaultspec_rag/tests`.
 
 ### Phase `W02.P03` - Rerank and graph scoring
 
 Rerank on token-bounded full content and bound the graph boost.
 
-- [ ] `W02.P03.S07` - Rerank with token-bounded full candidate content instead of 200-char snippets and expose reranker max-length configuration; `src/vaultspec_rag/search/_searcher.py`.
-- [ ] `W02.P03.S08` - Convert the post-rerank multiplicative graph boost into a bounded additive nudge; `src/vaultspec_rag/search/_rerank.py`.
+- [x] `W02.P03.S07` - Rerank with token-bounded full candidate content instead of 200-char snippets and expose reranker max-length configuration; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `W02.P03.S08` - Convert the post-rerank multiplicative graph boost into a bounded additive nudge; `src/vaultspec_rag/search/_rerank.py`.
 - [ ] `W02.P03.S09` - Update unit and GPU tests for content reranking and the bounded nudge, run the quality harness, and record deltas; `src/vaultspec_rag/tests`.
 
 ### Phase `W02.P04` - Contextual embeddings
 
 Contextual headers in embed text and per-surface query instructions.
 
-- [ ] `W02.P04.S10` - Prepend contextual headers (path, class, function) to code-chunk embed text while storing raw chunk content; `src/vaultspec_rag/indexer`.
-- [ ] `W02.P04.S11` - Add per-surface Qwen3 query instructions for vault and codebase searches; `src/vaultspec_rag/embeddings.py`.
+- [x] `W02.P04.S10` - Prepend contextual headers (path, class, function) to code-chunk embed text while storing raw chunk content; `src/vaultspec_rag/indexer`.
+- [x] `W02.P04.S11` - Add per-surface Qwen3 query instructions for vault and codebase searches; `src/vaultspec_rag/embeddings.py`.
 - [ ] `W02.P04.S12` - Re-run the quality benchmarks to validate contextual embeddings and record deltas; `src/vaultspec_rag/tests/benchmarks`.
 
 ## Wave `W03` - Lock architecture
@@ -59,17 +59,17 @@ Remove false sharing: backend-aware per-collection storage locks (D2), gpu_lock 
 
 Backend-aware per-collection point-operation locks with a lifecycle lock.
 
-- [ ] `W03.P05.S13` - Split the store client lock into a lifecycle lock plus per-collection point-operation locks, backend-aware so server mode runs lock-free; `src/vaultspec_rag/store.py`.
-- [ ] `W03.P05.S14` - Extend stress tests to assert cross-collection concurrency and same-collection exclusion semantics; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W03.P05.S13` - Split the store client lock into a lifecycle lock plus per-collection point-operation locks, backend-aware so server mode runs lock-free; `src/vaultspec_rag/store.py`.
+- [x] `W03.P05.S14` - Extend stress tests to assert cross-collection concurrency and same-collection exclusion semantics; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 
 ### Phase `W03.P06` - GPU lock narrowing and encode hygiene
 
 Forward-pass-only gpu_lock holds, query-embedding LRU, coalesced sparse conversion.
 
-- [ ] `W03.P06.S15` - Narrow gpu_lock holds to model forward calls only across the search encode and rerank paths; `src/vaultspec_rag/search/_searcher.py`.
-- [ ] `W03.P06.S16` - Add a thread-safe LRU query-embedding cache keyed by surface and cleaned query text; `src/vaultspec_rag/embeddings.py`.
-- [ ] `W03.P06.S17` - Replace the SPLADE densify-and-loop conversion with a single coalesced sparse-tensor pass; `src/vaultspec_rag/embeddings.py`.
-- [ ] `W03.P06.S18` - Add GPU tests covering narrowed lock holds, cache behavior, and sparse conversion parity; `src/vaultspec_rag/tests`.
+- [x] `W03.P06.S15` - Narrow gpu_lock holds to model forward calls only across the search encode and rerank paths; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `W03.P06.S16` - Add a thread-safe LRU query-embedding cache keyed by surface and cleaned query text; `src/vaultspec_rag/embeddings.py`.
+- [x] `W03.P06.S17` - Replace the SPLADE densify-and-loop conversion with a single coalesced sparse-tensor pass; `src/vaultspec_rag/embeddings.py`.
+- [x] `W03.P06.S18` - Add GPU tests covering narrowed lock holds, cache behavior, and sparse conversion parity; `src/vaultspec_rag/tests`.
 
 ## Wave `W04` - Service plumbing
 
@@ -79,10 +79,10 @@ Async-safe MCP transport (D4), dedicated capacity limiters (D5), event-loop hygi
 
 Thread-dispatched MCP transport, capacity limiters, loop hygiene, telemetry.
 
-- [ ] `W04.P07.S19` - Dispatch MCP tool daemon calls off the event loop preserving existing timeouts; `src/vaultspec_rag/mcp/_tools.py`.
-- [ ] `W04.P07.S20` - Introduce env-tunable search and index capacity limiters replacing shared default thread-pool usage; `src/vaultspec_rag/server`.
-- [ ] `W04.P07.S21` - Move the cold ensure-watcher peek and log reads off the event loop; `src/vaultspec_rag/server/_watcher.py`.
-- [ ] `W04.P07.S22` - Surface limiter depth and lock-wait telemetry through the existing bounded metrics plumbing; `src/vaultspec_rag/server/_state.py`.
+- [x] `W04.P07.S19` - Dispatch MCP tool daemon calls off the event loop preserving existing timeouts; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `W04.P07.S20` - Introduce env-tunable search and index capacity limiters replacing shared default thread-pool usage; `src/vaultspec_rag/server`.
+- [x] `W04.P07.S21` - Move the cold ensure-watcher peek and log reads off the event loop; `src/vaultspec_rag/server/_watcher.py`.
+- [x] `W04.P07.S22` - Surface limiter depth and lock-wait telemetry through the existing bounded metrics plumbing; `src/vaultspec_rag/server/_state.py`.
 
 ## Wave `W05` - Adversarial validation gate
 
