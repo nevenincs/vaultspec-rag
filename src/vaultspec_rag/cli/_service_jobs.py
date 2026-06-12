@@ -709,7 +709,7 @@ def service_jobs(
         typer.Option(
             "--query",
             "-q",
-            help="Filter by text in job id, result, or progress.",
+            help="Filter by text in job id, outcome, or progress.",
         ),
     ] = None,
     running: Annotated[

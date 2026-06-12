@@ -317,6 +317,8 @@ def test_jobs_subcommand_registered() -> None:
     assert "--watch" in result.stdout
     assert "--interval" in result.stdout
     assert "Filter by job state" in result.stdout
+    assert "job id, outcome, or progress" in normalized
+    assert "job id, result, or progress" not in normalized
     assert "automatic updates" in normalized
     assert "manual requests" in normalized
     assert "'watcher'" not in result.stdout
