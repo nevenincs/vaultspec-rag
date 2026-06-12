@@ -497,13 +497,17 @@ class TestIncrementalIndexMetadata:
         meta = {"mod.py": content_hash}
         indexer._write_meta(meta)
 
-        # Reload and verify types.
+        # Reload and verify types. The reserved dunder key carries the
+        # embed-format version, not a hash; every other value is a hash.
         loaded = indexer._load_meta()
+        assert loaded.get("__code_embed_schema__")
         for key, val in loaded.items():
             assert isinstance(key, str)
             assert isinstance(val, str), (
                 f"Expected str hash, got {type(val).__name__}: {val}"
             )
+            if key.startswith("__"):
+                continue
             # Must be a valid hex string (128 chars for blake2b).
             assert len(val) == 128
             int(val, 16)  # raises ValueError if not valid hex
@@ -792,6 +796,8 @@ class TestHashingPermissionError:
         }
         indexer._write_meta(hashes)
         loaded = indexer._load_meta()
+        # The write stamps the embed-format marker alongside the hashes.
+        assert loaded.pop("__code_embed_schema__") == "2"
         assert loaded == hashes
 
 
@@ -895,6 +901,7 @@ class TestCodebaseMetaRoundTrip:
 
         assert meta_path.exists()
         on_disk = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert on_disk.pop("__code_embed_schema__") == "2"
         assert on_disk == hashes
 
     def test_load_meta_returns_written_hashes(self, tmp_path: Path) -> None:
@@ -908,6 +915,7 @@ class TestCodebaseMetaRoundTrip:
         hashes = {"src/foo.py": "aaa", "lib/baz.rs": "bbb"}
         indexer._write_meta(hashes)
         loaded = indexer._load_meta()
+        assert loaded.pop("__code_embed_schema__") == "2"
         assert loaded == hashes
 
     def test_load_meta_returns_empty_when_missing(self, tmp_path: Path) -> None:

@@ -1080,17 +1080,23 @@ class CodebaseIndexer:
             if clean:
                 self.store.drop_code_table()
                 self._clear_preprocess_cache()
-            self.store.ensure_code_table()
-            try:
-                existing_ids_before: set[str] = set(self.store.get_all_code_ids())
-            except (OSError, RuntimeError):
-                logger.warning(
-                    "Could not snapshot existing code-chunk IDs "
-                    "before rebuild; stale-chunk purge will be "
-                    "skipped",
-                    exc_info=True,
-                )
-                existing_ids_before = set()
+                self.store.ensure_code_table()
+                # The collection was just dropped: the snapshot is
+                # empty by construction, and a full id scan of a large
+                # local collection costs minutes of GIL-holding CPU.
+                existing_ids_before: set[str] = set()
+            else:
+                self.store.ensure_code_table()
+                try:
+                    existing_ids_before = set(self.store.get_all_code_ids())
+                except (OSError, RuntimeError):
+                    logger.warning(
+                        "Could not snapshot existing code-chunk IDs "
+                        "before rebuild; stale-chunk purge will be "
+                        "skipped",
+                        exc_info=True,
+                    )
+                    existing_ids_before = set()
             reporter.advance(1)
         finally:
             reporter.phase_end()

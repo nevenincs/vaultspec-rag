@@ -427,6 +427,32 @@ class VaultStore:
             raise RuntimeError(msg)
         return self._client
 
+    def _id_scan_page_limit(self, collection: str) -> int:
+        """Return the scroll page size for payload-light full-collection scans.
+
+        QdrantLocal's ``scroll`` re-sorts every point id and linearly
+        skips to the offset on *each* page, so paging a large local
+        collection costs O(N^2) of GIL-holding CPU - measured at 10+
+        minutes on a few hundred thousand points while starving every
+        other thread in the process. Local mode therefore fetches the
+        whole id set as a single page (one sort, one pass); server mode
+        keeps bounded pages since large HTTP responses are the cost
+        there.
+        """
+        if self._server_mode:
+            return 1000
+        try:
+            with self._point_lock(collection):
+                total = int(self.client.count(collection_name=collection).count)
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not size the id scan for %s; falling back to paging",
+                collection,
+                exc_info=True,
+            )
+            return 1000
+        return max(1, total)
+
     def _point_lock(self, collection: str) -> AbstractContextManager[object]:
         """Return the point-operation guard for *collection*.
 
@@ -888,12 +914,13 @@ class VaultStore:
         counts: dict[str, int] = {}
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         self.ensure_table()
+        page_limit = self._id_scan_page_limit(self.TABLE_NAME)
         while True:
             with self._point_lock(self.TABLE_NAME):
                 records, next_offset = self.client.scroll(
                     collection_name=self.TABLE_NAME,
                     scroll_filter=scroll_filter,
-                    limit=1000,
+                    limit=page_limit,
                     offset=offset,
                     with_payload=["doc_id", "chunk_ordinal"],
                     with_vectors=False,
@@ -969,11 +996,12 @@ class VaultStore:
         """
         ids: set[str] = set()
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        page_limit = self._id_scan_page_limit(collection)
         while True:
             with self._point_lock(collection):
                 records, next_offset = self.client.scroll(
                     collection_name=collection,
-                    limit=1000,
+                    limit=page_limit,
                     offset=offset,
                     with_payload=[id_field],
                     with_vectors=False,
@@ -1017,12 +1045,13 @@ class VaultStore:
 
         ids: list[str] = []
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        page_limit = self._id_scan_page_limit(self.CODE_TABLE_NAME)
         while True:
             with self._point_lock(self.CODE_TABLE_NAME):
                 records, next_offset = self.client.scroll(
                     collection_name=self.CODE_TABLE_NAME,
                     scroll_filter=scroll_filter,
-                    limit=1000,
+                    limit=page_limit,
                     offset=offset,
                     with_payload=["chunk_id"],
                     with_vectors=False,

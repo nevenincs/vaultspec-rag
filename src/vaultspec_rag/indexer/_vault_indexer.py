@@ -729,6 +729,11 @@ class VaultIndexer:
         try:
             if clean:
                 self.store.drop_table()
+                self.store.ensure_table()
+                # The collection was just dropped: the snapshot is empty
+                # by construction, and scanning would only burn CPU.
+                reporter.advance(1)
+                return {}
             self.store.ensure_table()
             try:
                 existing_counts: dict[str, int] = self.store.get_chunk_counts()
