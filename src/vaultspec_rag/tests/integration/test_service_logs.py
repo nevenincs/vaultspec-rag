@@ -393,7 +393,12 @@ def test_logs_subcommand_registered() -> None:
     assert result.exit_code == 0
     assert "--raw" in result.stdout
     assert "Emit JSON for scripts" in result.stdout
+    assert "Number of recent activity entries to inspect" in result.stdout
+    assert "Only show activity for this job id" in result.stdout
+    assert "Only show activity containing this text" in result.stdout
     assert "Show original log lines" in result.stdout
+    assert "Number of trailing log lines" not in result.stdout
+    assert "Only show lines containing" not in result.stdout
     assert "diagnostic log lines" not in result.stdout
     assert "JSON envelope" not in result.stdout
     assert "raw implementation" not in result.stdout

@@ -289,15 +289,15 @@ def _render_activity_feed(log_lines: list[object]) -> None:
 def service_logs(
     lines: Annotated[
         int,
-        typer.Option("--lines", help="Number of trailing log lines to show."),
+        typer.Option("--lines", help="Number of recent activity entries to inspect."),
     ] = 200,
     job_id: Annotated[
         str | None,
-        typer.Option("--job-id", help="Only show lines containing this job id."),
+        typer.Option("--job-id", help="Only show activity for this job id."),
     ] = None,
     contains: Annotated[
         str | None,
-        typer.Option("--contains", help="Only show lines containing this text."),
+        typer.Option("--contains", help="Only show activity containing this text."),
     ] = None,
     port: Annotated[
         int | None,
