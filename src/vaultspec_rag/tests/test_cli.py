@@ -675,7 +675,7 @@ class TestServerCommands:
         result = runner.invoke(app, ["server", "--help"])
         assert result.exit_code == 0
         assert "start" in result.output
-        assert "mcp" in result.output
+        assert "mcp" not in result.output.lower()
 
     def test_mcp_help(self):
         result = runner.invoke(app, ["server", "mcp", "--help"])
@@ -746,8 +746,8 @@ class TestServerRoutingFlattened:
     """Verify the flattened `server` command surface (W03.P05.S12 #169).
 
     The `service` nesting level is removed; lifecycle commands and
-    sub-groups now live directly under `server`.  `server mcp` is
-    unchanged.
+    operator sub-groups now live directly under `server`.  `server mcp`
+    remains callable as a hidden compatibility surface.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
@@ -1791,6 +1791,9 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         assert "Manage the background search service" in result.output
         assert "Manage the HTTP RAG service" not in result.output
+        assert "Model Context Protocol" not in result.output
+        assert "MCP" not in result.output
+        assert "mcp" not in result.output.lower()
         assert "MCP protocol adapter" not in result.output
 
     def test_status_help_clean(self):

@@ -65,7 +65,7 @@ preprocess_app = typer.Typer(
 )
 
 app.add_typer(server_root_app, name="server")
-server_root_app.add_typer(mcp_app, name="mcp")
+server_root_app.add_typer(mcp_app, name="mcp", hidden=True)
 server_root_app.add_typer(server_projects_app, name="projects")
 server_root_app.add_typer(server_watcher_app, name="updates")
 server_root_app.add_typer(server_watcher_app, name="watcher", hidden=True)
