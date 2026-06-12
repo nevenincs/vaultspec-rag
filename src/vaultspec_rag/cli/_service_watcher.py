@@ -145,7 +145,7 @@ def service_watcher_start(
     elif not enabled:
         _cli.console.print(
             f"Automatic index updates are disabled; {root} will update on demand. "
-            "Start the service with --watch to enable.",
+            "Start the service with --updates to enable.",
             markup=False,
             highlight=False,
         )

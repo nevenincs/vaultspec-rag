@@ -9,6 +9,7 @@ import typing
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner, Result
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config as reset_base_config,
@@ -1458,10 +1459,126 @@ class TestHelpCleanup:
         self._assert_clean(result)
         out = result.output.lower()
         assert "detached" in out or "background" in out
+        assert "--updates" in result.output
+        assert "--no-updates" in result.output
+        assert "--update-delay-ms" in result.output
+        assert "--same-source-delay-s" in result.output
+        assert "--watch" not in result.output
+        assert "--no-watch" not in result.output
+        assert "--watch-debounce-ms" not in result.output
+        assert "--watch-cooldown-s" not in result.output
         assert "/health" not in result.output
         assert "auto-reindex" not in out
         assert "watcher" not in out
         assert "VAULTSPEC_RAG_WATCH_ENABLED" not in result.output
+
+    def test_server_start_update_aliases_parse(self, monkeypatch: pytest.MonkeyPatch):
+        captured: dict[str, object] = {}
+
+        def fake_spawn_service(
+            port: int,
+            log_path: Path,
+            *,
+            watch: bool | None,
+            watch_debounce_ms: int | None,
+            watch_cooldown_s: float | None,
+        ) -> int:
+            captured.update(
+                {
+                    "port": port,
+                    "log_path": log_path,
+                    "watch": watch,
+                    "watch_debounce_ms": watch_debounce_ms,
+                    "watch_cooldown_s": watch_cooldown_s,
+                }
+            )
+            raise typer.Exit(0)
+
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._service_lifecycle._port_is_available",
+            lambda _port: True,
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._service_lifecycle._read_service_status",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._service_lifecycle._spawn_service",
+            fake_spawn_service,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "start",
+                "--updates",
+                "--update-delay-ms",
+                "250",
+                "--same-source-delay-s",
+                "1.5",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert captured["watch"] is True
+        assert captured["watch_debounce_ms"] == 250
+        assert captured["watch_cooldown_s"] == 1.5
+
+    def test_server_start_legacy_watch_aliases_still_parse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        captured: dict[str, object] = {}
+
+        def fake_spawn_service(
+            port: int,
+            log_path: Path,
+            *,
+            watch: bool | None,
+            watch_debounce_ms: int | None,
+            watch_cooldown_s: float | None,
+        ) -> int:
+            captured.update(
+                {
+                    "port": port,
+                    "log_path": log_path,
+                    "watch": watch,
+                    "watch_debounce_ms": watch_debounce_ms,
+                    "watch_cooldown_s": watch_cooldown_s,
+                }
+            )
+            raise typer.Exit(0)
+
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._service_lifecycle._port_is_available",
+            lambda _port: True,
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._service_lifecycle._read_service_status",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._service_lifecycle._spawn_service",
+            fake_spawn_service,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "start",
+                "--no-watch",
+                "--watch-debounce-ms",
+                "250",
+                "--watch-cooldown-s",
+                "1.5",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert captured["watch"] is False
+        assert captured["watch_debounce_ms"] == 250
+        assert captured["watch_cooldown_s"] == 1.5
 
     def test_server_warmup_help_clean(self):
         result = runner.invoke(app, ["server", "warmup", "--help"])
