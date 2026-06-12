@@ -55,25 +55,25 @@ def _print_update_timing(result: dict[str, object]) -> None:
     same_project_delay = _format_seconds(result.get("cooldown_s"))
     if update_delay == "not reported":
         _cli.console.print(
-            "File change delay: not reported by service.",
+            "File changes: not reported by service.",
             markup=False,
             highlight=False,
         )
     else:
         _cli.console.print(
-            f"File change delay: wait {update_delay} before updating.",
+            f"File changes: wait {update_delay} before updating.",
             markup=False,
             highlight=False,
         )
     if same_project_delay == "not reported":
         _cli.console.print(
-            "Same-project delay: not reported by service.",
+            "Same project: not reported by service.",
             markup=False,
             highlight=False,
         )
         return
     _cli.console.print(
-        f"Same-project delay: wait {same_project_delay} before updating again.",
+        f"Same project: wait {same_project_delay} before updating again.",
         markup=False,
         highlight=False,
     )
@@ -104,7 +104,7 @@ def _watcher_service_unreachable(
 _UPDATES_STATUS_COMMAND = "service.updates.status"
 _UPDATES_START_COMMAND = "service.updates.start"
 _UPDATES_STOP_COMMAND = "service.updates.stop"
-_UPDATES_RECONFIGURE_COMMAND = "service.updates.reconfigure"
+_UPDATES_TIMING_COMMAND = "service.updates.timing"
 
 
 @server_watcher_app.command("status")
@@ -229,9 +229,9 @@ def service_watcher_stop(
     raise typer.Exit(0)
 
 
-@server_watcher_app.command("reconfigure")
-def service_watcher_reconfigure(
-    project: Annotated[str, typer.Argument(help="Project to reconfigure.")],
+@server_watcher_app.command("timing")
+def service_watcher_timing(
+    project: Annotated[str, typer.Argument(help="Project to update timing for.")],
     update_delay_ms: Annotated[
         int | None,
         typer.Option(
@@ -239,35 +239,11 @@ def service_watcher_reconfigure(
             help="Delay before indexing a burst of file changes, in milliseconds.",
         ),
     ] = None,
-    debounce_ms: Annotated[
-        int | None,
-        typer.Option(
-            "--debounce-ms",
-            help="Legacy name for --update-delay-ms.",
-            hidden=True,
-        ),
-    ] = None,
     same_project_delay_s: Annotated[
         float | None,
         typer.Option(
             "--same-project-delay-s",
             help="Minimum wait before indexing the same project again, in seconds.",
-        ),
-    ] = None,
-    same_source_delay_s: Annotated[
-        float | None,
-        typer.Option(
-            "--same-source-delay-s",
-            help="Legacy name for --same-project-delay-s.",
-            hidden=True,
-        ),
-    ] = None,
-    cooldown_s: Annotated[
-        float | None,
-        typer.Option(
-            "--cooldown-s",
-            help="Legacy name for --same-source-delay-s.",
-            hidden=True,
         ),
     ] = None,
     port: Annotated[
@@ -282,31 +258,21 @@ def service_watcher_reconfigure(
     """Change automatic index update timing."""
     resolved_port = port if port is not None else _default_service_port()
     args: dict[str, object] = {"root": project}
-    selected_update_delay_ms = (
-        update_delay_ms if update_delay_ms is not None else debounce_ms
-    )
-    selected_same_source_delay_s = (
-        same_project_delay_s
-        if same_project_delay_s is not None
-        else same_source_delay_s
-        if same_source_delay_s is not None
-        else cooldown_s
-    )
-    if selected_update_delay_ms is not None:
-        args["debounce_ms"] = selected_update_delay_ms
-    if selected_same_source_delay_s is not None:
-        args["cooldown_s"] = selected_same_source_delay_s
+    if update_delay_ms is not None:
+        args["debounce_ms"] = update_delay_ms
+    if same_project_delay_s is not None:
+        args["cooldown_s"] = same_project_delay_s
     result = _try_http_admin("reconfigure_watcher", args, resolved_port)
     if result is None:
         _watcher_service_unreachable(
-            _UPDATES_RECONFIGURE_COMMAND,
+            _UPDATES_TIMING_COMMAND,
             json_mode,
             root=project,
         )
         return
     restarted = bool(result.get("restarted", False))
     if json_mode:
-        _emit_json(True, _UPDATES_RECONFIGURE_COMMAND, data=result)
+        _emit_json(True, _UPDATES_TIMING_COMMAND, data=result)
         return
     if restarted:
         _cli.console.print(f"Automatic index updates reconfigured for: {project}")

@@ -65,15 +65,40 @@ _UPDATES_COMMANDS = [
     ["server", "updates", "status"],
     ["server", "updates", "start", "/tmp/x"],
     ["server", "updates", "stop", "/tmp/x"],
-    ["server", "updates", "reconfigure", "/tmp/x"],
+    ["server", "updates", "timing", "/tmp/x"],
 ]
 
 _UPDATES_COMMAND_IDS = {
     "status": "service.updates.status",
     "start": "service.updates.start",
     "stop": "service.updates.stop",
-    "reconfigure": "service.updates.reconfigure",
+    "timing": "service.updates.timing",
 }
+
+
+def _help_command_names(output: str) -> list[str]:
+    names: list[str] = []
+    in_commands = False
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line == "Commands:":
+            in_commands = True
+            continue
+        if not in_commands or not line:
+            continue
+        names.append(line.split()[0])
+    return names
+
+
+def _label_values(output: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if ": " not in line:
+            continue
+        label, value = line.split(": ", 1)
+        pairs[label] = value
+    return pairs
 
 
 @pytest.mark.parametrize("argv", _UPDATES_COMMANDS)
@@ -98,8 +123,12 @@ def test_updates_command_not_running_prose(argv: list[str]) -> None:
 def test_updates_subcommands_registered() -> None:
     result = runner.invoke(app, ["server", "updates", "--help"])
     assert result.exit_code == 0
-    for name in ("status", "start", "stop", "reconfigure"):
-        assert name in result.stdout
+    assert _help_command_names(result.stdout) == [
+        "status",
+        "start",
+        "stop",
+        "timing",
+    ]
     assert "automatic index update" in result.stdout.lower()
     assert "active roots" not in result.stdout.lower()
 
@@ -110,7 +139,7 @@ def test_updates_subcommands_registered() -> None:
         ["server", "updates", "status", "--help"],
         ["server", "updates", "start", "--help"],
         ["server", "updates", "stop", "--help"],
-        ["server", "updates", "reconfigure", "--help"],
+        ["server", "updates", "timing", "--help"],
     ],
 )
 def test_updates_help_uses_script_json_language(argv: list[str]) -> None:
@@ -132,7 +161,7 @@ def test_updates_status_help_uses_project_language() -> None:
     [
         ["server", "updates", "start", "--help"],
         ["server", "updates", "stop", "--help"],
-        ["server", "updates", "reconfigure", "--help"],
+        ["server", "updates", "timing", "--help"],
     ],
 )
 def test_updates_project_argument_uses_project_language(argv: list[str]) -> None:
@@ -141,21 +170,6 @@ def test_updates_project_argument_uses_project_language(argv: list[str]) -> None
     assert "PROJECT" in result.stdout
     assert " ROOT" not in result.stdout
     assert "Project root" not in result.stdout
-
-
-def test_update_timing_output_uses_user_language(capsys) -> None:
-    from ..cli._service_watcher import _print_update_timing
-
-    _print_update_timing({"debounce_ms": 2000, "cooldown_s": 30.0})
-
-    output = capsys.readouterr().out
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    timing = dict(line.split(": ", 1) for line in lines)
-    assert timing["File changes"] == "wait 2s before updating."
-    assert timing["Same project"] == "wait 30s before updating again."
-    assert "Same source" not in timing
-    assert "debounce=" not in output
-    assert "cooldown=" not in output
 
 
 def test_updates_status_empty_output_uses_project_language() -> None:
@@ -172,8 +186,14 @@ def test_updates_status_empty_output_uses_project_language() -> None:
         )
 
     assert result.exit_code == 0, result.output
+    labels = _label_values(result.output)
+    assert labels["File changes"] == "wait 2s before updating."
+    assert labels["Same project"] == "wait 30s before updating again."
+    assert "Same source" not in labels
     assert "No projects currently have automatic index updates." in result.output
     assert "No roots" not in result.output
+    assert "debounce=" not in result.output
+    assert "cooldown=" not in result.output
 
 
 def test_updates_status_lists_projects_as_blocks() -> None:
@@ -208,8 +228,8 @@ def test_updates_status_lists_projects_as_blocks() -> None:
     )
 
 
-def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
-    result = runner.invoke(app, ["server", "updates", "reconfigure", "--help"])
+def test_updates_timing_help_uses_user_facing_timing_flags() -> None:
+    result = runner.invoke(app, ["server", "updates", "timing", "--help"])
     assert result.exit_code == 0
     assert "--update-delay-ms" in result.stdout
     assert "--same-project-delay-s" in result.stdout
@@ -224,17 +244,31 @@ def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
         [
             "server",
             "updates",
-            "reconfigure",
+            "timing",
             "/tmp/x",
             "--update-delay-ms",
             "500",
             "--same-project-delay-s",
             "2",
         ],
+    ],
+)
+def test_updates_timing_flags_parse(argv: list[str]) -> None:
+    result = runner.invoke(app, [*argv, "--port", _DEAD_PORT, "--json"])
+    assert result.exit_code == 3
+    payload = json.loads(result.stdout)
+    assert payload["command"] == "service.updates.timing"
+    assert payload["error"] == "service_not_running"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["server", "updates", "reconfigure", "/tmp/x"],
         [
             "server",
             "updates",
-            "reconfigure",
+            "timing",
             "/tmp/x",
             "--same-source-delay-s",
             "2",
@@ -242,7 +276,7 @@ def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
         [
             "server",
             "updates",
-            "reconfigure",
+            "timing",
             "/tmp/x",
             "--debounce-ms",
             "500",
@@ -251,10 +285,10 @@ def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
         ],
     ],
 )
-def test_updates_reconfigure_timing_flags_parse(argv: list[str]) -> None:
+def test_updates_removed_legacy_forms_are_not_supported(argv: list[str]) -> None:
     result = runner.invoke(app, [*argv, "--port", _DEAD_PORT])
-    assert result.exit_code == 3
-    assert "not running" in result.stdout.lower()
+    assert result.exit_code != 0
+    assert "not running" not in result.stdout.lower()
 
 
 def test_watcher_alias_removed_from_user_facing_cli() -> None:
@@ -289,5 +323,9 @@ def test_cli_mcp_control_parity() -> None:
         assert tool in tools
     help_result = runner.invoke(app, ["server", "updates", "--help"])
     assert help_result.exit_code == 0
-    for name in ("status", "start", "stop", "reconfigure"):
-        assert name in help_result.stdout
+    assert _help_command_names(help_result.stdout) == [
+        "status",
+        "start",
+        "stop",
+        "timing",
+    ]

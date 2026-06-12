@@ -133,10 +133,10 @@ from ._service_status import (
     _write_service_status,
 )
 from ._service_watcher import (
-    service_watcher_reconfigure,
     service_watcher_start,
     service_watcher_status,
     service_watcher_stop,
+    service_watcher_timing,
 )
 from ._status import handle_status
 from ._store import _open_vault_store
@@ -217,10 +217,10 @@ __all__ = [
     "service_status",
     "service_stop",
     "service_warmup",
-    "service_watcher_reconfigure",
     "service_watcher_start",
     "service_watcher_status",
     "service_watcher_stop",
+    "service_watcher_timing",
     "sys",
     "version_callback",
 ]
