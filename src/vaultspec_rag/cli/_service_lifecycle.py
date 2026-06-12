@@ -554,7 +554,7 @@ def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:
         return "verified"
     if pid_alive:
         return "does not match the recorded service"
-    return "not checked"
+    return "not verified because the process is not running"
 
 
 def _network_label(port_listening: bool, pid_alive: bool) -> str:
@@ -562,7 +562,7 @@ def _network_label(port_listening: bool, pid_alive: bool) -> str:
         return "accepting connections"
     if pid_alive:
         return "not accepting connections"
-    return "not checked"
+    return "not accepting connections"
 
 
 def _plain_status_label(state: str) -> str:

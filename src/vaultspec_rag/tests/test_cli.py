@@ -2876,6 +2876,26 @@ class TestServiceDaemonHelpers:
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
+    def test_service_status_stale_pid_verbose_uses_condition_language(
+        self, tmp_path: Path
+    ):
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=99999999, port=8766)
+
+            result = runner.invoke(app, ["server", "status", "--verbose"])
+
+            assert result.exit_code == 4
+            assert "Process: not running" in result.output
+            assert (
+                "Service process: not verified because the process is not running"
+                in result.output
+            )
+            assert "Network: not accepting connections" in result.output
+            assert "not checked" not in result.output
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
     def test_health_probe_nonlistening_port(self):
         """Health probe on a port with no listener should return None."""
         assert _health_probe(1) is None
