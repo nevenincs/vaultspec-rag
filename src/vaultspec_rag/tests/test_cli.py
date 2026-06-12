@@ -1379,6 +1379,20 @@ class TestMcpFastPath:
         assert "Unexpected search options: --bogus-option" in result.output
         assert "option(s)" not in result.output
 
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["search", "anything", "--type", "code", "--node-type", "function"],
+            ["search", "anything", "--type", "code", "--no-truncate"],
+        ],
+    )
+    def test_search_removed_legacy_flags_are_not_supported(self, argv: list[str]):
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 2
+        assert "Unexpected search options:" in result.output
+        assert "Searching code" not in result.output
+
     def test_path_filter_with_vault_returns_usage_error(self):
         """--path is a code filter; pairing it with vault must error."""
         result = _try_http_search(
@@ -1776,7 +1790,7 @@ class TestSearchSafetyContract:
         assert "\n" not in str(records[0]["text"])
         _assert_no_table_borders(result.output)
 
-    def test_search_structure_filter_is_operator_facing_cli_alias(
+    def test_search_structure_filter_sends_service_node_type(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / ".vaultspec").mkdir()

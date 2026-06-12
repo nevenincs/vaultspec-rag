@@ -386,26 +386,6 @@ def _validate_and_handle_filters(
         raise typer.Exit(code=2) from None
 
 
-def _search_structure_filter(
-    structure: str | None,
-    node_type: str | None,
-    json_mode: bool,
-) -> str | None:
-    if (
-        structure is not None
-        and node_type is not None
-        and structure.strip() != node_type.strip()
-    ):
-        message = (
-            "--structure and --node-type received different values; use --structure."
-        )
-        if json_mode:
-            _emit_json_error_and_exit("search", "invalid_filter", message, 2)
-        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
-        raise typer.Exit(code=2)
-    return structure if structure is not None else node_type
-
-
 def _search_prefer_filter(prefer: str | None) -> str | None:
     if prefer is None:
         return None
@@ -469,7 +449,7 @@ def _render_in_process_results(
     ),
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
-def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI options.
+def handle_search(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
     search_type: Annotated[
@@ -539,14 +519,6 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
             help=(
                 "Prefer one kind of code result: production, tests, or documentation."
             ),
-        ),
-    ] = None,
-    node_type: Annotated[
-        str | None,
-        typer.Option(
-            "--node-type",
-            help="Legacy name for --structure.",
-            hidden=True,
         ),
     ] = None,
     structure: Annotated[
@@ -651,14 +623,13 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
-    node_type = _search_structure_filter(structure, node_type, json_mode)
     prefer = _search_prefer_filter(prefer)
 
     _validate_and_handle_filters(
         search_type=search_type,
         language=language,
         path=path,
-        node_type=node_type,
+        node_type=structure,
         function_name=function_name,
         class_name=class_name,
         doc_type=doc_type,
@@ -687,7 +658,7 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
             timeout=timeout,
             language=language,
             path=path,
-            node_type=node_type,
+            node_type=structure,
             function_name=function_name,
             class_name=class_name,
             doc_type=doc_type,
@@ -725,7 +696,7 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
         max_results,
         language,
         path,
-        node_type,
+        structure,
         function_name,
         class_name,
         include_paths,
@@ -751,9 +722,8 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
 
 
 def _validate_search_extra_args(ctx: typer.Context) -> None:
-    """Accept legacy no-op render flags while preserving strict option errors."""
     extras = list(ctx.args)
-    if not extras or all(item == "--no-truncate" for item in extras):
+    if not extras:
         return
     unexpected = " ".join(extras)
     _cli.console.print(
