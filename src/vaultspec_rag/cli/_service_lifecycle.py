@@ -25,6 +25,7 @@ from ._process import (
     _spawn_service,
 )
 from ._render import _emit_json, _emit_json_error_and_exit
+from ._service_jobs import _human_progress, _operation_label, _project_label
 from ._service_status import (
     _default_service_port,
     _log_file,
@@ -417,29 +418,16 @@ def _format_status_duration(raw: object) -> str:
 
 
 def _job_progress_summary(job: dict[str, object]) -> str:
-    progress = job.get("progress")
-    if not isinstance(progress, dict):
-        return ""
-    progress_dict = cast("dict[str, object]", progress)
-    step = str(progress_dict.get("step") or "")
-    completed = progress_dict.get("completed")
-    total = progress_dict.get("total")
-    if step and isinstance(total, int | float):
-        return f", {step} {completed}/{total}"
-    if step:
-        return f", {step}"
-    return ""
+    progress = _human_progress(job)
+    return f", {progress}" if progress else ""
 
 
 def _job_command_name(job: dict[str, object]) -> str:
-    initiator = job.get("initiator")
-    if isinstance(initiator, dict):
-        command = initiator.get("command")
-        if command:
-            return str(command)
-    source = str(job.get("source") or "job")
-    trigger = str(job.get("trigger") or "service")
-    return f"{trigger}_{source}"
+    operation = _operation_label(job)
+    project = _project_label(job)
+    if project != "project unknown":
+        return f"{operation} for {project}"
+    return operation
 
 
 def _current_job_summary(job: dict[str, object] | None) -> str:
@@ -645,12 +633,29 @@ def _status_busy_label(jobs: dict[str, object] | None) -> str:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
         return "unknown"
     running = jobs.get("running")
+    queued = jobs.get("queued")
     running_count = running if isinstance(running, int) else 0
+    queued_count = queued if isinstance(queued, int) else 0
     if running_count <= 0:
         return "idle"
-    if running_count == 1:
+    active_count = max(0, running_count - queued_count)
+    if active_count <= 0 and queued_count > 0:
+        return (
+            "waiting on 1 job"
+            if queued_count == 1
+            else f"waiting on {queued_count} jobs"
+        )
+    if active_count > 0 and queued_count > 0:
+        active_text = (
+            "processing 1 job"
+            if active_count == 1
+            else f"processing {active_count} jobs"
+        )
+        waiting_text = "1 waiting" if queued_count == 1 else f"{queued_count} waiting"
+        return f"{active_text}; {waiting_text}"
+    if active_count == 1:
         return "processing 1 job"
-    return f"processing {running_count} jobs"
+    return f"processing {active_count} jobs"
 
 
 def _status_queue_label(jobs: dict[str, object] | None) -> str:
@@ -661,20 +666,20 @@ def _status_queue_label(jobs: dict[str, object] | None) -> str:
     running_count = running if isinstance(running, int) else 0
     queued_count = queued if isinstance(queued, int) else 0
     if running_count <= 0:
-        return "no queued work"
+        return "nothing waiting"
     active_count = max(0, running_count - queued_count)
     if queued_count > 0:
         active_text = (
             "1 active job" if active_count == 1 else f"{active_count} active jobs"
         )
         queued_text = (
-            "1 queued job" if queued_count == 1 else f"{queued_count} queued jobs"
+            "1 waiting job" if queued_count == 1 else f"{queued_count} waiting jobs"
         )
         return f"{queued_text}; {active_text}"
     running_text = (
         "1 active job" if running_count == 1 else f"{running_count} active jobs"
     )
-    return f"no queued work; {running_text}"
+    return f"nothing waiting; {running_text}"
 
 
 def _status_jobs_label(jobs: dict[str, object] | None) -> str:

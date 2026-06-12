@@ -156,7 +156,10 @@ def _progress_step_label(step: str) -> str:
         "discover": "discovering items",
         "chunk": "chunking files",
         "embed": "embedding chunks",
+        "embed + upsert chunks": "embedding and writing chunks",
+        "embed + upsert documents": "embedding and writing documents",
         "index": "writing index",
+        "chunk + embed": "chunking and embedding files",
         "upsert": "writing vectors",
     }
     return labels.get(step, step.replace("_", " "))
@@ -170,6 +173,8 @@ def _human_progress(job: dict[str, object]) -> str:
     label = _progress_step_label(step)
     completed = progress.get("completed")
     total = progress.get("total")
+    if step == "queued":
+        return label
     if isinstance(completed, int | float) and isinstance(total, int | float):
         return f"{label} {int(completed)} of {int(total)}"
     if isinstance(completed, int | float) and step:

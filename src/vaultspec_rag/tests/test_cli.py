@@ -2074,10 +2074,10 @@ class TestServiceDaemonHelpers:
                 "Busy: processing 1 job",
                 f"Address: http://127.0.0.1:{port}",
                 "Uptime: 5m 12s",
-                "Queue: no queued work; 1 active job",
+                "Queue: nothing waiting; 1 active job",
                 "Jobs: 2 processed jobs; 1 running; 3 recent jobs",
-                "Current job: reindex_codebase (",
-                "embed 7/20",
+                "Current job: code index refresh (",
+                "embedding chunks 7 of 20",
             ]
             hidden = [
                 "Search Concurrency",
@@ -2101,7 +2101,7 @@ class TestServiceDaemonHelpers:
                 "Service file: present",
                 "PID alive: yes",
                 "Models loaded",
-                "Current job: reindex_codebase (",
+                "Current job: code index refresh (",
                 "Next action:",
                 "vaultspec-rag server jobs --running",
             ]
@@ -2125,6 +2125,14 @@ class TestServiceDaemonHelpers:
             server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
+
+    def test_service_status_distinguishes_waiting_from_processing(self):
+        from ..cli._service_lifecycle import _status_busy_label, _status_queue_label
+
+        jobs: dict[str, object] = {"available": True, "running": 1, "queued": 1}
+
+        assert _status_busy_label(jobs) == "waiting on 1 job"
+        assert _status_queue_label(jobs) == "1 waiting job; 0 active jobs"
 
     def test_service_status_port_only_json(self, tmp_path: Path):
         """server status --port can inspect a reachable service without service.json."""

@@ -344,6 +344,29 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert output.index("failjob1") < output.index("runjob12")
 
 
+def test_jobs_waiting_progress_omits_internal_counter() -> None:
+    from ...cli._service_jobs import _human_progress
+
+    waiting = _human_progress(
+        {"phase": "running", "progress": {"step": "queued", "completed": 0}}
+    )
+    compound = _human_progress(
+        {
+            "phase": "running",
+            "progress": {
+                "step": "embed + upsert chunks",
+                "completed": 64,
+                "total": 196,
+            },
+        }
+    )
+
+    assert waiting == "waiting for writer lock"
+    assert waiting != "waiting for writer lock 0"
+    assert compound == "embedding and writing chunks 64 of 196"
+    assert "upsert" not in compound
+
+
 def test_jobs_json_preserves_raw_service_payload() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
