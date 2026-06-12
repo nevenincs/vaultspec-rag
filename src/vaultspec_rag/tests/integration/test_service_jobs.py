@@ -340,6 +340,27 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     assert "watcher" not in rendered
 
 
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"jobs": [], "filters": {"limit": 5, "phase": "running"}}, "No running jobs."),
+        ({"jobs": [], "filters": {"limit": 5, "failed": True}}, "No failed jobs."),
+        ({"jobs": [], "filters": {"limit": 5, "source": "code"}}, "No matching jobs."),
+        ({"jobs": [], "filters": {"limit": 5}}, "No recent jobs."),
+    ],
+)
+def test_empty_jobs_output_matches_active_filter(
+    result: dict[str, object],
+    expected: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    _render_jobs_result(result, job_id=None, port=8766)
+
+    assert capsys.readouterr().out.strip() == expected
+
+
 def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     now = time.time()
     with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):

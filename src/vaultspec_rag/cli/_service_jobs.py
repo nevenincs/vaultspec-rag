@@ -407,6 +407,27 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
     return cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
 
 
+def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
+    if job_id:
+        return "No matching jobs."
+    filters = result.get("filters")
+    if not isinstance(filters, dict):
+        return "No recent jobs."
+    if filters.get("failed") is True:
+        return "No failed jobs."
+    phase = filters.get("phase")
+    if isinstance(phase, str) and phase.lower() == "running":
+        return "No running jobs."
+    active_filters = [
+        key
+        for key, value in filters.items()
+        if key != "limit" and value not in (None, "", False)
+    ]
+    if active_filters:
+        return "No matching jobs."
+    return "No recent jobs."
+
+
 def _render_job_detail(job: dict[str, object]) -> None:
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
@@ -459,7 +480,7 @@ def _render_jobs_result(
 ) -> None:
     jobs = _jobs_from_result(result)
     if not jobs:
-        _cli.console.print("No matching jobs." if job_id else "No recent jobs.")
+        _cli.console.print(_empty_jobs_message(result, job_id))
         return
     if job_id:
         if len(jobs) > 1:
