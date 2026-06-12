@@ -84,10 +84,9 @@ def _project_summary(raw_entry: object) -> tuple[str, str] | None:
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
     last_access = hms or "unknown"
-    request_word = "request" if refs == 1 else "requests"
     metadata = (
-        f"unused for {_humanize_idle(idle_s)}; in use by {refs} {request_word}; "
-        f"last used {last_access}"
+        f"idle for {_humanize_idle(idle_s)}; active requests: {refs}; "
+        f"last used: {last_access}"
     )
     return root_str, metadata
 
@@ -97,15 +96,18 @@ def _print_projects_summary(
 ) -> None:
     if not projects:
         _cli.console.print(
-            "No projects are loaded. "
-            f"Capacity: 0/{max_projects}; unloaded after "
-            f"{_humanize_duration(idle_ttl)} unused.",
+            f"Loaded projects: 0/{max_projects}.",
+        )
+        _cli.console.print(
+            f"Auto-unload: projects idle for {_humanize_duration(idle_ttl)}.",
         )
         return
 
     _cli.console.print(
-        f"Loaded projects: {len(projects)}/{max_projects}; unloaded after "
-        f"{_humanize_duration(idle_ttl)} unused.",
+        f"Loaded projects: {len(projects)}/{max_projects}.",
+    )
+    _cli.console.print(
+        f"Auto-unload: projects idle for {_humanize_duration(idle_ttl)}.",
     )
     for raw_entry in projects:
         summary = _project_summary(raw_entry)
