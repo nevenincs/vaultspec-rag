@@ -203,7 +203,7 @@ def _handle_evict_json(
 @server_projects_app.command("evict", hidden=True)
 @server_projects_app.command("unload")
 def service_projects_evict(
-    root: Annotated[str, typer.Argument(help="Project root to unload.")],
+    project: Annotated[str, typer.Argument(help="Project to unload.")],
     port: Annotated[
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
@@ -220,29 +220,29 @@ def service_projects_evict(
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin(
         "evict_project",
-        {"root": root},
+        {"root": project},
         resolved_port,
     )
     if result is None:
-        _handle_evict_not_running(json_mode, root)
+        _handle_evict_not_running(json_mode, project)
 
     reason = str(result.get("reason", ""))
     evicted = bool(result.get("evicted", False))
 
     if json_mode:
-        _handle_evict_json(evicted, reason, root, result)
+        _handle_evict_json(evicted, reason, project, result)
 
     if evicted:
-        _cli.console.print(f"Project unloaded: {root}", markup=False)
+        _cli.console.print(f"Project unloaded: {project}", markup=False)
         raise typer.Exit(0)
     if reason == "busy":
         _cli.console.print(
-            f"Project is in use: {root}. Retry shortly.",
+            f"Project is in use: {project}. Retry shortly.",
             markup=False,
         )
         raise typer.Exit(1)
     if reason == "not_found":
-        _cli.console.print(f"Project is not loaded: {root}", markup=False)
+        _cli.console.print(f"Project is not loaded: {project}", markup=False)
         raise typer.Exit(2)
     _cli.console.print(f"Unexpected response: {result}", markup=False)
     raise typer.Exit(1)

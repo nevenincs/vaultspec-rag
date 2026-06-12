@@ -2567,6 +2567,9 @@ class TestServiceProjectsCli:
         )
         assert result.exit_code == 0
         assert "Unload" in result.output or "unload" in result.output
+        assert "PROJECT" in result.output
+        assert " ROOT" not in result.output
+        assert "Project root" not in result.output
         assert "Emit JSON for scripts" in result.output
         assert "JSON envelope" not in result.output
 
