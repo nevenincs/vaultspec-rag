@@ -186,6 +186,8 @@ def _human_result(raw: object) -> str:
     if not raw:
         return ""
     result = str(raw)
+    if result == "watcher task cancelled":
+        return "automatic update cancelled"
     match = _RESULT_RE.match(result.strip())
     if match is None:
         return result

@@ -432,6 +432,43 @@ def test_jobs_waiting_progress_omits_internal_counter() -> None:
     assert "upsert" not in compound
 
 
+def test_jobs_humanizes_cancelled_automatic_update(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    now = time.time()
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "id": "cancelled-job",
+                    "phase": "cancelled",
+                    "source": "vault",
+                    "trigger": "watcher",
+                    "started_at": now - 10,
+                    "finished_at": now,
+                    "result": "watcher task cancelled",
+                    "initiator": {
+                        "kind": "watcher",
+                        "project_root": r"example",
+                    },
+                }
+            ],
+            "total": 1,
+            "returned": 1,
+            "summary": {"running": 0, "phases": {"cancelled": 1}},
+            "filters": {"limit": 1},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    assert "automatic update cancelled" in output
+    assert "watcher" not in output
+
+
 def test_jobs_json_preserves_raw_service_payload() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
