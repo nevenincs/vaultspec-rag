@@ -179,14 +179,6 @@ def service_start(
             ),
         ),
     ] = None,
-    watch: Annotated[
-        bool | None,
-        typer.Option(
-            "--watch/--no-watch",
-            help="Legacy name for --updates/--no-updates.",
-            hidden=True,
-        ),
-    ] = None,
     update_delay_ms: Annotated[
         int | None,
         typer.Option(
@@ -194,35 +186,11 @@ def service_start(
             help="Delay before indexing a burst of file changes, in milliseconds.",
         ),
     ] = None,
-    watch_debounce_ms: Annotated[
-        int | None,
-        typer.Option(
-            "--watch-debounce-ms",
-            help="Legacy name for --update-delay-ms.",
-            hidden=True,
-        ),
-    ] = None,
     same_project_delay_s: Annotated[
         float | None,
         typer.Option(
             "--same-project-delay-s",
             help="Minimum wait before indexing the same project again, in seconds.",
-        ),
-    ] = None,
-    same_source_delay_s: Annotated[
-        float | None,
-        typer.Option(
-            "--same-source-delay-s",
-            help="Legacy name for --same-project-delay-s.",
-            hidden=True,
-        ),
-    ] = None,
-    watch_cooldown_s: Annotated[
-        float | None,
-        typer.Option(
-            "--watch-cooldown-s",
-            help="Legacy name for --same-source-delay-s.",
-            hidden=True,
         ),
     ] = None,
     qdrant: Annotated[
@@ -269,23 +237,12 @@ def service_start(
 
     log_path = _log_file()
     t0 = time.perf_counter()
-    selected_updates = updates if updates is not None else watch
-    selected_update_delay_ms = (
-        update_delay_ms if update_delay_ms is not None else watch_debounce_ms
-    )
-    selected_same_source_delay_s = (
-        same_project_delay_s
-        if same_project_delay_s is not None
-        else same_source_delay_s
-        if same_source_delay_s is not None
-        else watch_cooldown_s
-    )
     pid = _spawn_service(
         port,
         log_path,
-        watch=selected_updates,
-        watch_debounce_ms=selected_update_delay_ms,
-        watch_cooldown_s=selected_same_source_delay_s,
+        watch=updates,
+        watch_debounce_ms=update_delay_ms,
+        watch_cooldown_s=same_project_delay_s,
         qdrant=qdrant,
     )
     _write_service_status(pid, port)

@@ -10,7 +10,6 @@ import typing
 from pathlib import Path
 
 import pytest
-import typer
 from typer.testing import CliRunner, Result
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config as reset_base_config,
@@ -2428,132 +2427,54 @@ class TestHelpCleanup:
         assert "vaultspec-rag server start --port <free-port>" in result.output
         assert "Traceback" not in result.output
 
-    def test_server_start_update_aliases_parse(self, monkeypatch: pytest.MonkeyPatch):
-        captured: dict[str, object] = {}
+    def test_server_start_update_options_parse_before_port_guard(self):
+        import socket
 
-        def fake_spawn_service(
-            port: int,
-            log_path: Path,
-            *,
-            watch: bool | None,
-            watch_debounce_ms: int | None,
-            watch_cooldown_s: float | None,
-            qdrant: bool = False,
-        ) -> int:
-            captured.update(
-                {
-                    "port": port,
-                    "log_path": log_path,
-                    "watch": watch,
-                    "watch_debounce_ms": watch_debounce_ms,
-                    "watch_cooldown_s": watch_cooldown_s,
-                    "qdrant": qdrant,
-                }
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = int(sock.getsockname()[1])
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "start",
+                    "--port",
+                    str(port),
+                    "--updates",
+                    "--update-delay-ms",
+                    "250",
+                    "--same-project-delay-s",
+                    "1.5",
+                ],
             )
-            raise typer.Exit(0)
+        finally:
+            sock.close()
 
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._service_lifecycle._port_is_available",
-            lambda _port: True,
-        )
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._service_lifecycle._read_service_status",
-            lambda: None,
-        )
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._service_lifecycle._spawn_service",
-            fake_spawn_service,
-        )
+        assert result.exit_code == 1, result.output
+        assert f"Port {port} is already in use." in result.output
+        assert "No such option" not in result.output
 
-        result = runner.invoke(
-            app,
-            [
-                "server",
-                "start",
-                "--updates",
-                "--update-delay-ms",
-                "250",
-                "--same-project-delay-s",
-                "1.5",
-            ],
-        )
-
-        assert result.exit_code == 0, result.output
-        assert captured["watch"] is True
-        assert captured["watch_debounce_ms"] == 250
-        assert captured["watch_cooldown_s"] == 1.5
-
-        legacy = runner.invoke(
-            app,
-            [
-                "server",
-                "start",
-                "--updates",
-                "--same-source-delay-s",
-                "2.5",
-            ],
-        )
-
-        assert legacy.exit_code == 0, legacy.output
-        assert captured["watch"] is True
-        assert captured["watch_cooldown_s"] == 2.5
-
-    def test_server_start_legacy_watch_aliases_still_parse(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["server", "start", "--watch"],
+            ["server", "start", "--no-watch"],
+            ["server", "start", "--watch-debounce-ms", "250"],
+            ["server", "start", "--same-source-delay-s", "1.5"],
+            ["server", "start", "--watch-cooldown-s", "1.5"],
+        ],
+    )
+    def test_server_start_removed_legacy_update_flags_are_not_supported(
+        self,
+        argv: list[str],
     ):
-        captured: dict[str, object] = {}
+        result = runner.invoke(app, argv)
 
-        def fake_spawn_service(
-            port: int,
-            log_path: Path,
-            *,
-            watch: bool | None,
-            watch_debounce_ms: int | None,
-            watch_cooldown_s: float | None,
-            qdrant: bool = False,
-        ) -> int:
-            captured.update(
-                {
-                    "port": port,
-                    "log_path": log_path,
-                    "watch": watch,
-                    "watch_debounce_ms": watch_debounce_ms,
-                    "watch_cooldown_s": watch_cooldown_s,
-                    "qdrant": qdrant,
-                }
-            )
-            raise typer.Exit(0)
-
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._service_lifecycle._port_is_available",
-            lambda _port: True,
-        )
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._service_lifecycle._read_service_status",
-            lambda: None,
-        )
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._service_lifecycle._spawn_service",
-            fake_spawn_service,
-        )
-
-        result = runner.invoke(
-            app,
-            [
-                "server",
-                "start",
-                "--no-watch",
-                "--watch-debounce-ms",
-                "250",
-                "--watch-cooldown-s",
-                "1.5",
-            ],
-        )
-
-        assert result.exit_code == 0, result.output
-        assert captured["watch"] is False
-        assert captured["watch_debounce_ms"] == 250
-        assert captured["watch_cooldown_s"] == 1.5
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+        assert "Starting service" not in result.output
 
     def test_server_warmup_help_clean(self):
         result = runner.invoke(app, ["server", "warmup", "--help"])
