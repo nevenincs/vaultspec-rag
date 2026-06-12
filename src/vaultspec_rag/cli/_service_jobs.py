@@ -576,6 +576,20 @@ def _jobs_started_by_filter(
     return started_by if started_by is not None else trigger
 
 
+def _jobs_index_filter(
+    index: str | None,
+    source: str | None,
+    json_mode: bool,
+) -> str | None:
+    if index is not None and source is not None and index.strip() != source.strip():
+        message = "--index and --source received different values; use --index."
+        if json_mode:
+            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
+        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+        raise typer.Exit(2)
+    return index if index is not None else source
+
+
 def _jobs_args(
     *,
     limit: int,
@@ -827,7 +841,15 @@ def service_jobs(
     ] = None,
     source: Annotated[
         str | None,
-        typer.Option("--source", help="Filter by index type: vault or code."),
+        typer.Option(
+            "--source",
+            help="Legacy name for --index.",
+            hidden=True,
+        ),
+    ] = None,
+    index: Annotated[
+        str | None,
+        typer.Option("--index", help="Filter by index type: vault or code."),
     ] = None,
     started_by: Annotated[
         str | None,
@@ -894,6 +916,7 @@ def service_jobs(
 ) -> None:
     """Show recent index update activity from the running service."""
     phase = _jobs_state_filter(state, phase, json_mode)
+    source = _jobs_index_filter(index, source, json_mode)
     trigger = _jobs_started_by_filter(started_by, trigger, json_mode)
     phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()

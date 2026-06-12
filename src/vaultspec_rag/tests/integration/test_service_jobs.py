@@ -342,6 +342,7 @@ def test_jobs_subcommand_registered() -> None:
     assert result.exit_code == 0
     expected_flags = (
         "--state",
+        "--index",
         "--running",
         "--query",
         "--failed",
@@ -355,6 +356,7 @@ def test_jobs_subcommand_registered() -> None:
     missing = [flag for flag in expected_flags if flag not in result.stdout]
     assert not missing, f"missing flags in help: {missing}"
     assert "--phase" not in result.stdout
+    assert "--source" not in result.stdout
     assert "--trigger" not in result.stdout
 
 
@@ -378,6 +380,7 @@ def test_jobs_help_uses_operator_language() -> None:
     assert not missing, f"missing operator phrasing: {missing}"
     forbidden_phrases = (
         "job id, result, or progress",
+        "--source",
         "--trigger",
         "'watcher'",
         "index/reindex",
@@ -438,6 +441,41 @@ def test_jobs_trigger_filter_accepts_user_language() -> None:
     )
 
     assert args["trigger"] == "watcher"
+
+
+def test_jobs_index_filter_is_operator_facing_cli_alias() -> None:
+    with _jobs_http_server(
+        [
+            {
+                "jobs": [],
+                "filters": {"limit": 20, "source": "code"},
+                "total": 0,
+                "returned": 0,
+            }
+        ]
+    ) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--index",
+                "code",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert request.path == "/jobs"
+    assert query["source"] == ["code"]
+    assert "No matching jobs." in result.output
+    assert "--source" not in result.output
 
 
 def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
