@@ -43,6 +43,7 @@ from ._supervise import (
     active_supervisor,
     runtime_state,
     set_active_supervisor,
+    start_supervised_from_config,
 )
 
 __all__ = [
@@ -69,4 +70,5 @@ __all__ = [
     "resolve_binary",
     "runtime_state",
     "set_active_supervisor",
+    "start_supervised_from_config",
 ]

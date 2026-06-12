@@ -68,6 +68,35 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
 
+    # Qdrant server mode: spawn the supervised child BEFORE model load
+    # so a missing/broken binary fails startup fast (no GPU memory
+    # committed yet) and the registry's stores open server-mode from
+    # the first lease. An operator-set URL wins over spawning: it is
+    # the remote-server escape hatch.
+    from .. import qdrant_runtime as _qr
+
+    cfg = get_config()
+    if bool(cfg.qdrant_server):
+        if str(cfg.qdrant_url or ""):
+            logger.info(
+                "qdrant server mode requested but %s is set; using remote %s",
+                EnvVar.QDRANT_URL.value,
+                cfg.qdrant_url,
+            )
+        else:
+            t_q = time.perf_counter()
+            supervisor = await _run_in_thread(_qr.start_supervised_from_config)
+            # Publish the in-process URL through the env so every
+            # config read (registry stores, watcher reindexes) sees
+            # server mode for the daemon's lifetime.
+            os.environ[EnvVar.QDRANT_URL.value] = supervisor.url
+            logger.info(
+                "qdrant server ready in %.2fs at %s (pid %s)",
+                time.perf_counter() - t_q,
+                supervisor.url,
+                supervisor.pid,
+            )
+
     # Wire watcher lifecycle into registry so close_project() stops watchers
     _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
 
@@ -106,10 +135,25 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await heartbeat_task
-        # Cancel watchers BEFORE closing stores to prevent
-        # incremental_index() running against a closed store.
+        # Shutdown ordering: watchers BEFORE stores (so no
+        # incremental_index() runs against a closed store), stores
+        # BEFORE the qdrant child (so clients release their server
+        # connections), the qdrant child LAST among data components.
         _m._stop_all_watchers()
         _m._registry.close_all()
+        supervisor = _qr.active_supervisor()
+        if supervisor is not None:
+            try:
+                supervisor.stop()
+            except Exception:
+                log_event(
+                    logger,
+                    "service.lifecycle",
+                    "qdrant_stop_failed",
+                    severity=logging.WARNING,
+                    exc_info=True,
+                )
+            _qr.set_active_supervisor(None)
         logger.info("Service shutdown complete")
         _m._record_shutdown("clean")
 
@@ -144,9 +188,19 @@ async def health_handler(_request: Request) -> object:
     else:
         status = "error"
 
+    # A supervised qdrant child that has died (and exhausted its
+    # bounded restart) degrades the whole service: searches against
+    # server-mode stores will fail until it returns.
+    from .. import qdrant_runtime as _qr
+
+    qdrant_state = _qr.runtime_state()
+    if status == "ready" and qdrant_state.mode == "server" and not qdrant_state.alive:
+        status = "degraded"
+
     return JSONResponse(
         {
             "status": status,
+            "qdrant": qdrant_state.to_dict(),
             "pid": os.getpid(),
             "parent_pid": os.getppid(),
             "executable": sys.executable,

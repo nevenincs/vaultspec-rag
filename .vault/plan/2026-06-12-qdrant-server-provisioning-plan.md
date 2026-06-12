@@ -30,8 +30,8 @@ Spawn and reap the loopback qdrant child safely on all platforms and namespace p
 
 Wire server mode into config, lifespan, heartbeat, health, and the service-state surface
 
-- [ ] `P03.S06` - Spawn qdrant before model load in the service lifespan, publish the in-process server URL, stop qdrant last among data components, and add a qdrant block to health; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/server/_state.py`.
-- [ ] `P03.S07` - Add qdrant liveness with one bounded auto-restart to the heartbeat, record the child PID in the service status file, and surface a qdrant block in the service-state read; `src/vaultspec_rag/server/_lifecycle.py, src/vaultspec_rag/api.py`.
+- [x] `P03.S06` - Spawn qdrant before model load in the service lifespan, publish the in-process server URL, stop qdrant last among data components, and add a qdrant block to health; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/server/_state.py`.
+- [x] `P03.S07` - Add qdrant liveness with one bounded auto-restart to the heartbeat, record the child PID in the service status file, and surface a qdrant block in the service-state read; `src/vaultspec_rag/server/_lifecycle.py, src/vaultspec_rag/api.py`.
 
 ### Phase `P04` - CLI surface
 

@@ -36,6 +36,7 @@ __all__ = [
     "active_supervisor",
     "runtime_state",
     "set_active_supervisor",
+    "start_supervised_from_config",
 ]
 
 _READY_TIMEOUT_SECONDS = 60.0
@@ -371,6 +372,59 @@ class QdrantSupervisor:
         except (urllib.error.URLError, OSError, ValueError) as exc:
             logger.debug("qdrant version probe failed: %s", exc)
             return ""
+
+
+def start_supervised_from_config() -> QdrantSupervisor:
+    """Resolve, verify, spawn, and ready-wait the qdrant child per config.
+
+    Resolution follows the env-var > provisioned > PATH order. A
+    provisioned binary is re-hashed against its manifest digest before
+    execution so a tampered managed dir never runs. The started
+    supervisor is installed as the process-wide active supervisor.
+
+    Returns:
+        The running, ready supervisor.
+
+    Raises:
+        RuntimeError: When no binary is resolvable (the message names
+            the exact install command), when the provisioned binary
+            fails its pre-execution hash check, or when the server
+            does not become ready.
+    """
+    from pathlib import Path
+
+    from ..config import get_config
+    from ._provision import file_sha256
+    from ._resolve import resolve_binary
+
+    cfg = get_config()
+    resolved = resolve_binary()
+    if resolved is None:
+        raise RuntimeError(
+            "qdrant server mode is enabled but no server binary is "
+            "available. Run: vaultspec-rag server qdrant install"
+        )
+    if resolved.source == "provisioned" and resolved.sha256:
+        actual = file_sha256(resolved.path)
+        if actual.lower() != resolved.sha256.lower():
+            raise RuntimeError(
+                f"Provisioned qdrant binary at {resolved.path} does not "
+                "match its manifest digest; refusing to execute. Re-run: "
+                "vaultspec-rag server qdrant install --upgrade"
+            )
+
+    storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
+    log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
+    supervisor = QdrantSupervisor(
+        resolved.path,
+        http_port=int(cfg.qdrant_port),
+        storage_dir=storage_dir,
+        log_path=log_path,
+    )
+    logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
+    supervisor.start()
+    set_active_supervisor(supervisor)
+    return supervisor
 
 
 # The daemon's active supervisor. Reassigned by the service lifespan;
