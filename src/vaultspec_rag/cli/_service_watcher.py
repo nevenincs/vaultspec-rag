@@ -44,6 +44,12 @@ def _format_seconds(raw: object) -> str:
     return f"{minutes}m"
 
 
+def _project_name(root: object) -> str:
+    value = str(root)
+    parts = value.replace("\\", "/").rstrip("/").split("/")
+    return parts[-1] if parts and parts[-1] else value
+
+
 def _print_update_timing(result: dict[str, object]) -> None:
     _cli.console.print(
         f"File changes: wait {_format_milliseconds(result.get('debounce_ms'))} "
@@ -120,7 +126,12 @@ def service_watcher_status(
         return
     _cli.console.print(f"Projects updating automatically: {len(watching)}")
     for entry in watching:
-        _cli.console.print(f"- {entry}", markup=False, highlight=False)
+        _cli.console.print(
+            f"- Project: {_project_name(entry)}",
+            markup=False,
+            highlight=False,
+        )
+        _cli.console.print(f"  Path: {entry}", markup=False, highlight=False)
 
 
 @server_watcher_app.command("start")

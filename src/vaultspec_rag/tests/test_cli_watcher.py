@@ -173,6 +173,38 @@ def test_updates_status_empty_output_uses_project_language() -> None:
     assert "No roots" not in result.output
 
 
+def test_updates_status_lists_projects_as_blocks() -> None:
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "debounce_ms": 2000,
+        "cooldown_s": 30.0,
+        "watching": [
+            r"vaultspec-rag\feature-server-supervision",
+            r"aeat-worktrees\chore-476-restructure-execution",
+        ],
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "status", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Projects updating automatically: 2" in result.output
+    assert "- Project: feature-server-supervision" in result.output
+    assert r"  Path: vaultspec-rag\feature-server-supervision" in (
+        result.output
+    )
+    assert "- Project: chore-476-restructure-execution" in result.output
+    assert r"  Path: aeat-worktrees\chore-476-restructure-execution" in (
+        result.output
+    )
+    assert (
+        r"- vaultspec-rag\feature-server-supervision"
+        not in result.output
+    )
+
+
 def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
     result = runner.invoke(app, ["server", "updates", "reconfigure", "--help"])
     assert result.exit_code == 0
