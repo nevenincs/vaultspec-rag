@@ -226,7 +226,7 @@ def _activity_from_unstructured(parts: dict[str, str]) -> str | None:
     if level not in ("warning", "error", "critical"):
         return None
     logger_name = parts["logger"].rsplit(".", 1)[-1] or "service"
-    return f"{parts['clock']} {level} {logger_name} details=use --raw"
+    return f"{parts['clock']} {level} {logger_name} details available with --raw"
 
 
 def _activity_feed_lines(log_lines: list[object]) -> list[str]:

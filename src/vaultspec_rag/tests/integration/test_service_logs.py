@@ -127,6 +127,19 @@ def _store_update_payload() -> dict[str, object]:
     }
 
 
+def _unstructured_warning_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 13:14:09,845 WARNING  vaultspec_rag.server: "
+                "unexpected service-side warning"
+            ),
+        ],
+        "total": 1,
+        "filters": {},
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Unit: read_service_log across the rotated set                               #
 # --------------------------------------------------------------------------- #
@@ -420,6 +433,19 @@ def test_logs_human_output_shows_index_updates() -> None:
     assert "13:12:10 index removed 2 docs" in output
     assert "No activity entries" not in output
     assert "vaultspec_rag.store" not in output
+
+
+def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
+    with _logs_http_server([_unstructured_warning_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--lines", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "13:14:09 warning server details available with --raw" in output
+    assert "details=use --raw" not in output
 
 
 def test_logs_raw_mode_preserves_log_lines() -> None:
