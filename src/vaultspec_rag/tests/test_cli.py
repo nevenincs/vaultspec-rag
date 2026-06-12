@@ -2382,7 +2382,7 @@ class TestServiceDaemonHelpers:
 
         jobs: dict[str, object] = {"available": True, "running": 1, "queued": 1}
 
-        assert _status_busy_label(jobs) == "waiting on 1 job"
+        assert _status_busy_label(jobs) == "1 job waiting to write"
         assert _status_queue_label(jobs) == "1 waiting job; 0 active jobs"
 
     def test_service_status_port_only_json(self, tmp_path: Path):

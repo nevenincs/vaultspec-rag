@@ -152,7 +152,7 @@ def _operation_label(job: dict[str, object]) -> str:
 
 def _progress_step_label(step: str) -> str:
     labels = {
-        "queued": "waiting for writer lock",
+        "queued": "waiting to write the index",
         "discover": "discovering items",
         "chunk": "chunking files",
         "embed": "embedding chunks",

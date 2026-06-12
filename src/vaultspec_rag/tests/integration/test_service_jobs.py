@@ -413,7 +413,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert output.index("failjob1") < output.index("runjob12")
 
 
-def test_jobs_waiting_progress_omits_internal_counter() -> None:
+def test_jobs_waiting_progress_uses_user_language() -> None:
     from ...cli._service_jobs import _human_progress
 
     waiting = _human_progress(
@@ -430,8 +430,9 @@ def test_jobs_waiting_progress_omits_internal_counter() -> None:
         }
     )
 
-    assert waiting == "waiting for writer lock"
-    assert waiting != "waiting for writer lock 0"
+    assert waiting == "waiting to write the index"
+    assert "writer lock" not in waiting
+    assert waiting != "waiting to write the index 0"
     assert compound == "embedding and writing chunks 64 of 196"
     assert "upsert" not in compound
 

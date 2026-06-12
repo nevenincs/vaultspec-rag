@@ -672,9 +672,9 @@ def _status_busy_label(jobs: dict[str, object] | None) -> str:
     active_count = max(0, running_count - queued_count)
     if active_count <= 0 and queued_count > 0:
         return (
-            "waiting on 1 job"
+            "1 job waiting to write"
             if queued_count == 1
-            else f"waiting on {queued_count} jobs"
+            else f"{queued_count} jobs waiting to write"
         )
     if active_count > 0 and queued_count > 0:
         active_text = (
