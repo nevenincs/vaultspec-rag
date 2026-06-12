@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
@@ -10,7 +11,11 @@ import vaultspec_rag.cli as _cli
 
 from ._app import CLIState, app
 from ._http_search import _try_http_admin
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import (
+    _emit_json,
+    _emit_json_error_and_exit,
+    _format_local_index_busy_message,
+)
 from ._service_status import _default_service_port
 
 
@@ -18,6 +23,16 @@ def _status_counts(status: dict[str, object]) -> tuple[int, int]:
     vault_count = status.get("vault_documents", status.get("vault_count", 0))
     code_count = status.get("codebase_chunks", status.get("code_count", 0))
     return int(cast("Any", vault_count)), int(cast("Any", code_count))
+
+
+def _human_index_data_location(storage_path: object) -> str:
+    raw = str(storage_path)
+    if "://" in raw:
+        return "remote storage"
+    path = Path(raw)
+    if path.name.lower() == "qdrant":
+        return str(path.parent)
+    return raw
 
 
 def _render_status_text(
@@ -29,7 +44,7 @@ def _render_status_text(
     cuda_available = bool(status["cuda"])
     gpu_name = cast("Any", status["gpu_name"])
     vram_mb = int(cast("Any", status["vram_mb"]))
-    storage_path = str(status["storage_path"])
+    index_data_path = _human_index_data_location(status["storage_path"])
     vault_count, code_count = _status_counts(status)
     device = (
         f"GPU - {gpu_name} ({vram_mb} MB VRAM)"
@@ -38,7 +53,7 @@ def _render_status_text(
     )
     lines = [
         f"Compute: {device}",
-        f"Index storage: {storage_path}",
+        f"Index data: {index_data_path}",
         f"Vault documents: {vault_count}",
         f"Source code chunks: {code_count}",
         f"Project: {target}",
@@ -50,7 +65,7 @@ def _render_status_text(
             line,
             markup=False,
             highlight=False,
-            soft_wrap=line.startswith(("Index storage:", "Project:", "Read from:")),
+            soft_wrap=line.startswith(("Index data:", "Project:", "Read from:")),
         )
 
 
@@ -134,17 +149,16 @@ def handle_status(
             _emit_json_error_and_exit(
                 "status",
                 "status_locked",
-                (
-                    "Cannot query index status because another process holds "
-                    f"the local index lock: {exc}"
-                ),
+                "Cannot read index status because the local index is busy.",
                 1,
+                db_path=str(exc.db_path),
+                remediation=[
+                    "vaultspec-rag server status",
+                    "Retry after the current index operation finishes.",
+                ],
             )
         _cli.console.print(
-            "Error: Cannot query index status because another process holds "
-            f"the local index lock.\n{exc}\n"
-            "Check the running service with `vaultspec-rag server status`, "
-            "or retry after the other process exits.",
+            _format_local_index_busy_message("read index status"),
             markup=False,
             highlight=False,
         )

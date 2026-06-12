@@ -24,6 +24,7 @@ __all__ = [
     "_display_service_error",
     "_emit_json",
     "_emit_json_error_and_exit",
+    "_format_local_index_busy_message",
     "_render_install_report",
     "_render_uninstall_report",
 ]
@@ -80,6 +81,19 @@ def _emit_json_error_and_exit(
         **extra,
     )
     raise typer.Exit(code=code)
+
+
+def _format_local_index_busy_message(action: str) -> str:
+    """Return operator-facing text for local index lock failures."""
+    return (
+        f"Error: Cannot {action} because the local index is busy.\n\n"
+        "Another vaultspec-rag command, the background service, or an automatic "
+        "index update is using this workspace.\n\n"
+        "Next actions:\n"
+        "  1. Check current work: vaultspec-rag server status\n"
+        "  2. If a service is running, send concurrent work through it with --port.\n"
+        "  3. Retry after the current index operation finishes."
+    )
 
 
 def _display_service_error(

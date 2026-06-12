@@ -36,6 +36,18 @@ pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 
+def _hold_local_index_lock(root: Path):
+    from ..config import get_config
+    from ..store import FileLock
+
+    cfg = get_config()
+    index_dir = root / cfg.data_dir / cfg.qdrant_dir
+    index_dir.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(index_dir / "exclusive.lock")
+    assert lock.acquire()
+    return lock
+
+
 def _status_contract_server() -> tuple[typing.Any, typing.Any]:
     """Start a local HTTP service exposing /health and /jobs for status tests."""
     import http.server
@@ -318,6 +330,61 @@ class TestCleanCommand:
             store.close()
         assert not (data_dir / cfg.index_metadata_file).exists()
         assert not (data_dir / cfg.code_index_metadata_file).exists()
+
+    def test_clean_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
+        root = self._workspace(tmp_path)
+        lock = _hold_local_index_lock(root)
+        try:
+            result = runner.invoke(
+                app,
+                ["--target", str(root), "clean", "all", "--yes"],
+            )
+        finally:
+            lock.release()
+
+        assert result.exit_code == 1, result.output
+        assert "Cannot clean the index because the local index is busy" in result.output
+        assert "vaultspec-rag server status" in result.output
+        for leaked in (
+            "Qdrant",
+            "Local-file-backed",
+            "parallel-safe",
+            "exclusive.lock",
+            "another process holds the lock",
+        ):
+            assert leaked not in result.output
+
+
+class TestStatusCommand:
+    """Tests for the project index status command."""
+
+    @staticmethod
+    def _workspace(tmp_path: Path) -> Path:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        return tmp_path
+
+    def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
+        root = self._workspace(tmp_path)
+        lock = _hold_local_index_lock(root)
+        try:
+            result = runner.invoke(app, ["--target", str(root), "status"])
+        finally:
+            lock.release()
+
+        assert result.exit_code == 1, result.output
+        assert "Cannot read index status because the local index is busy" in (
+            result.output
+        )
+        assert "vaultspec-rag server status" in result.output
+        for leaked in (
+            "Qdrant",
+            "Local-file-backed",
+            "parallel-safe",
+            "exclusive.lock",
+            "another process holds the lock",
+        ):
+            assert leaked not in result.output
 
 
 class TestIndexRebuild:

@@ -21,6 +21,7 @@ from ._render import (
     _display_service_error,
     _emit_json,
     _emit_json_error_and_exit,
+    _format_local_index_busy_message,
 )
 from ._service_status import _default_service_port
 
@@ -422,16 +423,18 @@ def _try_in_process_indexing(
                 _emit_json_error_and_exit(
                     "index",
                     "rebuild_locked" if rebuild else "index_locked",
-                    (
-                        f"Cannot access the {index_type} collection - "
-                        f"another process holds the lock: {exc}"
-                    ),
+                    "Cannot update the index because the local index is busy.",
                     1,
+                    db_path=str(exc.db_path),
+                    index_type=index_type,
+                    remediation=[
+                        "vaultspec-rag server status",
+                        "Use --port with a running service for concurrent work.",
+                        "Retry after the current index operation finishes.",
+                    ],
                 )
             _cli.console.print(
-                f"Error: Cannot access the {index_type} collection - "
-                f"another process holds the lock.\n{exc}\n"
-                "Close any other processes using the index and retry.",
+                _format_local_index_busy_message("update the index"),
                 markup=False,
                 highlight=False,
             )
@@ -545,13 +548,18 @@ def handle_clean(
             _emit_json_error_and_exit(
                 "clean",
                 "clean_locked",
-                f"Cannot clean the index - another process holds the lock: {exc}",
+                "Cannot clean the index because the local index is busy.",
                 1,
+                db_path=str(exc.db_path),
+                clean_type=clean_type,
+                remediation=[
+                    "vaultspec-rag server status",
+                    "Stop the service if you need exclusive cleanup.",
+                    "Retry after the current index operation finishes.",
+                ],
             )
         _cli.console.print(
-            "Error: Cannot clean the index - "
-            "another process holds the lock.\n"
-            f"{exc}\nClose any other processes using the index and retry.",
+            _format_local_index_busy_message("clean the index"),
             markup=False,
             highlight=False,
         )
