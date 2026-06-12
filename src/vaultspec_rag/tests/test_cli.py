@@ -3244,7 +3244,7 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
                                 "root": r"ready",
                                 "idle_seconds": 4,
                                 "ref_count": 0,
-                                "last_access_iso": "2026-06-12T14:06:01Z",
+                                "last_access_iso": "",
                             },
                         ],
                         "max_projects": 8,
@@ -3411,11 +3411,12 @@ class TestServiceProjectsCli:
         assert r"Path: ready" in lines
         assert "In use: not currently in use" in lines
         assert "Last activity: 4s ago" in lines
-        assert "Last used: 14:06:01" in lines
+        assert "Last used: no timestamp from service" in lines
         assert not any("Handling 2 active requests" in line for line in lines)
         assert not any(line.startswith("Requests:") for line in lines)
         assert not any(line.startswith("Last request:") for line in lines)
         assert not any("Available for new requests" in line for line in lines)
+        assert "Last used: not recorded" not in lines
         assert not any("project handle" in line.lower() for line in lines)
         assert not any("references" in line.lower() for line in lines)
         assert not any(line in {"yes", "no"} for line in lines)

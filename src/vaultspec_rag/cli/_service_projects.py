@@ -88,7 +88,7 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     refs = int(refs_raw) if isinstance(refs_raw, int | float) else 0
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
-    last_access = hms or "not recorded"
+    last_access = hms or "no timestamp from service"
     use_text = (
         "not currently in use"
         if refs <= 0
