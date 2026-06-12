@@ -556,6 +556,26 @@ def _jobs_state_filter(
     return state if state is not None else phase
 
 
+def _jobs_started_by_filter(
+    started_by: str | None,
+    trigger: str | None,
+    json_mode: bool,
+) -> str | None:
+    if (
+        started_by is not None
+        and trigger is not None
+        and started_by.strip() != trigger.strip()
+    ):
+        message = (
+            "--started-by and --trigger received different values; use --started-by."
+        )
+        if json_mode:
+            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
+        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+        raise typer.Exit(2)
+    return started_by if started_by is not None else trigger
+
+
 def _jobs_args(
     *,
     limit: int,
@@ -809,11 +829,19 @@ def service_jobs(
         str | None,
         typer.Option("--source", help="Filter by index type: vault or code."),
     ] = None,
+    started_by: Annotated[
+        str | None,
+        typer.Option(
+            "--started-by",
+            help="Filter by who started the job: manual requests or automatic updates.",
+        ),
+    ] = None,
     trigger: Annotated[
         str | None,
         typer.Option(
             "--trigger",
-            help="Filter by who started the job: manual requests or automatic updates.",
+            help="Legacy name for --started-by.",
+            hidden=True,
         ),
     ] = None,
     query: Annotated[
@@ -866,6 +894,7 @@ def service_jobs(
 ) -> None:
     """Show recent index update activity from the running service."""
     phase = _jobs_state_filter(state, phase, json_mode)
+    trigger = _jobs_started_by_filter(started_by, trigger, json_mode)
     phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:

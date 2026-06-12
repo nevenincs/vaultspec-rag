@@ -22,6 +22,7 @@ import json
 import re
 import threading
 import time
+import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
@@ -82,9 +83,11 @@ def _label_values(output: str) -> dict[str, str]:
 
 class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
     payloads: ClassVar[list[dict[str, object]]] = []
+    paths: ClassVar[list[str]] = []
     request_count = 0
 
     def do_GET(self) -> None:
+        type(self).paths.append(self.path)
         payload_index = min(self.request_count, len(self.payloads) - 1)
         payload = self.payloads[payload_index]
         type(self).request_count += 1
@@ -102,6 +105,7 @@ def _jobs_http_server(
     payloads: list[dict[str, object]],
 ) -> Iterator[tuple[http.server.HTTPServer, int]]:
     _JobsHTTPHandler.payloads = payloads
+    _JobsHTTPHandler.paths = []
     _JobsHTTPHandler.request_count = 0
     server = http.server.HTTPServer(("127.0.0.1", 0), _JobsHTTPHandler)
     port = int(server.server_address[1])
@@ -342,6 +346,7 @@ def test_jobs_subcommand_registered() -> None:
         "--query",
         "--failed",
         "--job-id",
+        "--started-by",
         "--since",
         "--watch",
         "--interval",
@@ -350,6 +355,7 @@ def test_jobs_subcommand_registered() -> None:
     missing = [flag for flag in expected_flags if flag not in result.stdout]
     assert not missing, f"missing flags in help: {missing}"
     assert "--phase" not in result.stdout
+    assert "--trigger" not in result.stdout
 
 
 def test_jobs_help_uses_operator_language() -> None:
@@ -372,6 +378,7 @@ def test_jobs_help_uses_operator_language() -> None:
     assert not missing, f"missing operator phrasing: {missing}"
     forbidden_phrases = (
         "job id, result, or progress",
+        "--trigger",
         "'watcher'",
         "index/reindex",
         "failed/error",
@@ -431,6 +438,41 @@ def test_jobs_trigger_filter_accepts_user_language() -> None:
     )
 
     assert args["trigger"] == "watcher"
+
+
+def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
+    with _jobs_http_server(
+        [
+            {
+                "jobs": [],
+                "filters": {"limit": 20, "trigger": "watcher"},
+                "total": 0,
+                "returned": 0,
+            }
+        ]
+    ) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--started-by",
+                "automatic",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert request.path == "/jobs"
+    assert query["trigger"] == ["watcher"]
+    assert "No matching jobs." in result.output
+    assert "--trigger" not in result.output
 
 
 def test_jobs_phase_filter_accepts_user_language() -> None:
