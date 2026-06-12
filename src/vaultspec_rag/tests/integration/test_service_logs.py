@@ -487,7 +487,8 @@ def test_logs_empty_output_routes_operator_to_next_commands() -> None:
     lines = [line.strip() for line in result.output.splitlines() if line.strip()]
     assert lines[0] == f"Service is reachable at http://127.0.0.1:{port}."
     assert lines[1] == "No service activity was found in the last 8 log lines."
-    assert "Try:" in lines
+    assert "Next actions:" in lines
+    assert "Try:" not in lines
     commands = [line for line in lines if line.startswith("vaultspec-rag ")]
     assert {
         f"vaultspec-rag server jobs --running --port {port}",

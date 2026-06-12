@@ -338,7 +338,7 @@ def _render_no_activity_hint(
         highlight=False,
         soft_wrap=True,
     )
-    _cli.console.print("Try:", markup=False, highlight=False, soft_wrap=True)
+    _cli.console.print("Next actions:", markup=False, highlight=False, soft_wrap=True)
     _cli.console.print(
         f"  vaultspec-rag server jobs --running --port {port}",
         markup=False,
