@@ -422,10 +422,34 @@ def _render_status_json(
 
 def _get_token_label(token_match: bool | None) -> str:
     if token_match is None:
-        return "n/a"
+        return "not checked"
     if token_match:
-        return "yes"
-    return "no"
+        return "verified"
+    return "does not match the recorded service"
+
+
+def _model_ready_label(value: object) -> str:
+    if value is True:
+        return "ready"
+    if value is False:
+        return "not ready"
+    return "unknown"
+
+
+def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:
+    if pid_is_ours:
+        return "verified"
+    if pid_alive:
+        return "does not match the recorded service"
+    return "not checked"
+
+
+def _network_label(port_listening: bool, pid_alive: bool) -> str:
+    if port_listening:
+        return "accepting connections"
+    if pid_alive:
+        return "not accepting connections"
+    return "not checked"
 
 
 def _plain_status_label(state: str) -> str:
@@ -485,10 +509,21 @@ def _print_health_detail(
             "Ready",
             _status_health_label(health, port_listening=port_listening),
         )
-        _print_detail_line("CUDA", health.get("cuda", "unknown"))
-        _print_detail_line("Models loaded", health.get("models_loaded", "unknown"))
-        _print_detail_line("Reranker loaded", health.get("reranker_loaded", "unknown"))
-        _print_detail_line("Projects", health.get("project_count", "unknown"))
+        compute = (
+            "GPU available"
+            if health.get("cuda") is True
+            else "no supported GPU detected"
+            if health.get("cuda") is False
+            else "unknown"
+        )
+        _print_detail_line("Compute", compute)
+        _print_detail_line(
+            "Search models", _model_ready_label(health.get("models_loaded"))
+        )
+        _print_detail_line(
+            "Reranking", _model_ready_label(health.get("reranker_loaded"))
+        )
+        _print_detail_line("Loaded projects", health.get("project_count", "unknown"))
         _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
         _print_detail_line("Ready", "not reachable")
@@ -818,12 +853,13 @@ def _render_status_detail(
     _print_detail_line("PID", pid)
     _print_detail_line("Port", port)
     _print_detail_line("Started", started_at)
-    _print_detail_line("PID alive", "yes" if pid_alive else "no")
-    pid_match = "yes" if pid_is_ours else "no" if pid_alive else "n/a"
-    _print_detail_line("PID matches service", pid_match)
-    _print_detail_line("Service token match", _get_token_label(token_match))
-    port_state = "yes" if port_listening else "no" if pid_alive else "n/a"
-    _print_detail_line("Port listening", port_state)
+    _print_detail_line("Process", "running" if pid_alive else "not running")
+    _print_detail_line(
+        "Service process",
+        _process_identity_label(pid_alive, pid_is_ours),
+    )
+    _print_detail_line("Service identity", _get_token_label(token_match))
+    _print_detail_line("Network", _network_label(port_listening, pid_alive))
     if heartbeat_age is None:
         _print_detail_line("Heartbeat", "absent")
     else:
