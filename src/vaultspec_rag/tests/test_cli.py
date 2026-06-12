@@ -490,6 +490,8 @@ class TestServerRoutingFlattened:
         result = runner.invoke(app, ["server", "status", "--help"])
         assert result.exit_code == 0, result.output
         assert "operator summary" in result.output
+        assert "service identity" in result.output
+        assert "token" not in result.output.lower()
         assert "Emit JSON for scripts" in result.output
         assert "JSON envelope" not in result.output
         assert "full-fidelity" not in result.output
@@ -2486,6 +2488,27 @@ class TestServiceDaemonHelpers:
             server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
+
+    def test_service_status_port_only_verbose_uses_network_language(
+        self, tmp_path: Path
+    ) -> None:
+        """Port-only verbose output should not expose raw yes/no socket labels."""
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            port = _find_free_port()
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port), "--verbose"],
+            )
+
+            assert result.exit_code == 3
+            assert "Service file: missing" in result.output
+            assert "Network: not checked" in result.output
+            assert "Port listening" not in result.output
+            assert "Port listening: yes" not in result.output
+            assert "Port listening: no" not in result.output
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_port_ignores_stale_service_json(self, tmp_path: Path):
         """server status --port ignores stale service.json."""

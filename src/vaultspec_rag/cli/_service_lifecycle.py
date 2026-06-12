@@ -943,7 +943,7 @@ def _render_port_only_status(
     _print_detail_line("Service file", "missing")
     _print_detail_line("PID", "n/a")
     _print_detail_line("Port", port)
-    _print_detail_line("Port listening", "yes" if port_listening else "no")
+    _print_detail_line("Network", _network_label(port_listening, pid_alive=False))
     _print_detail_line("State", state)
     _print_health_detail(health, port_listening)
     _print_operational_detail(operational)
@@ -1154,8 +1154,8 @@ def service_status(
         typer.Option(
             "--verbose",
             help=(
-                "Show process, heartbeat, token, model, and extra diagnostic "
-                "details in the human output."
+                "Show process, heartbeat, service identity, model, and extra "
+                "diagnostic details in the human output."
             ),
         ),
     ] = False,
