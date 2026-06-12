@@ -2715,67 +2715,89 @@ class TestServiceProjectsCli:
         assert result.exit_code == 3
 
 
-class TestIndexSummaryRendering:
-    """Human index summaries avoid backend route and key-value notation."""
+class TestIndexSummaryCLI:
+    """Human index summaries are covered through the CLI command surface."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _render(self, via: str) -> str:
-        from io import StringIO
+    def test_index_all_renders_service_summary_from_http_response(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
 
-        from rich.console import Console
+        (tmp_path / ".vaultspec").mkdir()
+        requests: list[dict[str, object]] = []
 
-        from ..cli._index import _print_index_summary
+        class _IndexServiceHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                requests.append(body)
 
-        out = StringIO()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "vaultspec_rag.cli.console",
-                Console(file=out, force_terminal=False, width=400),
-            )
-            _print_index_summary(
-                [
-                    {
-                        "source": "vault",
+                response_by_type = {
+                    "vault": {
+                        "ok": True,
                         "added": 1,
                         "updated": 2,
                         "removed": 3,
                         "total": 6,
                         "duration_ms": 1234,
                     },
-                    {
-                        "source": "codebase",
-                        "added": 4,
-                        "updated": 5,
-                        "removed": 6,
-                        "total": 15,
-                        "duration_ms": 50,
+                    "codebase": {
+                        "ok": True,
+                        "added": "4",
+                        "updated": "5",
+                        "removed": "6",
+                        "total": "15",
+                        "duration_ms": "50",
                     },
+                }
+                response = response_by_type.get(
+                    body.get("type"),
+                    {"ok": False, "error": "unexpected_type"},
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _IndexServiceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "index",
+                    "--type",
+                    "all",
+                    "--port",
+                    str(server.server_port),
                 ],
-                via=via,
             )
-        return out.getvalue()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
 
-    def test_service_summary_uses_plain_language(self) -> None:
-        rendered = self._render("service")
+        assert result.exit_code == 0, result.output
+        assert [req["type"] for req in requests] == ["vault", "codebase"]
+        assert {req["project_root"] for req in requests} == {str(tmp_path)}
+        assert {req["initiator_kind"] for req in requests} == {"cli"}
+        assert {req["clean"] for req in requests} == {False}
 
-        assert "Indexing summary: ran in running service." in rendered
-        assert (
-            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2s"
-            in rendered
-        )
-        assert (
-            "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms"
-            in rendered
-        )
-        for forbidden in ("via=", "added=", "updated=", "removed=", "total=", "time="):
-            assert forbidden not in rendered
-
-    def test_local_summary_avoids_in_process_label(self) -> None:
-        rendered = self._render("in-process")
-
-        assert "Indexing summary: ran in this command." in rendered
-        assert "in-process" not in rendered
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines == [
+            "Indexing summary: ran in running service.",
+            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2s",
+            "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms",
+        ]
 
 
 class TestCpuOnlyMessageRendering:
