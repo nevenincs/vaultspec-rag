@@ -459,7 +459,9 @@ class VaultStore:
         Local mode returns the collection's own reentrant lock; server
         mode returns a no-op context because the remote Qdrant server
         is concurrency-safe and client-side locking would only cap
-        throughput.
+        throughput. Reentrancy is load-bearing: scan helpers size their
+        page limit (which takes this lock) while callers already hold
+        it - switching to a non-reentrant lock would deadlock there.
         """
         if self._server_mode:
             return nullcontext()

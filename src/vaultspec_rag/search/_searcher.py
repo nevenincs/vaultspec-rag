@@ -433,11 +433,12 @@ class VaultSearcher:
             )
         _record_seconds(timings, "result_mapping_seconds", phase_started)
 
-        # Rerank a wider candidate set than top_k: grouping below can
+        # Rerank the FULL fetched candidate set: grouping below can
         # collapse several chunks of one document into a single row, so
-        # the post-group list must not start under-filled.
+        # truncating before grouping could under-fill the final page
+        # whenever one document's chunks dominate the rerank window.
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, top_k * 2, timings=timings)
+        results = self._rerank(query_text, results, len(results), timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
 
         phase_started = time.perf_counter()

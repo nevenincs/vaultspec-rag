@@ -32,6 +32,7 @@ related:
   - '[[2026-06-12-service-concurrency-W05-P08-S25]]'
   - '[[2026-06-12-service-concurrency-W05-P08-summary]]'
   - '[[2026-06-12-service-concurrency-adr]]'
+  - '[[2026-06-12-service-concurrency-audit]]'
   - '[[2026-06-12-service-concurrency-plan]]'
   - '[[2026-06-12-service-concurrency-research]]'
 ---
@@ -45,6 +46,10 @@ Auto-generated index of all documents tagged with `#service-concurrency`.
 ### adr
 
 - `2026-06-12-service-concurrency-adr` - `service-concurrency` adr: `concurrent saturation architecture rework` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-12-service-concurrency-audit` - `service-concurrency` Code Review
 
 ### exec
 

@@ -788,9 +788,9 @@ class VaultIndexer:
         way the stored points may use the one-point-per-document layout
         and must be rebuilt rather than incrementally patched.
         """
-        prev_meta = self._load_meta()
-        if prev_meta:
-            return prev_meta.get(_SCHEMA_KEY) != _VAULT_POINT_SCHEMA
+        raw = self._read_meta_raw()
+        if raw:
+            return raw.get(_SCHEMA_KEY) != _VAULT_POINT_SCHEMA
         try:
             return self.store.count() > 0
         except (OSError, RuntimeError):
@@ -822,13 +822,8 @@ class VaultIndexer:
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
-    def _load_meta(self) -> dict[str, str]:
-        """Load index metadata from the sidecar JSON file.
-
-        Returns:
-            Mapping of document stem to blake2b hex digest, or an empty
-            dict if the file does not exist or cannot be parsed.
-        """
+    def _read_meta_raw(self) -> dict[str, str]:
+        """Load the sidecar JSON verbatim, reserved keys included."""
         if not self._meta_path.exists():
             return {}
         try:
@@ -841,3 +836,19 @@ class VaultIndexer:
                 exc_info=True,
             )
             return {}
+
+    def _load_meta(self) -> dict[str, str]:
+        """Load index metadata from the sidecar JSON file.
+
+        Reserved dunder keys (the layout marker) are stripped so they
+        can never participate in document-id set arithmetic.
+
+        Returns:
+            Mapping of document stem to blake2b hex digest, or an empty
+            dict if the file does not exist or cannot be parsed.
+        """
+        return {
+            key: value
+            for key, value in self._read_meta_raw().items()
+            if not key.startswith("__")
+        }

@@ -497,17 +497,18 @@ class TestIncrementalIndexMetadata:
         meta = {"mod.py": content_hash}
         indexer._write_meta(meta)
 
-        # Reload and verify types. The reserved dunder key carries the
-        # embed-format version, not a hash; every other value is a hash.
+        # Reload and verify types. The reserved embed-format marker is
+        # stamped on disk but stripped from the loaded mapping, so every
+        # loaded value is a hash.
+        raw = json.loads(indexer._meta_path.read_text(encoding="utf-8"))
+        assert raw.get("__code_embed_schema__")
         loaded = indexer._load_meta()
-        assert loaded.get("__code_embed_schema__")
+        assert "__code_embed_schema__" not in loaded
         for key, val in loaded.items():
             assert isinstance(key, str)
             assert isinstance(val, str), (
                 f"Expected str hash, got {type(val).__name__}: {val}"
             )
-            if key.startswith("__"):
-                continue
             # Must be a valid hex string (128 chars for blake2b).
             assert len(val) == 128
             int(val, 16)  # raises ValueError if not valid hex
@@ -795,10 +796,9 @@ class TestHashingPermissionError:
             "bar/baz.rs": "b" * 64,
         }
         indexer._write_meta(hashes)
-        loaded = indexer._load_meta()
-        # The write stamps the embed-format marker alongside the hashes.
-        assert loaded.pop("__code_embed_schema__") == "2"
-        assert loaded == hashes
+        # The loaded mapping is exactly the hashes: the embed-format
+        # marker is stamped on disk but never surfaces in id math.
+        assert indexer._load_meta() == hashes
 
 
 class TestMergeSmallCrossType:
@@ -914,9 +914,7 @@ class TestCodebaseMetaRoundTrip:
 
         hashes = {"src/foo.py": "aaa", "lib/baz.rs": "bbb"}
         indexer._write_meta(hashes)
-        loaded = indexer._load_meta()
-        assert loaded.pop("__code_embed_schema__") == "2"
-        assert loaded == hashes
+        assert indexer._load_meta() == hashes
 
     def test_load_meta_returns_empty_when_missing(self, tmp_path: Path) -> None:
         """_load_meta returns {} when no meta file exists."""

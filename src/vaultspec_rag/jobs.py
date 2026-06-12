@@ -229,6 +229,17 @@ def record_finish(
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
+                if record["finished_at"] is not None:
+                    # Idempotent: cancellation paths can race their
+                    # cleanup (the canceller finishes the record, then
+                    # the owner's cleanup tries again); the first
+                    # terminal state wins and stays.
+                    logger.debug(
+                        "record_finish: job %s already finished; "
+                        "keeping its original terminal state",
+                        record_id,
+                    )
+                    return
                 record["phase"] = target_phase
                 record["finished_at"] = finished_at
                 record["result"] = summary

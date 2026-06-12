@@ -1550,9 +1550,9 @@ class CodebaseIndexer:
         one-time clean rebuild. A missing sidecar over a non-empty
         collection is treated the same way.
         """
-        prev_meta = self._load_meta()
-        if prev_meta:
-            return prev_meta.get(_EMBED_SCHEMA_KEY) != _CODE_EMBED_SCHEMA
+        raw = self._read_meta_raw()
+        if raw:
+            return raw.get(_EMBED_SCHEMA_KEY) != _CODE_EMBED_SCHEMA
         try:
             return self.store.count_code() > 0
         except (OSError, RuntimeError):
@@ -1584,14 +1584,8 @@ class CodebaseIndexer:
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
-    def _load_meta(self) -> dict[str, str]:
-        """Load codebase index metadata from the sidecar JSON file.
-
-        Returns:
-            Mapping of relative file path to blake2b hex digest, or
-            an empty dict if the file does not exist or cannot be
-            parsed.
-        """
+    def _read_meta_raw(self) -> dict[str, str]:
+        """Load the sidecar JSON verbatim, reserved keys included."""
         if not self._meta_path.exists():
             return {}
         try:
@@ -1604,3 +1598,22 @@ class CodebaseIndexer:
                 exc_info=True,
             )
             return {}
+
+    def _load_meta(self) -> dict[str, str]:
+        """Load codebase index metadata from the sidecar JSON file.
+
+        Reserved dunder keys (the embed-format marker) are stripped so
+        they can never participate in file-path set arithmetic - the
+        marker would otherwise be counted as a deleted file on every
+        incremental run.
+
+        Returns:
+            Mapping of relative file path to blake2b hex digest, or
+            an empty dict if the file does not exist or cannot be
+            parsed.
+        """
+        return {
+            key: value
+            for key, value in self._read_meta_raw().items()
+            if not key.startswith("__")
+        }

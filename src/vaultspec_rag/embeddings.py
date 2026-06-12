@@ -61,12 +61,28 @@ class QueryEmbeddingCache:
         self,
         key: tuple[str, str],
     ) -> tuple[np.ndarray, SparseResult | None] | None:
-        """Return the cached entry for *key*, refreshing its recency."""
+        """Return the cached entry for *key*, refreshing its recency.
+
+        The sparse component is returned as a defensive copy so no
+        caller can mutate the cached lists in place; the dense array is
+        shared and treated as read-only by every consumer (callers
+        serialize it via ``tolist()``).
+        """
         with self._lock:
             entry = self._data.get(key)
-            if entry is not None:
-                self._data.move_to_end(key)
-            return entry
+            if entry is None:
+                return None
+            self._data.move_to_end(key)
+            dense, sparse = entry
+            if sparse is None:
+                return (dense, None)
+            return (
+                dense,
+                SparseResult(
+                    indices=list(sparse.indices),
+                    values=list(sparse.values),
+                ),
+            )
 
     def put(
         self,
