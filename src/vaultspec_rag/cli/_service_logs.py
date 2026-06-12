@@ -274,34 +274,100 @@ def _render_raw_lines(log_lines: list[object]) -> None:
     sys.stdout.flush()
 
 
-def _render_no_activity_hint(port: int) -> None:
+def _command_value(value: object) -> str:
+    text = str(value)
+    if re.fullmatch(r"[A-Za-z0-9_.:/\\-]+", text):
+        return text
+    return '"' + text.replace('"', '\\"') + '"'
+
+
+def _raw_logs_command(
+    *,
+    port: int,
+    lines: int,
+    job_id: str | None,
+    contains: str | None,
+) -> str:
+    parts = [
+        "vaultspec-rag",
+        "server",
+        "logs",
+        "--raw",
+        "--limit",
+        str(lines),
+        "--port",
+        str(port),
+    ]
+    if job_id:
+        parts.extend(["--job-id", _command_value(job_id)])
+    if contains:
+        parts.extend(["--contains", _command_value(contains)])
+    return " ".join(parts)
+
+
+def _render_no_activity_hint(
+    port: int,
+    *,
+    lines: int,
+    job_id: str | None,
+    contains: str | None,
+) -> None:
+    filters: list[str] = []
+    if job_id:
+        filters.append(f"job {_short_id(job_id)}")
+    if contains:
+        filters.append(f'text "{contains}"')
+    scope = f" matching {' and '.join(filters)}" if filters else ""
     _cli.console.print(
-        "No recent activity entries were returned.",
+        f"Service is reachable at http://127.0.0.1:{port}.",
         markup=False,
         highlight=False,
+        soft_wrap=True,
     )
-    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _cli.console.print(
+        f"No service activity{scope} was found in the last {lines} log lines.",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print("Try:", markup=False, highlight=False, soft_wrap=True)
     _cli.console.print(
         f"  vaultspec-rag server jobs --running --port {port}",
         markup=False,
         highlight=False,
+        soft_wrap=True,
     )
     _cli.console.print(
         f"  vaultspec-rag server status --port {port}",
         markup=False,
         highlight=False,
+        soft_wrap=True,
+    )
+    raw_command = _raw_logs_command(
+        port=port,
+        lines=lines,
+        job_id=job_id,
+        contains=contains,
     )
     _cli.console.print(
-        f"  vaultspec-rag server logs --raw --port {port}",
+        f"  {raw_command}",
         markup=False,
         highlight=False,
+        soft_wrap=True,
     )
 
 
-def _render_activity_feed(log_lines: list[object], *, port: int) -> None:
+def _render_activity_feed(
+    log_lines: list[object],
+    *,
+    port: int,
+    lines: int,
+    job_id: str | None,
+    contains: str | None,
+) -> None:
     activity_lines = _activity_feed_lines(log_lines)
     if not activity_lines:
-        _render_no_activity_hint(port)
+        _render_no_activity_hint(port, lines=lines, job_id=job_id, contains=contains)
         return
     for line in activity_lines:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
@@ -384,9 +450,20 @@ def service_logs(
         cast("list[object]", raw_lines) if isinstance(raw_lines, list) else []
     )
     if not log_lines:
-        _render_no_activity_hint(resolved_port)
+        _render_no_activity_hint(
+            resolved_port,
+            lines=lines,
+            job_id=job_id,
+            contains=contains,
+        )
         return
     if raw:
         _render_raw_lines(log_lines)
         return
-    _render_activity_feed(log_lines, port=resolved_port)
+    _render_activity_feed(
+        log_lines,
+        port=resolved_port,
+        lines=lines,
+        job_id=job_id,
+        contains=contains,
+    )

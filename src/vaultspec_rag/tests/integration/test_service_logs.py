@@ -469,15 +469,49 @@ def test_logs_empty_output_routes_operator_to_next_commands() -> None:
 
     assert result.exit_code == 0, result.output
     lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-    assert lines[0] == "No recent activity entries were returned."
-    assert "Next actions:" in lines
+    assert lines[0] == f"Service is reachable at http://127.0.0.1:{port}."
+    assert lines[1] == "No service activity was found in the last 8 log lines."
+    assert "Try:" in lines
     commands = [line for line in lines if line.startswith("vaultspec-rag ")]
     assert {
         f"vaultspec-rag server jobs --running --port {port}",
         f"vaultspec-rag server status --port {port}",
-        f"vaultspec-rag server logs --raw --port {port}",
+        f"vaultspec-rag server logs --raw --limit 8 --port {port}",
     } == set(commands)
     assert "No recent activity found" not in result.output
+    assert "entries were returned" not in result.output
+
+
+def test_logs_empty_output_preserves_filters_in_raw_followup() -> None:
+    with _logs_http_server([{"lines": [], "total": 0, "filters": {}}]) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "logs",
+                "--limit",
+                "12",
+                "--job-id",
+                "abc123456789",
+                "--contains",
+                "disk space",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        'No service activity matching job abc12345 and text "disk space" '
+        "was found in the last 12 log lines."
+    ) in result.output
+    assert (
+        "vaultspec-rag server logs --raw --limit 12 "
+        f'--port {port} --job-id abc123456789 --contains "disk space"'
+    ) in result.output
 
 
 def test_logs_raw_mode_preserves_log_lines() -> None:
