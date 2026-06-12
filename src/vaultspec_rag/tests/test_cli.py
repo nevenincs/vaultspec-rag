@@ -222,6 +222,55 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
     return server, thread, requests
 
 
+def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
+    """Start a local service returning empty-search diagnostics."""
+    import http.server
+    import threading
+
+    requests: list[object] = []
+
+    class _EmptySearchHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            requests.append(body)
+            payload = {
+                "ok": True,
+                "results": [],
+                "empty": {
+                    "reason": "index_missing",
+                    "message": "No indexed code items are available.",
+                    "remediation": [
+                        "vaultspec-rag index --type code --port 8766",
+                        "vaultspec-rag server status",
+                    ],
+                },
+                "index_state": {
+                    "source": "code",
+                    "indexed_count": 0,
+                    "requested_target_root": "current project",
+                    "indexed_target_root": "other project",
+                    "target_matches": False,
+                },
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _EmptySearchHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 class TestSearchTimeoutDefaults:
     """Tests for service-delegated search timeout defaults."""
 
@@ -1355,6 +1404,67 @@ class TestSearchSafetyContract:
         )
         assert "score=" not in result.output
         assert "rank=" not in result.output
+
+    def test_empty_search_command_humanizes_service_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _empty_search_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "missing symbol",
+                    "--type",
+                    "code",
+                    "--limit",
+                    "2",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [
+            {
+                "query": "missing symbol",
+                "top_k": 2,
+                "project_root": str(tmp_path),
+                "type": "codebase",
+            }
+        ]
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines[:3] == [
+            "No source code results found for: missing symbol",
+            "Why: No indexed code items are available.",
+            "Indexed source code chunks: 0.",
+        ]
+        normalized = " ".join(result.output.split())
+        mismatch = (
+            "Project mismatch: requested current project; index is for other project."
+        )
+        assert mismatch in normalized
+        assert lines[-3:] == [
+            "Next actions:",
+            "- vaultspec-rag index --type code --port 8766",
+            "- vaultspec-rag server status",
+        ]
+        for leaked in (
+            "indexed_count",
+            "requested_target",
+            "indexed_target",
+            "index_missing",
+            "reason=",
+            "target_matches",
+        ):
+            assert leaked not in result.output
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""

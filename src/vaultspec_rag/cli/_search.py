@@ -142,31 +142,68 @@ def _render_empty_service_results(
     search_type: str,
 ) -> None:
     _cli.console.print(
-        f"No {search_type} results found for: {query}",
+        f"No {_search_type_result_label(search_type)} results found for: {query}",
         markup=False,
         highlight=False,
     )
+    remediation: object = None
     empty = payload.get("empty")
     if isinstance(empty, dict):
         message = str(empty.get("message", "No matching indexed items found."))
-        reason = str(empty.get("reason", "no_match"))
-        _cli.console.print(f"Reason: {message} ({reason})", markup=False)
+        _cli.console.print(f"Why: {message}", markup=False)
         remediation = empty.get("remediation")
-        if isinstance(remediation, list) and remediation:
-            _cli.console.print("Next actions:")
-            for item in remediation:
-                _cli.console.print(f"  - {item}")
     index_state = payload.get("index_state")
     if isinstance(index_state, dict):
-        indexed = index_state.get("indexed_count", "?")
-        requested = index_state.get("requested_target_root", "?")
-        indexed_target = index_state.get("indexed_target_root", "?")
+        _render_empty_index_state(cast("dict[str, object]", index_state), search_type)
+    if isinstance(remediation, list) and remediation:
+        _cli.console.print("Next actions:")
+        for item in remediation:
+            _cli.console.print(f"  - {item}")
+
+
+def _search_type_result_label(search_type: str) -> str:
+    if search_type in ("code", "codebase"):
+        return "source code"
+    if search_type == "vault":
+        return "vault document"
+    return search_type.replace("_", " ")
+
+
+def _search_type_count_label(search_type: str) -> str:
+    if search_type in ("code", "codebase"):
+        return "source code chunks"
+    if search_type == "vault":
+        return "vault documents"
+    return f"{search_type.replace('_', ' ')} items"
+
+
+def _render_empty_index_state(
+    index_state: dict[str, object],
+    search_type: str,
+) -> None:
+    source = str(index_state.get("source") or search_type)
+    indexed = index_state.get("indexed_count", "?")
+    _cli.console.print(
+        f"Indexed {_search_type_count_label(source)}: {indexed}.",
+        markup=False,
+        highlight=False,
+    )
+    requested = str(index_state.get("requested_target_root", "")).strip()
+    indexed_target = str(index_state.get("indexed_target_root", "")).strip()
+    if not requested or not indexed_target:
+        return
+    if index_state.get("target_matches") is False and requested != indexed_target:
         _cli.console.print(
-            f"indexed_count={indexed}; requested_target={requested}; "
-            f"indexed_target={indexed_target}",
+            f"Project mismatch: requested {requested}; index is for {indexed_target}.",
             markup=False,
             highlight=False,
         )
+        return
+    _cli.console.print(
+        f"Project: {requested}.",
+        markup=False,
+        highlight=False,
+    )
 
 
 def _handle_vaultstore_locked_error(
