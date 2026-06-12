@@ -619,6 +619,48 @@ Deliverables:
 Objective: Walk a human reviewer through the modified CLI operation surface one command
 at a time, using the original audit and accepted ADRs as the comparison baseline.
 
+### Phase W06.P01 - Redesign `server status` Human Output
+
+Objective: Replace the fragile table-shaped default `server status` output with a
+plain, human-first operator summary while preserving advanced diagnostics behind explicit
+flags.
+
+Progress tracking:
+
+- [ ] Confirm the default output answers the human review questions:
+  - is the server running,
+  - is it healthy,
+  - is it currently processing a request,
+  - what is the queue status,
+  - how many jobs has it processed,
+  - what is the clickable service address,
+  - what is the current job name and age when present,
+  - how long has the service been running in short human-readable form.
+- [ ] Move low-level process, token, model, and backend capability metadata behind
+  `--verbose`, `--debug`, or `--json`.
+- [ ] Remove Rich table rendering from the default `server status` human output.
+- [ ] Keep `--json` stable and full-fidelity for agent/script use.
+- [ ] Add or update real-behavior tests for the human output contract.
+- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+
+Agent brief:
+
+- Start with Phase `W06.P01`.
+- Read the original UX audit, the four governing ADRs, the four research notes, and the
+  W05 summary before editing code.
+- Treat the command-line UX reviewer feedback as accepted design input:
+  - no table layout for default `server status`,
+  - use stable plain labels such as `Server:`, `Health:`, `Busy:`, `Address:`,
+    `Uptime:`, `Queue:`, `Jobs:`, and `Current job:`,
+  - show the address as a full URL including the port,
+  - use short human-readable uptime,
+  - summarize jobs and queue state in human language,
+  - reserve process identity, token checks, model details, and backend capability
+    metadata for advanced flags.
+- Do not broaden the command tree unless the human reviewer approves it.
+- Do not change generated provider artifacts unless the project tooling requires it.
+- Use `uv run` or `uv run --no-sync` for project commands.
+
 Pipeline:
 
 Hardening:
