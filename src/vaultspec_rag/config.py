@@ -66,6 +66,9 @@ class EnvVar(StrEnum):
     VAULT_CHUNK_CHARS = "VAULTSPEC_RAG_VAULT_CHUNK_CHARS"
     # Reranker input token bound.
     RERANKER_MAX_LENGTH = "VAULTSPEC_RAG_RERANKER_MAX_LENGTH"
+    # Worker-thread pool partitioning.
+    SEARCH_CONCURRENCY = "VAULTSPEC_RAG_SEARCH_CONCURRENCY"
+    INDEX_JOB_CONCURRENCY = "VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY"
 
     QDRANT_URL = "VAULTSPEC_RAG_QDRANT_URL"
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
@@ -116,6 +119,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # Vault chunking + reranker input knobs.
     "vault_chunk_chars": EnvVar.VAULT_CHUNK_CHARS,
     "reranker_max_length": EnvVar.RERANKER_MAX_LENGTH,
+    # Worker-thread pool partitioning.
+    "search_concurrency": EnvVar.SEARCH_CONCURRENCY,
+    "index_job_concurrency": EnvVar.INDEX_JOB_CONCURRENCY,
     "qdrant_url": EnvVar.QDRANT_URL,
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
@@ -225,6 +231,12 @@ class VaultSpecConfigWrapper:
         # point per chunk; ~3000 chars is ~750 BPE tokens, well inside
         # the 2048-token encoder cap with the title header prepended.
         "vault_chunk_chars": 3000,
+        # Worker-thread pool partitioning: interactive searches and
+        # long-running index jobs draw from separate capacity limiters
+        # so reindex runs can never exhaust the threads that serve
+        # searches. Saturation beyond a limiter queues callers.
+        "search_concurrency": 16,
+        "index_job_concurrency": 4,
         "mcp_port": 8766,
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,

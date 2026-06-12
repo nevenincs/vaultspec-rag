@@ -108,6 +108,7 @@ from ._utils import (
 )
 from ._watcher import (
     _ensure_watcher,
+    _ensure_watcher_soon,
     _stop_all_watchers,
     _stop_watcher,
 )
@@ -129,6 +130,7 @@ __all__ = [
     "_clamp_top_k",
     "_default_root",
     "_ensure_watcher",
+    "_ensure_watcher_soon",
     "_heartbeat_loop",
     "_heartbeat_tick_sync",
     "_http_mode",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from ._mcp import mcp
 from ._tools import (
-    _call_daemon,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module intentional import
+    _call_daemon_async,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module intentional import
 )
 
 
@@ -30,7 +30,7 @@ async def get_vault_document(doc_id: str) -> str:
         RuntimeError: If the daemon is not running or the REST call
             fails.
     """
-    res = _call_daemon("/vault-document", {"doc_id": doc_id})
+    res = await _call_daemon_async("/vault-document", {"doc_id": doc_id})
     if "content" in res:
         return str(res["content"])
     if res.get("error") == "not_found":

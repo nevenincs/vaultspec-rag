@@ -10,6 +10,8 @@ alias so a test rebind of ``_registry`` is observed.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import urllib.error
 import urllib.request
 from typing import Any
@@ -18,6 +20,19 @@ from ..cli import (
     _read_service_status,  # pyright: ignore[reportPrivateUsage]  # intra-package: cli __all__ explicitly re-exports this symbol
 )
 from ._mcp import mcp
+
+logger = logging.getLogger(__name__)
+
+
+def _daemon_timeout_seconds() -> float:
+    """Resolve the daemon round-trip timeout (env-tunable, default 300s)."""
+    raw = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            logger.debug("Invalid VAULTSPEC_RAG_SEARCH_TIMEOUT %r; using default", raw)
+    return 300.0
 
 
 def _call_daemon(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -43,7 +58,7 @@ def _call_daemon(path: str, payload: dict[str, Any] | None = None) -> dict[str, 
         req = urllib.request.Request(url, headers=headers, method="GET")
 
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=_daemon_timeout_seconds()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
@@ -55,6 +70,25 @@ def _call_daemon(path: str, payload: dict[str, Any] | None = None) -> dict[str, 
             ) from e
     except Exception as e:
         raise RuntimeError(f"REST API call to {url} failed: {e}") from e
+
+
+async def _call_daemon_async(
+    path: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the blocking daemon round trip on a worker thread.
+
+    Every MCP tool is an ``async def`` serving on an event loop - in
+    the stdio process and, crucially, on the daemon itself, which
+    mounts this same MCP app and would otherwise issue a blocking
+    loopback HTTP request from its own loop thread (a full-server
+    stall, or a deadlock once the loop is saturated).
+    """
+    from functools import partial
+
+    import anyio.to_thread
+
+    return await anyio.to_thread.run_sync(partial(_call_daemon, path, payload))
 
 
 @mcp.tool()
@@ -82,7 +116,9 @@ async def search_vault(
         "unlike_ids": unlike_ids,
         "project_root": project_root,
     }
-    return _call_daemon("/search", {k: v for k, v in payload.items() if v is not None})
+    return await _call_daemon_async(
+        "/search", {k: v for k, v in payload.items() if v is not None}
+    )
 
 
 @mcp.tool()
@@ -120,7 +156,9 @@ async def search_codebase(
         "unlike_ids": unlike_ids,
         "project_root": project_root,
     }
-    return _call_daemon("/search", {k: v for k, v in payload.items() if v is not None})
+    return await _call_daemon_async(
+        "/search", {k: v for k, v in payload.items() if v is not None}
+    )
 
 
 @mcp.tool()
@@ -133,7 +171,7 @@ async def get_index_status(
         import urllib.parse
 
         url_path += "?project_root=" + urllib.parse.quote(project_root)
-    return _call_daemon(url_path)
+    return await _call_daemon_async(url_path)
 
 
 @mcp.tool()
@@ -143,7 +181,7 @@ async def get_code_file(
 ) -> str:
     """Retrieve the full content of a source file by path."""
     payload = {"path": path, "project_root": project_root}
-    res = _call_daemon(
+    res = await _call_daemon_async(
         "/code-file", {k: v for k, v in payload.items() if v is not None}
     )
     if "content" in res:
@@ -165,7 +203,9 @@ async def reindex_vault(
         "project_root": project_root,
         "initiator_kind": "mcp",
     }
-    return _call_daemon("/reindex", {k: v for k, v in payload.items() if v is not None})
+    return await _call_daemon_async(
+        "/reindex", {k: v for k, v in payload.items() if v is not None}
+    )
 
 
 @mcp.tool()
@@ -180,4 +220,6 @@ async def reindex_codebase(
         "project_root": project_root,
         "initiator_kind": "mcp",
     }
-    return _call_daemon("/reindex", {k: v for k, v in payload.items() if v is not None})
+    return await _call_daemon_async(
+        "/reindex", {k: v for k, v in payload.items() if v is not None}
+    )

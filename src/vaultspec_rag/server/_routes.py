@@ -30,7 +30,8 @@ from starlette.routing import Route
 
 import vaultspec_rag.server as _m
 
-from ..logging_config import read_service_log
+from ..concurrency import get_search_limiter
+from ..logging_config import log_event, read_service_log
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
 from . import _jobs
@@ -195,7 +196,8 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     lines = _clamp_lines(request.query_params.get("lines"))
     filters = _log_filters_from_request(request)
     read_limit = _MAX_LOG_LINES if filters else lines
-    body_lines = read_service_log(read_limit)
+    # Rotated-set log reads can span megabytes; keep them off the loop.
+    body_lines = await _run_in_thread(read_service_log, read_limit)
     if filters:
         body_lines = _filter_log_lines(body_lines, **filters)
         body_lines = body_lines[-lines:]
@@ -403,10 +405,19 @@ def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
 def _prioritise_running_jobs(
     records: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """Keep running work visible before completed history while preserving recency."""
+    """Keep running and failed work visible before completed history."""
+
+    def priority(record: dict[str, object]) -> int:
+        phase = record.get("phase")
+        if phase == "running":
+            return 0
+        if phase in ("error", "failed"):
+            return 1
+        return 2
+
     return sorted(
         records,
-        key=lambda record: 0 if record.get("phase") == "running" else 1,
+        key=priority,
     )
 
 
@@ -658,7 +669,7 @@ async def search_route(request: Request) -> JSONResponse:
             return _m._local_store_locked_error_dict(exc)
 
     started = time.perf_counter()
-    result = await _run_in_thread(_run)
+    result = await _run_in_thread(_run, limiter=get_search_limiter())
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
@@ -672,9 +683,11 @@ async def search_route(request: Request) -> JSONResponse:
                 result.get("index_state", {}),
                 port=request.url.port,
             )
-        _m._ensure_watcher(root)
-        _m._lifecycle_log(
-            "search",
+        _m._ensure_watcher_soon(root)
+        log_event(
+            logger,
+            "service.search",
+            "completed",
             request_id=request_id,
             search_type=search_type,
             root=root,
@@ -713,7 +726,7 @@ async def reindex_route(request: Request) -> JSONResponse:
     else:
         job_id = start_reindex_codebase(root, clean, initiator_kind=initiator_kind)
 
-    _m._ensure_watcher(root)
+    _m._ensure_watcher_soon(root)
     return JSONResponse({"ok": True, "job_id": job_id, "status": "queued"})
 
 
@@ -953,7 +966,8 @@ async def logs_json_route(request: Request) -> JSONResponse:
     lines = _clamp_lines(request.query_params.get("lines"))
     filters = _log_filters_from_request(request)
     read_limit = _MAX_LOG_LINES if filters else lines
-    body = read_service_log(read_limit)
+    # Rotated-set log reads can span megabytes; keep them off the loop.
+    body = await _run_in_thread(read_service_log, read_limit)
     if filters:
         body = _filter_log_lines(body, **filters)
         body = body[-lines:]

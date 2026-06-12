@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
+from .concurrency import get_index_limiter
+from .logging_config import log_event
 from .registry import get_registry
 
 if TYPE_CHECKING:
@@ -137,6 +139,18 @@ def record_start(
     }
     with _lock:
         _records.append(record)
+    log_event(
+        logger,
+        "service.job",
+        "started",
+        job_id=record_id,
+        source=source,
+        trigger=trigger,
+        phase="running",
+        initiator_kind=initiator_kind or trigger,
+        command=command or f"{trigger}_{source}_index",
+        project_root=str(project_root) if project_root is not None else None,
+    )
     return record_id
 
 
@@ -154,16 +168,34 @@ def record_progress(
         completed: Count of items processed so far in this step.
         total: Total number of items to process, if known.
     """
+    log_fields: dict[str, object] | None = None
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
+                progress = record.get("progress")
+                progress_step = None
+                if isinstance(progress, dict):
+                    progress_data = cast("dict[str, object]", progress)
+                    progress_step = progress_data.get("step")
                 record["progress"] = {
                     "step": step,
                     "completed": completed,
                     "total": total,
                     "last_updated": time.time(),
                 }
-                return
+                if progress_step != step:
+                    log_fields = {
+                        "job_id": record_id,
+                        "source": record.get("source"),
+                        "trigger": record.get("trigger"),
+                        "phase": record.get("phase"),
+                        "step": step,
+                        "completed": completed,
+                        "total": total,
+                    }
+                break
+    if log_fields is not None:
+        log_event(logger, "service.job", "progress", fields=log_fields)
 
 
 def record_finish(
@@ -193,6 +225,7 @@ def record_finish(
     else:
         target_phase = "error" if error is not None else "done"
     summary = error if error is not None else result
+    log_fields: dict[str, object] | None = None
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
@@ -203,7 +236,23 @@ def record_finish(
                 if isinstance(resources, dict):
                     resources = cast("dict[str, object]", resources)
                     resources["finished"] = resource_snapshot()
-                return
+                log_fields = {
+                    "job_id": record_id,
+                    "source": record.get("source"),
+                    "trigger": record.get("trigger"),
+                    "phase": target_phase,
+                    "result": summary,
+                }
+                break
+    if log_fields is not None:
+        level = logging.ERROR if target_phase == "error" else logging.INFO
+        log_event(
+            logger,
+            "service.job",
+            "finished",
+            severity=level,
+            fields=log_fields,
+        )
 
 
 def snapshot() -> list[dict[str, object]]:
@@ -230,11 +279,12 @@ def snapshot() -> list[dict[str, object]]:
                 item["runtime"] = dict(cast("dict[str, object]", runtime))
             resources = record.get("resources")
             if isinstance(resources, dict):
+                resource_data = cast("dict[str, object]", resources)
                 item["resources"] = {
                     str(key): dict(cast("dict[str, object]", value))
                     if isinstance(value, dict)
                     else value
-                    for key, value in resources.items()
+                    for key, value in resource_data.items()
                 }
             copied.append(item)
         return copied
@@ -320,7 +370,7 @@ def start_reindex_vault(
                     record_finish(job_id, error=str(exc))
                     logger.exception("Background vault re-indexing failed")
 
-            await _run_in_thread(_bg_run)
+            await _run_in_thread(_bg_run, limiter=get_index_limiter())
             duration = time.perf_counter() - started
             for cb in _on_job_complete_callbacks:
                 try:
@@ -386,7 +436,7 @@ def start_reindex_codebase(
                     record_finish(job_id, error=str(exc))
                     logger.exception("Background codebase re-indexing failed")
 
-            await _run_in_thread(_bg_run)
+            await _run_in_thread(_bg_run, limiter=get_index_limiter())
             duration = time.perf_counter() - started
             for cb in _on_job_complete_callbacks:
                 try:
