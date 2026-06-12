@@ -3206,9 +3206,12 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 3
             assert "Service record: missing" in result.output
-            assert "Process id: not recorded" in result.output
+            assert "Process: not reported" in result.output
             assert f"Address: http://127.0.0.1:{port}" in result.output
-            assert "Network: not checked" in result.output
+            assert "Network: not accepting connections" in result.output
+            assert "Process id:" not in result.output
+            assert "not checked" not in result.output
+            assert "not recorded" not in result.output
             assert "PID:" not in result.output
             assert "Port:" not in result.output
             assert "Port listening" not in result.output

@@ -1132,9 +1132,12 @@ def _render_port_only_status(
 
     _cli.console.print("Service status")
     _print_detail_line("Service record", "missing")
-    _print_detail_line("Process id", "not recorded")
+    _print_detail_line("Process", "not reported")
     _print_detail_line("Address", f"http://127.0.0.1:{port}")
-    _print_detail_line("Network", _network_label(port_listening, pid_alive=False))
+    _print_detail_line(
+        "Network",
+        "accepting connections" if port_listening else "not accepting connections",
+    )
     _print_detail_line("State", state)
     _print_health_detail(health, port_listening)
     _print_operational_detail(operational)
