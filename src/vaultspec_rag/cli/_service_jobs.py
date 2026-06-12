@@ -325,7 +325,7 @@ def _render_jobs_feed(
         job_id = str(job.get("id", ""))[:8]
         _cli.console.print(
             f"{_job_prefix(job)} {_job_time_label(job)} {_phase_label(job)} "
-            f"{_operation_label(job)} project={_project_label(job)} id={job_id} - "
+            f"{_operation_label(job)} project {_project_label(job)} id {job_id} - "
             f"{_job_summary_detail(job)}",
             soft_wrap=True,
         )

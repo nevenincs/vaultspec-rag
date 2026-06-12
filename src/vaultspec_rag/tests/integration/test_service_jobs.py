@@ -430,9 +430,10 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         "1 active, 0 waiting, 1 finished, 1 failed"
     ) in output
     assert "Latest shown last" in output
-    assert "project=proj-a" in output
-    assert "project=proj-b" in output
-    assert "project=proj-c" in output
+    assert "project proj-a" in output
+    assert "project proj-b" in output
+    assert "project proj-c" in output
+    assert "project=" not in output
     assert "* " in output
     assert "! " in output
     assert "FAILED" in output
