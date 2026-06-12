@@ -82,6 +82,46 @@ def test_update_timing_output_uses_user_language(capsys) -> None:
     assert "cooldown=" not in output
 
 
+def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
+    result = runner.invoke(app, ["server", "updates", "reconfigure", "--help"])
+    assert result.exit_code == 0
+    assert "--update-delay-ms" in result.stdout
+    assert "--same-source-delay-s" in result.stdout
+    assert "--debounce-ms" not in result.stdout
+    assert "--cooldown-s" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [
+            "server",
+            "updates",
+            "reconfigure",
+            "/tmp/x",
+            "--update-delay-ms",
+            "500",
+            "--same-source-delay-s",
+            "2",
+        ],
+        [
+            "server",
+            "updates",
+            "reconfigure",
+            "/tmp/x",
+            "--debounce-ms",
+            "500",
+            "--cooldown-s",
+            "2",
+        ],
+    ],
+)
+def test_updates_reconfigure_timing_flags_parse(argv: list[str]) -> None:
+    result = runner.invoke(app, [*argv, "--port", _DEAD_PORT])
+    assert result.exit_code == 3
+    assert "not running" in result.stdout.lower()
+
+
 def test_watcher_alias_hidden_but_still_compatible() -> None:
     server_help = runner.invoke(app, ["server", "--help"])
     assert server_help.exit_code == 0

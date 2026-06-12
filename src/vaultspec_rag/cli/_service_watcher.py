@@ -192,18 +192,34 @@ def service_watcher_stop(
 @server_watcher_app.command("reconfigure")
 def service_watcher_reconfigure(
     root: Annotated[str, typer.Argument(help="Project root to reconfigure.")],
+    update_delay_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--update-delay-ms",
+            help="Delay before indexing a burst of file changes, in milliseconds.",
+        ),
+    ] = None,
     debounce_ms: Annotated[
         int | None,
         typer.Option(
             "--debounce-ms",
-            help="Delay before indexing a burst of file changes, in milliseconds.",
+            help="Legacy name for --update-delay-ms.",
+            hidden=True,
+        ),
+    ] = None,
+    same_source_delay_s: Annotated[
+        float | None,
+        typer.Option(
+            "--same-source-delay-s",
+            help="Minimum wait before indexing the same source again, in seconds.",
         ),
     ] = None,
     cooldown_s: Annotated[
         float | None,
         typer.Option(
             "--cooldown-s",
-            help="Minimum wait before indexing the same source again, in seconds.",
+            help="Legacy name for --same-source-delay-s.",
+            hidden=True,
         ),
     ] = None,
     port: Annotated[
@@ -218,10 +234,16 @@ def service_watcher_reconfigure(
     """Change automatic index update timing."""
     resolved_port = port if port is not None else _default_service_port()
     args: dict[str, object] = {"root": root}
-    if debounce_ms is not None:
-        args["debounce_ms"] = debounce_ms
-    if cooldown_s is not None:
-        args["cooldown_s"] = cooldown_s
+    selected_update_delay_ms = (
+        update_delay_ms if update_delay_ms is not None else debounce_ms
+    )
+    selected_same_source_delay_s = (
+        same_source_delay_s if same_source_delay_s is not None else cooldown_s
+    )
+    if selected_update_delay_ms is not None:
+        args["debounce_ms"] = selected_update_delay_ms
+    if selected_same_source_delay_s is not None:
+        args["cooldown_s"] = selected_same_source_delay_s
     result = _try_http_admin("reconfigure_watcher", args, resolved_port)
     if result is None:
         _watcher_service_unreachable(
