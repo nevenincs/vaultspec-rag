@@ -138,14 +138,14 @@ def main(
         str | None,
         typer.Option(
             "--data-dir",
-            help="Search data directory (default: .vault/data/search-data)",
+            help="Index data directory (default: .vault/data/search-data)",
         ),
     ] = None,
     storage_dir: Annotated[
         str | None,
         typer.Option(
             "--storage-dir",
-            help="Search storage directory relative to --data-dir",
+            help="Index storage directory relative to --data-dir",
         ),
     ] = None,
     qdrant_dir: Annotated[

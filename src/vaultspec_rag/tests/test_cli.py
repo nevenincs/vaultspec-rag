@@ -1432,9 +1432,13 @@ class TestHelpCleanup:
         assert "search project documentation and source code" in result.output
         assert "Manage the background search service" in result.output
         assert "Inspect and validate document preprocessing rules" in result.output
+        assert "Index data directory" in result.output
+        assert "Index storage directory" in result.output
         assert "--storage-dir" in result.output
         for forbidden in (
             "Qdrant",
+            "Search data directory",
+            "Search storage directory",
             "--qdrant-dir",
             "--index-meta",
             "--code-index-meta",
@@ -1663,7 +1667,9 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         assert "Remove vaultspec-rag setup" in result.output
         assert "Emit JSON for scripts" in result.output
-        assert "search data under .vault/data/" in result.output
+        assert "index data under .vault/data/" in result.output
+        assert "search data" not in result.output
+        assert "``--force``" not in result.output
         for forbidden in (
             "MCP source files",
             "rag's index",

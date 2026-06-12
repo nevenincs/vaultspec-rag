@@ -191,7 +191,7 @@ def handle_uninstall(
         bool,
         typer.Option(
             "--remove-data",
-            help="Also remove search data under .vault/data/.",
+            help="Also remove index data under .vault/data/.",
         ),
     ] = False,
     dry_run: Annotated[
@@ -230,8 +230,8 @@ def handle_uninstall(
 ) -> None:
     """Remove vaultspec-rag setup from a workspace.
 
-    Without ``--force``, this only previews what would be removed. Vault
-    documents and search data are preserved unless ``--remove-data`` is set.
+    Without --force, this only previews what would be removed. Vault
+    documents and index data are preserved unless --remove-data is set.
     """
     from ..commands import uninstall_run
 
