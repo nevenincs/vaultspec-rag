@@ -5,16 +5,11 @@ from __future__ import annotations
 from typing import Annotated, Any, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
 from ._app import CLIState, app
-from ._render import (
-    _add_backend_contract_rows,
-    _emit_json,
-    _emit_json_error_and_exit,
-)
+from ._render import _emit_json, _emit_json_error_and_exit
 
 
 @app.command(
@@ -91,18 +86,17 @@ def handle_status(
         )
         return
 
-    gpu_status = (
-        f"[green]cuda[/] - {gpu_name} ({vram_mb} MB VRAM)"
+    device = (
+        f"cuda - {gpu_name} ({vram_mb} MB VRAM)"
         if cuda_available
-        else "[red]No CUDA GPU available[/]"
+        else "no CUDA GPU available"
     )
-    table = Table(title="RAG Engine Status", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Device", gpu_status)
-    table.add_row("Storage Path", f"[cyan]{storage_path}[/]")
-    table.add_row("Vault Documents", f"[green]{vault_count}[/]")
-    table.add_row("Codebase Chunks", f"[green]{code_count}[/]")
-    table.add_row("Target Directory", f"[cyan]{target}[/]")
-    _add_backend_contract_rows(table)
-    _cli.console.print(table)
+    lines = [
+        f"Device: {device}",
+        f"Storage: {storage_path}",
+        f"Vault documents: {vault_count}",
+        f"Codebase chunks: {code_count}",
+        f"Target: {target}",
+    ]
+    for line in lines:
+        _cli.console.print(line, markup=False, highlight=False)

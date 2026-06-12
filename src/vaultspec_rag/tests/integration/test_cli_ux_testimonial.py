@@ -53,6 +53,81 @@ class _Observation:
 # ---------------------------------------------------------------------------
 
 
+def _observe_first_time_indexer(tmp_path: Path) -> list[_Observation]:
+    from ._helpers import _service_env
+
+    (tmp_path / ".vault").mkdir()
+    (tmp_path / ".vaultspec").mkdir()
+
+    observations: list[_Observation] = []
+    for command in (["--help"], ["index", "--help"]):
+        result = runner.invoke(app, command)
+        observations.append(
+            _Observation(
+                command=command,
+                exit_code=result.exit_code,
+                output=result.output,
+                friction="" if result.exit_code == 0 else "unexpected non-zero exit",
+            )
+        )
+
+    status_command = ["--target", str(tmp_path), "status"]
+    with _service_env(tmp_path):
+        result = runner.invoke(app, status_command)
+    observations.append(
+        _Observation(
+            command=status_command,
+            exit_code=result.exit_code,
+            output=result.output,
+            friction="" if result.exit_code == 0 else "unexpected non-zero exit",
+        )
+    )
+    return observations
+
+
+def _assert_observations_succeeded(observations: list[_Observation]) -> None:
+    for obs in observations:
+        assert obs.exit_code == 0, (
+            f"Command {obs.command!r} exited {obs.exit_code}.\n"
+            f"friction: {obs.friction!r}\n"
+            f"output:\n{obs.output}"
+        )
+
+
+def _assert_help_observations_clean(observations: list[_Observation]) -> None:
+    help_obs = [obs for obs in observations if "--help" in obs.command]
+    for obs in help_obs:
+        for token in _FORBIDDEN_HELP_TOKENS:
+            assert token not in obs.output, (
+                f"Forbidden token {token!r} leaked into {obs.command!r} help:\n"
+                f"{obs.output}"
+            )
+
+
+def _assert_first_time_help_output(observations: list[_Observation]) -> None:
+    top_help = observations[0].output
+    for expected_cmd in ("index", "search", "status", "server"):
+        assert expected_cmd in top_help, (
+            f"Expected command {expected_cmd!r} missing from --help:\n{top_help}"
+        )
+    index_help = observations[1].output
+    assert "docs/indexing.md" in index_help, (
+        f"Cross-reference to docs/indexing.md missing from index --help:\n{index_help}"
+    )
+
+
+def _assert_status_output_is_plain(observations: list[_Observation]) -> None:
+    status_out = observations[2].output
+    assert "cuda" in status_out.lower() or "GPU" in status_out.lower(), (
+        f"Expected GPU/CUDA info in status output:\n{status_out}"
+    )
+    assert "Device:" in status_out
+    assert "Storage:" in status_out
+    assert "Search Concurrency" not in status_out
+    for forbidden in ("┌", "└", "│"):
+        assert forbidden not in status_out
+
+
 class TestFirstTimeIndexer:
     """An operator who has just installed the tool and is learning the CLI.
 
@@ -68,82 +143,11 @@ class TestFirstTimeIndexer:
     pytestmark: typing.ClassVar = [pytest.mark.integration]
 
     def test_persona(self, tmp_path: Path) -> None:
-        from ._helpers import _service_env
-
-        observations: list[_Observation] = []
-        (tmp_path / ".vault").mkdir()
-        (tmp_path / ".vaultspec").mkdir()
-
-        # Step 1: discover top-level commands.
-        r = runner.invoke(app, ["--help"])
-        observations.append(
-            _Observation(
-                command=["--help"],
-                exit_code=r.exit_code,
-                output=r.output,
-                friction="" if r.exit_code == 0 else "unexpected non-zero exit",
-            )
-        )
-
-        # Step 2: read the index sub-command help.
-        r = runner.invoke(app, ["index", "--help"])
-        observations.append(
-            _Observation(
-                command=["index", "--help"],
-                exit_code=r.exit_code,
-                output=r.output,
-                friction="" if r.exit_code == 0 else "unexpected non-zero exit",
-            )
-        )
-
-        # Step 3: run status (no GPU required; no Qdrant lock opened).
-        with _service_env(tmp_path):
-            r = runner.invoke(app, ["--target", str(tmp_path), "status"])
-        observations.append(
-            _Observation(
-                command=["--target", str(tmp_path), "status"],
-                exit_code=r.exit_code,
-                output=r.output,
-                friction="" if r.exit_code == 0 else "unexpected non-zero exit",
-            )
-        )
-
-        # --- assertions ---
-        for obs in observations:
-            assert obs.exit_code == 0, (
-                f"Command {obs.command!r} exited {obs.exit_code}.\n"
-                f"friction: {obs.friction!r}\n"
-                f"output:\n{obs.output}"
-            )
-
-        # Help output must contain no leaked developer internals.
-        help_obs = [o for o in observations if "--help" in o.command]
-        for obs in help_obs:
-            for token in _FORBIDDEN_HELP_TOKENS:
-                assert token not in obs.output, (
-                    f"Forbidden token {token!r} leaked into {obs.command!r} help:\n"
-                    f"{obs.output}"
-                )
-
-        # Top-level help must list the key operator commands.
-        top_help = observations[0].output
-        for expected_cmd in ("index", "search", "status", "server"):
-            assert expected_cmd in top_help, (
-                f"Expected command {expected_cmd!r} missing from --help:\n{top_help}"
-            )
-
-        # index --help must contain the indexing-architecture cross-reference.
-        index_help = observations[1].output
-        assert "docs/indexing.md" in index_help, (
-            f"Cross-reference to docs/indexing.md missing from index --help:\n"
-            f"{index_help}"
-        )
-
-        # status must report GPU device information.
-        status_out = observations[2].output
-        assert "cuda" in status_out.lower() or "GPU" in status_out.lower(), (
-            f"Expected GPU/CUDA info in status output:\n{status_out}"
-        )
+        observations = _observe_first_time_indexer(tmp_path)
+        _assert_observations_succeeded(observations)
+        _assert_help_observations_clean(observations)
+        _assert_first_time_help_output(observations)
+        _assert_status_output_is_plain(observations)
 
 
 # ---------------------------------------------------------------------------
