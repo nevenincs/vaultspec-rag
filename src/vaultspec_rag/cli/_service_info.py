@@ -1,4 +1,4 @@
-"""``server info``: consolidated read-only service state.
+"""Internal compatibility helper for consolidated read-only service state.
 
 Tier-1 observability subcommand (``service-observability`` ADR, plan
 P02). Calls the service-state admin endpoint through the shared HTTP
@@ -15,13 +15,11 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from ._app import server_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
 
-@server_app.command("info")
 def service_info(
     ctx: typer.Context,
     port: Annotated[
@@ -48,7 +46,7 @@ def service_info(
         typer.Option("--json", help="Emit one JSON envelope instead of a summary."),
     ] = False,
 ) -> None:
-    """Show a consolidated snapshot of the running service's state."""
+    """Compatibility entry point for the service-state admin endpoint."""
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
         _exit_service_info_not_running(json_mode)
@@ -96,7 +94,7 @@ def _exit_service_info_not_running(json_mode: bool) -> NoReturn:
 def _exit_project_root_required(json_mode: bool) -> NoReturn:
     message = (
         "Project root is required. Pass global --target or "
-        "`vaultspec-rag server info --project-root <path>`."
+        "`vaultspec-rag --target <path> server status --verbose`."
     )
     if json_mode:
         _emit_json_error_and_exit(
@@ -142,7 +140,7 @@ def _render_service_info(result: dict[str, Any]) -> None:
         cast("dict[str, object]", raw_watcher) if isinstance(raw_watcher, dict) else {}
     )
 
-    _cli.console.print("Service state")
+    _cli.console.print("Service status detail")
     _cli.console.print(
         f"Index: vault_docs={index.get('vault_count', '?')} "
         f"code_chunks={index.get('code_count', '?')}",

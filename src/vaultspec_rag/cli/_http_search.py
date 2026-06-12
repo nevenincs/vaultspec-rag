@@ -272,7 +272,7 @@ def _health_summary(port: int) -> dict[str, object]:
         return {
             "available": False,
             "error": health.get("error", "service_error"),
-            "message": health.get("message", "Health probe returned an error."),
+            "message": health.get("message", "Readiness check returned an error."),
         }
     return {
         "available": True,

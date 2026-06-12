@@ -378,7 +378,7 @@ def _render_status_json(
         "service.status",
         data=payload,
         **(
-            {"error": state, "message": f"Service state: {state}"}
+            {"error": state, "message": f"Service status: {state}"}
             if exit_code != 0
             else {}
         ),
@@ -462,7 +462,7 @@ def _print_health_detail(
 ) -> None:
     if isinstance(health, dict):
         _print_detail_line(
-            "Health",
+            "Ready",
             _status_health_label(health, port_listening=port_listening),
         )
         _print_detail_line("CUDA", health.get("cuda", "unknown"))
@@ -471,7 +471,7 @@ def _print_health_detail(
         _print_detail_line("Projects", health.get("project_count", "unknown"))
         _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
-        _print_detail_line("Health", "not reachable")
+        _print_detail_line("Ready", "not reachable")
 
 
 def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object]]:
@@ -837,7 +837,7 @@ def _render_port_only_status(
             "service.status",
             data=payload,
             **(
-                {"error": state, "message": f"Service state: {state}"}
+                {"error": state, "message": f"Service status: {state}"}
                 if exit_code != 0
                 else {}
             ),
