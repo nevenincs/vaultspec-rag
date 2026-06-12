@@ -1040,6 +1040,8 @@ class TestSearchSafetyContract:
                 str(tmp_path),
                 "search",
                 "anything",
+                "--limit",
+                "3",
                 "--port",
                 "1",
             ],
@@ -1424,6 +1426,13 @@ class TestHelpCleanup:
         assert "Emit JSON for scripts" in result.output
         assert "MCP" not in result.output
         assert "get_index_status" not in result.output
+
+    def test_search_help_includes_limit_alias(self):
+        result = runner.invoke(app, ["search", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--max-results" in result.output
+        assert "--limit" in result.output
+        assert "Maximum number of results" in result.output
 
     def test_status_help_cross_ref(self):
         """status --help must reference docs/indexing.md."""

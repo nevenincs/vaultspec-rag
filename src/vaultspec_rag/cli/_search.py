@@ -417,6 +417,7 @@ def handle_search(
         int,
         typer.Option(
             "--max-results",
+            "--limit",
             help=(
                 "Maximum number of results to show. Default 10 keeps the "
                 "output focused."
