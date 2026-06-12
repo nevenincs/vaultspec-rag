@@ -15,8 +15,8 @@ from ._service_status import _default_service_port
 
 __all__ = [
     "_truncate_root",
-    "service_projects_evict",
     "service_projects_list",
+    "service_projects_unload",
 ]
 
 
@@ -175,10 +175,10 @@ def service_projects_list(
     _print_projects_summary(projects, int(max_projects), int(idle_ttl))
 
 
-def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:
+def _handle_unload_not_running(json_mode: bool, root: str) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
-            "service.projects.evict",
+            "service.projects.unload",
             "service_not_running",
             "Service is not running. Start it with `vaultspec-rag server start`.",
             3,
@@ -209,13 +209,13 @@ def _handle_evict_json(
     if evicted:
         _emit_json(
             True,
-            "service.projects.evict",
+            "service.projects.unload",
             data={"evicted": True, "reason": reason or "ok", "root": root},
         )
         raise typer.Exit(0)
     exit_code = 1 if reason == "busy" else 2 if reason == "not_found" else 1
     _emit_json_error_and_exit(
-        "service.projects.evict",
+        "service.projects.unload",
         reason or "unexpected_response",
         _project_unload_failure_message(root, reason),
         exit_code,
@@ -225,9 +225,8 @@ def _handle_evict_json(
     )
 
 
-@server_projects_app.command("evict", hidden=True)
 @server_projects_app.command("unload")
-def service_projects_evict(
+def service_projects_unload(
     project: Annotated[str, typer.Argument(help="Project to unload.")],
     port: Annotated[
         int | None,
@@ -249,7 +248,7 @@ def service_projects_evict(
         resolved_port,
     )
     if result is None:
-        _handle_evict_not_running(json_mode, project)
+        _handle_unload_not_running(json_mode, project)
 
     reason = str(result.get("reason", ""))
     evicted = bool(result.get("evicted", False))

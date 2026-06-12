@@ -3895,13 +3895,13 @@ class TestServiceProjectsCli:
         assert "Emit JSON for scripts" in result.output
         assert "JSON envelope" not in result.output
 
-    def test_projects_evict_alias_remains_callable(self) -> None:
+    def test_projects_evict_alias_is_not_supported(self) -> None:
         result = runner.invoke(
             app,
             ["server", "projects", "evict", "--help"],
         )
-        assert result.exit_code == 0
-        assert "unload" in result.output.lower()
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
     def test_projects_list_summary_uses_operator_language(self, capsys) -> None:
         from ..cli._service_projects import _print_projects_summary
@@ -3946,7 +3946,7 @@ class TestServiceProjectsCli:
         )
         assert result.exit_code == 3
 
-    def test_projects_evict_service_down_returns_exit_3(self) -> None:
+    def test_projects_unload_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
         result = runner.invoke(
             app,
@@ -4049,6 +4049,7 @@ class TestServiceProjectsCli:
         assert requests == [{"root": r"example"}]
         envelope = json.loads(result.output)
         assert envelope["ok"] is False
+        assert envelope["command"] == "service.projects.unload"
         assert envelope["error"] == "unexpected_response"
         assert r"example" in envelope["message"]
         assert "vaultspec-rag server status" in envelope["message"]

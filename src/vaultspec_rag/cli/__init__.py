@@ -113,8 +113,8 @@ from ._service_lifecycle import (
 )
 from ._service_logs import service_logs
 from ._service_projects import (
-    service_projects_evict,
     service_projects_list,
+    service_projects_unload,
 )
 from ._service_qdrant import (
     qdrant_clean,
@@ -211,8 +211,8 @@ __all__ = [
     "service_info",
     "service_jobs",
     "service_logs",
-    "service_projects_evict",
     "service_projects_list",
+    "service_projects_unload",
     "service_start",
     "service_status",
     "service_stop",
