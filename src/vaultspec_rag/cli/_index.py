@@ -557,7 +557,7 @@ def handle_clean(
         )
         raise typer.Exit(code=1) from None
 
-    cleared = [s.capitalize() for s in cleared_raw]
+    cleared = [s.lower() for s in cleared_raw]
 
     if json_mode:
         _emit_json(
@@ -565,11 +565,12 @@ def handle_clean(
             "clean",
             data={
                 "clean_type": clean_type,
-                "cleared": [s.lower() for s in cleared],
+                "cleared": cleared,
             },
         )
         return
 
     _cli.console.print("Clean summary")
     for source in cleared:
-        _cli.console.print(f"{source}: empty", markup=False, highlight=False)
+        label = _index_source_label("codebase" if source == "code" else source)
+        _cli.console.print(f"{label} index: empty.", markup=False, highlight=False)

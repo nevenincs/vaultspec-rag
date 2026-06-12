@@ -303,6 +303,10 @@ class TestCleanCommand:
         result = runner.invoke(app, ["--target", str(root), "clean", "all", "--yes"])
         assert result.exit_code == 0, result.output
         assert "Clean summary" in result.output
+        assert "Vault index: empty." in result.output
+        assert "Source code index: empty." in result.output
+        assert "Vault: empty" not in result.output
+        assert "Code: empty" not in result.output
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
 
