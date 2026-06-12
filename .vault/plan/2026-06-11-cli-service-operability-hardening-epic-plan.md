@@ -676,6 +676,9 @@ Status as of 2026-06-12:
     `phases.gpu_queue_wait_seconds`.
   - service-backed search responses include `request_id`, and the service logs emit
     `service.lifecycle event=search request_id=<id>` for log correlation.
+  - service startup now preloads the shared reranker, and health/status expose
+    `reranker_loaded`; manual first-search timing after restart dropped cold
+    `project_lease_seconds` from about `6.53s` to about `1.35s`.
 - Process identity parity shipped:
   - `/health` reports serving PID and interpreter/venv context.
   - heartbeat and `server start` persist the serving daemon PID instead of the Windows
@@ -706,5 +709,7 @@ Manual integration persona:
 
 Remaining deferred work:
 
-- Cold service-backed search still shows high project/model setup latency under
-  `project_lease_seconds`; this is now observable, but not yet optimized.
+- Startup readiness now includes shared reranker loading, which makes first-search
+  setup substantially faster but keeps cold service startup around tens of seconds on
+  the tested GPU workstation. A future performance pass should compare this service
+  startup/readiness tradeoff against prior near-instant benchmark expectations.

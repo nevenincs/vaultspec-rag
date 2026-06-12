@@ -38,6 +38,7 @@ class ServiceHealth(TypedDict):
     """Diagnostic status returned by :meth:`ServiceRegistry.health`."""
 
     model_loaded: bool
+    reranker_loaded: bool
     project_count: int
     projects: list[str]
 
@@ -672,6 +673,7 @@ class ServiceRegistry:
             count = len(self._projects)
         return {
             "model_loaded": self._model is not None,
+            "reranker_loaded": self._reranker is not None,
             "project_count": count,
             "projects": project_list,
         }

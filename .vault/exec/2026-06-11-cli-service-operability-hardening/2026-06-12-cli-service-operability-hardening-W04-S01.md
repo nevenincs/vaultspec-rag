@@ -263,3 +263,53 @@ Observed against resident service PID `59728` on port `8766`:
 - Search JSON returned request id `1d11935dd18e4e258c955439653fb339`.
 - `server logs --contains 1d11935dd18e4e258c955439653fb339` returned a structured
   `service.lifecycle event=search` line with the same id.
+
+## Follow-Up: Reranker Readiness And Cold Project Lease
+
+Manual measurement after request correlation showed that cold service-backed search was
+still paying a large first-project setup cost under `project_lease_seconds`. In the
+previous resident service run, the cold search reported `project_lease_seconds` around
+`6.53s`, while `queue_wait_seconds` was near zero. That meant the latency was setup work,
+not observed GPU-lock contention.
+
+The service now preloads the shared CrossEncoder reranker during lifespan startup when
+reranking is enabled. `/health`, `server health --json`, and `server status --json` now
+include `reranker_loaded`, so readiness means the shared dense/sparse models and shared
+reranker are loaded before the first project lease.
+
+The CLI `server start` health wait budget was increased from `30s` to `300s` because the
+readiness contract now includes more honest model setup work and a cold cache can be much
+slower than the warm-cache manual run.
+
+A review follow-up also exposed `reranker_loaded` in the human `server health` and
+`server status` tables, not only JSON, and extended the subprocess lifecycle test to
+assert that a ready service reports `reranker_loaded: true` while `project_count` is
+still `0`.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/cli/_service_lifecycle.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/test_service_registry.py src/vaultspec_rag/tests/integration/test_service_lifecycle.py`
+- `uv run ty check src/vaultspec_rag/cli/_service_lifecycle.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/test_service_registry.py src/vaultspec_rag/tests/integration/test_service_lifecycle.py`
+- `uv run pytest src/vaultspec_rag/tests/test_service_registry.py::TestHealth src/vaultspec_rag/tests/test_service_registry.py::TestSharedReranker src/vaultspec_rag/tests/integration/test_service_lifecycle.py::test_start_health_stop`
+- `uv run --no-sync python tools/complexity_gate.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag server status --json --port 8766`
+- `uv run vaultspec-rag server health --json --port 8766`
+- `uv run vaultspec-rag server health --port 8766`
+- `uv run vaultspec-rag server status --port 8766`
+- `uv run vaultspec-rag search "cold reranker preload project lease timing" --type code --json --max-results 1 --port 8766 --timeout 180`
+
+Observed against resident service PID `62932` on port `8766`:
+
+- startup completed in about `19.2s`,
+- status and health reported `reranker_loaded: true` before any project was leased,
+- human health and status tables showed `Reranker loaded: True`,
+- first service-backed search returned in about `2.65s`,
+- `project_lease_seconds` dropped to about `1.35s`,
+- `model_load_seconds` was near zero,
+- `queue_wait_seconds` stayed near zero.
+
+This moves shared reranker cost from the first user search into service readiness. It
+does not claim the cold path is fully optimized, but it makes readiness honest and
+removes the largest observed first-search setup spike from `project_lease_seconds`.

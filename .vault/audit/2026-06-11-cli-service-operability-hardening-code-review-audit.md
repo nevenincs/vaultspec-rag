@@ -174,6 +174,28 @@ cover this operator failure mode.
 apply `job_id`/`contains`, then return the last requested filtered lines. The regression
 test covers a matching job line outside the requested unfiltered tail.
 
+### CR-15 | MEDIUM | Reranker preload makes the old service-start wait budget too optimistic
+
+The service lifespan now preloads the CrossEncoder reranker before reporting ready. The
+warm-cache manual run completed in about 19 seconds, but a cold HuggingFace cache or slow
+first CUDA initialization can exceed the previous 30-second start wait. A too-short wait
+can make `server start` exit as a failure while the daemon is still legitimately starting.
+
+**Disposition:** Fixed. The CLI start health wait budget is now 300 seconds, matching the
+new readiness contract that includes real shared model setup rather than first-search
+lazy loading.
+
+### CR-16 | LOW | Reranker readiness was JSON-only and weakly covered
+
+The initial readiness slice exposed `reranker_loaded` through JSON health/status, but the
+human `server health` and `server status` tables did not show it. The first test update
+also proved registry health after project creation, not service lifespan preload before
+any project lease.
+
+**Disposition:** Fixed. Human health/status output now includes `Reranker loaded`. The
+real subprocess lifecycle test asserts that the ready service reports
+`reranker_loaded: true` with `project_count == 0`.
+
 ## Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`
@@ -181,6 +203,7 @@ test covers a matching job line outside the requested unfiltered tail.
 - `uv run pytest src/vaultspec_rag/tests/test_cli.py -k SearchTimeoutDefaults`
 - `uv run ruff check` on touched files.
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run pytest src/vaultspec_rag/tests/test_service_registry.py::TestHealth src/vaultspec_rag/tests/test_service_registry.py::TestSharedReranker src/vaultspec_rag/tests/integration/test_service_lifecycle.py::test_start_health_stop`
 - Manual restarted-service checks:
   - `uv run vaultspec-rag server health --json`
   - `uv run vaultspec-rag index --type code --port 8766 --json`

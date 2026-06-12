@@ -177,6 +177,7 @@ class HealthResponse(BaseModel):
         virtual_env: Active virtualenv path from ``VIRTUAL_ENV``.
         cuda: Whether a CUDA GPU is available.
         models_loaded: Whether GPU models have been loaded.
+        reranker_loaded: Whether the shared reranker has been loaded.
         project_count: Number of connected projects.
         uptime_s: Seconds since service startup.
         backend_capabilities: Search concurrency and local storage
@@ -196,6 +197,10 @@ class HealthResponse(BaseModel):
     virtual_env: str | None = Field(default=None, description="Virtualenv path")
     cuda: bool = Field(description="CUDA GPU available")
     models_loaded: bool = Field(description="GPU models loaded")
+    reranker_loaded: bool = Field(
+        default=False,
+        description="Shared reranker loaded",
+    )
     project_count: int = Field(
         default=0,
         description="Number of connected projects",

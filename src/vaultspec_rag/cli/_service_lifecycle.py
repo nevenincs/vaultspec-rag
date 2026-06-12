@@ -150,7 +150,7 @@ def service_start(
 
     # Poll health with exponential backoff
     delay = 0.1
-    deadline = 30.0
+    deadline = 300.0
     elapsed = 0.0
     with _cli.console.status("[bold green]Starting service..."):
         while elapsed < deadline:
@@ -427,6 +427,7 @@ def _add_health_rows(
         table.add_row("Health", str(health.get("status", "unknown")))
         table.add_row("CUDA", str(health.get("cuda", "unknown")))
         table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
+        table.add_row("Reranker loaded", str(health.get("reranker_loaded", "unknown")))
         table.add_row("Projects", str(health.get("project_count", "unknown")))
         uptime = health.get("uptime_s", 0.0)
         table.add_row("Uptime", f"{float(cast('float', uptime)):.0f}s")
@@ -598,6 +599,7 @@ def _render_health_table(port: int, health: dict[str, object]) -> None:
     table.add_row("Health", str(health.get("status", "unknown")))
     table.add_row("CUDA", str(health.get("cuda", "unknown")))
     table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
+    table.add_row("Reranker loaded", str(health.get("reranker_loaded", "unknown")))
     table.add_row("Projects", str(health.get("project_count", "unknown")))
     uptime = health.get("uptime_s")
     if isinstance(uptime, int | float):

@@ -62,7 +62,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     t_total = time.perf_counter()
 
     # HF cache status
-    from ..config import EnvVar
+    from ..config import EnvVar, get_config
 
     hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
@@ -73,6 +73,8 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
     t0 = time.perf_counter()
     await _run_in_thread(_m._registry.load_model)
+    if bool(get_config().reranker_enabled):
+        await _run_in_thread(_m._registry.get_reranker)
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
 
     logger.info("Service startup complete in %.2fs", time.perf_counter() - t_total)
@@ -149,6 +151,7 @@ async def health_handler(_request: Request) -> object:
             "virtual_env": os.environ.get("VIRTUAL_ENV"),
             "cuda": cuda,
             "models_loaded": reg_health["model_loaded"],
+            "reranker_loaded": reg_health["reranker_loaded"],
             "project_count": reg_health["project_count"],
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),

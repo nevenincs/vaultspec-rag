@@ -218,6 +218,7 @@ class TestHealth:
         reg = ServiceRegistry()
         h = reg.health()
         assert h["model_loaded"] is False
+        assert h["reranker_loaded"] is False
         assert h["project_count"] == 0
         assert h["projects"] == []
 
@@ -231,6 +232,7 @@ class TestHealth:
         try:
             h = registry.health()
             assert h["model_loaded"] is True
+            assert h["reranker_loaded"] is True
             assert h["project_count"] >= 1
             assert str(root.resolve()) in h["projects"]
         finally:

@@ -826,9 +826,12 @@ implemented the following current-state improvements:
 - `/health`, heartbeat, `server start`, `server status`, and job runtime records now
   agree on the serving daemon PID rather than the Windows launcher PID.
 - Search request ids are now joinable through `server logs --contains <request_id>`.
+- Service readiness now includes shared reranker preload when reranking is enabled, and
+  health/status expose `reranker_loaded` so the first project lease no longer pays the
+  largest observed CrossEncoder setup cost.
 
-Manual validation after the hardening changes used resident service PID `59728` on port
-`8766`:
+Manual validation after request-correlation hardening used resident service PID `59728`
+on port `8766`:
 
 - `uv run vaultspec-rag search "request correlation logs" --type code --json --max-results 1 --port 8766 --timeout 180`
 - `uv run vaultspec-rag server logs --json --contains 1d11935dd18e4e258c955439653fb339 --lines 5 --port 8766`
@@ -839,11 +842,26 @@ Observed result:
 - The log query returned a structured `service.lifecycle event=search` line with the same
   request id.
 
+Manual validation after reranker-readiness hardening restarted the resident service as
+PID `62932` on port `8766`:
+
+- `uv run vaultspec-rag server status --json --port 8766`
+- `uv run vaultspec-rag server health --json --port 8766`
+- `uv run vaultspec-rag search "cold reranker preload project lease timing" --type code --json --max-results 1 --port 8766 --timeout 180`
+
+Observed result:
+
+- startup completed in about `19.2s`,
+- health and status reported `reranker_loaded: true` before any project was leased,
+- first service-backed search returned in about `2.65s`,
+- cold `project_lease_seconds` was about `1.35s`, down from the earlier observed
+  `~6.53s` setup cost.
+
 Remaining product risk:
 
-- Cold service-backed search and live-service test setup still show high startup/setup
-  latency. This is now visible under `project_lease_seconds`, but it has not been
-  optimized in this epic slice.
+- Cold service startup still takes tens of seconds because readiness now includes real
+  shared model setup. That is more honest and improves first-search behavior, but it
+  should still be compared against prior near-instant benchmark expectations.
 - The audit still recommends a future higher-level diagnostic/doctor flow. The current
   implementation hardens the existing status/jobs/logs/search surfaces rather than adding
   a new umbrella command.

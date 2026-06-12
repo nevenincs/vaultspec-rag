@@ -58,9 +58,12 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         assert "status" in health
         assert "cuda" in health
         assert "models_loaded" in health
+        assert "reranker_loaded" in health
         assert "uptime_s" in health
         assert "project_count" in health
         assert health["status"] == "ready"
+        assert health["reranker_loaded"] is True
+        assert health["project_count"] == 0
 
         _terminate_pid(pid)
         assert _wait_for_exit(pid), f"PID {pid} did not exit after terminate"
