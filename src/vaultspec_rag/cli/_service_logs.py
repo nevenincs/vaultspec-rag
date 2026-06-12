@@ -106,10 +106,10 @@ def _short_id(raw: str | None) -> str | None:
     return raw[:8] if len(raw) > 8 else raw
 
 
-def _compact_kv(key: str, value: str | None) -> str | None:
+def _compact_detail(key: str, value: str | None) -> str | None:
     if value in (None, ""):
         return None
-    return f"{key}={value}"
+    return f"{key} {value}"
 
 
 def _join_row(parts: list[str | None]) -> str:
@@ -126,14 +126,14 @@ def _activity_search(clock: str, fields: dict[str, str]) -> str:
             _result_count(fields.get("results")),
             _format_duration(fields.get("total_seconds")),
             _project_label(fields.get("root") or fields.get("project_root")),
-            _compact_kv("request", _short_id(fields.get("request_id"))),
+            _compact_detail("request", _short_id(fields.get("request_id"))),
         ]
     )
 
 
 def _activity_startup(clock: str, fields: dict[str, str]) -> str:
     return _join_row(
-        [clock, "service", "started", _compact_kv("pid", fields.get("pid"))]
+        [clock, "service", "started", _compact_detail("process", fields.get("pid"))]
     )
 
 
@@ -143,8 +143,8 @@ def _activity_shutdown(clock: str, fields: dict[str, str]) -> str:
             clock,
             "service",
             "stopped",
-            _compact_kv("reason", fields.get("reason")),
-            _compact_kv("pid", fields.get("pid")),
+            _compact_detail("reason", fields.get("reason")),
+            _compact_detail("process", fields.get("pid")),
         ]
     )
 
@@ -155,7 +155,7 @@ def _activity_cleanup_failed(clock: str, fields: dict[str, str]) -> str:
             clock,
             "service",
             "cleanup failed",
-            _compact_kv("error", fields.get("error")),
+            _compact_detail("error", fields.get("error")),
         ]
     )
 
@@ -173,7 +173,7 @@ def _activity_generic(clock: str, event: str, fields: dict[str, str]) -> str:
         elif key == "job_id":
             key = "job"
             value = _short_id(value)
-        rendered = _compact_kv(key, value)
+        rendered = _compact_detail(key, value)
         if rendered:
             row_parts.append(rendered)
     return " ".join(row_parts)

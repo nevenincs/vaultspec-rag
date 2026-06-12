@@ -410,9 +410,11 @@ def test_logs_human_output_is_activity_feed() -> None:
     output = result.output
     assert (
         "08:46:28 search vault 10 results 1.38s "
-        "chore-476-restructure-execution request=6793374d"
+        "chore-476-restructure-execution request 6793374d"
     ) in output
-    assert "08:46:29 service started pid=4242" in output
+    assert "08:46:29 service started process 4242" in output
+    assert "request=" not in output
+    assert "pid=" not in output
     assert "service.lifecycle" not in output
     assert "POST /search" not in output
     assert "uvicorn.access" not in output
