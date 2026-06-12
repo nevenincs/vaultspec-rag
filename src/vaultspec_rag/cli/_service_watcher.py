@@ -89,7 +89,7 @@ def service_watcher_status(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of text."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Show automatic index update settings and active roots."""
@@ -126,7 +126,7 @@ def service_watcher_start(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of prose."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Start automatic index updates for a project root."""
@@ -169,7 +169,7 @@ def service_watcher_stop(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of prose."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Stop automatic index updates for a project root."""
@@ -212,7 +212,7 @@ def service_watcher_reconfigure(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of prose."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Change automatic index update timing."""

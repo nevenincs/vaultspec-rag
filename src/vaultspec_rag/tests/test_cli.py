@@ -495,10 +495,14 @@ class TestServerRoutingFlattened:
         result = runner.invoke(app, ["server", "updates", "status", "--help"])
         assert result.exit_code == 0, result.output
         assert "automatic index update" in result.output.lower()
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
 
     def test_server_projects_list_help(self):
         result = runner.invoke(app, ["server", "projects", "list", "--help"])
         assert result.exit_code == 0, result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
 
     def test_server_mcp_start_help(self):
         result = runner.invoke(app, ["server", "mcp", "start", "--help"])
@@ -2321,6 +2325,8 @@ class TestServiceProjectsCli:
         )
         assert result.exit_code == 0
         assert "projects currently loaded" in result.output.lower()
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
         assert "project slots" not in result.output.lower()
         projects_help = runner.invoke(app, ["server", "projects", "--help"])
         assert projects_help.exit_code == 0
@@ -2334,6 +2340,8 @@ class TestServiceProjectsCli:
         )
         assert result.exit_code == 0
         assert "Unload" in result.output or "unload" in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
 
     def test_projects_evict_alias_remains_callable(self) -> None:
         result = runner.invoke(

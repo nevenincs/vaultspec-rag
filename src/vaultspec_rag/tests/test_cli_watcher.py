@@ -54,6 +54,22 @@ def test_updates_subcommands_registered() -> None:
     assert "automatic index update" in result.stdout.lower()
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["server", "updates", "status", "--help"],
+        ["server", "updates", "start", "--help"],
+        ["server", "updates", "stop", "--help"],
+        ["server", "updates", "reconfigure", "--help"],
+    ],
+)
+def test_updates_help_uses_script_json_language(argv: list[str]) -> None:
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0
+    assert "Emit JSON for scripts" in result.stdout
+    assert "JSON envelope" not in result.stdout
+
+
 def test_update_timing_output_uses_user_language(capsys) -> None:
     from ..cli._service_watcher import _print_update_timing
 

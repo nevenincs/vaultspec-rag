@@ -127,7 +127,7 @@ def service_projects_list(
         bool,
         typer.Option(
             "--json",
-            help="Emit one JSON envelope to stdout instead of text.",
+            help="Emit JSON for scripts instead of human text.",
         ),
     ] = False,
 ) -> None:
@@ -210,7 +210,7 @@ def service_projects_evict(
         bool,
         typer.Option(
             "--json",
-            help="Emit one JSON envelope to stdout instead of prose.",
+            help="Emit JSON for scripts instead of human text.",
         ),
     ] = False,
 ) -> None:
