@@ -291,10 +291,10 @@ def _filters_label(result: dict[str, object]) -> str:
         value = filters.get(key)
         if value not in (None, "", False):
             value_text = values.get(str(value), str(value))
-            visible.append(f"{labels[key]}={value_text}")
+            visible.append(f"{labels[key]} {value_text}")
     if filters.get("failed") is True:
         visible.append("failed only")
-    return f" filters: {', '.join(visible)}" if visible else ""
+    return f" Filtered by {'; '.join(visible)}." if visible else ""
 
 
 def _render_jobs_feed(

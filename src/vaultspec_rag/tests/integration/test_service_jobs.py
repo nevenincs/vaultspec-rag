@@ -343,11 +343,13 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     )
 
     assert rendered == (
-        " filters: state=active or waiting, index=code, "
-        "started by=automatic updates, failed only"
+        " Filtered by state active or waiting; index code; "
+        "started by automatic updates; failed only."
     )
     assert "phase=" not in rendered
+    assert "state=" not in rendered
     assert "trigger=" not in rendered
+    assert "started by=" not in rendered
     assert "watcher" not in rendered
 
 
@@ -356,8 +358,9 @@ def test_jobs_filter_summary_humanizes_finished_state() -> None:
 
     rendered = _filters_label({"filters": {"phase": "done", "limit": 5}})
 
-    assert rendered == " filters: state=finished"
+    assert rendered == " Filtered by state finished."
     assert "state=done" not in rendered
+    assert "state=" not in rendered
 
 
 def test_jobs_trigger_filter_accepts_user_language() -> None:
