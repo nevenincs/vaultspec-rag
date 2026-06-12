@@ -308,6 +308,8 @@ def _status_contract_health_payload() -> dict[str, object]:
 def _slow_search_contract_server(
     *,
     health_payload: dict[str, object] | None = None,
+    jobs_payload: dict[str, object] | None = None,
+    jobs_status_code: int = 200,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a local service that lets /search time out while probes work."""
     import http.server
@@ -335,13 +337,22 @@ def _slow_search_contract_server(
                     else _status_contract_health_payload()
                 )
             elif self.path.startswith("/jobs"):
-                payload = {
-                    "ok": True,
-                    "jobs": [],
-                    "total": 0,
-                    "returned": 0,
-                    "summary": {"running": 0, "phases": {}},
-                }
+                payload = (
+                    jobs_payload
+                    if jobs_payload is not None
+                    else {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                )
+                self.send_response(jobs_status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+                return
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -2009,6 +2020,50 @@ class TestSearchSafetyContract:
             "Service: reachable; readiness not reported by service; 1 project loaded"
         ) in result.output
         assert "Service: reachable; unknown" not in result.output
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_timeout_jobs_error_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server(
+            jobs_payload={
+                "ok": False,
+                "error": "jobs_unavailable",
+                "message": "Job summary is not available.",
+            },
+            jobs_status_code=503,
+        )
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        assert (
+            "Work: jobs check not reported by service (Job summary is not available.)"
+        ) in result.output
+        assert "jobs check unavailable" not in result.output.lower()
         assert "unknown" not in result.output.lower()
         _assert_no_table_borders(result.output)
 

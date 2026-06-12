@@ -215,8 +215,8 @@ def _unavailable_diagnostic_text(data: dict[str, object], label: str) -> str:
     if error == "TimeoutError" or "timed out" in message.lower():
         return f"{label} timed out"
     if message:
-        return f"{label} unavailable ({message})"
-    return f"{label} unavailable"
+        return f"{label} not reported by service ({message})"
+    return f"{label} not reported by service"
 
 
 def _display_search_results(
