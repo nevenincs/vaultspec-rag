@@ -194,11 +194,42 @@ class TestStoreLocalWarnings:
 
 
 class TestStoreLocalClientSerialization:
-    """Real local-Qdrant client calls serialize on the store client lock."""
+    """Local-Qdrant point calls serialize on their collection's lock.
 
-    def _assert_call_waits_for_store_lock(
+    Same-collection operations must wait while the collection lock is
+    held; operations on the *other* collection must proceed - the lock
+    split is the whole point.
+    """
+
+    def _run_worker(
+        self,
+        store: VaultStore,
+        store_call: Callable[[VaultStore], object],
+        expected: object,
+    ) -> tuple[threading.Thread, threading.Event, list[BaseException]]:
+        started = threading.Event()
+        finished = threading.Event()
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            started.set()
+            try:
+                result: object = store_call(store)
+                assert result == expected
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=worker, name="store-lock-test")
+        thread.start()
+        assert started.wait(timeout=5), "store worker did not start"
+        return thread, finished, errors
+
+    def _assert_call_waits_for_collection_lock(
         self,
         tmp_path: Path,
+        collection_attr: str,
         store_call: Callable[[VaultStore], object],
         expected: object,
     ) -> None:
@@ -207,50 +238,36 @@ class TestStoreLocalClientSerialization:
         store = VaultStore(tmp_path)
         acquired = False
         released = False
+        collection = getattr(store, collection_attr)
+        lock = store._collection_locks[collection]
         try:
             store.ensure_table()
             store.ensure_code_table()
-            acquired = store._client_lock.acquire(timeout=5)
+            acquired = lock.acquire(timeout=5)
             assert acquired
 
-            started = threading.Event()
-            finished = threading.Event()
-            errors: list[BaseException] = []
-
-            def worker() -> None:
-                started.set()
-                try:
-                    result: object = store_call(store)
-                    assert result == expected
-                except BaseException as exc:  # pragma: no cover - reported below
-                    errors.append(exc)
-                finally:
-                    finished.set()
-
-            thread = threading.Thread(target=worker, name="store-search-lock-test")
-            thread.start()
-
-            assert started.wait(timeout=5), "search worker did not start"
+            thread, finished, errors = self._run_worker(store, store_call, expected)
             time.sleep(0.25)
-            assert thread.is_alive(), "search completed while store lock was held"
+            assert thread.is_alive(), "call completed while collection lock was held"
             assert not finished.is_set()
 
-            store._client_lock.release()
+            lock.release()
             released = True
             thread.join(timeout=30)
 
-            assert not thread.is_alive(), "search worker did not finish"
+            assert not thread.is_alive(), "store worker did not finish"
             assert errors == []
         finally:
             if acquired and not released:
-                store._client_lock.release()
+                lock.release()
             store.close()
 
-    def test_vault_hybrid_search_waits_for_store_lock(self, tmp_path: Path) -> None:
+    def test_vault_hybrid_search_waits_for_vault_lock(self, tmp_path: Path) -> None:
         from ..store import EMBEDDING_DIM
 
-        self._assert_call_waits_for_store_lock(
+        self._assert_call_waits_for_collection_lock(
             tmp_path,
+            "TABLE_NAME",
             lambda store: store.hybrid_search(
                 query_vector=[0.0] * EMBEDDING_DIM,
                 _query_text="anything",
@@ -259,11 +276,12 @@ class TestStoreLocalClientSerialization:
             [],
         )
 
-    def test_codebase_hybrid_search_waits_for_store_lock(self, tmp_path: Path) -> None:
+    def test_codebase_hybrid_search_waits_for_code_lock(self, tmp_path: Path) -> None:
         from ..store import EMBEDDING_DIM
 
-        self._assert_call_waits_for_store_lock(
+        self._assert_call_waits_for_collection_lock(
             tmp_path,
+            "CODE_TABLE_NAME",
             lambda store: store.hybrid_search_codebase(
                 query_vector=[0.0] * EMBEDDING_DIM,
                 _query_text="anything",
@@ -272,9 +290,41 @@ class TestStoreLocalClientSerialization:
             [],
         )
 
+    def test_code_search_proceeds_while_vault_lock_held(self, tmp_path: Path) -> None:
+        from ..store import EMBEDDING_DIM, VaultStore
+
+        store = VaultStore(tmp_path)
+        vault_lock = store._collection_locks[store.TABLE_NAME]
+        acquired = False
+        try:
+            store.ensure_table()
+            store.ensure_code_table()
+            acquired = vault_lock.acquire(timeout=5)
+            assert acquired
+
+            thread, finished, errors = self._run_worker(
+                store,
+                lambda s: s.hybrid_search_codebase(
+                    query_vector=[0.0] * EMBEDDING_DIM,
+                    _query_text="anything",
+                    limit=1,
+                ),
+                [],
+            )
+            assert finished.wait(timeout=10), (
+                "code search blocked behind the vault collection lock"
+            )
+            thread.join(timeout=10)
+            assert errors == []
+        finally:
+            if acquired:
+                vault_lock.release()
+            store.close()
+
     def test_count_waits_for_store_lock(self, tmp_path: Path) -> None:
-        self._assert_call_waits_for_store_lock(
+        self._assert_call_waits_for_collection_lock(
             tmp_path,
+            "TABLE_NAME",
             lambda store: store.count(),
             0,
         )

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
@@ -21,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EmbeddingModel", "SparseResult"]
+__all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult"]
 
 
 @dataclass
@@ -34,6 +36,49 @@ class SparseResult:
 
     indices: list[int]
     values: list[float]
+
+
+class QueryEmbeddingCache:
+    """Thread-safe LRU cache for query embeddings.
+
+    Agents re-issue identical queries frequently; a hit skips both
+    encoder forward passes and therefore the GPU lock acquisition.
+    Keys pair the search surface with the cleaned query text; values
+    hold the dense vector together with the sparse vector (or ``None``
+    when sparse encoding was disabled at compute time). Entries are
+    never invalidated - query embeddings depend only on the model.
+    """
+
+    def __init__(self, maxsize: int = 128) -> None:
+        self._data: OrderedDict[
+            tuple[str, str],
+            tuple[np.ndarray, SparseResult | None],
+        ] = OrderedDict()
+        self._lock = threading.Lock()
+        self._maxsize = max(1, maxsize)
+
+    def get(
+        self,
+        key: tuple[str, str],
+    ) -> tuple[np.ndarray, SparseResult | None] | None:
+        """Return the cached entry for *key*, refreshing its recency."""
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is not None:
+                self._data.move_to_end(key)
+            return entry
+
+    def put(
+        self,
+        key: tuple[str, str],
+        value: tuple[np.ndarray, SparseResult | None],
+    ) -> None:
+        """Insert *value* under *key*, evicting the least recent entry."""
+        with self._lock:
+            self._data[key] = value
+            self._data.move_to_end(key)
+            while len(self._data) > self._maxsize:
+                self._data.popitem(last=False)
 
 
 def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
@@ -125,17 +170,33 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
         return results
 
     if isinstance(sparse_tensor, torch.Tensor):
+        # One coalesced pass and a single device-to-host transfer for
+        # the whole batch. Densifying a [batch x vocab] tensor and
+        # looping per row costs a GPU sync per row and runs inside the
+        # GPU lock on the indexing path.
+        n_rows = int(sparse_tensor.shape[0])
         if sparse_tensor.is_sparse or sparse_tensor.is_sparse_csr:
-            dense = sparse_tensor.to_dense()
+            coo = (
+                sparse_tensor.to_sparse_coo()
+                if sparse_tensor.is_sparse_csr
+                else sparse_tensor
+            ).coalesce()
+            joint = coo.indices().cpu()
+            rows = cast("list[int]", joint[0].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
+            cols = cast("list[int]", joint[1].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
+            vals = cast("list[float]", coo.values().cpu().tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
         else:
-            dense = sparse_tensor
-        results = []
-        for i in range(dense.shape[0]):
-            row = dense[i]
-            nz = row.nonzero(as_tuple=True)[0]
-            indices = cast("list[int]", nz.tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
-            values = cast("list[float]", row[nz].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
-            results.append(SparseResult(indices=indices, values=values))
+            nz = sparse_tensor.nonzero(as_tuple=False)
+            picked = sparse_tensor[nz[:, 0], nz[:, 1]]
+            nz_cpu = nz.cpu()
+            rows = cast("list[int]", nz_cpu[:, 0].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
+            cols = cast("list[int]", nz_cpu[:, 1].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
+            vals = cast("list[float]", picked.cpu().tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
+        results = [SparseResult(indices=[], values=[]) for _ in range(n_rows)]
+        for row, col, val in zip(rows, cols, vals, strict=True):
+            entry = results[row]
+            entry.indices.append(col)
+            entry.values.append(val)
         return results
 
     # numpy array fallback
@@ -379,6 +440,7 @@ class EmbeddingModel:
         )
 
         self._device = "cuda"
+        self.query_cache = QueryEmbeddingCache()
         self.dimension: int = (
             cfg.embedding_dimension
             if hasattr(cfg, "embedding_dimension")

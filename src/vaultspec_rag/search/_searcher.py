@@ -279,7 +279,9 @@ class VaultSearcher:
         char_cap = max(1, int(cfg.reranker_max_length)) * 6
         pairs = [(query, (r.rerank_text or r.snippet)[:char_cap]) for r in results]
         batch_size = cfg.reranker_batch_size
-        scores: list[float] = []
+        raw_scores = None
+        # The GPU lock wraps only the model forward call; the
+        # score-to-float conversion below runs after release.
         with self._gpu_section(timings):
             while True:
                 try:
@@ -288,7 +290,6 @@ class VaultSearcher:
                         batch_size=batch_size,
                         show_progress_bar=False,
                     )
-                    scores = [float(s) for s in raw_scores]
                     break
                 except torch.cuda.OutOfMemoryError:
                     torch.cuda.empty_cache()
@@ -299,6 +300,7 @@ class VaultSearcher:
                         "CUDA OOM during reranking, retrying with batch_size=%d",
                         batch_size,
                     )
+        scores = [float(s) for s in raw_scores]
         for result, score in zip(results, scores, strict=True):
             result.score = score
         results.sort(key=lambda r: r.score, reverse=True)
@@ -720,17 +722,31 @@ class VaultSearcher:
         """
         parsed = parse_query(raw_query)
         query_text = parsed.text or raw_query
-        with self._gpu_section(timings):
-            query_vector = self.model.encode_query(
+
+        # A cache hit skips both forward passes and - more importantly
+        # under load - the GPU lock acquisition entirely. Entries that
+        # were computed without a sparse vector are recomputed when
+        # sparse encoding is enabled.
+        cache_key = (surface or "", query_text)
+        cached = self.model.query_cache.get(cache_key)
+        if cached is not None and (not self._sparse_enabled or cached[1] is not None):
+            dense, sparse = cached
+            return (
+                parsed,
                 query_text,
-                surface=surface,
-            ).tolist()
-            sparse_vector = (
+                dense.tolist(),
+                sparse if self._sparse_enabled else None,
+            )
+
+        with self._gpu_section(timings):
+            dense = self.model.encode_query(query_text, surface=surface)
+            sparse = (
                 self.model.encode_query_sparse(query_text)
                 if self._sparse_enabled
                 else None
             )
-        return parsed, query_text, query_vector, sparse_vector
+        self.model.query_cache.put(cache_key, (dense, sparse))
+        return parsed, query_text, dense.tolist(), sparse
 
     def search_vault(
         self,

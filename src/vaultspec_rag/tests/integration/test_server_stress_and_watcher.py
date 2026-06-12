@@ -45,9 +45,9 @@ class TestLocalConcurrencyLocks:
             store1.close()
 
     def test_local_mode_in_process_concurrency_serialized(self, tmp_path: Path) -> None:
-        """Assert that multiple threads using the same VaultStore instance
+        """Assert that same-collection threads on one VaultStore instance
 
-        are serialized via RLock.
+        are serialized via the collection's lock.
         """
         store = VaultStore(tmp_path)
         store.ensure_table()
@@ -57,8 +57,8 @@ class TestLocalConcurrencyLocks:
         search_started = threading.Event()
         search_finished = threading.Event()
 
-        # Hold the client lock in main thread
-        store._client_lock.acquire()
+        # Hold the vault collection lock in the main thread
+        store._collection_locks[store.TABLE_NAME].acquire()
 
         def worker():
             search_started.set()
@@ -84,7 +84,7 @@ class TestLocalConcurrencyLocks:
         assert not search_finished.is_set()
 
         # Release lock and assert the thread completes
-        store._client_lock.release()
+        store._collection_locks[store.TABLE_NAME].release()
         thread.join(timeout=10)
 
         assert not thread.is_alive()
