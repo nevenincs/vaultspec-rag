@@ -23,7 +23,11 @@ def handle_benchmark(
     ctx: typer.Context,
     n_queries: Annotated[
         int,
-        typer.Option("--n-queries", help="Number of search queries to time."),
+        typer.Option(
+            "--queries",
+            "--n-queries",
+            help="Number of search queries to time.",
+        ),
     ] = 20,
 ) -> None:
     """Measure search speed on the current project index."""
@@ -49,12 +53,27 @@ def handle_benchmark(
 
     _cli.console.print(f"Search latency: {n_queries} queries")
     _cli.console.print(
-        "Latency: "
-        f"p50={results['p50']:.1f}ms "
-        f"p95={results['p95']:.1f}ms "
-        f"p99={results['p99']:.1f}ms "
-        f"mean={results['mean']:.1f}ms "
-        f"stdev={results['stdev']:.1f}ms",
+        f"Median: {results['p50']:.1f}ms",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"95th percentile: {results['p95']:.1f}ms",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"99th percentile: {results['p99']:.1f}ms",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Average: {results['mean']:.1f}ms",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Variation: {results['stdev']:.1f}ms standard deviation",
         markup=False,
         highlight=False,
     )

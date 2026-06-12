@@ -3973,7 +3973,7 @@ class TestBenchmarkAndQualityCommands:
                 "--target",
                 str(tmp_path),
                 "benchmark",
-                "--n-queries",
+                "--queries",
                 "10",
             ],
         )
@@ -3984,8 +3984,15 @@ class TestBenchmarkAndQualityCommands:
         assert "512.0 MB" in result.output
         assert "42" in result.output
         assert "Search latency: 10 queries" in result.output
+        assert "Median: 1.2ms" in result.output
+        assert "95th percentile: 3.4ms" in result.output
+        assert "99th percentile: 5.6ms" in result.output
+        assert "Average: 2.3ms" in result.output
+        assert "Variation: 0.5ms standard deviation" in result.output
         assert "vault documents" in result.output
         assert "vram_allocated" not in result.output
+        for forbidden in ("p50=", "p95=", "p99=", "mean=", "stdev="):
+            assert forbidden not in result.output
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
 
@@ -4045,9 +4052,13 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 0
         assert len(called) == 1
-        assert "PASS" in result.output
+        assert "1. passed: L1 - q1" in result.output
         assert "Quality checks: built-in temporary project" in result.output
         assert "synthetic corpus" not in result.output
+        assert "Result: 8 of 8 probes passed (100%)." in result.output
+        assert "Passed." in result.output
+        for forbidden in ("label=", "query=", "PASS", "PASSED"):
+            assert forbidden not in result.output
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
         import re
@@ -4085,7 +4096,10 @@ class TestBenchmarkAndQualityCommands:
             ],
         )
         assert result.exit_code == 1
-        assert "FAILED" in result.output
+        assert "1. failed: L1 - q1" in result.output
+        assert "Failed: 50% passed; required 75%." in result.output
+        for forbidden in ("label=", "query=", "FAIL", "FAILED"):
+            assert forbidden not in result.output
         import re
 
         output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)

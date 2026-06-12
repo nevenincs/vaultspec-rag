@@ -31,16 +31,16 @@ def handle_quality() -> None:
 
     _cli.console.print("Quality checks: built-in temporary project")
     for i, probe in enumerate(results["probes"], 1):
-        status = "PASS" if probe["passed"] else "FAIL"
+        status = "passed" if probe["passed"] else "failed"
         _cli.console.print(
-            f"{i}. {status} label={probe['label']} query={probe['query']}",
+            f"{i}. {status}: {probe['label']} - {probe['query']}",
             markup=False,
             highlight=False,
         )
 
     _cli.console.print(
-        f"Result: {results['passed']}/{results['total']} probes passed "
-        f"({results['precision']:.0%} precision)",
+        f"Result: {results['passed']} of {results['total']} probes passed "
+        f"({results['precision']:.0%}).",
         markup=False,
         highlight=False,
     )
@@ -48,10 +48,9 @@ def handle_quality() -> None:
     threshold = results["threshold"]
     if results["precision"] < threshold:
         _cli.console.print(
-            f"FAILED: precision {results['precision']:.0%} "
-            f"below {threshold:.0%} threshold.",
+            f"Failed: {results['precision']:.0%} passed; required {threshold:.0%}.",
             markup=False,
             highlight=False,
         )
         raise typer.Exit(code=1)
-    _cli.console.print("PASSED")
+    _cli.console.print("Passed.")
