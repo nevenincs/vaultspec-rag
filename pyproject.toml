@@ -143,6 +143,12 @@ packages = ["src/vaultspec_rag"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# GPU test runs materialize real Qdrant stores under the pytest temp
+# root; retaining every run's directories once filled a system drive
+# (50k+ leftover dirs). Keep temp only for failing tests and only for
+# the most recent run.
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
 log_cli = true
 log_cli_date_format = "%H:%M:%S"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
