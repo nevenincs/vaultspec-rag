@@ -614,6 +614,90 @@ Deliverables:
 - Manual usage transcript summarized.
 - Audit updated with before/after user testimonial.
 
+## Wave 06 - Human Review Of Modified CLI Interface
+
+Objective: Walk a human reviewer through the modified CLI operation surface one command
+at a time, using the original audit and accepted ADRs as the comparison baseline.
+
+Pipeline:
+
+Hardening:
+
+- Re-run the changed CLI surfaces interactively with a human reviewer:
+  - `server status`,
+  - `server health`,
+  - `server jobs`,
+  - `server logs`,
+  - service-backed `search`,
+  - timeout diagnostics.
+- For each command, compare the current behavior against the original audit failure it
+  was meant to address.
+
+Research:
+
+- Before each review step, use `vaultspec-rag` and the vault paper trail to restate the
+  relevant decision basis:
+  - original audit finding,
+  - governing ADR,
+  - research note,
+  - implementation summary where relevant.
+
+ADR / Plan Alignment:
+
+- Treat this wave as a post-implementation human acceptance review, not a new
+  implementation decision.
+- If the reviewer finds a new semantic conflict, record it as a new audit finding before
+  changing code.
+
+Implementation:
+
+- No product implementation by default.
+- Only add notes, transcripts, or follow-up findings unless the reviewer explicitly
+  authorizes a code change.
+
+Code Review:
+
+- Review the observed CLI output as product behavior:
+  - command naming,
+  - flag discoverability,
+  - table scanability,
+  - JSON shape,
+  - remediation clarity,
+  - consistency with service-domain ownership.
+
+Repeating Patterns:
+
+- Identify whether the new command surfaces teach a stable operator mental model.
+- Record any repeating confusion around names, flags, defaults, or output hierarchy.
+
+Manual CLI Persona Test:
+
+- Persona: "Human maintainer reviewing whether the modified CLI now matches the accepted
+  operability decisions."
+- Review protocol for every command:
+  - provide a one-sentence summary in the exact form:
+    `I achieved this because of that and this is the outcome.`
+  - show the exact CLI command,
+  - show the command output,
+  - explain the significant CLI input or operation-surface shifts,
+  - explain the flags and commands that can manipulate the output,
+  - provide the expected output signals and response interpretation,
+  - wait for human feedback before running the next command.
+
+Acceptance:
+
+- The reviewer can say whether each changed surface is understandable and actionable.
+- The reviewer can identify which flags change scope, filtering, output format, and
+  timeout behavior.
+- Any remaining rough edges become explicit follow-up findings instead of hidden
+  implementation assumptions.
+
+Deliverables:
+
+- Human review transcript or summarized wave note.
+- New audit findings for any remaining UX defects.
+- Follow-up implementation plan only if the review discovers material gaps.
+
 ## Epic Done Criteria
 
 The epic is complete only when all of the following are true:
@@ -639,6 +723,7 @@ The epic is complete only when all of the following are true:
 1. Wave 03: Search freshness and empty-result recovery.
 1. Wave 04: Timeout/backpressure/performance readiness.
 1. Wave 05: Integration, review, and codification.
+1. Wave 06: Human review of the modified CLI interface.
 
 Wave 01 should precede the others because names and ownership boundaries determine how
 jobs, search freshness, and timeout diagnostics should be exposed.
