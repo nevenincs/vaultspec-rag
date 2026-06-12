@@ -406,6 +406,47 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
     return server, thread, requests
 
 
+def _sparse_search_output_contract_server() -> tuple[
+    typing.Any, typing.Any, list[object]
+]:
+    """Start a local service returning a result without locator fields."""
+    import http.server
+    import threading
+
+    requests: list[object] = []
+
+    class _SparseSearchOutputHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            requests.append(body)
+            payload = {
+                "ok": True,
+                "results": [
+                    {
+                        "score": 0.25,
+                        "snippet": "result text without a source location",
+                    }
+                ],
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _SparseSearchOutputHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
     """Start a local service returning empty-search diagnostics."""
     import http.server
@@ -1649,6 +1690,31 @@ class TestSearchSafetyContract:
             text="Use server status for service readiness and current work.",
         )
         assert "\n" not in str(records[0]["text"])
+        _assert_no_table_borders(result.output)
+
+    def test_search_command_humanizes_missing_result_location(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _sparse_search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        records = _search_records(result.output)
+        _assert_record(
+            records[0],
+            number=1,
+            location="location-not-reported",
+            text="result text without a source location",
+        )
+        assert "<unknown>" not in result.output
+        assert "unknown" not in result.output.lower()
         _assert_no_table_borders(result.output)
 
     def test_search_command_scores_flag_uses_plain_score_label(

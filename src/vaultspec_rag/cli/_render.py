@@ -309,7 +309,7 @@ def _search_result_location(result: dict[str, object]) -> str:
         or _non_empty_result_string(result, "source_path")
         or _non_empty_result_string(result, "doc_id")
         or _non_empty_result_string(result, "id")
-        or "<unknown>"
+        or "location-not-reported"
     )
     line_start = _result_int(result, "line_start")
     if line_start is not None:
