@@ -186,7 +186,10 @@ def _health_diagnostic_text(health: dict[str, object]) -> str:
     project_count = health.get("project_count")
     if project_count is None:
         return f"reachable; {ready_text}"
-    return f"reachable; {ready_text}; {project_count} project(s) loaded"
+    if isinstance(project_count, int):
+        project_word = "project" if project_count == 1 else "projects"
+        return f"reachable; {ready_text}; {project_count} {project_word} loaded"
+    return f"reachable; {ready_text}; projects loaded: {project_count}"
 
 
 def _jobs_diagnostic_text(jobs: dict[str, object]) -> str:

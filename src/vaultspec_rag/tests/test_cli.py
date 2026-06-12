@@ -1721,9 +1721,10 @@ class TestSearchSafetyContract:
         assert "timed out after 0.001 seconds" in normalized
         assert "running index jobs before retrying" in normalized
         assert "running jobs before retrying" not in normalized
-        assert "Service: reachable; status check passed; 3 project(s) loaded" in (
+        assert "Service: reachable; status check passed; 3 projects loaded" in (
             result.output
         )
+        assert "project(s) loaded" not in result.output
         assert "Service: reachable; ready for requests" not in result.output
         assert "Work: no index jobs running" in result.output
         assert f"vaultspec-rag server status --port {port}" in result.output
