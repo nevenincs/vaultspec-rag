@@ -170,6 +170,13 @@ def _project_label(job: dict[str, object]) -> str:
     return parts[-1] if parts and parts[-1] else str(project_root)
 
 
+def _project_phrase(job: dict[str, object]) -> str:
+    project = _project_label(job)
+    if project == "project unknown":
+        return ""
+    return f" for {project}"
+
+
 def _project_root(job: dict[str, object]) -> str | None:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
@@ -379,7 +386,7 @@ def _render_jobs_feed(
         job_id = str(job.get("id", ""))[:8]
         _cli.console.print(
             f"{_job_prefix(job)} {_job_time_label(job)} {_phase_label(job)} "
-            f"{_operation_label(job)} project {_project_label(job)} id {job_id} - "
+            f"{_operation_label(job)}{_project_phrase(job)} (job {job_id}) - "
             f"{_job_summary_detail(job)}",
             soft_wrap=True,
         )

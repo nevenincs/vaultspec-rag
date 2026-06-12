@@ -487,9 +487,9 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         f"Jobs on service port {port}: 3/3 shown: "
         "1 active, 0 waiting, 1 finished, 1 failed",
         "Latest shown last",
-        "project proj-a",
-        "project proj-b",
-        "project proj-c",
+        "for proj-a (job runjob12)",
+        "for proj-b (job failjob1)",
+        "for proj-c (job donejob1)",
         "* ",
         "! ",
         "FAILED",
@@ -502,6 +502,8 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert not missing, f"missing feed content: {missing}"
     forbidden_fragments = (
         "project=",
+        " project proj-",
+        " id runjob12",
         " done code index refresh",
         "watcher",
         "─",
