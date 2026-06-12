@@ -213,9 +213,15 @@ def _activity_from_store_update(parts: dict[str, str]) -> str | None:
     if match is None:
         return None
     verb = "updated" if match.group("verb") == "Upserted" else "removed"
-    kind = match.group("kind").replace("codebase", "code").replace("document", "doc")
     count = match.group("count")
-    return f"{parts['clock']} index {verb} {count} {kind}s"
+    kind = match.group("kind")
+    if kind in ("codebase chunk", "code chunk"):
+        noun = "source code section" if count == "1" else "source code sections"
+    elif kind == "document":
+        noun = "doc" if count == "1" else "docs"
+    else:
+        noun = f"{kind}s"
+    return f"{parts['clock']} index {verb} {count} {noun}"
 
 
 def _activity_from_unstructured(parts: dict[str, str]) -> str | None:

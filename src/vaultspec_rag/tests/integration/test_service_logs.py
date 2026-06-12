@@ -443,7 +443,7 @@ def test_logs_human_output_shows_index_updates() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
-    assert "13:12:09 index updated 64 code chunks" in output
+    assert "13:12:09 index updated 64 source code sections" in output
     assert "13:12:10 index removed 2 docs" in output
     assert "No activity entries" not in output
     assert "vaultspec_rag.store" not in output
