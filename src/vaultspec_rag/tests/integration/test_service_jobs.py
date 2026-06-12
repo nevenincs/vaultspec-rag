@@ -423,7 +423,10 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
-    assert f"Jobs on service port {port}: 3/3 shown, 1 running, 1 failed" in output
+    assert (
+        f"Jobs on service port {port}: 3/3 shown: "
+        "1 active, 0 waiting, 1 finished, 1 failed"
+    ) in output
     assert "Latest shown last" in output
     assert "project=proj-a" in output
     assert "project=proj-b" in output
@@ -441,6 +444,43 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         assert forbidden not in output
     assert output.index("donejob1") < output.index("failjob1")
     assert output.index("failjob1") < output.index("runjob12")
+
+
+def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    now = time.time()
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "id": "waiting-job",
+                    "source": "code",
+                    "trigger": "watcher",
+                    "phase": "running",
+                    "started_at": now - 20,
+                    "finished_at": None,
+                    "result": None,
+                    "progress": {"step": "queued", "completed": 0},
+                    "runtime_seconds": 20.0,
+                    "initiator": {
+                        "kind": "watcher",
+                        "project_root": r"proj-waiting",
+                    },
+                }
+            ],
+            "total": 1,
+            "returned": 1,
+            "summary": {"running": 1, "phases": {"running": 1}},
+            "filters": {"limit": 5},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    assert "1/1 shown: 0 active, 1 waiting, 0 finished, 0 failed" in output
+    assert "1 running" not in output
 
 
 def test_jobs_waiting_progress_uses_user_language() -> None:

@@ -235,25 +235,29 @@ def _human_sorted_jobs(jobs: list[object]) -> list[dict[str, object]]:
     return sorted(normalised, key=_job_timestamp)
 
 
-def _summary_count(summary: object, key: str) -> int:
-    if not isinstance(summary, dict):
-        return 0
-    value = summary.get(key)
-    return int(value) if isinstance(value, int | float) else 0
+def _job_is_waiting(job: dict[str, object]) -> bool:
+    if str(job.get("phase", "")) != "running":
+        return False
+    progress = job.get("progress")
+    return isinstance(progress, dict) and progress.get("step") == "queued"
 
 
-def _summary_phase_count(summary: object, *phases: str) -> int:
-    if not isinstance(summary, dict):
-        return 0
-    phase_counts = summary.get("phases")
-    if not isinstance(phase_counts, dict):
-        return 0
-    total = 0
-    for phase in phases:
-        value = phase_counts.get(phase, 0)
-        if isinstance(value, int | float):
-            total += int(value)
-    return total
+def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int]:
+    active = 0
+    waiting = 0
+    finished = 0
+    failed = 0
+    for job in jobs:
+        phase = str(job.get("phase", ""))
+        if phase in ("error", "failed"):
+            failed += 1
+        elif phase == "done":
+            finished += 1
+        elif _job_is_waiting(job):
+            waiting += 1
+        elif phase == "running":
+            active += 1
+    return active, waiting, finished, failed
 
 
 def _filters_label(result: dict[str, object]) -> str:
@@ -293,22 +297,22 @@ def _render_jobs_feed(
 ) -> None:
     total = result.get("total", len(jobs))
     returned = result.get("returned", len(jobs))
-    summary = result.get("summary")
-    running = _summary_count(summary, "running")
-    failed = _summary_phase_count(summary, "error", "failed")
+    sorted_jobs = _human_sorted_jobs(jobs)
+    active, waiting, finished, failed = _shown_job_counts(sorted_jobs)
     filter_text = _filters_label(result)
     monitor_text = ""
     if monitoring:
         monitor_text = f" refreshed {time.strftime('%H:%M:%S', time.localtime())}"
     _cli.console.print(
-        f"Jobs on service port {port}: {returned}/{total} shown, "
-        f"{running} running, {failed} failed. Latest shown last.{filter_text}"
+        f"Jobs on service port {port}: {returned}/{total} shown: "
+        f"{active} active, {waiting} waiting, {finished} finished, {failed} failed. "
+        f"Latest shown last.{filter_text}"
         f"{monitor_text}",
         soft_wrap=True,
     )
     if monitoring:
         _cli.console.print("Watching; press Ctrl+C to stop.")
-    for job in _human_sorted_jobs(jobs):
+    for job in sorted_jobs:
         job_id = str(job.get("id", ""))[:8]
         _cli.console.print(
             f"{_job_prefix(job)} {_job_time_label(job)} {_phase_label(job)} "
