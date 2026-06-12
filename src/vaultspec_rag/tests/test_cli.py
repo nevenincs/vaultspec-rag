@@ -759,6 +759,8 @@ class TestServerCommands:
         result = runner.invoke(app, ["server", "--help"])
         assert result.exit_code == 0
         assert "start" in result.output
+        assert "updates" in result.output
+        assert "watcher" not in result.output.lower()
         assert "mcp" not in result.output.lower()
 
     def test_mcp_help(self):
@@ -822,6 +824,16 @@ class TestServerCommands:
         assert "health" not in help_result.output.lower()
 
         result = runner.invoke(app, ["server", "health", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+    def test_server_watcher_alias_is_not_a_user_facing_command(self):
+        """server updates is the single user-facing automatic update surface."""
+        updates_help = runner.invoke(app, ["server", "updates", "--help"])
+        assert updates_help.exit_code == 0, updates_help.output
+        assert "automatic index updates" in updates_help.output
+
+        result = runner.invoke(app, ["server", "watcher", "--help"])
         assert result.exit_code != 0
         assert "No such command" in result.output
 
