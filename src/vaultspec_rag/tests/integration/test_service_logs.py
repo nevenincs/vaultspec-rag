@@ -110,6 +110,23 @@ def _activity_payload() -> dict[str, object]:
     }
 
 
+def _store_update_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 13:12:09,845 INFO     vaultspec_rag.store: "
+                "Upserted 64 codebase chunk(s)"
+            ),
+            (
+                "2026-06-12 13:12:10,845 INFO     vaultspec_rag.store: "
+                "Deleted 2 document(s)"
+            ),
+        ],
+        "total": 2,
+        "filters": {},
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Unit: read_service_log across the rotated set                               #
 # --------------------------------------------------------------------------- #
@@ -383,6 +400,21 @@ def test_logs_human_output_is_activity_feed() -> None:
     assert "uvicorn.access" not in output
     for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
         assert forbidden not in output
+
+
+def test_logs_human_output_shows_index_updates() -> None:
+    with _logs_http_server([_store_update_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--lines", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "13:12:09 index updated 64 code chunks" in output
+    assert "13:12:10 index removed 2 docs" in output
+    assert "No activity entries" not in output
+    assert "vaultspec_rag.store" not in output
 
 
 def test_logs_raw_mode_preserves_log_lines() -> None:

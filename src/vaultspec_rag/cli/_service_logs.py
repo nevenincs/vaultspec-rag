@@ -34,6 +34,11 @@ _FIELD_RE = re.compile(
 _ACCESS_RE = re.compile(
     r'"(?P<method>[A-Z]+)\s+(?P<path>[^ ]+)\s+HTTP/[^"]+"\s+(?P<status>\d{3})'
 )
+_STORE_UPDATE_RE = re.compile(
+    r"^(?P<verb>Upserted|Deleted)\s+"
+    r"(?P<count>\d+)\s+"
+    r"(?P<kind>document|vault chunk|codebase chunk|code chunk)\(s\)$"
+)
 
 
 def _log_parts(raw: str) -> dict[str, str]:
@@ -201,7 +206,22 @@ def _activity_from_access(parts: dict[str, str]) -> tuple[str, str] | None:
     return row, f"{method} {path}"
 
 
+def _activity_from_store_update(parts: dict[str, str]) -> str | None:
+    if parts["logger"] != "vaultspec_rag.store":
+        return None
+    match = _STORE_UPDATE_RE.match(parts["message"])
+    if match is None:
+        return None
+    verb = "updated" if match.group("verb") == "Upserted" else "removed"
+    kind = match.group("kind").replace("codebase", "code").replace("document", "doc")
+    count = match.group("count")
+    return f"{parts['clock']} index {verb} {count} {kind}s"
+
+
 def _activity_from_unstructured(parts: dict[str, str]) -> str | None:
+    store_update = _activity_from_store_update(parts)
+    if store_update is not None:
+        return store_update
     level = parts["level"].lower()
     if level not in ("warning", "error", "critical"):
         return None
