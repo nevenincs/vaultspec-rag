@@ -140,6 +140,10 @@ def _unstructured_warning_payload() -> dict[str, object]:
     }
 
 
+def _plain_lines(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
 # --------------------------------------------------------------------------- #
 # Unit: read_service_log across the rotated set                               #
 # --------------------------------------------------------------------------- #
@@ -454,8 +458,19 @@ def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
-    assert "13:14:09 warning server details available with --raw" in output
+    lines = _plain_lines(output)
+    assert len(lines) == 1
+    head, hint = lines[0].split("; ", 1)
+    clock, level, source = head.split()
+    assert clock == "13:14:09"
+    assert level == "warning"
+    assert source == "server"
+    assert "--raw" in hint
+    assert "original log line" in hint
+    assert "unexpected service-side warning" not in output
+    assert "vaultspec_rag.server" not in output
     assert "details=use --raw" not in output
+    assert "details available" not in output
 
 
 def test_logs_empty_output_routes_operator_to_next_commands() -> None:
