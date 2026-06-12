@@ -58,7 +58,7 @@ def _print_update_timing(result: dict[str, object]) -> None:
         highlight=False,
     )
     _cli.console.print(
-        f"Same source: wait {_format_seconds(result.get('cooldown_s'))} "
+        f"Same project: wait {_format_seconds(result.get('cooldown_s'))} "
         "before updating again.",
         markup=False,
         highlight=False,

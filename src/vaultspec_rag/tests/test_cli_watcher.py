@@ -149,8 +149,11 @@ def test_update_timing_output_uses_user_language(capsys) -> None:
     _print_update_timing({"debounce_ms": 2000, "cooldown_s": 30.0})
 
     output = capsys.readouterr().out
-    assert "File changes: wait 2s before updating." in output
-    assert "Same source: wait 30s before updating again." in output
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    timing = dict(line.split(": ", 1) for line in lines)
+    assert timing["File changes"] == "wait 2s before updating."
+    assert timing["Same project"] == "wait 30s before updating again."
+    assert "Same source" not in timing
     assert "debounce=" not in output
     assert "cooldown=" not in output
 
