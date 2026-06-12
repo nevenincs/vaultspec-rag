@@ -177,41 +177,43 @@ def _handle_vaultstore_locked_error(
             "search",
             "local_store_locked",
             (
-                f"The vault index at {exc.db_path} is currently in "
-                "use by another process. Current routing mode: "
-                "direct local-store search. Stop the resident "
-                "service / RAG service, or route through one running "
-                "vaultspec-rag service for concurrent access "
-                "(e.g., using --port 8766)."
+                f"The local search index at {exc.db_path} is busy. "
+                "This command tried to search the index directly, but another "
+                "vaultspec-rag command, the background service, or an automatic "
+                "index update is using this workspace. Send the search through "
+                "the running service instead, for example with --port 8766."
             ),
             1,
             db_path=str(exc.db_path),
-            routing_mode="local",
+            routing_mode="direct_local_search",
             remediation=[
-                "Wait for the other process to finish.",
+                "Wait for the other command or update to finish.",
                 "vaultspec-rag search ... --port 8766",
+                "vaultspec-rag server status",
                 "vaultspec-rag server stop",
                 "vaultspec-rag server mcp stop",
             ],
         )
     _cli.console.print(
-        f"Error: The vault index at {exc.db_path} is currently in use by "
-        "another process (routing mode: direct local-store search).\n\n"
-        "  Another vaultspec-rag command, RAG service, or file watcher is "
-        "likely running against this workspace.\n\n"
-        "  Local-file-backed RAG storage cannot be opened by multiple "
-        "processes at once. For concurrent agent searches, route every "
-        "request through one running vaultspec-rag service.\n\n"
-        "  To resolve, do one of the following:\n"
-        "    1. Wait for the other process to finish.\n"
-        "    2. Route your search request through a running "
+        f"Error: The local search index at {exc.db_path} is busy.\n\n"
+        "  This command tried to search the index directly, but another "
+        "vaultspec-rag command, the background service, or an automatic index "
+        "update is using this workspace.\n\n"
+        "  Only one local command can use this index directly at a time. "
+        "For concurrent searches, send requests through one running "
+        "vaultspec-rag service.\n\n"
+        "  Next actions:\n"
+        "    1. Wait for the other command or update to finish.\n"
+        "    2. Send this search through a running "
         "service on a port, e.g.:\n"
         "         vaultspec-rag search ... --port 8766\n"
-        "    3. Stop the running server:\n"
+        "    3. Check the service:\n"
+        "         vaultspec-rag server status\n"
+        "    4. Stop the running service:\n"
         "         vaultspec-rag server mcp stop\n"
         "         vaultspec-rag server stop\n"
-        "    4. If no vaultspec-rag process is alive, look for an "
-        "orphaned Python process holding the lock and stop it manually.",
+        "    5. If no vaultspec-rag process is alive, look for an "
+        "orphaned Python process using the index and stop it manually.",
         markup=False,
         highlight=False,
     )

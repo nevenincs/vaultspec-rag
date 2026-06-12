@@ -1045,8 +1045,12 @@ class TestSearchSafetyContract:
             ],
         )
         assert result.exit_code != 0
-        assert "unreachable" in result.output.lower()
-        assert "allow-fallback" in result.output.lower()
+        normalized = " ".join(result.output.split())
+        assert "unreachable" in normalized.lower()
+        assert "allow-fallback" in normalized.lower()
+        assert "local search index" in normalized
+        assert "Qdrant lock" not in normalized
+        assert "in-process" not in normalized
 
     def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path: Path):
         """--allow-fallback does NOT emit the legacy fallthrough warning."""
@@ -1146,7 +1150,12 @@ class TestSearchSafetyContract:
         )
         assert result.exit_code != 0
         normalized = " ".join(result.output.split())
-        assert "routing mode: direct local-store search" in normalized
+        assert "local search index" in normalized
+        assert "background service" in normalized
+        assert "automatic index update" in normalized
+        assert "direct local-store search" not in normalized
+        assert "RAG service" not in normalized
+        assert "file watcher" not in normalized
 
     def test_search_locked_store_json_mode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1180,7 +1189,12 @@ class TestSearchSafetyContract:
         data = json.loads(result.output.strip())
         assert data["ok"] is False
         assert data["error"] == "local_store_locked"
-        assert "direct local-store search" in data["message"]
+        assert "local search index" in data["message"]
+        assert "background service" in data["message"]
+        assert "automatic index update" in data["message"]
+        assert "direct local-store search" not in data["message"]
+        assert "RAG service" not in data["message"]
+        assert "file watcher" not in data["message"]
 
     def test_search_mcp_timeout_diagnostics(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1597,6 +1611,15 @@ class TestSearchResultRendering:
         assert "serialized" not in out
         for forbidden in ("┌", "└", "│"):
             assert forbidden not in out
+
+    def test_display_service_error_fallback_uses_plain_service_name(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        _display_service_error({"ok": False, "error": "service_error"})
+
+        out = capsys.readouterr().out
+        assert "Search service returned an error." in out
+        assert "RAG service" not in out
 
     def test_display_search_timeout_error_humanizes_diagnostics(
         self, capsys: pytest.CaptureFixture[str]
@@ -2848,6 +2871,8 @@ class TestJsonOutputMode:
         assert env["error"] == "port_unreachable"
         assert env["port"] == 1
         assert "remediation" in env
+        assert "Qdrant lock" not in env["message"]
+        assert "in-process" not in env["message"]
 
     def test_service_status_json_stopped_envelope(self, tmp_path: Path):
         """No service.json: exit 3 + ok=false envelope with error=stopped."""

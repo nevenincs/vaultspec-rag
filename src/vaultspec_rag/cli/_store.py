@@ -42,7 +42,7 @@ def _open_vault_store(
 
     Raises:
         VaultStoreLockedError: If raise_on_locked is True and the store is locked.
-        typer.Exit: With code 1 if the Qdrant storage is already held by
+        typer.Exit: With code 1 if the local search index is already held by
             another process. The message names the exact path and lists
             the three options available to the user.
     """
@@ -56,34 +56,37 @@ def _open_vault_store(
                 command,
                 "local_store_locked",
                 (
-                    f"The vault index at {exc.db_path} is currently in "
-                    "use by another process. Stop the resident "
-                    "RAG service, or route through one running "
-                    "vaultspec-rag service for concurrent access."
+                    f"The local search index at {exc.db_path} is busy. "
+                    "Another vaultspec-rag command, the background service, "
+                    "or an automatic index update is using this workspace. "
+                    "Use one running vaultspec-rag service for concurrent "
+                    "searches."
                 ),
                 1,
                 db_path=str(exc.db_path),
                 remediation=[
                     "Wait for the other process to finish.",
+                    "vaultspec-rag server status",
                     "vaultspec-rag server stop",
                     "vaultspec-rag server mcp stop",
                 ],
             )
         _cli.console.print(
-            f"Error: The vault index at {exc.db_path} "
-            "is currently in use by another process.\n\n"
-            "  Another vaultspec-rag command, RAG service, "
-            "or file watcher is likely running against this workspace.\n\n"
-            "  Local-file-backed RAG storage cannot be opened by multiple "
-            "processes at once. For concurrent agent searches, route every "
-            "request through one running vaultspec-rag service.\n\n"
-            "  To resolve, do one of the following:\n"
-            "    1. Wait for the other process to finish.\n"
-            "    2. Stop the running server:\n"
+            f"Error: The local search index at {exc.db_path} is busy.\n\n"
+            "  Another vaultspec-rag command, the background service, or an "
+            "automatic index update is using this workspace.\n\n"
+            "  Only one local command can use this index directly at a time. "
+            "For concurrent searches, send requests through one running "
+            "vaultspec-rag service.\n\n"
+            "  Next actions:\n"
+            "    1. Wait for the other command or update to finish.\n"
+            "    2. Check the service:\n"
+            "         vaultspec-rag server status\n"
+            "    3. Stop the running service:\n"
             "         vaultspec-rag server mcp stop\n"
             "         vaultspec-rag server stop\n"
-            "    3. If no vaultspec-rag process is alive, look for an "
-            "orphaned Python process holding the lock and stop it manually.",
+            "    4. If no vaultspec-rag process is alive, look for an "
+            "orphaned Python process using the index and stop it manually.",
             markup=False,
             highlight=False,
         )

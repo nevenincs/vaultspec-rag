@@ -89,7 +89,7 @@ def _display_service_error(
     command: str = "service",
     exit_code: int = 1,
 ) -> None:
-    """Render a structured error returned by the RAG service fast path.
+    """Render a structured error returned by the search service fast path.
 
     When ``json_mode`` is True the helper emits the envelope and
     raises ``typer.Exit(exit_code)`` so callers don't have to thread
@@ -97,7 +97,7 @@ def _display_service_error(
     (no exit; caller decides).
     """
     error = str(payload.get("error", "service_error"))
-    message = str(payload.get("message", "RAG service returned an error."))
+    message = str(payload.get("message", "Search service returned an error."))
     if json_mode:
         extra: dict[str, object] = {}
         for key in (
@@ -355,8 +355,8 @@ def _display_port_unreachable_error(
             "port_unreachable",
             (
                 f"Service on port {port} is unreachable. "
-                f"The CLI will not silently fall back to in-process "
-                f"{command}; start the service or re-run with "
+                f"The CLI will not silently run {command} locally; "
+                f"start the service or re-run with "
                 f"--allow-fallback (single-agent use only)."
             ),
             1,
@@ -364,20 +364,20 @@ def _display_port_unreachable_error(
             remediation=[
                 "vaultspec-rag server status",
                 "vaultspec-rag server start",
-                "rerun with --allow-fallback (single-agent only)",
+                "rerun with --allow-fallback (one user only)",
             ],
         )
         return
     _cli.console.print(
         f"Service on port {port} is unreachable.\n"
-        f"The CLI will not silently fall back to in-process "
-        f"{command} because that would acquire the Qdrant lock and "
-        f"strand any other agent waiting on the resident service.\n"
+        f"The CLI will not silently run {command} locally because that would "
+        f"open the local search index directly "
+        f"and block other users or agents waiting on the service.\n"
         f"Next actions:\n"
         f"  1. Check status:  vaultspec-rag server status\n"
         f"  2. Start service: vaultspec-rag server start\n"
-        f"  3. Or opt in to in-process fallback: re-run with "
-        f"--allow-fallback (single-agent use only).",
+        f"  3. Or run locally anyway: re-run with "
+        f"--allow-fallback (one user only).",
         markup=False,
         highlight=False,
     )
