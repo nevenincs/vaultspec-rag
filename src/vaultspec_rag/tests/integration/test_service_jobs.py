@@ -323,6 +323,7 @@ def test_jobs_subcommand_registered() -> None:
     assert "index update activity" in normalized
     assert "failed/error" not in result.stdout
     assert "Show only failed jobs" in result.stdout
+    assert "Show only active or waiting jobs" in result.stdout
     assert "running, finished, or failed" in normalized
     assert "running, done, or failed" not in normalized
 
@@ -342,7 +343,8 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     )
 
     assert rendered == (
-        " filters: state=running, index=code, started by=automatic updates, failed only"
+        " filters: state=active or waiting, index=code, "
+        "started by=automatic updates, failed only"
     )
     assert "phase=" not in rendered
     assert "trigger=" not in rendered
@@ -481,6 +483,10 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     output = capsys.readouterr().out
     assert "1/1 shown: 0 active, 1 waiting, 0 finished, 0 failed" in output
     assert "1 running" not in output
+    assert "waiting code index update" in output
+    assert "waiting to write the index for 20s" in output
+    assert "running code index update" not in output
+    assert "running for 20s" not in output
 
 
 def test_jobs_waiting_progress_uses_user_language() -> None:

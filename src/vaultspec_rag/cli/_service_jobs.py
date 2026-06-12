@@ -78,10 +78,19 @@ def _resource_summary(job: dict[str, object]) -> str:
     )
 
 
+def _job_is_waiting(job: dict[str, object]) -> bool:
+    if str(job.get("phase", "")) != "running":
+        return False
+    progress = job.get("progress")
+    return isinstance(progress, dict) and progress.get("step") == "queued"
+
+
 def _phase_label(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "?"))
     if phase in ("error", "failed"):
         return "FAILED"
+    if _job_is_waiting(job):
+        return "waiting"
     if phase == "running":
         return "running"
     if phase == "done":
@@ -214,6 +223,10 @@ def _job_summary_detail(job: dict[str, object]) -> str:
     if phase == "running":
         detail = _human_progress(job)
         runtime = _format_seconds(job.get("runtime_seconds"))
+        if _job_is_waiting(job):
+            if detail:
+                return f"{detail} for {runtime}"
+            return f"waiting for {runtime}"
         if detail:
             return f"{detail}; running for {runtime}"
         return f"running for {runtime}"
@@ -233,13 +246,6 @@ def _human_sorted_jobs(jobs: list[object]) -> list[dict[str, object]]:
         for entry in jobs
     ]
     return sorted(normalised, key=_job_timestamp)
-
-
-def _job_is_waiting(job: dict[str, object]) -> bool:
-    if str(job.get("phase", "")) != "running":
-        return False
-    progress = job.get("progress")
-    return isinstance(progress, dict) and progress.get("step") == "queued"
 
 
 def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int]:
@@ -274,6 +280,7 @@ def _filters_label(result: dict[str, object]) -> str:
         "since": "updated within",
     }
     values = {
+        "running": "active or waiting",
         "done": "finished",
         "watcher": "automatic updates",
         "tool": "manual request",
@@ -646,7 +653,7 @@ def service_jobs(
     ] = None,
     running: Annotated[
         bool,
-        typer.Option("--running", help="Show only running jobs."),
+        typer.Option("--running", help="Show only active or waiting jobs."),
     ] = False,
     failed: Annotated[
         bool,
