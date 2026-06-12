@@ -180,7 +180,9 @@ def _health_diagnostic_text(health: dict[str, object]) -> str:
     if health.get("available") is False:
         return _unavailable_diagnostic_text(health, "status check")
     status = str(health.get("status", "unknown"))
-    ready_text = "ready for requests" if status == "ready" else status.replace("_", " ")
+    ready_text = (
+        "status check passed" if status == "ready" else status.replace("_", " ")
+    )
     project_count = health.get("project_count")
     if project_count is None:
         return f"reachable; {ready_text}"
