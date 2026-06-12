@@ -107,6 +107,12 @@ def _print_lifecycle_lines(title: str, *lines: str) -> None:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
+def _print_lifecycle_next_actions(*commands: str) -> None:
+    _cli.console.print("Next actions:", markup=False, highlight=False)
+    for command in commands:
+        _cli.console.print(f"  {command}", markup=False, highlight=False)
+
+
 def _process_line(pid: object) -> str:
     return f"Process id: {pid}"
 
@@ -235,7 +241,16 @@ def service_start(
     """Start the background search service."""
     # Port-level guard: prevents concurrent start races (ADR D1)
     if not _port_is_available(port):
-        _print_lifecycle_lines("Service start failed", f"Port {port} is in use.")
+        _print_lifecycle_lines(
+            "Service start failed",
+            f"Port {port} is already in use.",
+            "Another process is already using this service address.",
+        )
+        _print_lifecycle_next_actions(
+            f"vaultspec-rag server status --port {port}",
+            f"vaultspec-rag server jobs --running --port {port}",
+            "vaultspec-rag server start --port <free-port>",
+        )
         raise typer.Exit(code=1)
 
     if qdrant:

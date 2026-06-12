@@ -1908,6 +1908,27 @@ class TestHelpCleanup:
         assert "watcher" not in out
         assert "VAULTSPEC_RAG_WATCH_ENABLED" not in result.output
 
+    def test_server_start_port_in_use_gives_next_actions(self):
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = int(sock.getsockname()[1])
+        try:
+            result = runner.invoke(app, ["server", "start", "--port", str(port)])
+        finally:
+            sock.close()
+
+        assert result.exit_code == 1, result.output
+        assert f"Port {port} is already in use." in result.output
+        assert "Another process is already using this service address." in result.output
+        assert "Next actions:" in result.output
+        assert f"vaultspec-rag server status --port {port}" in result.output
+        assert f"vaultspec-rag server jobs --running --port {port}" in result.output
+        assert "vaultspec-rag server start --port <free-port>" in result.output
+        assert "Traceback" not in result.output
+
     def test_server_start_update_aliases_parse(self, monkeypatch: pytest.MonkeyPatch):
         captured: dict[str, object] = {}
 
