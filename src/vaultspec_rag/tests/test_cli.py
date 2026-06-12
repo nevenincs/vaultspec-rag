@@ -1105,6 +1105,13 @@ class TestMcpFastPath:
         assert result.exit_code == 2
         assert "require --type vault" in result.output
 
+    def test_search_cmd_rejects_unknown_option_with_plain_language(self):
+        result = runner.invoke(app, ["search", "anything", "--bogus-option"])
+
+        assert result.exit_code == 2
+        assert "Unexpected search options: --bogus-option" in result.output
+        assert "option(s)" not in result.output
+
     def test_path_filter_with_vault_returns_usage_error(self):
         """--path is a code filter; pairing it with vault must error."""
         result = _try_http_search(

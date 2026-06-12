@@ -714,6 +714,6 @@ def _validate_search_extra_args(ctx: typer.Context) -> None:
         return
     unexpected = " ".join(extras)
     _cli.console.print(
-        f"Unexpected search option(s): {unexpected}", markup=False, highlight=False
+        f"Unexpected search options: {unexpected}", markup=False, highlight=False
     )
     raise typer.Exit(code=2)
