@@ -306,6 +306,7 @@ def test_jobs_not_running_prose() -> None:
 def test_jobs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
+    normalized = " ".join(result.stdout.split())
     assert "--phase" in result.stdout
     assert "--running" in result.stdout
     assert "--query" in result.stdout
@@ -315,7 +316,9 @@ def test_jobs_subcommand_registered() -> None:
     assert "--watch" in result.stdout
     assert "--interval" in result.stdout
     assert "Filter by job state" in result.stdout
-    assert "automatic updates" in result.stdout
+    assert "automatic updates" in normalized
+    assert "manual requests" in normalized
+    assert "'watcher'" not in result.stdout
 
 
 def test_jobs_filter_summary_uses_operator_language() -> None:
@@ -338,6 +341,23 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     assert "phase=" not in rendered
     assert "trigger=" not in rendered
     assert "watcher" not in rendered
+
+
+def test_jobs_trigger_filter_accepts_user_language() -> None:
+    from ...cli._service_jobs import _jobs_args
+
+    args = _jobs_args(
+        limit=5,
+        phase=None,
+        source=None,
+        trigger="automatic",
+        query=None,
+        failed=False,
+        job_id=None,
+        since=None,
+    )
+
+    assert args["trigger"] == "watcher"
 
 
 @pytest.mark.parametrize(

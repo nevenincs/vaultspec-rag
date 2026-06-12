@@ -358,6 +358,17 @@ def _resolve_jobs_filters(
     return resolved_phase, failed
 
 
+def _jobs_trigger_value(trigger: str | None) -> str | None:
+    if trigger is None:
+        return None
+    value = trigger.strip().lower()
+    if value in ("automatic", "automatic-updates", "updates"):
+        return "watcher"
+    if value in ("manual", "manual-request"):
+        return "tool"
+    return trigger
+
+
 def _jobs_args(
     *,
     limit: int,
@@ -370,10 +381,11 @@ def _jobs_args(
     since: float | None,
 ) -> dict[str, object]:
     args: dict[str, object] = {"limit": limit}
+    normalized_trigger = _jobs_trigger_value(trigger)
     optional_args = {
         "phase": phase,
         "source": source,
-        "trigger": trigger,
+        "trigger": normalized_trigger,
         "query": query,
         "job_id": job_id,
         "since": since,
@@ -601,10 +613,7 @@ def service_jobs(
         str | None,
         typer.Option(
             "--trigger",
-            help=(
-                "Filter by who started the job: 'tool' for manual requests or "
-                "'watcher' for automatic updates."
-            ),
+            help="Filter by who started the job: manual requests or automatic updates.",
         ),
     ] = None,
     query: Annotated[
