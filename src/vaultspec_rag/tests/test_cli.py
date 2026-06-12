@@ -4493,8 +4493,16 @@ class TestBenchmarkAndQualityCommands:
             "Variation": 0.5,
         }
         index_line = next(line for line in lines if line.startswith("Index:"))
-        assert re.search(r"\b42\b.*vault documents", index_line)
-        assert re.search(r"\b100\b.*code chunks", index_line)
+        index_match = re.fullmatch(
+            r"Index: (?P<vault_count>\d+) vault documents; "
+            r"(?P<code_count>\d+) source code sections",
+            index_line,
+        )
+        assert index_match is not None
+        assert index_match.groupdict() == {
+            "vault_count": "42",
+            "code_count": "100",
+        }
         gpu_line = next(line for line in lines if line.startswith("GPU:"))
         assert "GeForce RTX 4090" in gpu_line
         assert "512.0 MB" in gpu_line

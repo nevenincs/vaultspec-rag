@@ -79,7 +79,7 @@ def handle_benchmark(
     )
     _cli.console.print(
         f"Index: {results['vault_count']} vault documents; "
-        f"{results['code_count']} code chunks",
+        f"{results['code_count']} source code sections",
         markup=False,
         highlight=False,
     )
