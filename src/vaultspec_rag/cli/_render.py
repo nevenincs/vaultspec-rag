@@ -179,10 +179,15 @@ def _display_service_diagnostic_summary(diagnostics: object) -> None:
 def _health_diagnostic_text(health: dict[str, object]) -> str:
     if health.get("available") is False:
         return _unavailable_diagnostic_text(health, "status check")
-    status = str(health.get("status", "unknown"))
-    ready_text = (
-        "status check passed" if status == "ready" else status.replace("_", " ")
-    )
+    raw_status = health.get("status")
+    if not isinstance(raw_status, str) or not raw_status or raw_status == "unknown":
+        ready_text = "readiness not reported by service"
+    else:
+        ready_text = (
+            "status check passed"
+            if raw_status == "ready"
+            else raw_status.replace("_", " ")
+        )
     project_count = health.get("project_count")
     if project_count is None:
         return f"reachable; {ready_text}"

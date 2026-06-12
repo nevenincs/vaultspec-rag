@@ -305,7 +305,10 @@ def _status_contract_health_payload() -> dict[str, object]:
     }
 
 
-def _slow_search_contract_server() -> tuple[typing.Any, typing.Any]:
+def _slow_search_contract_server(
+    *,
+    health_payload: dict[str, object] | None = None,
+) -> tuple[typing.Any, typing.Any]:
     """Start a local service that lets /search time out while probes work."""
     import http.server
     import threading
@@ -326,7 +329,11 @@ def _slow_search_contract_server() -> tuple[typing.Any, typing.Any]:
 
         def do_GET(self):
             if self.path == "/health":
-                payload = _status_contract_health_payload()
+                payload = (
+                    health_payload
+                    if health_payload is not None
+                    else _status_contract_health_payload()
+                )
             elif self.path.startswith("/jobs"):
                 payload = {
                     "ok": True,
@@ -1960,6 +1967,50 @@ class TestSearchSafetyContract:
             "└",
         ):
             assert forbidden not in result.output
+
+    def test_search_timeout_missing_health_status_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server(
+            health_payload={
+                "project_count": 1,
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                },
+            }
+        )
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        assert (
+            "Service: reachable; readiness not reported by service; 1 project loaded"
+        ) in result.output
+        assert "Service: reachable; unknown" not in result.output
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
 
     def test_search_timeout_json_preserves_backend_diagnostics(
         self, tmp_path: Path
