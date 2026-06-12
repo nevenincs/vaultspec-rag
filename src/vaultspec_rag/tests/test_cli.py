@@ -1461,6 +1461,8 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
         assert "index counts" in result.output
+        assert "storage location" in result.output
+        assert "search data location" not in result.output
         assert "Emit JSON for scripts" in result.output
         assert "MCP" not in result.output
         assert "get_index_status" not in result.output

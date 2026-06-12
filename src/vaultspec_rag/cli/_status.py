@@ -1,4 +1,4 @@
-"""``status`` command: index counts, search data location, and GPU info."""
+"""``status`` command: project index counts, storage, and compute device."""
 
 from __future__ import annotations
 
@@ -32,25 +32,25 @@ def _render_status_text(
     storage_path = str(status["storage_path"])
     vault_count, code_count = _status_counts(status)
     device = (
-        f"cuda - {gpu_name} ({vram_mb} MB VRAM)"
+        f"GPU - {gpu_name} ({vram_mb} MB VRAM)"
         if cuda_available
-        else "no CUDA GPU available"
+        else "CPU only (no supported GPU detected)"
     )
     lines = [
-        f"GPU: {device}",
-        f"Search data: {storage_path}",
+        f"Compute: {device}",
+        f"Index storage: {storage_path}",
         f"Vault documents: {vault_count}",
-        f"Codebase chunks: {code_count}",
+        f"Source code chunks: {code_count}",
         f"Project: {target}",
     ]
     if service_port is not None:
-        lines.append(f"Source: running service at http://127.0.0.1:{service_port}")
+        lines.append(f"Read from: running service at http://127.0.0.1:{service_port}")
     for line in lines:
         _cli.console.print(
             line,
             markup=False,
             highlight=False,
-            soft_wrap=line.startswith(("Search data:", "Project:", "Source:")),
+            soft_wrap=line.startswith(("Index storage:", "Project:", "Read from:")),
         )
 
 
@@ -96,7 +96,7 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
 @app.command(
     "status",
     help=(
-        "Show index counts, search data location, and GPU device info. "
+        "Show project index counts, storage location, and compute device. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -110,7 +110,7 @@ def handle_status(
         ),
     ] = False,
 ) -> None:
-    """Show index counts, search data location, and GPU info."""
+    """Show project index counts, storage location, and compute device."""
     state: CLIState = ctx.obj
     target = state.target
 
