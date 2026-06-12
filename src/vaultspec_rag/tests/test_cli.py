@@ -3324,7 +3324,7 @@ class TestServiceProjectsCli:
         assert "Automatic unload: after 30m idle." in out
         assert "- Project: example" in out
         assert r"  Path: example" in out
-        assert "  In use: 1 active use" in out
+        assert "  In use: 1 active project handle" in out
         assert "  Last activity: 2m 5s ago" in out
         assert "  Last used: 14:05:06" in out
         assert "Handling 1 active request; idle for 2m 5s" not in out
@@ -3379,7 +3379,7 @@ class TestServiceProjectsCli:
         assert "Automatic unload: after 10m idle." in lines
         assert "- Project: busy" in lines
         assert r"Path: busy" in lines
-        assert "In use: 2 active uses" in lines
+        assert "In use: 2 active project handles" in lines
         assert "Last activity: 1m 5s ago" in lines
         assert "Last used: 14:05:06" in lines
         assert "- Project: ready" in lines
