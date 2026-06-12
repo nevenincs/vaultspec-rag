@@ -77,6 +77,21 @@ def _json(output: str) -> dict[str, Any]:
     raise AssertionError(msg)
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["preprocess", "list", "--help"],
+        ["preprocess", "check", "--help"],
+        ["preprocess", "run-one", "--help"],
+    ],
+)
+def test_preprocess_json_help_uses_script_language(argv: list[str]) -> None:
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0, result.output
+    assert "Emit JSON for scripts" in result.output
+    assert "JSON envelope" not in result.output
+
+
 def test_list_empty(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list", "--json"])

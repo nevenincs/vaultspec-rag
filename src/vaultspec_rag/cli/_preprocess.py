@@ -8,7 +8,7 @@ Implements the operator surface decided in the ``preprocess-hooks`` ADR (D13):
 - ``preprocess run-one`` - run the matching rule against one file and print the
   validated output, for authoring/debugging. No indexing side effect.
 
-All three honour the shared ``--json`` envelope.
+All three honour the shared script-facing ``--json`` output.
 """
 
 from __future__ import annotations
@@ -37,7 +37,8 @@ def _root(ctx: typer.Context) -> Path:
 def handle_preprocess_list(
     ctx: typer.Context,
     json_mode: Annotated[
-        bool, typer.Option("--json", help="Emit one JSON envelope instead of text.")
+        bool,
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Show the project's resolved preprocess rules in precedence order."""
@@ -87,7 +88,8 @@ def handle_preprocess_list(
 def handle_preprocess_check(
     ctx: typer.Context,
     json_mode: Annotated[
-        bool, typer.Option("--json", help="Emit one JSON envelope instead of text.")
+        bool,
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Strictly validate the config; exit non-zero on the first defect."""
@@ -119,7 +121,8 @@ def handle_preprocess_run_one(
     ctx: typer.Context,
     path: Annotated[str, typer.Argument(help="Source file to preprocess.")],
     json_mode: Annotated[
-        bool, typer.Option("--json", help="Emit one JSON envelope instead of text.")
+        bool,
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Trial the matching preprocessor against one file for authoring/debugging."""
