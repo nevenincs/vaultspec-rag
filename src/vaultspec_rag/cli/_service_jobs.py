@@ -1,4 +1,4 @@
-"""``server jobs``: list recent index/reindex activity.
+"""``server jobs``: list recent index update activity.
 
 Calls the jobs admin endpoint through the shared HTTP admin client and
 renders either a line-oriented operator feed or the JSON envelope.
@@ -667,7 +667,7 @@ def service_jobs(
         ),
     ] = None,
 ) -> None:
-    """Show recent index/reindex activity from the running service."""
+    """Show recent index update activity from the running service."""
     phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:

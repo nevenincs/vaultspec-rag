@@ -319,6 +319,8 @@ def test_jobs_subcommand_registered() -> None:
     assert "automatic updates" in normalized
     assert "manual requests" in normalized
     assert "'watcher'" not in result.stdout
+    assert "index/reindex" not in result.stdout
+    assert "index update activity" in normalized
 
 
 def test_jobs_filter_summary_uses_operator_language() -> None:
