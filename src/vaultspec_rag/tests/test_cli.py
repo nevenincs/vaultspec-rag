@@ -50,6 +50,15 @@ def _plain_lines(output: str) -> list[str]:
     return [line.strip() for line in clean.splitlines() if line.strip()]
 
 
+def _label_values(output: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in _plain_lines(output):
+        if ": " in line:
+            label, value = line.split(": ", 1)
+            values[label] = value
+    return values
+
+
 def _search_records(output: str) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for line in _plain_lines(output):
@@ -646,6 +655,31 @@ class TestStatusCommand:
         (tmp_path / ".vault").mkdir()
         (tmp_path / ".vaultspec").mkdir()
         return tmp_path
+
+    def test_status_human_output_uses_operator_labels(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "gpu_name": "",
+                "vram_mb": 0,
+                "storage_path": tmp_path / ".vault" / "data" / "search-data",
+                "vault_documents": 12,
+                "codebase_chunks": 34,
+            },
+            target=tmp_path,
+            service_port=8766,
+        )
+
+        labels = _label_values(capsys.readouterr().out)
+        assert labels["Compute"] == "CPU only (no supported GPU detected)"
+        assert labels["Vault documents"] == "12"
+        assert labels["Source code sections"] == "34"
+        assert labels["Read from"] == "running service at http://127.0.0.1:8766"
+        assert "Source code chunks" not in labels
 
     def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = self._workspace(tmp_path)

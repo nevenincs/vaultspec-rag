@@ -55,7 +55,7 @@ def _render_status_text(
         f"Compute: {device}",
         f"Index data: {index_data_path}",
         f"Vault documents: {vault_count}",
-        f"Source code chunks: {code_count}",
+        f"Source code sections: {code_count}",
         f"Project: {target}",
     ]
     if service_port is not None:
