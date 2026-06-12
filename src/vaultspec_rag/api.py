@@ -801,8 +801,11 @@ def get_service_state(
         "running": str(root) in watching,
     }
 
+    from .qdrant_runtime import runtime_state
+
     return {
         "index": index_data,
         "projects": projects_data,
         "watcher": watcher_data,
+        "qdrant": runtime_state().to_dict(),
     }

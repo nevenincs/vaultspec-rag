@@ -74,6 +74,11 @@ class EnvVar(StrEnum):
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
     QDRANT_QUANTIZATION = "VAULTSPEC_RAG_QDRANT_QUANTIZATION"
     SPARSE_ENABLED = "VAULTSPEC_RAG_SPARSE_ENABLED"
+    # Supervised qdrant server-mode knobs.
+    QDRANT_SERVER = "VAULTSPEC_RAG_QDRANT_SERVER"
+    QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
+    QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
+    QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
 
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
@@ -126,6 +131,11 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
     "sparse_enabled": EnvVar.SPARSE_ENABLED,
+    # Supervised qdrant server-mode knobs.
+    "qdrant_server": EnvVar.QDRANT_SERVER,
+    "qdrant_port": EnvVar.QDRANT_PORT,
+    "qdrant_binary": EnvVar.QDRANT_BINARY,
+    "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
 }
 
 
@@ -152,6 +162,20 @@ class VaultSpecConfigWrapper:
         "qdrant_url": None,
         "qdrant_api_key": None,
         "qdrant_quantization": None,
+        # Supervised qdrant server mode. ``qdrant_server`` opts the
+        # resident service into spawning the pinned Rust qdrant binary
+        # as a loopback child and routing stores at it; local mode
+        # stays the zero-dependency default. The server's HTTP port
+        # defaults to one below the service port (8766); its gRPC
+        # listener binds one below that. ``qdrant_binary`` overrides
+        # binary resolution entirely (air-gapped escape hatch).
+        # Server storage is shared and multi-root (per-root data is
+        # namespaced collections inside it), so it lives under the
+        # managed service directory, never a project data dir.
+        "qdrant_server": False,
+        "qdrant_port": 8765,
+        "qdrant_binary": None,
+        "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",

@@ -1902,6 +1902,7 @@ class TestHelpCleanup:
             watch: bool | None,
             watch_debounce_ms: int | None,
             watch_cooldown_s: float | None,
+            qdrant: bool = False,
         ) -> int:
             captured.update(
                 {
@@ -1910,6 +1911,7 @@ class TestHelpCleanup:
                     "watch": watch,
                     "watch_debounce_ms": watch_debounce_ms,
                     "watch_cooldown_s": watch_cooldown_s,
+                    "qdrant": qdrant,
                 }
             )
             raise typer.Exit(0)
@@ -1957,6 +1959,7 @@ class TestHelpCleanup:
             watch: bool | None,
             watch_debounce_ms: int | None,
             watch_cooldown_s: float | None,
+            qdrant: bool = False,
         ) -> int:
             captured.update(
                 {
@@ -1965,6 +1968,7 @@ class TestHelpCleanup:
                     "watch": watch,
                     "watch_debounce_ms": watch_debounce_ms,
                     "watch_cooldown_s": watch_cooldown_s,
+                    "qdrant": qdrant,
                 }
             )
             raise typer.Exit(0)

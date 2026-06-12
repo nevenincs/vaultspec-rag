@@ -30,6 +30,7 @@ __all__ = [
     "preprocess_app",
     "server_app",
     "server_projects_app",
+    "server_qdrant_app",
     "server_watcher_app",
     "version_callback",
 ]
@@ -59,6 +60,10 @@ server_watcher_app = typer.Typer(
     help="Inspect and control automatic index updates.",
     rich_markup_mode=None,
 )
+server_qdrant_app = typer.Typer(
+    help="Provision and inspect the supervised qdrant server binary.",
+    rich_markup_mode=None,
+)
 preprocess_app = typer.Typer(
     help="Inspect and validate document preprocessing rules.",
     rich_markup_mode=None,
@@ -69,6 +74,7 @@ server_root_app.add_typer(mcp_app, name="mcp", hidden=True)
 server_root_app.add_typer(server_projects_app, name="projects")
 server_root_app.add_typer(server_watcher_app, name="updates")
 server_root_app.add_typer(server_watcher_app, name="watcher", hidden=True)
+server_root_app.add_typer(server_qdrant_app, name="qdrant")
 app.add_typer(preprocess_app, name="preprocess")
 
 

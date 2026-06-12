@@ -311,12 +311,14 @@ def _service_child_env(
     watch: bool | None = None,
     watch_debounce_ms: int | None = None,
     watch_cooldown_s: float | None = None,
+    qdrant: bool | None = None,
 ) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
     The daemon inherits configuration only through the environment (it
     parses no argv beyond ``--port``), so watcher flags passed to
-    ``service start`` are translated into ``VAULTSPEC_RAG_WATCH*`` here.
+    ``service start`` are translated into ``VAULTSPEC_RAG_WATCH*`` here
+    and the qdrant server-mode flag into ``VAULTSPEC_RAG_QDRANT_SERVER``.
     A flag left unset (``None``) is not written, so an operator-set env
     var of the same name survives untouched.
 
@@ -324,6 +326,8 @@ def _service_child_env(
         watch: Tri-state watcher toggle; ``None`` leaves it unset.
         watch_debounce_ms: Debounce override in ms; ``None`` leaves it unset.
         watch_cooldown_s: Cooldown override in s; ``None`` leaves it unset.
+        qdrant: Tri-state qdrant server-mode toggle; ``None`` leaves it
+            unset.
 
     Returns:
         The child-process environment mapping.
@@ -340,6 +344,8 @@ def _service_child_env(
         env[EnvVar.WATCH_DEBOUNCE_MS.value] = str(watch_debounce_ms)
     if watch_cooldown_s is not None:
         env[EnvVar.WATCH_COOLDOWN_S.value] = str(watch_cooldown_s)
+    if qdrant is not None:
+        env[EnvVar.QDRANT_SERVER.value] = "1" if qdrant else "0"
     return env
 
 
@@ -384,6 +390,7 @@ def _spawn_service(
     watch: bool | None = None,
     watch_debounce_ms: int | None = None,
     watch_cooldown_s: float | None = None,
+    qdrant: bool | None = None,
 ) -> int:
     """Spawn the RAG service as a detached background process.
 
@@ -393,6 +400,7 @@ def _spawn_service(
         watch: Optional watcher enable/disable forwarded to the daemon env.
         watch_debounce_ms: Optional debounce override forwarded to the env.
         watch_cooldown_s: Optional cooldown override forwarded to the env.
+        qdrant: Optional qdrant server-mode toggle forwarded to the env.
 
     Returns:
         PID of the spawned process.
@@ -404,6 +412,7 @@ def _spawn_service(
         watch=watch,
         watch_debounce_ms=watch_debounce_ms,
         watch_cooldown_s=watch_cooldown_s,
+        qdrant=qdrant,
     )
     log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
     if sys.platform == "win32":

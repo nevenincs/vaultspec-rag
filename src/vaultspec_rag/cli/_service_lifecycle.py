@@ -38,6 +38,39 @@ from ._service_status import (
 )
 
 
+def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
+    """Fail fast (or provision with consent) before a --qdrant start.
+
+    Never downloads silently: an absent binary without
+    ``auto_provision`` prints the exact install command and exits
+    non-zero.
+    """
+    from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+
+    if resolve_binary() is not None:
+        return
+    if not auto_provision:
+        _print_lifecycle_lines(
+            "Service start failed",
+            "qdrant server mode needs the server binary, which is not installed.",
+            "Run: vaultspec-rag server qdrant install",
+            "(or re-run with --qdrant-auto-provision to consent to the download)",
+        )
+        raise typer.Exit(code=1)
+    report = provision()
+    if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
+        _print_lifecycle_lines(
+            "Service start failed",
+            f"qdrant provisioning failed: {report.message}",
+        )
+        raise typer.Exit(code=1)
+    _print_lifecycle_lines(
+        "Provisioned qdrant server",
+        f"Version: {report.version}",
+        f"Binary: {report.binary}",
+    )
+
+
 def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
     serving_pid = health.get("pid")
     if isinstance(serving_pid, int) and serving_pid > 0:
@@ -81,6 +114,38 @@ def _address_line(port: object) -> str:
         "and records how the CLI can reach it."
     ),
 )
+def _existing_service_running() -> bool:
+    """Report a live service and clean up stale state.
+
+    Returns True when a healthy service we own is already running (the
+    caller should not spawn another); removes a stale status file and
+    returns False otherwise.
+    """
+    status = _read_service_status()
+    if status is None:
+        return False
+    existing_pid = int(status["pid"])
+    existing_port = int(status["port"])
+    existing_token = status.get("service_token")
+    existing_token_str = existing_token if isinstance(existing_token, str) else None
+    if _cli._is_our_service(
+        existing_pid,
+        port=existing_port,
+        expected_token=existing_token_str,
+    ):
+        health = _health_probe(existing_port)
+        if health is not None:
+            _print_lifecycle_lines(
+                "Service already running",
+                _process_line(existing_pid),
+                _address_line(existing_port),
+            )
+            return True
+    # Stale PID -- remove status file
+    _status_file().unlink(missing_ok=True)
+    return False
+
+
 def service_start(
     port: Annotated[
         int,
@@ -138,6 +203,25 @@ def service_start(
             hidden=True,
         ),
     ] = None,
+    qdrant: Annotated[
+        bool | None,
+        typer.Option(
+            "--qdrant/--no-qdrant",
+            help="Run the daemon in qdrant server mode: it supervises the "
+            "pinned Rust qdrant binary as a loopback child and routes all "
+            "stores at it. Unset leaves VAULTSPEC_RAG_QDRANT_SERVER "
+            "untouched.",
+        ),
+    ] = None,
+    qdrant_auto_provision: Annotated[
+        bool,
+        typer.Option(
+            "--qdrant-auto-provision",
+            help="Consent to downloading the pinned qdrant binary when it "
+            "is absent. Without this flag an absent binary fails the start "
+            "with the exact install command.",
+        ),
+    ] = False,
 ) -> None:
     """Start the background search service."""
     # Port-level guard: prevents concurrent start races (ADR D1)
@@ -145,28 +229,11 @@ def service_start(
         _print_lifecycle_lines("Service start failed", f"Port {port} is in use.")
         raise typer.Exit(code=1)
 
-    # Check for existing service
-    status = _read_service_status()
-    if status is not None:
-        existing_pid = int(status["pid"])
-        existing_port = int(status["port"])
-        existing_token = status.get("service_token")
-        existing_token_str = existing_token if isinstance(existing_token, str) else None
-        if _cli._is_our_service(
-            existing_pid,
-            port=existing_port,
-            expected_token=existing_token_str,
-        ):
-            health = _health_probe(existing_port)
-            if health is not None:
-                _print_lifecycle_lines(
-                    "Service already running",
-                    _process_line(existing_pid),
-                    _address_line(existing_port),
-                )
-                return
-        # Stale PID -- remove status file
-        _status_file().unlink(missing_ok=True)
+    if qdrant:
+        _ensure_qdrant_binary(auto_provision=qdrant_auto_provision)
+
+    if _existing_service_running():
+        return
 
     log_path = _log_file()
     t0 = time.perf_counter()
@@ -183,6 +250,7 @@ def service_start(
         watch=selected_updates,
         watch_debounce_ms=selected_update_delay_ms,
         watch_cooldown_s=selected_same_source_delay_s,
+        qdrant=qdrant,
     )
     _write_service_status(pid, port)
 

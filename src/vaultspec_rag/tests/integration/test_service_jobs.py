@@ -306,29 +306,46 @@ def test_jobs_not_running_prose() -> None:
 def test_jobs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
-    normalized = " ".join(result.stdout.split())
-    assert "--state" in result.stdout
+    expected_flags = (
+        "--state",
+        "--running",
+        "--query",
+        "--failed",
+        "--job-id",
+        "--since",
+        "--watch",
+        "--interval",
+    )
+    missing = [flag for flag in expected_flags if flag not in result.stdout]
+    assert not missing, f"missing flags in help: {missing}"
     assert "--phase" not in result.stdout
-    assert "--running" in result.stdout
-    assert "--query" in result.stdout
-    assert "--failed" in result.stdout
-    assert "--job-id" in result.stdout
-    assert "--since" in result.stdout
-    assert "--watch" in result.stdout
-    assert "--interval" in result.stdout
-    assert "Filter by job state" in result.stdout
-    assert "job id, outcome, or progress" in normalized
-    assert "job id, result, or progress" not in normalized
-    assert "automatic updates" in normalized
-    assert "manual requests" in normalized
-    assert "'watcher'" not in result.stdout
-    assert "index/reindex" not in result.stdout
-    assert "index update activity" in normalized
-    assert "failed/error" not in result.stdout
-    assert "Show only failed jobs" in result.stdout
-    assert "Show only active or waiting jobs" in result.stdout
-    assert "running, finished, or failed" in normalized
-    assert "running, done, or failed" not in normalized
+
+
+def test_jobs_help_uses_operator_language() -> None:
+    result = runner.invoke(app, ["server", "jobs", "--help"])
+    assert result.exit_code == 0
+    normalized = " ".join(result.stdout.split())
+    expected_phrases = (
+        "Filter by job state",
+        "job id, outcome, or progress",
+        "automatic updates",
+        "manual requests",
+        "index update activity",
+        "Show only failed jobs",
+        "Show only active or waiting jobs",
+        "running, finished, or failed",
+    )
+    missing = [phrase for phrase in expected_phrases if phrase not in normalized]
+    assert not missing, f"missing operator phrasing: {missing}"
+    forbidden_phrases = (
+        "job id, result, or progress",
+        "'watcher'",
+        "index/reindex",
+        "failed/error",
+        "running, done, or failed",
+    )
+    leaked = [phrase for phrase in forbidden_phrases if phrase in normalized]
+    assert not leaked, f"internal phrasing leaked into help: {leaked}"
 
 
 def test_jobs_filter_summary_uses_operator_language() -> None:
@@ -466,26 +483,36 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
-    assert (
+    expected_lines = (
         f"Jobs on service port {port}: 3/3 shown: "
-        "1 active, 0 waiting, 1 finished, 1 failed"
-    ) in output
-    assert "Latest shown last" in output
-    assert "project proj-a" in output
-    assert "project proj-b" in output
-    assert "project proj-c" in output
-    assert "project=" not in output
-    assert "* " in output
-    assert "! " in output
-    assert "FAILED" in output
-    assert "finished code index refresh" in output
-    assert " done code index refresh" not in output
-    assert "code index update" in output
-    assert "watcher" not in output
-    assert "added 3, updated 1, removed 0, finished in 22s" in output
-    assert "embedding chunks 2 of 5; running for 10s" in output
-    for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-        assert forbidden not in output
+        "1 active, 0 waiting, 1 finished, 1 failed",
+        "Latest shown last",
+        "project proj-a",
+        "project proj-b",
+        "project proj-c",
+        "* ",
+        "! ",
+        "FAILED",
+        "finished code index refresh",
+        "code index update",
+        "added 3, updated 1, removed 0, finished in 22s",
+        "embedding chunks 2 of 5; running for 10s",
+    )
+    missing = [text for text in expected_lines if text not in output]
+    assert not missing, f"missing feed content: {missing}"
+    forbidden_fragments = (
+        "project=",
+        " done code index refresh",
+        "watcher",
+        "─",
+        "│",
+        "┌",
+        "┐",
+        "└",
+        "┘",
+    )
+    leaked = [text for text in forbidden_fragments if text in output]
+    assert not leaked, f"internal or table fragments leaked: {leaked}"
     assert output.index("donejob1") < output.index("failjob1")
     assert output.index("failjob1") < output.index("runjob12")
 
