@@ -92,7 +92,7 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     use_text = (
         "not currently in use"
         if refs <= 0
-        else f"{refs} active project handle{'s' if refs != 1 else ''}"
+        else f"{refs} active service use{'s' if refs != 1 else ''}"
     )
     return [
         f"- Project: {_project_name(root_str)}",

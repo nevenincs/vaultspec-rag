@@ -3332,7 +3332,7 @@ class TestServiceProjectsCli:
         assert "Automatic unload: after 30m idle." in out
         assert "- Project: example" in out
         assert r"  Path: example" in out
-        assert "  In use: 1 active project handle" in out
+        assert "  In use: 1 active service use" in out
         assert "  Last activity: 2m 5s ago" in out
         assert "  Last used: 14:05:06" in out
         assert "Handling 1 active request; idle for 2m 5s" not in out
@@ -3342,6 +3342,7 @@ class TestServiceProjectsCli:
         assert "no" not in out.lower()
         assert "Auto-unload" not in out
         assert "project slots" not in out.lower()
+        assert "project handle" not in out.lower()
         assert "idle ttl" not in out.lower()
         assert "references" not in out.lower()
 
@@ -3387,7 +3388,7 @@ class TestServiceProjectsCli:
         assert "Automatic unload: after 10m idle." in lines
         assert "- Project: busy" in lines
         assert r"Path: busy" in lines
-        assert "In use: 2 active project handles" in lines
+        assert "In use: 2 active service uses" in lines
         assert "Last activity: 1m 5s ago" in lines
         assert "Last used: 14:05:06" in lines
         assert "- Project: ready" in lines
@@ -3399,6 +3400,8 @@ class TestServiceProjectsCli:
         assert not any(line.startswith("Requests:") for line in lines)
         assert not any(line.startswith("Last request:") for line in lines)
         assert not any("Available for new requests" in line for line in lines)
+        assert not any("project handle" in line.lower() for line in lines)
+        assert not any("references" in line.lower() for line in lines)
         assert not any(line in {"yes", "no"} for line in lines)
         _assert_no_table_borders(result.output)
 
