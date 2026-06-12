@@ -68,7 +68,10 @@ def _open_vault_store(
                     "Wait for the other process to finish.",
                     "vaultspec-rag server status",
                     "vaultspec-rag server stop",
-                    "vaultspec-rag server mcp stop",
+                    (
+                        "Stop any orphaned Python process that is still using "
+                        "this workspace."
+                    ),
                 ],
             )
         _cli.console.print(
@@ -83,7 +86,6 @@ def _open_vault_store(
             "    2. Check the service:\n"
             "         vaultspec-rag server status\n"
             "    3. Stop the running service:\n"
-            "         vaultspec-rag server mcp stop\n"
             "         vaultspec-rag server stop\n"
             "    4. If no vaultspec-rag process is alive, look for an "
             "orphaned Python process using the index and stop it manually.",

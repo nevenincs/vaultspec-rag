@@ -228,7 +228,7 @@ def _handle_vaultstore_locked_error(
                 "vaultspec-rag search ... --port 8766",
                 "vaultspec-rag server status",
                 "vaultspec-rag server stop",
-                "vaultspec-rag server mcp stop",
+                "Stop any orphaned Python process that is still using this workspace.",
             ],
         )
     _cli.console.print(
@@ -247,7 +247,6 @@ def _handle_vaultstore_locked_error(
         "    3. Check the service:\n"
         "         vaultspec-rag server status\n"
         "    4. Stop the running service:\n"
-        "         vaultspec-rag server mcp stop\n"
         "         vaultspec-rag server stop\n"
         "    5. If no vaultspec-rag process is alive, look for an "
         "orphaned Python process using the index and stop it manually.",

@@ -1508,6 +1508,11 @@ class TestSearchSafetyContract:
         assert "local search index" in normalized
         assert "background service" in normalized
         assert "automatic index update" in normalized
+        assert "vaultspec-rag server status" in normalized
+        assert "vaultspec-rag server stop" in normalized
+        assert "orphaned Python process" in normalized
+        assert "server mcp" not in normalized
+        assert "MCP" not in normalized
         assert "direct local-store search" not in normalized
         assert "RAG service" not in normalized
         assert "file watcher" not in normalized
@@ -1547,6 +1552,10 @@ class TestSearchSafetyContract:
         assert "local search index" in data["message"]
         assert "background service" in data["message"]
         assert "automatic index update" in data["message"]
+        remediation = data["remediation"]
+        assert "vaultspec-rag server status" in remediation
+        assert "vaultspec-rag server stop" in remediation
+        assert not any("server mcp" in item.lower() for item in remediation)
         assert "direct local-store search" not in data["message"]
         assert "RAG service" not in data["message"]
         assert "file watcher" not in data["message"]
