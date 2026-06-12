@@ -2903,7 +2903,7 @@ class TestServiceDaemonHelpers:
                 "  Operation: code index refresh",
                 "  Project: feature-server-supervision",
                 "  Runtime:",
-                "  Progress: embedding chunks 7 of 20",
+                "  Progress: embedding source code sections 7 of 20",
             ]
             hidden = [
                 "Search Concurrency",
@@ -2951,7 +2951,7 @@ class TestServiceDaemonHelpers:
                 "  Operation: code index refresh",
                 "  Project: feature-server-supervision",
                 "  Runtime:",
-                "  Progress: embedding chunks 7 of 20",
+                "  Progress: embedding source code sections 7 of 20",
                 "Next action:",
                 "vaultspec-rag server jobs --running",
             ]
@@ -3018,7 +3018,7 @@ class TestServiceDaemonHelpers:
             assert active_rows[1].startswith(
                 "  * code index refresh for feature-server-supervision"
             )
-            assert "embedding chunks 7 of 20" in active_rows[1]
+            assert "embedding source code sections 7 of 20" in active_rows[1]
             assert all(row.count("no progress for") <= 1 for row in active_rows)
             assert "Current job:" not in result.output
         finally:
@@ -3074,7 +3074,7 @@ class TestServiceDaemonHelpers:
 
         assert "Current job:" in fresh_status
         assert "Current job:" in stalled_status
-        assert "Progress: embedding chunks 7 of 20" in stalled_status
+        assert "Progress: embedding source code sections 7 of 20" in stalled_status
         assert "no progress for" not in fresh_status
         assert "Warning: no progress for 10m 0s" in stalled_status
         assert stalled_status != fresh_status

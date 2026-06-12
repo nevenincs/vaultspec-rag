@@ -208,16 +208,24 @@ def _operation_label(job: dict[str, object]) -> str:
     return f"{source} index operation"
 
 
-def _progress_step_label(step: str) -> str:
+def _progress_step_label(step: str, source: str) -> str:
+    section = (
+        "source code section"
+        if source == "code"
+        else "document section"
+        if source == "vault"
+        else "section"
+    )
+    sections = f"{section}s"
     labels = {
         "queued": "waiting to write the index",
         "discover": "discovering items",
-        "chunk": "chunking files",
-        "embed": "embedding chunks",
-        "embed + upsert chunks": "embedding and writing chunks",
+        "chunk": "preparing files",
+        "embed": f"embedding {sections}",
+        "embed + upsert chunks": f"embedding and writing {sections}",
         "embed + upsert documents": "embedding and writing documents",
         "index": "writing index",
-        "chunk + embed": "chunking and embedding files",
+        "chunk + embed": "preparing and embedding files",
         "upsert": "writing vectors",
     }
     return labels.get(step, step.replace("_", " "))
@@ -228,7 +236,7 @@ def _human_progress(job: dict[str, object]) -> str:
     if not isinstance(progress, dict):
         return ""
     step = str(progress.get("step", ""))
-    label = _progress_step_label(step)
+    label = _progress_step_label(step, _source_label(job))
     completed = progress.get("completed")
     total = progress.get("total")
     if step == "queued":

@@ -536,7 +536,9 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert rows[2]["marker"] == "*"
     assert rows[2]["state"] == "running"
     assert rows[2]["operation"] == "code index update for proj-a"
-    assert rows[2]["detail"] == "embedding chunks 2 of 5; running for 10s"
+    assert rows[2]["detail"] == (
+        "embedding source code sections 2 of 5; running for 10s"
+    )
     forbidden_fragments = (
         "3/3 shown:",
         "Shown: 3 of 3",
@@ -706,7 +708,7 @@ def test_jobs_waiting_progress_uses_user_language() -> None:
     assert waiting == "waiting to write the index"
     assert "writer lock" not in waiting
     assert waiting != "waiting to write the index 0"
-    assert compound == "embedding and writing chunks 64 of 196"
+    assert compound == "embedding and writing sections 64 of 196"
     assert "upsert" not in compound
 
 
