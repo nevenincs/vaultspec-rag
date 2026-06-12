@@ -6,6 +6,7 @@ tags:
 date: '2026-06-12'
 related:
   - '[[2026-06-12-service-concurrency-adr]]'
+  - '[[2026-06-12-service-concurrency-plan]]'
   - '[[2026-06-12-service-concurrency-research]]'
 ---
 
@@ -18,6 +19,10 @@ Auto-generated index of all documents tagged with `#service-concurrency`.
 ### adr
 
 - `2026-06-12-service-concurrency-adr` - `service-concurrency` adr: `concurrent saturation architecture rework` | (**status:** `accepted`)
+
+### plan
+
+- `2026-06-12-service-concurrency-plan` - `service-concurrency` `concurrent saturation architecture rework` plan
 
 ### research
 
