@@ -19,8 +19,8 @@ Build the concurrency benchmark harness (D1) and capture pre-rework saturation b
 
 Build the saturation benchmark and capture pre-rework baselines.
 
-- [ ] `W01.P01.S01` - Create a concurrency benchmark harness driving N parallel searches (same-root, cross-root, vault+code mixed, optional concurrent reindex) against the live service, reporting throughput, p50/p95 latency, and per-phase timings; `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`.
-- [ ] `W01.P01.S02` - Capture pre-rework baseline numbers on the two-root corpus and persist them in the step record; `.vault/exec/2026-06-12-service-concurrency`.
+- [x] `W01.P01.S01` - Create a concurrency benchmark harness driving N parallel searches (same-root, cross-root, vault+code mixed, optional concurrent reindex) against the live service, reporting throughput, p50/p95 latency, and per-phase timings; `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`.
+- [x] `W01.P01.S02` - Capture pre-rework baseline numbers on the two-root corpus and persist them in the step record; `.vault/exec/2026-06-12-service-concurrency`.
 
 ## Wave `W02` - Retrieval quality core
 
