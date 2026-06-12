@@ -483,6 +483,8 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     output = capsys.readouterr().out
     assert "1/1 shown: 0 active, 1 waiting, 0 finished, 0 failed" in output
     assert "1 running" not in output
+    assert "~ " in output
+    assert "* " not in output
     assert "waiting code index update" in output
     assert "waiting to write the index for 20s" in output
     assert "running code index update" not in output

@@ -100,6 +100,8 @@ def _phase_label(job: dict[str, object]) -> str:
 
 def _job_prefix(job: dict[str, object]) -> str:
     phase = str(job.get("phase", ""))
+    if _job_is_waiting(job):
+        return "~"
     if phase == "running":
         return "*"
     if phase in ("error", "failed"):
