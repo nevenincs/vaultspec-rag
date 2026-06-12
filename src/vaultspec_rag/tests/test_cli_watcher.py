@@ -117,6 +117,22 @@ def test_updates_status_help_uses_project_language() -> None:
     assert "active roots" not in result.stdout.lower()
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["server", "updates", "start", "--help"],
+        ["server", "updates", "stop", "--help"],
+        ["server", "updates", "reconfigure", "--help"],
+    ],
+)
+def test_updates_project_argument_uses_project_language(argv: list[str]) -> None:
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0
+    assert "PROJECT" in result.stdout
+    assert " ROOT" not in result.stdout
+    assert "Project root" not in result.stdout
+
+
 def test_update_timing_output_uses_user_language(capsys) -> None:
     from ..cli._service_watcher import _print_update_timing
 
