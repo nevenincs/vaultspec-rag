@@ -380,16 +380,16 @@ def service_logs(
         typer.Option(
             "--limit",
             "--lines",
-            help="Number of recent activity entries to inspect.",
+            help="Number of recent service log lines to inspect.",
         ),
     ] = 200,
     job_id: Annotated[
         str | None,
-        typer.Option("--job-id", help="Only show activity for this job id."),
+        typer.Option("--job-id", help="Only inspect log lines for this job ID."),
     ] = None,
     contains: Annotated[
         str | None,
-        typer.Option("--contains", help="Only show activity containing this text."),
+        typer.Option("--contains", help="Only inspect log lines containing this text."),
     ] = None,
     port: Annotated[
         int | None,
