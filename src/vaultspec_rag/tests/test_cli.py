@@ -2952,6 +2952,76 @@ def _find_free_port() -> int:
     return port
 
 
+def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _ProjectsHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "projects": [
+                            {
+                                "root": r"busy",
+                                "idle_seconds": 65,
+                                "ref_count": 2,
+                                "last_access_iso": "2026-06-12T14:05:06Z",
+                            },
+                            {
+                                "root": r"ready",
+                                "idle_seconds": 4,
+                                "ref_count": 0,
+                                "last_access_iso": "2026-06-12T14:06:01Z",
+                            },
+                        ],
+                        "max_projects": 8,
+                        "idle_ttl_seconds": 600,
+                    }
+                ).encode("utf-8")
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _ProjectsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _projects_unload_contract_server() -> tuple[
+    typing.Any, typing.Any, list[dict[str, object]]
+]:
+    import http.server
+    import threading
+
+    requests: list[dict[str, object]] = []
+
+    class _ProjectsEvictHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            requests.append(json.loads(self.rfile.read(length).decode("utf-8")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"unexpected": {"raw": True}}).encode())
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _ProjectsEvictHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 class TestServiceProjectsCli:
     """In-process CLI coverage for `server projects list|unload`."""
 
@@ -3011,10 +3081,11 @@ class TestServiceProjectsCli:
         assert "Loaded projects: 1/16." in out
         assert "Automatic unload: after 30m idle." in out
         assert r"- example" in out
-        assert (
-            "in use: yes (1 active request); idle for 2m 5s; last request: 14:05:06"
-        ) in out
-        assert "active requests" not in out
+        assert "Handling 1 active request; idle for 2m 5s" in out
+        assert "last request: 14:05:06" in out
+        assert "in use:" not in out
+        assert "yes" not in out.lower()
+        assert "no" not in out.lower()
         assert "last used" not in out
         assert "Auto-unload" not in out
         assert "project slots" not in out.lower()
@@ -3043,6 +3114,55 @@ class TestServiceProjectsCli:
             ],
         )
         assert result.exit_code == 3
+
+    def test_projects_list_command_humanizes_service_payload(self) -> None:
+        server, thread, requests = _projects_list_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "projects", "list", "--port", str(server.server_port)],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/projects"]
+        lines = _plain_lines(result.output)
+        assert "Loaded projects: 2/8." in lines
+        assert "Automatic unload: after 10m idle." in lines
+        assert any("Handling 2 active requests" in line for line in lines)
+        assert any("Available for new requests" in line for line in lines)
+        assert not any("in use:" in line or line in {"yes", "no"} for line in lines)
+        _assert_no_table_borders(result.output)
+
+    def test_projects_unload_unexpected_response_stays_actionable(self) -> None:
+        server, thread, requests = _projects_unload_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "projects",
+                    "unload",
+                    r"example",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 1, result.output
+        assert requests == [{"root": r"example"}]
+        message = " ".join(_plain_lines(result.output))
+        assert r"example" in message
+        assert "vaultspec-rag server status" in message
+        assert "unexpected" not in result.output
+        assert "{" not in result.output
 
 
 class TestIndexSummaryCLI:

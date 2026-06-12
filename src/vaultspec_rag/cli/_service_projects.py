@@ -84,13 +84,13 @@ def _project_summary(raw_entry: object) -> tuple[str, str] | None:
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
     last_access = hms or "not recorded"
-    in_use = "yes" if refs > 0 else "no"
-    request_count = (
-        "" if refs == 0 else f" ({refs} active request{'s' if refs != 1 else ''})"
+    activity = (
+        "Available for new requests"
+        if refs <= 0
+        else f"Handling {refs} active request{'s' if refs != 1 else ''}"
     )
     metadata = (
-        f"in use: {in_use}{request_count}; idle for {_humanize_idle(idle_s)}; "
-        f"last request: {last_access}"
+        f"{activity}; idle for {_humanize_idle(idle_s)}; last request: {last_access}"
     )
     return root_str, metadata
 
@@ -248,5 +248,10 @@ def service_projects_evict(
     if reason == "not_found":
         _cli.console.print(f"Project is not loaded: {project}", markup=False)
         raise typer.Exit(2)
-    _cli.console.print(f"Unexpected response: {result}", markup=False)
+    _cli.console.print(
+        f"The service could not confirm that the project was unloaded: {project}. "
+        "Run `vaultspec-rag server status` and retry.",
+        markup=False,
+        highlight=False,
+    )
     raise typer.Exit(1)
