@@ -465,8 +465,7 @@ def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
     assert clock == "13:14:09"
     assert level == "warning"
     assert source == "server"
-    assert "--raw" in hint
-    assert "original log line" in hint
+    assert hint == "run with --raw for original log line"
     assert "unexpected service-side warning" not in output
     assert "vaultspec_rag.server" not in output
     assert "details=use --raw" not in output
