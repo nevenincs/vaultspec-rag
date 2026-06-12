@@ -237,12 +237,11 @@ def _display_search_results(
     for rank, result in enumerate(results, start=1):
         location = _search_result_location(result)
         snippet = _search_result_text(result, root=root)
-        details = f"rank={rank}"
+        line = f"{rank}. {location}"
         if show_scores:
-            details += f" score={_search_result_score(result):.4f}"
-        line = f"{location}: {details}"
+            line += f" (score {_search_result_score(result):.4f})"
         if snippet:
-            line += f" {snippet}"
+            line += f" - {snippet}"
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
@@ -252,6 +251,9 @@ def _single_line_text(value: object) -> str:
 
 
 def _search_result_text(result: dict[str, object], *, root: Path | None) -> str:
+    full_text = _non_empty_result_string(result, "rerank_text")
+    if full_text is not None:
+        return _single_line_text(full_text)
     source_text = _source_line_text(result, root=root)
     if source_text:
         return source_text

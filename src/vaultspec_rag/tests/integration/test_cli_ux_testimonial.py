@@ -287,11 +287,12 @@ class TestSearchPowerUser:
             f"search command exited {obs.exit_code}.\n"
             f"stdout:\n{obs.output}\nstderr:\n{obs.friction}"
         )
-        # Human search output is a line-oriented ranked result, not a score table.
+        # Human search output is a numbered result list, not a score table.
         output_lower = obs.output.lower()
-        assert "rank=1" in output_lower or "load_embedding_model" in obs.output, (
+        assert "1." in output_lower or "load_embedding_model" in obs.output, (
             f"Expected ranked code-search result in output:\n{obs.output}"
         )
+        assert "rank=" not in output_lower
 
 
 # ---------------------------------------------------------------------------

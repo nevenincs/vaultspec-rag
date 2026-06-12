@@ -227,9 +227,11 @@ class TestPydanticModels:
             language="python",
             line_start=1,
             line_end=10,
+            rerank_text="def main():\n    return 0",
         )
         assert item.language == "python"
         assert item.line_start == 1
+        assert item.model_dump()["rerank_text"] == "def main():\n    return 0"
 
     def test_search_response(self):
         resp = SearchResponse(

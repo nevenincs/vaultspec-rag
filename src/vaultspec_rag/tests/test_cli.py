@@ -169,6 +169,59 @@ def _slow_search_contract_server() -> tuple[typing.Any, typing.Any]:
     return server, thread
 
 
+def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
+    """Start a local service returning deterministic search results."""
+    import http.server
+    import threading
+
+    requests: list[object] = []
+
+    class _SearchOutputHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            requests.append(body)
+            payload = {
+                "ok": True,
+                "results": [
+                    {
+                        "path": "src/search_ui.py",
+                        "line_start": 12,
+                        "score": 0.875,
+                        "snippet": "def render_search",
+                        "rerank_text": (
+                            "def render_search_results(): return 'full service text'"
+                        ),
+                    },
+                    {
+                        "anchor": "docs/ops.md#service-status",
+                        "path": "docs/ops.md",
+                        "score": 0.5,
+                        "snippet": "Use server status",
+                        "rerank_text": (
+                            "Use server status for service readiness and current work."
+                        ),
+                    },
+                ],
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _SearchOutputHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 class TestSearchTimeoutDefaults:
     """Tests for service-delegated search timeout defaults."""
 
@@ -1190,9 +1243,10 @@ class TestSearchSafetyContract:
                 via="service",
             )
         rendered = " ".join(out.getvalue().split())
-        assert rendered == "foo.py: rank=1 x"
+        assert rendered == "1. foo.py - x"
         assert "Search Results" not in rendered
         assert "score" not in rendered
+        assert "rank=" not in rendered
 
     def test_search_results_in_process_uses_same_line_contract(self):
         """The via marker does not change the human result shape."""
@@ -1212,8 +1266,95 @@ class TestSearchSafetyContract:
                 via="in-process",
             )
         rendered = " ".join(out.getvalue().split())
-        assert rendered == "foo.py: rank=1 x"
+        assert rendered == "1. foo.py - x"
         assert "Search Results" not in rendered
+        assert "rank=" not in rendered
+
+    def test_search_command_renders_numbered_results_from_http_response(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status",
+                    "--type",
+                    "code",
+                    "--limit",
+                    "2",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [
+            {
+                "query": "service status",
+                "top_k": 2,
+                "project_root": str(tmp_path),
+                "type": "codebase",
+            }
+        ]
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines == [
+            (
+                "1. src/search_ui.py:12 - "
+                "def render_search_results(): return 'full service text'"
+            ),
+            (
+                "2. docs/ops.md#service-status - "
+                "Use server status for service readiness and current work."
+            ),
+        ]
+        assert "def render_search\n" not in result.output
+        assert "rank=" not in result.output
+        assert "score=" not in result.output
+
+    def test_search_command_scores_flag_uses_plain_score_label(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, _requests = _search_output_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status",
+                    "--type",
+                    "code",
+                    "--limit",
+                    "2",
+                    "--port",
+                    str(server.server_port),
+                    "--scores",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines[0] == (
+            "1. src/search_ui.py:12 (score 0.8750) - "
+            "def render_search_results(): return 'full service text'"
+        )
+        assert "score=" not in result.output
+        assert "rank=" not in result.output
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
@@ -1822,10 +1963,11 @@ class TestSearchResultRendering:
         assert "a" * 250 in rendered
 
     def test_scores_are_hidden_by_default(self):
-        """Default output shows rank, not numeric relevance score."""
+        """Default output shows numbering, not numeric relevance score."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        assert rendered.strip() == "foo.py: rank=1 test"
-        assert "score=" not in rendered
+        assert rendered.strip() == "1. foo.py - test"
+        assert "score" not in rendered
+        assert "rank=" not in rendered
 
     def test_scores_flag_renders_numeric_score(self):
         """--scores detail mode includes the relevance score."""
@@ -1833,7 +1975,8 @@ class TestSearchResultRendering:
             {"path": "foo.py", "score": 0.9, "snippet": "test"},
             show_scores=True,
         )
-        assert rendered.strip() == "foo.py: rank=1 score=0.9000 test"
+        assert rendered.strip() == "1. foo.py (score 0.9000) - test"
+        assert "score=" not in rendered
 
     def test_display_empty_results(self):
         """Empty results list renders without raising."""
@@ -1848,12 +1991,12 @@ class TestSearchResultRendering:
         rendered = self._render(
             {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
         )
-        assert rendered.strip() == "foo.py:42: rank=1 test"
+        assert rendered.strip() == "1. foo.py:42 - test"
 
     def test_display_without_line_start(self):
         """Result without line_start renders location as bare path."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        assert rendered.strip() == "foo.py: rank=1 test"
+        assert rendered.strip() == "1. foo.py - test"
 
     def test_display_with_anchor_prefers_deep_link(self):
         """Anchor locators stay mechanically grabbable."""
@@ -1866,7 +2009,7 @@ class TestSearchResultRendering:
                 "snippet": "test",
             }
         )
-        assert rendered.strip() == "report.pdf#page=4: rank=1 test"
+        assert rendered.strip() == "1. report.pdf#page=4 - test"
 
     def test_display_service_lock_error_hides_backend_contract(
         self, capsys: pytest.CaptureFixture[str]

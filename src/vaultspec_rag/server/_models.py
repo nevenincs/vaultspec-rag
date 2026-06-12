@@ -72,6 +72,7 @@ class SearchResultItem(BaseModel):
     preprocessor_id: str | None = None
     anchor: str | None = None
     locator: str | None = None
+    rerank_text: str | None = None
 
 
 class SearchResponse(BaseModel):
