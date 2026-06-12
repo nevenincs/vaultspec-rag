@@ -3879,6 +3879,84 @@ class TestIndexSummaryCLI:
             "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms",
         ]
 
+    def test_index_all_handles_sparse_service_summary_without_unknown_text(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        (tmp_path / ".vaultspec").mkdir()
+        requests: list[dict[str, object]] = []
+
+        class SparseIndexServiceHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                requests.append(body)
+
+                response_by_type = {
+                    "vault": {
+                        "ok": True,
+                        "added": "not-a-number",
+                        "updated": "2",
+                        "removed": None,
+                        "total": [],
+                        "duration_ms": "not-a-duration",
+                    },
+                    "codebase": {
+                        "ok": True,
+                        "added": "4",
+                        "updated": "5",
+                        "removed": "6",
+                        "total": "15",
+                        "duration_ms": "50",
+                    },
+                }
+                response = response_by_type.get(
+                    body.get("type"),
+                    {"ok": False, "error": "unexpected_type"},
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), SparseIndexServiceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "index",
+                    "--type",
+                    "all",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert [req["type"] for req in requests] == ["vault", "codebase"]
+
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines == [
+            "Indexing summary: ran in running service.",
+            "Vault: added 0; updated 2; removed 0; total 0; duration not reported",
+            "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms",
+        ]
+        assert "unknown" not in result.output.lower()
+        assert "finished in not reported" not in result.output.lower()
+
 
 class TestCpuOnlyMessageRendering:
     """Regression guard for literal TOML keys in the CPU_ONLY copy.

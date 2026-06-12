@@ -43,9 +43,19 @@ def _index_source_label(source: str) -> str:
 
 
 def _format_index_duration(raw: object) -> str:
-    if not isinstance(raw, int | float):
-        return "unknown"
-    milliseconds = max(0, int(raw))
+    if isinstance(raw, int | float):
+        raw_milliseconds = float(raw)
+    elif isinstance(raw, str):
+        try:
+            raw_milliseconds = float(raw)
+        except ValueError:
+            return "not reported"
+    else:
+        return "not reported"
+    try:
+        milliseconds = max(0, int(raw_milliseconds))
+    except (OverflowError, ValueError):
+        return "not reported"
     if milliseconds < 1000:
         return f"{milliseconds}ms"
     seconds = milliseconds / 1000.0
@@ -64,14 +74,20 @@ def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
         _cli.console.print("No sources indexed.")
         return
     for row in sources:
-        source = str(row.get("source", "unknown"))
+        source = str(row.get("source") or "not_reported")
         label = _index_source_label(source)
+        duration = _format_index_duration(row.get("duration_ms"))
+        duration_text = (
+            f"finished in {duration}"
+            if duration != "not reported"
+            else "duration not reported"
+        )
         _cli.console.print(
             f"{label}: added {row.get('added', 0)}; "
             f"updated {row.get('updated', 0)}; "
             f"removed {row.get('removed', 0)}; "
             f"total {row.get('total', 0)}; "
-            f"finished in {_format_index_duration(row.get('duration_ms', 0))}",
+            f"{duration_text}",
             markup=False,
             highlight=False,
         )
@@ -246,7 +262,12 @@ def _print_service_results(
     def _row(label: str, data: dict[str, object]) -> dict[str, object]:
         def _i(key: str) -> int:
             raw = data.get(key, 0)
-            return int(raw) if isinstance(raw, int | float | str) else 0
+            if not isinstance(raw, int | float | str):
+                return 0
+            try:
+                return int(raw)
+            except (OverflowError, ValueError):
+                return 0
 
         return {
             "source": label,
@@ -254,7 +275,7 @@ def _print_service_results(
             "updated": _i("updated"),
             "removed": _i("removed"),
             "total": _i("total"),
-            "duration_ms": _i("duration_ms"),
+            "duration_ms": data.get("duration_ms"),
         }
 
     sources: list[dict[str, object]] = []
