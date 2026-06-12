@@ -574,7 +574,7 @@ def _status_next_action(
     if state != "running":
         return f"vaultspec-rag server logs --lines 80{port_arg}"
     if not isinstance(health, dict) or health.get("status") != "ready":
-        return f"vaultspec-rag server health{port_arg}"
+        return f"vaultspec-rag server status --verbose{port_arg}"
     running_jobs = jobs.get("running")
     if isinstance(running_jobs, int) and running_jobs > 0:
         return f"vaultspec-rag server jobs --running{port_arg}"
@@ -739,7 +739,7 @@ def _render_status_summary(
     jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
     lines = [
         f"Server: {_plain_status_label(state_label)}",
-        f"Health: {_status_health_label(health, port_listening=port_listening)}",
+        f"Ready: {_status_health_label(health, port_listening=port_listening)}",
         f"Busy: {_status_busy_label(jobs_dict)}",
         f"Address: http://127.0.0.1:{port}",
         f"Uptime: {_status_uptime_label(health)}",
@@ -978,13 +978,6 @@ def _render_explicit_port_status(
     )
 
 
-@server_app.command(
-    "health",
-    help=(
-        "Readiness probe for automation and adapters. Use `server status` for "
-        "human service state and next actions."
-    ),
-)
 def service_health(
     port: Annotated[
         int | None,
@@ -998,7 +991,7 @@ def service_health(
         ),
     ] = False,
 ) -> None:
-    """Probe the resident service ``/health`` endpoint."""
+    """Internal compatibility helper for probing the service ``/health`` endpoint."""
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
         message = "Service is not running. Start it with `vaultspec-rag server start`."
@@ -1010,7 +1003,7 @@ def service_health(
                 3,
             )
         _cli.console.print(
-            "Health: unavailable\n"
+            "Ready: unavailable\n"
             "Use `vaultspec-rag server status` for service state and next actions.",
             markup=False,
             highlight=False,
@@ -1032,7 +1025,7 @@ def service_health(
                 port=resolved_port,
             )
         _cli.console.print(
-            "Health: unreachable\n"
+            "Ready: unreachable\n"
             f"Use `vaultspec-rag server status --port {resolved_port}` for "
             "service state and next actions.",
             markup=False,
@@ -1045,7 +1038,7 @@ def service_health(
         return
 
     _cli.console.print(
-        f"Health: {_status_health_label(health, port_listening=True)}\n"
+        f"Ready: {_status_health_label(health, port_listening=True)}\n"
         f"Use `vaultspec-rag server status --port {resolved_port}` for "
         "service state and next actions.",
         markup=False,
@@ -1056,7 +1049,7 @@ def service_health(
 @server_app.command(
     "status",
     help=(
-        "Show the human operator summary for service state, health, work, "
+        "Show the human operator summary for service state, readiness, work, "
         "and next checks."
     ),
 )

@@ -456,67 +456,15 @@ class TestServerCommands:
             reset_base_config()
             reset_rag_config()
 
-    def test_service_health_human_output_is_minimal_probe(self):
-        """server health is automation-oriented and points humans to status."""
-        import http.server
-        import json
-        import threading
+    def test_server_health_is_not_a_user_facing_command(self):
+        """server status is the single user-facing readiness entry point."""
+        help_result = runner.invoke(app, ["server", "--help"])
+        assert help_result.exit_code == 0, help_result.output
+        assert "health" not in help_result.output.lower()
 
-        class _HealthHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(
-                        {
-                            "status": "ready",
-                            "cuda": True,
-                            "models_loaded": True,
-                            "project_count": 3,
-                            "uptime_s": 42.0,
-                            "backend_capabilities": {
-                                "same_project_search_strategy": "serialized",
-                                "cross_project_search_strategy": "parallel",
-                                "local_storage_process_model": "exclusive",
-                            },
-                        },
-                    ).encode("utf-8"),
-                )
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
-        port = server.server_address[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            human = runner.invoke(app, ["server", "health", "--port", str(port)])
-            assert human.exit_code == 0
-            assert "Health: ready for requests" in human.output
-            assert f"vaultspec-rag server status --port {port}" in human.output
-            assert "Models loaded" not in human.output
-            assert "Search Concurrency" not in human.output
-            for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-                assert forbidden not in human.output
-
-            json_result = runner.invoke(
-                app,
-                ["server", "health", "--port", str(port), "--json"],
-            )
-            assert json_result.exit_code == 0
-            envelope = json.loads(json_result.output)
-            assert envelope["ok"] is True
-            assert envelope["data"]["models_loaded"] is True
-            assert (
-                envelope["data"]["backend_capabilities"]["same_project_search_strategy"]
-                == "serialized"
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+        result = runner.invoke(app, ["server", "health", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
 
 class TestServerRoutingFlattened:
@@ -538,10 +486,10 @@ class TestServerRoutingFlattened:
         assert result.exit_code == 0, result.output
         assert "operator summary" in result.output
 
-    def test_server_health_help_points_to_status(self):
+    def test_server_health_not_a_command(self):
         result = runner.invoke(app, ["server", "health", "--help"])
-        assert result.exit_code == 0, result.output
-        assert "Use `server status`" in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
     def test_server_watcher_status_help(self):
         result = runner.invoke(app, ["server", "watcher", "status", "--help"])
@@ -1289,7 +1237,7 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "search request to the service" in normalized
         assert "timed out after 0.001 seconds" in normalized
-        assert "Service: reachable; health status ready; 3 project(s) loaded" in (
+        assert "Service: reachable; ready for requests; 3 project(s) loaded" in (
             result.output
         )
         assert "Work: no running jobs reported" in result.output
@@ -2096,7 +2044,7 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 0
             expected = [
                 "Server: running",
-                "Health: ready for requests",
+                "Ready: ready for requests",
                 "Busy: processing 1 job",
                 f"Address: http://127.0.0.1:{port}",
                 "Uptime: 5m 12s",
