@@ -3540,6 +3540,63 @@ class TestServiceDaemonHelpers:
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
 
+    def test_service_status_jobs_error_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        class _JobsErrorStatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/health":
+                    payload = {"status": "ready", "uptime_s": 60}
+                    status_code = 200
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": False,
+                        "error": "jobs_unavailable",
+                        "message": "Job summary is not available.",
+                    }
+                    status_code = 503
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _JobsErrorStatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port)],
+            )
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Server"] == "running"
+            assert labels["Ready"] == "ready for requests"
+            assert labels["Busy"] == "not reported by service"
+            assert labels["Queue"] == "not reported by service"
+            assert labels["Jobs"] == "not reported by service"
+            assert labels["Current job"] == "not reported by service"
+            assert "unknown" not in result.output.lower()
+            assert "unavailable" not in result.output.lower()
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
     def test_service_status_port_only_verbose_uses_network_language(
         self, tmp_path: Path
     ) -> None:

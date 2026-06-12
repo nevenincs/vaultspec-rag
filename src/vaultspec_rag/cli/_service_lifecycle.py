@@ -651,7 +651,7 @@ def _running_job_line(job: dict[str, object]) -> str:
 
 def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return ["Current job: unavailable"]
+        return ["Current job: not reported by service"]
     current_jobs = jobs.get("current_jobs")
     if isinstance(current_jobs, list) and len(current_jobs) > 1:
         return [
@@ -867,7 +867,7 @@ def _print_operational_detail(
             _print_detail_line("Jobs", _status_jobs_label(jobs_dict))
             _print_current_job_detail(jobs_dict)
         else:
-            _print_detail_line("Jobs", "unavailable")
+            _print_detail_line("Jobs", "not reported by service")
     next_action = operational.get("next_action")
     if next_action:
         _cli.console.print("Next action:", markup=False, highlight=False)
@@ -894,7 +894,7 @@ def _status_health_label(
 
 def _status_busy_label(jobs: dict[str, object] | None) -> str:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "unknown"
+        return "not reported by service"
     running = jobs.get("running")
     queued = jobs.get("queued")
     running_count = running if isinstance(running, int) else 0
@@ -923,7 +923,7 @@ def _status_busy_label(jobs: dict[str, object] | None) -> str:
 
 def _status_queue_label(jobs: dict[str, object] | None) -> str:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "unavailable"
+        return "not reported by service"
     running = jobs.get("running")
     queued = jobs.get("queued")
     running_count = running if isinstance(running, int) else 0
@@ -947,7 +947,7 @@ def _status_queue_label(jobs: dict[str, object] | None) -> str:
 
 def _status_jobs_label(jobs: dict[str, object] | None) -> str:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "unavailable"
+        return "not reported by service"
     phases = jobs.get("phases")
     total = jobs.get("total")
     running = jobs.get("running")
@@ -986,7 +986,7 @@ def _status_jobs_label(jobs: dict[str, object] | None) -> str:
 
 def _status_current_job_label(jobs: dict[str, object] | None) -> str:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "unavailable"
+        return "not reported by service"
     current_job = jobs.get("current_job")
     current_job_dict = (
         cast("dict[str, object]", current_job)
@@ -999,7 +999,7 @@ def _status_current_job_label(jobs: dict[str, object] | None) -> str:
 
 def _status_uptime_label(health: dict[str, object] | None) -> str:
     if not isinstance(health, dict):
-        return "unknown"
+        return "not reported by service"
     return _format_status_duration(health.get("uptime_s"))
 
 
