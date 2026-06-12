@@ -321,6 +321,8 @@ def test_jobs_subcommand_registered() -> None:
     assert "'watcher'" not in result.stdout
     assert "index/reindex" not in result.stdout
     assert "index update activity" in normalized
+    assert "failed/error" not in result.stdout
+    assert "Show only failed jobs" in result.stdout
 
 
 def test_jobs_filter_summary_uses_operator_language() -> None:

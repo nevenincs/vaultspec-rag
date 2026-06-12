@@ -632,7 +632,7 @@ def service_jobs(
     ] = False,
     failed: Annotated[
         bool,
-        typer.Option("--failed", help="Show only failed/error jobs."),
+        typer.Option("--failed", help="Show only failed jobs."),
     ] = False,
     job_id: Annotated[
         str | None,
