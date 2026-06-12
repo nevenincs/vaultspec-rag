@@ -16,6 +16,14 @@ related:
 
 ## Description
 
+- Re-run the quality harness with contextual code-chunk headers and
+  per-surface query instructions active (shared run with the rerank step).
+
 ## Outcome
+
+8/8 probes, 100% precision - no relevance regression from the embed-input
+changes; the long-document tail-retrieval gain is separately proven by the
+chunking integration tests. The harness ran while three concurrent index jobs
+saturated the GPU, doubling as an adversarial co-load sample.
 
 ## Notes

@@ -41,7 +41,7 @@ Rerank on token-bounded full content and bound the graph boost.
 
 - [x] `W02.P03.S07` - Rerank with token-bounded full candidate content instead of 200-char snippets and expose reranker max-length configuration; `src/vaultspec_rag/search/_searcher.py`.
 - [x] `W02.P03.S08` - Convert the post-rerank multiplicative graph boost into a bounded additive nudge; `src/vaultspec_rag/search/_rerank.py`.
-- [ ] `W02.P03.S09` - Update unit and GPU tests for content reranking and the bounded nudge, run the quality harness, and record deltas; `src/vaultspec_rag/tests`.
+- [x] `W02.P03.S09` - Update unit and GPU tests for content reranking and the bounded nudge, run the quality harness, and record deltas; `src/vaultspec_rag/tests`.
 
 ### Phase `W02.P04` - Contextual embeddings
 
@@ -49,7 +49,7 @@ Contextual headers in embed text and per-surface query instructions.
 
 - [x] `W02.P04.S10` - Prepend contextual headers (path, class, function) to code-chunk embed text while storing raw chunk content; `src/vaultspec_rag/indexer`.
 - [x] `W02.P04.S11` - Add per-surface Qwen3 query instructions for vault and codebase searches; `src/vaultspec_rag/embeddings.py`.
-- [ ] `W02.P04.S12` - Re-run the quality benchmarks to validate contextual embeddings and record deltas; `src/vaultspec_rag/tests/benchmarks`.
+- [x] `W02.P04.S12` - Re-run the quality benchmarks to validate contextual embeddings and record deltas; `src/vaultspec_rag/tests/benchmarks`.
 
 ## Wave `W03` - Lock architecture
 
@@ -92,7 +92,7 @@ Rebuild corpora, run the full saturation matrix against the W01 baseline, verify
 
 Adversarial matrix vs baseline, quality parity, persona verification.
 
-- [ ] `W05.P08.S23` - Rebuild both corpora under the new schema and run the adversarial saturation matrix against the W01 baseline, recording results; `.vault/exec/2026-06-12-service-concurrency`.
+- [x] `W05.P08.S23` - Rebuild both corpora under the new schema and run the adversarial saturation matrix against the W01 baseline, recording results; `.vault/exec/2026-06-12-service-concurrency`.
 - [ ] `W05.P08.S24` - Run the quality harness comparison and manual persona CLI verification in human and JSON modes; `src/vaultspec_rag/tests/benchmarks`.
 - [ ] `W05.P08.S25` - Record the execution summary and prepare the review handoff; `.vault/exec/2026-06-12-service-concurrency`.
 
