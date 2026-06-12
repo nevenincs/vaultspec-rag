@@ -2144,6 +2144,8 @@ class TestHelpCleanup:
         normalized = " ".join(result.output.split())
         assert "Build or update" in result.output
         assert "Uses the running service" in normalized
+        assert "selected service is not reachable" in normalized
+        assert "selected service is unavailable" not in normalized
         for forbidden in ("Qdrant", "tqdm", "agent / CI", "fast path"):
             assert forbidden not in normalized
 
@@ -2174,6 +2176,9 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["search", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
+        normalized = " ".join(result.output.split())
+        assert "selected service is not reachable" in normalized
+        assert "selected service is unavailable" not in normalized
         assert "hybrid" in result.output.lower() or "Search" in result.output
 
     def test_search_help_filter_options_are_plain(self):

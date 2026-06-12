@@ -353,7 +353,7 @@ def handle_index(
         typer.Option(
             "--allow-fallback",
             help=(
-                "If the selected service is unavailable, build the index "
+                "If the selected service is not reachable, build the index "
                 "locally instead of stopping with an error."
             ),
         ),

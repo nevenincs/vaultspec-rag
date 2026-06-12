@@ -573,7 +573,7 @@ def handle_search(
         typer.Option(
             "--allow-fallback",
             help=(
-                "If the selected service is unavailable, run the search "
+                "If the selected service is not reachable, run the search "
                 "locally instead of stopping with an error."
             ),
         ),
