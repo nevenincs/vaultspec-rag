@@ -26,8 +26,8 @@ def handle_status(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Mirrors the MCP get_index_status response."
+                "Emit one JSON envelope to stdout instead of text. "
+                "Mirrors the MCP get_index_status response."
             ),
         ),
     ] = False,
@@ -99,4 +99,9 @@ def handle_status(
         f"Target: {target}",
     ]
     for line in lines:
-        _cli.console.print(line, markup=False, highlight=False)
+        _cli.console.print(
+            line,
+            markup=False,
+            highlight=False,
+            soft_wrap=line.startswith(("Storage:", "Target:")),
+        )

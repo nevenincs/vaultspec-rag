@@ -15,7 +15,6 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from ..cli import (
-    _add_backend_contract_rows,
     _display_search_results,
     _display_service_error,
     _health_probe,
@@ -298,7 +297,9 @@ class TestCleanCommand:
 
         result = runner.invoke(app, ["--target", str(root), "clean", "all", "--yes"])
         assert result.exit_code == 0, result.output
-        assert "Clean Summary" in result.output
+        assert "Clean summary" in result.output
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in result.output
 
         store = VaultStore(root)
         try:
@@ -1559,34 +1560,6 @@ class TestSearchResultRendering:
         )
         assert rendered.strip() == "report.pdf#page=4: rank=1 test"
 
-    def test_backend_contract_rows_render(self):
-        """Backend contract rows render stable concurrency wording."""
-        from rich.table import Table
-
-        table = Table(show_header=False)
-        table.add_column("Key")
-        table.add_column("Value")
-
-        _add_backend_contract_rows(
-            table,
-            {
-                "same_project_search_strategy": "serialized",
-                "cross_project_search_strategy": "parallel",
-                "local_storage_process_model": "exclusive",
-            },
-        )
-
-        from io import StringIO
-
-        from rich.console import Console
-
-        out = StringIO()
-        Console(file=out, force_terminal=False, width=120).print(table)
-        rendered = out.getvalue()
-        assert "Search Concurrency" in rendered
-        assert "supported; same-project local backend access serialized" in rendered
-        assert "Storage Process Model" in rendered
-
     def test_display_service_lock_error_hides_backend_contract(
         self, capsys: pytest.CaptureFixture[str]
     ):
@@ -2148,13 +2121,29 @@ class TestServiceDaemonHelpers:
             verbose = runner.invoke(app, ["server", "status", "--verbose"])
             assert verbose.exit_code == 0
             verbose_expected = [
+                "Service status",
+                "Service file: present",
+                "PID alive: yes",
+                "Models loaded",
+                "Current job: reindex_codebase (",
+                "Next action:",
+                "vaultspec-rag server jobs --running",
+            ]
+            verbose_hidden = [
                 "Search Concurrency",
                 "Cross-project Search",
-                "Models loaded",
+                "Service Token Match",
+                "─",
+                "│",
+                "┌",
+                "┐",
+                "└",
+                "┘",
             ]
             assert [
                 text for text in verbose_expected if text not in verbose.output
             ] == []
+            assert [text for text in verbose_hidden if text in verbose.output] == []
         finally:
             server.shutdown()
             server.server_close()
@@ -3170,6 +3159,9 @@ class TestBenchmarkAndQualityCommands:
         assert "GeForce RTX 4090" in result.output
         assert "512.0 MB" in result.output
         assert "42" in result.output
+        assert "Search latency: 10 queries" in result.output
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in result.output
 
     def test_benchmark_empty_vault(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3228,6 +3220,9 @@ class TestBenchmarkAndQualityCommands:
         assert result.exit_code == 0
         assert len(called) == 1
         assert "PASS" in result.output
+        assert "Quality probes: synthetic corpus" in result.output
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in result.output
         import re
 
         output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)

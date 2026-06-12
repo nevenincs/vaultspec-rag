@@ -98,7 +98,7 @@ class TestCLIIndex:
         root = str(cli_vault)
         result = _run_cli("--target", root, "index", "--type", "vault", cwd=root)
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "Indexing Summary" in result.stdout
+        assert "Indexing summary" in result.stdout
 
     @pytest.mark.timeout(300)
     def test_index_rebuild_flag_works(self, cli_vault: Path) -> None:
@@ -122,7 +122,7 @@ class TestCLIIndex:
         root = str(cli_vault)
         result = _run_cli("--target", root, "index", "--type", "code", cwd=root)
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "Indexing Summary" in result.stdout
+        assert "Indexing summary" in result.stdout
         assert "Codebase" in result.stdout
 
     @pytest.mark.timeout(300)

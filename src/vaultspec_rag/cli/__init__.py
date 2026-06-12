@@ -89,7 +89,6 @@ from ._process import (
 )
 from ._quality import handle_quality
 from ._render import (
-    _add_backend_contract_rows,
     _display_port_unreachable_error,
     _display_search_results,
     _display_service_error,
@@ -139,7 +138,6 @@ from ._test import handle_test
 
 __all__ = [
     "CLIState",
-    "_add_backend_contract_rows",
     "_append_lifecycle_shutdown_log",
     "_cpu_only_message",
     "_default_service_port",

@@ -6,8 +6,6 @@ import os
 from typing import Annotated
 
 import typer
-from rich.panel import Panel
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -65,36 +63,29 @@ def mcp_stop() -> None:
         lifecycle automatically.
 
     """
-    _cli.console.print(
-        Panel(
-            "The MCP server uses stdio transport and runs in the foreground.\n"
-            "Terminate it via [bold]Ctrl+C[/] or the parent process manager.",
-            title="MCP Stop",
-            border_style="yellow",
-        ),
-    )
+    _cli.console.print("MCP server: foreground stdio process")
+    _cli.console.print("Stop it with Ctrl+C or the parent process manager.")
 
 
 @mcp_app.command("status")
 def mcp_status() -> None:
     """Display the MCP server configuration, available tools, and entry points.
 
-    Shows a table with server name, transport mode, registered tools
-    (search_vault, search_codebase, reindex_vault, reindex_codebase,
-    get_index_status, get_code_file), available resources, and prompts.
+    Shows server name, transport mode, registered tools, available resources, and
+    prompts.
     """
-    table = Table(title="MCP Server Configuration", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Server Name", "VaultSpec Search")
-    table.add_row("Transport", "stdio (default), HTTP via service start")
-    table.add_row(
-        "Tools",
-        "search_vault, search_codebase, "
-        "get_index_status, get_code_file, "
-        "reindex_vault, reindex_codebase",
-    )
-    table.add_row("Resources", "vault://{doc_id}")
-    table.add_row("Prompts", "analyze_feature")
-    table.add_row("Entry Point", "vaultspec-search-mcp")
-    _cli.console.print(table)
+    _cli.console.print("Server: VaultSpec Search")
+    _cli.console.print("Transport: stdio by default; HTTP through server start")
+    _cli.console.print("Tools:")
+    for tool in (
+        "search_vault",
+        "search_codebase",
+        "get_index_status",
+        "get_code_file",
+        "reindex_vault",
+        "reindex_codebase",
+    ):
+        _cli.console.print(f"- {tool}", markup=False, highlight=False)
+    _cli.console.print("Resources: vault://{doc_id}")
+    _cli.console.print("Prompts: analyze_feature")
+    _cli.console.print("Entry point: vaultspec-search-mcp")

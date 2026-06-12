@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Annotated, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -38,7 +37,7 @@ def _root(ctx: typer.Context) -> Path:
 def handle_preprocess_list(
     ctx: typer.Context,
     json_mode: Annotated[
-        bool, typer.Option("--json", help="Emit one JSON envelope instead of a table.")
+        bool, typer.Option("--json", help="Emit one JSON envelope instead of text.")
     ] = False,
 ) -> None:
     """Show the project's resolved preprocess rules in precedence order."""
@@ -59,21 +58,27 @@ def handle_preprocess_list(
     if not rules:
         _cli.console.print("No preprocess rules configured (.vaultragpreprocess.toml).")
         return
-    table = Table(title="Preprocess Rules", show_header=True)
-    table.add_column("Pattern", style="cyan")
-    table.add_column("Command", style="white")
-    table.add_column("Priority", justify="right")
-    table.add_column("on_error", style="yellow")
-    table.add_column("timeout_s", justify="right")
-    for r in rules:
-        table.add_row(
-            str(r["pattern"]),
-            str(r["command"]),
-            str(r["priority"]),
-            str(r["on_error"]),
-            "-" if r["timeout_s"] is None else str(r["timeout_s"]),
+    _cli.console.print(f"Preprocess rules: {len(rules)}")
+    for index, rule in enumerate(rules, start=1):
+        timeout = "-" if rule["timeout_s"] is None else str(rule["timeout_s"])
+        _cli.console.print(
+            " ".join(
+                [
+                    f"{index}.",
+                    f"pattern={rule['pattern']}",
+                    f"priority={rule['priority']}",
+                    f"on_error={rule['on_error']}",
+                    f"timeout_s={timeout}",
+                ]
+            ),
+            markup=False,
+            highlight=False,
         )
-    _cli.console.print(table)
+        _cli.console.print(
+            f"   command={rule['command']}",
+            markup=False,
+            highlight=False,
+        )
 
 
 @preprocess_app.command(

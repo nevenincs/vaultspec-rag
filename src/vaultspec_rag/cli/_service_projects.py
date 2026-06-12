@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Annotated, Any, NoReturn, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -55,7 +54,25 @@ def _handle_list_not_running(json_mode: bool) -> NoReturn:
     raise typer.Exit(3)
 
 
-def _print_projects_table(
+def _project_summary(raw_entry: object) -> tuple[str, str] | None:
+    if not isinstance(raw_entry, dict):
+        return None
+    entry = cast("dict[str, object]", raw_entry)
+    root_str = str(entry.get("root", ""))
+    idle_raw = entry.get("idle_seconds", 0.0)
+    idle_s = float(idle_raw) if isinstance(idle_raw, int | float) else 0.0
+    refs_raw = entry.get("ref_count", 0)
+    refs = int(refs_raw) if isinstance(refs_raw, int | float) else 0
+    iso = str(entry.get("last_access_iso", ""))
+    hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
+    last_access = hms or "unknown"
+    metadata = (
+        f"idle {_humanize_idle(idle_s)}; references {refs}; last access {last_access}"
+    )
+    return root_str, metadata
+
+
+def _print_projects_summary(
     projects: list[object], max_projects: int, idle_ttl: int
 ) -> None:
     if not projects:
@@ -64,28 +81,17 @@ def _print_projects_table(
         )
         return
 
-    table = Table(title="Active project slots")
-    table.add_column("Root", overflow="ellipsis")
-    table.add_column("Idle", justify="right")
-    table.add_column("Refs", justify="right")
-    table.add_column("Last access", justify="right")
-    for raw_entry in projects:
-        if not isinstance(raw_entry, dict):
-            continue
-        entry = cast("dict[str, object]", raw_entry)
-        root_str = _truncate_root(str(entry.get("root", "")))
-        idle_raw = entry.get("idle_seconds", 0.0)
-        idle_s = float(idle_raw) if isinstance(idle_raw, int | float) else 0.0
-        refs_raw = entry.get("ref_count", 0)
-        refs = int(refs_raw) if isinstance(refs_raw, int | float) else 0
-        iso = str(entry.get("last_access_iso", ""))
-        # Show just HH:MM:SS from ISO timestamp.
-        hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
-        table.add_row(root_str, _humanize_idle(idle_s), str(refs), hms)
-    _cli.console.print(table)
     _cli.console.print(
-        f"{len(projects)}/{max_projects} slots, idle TTL {idle_ttl}s",
+        f"Active project slots: {len(projects)}/{max_projects}, idle TTL {idle_ttl}s",
     )
+    for raw_entry in projects:
+        summary = _project_summary(raw_entry)
+        if summary:
+            root, metadata = summary
+            _cli.console.print(
+                f"- {root}", markup=False, highlight=False, soft_wrap=True
+            )
+            _cli.console.print(f"  {metadata}", markup=False, highlight=False)
 
 
 @server_projects_app.command("list")
@@ -98,7 +104,7 @@ def service_projects_list(
         bool,
         typer.Option(
             "--json",
-            help="Emit one JSON envelope to stdout instead of a Rich table.",
+            help="Emit one JSON envelope to stdout instead of text.",
         ),
     ] = False,
 ) -> None:
@@ -127,7 +133,7 @@ def service_projects_list(
         )
         return
 
-    _print_projects_table(projects, int(max_projects), int(idle_ttl))
+    _print_projects_summary(projects, int(max_projects), int(idle_ttl))
 
 
 def _handle_evict_not_running(json_mode: bool, root: str) -> NoReturn:

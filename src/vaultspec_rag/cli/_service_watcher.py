@@ -5,14 +5,12 @@ from __future__ import annotations
 from typing import Annotated, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
 from ._app import server_watcher_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
-from ._service_projects import _truncate_root
 from ._service_status import _default_service_port
 
 
@@ -45,7 +43,7 @@ def service_watcher_status(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of a table."),
+        typer.Option("--json", help="Emit one JSON envelope instead of text."),
     ] = False,
 ) -> None:
     """Show watcher config and which roots are being watched."""
@@ -71,11 +69,9 @@ def service_watcher_status(
     if not watching:
         _cli.console.print("No roots currently watched.")
         return
-    table = Table(title="Watched roots")
-    table.add_column("Root", overflow="ellipsis")
+    _cli.console.print(f"Watched roots: {len(watching)}")
     for entry in watching:
-        table.add_row(_truncate_root(str(entry)))
-    _cli.console.print(table)
+        _cli.console.print(f"- {entry}", markup=False, highlight=False)
 
 
 @server_watcher_app.command("start")

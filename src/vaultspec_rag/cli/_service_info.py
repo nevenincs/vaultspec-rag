@@ -2,7 +2,7 @@
 
 Tier-1 observability subcommand (``service-observability`` ADR, plan
 P02). Calls the service-state admin endpoint through the shared HTTP
-admin client and renders a Rich summary (or the JSON envelope).
+admin client and renders a plain summary (or the JSON envelope).
 Service-not-running yields exit code 3.
 """
 
@@ -12,14 +12,12 @@ from pathlib import Path
 from typing import Annotated, Any, NoReturn, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
 from ._app import server_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
-from ._service_projects import _truncate_root
 from ._service_status import _default_service_port
 
 
@@ -74,7 +72,7 @@ def service_info(
         _emit_json(True, "service.info", data=result)
         return
 
-    _render_service_info_table(result)
+    _render_service_info(result)
 
 
 def _global_target_from_context(ctx: typer.Context) -> Path | None:
@@ -133,7 +131,7 @@ def _exit_service_info_error(
     raise typer.Exit(1)
 
 
-def _render_service_info_table(result: dict[str, Any]) -> None:
+def _render_service_info(result: dict[str, Any]) -> None:
     raw_index = result.get("index")
     index = cast("dict[str, object]", raw_index) if isinstance(raw_index, dict) else {}
     raw_projects = result.get("projects")
@@ -147,21 +145,29 @@ def _render_service_info_table(result: dict[str, Any]) -> None:
         cast("dict[str, object]", raw_watcher) if isinstance(raw_watcher, dict) else {}
     )
 
-    table = Table(title="Service state", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Vault docs", str(index.get("vault_count", "?")))
-    table.add_row("Code chunks", str(index.get("code_count", "?")))
-    table.add_row("Target", _truncate_root(str(index.get("target_dir", ""))))
-    table.add_row("GPU VRAM (GB)", str(index.get("vram_gb", "?")))
+    _cli.console.print("Service state")
+    _cli.console.print(
+        f"Index: vault_docs={index.get('vault_count', '?')} "
+        f"code_chunks={index.get('code_count', '?')}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Target: {index.get('target_dir', '')}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print(f"GPU: vram_gb={index.get('vram_gb', '?')}")
 
     raw_slots = projects_data.get("projects")
     slots: list[object] = (
         cast("list[object]", raw_slots) if isinstance(raw_slots, list) else []
     )
-    table.add_row(
-        "Project slots",
-        f"{len(slots)}/{projects_data.get('max_projects', '?')}",
+    _cli.console.print(
+        f"Project slots: {len(slots)}/{projects_data.get('max_projects', '?')}",
+        markup=False,
+        highlight=False,
     )
 
     enabled = bool(watcher.get("watch_enabled", False))
@@ -169,8 +175,9 @@ def _render_service_info_table(result: dict[str, Any]) -> None:
     watching: list[object] = (
         cast("list[object]", raw_watching) if isinstance(raw_watching, list) else []
     )
-    table.add_row(
-        "Watcher",
-        f"{'enabled' if enabled else 'disabled (pull-only)'}; {len(watching)} root(s)",
+    mode = "enabled" if enabled else "disabled (pull-only)"
+    _cli.console.print(
+        f"Index updates: {mode}; watched_roots={len(watching)}",
+        markup=False,
+        highlight=False,
     )
-    _cli.console.print(table)

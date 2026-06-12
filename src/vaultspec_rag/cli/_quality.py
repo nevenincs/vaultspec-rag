@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -35,30 +34,29 @@ def handle_quality() -> None:
         _handle_gpu_error(e)
         return
 
-    table = Table(
-        title="Quality Probes - Synthetic Corpus",
-        show_header=True,
-    )
-    table.add_column("#", style="bold", justify="right")
-    table.add_column("Label")
-    table.add_column("Query", style="italic")
-    table.add_column("Result", justify="center")
-
+    _cli.console.print("Quality probes: synthetic corpus")
     for i, probe in enumerate(results["probes"], 1):
-        status = "[green]PASS[/]" if probe["passed"] else "[red]FAIL[/]"
-        table.add_row(str(i), probe["label"], probe["query"], status)
+        status = "PASS" if probe["passed"] else "FAIL"
+        _cli.console.print(
+            f"{i}. {status} label={probe['label']} query={probe['query']}",
+            markup=False,
+            highlight=False,
+        )
 
-    _cli.console.print(table)
     _cli.console.print(
-        f"\nPassed [bold]{results['passed']}/{results['total']}[/] probes "
-        f"([cyan]{results['precision']:.0%}[/] precision)",
+        f"Result: {results['passed']}/{results['total']} probes passed "
+        f"({results['precision']:.0%} precision)",
+        markup=False,
+        highlight=False,
     )
 
     threshold = results["threshold"]
     if results["precision"] < threshold:
         _cli.console.print(
-            f"[bold red]FAILED[/] - precision {results['precision']:.0%} "
+            f"FAILED: precision {results['precision']:.0%} "
             f"below {threshold:.0%} threshold.",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(code=1)
-    _cli.console.print("[bold green]PASSED[/]")
+    _cli.console.print("PASSED")

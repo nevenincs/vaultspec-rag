@@ -12,19 +12,13 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
-from ..capabilities import backend_capabilities_dict
-
-if TYPE_CHECKING:
-    from rich.table import Table
-
 __all__ = [
-    "_add_backend_contract_rows",
     "_display_port_unreachable_error",
     "_display_search_results",
     "_display_service_error",
@@ -33,38 +27,6 @@ __all__ = [
     "_render_install_report",
     "_render_uninstall_report",
 ]
-
-
-def _capability_value(caps: dict[str, object], key: str) -> str:
-    """Return a capability value as display text."""
-    value = caps.get(key, "unknown")
-    return str(value)
-
-
-def _add_backend_contract_rows(
-    table: Table,
-    caps: dict[str, object] | None = None,
-) -> None:
-    """Add backend concurrency contract rows to a Rich table."""
-    data = caps if caps is not None else backend_capabilities_dict()
-    table.add_row(
-        "Search Concurrency",
-        (
-            "supported; same-project local backend access "
-            f"{_capability_value(data, 'same_project_search_strategy')}"
-        ),
-    )
-    table.add_row(
-        "Cross-project Search",
-        _capability_value(data, "cross_project_search_strategy"),
-    )
-    table.add_row(
-        "Storage Process Model",
-        (
-            f"{_capability_value(data, 'local_storage_process_model')} "
-            "local Qdrant process"
-        ),
-    )
 
 
 def _emit_json(

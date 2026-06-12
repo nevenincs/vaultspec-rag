@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -55,19 +54,25 @@ def handle_benchmark(
         _handle_gpu_error(e)
         return
 
-    table = Table(
-        title=f"Search Latency - {n_queries} queries",
-        show_header=True,
+    _cli.console.print(f"Search latency: {n_queries} queries")
+    _cli.console.print(
+        "Latency: "
+        f"p50={results['p50']:.1f}ms "
+        f"p95={results['p95']:.1f}ms "
+        f"p99={results['p99']:.1f}ms "
+        f"mean={results['mean']:.1f}ms "
+        f"stdev={results['stdev']:.1f}ms",
+        markup=False,
+        highlight=False,
     )
-    table.add_column("Metric", style="bold")
-    table.add_column("Value", justify="right", style="cyan")
-    table.add_row("p50", f"{results['p50']:.1f} ms")
-    table.add_row("p95", f"{results['p95']:.1f} ms")
-    table.add_row("p99", f"{results['p99']:.1f} ms")
-    table.add_row("mean", f"{results['mean']:.1f} ms")
-    table.add_row("stdev", f"{results['stdev']:.1f} ms")
-    table.add_row("vault docs", str(results["vault_count"]))
-    table.add_row("code chunks", str(results["code_count"]))
-    table.add_row("GPU", results["gpu"])
-    table.add_row("VRAM allocated", f"{results['vram_mb']:.1f} MB")
-    _cli.console.print(table)
+    _cli.console.print(
+        f"Index: vault_docs={results['vault_count']} "
+        f"code_chunks={results['code_count']}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"GPU: {results['gpu']} vram_allocated={results['vram_mb']:.1f} MB",
+        markup=False,
+        highlight=False,
+    )

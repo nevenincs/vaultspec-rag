@@ -10,7 +10,6 @@ from typing import Annotated, Any, cast
 
 import typer
 from rich.panel import Panel
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -26,7 +25,7 @@ from ._process import (
     _port_is_listening,
     _spawn_service,
 )
-from ._render import _add_backend_contract_rows, _emit_json, _emit_json_error_and_exit
+from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import (
     _default_service_port,
     _log_file,
@@ -415,10 +414,10 @@ def _render_status_json(
 
 def _get_token_label(token_match: bool | None) -> str:
     if token_match is None:
-        return "[yellow]n/a[/]"
+        return "n/a"
     if token_match:
-        return "[green]yes[/]"
-    return "[red]no[/]"
+        return "yes"
+    return "no"
 
 
 def _plain_status_label(state: str) -> str:
@@ -479,22 +478,25 @@ def _current_job_summary(job: dict[str, object] | None) -> str:
     return f"{_job_command_name(job)} ({age}{_job_progress_summary(job)})"
 
 
-def _add_health_rows(
-    table: Table, health: dict[str, object] | None, port_listening: bool
+def _print_detail_line(label: str, value: object) -> None:
+    _cli.console.print(f"{label}: {value}", markup=False, highlight=False)
+
+
+def _print_health_detail(
+    health: dict[str, object] | None, port_listening: bool
 ) -> None:
     if isinstance(health, dict):
-        table.add_row("Health", str(health.get("status", "unknown")))
-        table.add_row("CUDA", str(health.get("cuda", "unknown")))
-        table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
-        table.add_row("Reranker loaded", str(health.get("reranker_loaded", "unknown")))
-        table.add_row("Projects", str(health.get("project_count", "unknown")))
-        uptime = health.get("uptime_s", 0.0)
-        table.add_row("Uptime", f"{float(cast('float', uptime)):.0f}s")
-        caps = health.get("backend_capabilities")
-        if isinstance(caps, dict):
-            _add_backend_contract_rows(table, cast("dict[str, object]", caps))
+        _print_detail_line(
+            "Health",
+            _status_health_label(health, port_listening=port_listening),
+        )
+        _print_detail_line("CUDA", health.get("cuda", "unknown"))
+        _print_detail_line("Models loaded", health.get("models_loaded", "unknown"))
+        _print_detail_line("Reranker loaded", health.get("reranker_loaded", "unknown"))
+        _print_detail_line("Projects", health.get("project_count", "unknown"))
+        _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
-        table.add_row("Health", "[yellow]unreachable[/]")
+        _print_detail_line("Health", "not reachable")
 
 
 def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object]]:
@@ -624,24 +626,28 @@ def _status_operational_summary(
     }
 
 
-def _add_operational_rows(
-    table: Table,
+def _print_operational_detail(
     operational: dict[str, object] | None,
 ) -> None:
     if not isinstance(operational, dict):
         return
+    status_file_port = operational.get("status_file_port")
+    if status_file_port:
+        _print_detail_line("Status file port", status_file_port)
     jobs = operational.get("jobs")
     if isinstance(jobs, dict):
         if jobs.get("available") is True:
-            table.add_row(
-                "Jobs",
-                f"{jobs.get('running', 0)} running; {jobs.get('total', 0)} total",
-            )
+            jobs_dict = cast("dict[str, object]", jobs)
+            _print_detail_line("Busy", _status_busy_label(jobs_dict))
+            _print_detail_line("Queue", _status_queue_label(jobs_dict))
+            _print_detail_line("Jobs", _status_jobs_label(jobs_dict))
+            _print_detail_line("Current job", _status_current_job_label(jobs_dict))
         else:
-            table.add_row("Jobs", "[yellow]unavailable[/]")
+            _print_detail_line("Jobs", "unavailable")
     next_action = operational.get("next_action")
     if next_action:
-        table.add_row("Next action", str(next_action))
+        _cli.console.print("Next action:", markup=False, highlight=False)
+        _cli.console.print(f"  {next_action}", markup=False, highlight=False)
 
 
 def _status_health_label(
@@ -772,7 +778,7 @@ def _render_status_summary(
         raise typer.Exit(code=exit_code)
 
 
-def _render_status_table(
+def _render_status_detail(
     pid: int,
     port: int,
     started_at: str,
@@ -787,40 +793,26 @@ def _render_status_table(
     health: dict[str, object] | None,
     operational: dict[str, object] | None,
 ) -> None:
-    table = Table(title="Service Status", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Service JSON", "[green]present[/]")
-    table.add_row("PID", str(pid))
-    table.add_row("Port", str(port))
-    table.add_row("Started", started_at)
-    table.add_row(
-        "PID Alive",
-        "[green]yes[/]" if pid_alive else "[red]no[/]",
-    )
-    table.add_row(
-        "PID Matches Service",
-        "[green]yes[/]" if pid_is_ours else "[red]no[/]" if pid_alive else "n/a",
-    )
-    table.add_row("Service Token Match", _get_token_label(token_match))
-    table.add_row(
-        "Port Listening",
-        "[green]yes[/]" if port_listening else "[red]no[/]" if pid_alive else "n/a",
-    )
+    _cli.console.print("Service status")
+    _print_detail_line("Service file", "present")
+    _print_detail_line("PID", pid)
+    _print_detail_line("Port", port)
+    _print_detail_line("Started", started_at)
+    _print_detail_line("PID alive", "yes" if pid_alive else "no")
+    pid_match = "yes" if pid_is_ours else "no" if pid_alive else "n/a"
+    _print_detail_line("PID matches service", pid_match)
+    _print_detail_line("Service token match", _get_token_label(token_match))
+    port_state = "yes" if port_listening else "no" if pid_alive else "n/a"
+    _print_detail_line("Port listening", port_state)
     if heartbeat_age is None:
-        table.add_row("Heartbeat", "[yellow]absent[/]")
+        _print_detail_line("Heartbeat", "absent")
     else:
-        colour = "red" if heartbeat_stale else "green"
-        table.add_row(
-            "Heartbeat",
-            f"[{colour}]{heartbeat_age:.0f}s ago[/]",
-        )
-    table.add_row("State", state_label)
+        suffix = " (stale)" if heartbeat_stale else ""
+        _print_detail_line("Heartbeat", f"{heartbeat_age:.0f}s ago{suffix}")
+    _print_detail_line("State", _plain_status_label(state_label))
 
-    _add_health_rows(table, health, port_listening)
-    _add_operational_rows(table, operational)
-
-    _cli.console.print(table)
+    _print_health_detail(health, port_listening)
+    _print_operational_detail(operational)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 
@@ -893,23 +885,14 @@ def _render_port_only_status(
         )
         return
 
-    table = Table(title="Service Status", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Service JSON", "[yellow]missing[/]")
-    table.add_row("PID", "n/a")
-    table.add_row("Port", str(port))
-    table.add_row(
-        "Port Listening",
-        "[green]yes[/]" if port_listening else "[red]no[/]",
-    )
-    table.add_row(
-        "State",
-        "[green]running[/]" if state == "running" else f"[red]{state}[/]",
-    )
-    _add_health_rows(table, health, port_listening)
-    _add_operational_rows(table, operational)
-    _cli.console.print(table)
+    _cli.console.print("Service status")
+    _print_detail_line("Service file", "missing")
+    _print_detail_line("PID", "n/a")
+    _print_detail_line("Port", port)
+    _print_detail_line("Port listening", "yes" if port_listening else "no")
+    _print_detail_line("State", state)
+    _print_health_detail(health, port_listening)
+    _print_operational_detail(operational)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 
@@ -994,7 +977,7 @@ def _render_explicit_port_status(
             f"[yellow]Status file port is {status_file_port}; probing {target_port}.[/]"
         )
     if verbose:
-        _render_status_table(
+        _render_status_detail(
             pid,
             target_port,
             started_at,
@@ -1171,12 +1154,9 @@ def service_status(
             )
             raise typer.Exit(code=3)
         if verbose:
-            table = Table(title="Service Status", show_header=False, padding=(0, 2))
-            table.add_column("Key", style="bold")
-            table.add_column("Value")
-            table.add_row("Service JSON", "[red]missing[/]")
-            table.add_row("State", "[red]stopped[/]")
-            _cli.console.print(table)
+            _cli.console.print("Service status")
+            _print_detail_line("Service file", "missing")
+            _print_detail_line("State", "stopped")
         else:
             _render_status_summary(
                 state_label="[red]stopped[/]",
@@ -1242,7 +1222,7 @@ def service_status(
         return
 
     if verbose:
-        _render_status_table(
+        _render_status_detail(
             pid,
             target_port,
             started_at,
@@ -1307,46 +1287,37 @@ def service_warmup() -> None:
         ("Reranker (CrossEncoder)", cfg.reranker_model),
     ]
 
-    table = Table(title="Model Warmup", show_header=True)
-    table.add_column("Model", style="bold")
-    table.add_column("Repo", style="cyan")
-    table.add_column("Status")
-
+    _cli.console.print("Model warmup")
     token = get_token()
     if token:
-        table.add_row("HuggingFace auth", "token", "[green]configured[/]")
+        _print_detail_line("HuggingFace auth", "configured")
     else:
-        table.add_row(
+        _print_detail_line(
             "HuggingFace auth",
-            "token",
-            "[yellow]missing[/]: run huggingface-cli login if downloads fail",
+            "missing; run huggingface-cli login if downloads fail",
         )
 
     for label, repo_id in models:
         # Check if already cached
         cached = try_to_load_from_cache(repo_id, "config.json")
         if cached is not None:
-            table.add_row(label, repo_id, "[green]cached[/]")
+            _print_detail_line(label, f"{repo_id} cached")
             continue
 
         try:
             with _cli.console.status(f"[bold green]Downloading {label}..."):
                 snapshot_download(repo_id)
-            table.add_row(label, repo_id, "[green]downloaded[/]")
+            _print_detail_line(label, f"{repo_id} downloaded")
         except Exception as exc:
             msg = str(exc)
             if "401" in msg or "403" in msg or "GatedRepo" in msg:
-                table.add_row(
+                _print_detail_line(
                     label,
-                    repo_id,
-                    "[red]auth required[/]: run huggingface-cli login",
+                    f"{repo_id} auth required; run huggingface-cli login",
                 )
             else:
-                table.add_row(
+                _print_detail_line(
                     label,
-                    repo_id,
-                    f"[red]failed[/]: {exc}"
+                    f"{repo_id} failed: {exc}"
                     " (partial cache may remain in ~/.cache/huggingface)",
                 )
-
-    _cli.console.print(table)

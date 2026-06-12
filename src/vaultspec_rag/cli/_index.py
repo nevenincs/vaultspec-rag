@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     import pathlib
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -24,6 +23,25 @@ from ._render import (
     _emit_json_error_and_exit,
 )
 from ._service_status import _default_service_port
+
+
+def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
+    _cli.console.print(f"Indexing summary: via={via}", markup=False, highlight=False)
+    if not sources:
+        _cli.console.print("No sources indexed.")
+        return
+    for row in sources:
+        source = str(row.get("source", "unknown"))
+        label = source.capitalize()
+        _cli.console.print(
+            f"{label}: added={row.get('added', 0)} "
+            f"updated={row.get('updated', 0)} "
+            f"removed={row.get('removed', 0)} "
+            f"total={row.get('total', 0)} "
+            f"time={row.get('duration_ms', 0)}ms",
+            markup=False,
+            highlight=False,
+        )
 
 
 def _handle_dry_run(
@@ -213,25 +231,7 @@ def _print_service_results(
         )
         return True
 
-    table = Table(title="Indexing Summary", show_header=True)
-    table.add_column("Source", style="bold")
-    table.add_column("Added", style="green", justify="right")
-    table.add_column("Updated", style="yellow", justify="right")
-    table.add_column("Removed", style="red", justify="right")
-    table.add_column("Total", style="cyan", justify="right")
-    table.add_column("Time", justify="right")
-    for row in sources:
-        src_value = row["source"]
-        label = src_value.capitalize() if isinstance(src_value, str) else ""
-        table.add_row(
-            label,
-            str(row["added"]),
-            str(row["updated"]),
-            str(row["removed"]),
-            str(row["total"]),
-            f"{row['duration_ms']}ms",
-        )
-    _cli.console.print(table)
+    _print_index_summary(sources, via="service")
     return True
 
 
@@ -442,26 +442,7 @@ def _try_in_process_indexing(
         )
         return
 
-    # Summary table
-    table = Table(title="Indexing Summary", show_header=True)
-    table.add_column("Source", style="bold")
-    table.add_column("Added", style="green", justify="right")
-    table.add_column("Updated", style="yellow", justify="right")
-    table.add_column("Removed", style="red", justify="right")
-    table.add_column("Total", style="cyan", justify="right")
-    table.add_column("Time", justify="right")
-    for row in in_process_sources:
-        src_value = row["source"]
-        label = src_value.capitalize() if isinstance(src_value, str) else ""
-        table.add_row(
-            label,
-            str(row["added"]),
-            str(row["updated"]),
-            str(row["removed"]),
-            str(row["total"]),
-            f"{row['duration_ms']}ms",
-        )
-    _cli.console.print(table)
+    _print_index_summary(in_process_sources, via="in-process")
 
 
 @app.command(
@@ -557,9 +538,6 @@ def handle_clean(
         )
         return
 
-    table = Table(title="Clean Summary", show_header=True)
-    table.add_column("Source", style="bold")
-    table.add_column("Status", style="green")
+    _cli.console.print("Clean summary")
     for source in cleared:
-        table.add_row(source, "empty")
-    _cli.console.print(table)
+        _cli.console.print(f"{source}: empty", markup=False, highlight=False)
