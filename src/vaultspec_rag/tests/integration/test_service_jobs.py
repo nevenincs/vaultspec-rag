@@ -556,6 +556,65 @@ def test_jobs_humanizes_cancelled_automatic_update(
     assert "watcher" not in output
 
 
+def test_job_detail_uses_plain_runtime_and_resource_language(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_job_detail
+
+    _render_job_detail(
+        {
+            "id": "runjob12",
+            "source": "code",
+            "trigger": "watcher",
+            "phase": "running",
+            "runtime_seconds": 12.0,
+            "last_progress_age_seconds": 2.0,
+            "progress": {"step": "embed", "completed": 2, "total": 5},
+            "initiator": {
+                "kind": "watcher",
+                "command": "watcher_code_index",
+                "project_root": r"proj-a",
+            },
+            "runtime": {
+                "pid": 123,
+                "user": "operator",
+                "executable": r".venv\Scripts\python.exe",
+                "virtual_env": r".venv",
+            },
+            "resources": {
+                "current": {
+                    "rss_mb": 10.0,
+                    "cuda_allocated_mb": 20.0,
+                    "cuda_reserved_mb": 30.0,
+                }
+            },
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Started by: automatic updates" in output
+    assert "Request: automatic code index update" in output
+    assert "Process: 123" in output
+    assert "User: operator" in output
+    assert "Python: .venv/Scripts/python.exe" in output
+    assert "Python environment: .venv" in output
+    assert r".venv\Scripts\python.exe" not in output
+    assert "Memory: memory 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB" in output
+    for forbidden in (
+        "Initiator:",
+        "Command:",
+        "watcher_code_index",
+        "PID:",
+        "OS user:",
+        "Executable:",
+        "Virtual env:",
+    ):
+        assert forbidden not in output
+    assert "rss " not in output
+    assert "cuda alloc" not in output
+    assert "cuda reserved" not in output
+
+
 def test_jobs_json_preserves_raw_service_payload() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)

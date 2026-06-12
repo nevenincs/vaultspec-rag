@@ -71,11 +71,48 @@ def _resource_summary(job: dict[str, object]) -> str:
     snapshot = _preferred_resource_snapshot(job)
     if snapshot is None:
         return ""
-    return (
-        f"rss {_format_mb(snapshot.get('rss_mb'))}, "
-        f"cuda alloc {_format_mb(snapshot.get('cuda_allocated_mb'))}, "
-        f"cuda reserved {_format_mb(snapshot.get('cuda_reserved_mb'))}"
-    )
+    parts: list[str] = []
+    if "rss_mb" in snapshot:
+        parts.append(f"memory {_format_mb(snapshot.get('rss_mb'))}")
+    if "cuda_allocated_mb" in snapshot:
+        parts.append(f"GPU used {_format_mb(snapshot.get('cuda_allocated_mb'))}")
+    if "cuda_reserved_mb" in snapshot:
+        parts.append(f"GPU reserved {_format_mb(snapshot.get('cuda_reserved_mb'))}")
+    return ", ".join(parts)
+
+
+def _initiator_label(raw: object) -> str:
+    value = str(raw or "?")
+    if value == "watcher":
+        return "automatic updates"
+    if value in ("cli", "tool"):
+        return "manual request"
+    return value.replace("_", " ")
+
+
+def _command_label(raw: object) -> str:
+    value = str(raw or "?")
+    if value == "watcher_code_index":
+        return "automatic code index update"
+    if value == "watcher_vault_index":
+        return "automatic vault index update"
+    if value == "reindex_codebase":
+        return "code index refresh"
+    if value == "reindex_vault":
+        return "vault index refresh"
+    return value.replace("_", " ")
+
+
+def _path_label(raw: object) -> str:
+    value = str(raw or "")
+    if not value:
+        return "?"
+    parts = value.replace("\\", "/").rstrip("/").split("/")
+    if ".venv" in parts:
+        return "/".join(parts[parts.index(".venv") :])
+    if len(parts) > 3:
+        return ".../" + "/".join(parts[-3:])
+    return value
 
 
 def _job_is_waiting(job: dict[str, object]) -> bool:
@@ -484,28 +521,28 @@ def _render_job_detail(job: dict[str, object]) -> None:
     )
     initiator = job.get("initiator")
     if isinstance(initiator, dict):
-        _cli.console.print(f"Initiator: {initiator.get('kind', '?')}")
-        _cli.console.print(f"Command: {initiator.get('command', '?')}")
+        _cli.console.print(f"Started by: {_initiator_label(initiator.get('kind'))}")
+        _cli.console.print(f"Request: {_command_label(initiator.get('command'))}")
     runtime = job.get("runtime")
     if isinstance(runtime, dict):
         pid = runtime.get("pid")
         user = runtime.get("user")
         if pid is not None:
-            _cli.console.print(f"PID: {pid}")
+            _cli.console.print(f"Process: {pid}")
         if user:
-            _cli.console.print(f"OS user: {user}")
+            _cli.console.print(f"User: {user}")
         executable = runtime.get("executable")
         if executable:
-            _cli.console.print(f"Executable: {executable}")
+            _cli.console.print(f"Python: {_path_label(executable)}")
         virtual_env = runtime.get("virtual_env") or runtime.get("prefix")
         if virtual_env:
-            _cli.console.print(f"Virtual env: {virtual_env}")
+            _cli.console.print(f"Python environment: {_path_label(virtual_env)}")
     progress = job.get("progress")
     if isinstance(progress, dict):
         _cli.console.print(f"Progress: {_human_progress(job)}")
     resource_summary = _resource_summary(job)
     if resource_summary:
-        _cli.console.print(f"Resources: {resource_summary}")
+        _cli.console.print(f"Memory: {resource_summary}")
     result = job.get("result")
     if result:
         label = "Error" if str(job.get("phase")) in ("error", "failed") else "Result"
