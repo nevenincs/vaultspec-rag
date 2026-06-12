@@ -2,8 +2,8 @@
 
 Calls the logs admin endpoint through the shared HTTP admin client and
 renders a compact operator activity feed by default. Raw log access is
-kept behind ``--raw`` and ``--json`` remains the full-fidelity machine
-format. Service-not-running yields exit code 3.
+kept behind ``--raw`` and ``--json`` remains the script-facing format.
+Service-not-running yields exit code 3.
 """
 
 from __future__ import annotations
@@ -278,7 +278,7 @@ def _render_activity_feed(log_lines: list[object]) -> None:
     activity_lines = _activity_feed_lines(log_lines)
     if not activity_lines:
         _cli.console.print(
-            "No activity entries in log tail. Use --raw for diagnostic lines."
+            "No recent activity found. Run with --raw to inspect diagnostic lines."
         )
         return
     for line in activity_lines:
@@ -305,11 +305,11 @@ def service_logs(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of plain text."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
     raw: Annotated[
         bool,
-        typer.Option("--raw", help="Show raw implementation log lines."),
+        typer.Option("--raw", help="Show original diagnostic log lines."),
     ] = False,
 ) -> None:
     """Show recent activity from the running service log."""
@@ -345,7 +345,7 @@ def service_logs(
     )
     if not log_lines:
         _cli.console.print(
-            "No activity entries in log tail. Use --raw for diagnostic lines."
+            "No recent activity found. Run with --raw to inspect diagnostic lines."
         )
         return
     if raw:
