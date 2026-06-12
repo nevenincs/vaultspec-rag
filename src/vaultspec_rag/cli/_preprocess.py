@@ -3,8 +3,8 @@
 Implements the operator surface decided in the ``preprocess-hooks`` ADR (D13):
 
 - ``preprocess list``   - show the resolved rules for the project root.
-- ``preprocess check``  - validate ``.vaultragpreprocess.toml`` (the only
-  hard-fail path; non-zero exit on an invalid config).
+- ``preprocess check``  - validate ``.vaultragpreprocess.toml`` and report
+  configuration problems.
 - ``preprocess run-one`` - run the matching rule against one file and print the
   validated output, for authoring/debugging. No indexing side effect.
 
@@ -83,7 +83,7 @@ def handle_preprocess_list(
 
 
 @preprocess_app.command(
-    "check", help="Validate .vaultragpreprocess.toml (non-zero on error)."
+    "check", help="Validate .vaultragpreprocess.toml and report configuration problems."
 )
 def handle_preprocess_check(
     ctx: typer.Context,
@@ -92,7 +92,7 @@ def handle_preprocess_check(
         typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
-    """Strictly validate the config; exit non-zero on the first defect."""
+    """Strictly validate the config and report the first defect."""
     try:
         config = load_preprocess_rules(_root(ctx), strict=True)
     except PreprocessConfigError as exc:

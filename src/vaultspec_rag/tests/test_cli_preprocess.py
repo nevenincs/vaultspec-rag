@@ -90,6 +90,9 @@ def test_preprocess_json_help_uses_script_language(argv: list[str]) -> None:
     assert result.exit_code == 0, result.output
     assert "Emit JSON for scripts" in result.output
     assert "JSON envelope" not in result.output
+    assert "non-zero" not in result.output.lower()
+    if argv[:2] == ["preprocess", "check"]:
+        assert "report configuration problems" in result.output
 
 
 def test_list_empty(tmp_path: Path) -> None:
