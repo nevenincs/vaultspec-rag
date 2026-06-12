@@ -257,12 +257,25 @@ def _filters_label(result: dict[str, object]) -> str:
     if not isinstance(filters, dict):
         return ""
     visible: list[str] = []
+    labels = {
+        "phase": "state",
+        "source": "index",
+        "trigger": "started by",
+        "query": "text",
+        "job_id": "job",
+        "since": "updated within",
+    }
+    values = {
+        "watcher": "automatic updates",
+        "tool": "manual request",
+    }
     for key in ("phase", "source", "trigger", "query", "job_id", "since"):
         value = filters.get(key)
         if value not in (None, "", False):
-            visible.append(f"{key}={value}")
+            value_text = values.get(str(value), str(value))
+            visible.append(f"{labels[key]}={value_text}")
     if filters.get("failed") is True:
-        visible.append("failed=true")
+        visible.append("failed only")
     return f" filters: {', '.join(visible)}" if visible else ""
 
 
@@ -301,7 +314,7 @@ def _render_jobs_feed(
 
 
 def _exit_invalid_jobs_filter(json_mode: bool) -> NoReturn:
-    message = "--running cannot be combined with --phase other than running."
+    message = "--running cannot be combined with --phase unless it is running."
     if json_mode:
         _emit_json_error_and_exit(
             "service.jobs",
@@ -337,7 +350,7 @@ def _resolve_jobs_filters(
         and resolved_phase is not None
         and resolved_phase not in ("error", "failed")
     ):
-        message = "--failed cannot be combined with --phase outside error/failed."
+        message = "--failed can only be combined with --phase error or failed."
         if json_mode:
             _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
         _cli.console.print(f"Error: {message}", markup=False, highlight=False)
@@ -550,26 +563,35 @@ def _watch_jobs(
 def service_jobs(
     limit: Annotated[
         int,
-        typer.Option("--limit", help="Max number of matching jobs to show."),
+        typer.Option("--limit", help="Maximum number of matching jobs to show."),
     ] = 20,
     phase: Annotated[
         str | None,
-        typer.Option("--phase", help="Filter by job phase, for example running."),
+        typer.Option(
+            "--phase",
+            help="Filter by job state, for example running, done, or failed.",
+        ),
     ] = None,
     source: Annotated[
         str | None,
-        typer.Option("--source", help="Filter by source: vault or code."),
+        typer.Option("--source", help="Filter by index type: vault or code."),
     ] = None,
     trigger: Annotated[
         str | None,
-        typer.Option("--trigger", help="Filter by trigger: tool or watcher."),
+        typer.Option(
+            "--trigger",
+            help=(
+                "Filter by who started the job: 'tool' for manual requests or "
+                "'watcher' for automatic updates."
+            ),
+        ),
     ] = None,
     query: Annotated[
         str | None,
         typer.Option(
             "--query",
             "-q",
-            help="Filter by text in id, result, or progress.",
+            help="Filter by text in job id, result, or progress.",
         ),
     ] = None,
     running: Annotated[
@@ -582,7 +604,7 @@ def service_jobs(
     ] = False,
     job_id: Annotated[
         str | None,
-        typer.Option("--job-id", help="Show details for a job id or id prefix."),
+        typer.Option("--job-id", help="Show details for a job id or prefix."),
     ] = None,
     since: Annotated[
         float | None,
@@ -594,7 +616,7 @@ def service_jobs(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of human output."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
     watch: Annotated[
         bool,

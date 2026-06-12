@@ -314,6 +314,30 @@ def test_jobs_subcommand_registered() -> None:
     assert "--since" in result.stdout
     assert "--watch" in result.stdout
     assert "--interval" in result.stdout
+    assert "Filter by job state" in result.stdout
+    assert "automatic updates" in result.stdout
+
+
+def test_jobs_filter_summary_uses_operator_language() -> None:
+    from ...cli._service_jobs import _filters_label
+
+    rendered = _filters_label(
+        {
+            "filters": {
+                "phase": "running",
+                "trigger": "watcher",
+                "source": "code",
+                "failed": True,
+            }
+        }
+    )
+
+    assert rendered == (
+        " filters: state=running, index=code, started by=automatic updates, failed only"
+    )
+    assert "phase=" not in rendered
+    assert "trigger=" not in rendered
+    assert "watcher" not in rendered
 
 
 def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
