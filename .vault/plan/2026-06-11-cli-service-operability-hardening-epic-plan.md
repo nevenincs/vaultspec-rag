@@ -797,6 +797,53 @@ Agent brief:
 - Coordinate with W06.P03 only through stable event fields, not display formatting.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
+### Phase W06.P05 - Research Search Result Output In Mature CLI Tools
+
+Objective: Ground the `vaultspec-rag search` human output redesign in mature,
+respected command-line tools before changing the search result renderer.
+
+Progress tracking:
+
+- [ ] Identify mature CLI tools with search, ranked result, reporting, or operational
+  listing output that is respected by working developers and operators.
+- [ ] Use primary or authoritative sources where possible, such as official
+  documentation, manpages, and long-lived project references.
+- [ ] Compare how those tools handle:
+  - stable line-oriented output,
+  - TTY-aware color and decoration,
+  - non-TTY output suitable for pipes,
+  - long paths and snippets,
+  - result scores or ranks,
+  - line numbers or locations,
+  - JSON, NDJSON, or other machine-readable modes,
+  - explicit context/detail flags,
+  - truncation and wrapping behavior.
+- [ ] Treat `ragx` as a possible stable handoff format for long or structured result
+  inspection, not as a substitute for a good default CLI result view.
+- [ ] Produce design recommendations for `vaultspec-rag search` that keep default
+  output easily grabbable, stable, and never silently truncated.
+- [ ] Do not implement the search output redesign until the human reviewer accepts the
+  research direction.
+
+Agent brief:
+
+- Start with Phase `W06.P05`.
+- Research mature, relevant CLI utilities; avoid random fresh repositories as design
+  precedent.
+- Focus on tools such as `ripgrep`, `git grep`, GNU/BSD `grep`, GitHub CLI search,
+  `kubectl`, `journalctl`, or other established CLIs only where their output model is
+  directly relevant.
+- Distinguish semantic/ranked search from exact text search: score is useful metadata,
+  but it must not be conflated with line numbers or result count.
+- Treat wrapping card layouts as rejected design input unless the research proves a
+  bounded variant is appropriate behind an explicit detail mode.
+- Prefer recommendations that are line-oriented, copyable, pipe-friendly,
+  TTY-sensitive, and stable under terminal width changes.
+- Include example output shapes and the rationale behind each recommendation.
+- Do not edit source code.
+- Use `uv run` or `uv run --no-sync` for project commands if local CLI examples are
+  needed.
+
 Pipeline:
 
 Hardening:
