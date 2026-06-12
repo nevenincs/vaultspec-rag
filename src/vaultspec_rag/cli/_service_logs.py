@@ -278,7 +278,7 @@ def _render_activity_feed(log_lines: list[object]) -> None:
     activity_lines = _activity_feed_lines(log_lines)
     if not activity_lines:
         _cli.console.print(
-            "No recent activity found. Run with --raw to inspect diagnostic lines."
+            "No recent activity found. Run with --raw to inspect original log lines."
         )
         return
     for line in activity_lines:
@@ -309,7 +309,7 @@ def service_logs(
     ] = False,
     raw: Annotated[
         bool,
-        typer.Option("--raw", help="Show original diagnostic log lines."),
+        typer.Option("--raw", help="Show original log lines."),
     ] = False,
 ) -> None:
     """Show recent activity from the running service log."""
@@ -345,7 +345,7 @@ def service_logs(
     )
     if not log_lines:
         _cli.console.print(
-            "No recent activity found. Run with --raw to inspect diagnostic lines."
+            "No recent activity found. Run with --raw to inspect original log lines."
         )
         return
     if raw:
