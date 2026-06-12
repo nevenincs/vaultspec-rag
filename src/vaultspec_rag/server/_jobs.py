@@ -12,6 +12,7 @@ from ..jobs import (
     record_progress,
     record_start,
     reset,
+    resource_snapshot,
     snapshot,
 )
 
@@ -22,5 +23,6 @@ __all__ = [
     "record_progress",
     "record_start",
     "reset",
+    "resource_snapshot",
     "snapshot",
 ]

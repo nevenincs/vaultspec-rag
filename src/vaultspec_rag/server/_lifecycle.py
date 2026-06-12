@@ -136,6 +136,8 @@ def _heartbeat_tick_sync() -> None:
         )
         return
     data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+    data["pid"] = os.getpid()
+    data["parent_pid"] = os.getppid()
     # Per-process identity token. Empty during the narrow window
     # between module import and service_lifespan startup; the guard
     # prevents an in-flight zero-value overwrite of a token written

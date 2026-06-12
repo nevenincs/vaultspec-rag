@@ -7,7 +7,10 @@ along with async task execution helpers for background reindexing.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import logging
+import os
+import sys
 import threading
 import time
 import uuid
@@ -32,6 +35,7 @@ __all__ = [
     "record_start",
     "register_on_job_complete",
     "reset",
+    "resource_snapshot",
     "snapshot",
     "start_reindex_codebase",
     "start_reindex_vault",
@@ -54,6 +58,30 @@ _lock = threading.Lock()
 _records: deque[dict[str, object]] = deque(maxlen=MAX_RECORDS)
 _background_tasks: set[asyncio.Task[Any]] = set()
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
+
+
+def _runtime_context() -> dict[str, object]:
+    return {
+        "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "user": getpass.getuser(),
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "virtual_env": os.environ.get("VIRTUAL_ENV"),
+    }
+
+
+def resource_snapshot() -> dict[str, object]:
+    """Return a best-effort current resource snapshot for the service process."""
+    from .memory_probe import current_cuda_mb, current_rss_mb
+
+    cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+    return {
+        "rss_mb": round(current_rss_mb(), 1),
+        "cuda_allocated_mb": round(cuda_allocated_mb, 1),
+        "cuda_reserved_mb": round(cuda_reserved_mb, 1),
+    }
 
 
 def register_on_job_complete(callback: Callable[[float], None]) -> None:
@@ -100,6 +128,11 @@ def record_start(
             "kind": initiator_kind or trigger,
             "command": command or f"{trigger}_{source}_index",
             "project_root": str(project_root) if project_root is not None else None,
+        },
+        "runtime": _runtime_context(),
+        "resources": {
+            "started": resource_snapshot(),
+            "finished": None,
         },
     }
     with _lock:
@@ -166,6 +199,10 @@ def record_finish(
                 record["phase"] = target_phase
                 record["finished_at"] = finished_at
                 record["result"] = summary
+                resources = record.get("resources")
+                if isinstance(resources, dict):
+                    resources = cast("dict[str, object]", resources)
+                    resources["finished"] = resource_snapshot()
                 return
 
 
@@ -188,6 +225,17 @@ def snapshot() -> list[dict[str, object]]:
             initiator = record.get("initiator")
             if isinstance(initiator, dict):
                 item["initiator"] = dict(cast("dict[str, object]", initiator))
+            runtime = record.get("runtime")
+            if isinstance(runtime, dict):
+                item["runtime"] = dict(cast("dict[str, object]", runtime))
+            resources = record.get("resources")
+            if isinstance(resources, dict):
+                item["resources"] = {
+                    str(key): dict(cast("dict[str, object]", value))
+                    if isinstance(value, dict)
+                    else value
+                    for key, value in resources.items()
+                }
             copied.append(item)
         return copied
 

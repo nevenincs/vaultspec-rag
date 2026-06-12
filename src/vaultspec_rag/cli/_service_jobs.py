@@ -86,6 +86,52 @@ def _format_seconds(raw: object) -> str:
     return f"{hours}h {minutes}m"
 
 
+def _format_mb(raw: object) -> str:
+    if not isinstance(raw, int | float):
+        return "?"
+    return f"{float(raw):.1f} MB"
+
+
+def _job_owner(job: dict[str, object]) -> str:
+    initiator = job.get("initiator")
+    kind = "?"
+    if isinstance(initiator, dict):
+        kind = str(initiator.get("kind", "?"))
+    runtime = job.get("runtime")
+    if isinstance(runtime, dict):
+        user = runtime.get("user")
+        if user:
+            return f"{kind}/{user}"
+    return kind
+
+
+def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
+    resources = job.get("resources")
+    if not isinstance(resources, dict):
+        return None
+    value = resources.get(key)
+    return cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def _preferred_resource_snapshot(job: dict[str, object]) -> dict[str, object] | None:
+    for key in ("current", "finished", "started"):
+        snapshot = _resource_at(job, key)
+        if snapshot is not None:
+            return snapshot
+    return None
+
+
+def _resource_summary(job: dict[str, object]) -> str:
+    snapshot = _preferred_resource_snapshot(job)
+    if snapshot is None:
+        return ""
+    return (
+        f"rss {_format_mb(snapshot.get('rss_mb'))}, "
+        f"cuda alloc {_format_mb(snapshot.get('cuda_allocated_mb'))}, "
+        f"cuda reserved {_format_mb(snapshot.get('cuda_reserved_mb'))}"
+    )
+
+
 def _job_detail(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "?"))
     result_str = str(job.get("result") or "")
@@ -209,6 +255,7 @@ def _render_jobs_table(result: dict[str, object], jobs: list[object]) -> None:
     table.add_column("ID", no_wrap=True)
     table.add_column("Source", style="bold", no_wrap=True)
     table.add_column("Trigger", no_wrap=True)
+    table.add_column("By", no_wrap=True)
     table.add_column("Phase", no_wrap=True)
     table.add_column("Age", justify="right", no_wrap=True)
     table.add_column("Detail", overflow="fold")
@@ -218,6 +265,7 @@ def _render_jobs_table(result: dict[str, object], jobs: list[object]) -> None:
             str(job.get("id", ""))[:8],
             str(job.get("source", "?")),
             str(job.get("trigger", "?")),
+            _job_owner(job),
             str(job.get("phase", "?")),
             _format_job_age(job),
             _job_detail(job),
@@ -245,9 +293,26 @@ def _render_job_detail(job: dict[str, object]) -> None:
         project_root = initiator.get("project_root")
         if project_root:
             table.add_row("Project root", str(project_root))
+    runtime = job.get("runtime")
+    if isinstance(runtime, dict):
+        pid = runtime.get("pid")
+        user = runtime.get("user")
+        if pid is not None:
+            table.add_row("PID", str(pid))
+        if user:
+            table.add_row("OS user", str(user))
+        executable = runtime.get("executable")
+        if executable:
+            table.add_row("Executable", str(executable))
+        virtual_env = runtime.get("virtual_env") or runtime.get("prefix")
+        if virtual_env:
+            table.add_row("Virtual env", str(virtual_env))
     progress = job.get("progress")
     if isinstance(progress, dict):
         table.add_row("Progress", _format_progress_text(job))
+    resource_summary = _resource_summary(job)
+    if resource_summary:
+        table.add_row("Resources", resource_summary)
     result = job.get("result")
     if result:
         table.add_row("Result", str(result))

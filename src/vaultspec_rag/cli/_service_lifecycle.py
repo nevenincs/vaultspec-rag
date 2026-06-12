@@ -31,9 +31,32 @@ from ._service_status import (
     _log_file,
     _read_service_status,
     _status_file,
+    _update_service_metadata,
     _update_service_token,
     _write_service_status,
 )
+
+
+def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
+    serving_pid = health.get("pid")
+    if isinstance(serving_pid, int) and serving_pid > 0:
+        return serving_pid
+    return fallback_pid
+
+
+def _status_metadata_from_health(
+    health: dict[str, object],
+    *,
+    pid: int,
+) -> dict[str, object]:
+    return {
+        "pid": pid,
+        "parent_pid": health.get("parent_pid"),
+        "executable": health.get("executable"),
+        "prefix": health.get("prefix"),
+        "base_prefix": health.get("base_prefix"),
+        "virtual_env": health.get("virtual_env"),
+    }
 
 
 @server_app.command(
@@ -155,6 +178,8 @@ def service_start(
                 token_from_health = health.get("service_token")
                 if isinstance(token_from_health, str) and token_from_health:
                     _update_service_token(token_from_health)
+                pid = _health_service_pid(health, pid)
+                _update_service_metadata(_status_metadata_from_health(health, pid=pid))
                 startup_s = time.perf_counter() - t0
                 _cli.console.print(
                     Panel(
@@ -433,6 +458,9 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
         "phases": summary_dict.get("phases", {}),
         "sources": summary_dict.get("sources", {}),
         "triggers": summary_dict.get("triggers", {}),
+        "initiators": summary_dict.get("initiators", {}),
+        "active_initiators": summary_dict.get("active_initiators", {}),
+        "users": summary_dict.get("users", {}),
     }
 
 

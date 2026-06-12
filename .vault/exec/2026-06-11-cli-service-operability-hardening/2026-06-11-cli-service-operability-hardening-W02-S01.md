@@ -83,6 +83,46 @@ Post-review corrections:
 
 The registry still lacks OS user, wrapper identity, PID, and memory fields, so those cannot be truthfully surfaced yet.
 
+## Follow-Up: Runtime Ownership And Resource Context
+
+Implemented the missing job ownership/resource context across the registry, HTTP route,
+status summary, and CLI detail view:
+
+- Job records now include `runtime.pid`, `runtime.parent_pid`, `runtime.user`,
+  `runtime.executable`, `runtime.prefix`, `runtime.base_prefix`, and `runtime.virtual_env`.
+- Job records now include resource snapshots with RSS, CUDA allocated memory, and CUDA
+  reserved memory at job start and finish.
+- Running jobs are enriched with a current resource snapshot in the `/jobs` response.
+- Job summaries now include `initiators`, `active_initiators`, and `users` buckets.
+- `server jobs` compact table includes an owner column such as `cli/hello`.
+- `server jobs --job-id <prefix>` renders PID, OS user, executable, virtualenv, and
+  resource usage.
+- `/health`, heartbeat, and `server start` now publish/persist the serving daemon PID
+  rather than leaving `service.json` pinned to the Windows venv launcher PID.
+- `server status --json` carries the same health PID and operational jobs initiator/user
+  rollups, so status and jobs agree about the active service process.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/jobs.py src/vaultspec_rag/server/_jobs.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/server/_lifecycle.py src/vaultspec_rag/server/_models.py src/vaultspec_rag/cli/_service_jobs.py src/vaultspec_rag/cli/_service_lifecycle.py src/vaultspec_rag/cli/_service_status.py src/vaultspec_rag/cli/__init__.py src/vaultspec_rag/tests/integration/test_jobs_registry.py src/vaultspec_rag/tests/integration/test_service_jobs.py src/vaultspec_rag/tests/integration/test_service_lifecycle.py`
+- `uv run ty check src/vaultspec_rag/jobs.py src/vaultspec_rag/server/_jobs.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/server/_lifecycle.py src/vaultspec_rag/server/_models.py src/vaultspec_rag/cli/_service_jobs.py src/vaultspec_rag/cli/_service_lifecycle.py src/vaultspec_rag/cli/_service_status.py src/vaultspec_rag/cli/__init__.py src/vaultspec_rag/tests/integration/test_jobs_registry.py src/vaultspec_rag/tests/integration/test_service_jobs.py src/vaultspec_rag/tests/integration/test_service_lifecycle.py`
+- `uv run --no-sync python tools/complexity_gate.py`
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_lifecycle.py::test_stale_pid_recovery src/vaultspec_rag/tests/integration/test_service_lifecycle.py::test_service_status_running src/vaultspec_rag/tests/integration/test_jobs_registry.py src/vaultspec_rag/tests/integration/test_service_jobs.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag index --type vault --port 8766 --json`
+- `uv run vaultspec-rag server jobs --json --port 8766 --job-id 7d4f1c64 --limit 5`
+- `uv run vaultspec-rag server jobs --port 8766 --job-id 7d4f1c64`
+- `uv run vaultspec-rag server status --json --port 8766`
+
+Observed:
+
+- `server status` and `/health` agreed on serving PID `60276` during manual validation.
+- The job detail for `7d4f1c646d3b4412bc48b98d4dfa7626` reported `initiator.kind: cli`,
+  OS user `hello`, PID `60276`, `.venv` executable/prefix metadata, RSS `2311.3 MB`,
+  CUDA allocated `3520.1 MB`, and CUDA reserved `3532.0 MB`.
+- The final resident service was restarted on port `8766` with serving PID `32848`.
+
 ## Follow-Up: Logs Filtering Parity
 
 Implemented a small logs parity slice so operators can narrow the service log without

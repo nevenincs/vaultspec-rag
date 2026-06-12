@@ -80,7 +80,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
 
         result = runner.invoke(
             app,
-            ["server", "service", "start", "--port", str(port)],
+            ["server", "start", "--port", str(port)],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         assert "already in use" in (result.stdout or "").lower(), (
@@ -106,7 +106,7 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
         try:
             result2 = runner.invoke(
                 app,
-                ["server", "service", "start", "--port", str(port)],
+                ["server", "start", "--port", str(port)],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
 
@@ -136,7 +136,7 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
     with _service_env(tmp_path):
         result = runner.invoke(
             app,
-            ["server", "service", "stop"],
+            ["server", "stop"],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         output = (result.stdout or "").lower()
@@ -160,7 +160,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
 
         runner.invoke(
             app,
-            ["server", "service", "stop"],
+            ["server", "stop"],
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
 
@@ -187,7 +187,9 @@ def test_service_status_running(
         # the lifespan) then finds the file and writes ``last_heartbeat``,
         # so status reports "running" rather than "crashed (heartbeat stale)".
         _write_service_status(pid, port)
-        _poll_health(port)
+        health = _poll_health(port)
+        serving_pid = int(health["pid"])
+        assert serving_pid > 0
 
         # Poll status until the daemon's heartbeat lands (the initial tick
         # races with model load); the loop heartbeat interval is 15s, so allow
@@ -216,6 +218,8 @@ def test_service_status_running(
         payload = json.loads(json_result.stdout)
         data = payload["data"]
         assert data["state"] == "running"
+        assert data["pid"] == serving_pid
+        assert data["pid"] != pid or data["health"].get("parent_pid") == pid
         operational = data["operational"]
         assert operational["jobs"]["available"] is True
         assert "next_action" in operational

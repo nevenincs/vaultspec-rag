@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -140,6 +141,12 @@ async def health_handler(_request: Request) -> object:
     return JSONResponse(
         {
             "status": status,
+            "pid": os.getpid(),
+            "parent_pid": os.getppid(),
+            "executable": sys.executable,
+            "prefix": sys.prefix,
+            "base_prefix": sys.base_prefix,
+            "virtual_env": os.environ.get("VIRTUAL_ENV"),
             "cuda": cuda,
             "models_loaded": reg_health["model_loaded"],
             "project_count": reg_health["project_count"],

@@ -101,6 +101,8 @@ async def test_get_jobs_returns_snapshot_shape(
         "result",
         "progress",
         "initiator",
+        "runtime",
+        "resources",
         "runtime_seconds",
         "last_progress_age_seconds",
     } <= set(entry)
@@ -109,6 +111,9 @@ async def test_get_jobs_returns_snapshot_shape(
     assert entry["phase"] in ("done", "error", "failed")
     assert entry["initiator"]["project_root"] == str(tmp_path)
     assert entry["initiator"]["kind"] == "mcp"
+    assert isinstance(entry["runtime"]["pid"], int)
+    assert isinstance(entry["runtime"]["user"], str)
+    assert isinstance(entry["resources"]["started"]["rss_mb"], float)
 
 
 @pytest.mark.subprocess_gpu
@@ -274,6 +279,8 @@ def test_jobs_route_200_with_bearer_token(
     assert payload["jobs"][0]["source"] == "vault"
     assert payload["jobs"][0]["phase"] == "done"
     assert payload["summary"]["running"] == 0
+    assert payload["summary"]["initiators"]["tool"] == 1
+    assert payload["summary"]["users"]
 
 
 def test_jobs_route_200_with_query_token(
@@ -312,6 +319,7 @@ def test_jobs_route_prioritises_running_before_limit(
     payload: dict[str, Any] = response.json()
     assert payload["jobs"][0]["id"] == running_id
     assert payload["jobs"][0]["phase"] == "running"
+    assert "current" in payload["jobs"][0]["resources"]
 
 
 def test_jobs_route_filters_phase_source_trigger_and_query(
@@ -387,6 +395,28 @@ def test_jobs_route_filters_failed_job_id_and_since(
     assert payload["filters"]["failed"] is True
     assert payload["filters"]["job_id"] == failed_id[:8]
     assert payload["filters"]["since"] == 60.0
+
+
+def test_jobs_route_query_matches_runtime_and_initiator(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start(
+        "code",
+        "tool",
+        command="reindex_codebase",
+        initiator_kind="cli",
+    )
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "query": "cli"}),
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    ids = [job["id"] for job in payload["jobs"]]
+    assert running_id in ids
 
 
 def test_jobs_route_since_uses_progress_update_time(

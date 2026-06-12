@@ -297,6 +297,15 @@ def _job_with_liveness(
     enriched = dict(record)
     enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
     enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
+    resources = record.get("resources")
+    if isinstance(resources, dict):
+        enriched_resources = {
+            str(key): dict(value) if isinstance(value, dict) else value
+            for key, value in resources.items()
+        }
+        if record.get("phase") == "running":
+            enriched_resources["current"] = _jobs.resource_snapshot()
+        enriched["resources"] = enriched_resources
     return enriched
 
 
@@ -342,15 +351,26 @@ def _job_matches(
             str(record.get("phase", "")),
             str(record.get("result", "")),
             _job_progress_text(record),
+            *_job_nested_values(record.get("initiator")),
+            *_job_nested_values(record.get("runtime")),
         ]
     ).lower()
     return query in haystack
+
+
+def _job_nested_values(raw: object) -> list[str]:
+    if not isinstance(raw, dict):
+        return []
+    return [str(value) for value in raw.values() if value is not None]
 
 
 def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
     phases: dict[str, int] = {}
     sources: dict[str, int] = {}
     triggers: dict[str, int] = {}
+    initiators: dict[str, int] = {}
+    active_initiators: dict[str, int] = {}
+    users: dict[str, int] = {}
     for record in records:
         phase = str(record.get("phase", "unknown"))
         source = str(record.get("source", "unknown"))
@@ -358,10 +378,23 @@ def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
         phases[phase] = phases.get(phase, 0) + 1
         sources[source] = sources.get(source, 0) + 1
         triggers[trigger] = triggers.get(trigger, 0) + 1
+        initiator = record.get("initiator")
+        if isinstance(initiator, dict):
+            kind = str(initiator.get("kind", "unknown"))
+            initiators[kind] = initiators.get(kind, 0) + 1
+            if phase == "running":
+                active_initiators[kind] = active_initiators.get(kind, 0) + 1
+        runtime = record.get("runtime")
+        if isinstance(runtime, dict):
+            user = str(runtime.get("user", "unknown"))
+            users[user] = users.get(user, 0) + 1
     return {
         "phases": phases,
         "sources": sources,
         "triggers": triggers,
+        "initiators": initiators,
+        "active_initiators": active_initiators,
+        "users": users,
         "running": phases.get("running", 0),
     }
 

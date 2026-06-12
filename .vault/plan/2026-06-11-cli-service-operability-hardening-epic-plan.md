@@ -655,7 +655,9 @@ Status as of 2026-06-12:
   - bounded jobs list,
   - focused `--job-id` inspection,
   - `--running`, `--failed`, `--since`, source/trigger/query filters,
-  - initiator and liveness fields.
+  - initiator and liveness fields,
+  - OS user, serving PID, parent PID, executable/venv context, RSS, and CUDA memory
+    snapshots.
 - Logs parity shipped and pushed:
   - `GET /logs`, `GET /logs/json`, CLI `server logs`, and MCP `get_logs` share
     `job_id` and `contains` filters.
@@ -670,6 +672,12 @@ Status as of 2026-06-12:
   - redundant cold pre-search status work was removed; manual cold search showed
     near-zero `status_seconds`, and remaining cold cost is now visible through setup and
     search phase fields.
+- Process identity parity shipped:
+  - `/health` reports serving PID and interpreter/venv context.
+  - heartbeat and `server start` persist the serving daemon PID instead of the Windows
+    launcher PID.
+  - `server status`, `server jobs`, and job runtime records agree on the active daemon
+    process.
 - Code review completed:
   - CR-13 and CR-14 were found in W05 review and fixed before final push.
 - Codified project rules:
@@ -695,5 +703,3 @@ Manual integration persona:
 Remaining deferred work:
 
 - True queue wait is still not measured.
-- The jobs registry still lacks OS user, wrapper identity, PID, process memory, and GPU
-  memory fields.
