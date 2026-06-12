@@ -195,8 +195,9 @@ def _jobs_diagnostic_text(jobs: dict[str, object]) -> str:
     running = jobs.get("running_count")
     if isinstance(running, int):
         if running == 0:
-            return "no running index jobs reported"
-        return f"{running} running index job(s) reported"
+            return "no index jobs running"
+        word = "job" if running == 1 else "jobs"
+        return f"{running} index {word} running"
     return "running work status unknown"
 
 
