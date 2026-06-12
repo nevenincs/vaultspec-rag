@@ -724,6 +724,79 @@ Agent brief:
 - Do not change generated provider artifacts unless the project tooling requires it.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
+### Phase W06.P03 - Redesign `server logs` Human Activity Feed
+
+Objective: Replace raw default `server logs` output with a human-facing activity feed
+while preserving raw log access and JSON output for diagnostics and automation.
+
+Progress tracking:
+
+- [ ] Keep raw log access available through an explicit flag or mode.
+- [ ] Make default human `server logs` output an activity feed, not raw implementation
+  log lines.
+- [ ] Collapse duplicate lifecycle/access-log entries where they describe the same
+  operation.
+- [ ] Convert structured lifecycle lines into readable activity rows:
+  - time,
+  - operation,
+  - project/repository,
+  - result count or job outcome,
+  - duration,
+  - request/job id when useful.
+- [ ] Keep `--contains <request_id>` and `--job-id <id>` useful for correlation.
+- [ ] Preserve `--json` as the full-fidelity machine-readable log-tail envelope.
+- [ ] Avoid formatting that wraps badly in narrow terminals.
+- [ ] Add or update real-behavior tests for activity formatting, raw mode, and filters.
+- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+
+Agent brief:
+
+- Start with Phase `W06.P03`.
+- Own the CLI log viewing surface, not global logging internals.
+- Treat the human review feedback as accepted design input:
+  - default log output is currently raw, duplicated, noisy, and wraps badly,
+  - lifecycle events are useful but should be rendered as operator activity,
+  - raw log lines still matter, but they belong behind an explicit raw/detail mode,
+  - request ids must remain searchable and joinable from search responses.
+- Avoid changing centralized logger configuration or broad logging call sites; that is
+  W06.P04.
+- Use `uv run` or `uv run --no-sync` for project commands.
+
+### Phase W06.P04 - Standardize Centralized Logging Enrollment
+
+Objective: Standardize logging calls and message structure across the RAG codebase using
+the project's centralized, customizable logging interface, independent of CLI log-view
+formatting.
+
+Progress tracking:
+
+- [ ] Inventory current logger creation and direct logging calls across the codebase.
+- [ ] Identify call sites that bypass or misuse the centralized logging interface.
+- [ ] Standardize event names, severity levels, and structured fields for service
+  lifecycle, search, jobs, watcher, indexing, and request correlation.
+- [ ] Ensure normal lifecycle/activity events are not logged as warnings unless they are
+  actual warnings.
+- [ ] Keep emitted messages suitable for downstream parsing by `server logs`, MCP, and
+  external log collectors.
+- [ ] Avoid changing the human CLI log renderer owned by W06.P03 except by agreed
+  contract fields.
+- [ ] Add or update tests for normalized log emission where feasible.
+- [ ] Produce an audit note for any broad call-site migration that should be staged
+  separately.
+
+Agent brief:
+
+- Start with Phase `W06.P04`.
+- Own centralized logging enrollment and message standardization, not the human
+  `server logs` display.
+- Read `src/vaultspec_rag/logging_config.py`, existing service lifecycle logging, jobs,
+  watcher, index, search, and server route logging before editing.
+- Treat the current raw `WARNING service.lifecycle event=search ...` output as evidence
+  that levels and message semantics need tightening.
+- Preserve request/job correlation semantics; do not remove useful structured fields.
+- Coordinate with W06.P03 only through stable event fields, not display formatting.
+- Use `uv run` or `uv run --no-sync` for project commands.
+
 Pipeline:
 
 Hardening:
