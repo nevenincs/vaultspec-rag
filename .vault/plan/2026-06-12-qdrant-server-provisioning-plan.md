@@ -15,15 +15,15 @@ related:
 
 Pin the server version and digests, resolve assets and binaries, and provision idempotently with dry-run support
 
-- [ ] `P01.S01` - Create qdrant_runtime constants module with the pinned server version and the committed per-asset SHA256 map, plus config knobs for server toggle, port, binary, and storage dir; `src/vaultspec_rag/qdrant_runtime/_constants.py, src/vaultspec_rag/config.py`.
-- [ ] `P01.S02` - Implement platform-to-asset mapping and active-binary resolution ordered env var, provisioned dir, PATH; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `P01.S03` - Implement host-pinned download, SHA256 verify before extraction, extraction, manifest, idempotent unchanged, and dry-run reporting in the sync vocabulary, with unit tests including the uv.lock minor-pin guard; `src/vaultspec_rag/qdrant_runtime/_provision.py, src/vaultspec_rag/tests/test_qdrant_runtime.py`.
+- [x] `P01.S01` - Create qdrant_runtime constants module with the pinned server version and the committed per-asset SHA256 map, plus config knobs for server toggle, port, binary, and storage dir; `src/vaultspec_rag/qdrant_runtime/_constants.py, src/vaultspec_rag/config.py`.
+- [x] `P01.S02` - Implement platform-to-asset mapping and active-binary resolution ordered env var, provisioned dir, PATH; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
+- [x] `P01.S03` - Implement host-pinned download, SHA256 verify before extraction, extraction, manifest, idempotent unchanged, and dry-run reporting in the sync vocabulary, with unit tests including the uv.lock minor-pin guard; `src/vaultspec_rag/qdrant_runtime/_provision.py, src/vaultspec_rag/tests/test_qdrant_runtime.py`.
 
 ### Phase `P02` - Supervision and store namespacing
 
 Spawn and reap the loopback qdrant child safely on all platforms and namespace per-root collections in server mode
 
-- [ ] `P02.S04` - Implement qdrant child supervision: loopback spawn with env-injected storage and ports, readyz poll with backoff, graceful terminate, and Windows kill-on-close Job Object; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `P02.S04` - Implement qdrant child supervision: loopback spawn with env-injected storage and ports, readyz poll with backoff, graceful terminate, and Windows kill-on-close Job Object; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
 - [ ] `P02.S05` - Namespace store collections per root in server mode via a stable short-hash prefix with instance-resolved collection names, unit-tested for stability and local-mode invariance; `src/vaultspec_rag/store.py, src/vaultspec_rag/tests/test_store.py`.
 
 ### Phase `P03` - Service lifecycle integration
