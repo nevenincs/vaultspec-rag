@@ -184,6 +184,7 @@ def _status_contract_server(
     *,
     extra_running_job: bool = False,
     omit_project: bool = False,
+    omit_job_started_at: bool = False,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a local HTTP service exposing /health and /jobs for status tests."""
     import http.server
@@ -200,6 +201,7 @@ def _status_contract_server(
                     last_progress_age_seconds=last_progress_age_seconds,
                     extra_running_job=extra_running_job,
                     omit_project=omit_project,
+                    omit_job_started_at=omit_job_started_at,
                 )
                 if self.path.startswith("/jobs")
                 else _status_contract_health_payload()
@@ -224,13 +226,13 @@ def _status_contract_jobs_payload(
     last_progress_age_seconds: float,
     extra_running_job: bool,
     omit_project: bool,
+    omit_job_started_at: bool,
 ) -> dict[str, object]:
     running_job: dict[str, object] = {
         "id": "running-job",
         "source": "code",
         "trigger": "tool",
         "phase": "running",
-        "started_at": started_at,
         "finished_at": None,
         "result": None,
         "progress": {
@@ -240,6 +242,8 @@ def _status_contract_jobs_payload(
         },
         "last_progress_age_seconds": last_progress_age_seconds,
     }
+    if not omit_job_started_at:
+        running_job["started_at"] = started_at
     if not omit_project:
         running_job["initiator"] = {
             "command": "reindex_codebase",
@@ -3086,6 +3090,37 @@ class TestServiceDaemonHelpers:
             assert not any(line.startswith("Project:") for line in lines)
             assert "project not reported" not in result.output
             assert "project unknown" not in result.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_missing_start_times_use_reported_absence_language(
+        self, tmp_path: Path
+    ):
+        import json
+
+        server, thread = _status_contract_server(omit_job_started_at=True)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            data.pop("started_at", None)
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status", "--verbose"])
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Started"] == "not reported by service record"
+            assert labels["Runtime"] == "not reported by service"
+            assert "unknown" not in result.output.lower()
         finally:
             server.shutdown()
             server.server_close()

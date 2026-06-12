@@ -448,7 +448,7 @@ def _evaluate_service_signals(
 ]:
     pid = int(status.get("pid", 0))
     port = int(status.get("port", 0))
-    started_at = str(status.get("started_at", "unknown"))
+    started_at = str(status.get("started_at", ""))
 
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) and raw_token else None
@@ -586,8 +586,8 @@ def _format_status_duration(raw: object) -> str:
 
 
 def _format_started_label(raw: object) -> str:
-    if not isinstance(raw, str) or not raw:
-        return "unknown"
+    if not isinstance(raw, str) or not raw or raw == "unknown":
+        return "not reported by service record"
     try:
         started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
@@ -621,7 +621,7 @@ def _current_job_summary(job: dict[str, object] | None) -> str:
     age = (
         _format_status_duration(time.time() - float(started_at))
         if isinstance(started_at, int | float)
-        else "unknown"
+        else "not reported by service"
     )
     return f"{_job_command_name(job)} ({age}{_job_progress_summary(job)})"
 
@@ -670,7 +670,7 @@ def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
     runtime = (
         _format_status_duration(time.time() - float(started_at))
         if isinstance(started_at, int | float)
-        else "unknown"
+        else "not reported by service"
     )
     lines = [
         "Current job:",
