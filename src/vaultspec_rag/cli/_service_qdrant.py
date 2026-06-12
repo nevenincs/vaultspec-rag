@@ -209,7 +209,7 @@ def qdrant_status(
             else "state not reported"
         )
         _print_line(f"Qdrant process: {alive}")
-        _print_line(f"Process: {service.get('qdrant_pid', 'not reported')}")
+        _print_line(f"Qdrant process id: {service.get('qdrant_pid', 'not reported')}")
         _print_line(f"Qdrant port: {service.get('qdrant_port', 'not reported')}")
     else:
         _print_line("Qdrant process: not started by this service")
