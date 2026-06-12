@@ -170,7 +170,9 @@ def _hold_local_index_lock(root: Path):
     return lock
 
 
-def _status_contract_server() -> tuple[typing.Any, typing.Any]:
+def _status_contract_server(
+    last_progress_age_seconds: float = 2.0,
+) -> tuple[typing.Any, typing.Any]:
     """Start a local HTTP service exposing /health and /jobs for status tests."""
     import http.server
     import threading
@@ -181,7 +183,10 @@ def _status_contract_server() -> tuple[typing.Any, typing.Any]:
     class _StatusContractHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             payload = (
-                _status_contract_jobs_payload(running_job_started_at)
+                _status_contract_jobs_payload(
+                    running_job_started_at,
+                    last_progress_age_seconds=last_progress_age_seconds,
+                )
                 if self.path.startswith("/jobs")
                 else _status_contract_health_payload()
             )
@@ -199,7 +204,11 @@ def _status_contract_server() -> tuple[typing.Any, typing.Any]:
     return server, thread
 
 
-def _status_contract_jobs_payload(started_at: float) -> dict[str, object]:
+def _status_contract_jobs_payload(
+    started_at: float,
+    *,
+    last_progress_age_seconds: float,
+) -> dict[str, object]:
     return {
         "ok": True,
         "jobs": [
@@ -216,6 +225,7 @@ def _status_contract_jobs_payload(started_at: float) -> dict[str, object]:
                     "completed": 7,
                     "total": 20,
                 },
+                "last_progress_age_seconds": last_progress_age_seconds,
                 "initiator": {"command": "reindex_codebase"},
             },
             {"id": "done-1", "phase": "done"},
@@ -2820,6 +2830,57 @@ class TestServiceDaemonHelpers:
             server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
+
+    def _service_status_current_job_output(
+        self,
+        tmp_path: Path,
+        *,
+        last_progress_age_seconds: float,
+    ) -> str:
+        import json
+
+        server, thread = _status_contract_server(
+            last_progress_age_seconds=last_progress_age_seconds,
+        )
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            return " ".join(result.output.split())
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_current_job_flags_no_recent_progress(
+        self,
+        tmp_path: Path,
+    ):
+        fresh_status = self._service_status_current_job_output(
+            tmp_path / "fresh",
+            last_progress_age_seconds=2.0,
+        )
+        stalled_status = self._service_status_current_job_output(
+            tmp_path / "stalled",
+            last_progress_age_seconds=600.0,
+        )
+
+        assert "Current job:" in fresh_status
+        assert "Current job:" in stalled_status
+        assert "no progress for" not in fresh_status
+        assert "no progress for 10m 0s" in stalled_status
+        assert stalled_status != fresh_status
 
     def test_service_status_distinguishes_waiting_from_processing(self):
         from ..cli._service_lifecycle import (

@@ -26,7 +26,12 @@ from ._process import (
     _spawn_service,
 )
 from ._render import _emit_json, _emit_json_error_and_exit
-from ._service_jobs import _human_progress, _operation_label, _project_label
+from ._service_jobs import (
+    _human_progress,
+    _operation_label,
+    _project_label,
+    _stale_progress_label,
+)
 from ._service_status import (
     _default_service_port,
     _log_file,
@@ -564,8 +569,14 @@ def _format_started_label(raw: object) -> str:
 
 
 def _job_progress_summary(job: dict[str, object]) -> str:
+    parts = []
     progress = _human_progress(job)
-    return f", {progress}" if progress else ""
+    if progress:
+        parts.append(progress)
+    stale_progress = _stale_progress_label(job)
+    if stale_progress:
+        parts.append(stale_progress)
+    return f", {', '.join(parts)}" if parts else ""
 
 
 def _job_command_name(job: dict[str, object]) -> str:
