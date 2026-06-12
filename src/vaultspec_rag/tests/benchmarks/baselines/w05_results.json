@@ -1,0 +1,205 @@
+{
+  "port": 8766,
+  "roots": [
+    "aeat-worktrees\\chore-476-restructure-execution",
+    "vaultspec-rag\\main"
+  ],
+  "requests": 8,
+  "concurrency": 4,
+  "with_reindex": false,
+  "reindex_job": null,
+  "scenarios": [
+    {
+      "name": "same-root-vault",
+      "concurrency": 4,
+      "requests": 8,
+      "ok": 8,
+      "errors": 0,
+      "wall_seconds": 20.766,
+      "throughput_rps": 0.385,
+      "latency": {
+        "p50": 10.448,
+        "p95": 10.602,
+        "max": 10.602
+      },
+      "phases": {
+        "embedding_seconds": {
+          "mean": 3.1534,
+          "max": 4.6327
+        },
+        "qdrant_seconds": {
+          "mean": 1.4165,
+          "max": 1.6439
+        },
+        "rerank_seconds": {
+          "mean": 4.9231,
+          "max": 5.6138
+        },
+        "postprocess_seconds": {
+          "mean": 4.9233,
+          "max": 5.614
+        },
+        "project_lease_seconds": {
+          "mean": 0.0004,
+          "max": 0.0009
+        },
+        "server_total_seconds": {
+          "mean": 9.5003,
+          "max": 10.591
+        },
+        "gpu_queue_wait_seconds": {
+          "mean": 5.4859,
+          "max": 6.5993
+        },
+        "queue_wait_seconds": {
+          "mean": 5.4859,
+          "max": 6.5993
+        }
+      }
+    },
+    {
+      "name": "same-root-code",
+      "concurrency": 4,
+      "requests": 8,
+      "ok": 8,
+      "errors": 0,
+      "wall_seconds": 616.628,
+      "throughput_rps": 0.013,
+      "latency": {
+        "p50": 250.391,
+        "p95": 384.663,
+        "max": 384.663
+      },
+      "phases": {
+        "embedding_seconds": {
+          "mean": 1.0264,
+          "max": 2.2315
+        },
+        "qdrant_seconds": {
+          "mean": 149.2453,
+          "max": 241.8461
+        },
+        "rerank_seconds": {
+          "mean": 5.837,
+          "max": 26.9653
+        },
+        "postprocess_seconds": {
+          "mean": 5.8372,
+          "max": 26.9654
+        },
+        "project_lease_seconds": {
+          "mean": 0.0006,
+          "max": 0.0008
+        },
+        "server_total_seconds": {
+          "mean": 291.5082,
+          "max": 384.6486
+        },
+        "gpu_queue_wait_seconds": {
+          "mean": 0.8363,
+          "max": 2.0425
+        },
+        "queue_wait_seconds": {
+          "mean": 0.8363,
+          "max": 2.0425
+        }
+      }
+    },
+    {
+      "name": "same-root-mixed",
+      "concurrency": 4,
+      "requests": 8,
+      "ok": 8,
+      "errors": 0,
+      "wall_seconds": 290.343,
+      "throughput_rps": 0.028,
+      "latency": {
+        "p50": 172.789,
+        "p95": 176.219,
+        "max": 176.219
+      },
+      "phases": {
+        "embedding_seconds": {
+          "mean": 0.0001,
+          "max": 0.0002
+        },
+        "qdrant_seconds": {
+          "mean": 43.8938,
+          "max": 114.0252
+        },
+        "rerank_seconds": {
+          "mean": 37.3015,
+          "max": 71.5627
+        },
+        "postprocess_seconds": {
+          "mean": 55.3057,
+          "max": 116.3234
+        },
+        "project_lease_seconds": {
+          "mean": 0.0005,
+          "max": 0.0009
+        },
+        "server_total_seconds": {
+          "mean": 144.3809,
+          "max": 176.2071
+        },
+        "gpu_queue_wait_seconds": {
+          "mean": 28.4825,
+          "max": 58.7706
+        },
+        "queue_wait_seconds": {
+          "mean": 28.4825,
+          "max": 58.7706
+        }
+      }
+    },
+    {
+      "name": "cross-root-mixed",
+      "concurrency": 4,
+      "requests": 8,
+      "ok": 8,
+      "errors": 0,
+      "wall_seconds": 118.157,
+      "throughput_rps": 0.068,
+      "latency": {
+        "p50": 59.439,
+        "p95": 115.576,
+        "max": 115.576
+      },
+      "phases": {
+        "embedding_seconds": {
+          "mean": 0.0001,
+          "max": 0.0003
+        },
+        "qdrant_seconds": {
+          "mean": 14.9558,
+          "max": 58.4865
+        },
+        "rerank_seconds": {
+          "mean": 27.9995,
+          "max": 59.083
+        },
+        "postprocess_seconds": {
+          "mean": 31.6746,
+          "max": 59.0832
+        },
+        "project_lease_seconds": {
+          "mean": 0.002,
+          "max": 0.0055
+        },
+        "server_total_seconds": {
+          "mean": 58.4105,
+          "max": 115.5642
+        },
+        "gpu_queue_wait_seconds": {
+          "mean": 13.6717,
+          "max": 52.5934
+        },
+        "queue_wait_seconds": {
+          "mean": 13.6717,
+          "max": 52.5934
+        }
+      }
+    }
+  ]
+}
