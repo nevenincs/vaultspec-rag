@@ -688,7 +688,7 @@ def _render_job_detail(job: dict[str, object]) -> None:
         pid = runtime.get("pid")
         user = runtime.get("user")
         if pid is not None:
-            _cli.console.print(f"Process: {pid}")
+            _cli.console.print(f"Job process id: {pid}")
         if user:
             _cli.console.print(f"User: {user}")
         executable = runtime.get("executable")

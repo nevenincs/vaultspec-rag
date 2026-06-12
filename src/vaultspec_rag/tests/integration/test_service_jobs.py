@@ -944,7 +944,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     values = _label_values(output)
     assert values["Started by"] == "automatic updates"
     assert values["Request"] == "automatic code index update"
-    assert values["Process"] == "123"
+    assert values["Job process id"] == "123"
     assert values["User"] == "operator"
     assert values["Python"] == ".venv/Scripts/python.exe"
     assert values["Python environment"] == ".venv"
@@ -953,6 +953,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     for forbidden in (
         "Initiator:",
         "Command:",
+        "Process:",
         "watcher_code_index",
         "PID:",
         "OS user:",
@@ -963,6 +964,34 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert "rss " not in output
     assert "cuda alloc" not in output
     assert "cuda reserved" not in output
+
+
+def test_jobs_job_id_detail_uses_precise_process_label() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    payload["jobs"] = [jobs[0]]
+    payload["total"] = 1
+    payload["returned"] = 1
+    payload["filters"] = {"limit": 20, "job_id": "runjob12"}
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--job-id", "runjob12", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["job_id"] == ["runjob12"]
+    values = _label_values(result.output)
+    assert values["Job process id"] == "123"
+    assert values["User"] == "operator"
+    assert values["Started by"] == "automatic updates"
+    assert values["Request"] == "automatic code index update"
+    assert "Process: 123" not in result.output
+    assert "PID:" not in result.output
 
 
 def test_job_detail_only_reports_progress_freshness_while_running(
