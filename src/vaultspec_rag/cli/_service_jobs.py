@@ -155,24 +155,24 @@ def _job_timestamp(job: dict[str, object]) -> float:
 def _job_time_label(job: dict[str, object]) -> str:
     timestamp = _job_timestamp(job)
     if timestamp <= 0:
-        return "time unknown"
+        return "time not reported"
     return time.strftime("%H:%M:%S", time.localtime(timestamp))
 
 
 def _project_label(job: dict[str, object]) -> str:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
-        return "project unknown"
+        return "project not reported"
     project_root = initiator.get("project_root")
     if not project_root:
-        return "project unknown"
+        return "project not reported"
     parts = str(project_root).replace("\\", "/").rstrip("/").split("/")
     return parts[-1] if parts and parts[-1] else str(project_root)
 
 
 def _project_phrase(job: dict[str, object]) -> str:
     project = _project_label(job)
-    if project == "project unknown":
+    if project == "project not reported":
         return ""
     return f" for {project}"
 
@@ -326,7 +326,7 @@ def _job_id_labels(jobs: list[dict[str, object]]) -> dict[int, str]:
     labels: dict[int, str] = {}
     for index, raw_id in enumerate(raw_ids):
         if not raw_id:
-            labels[index] = "unknown"
+            labels[index] = "not reported"
             continue
         min_length = min(8, len(raw_id))
         label = raw_id[:min_length]

@@ -51,7 +51,7 @@ runner = CliRunner()
 _DEAD_PORT = "59235"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _JOB_ROW_RE = re.compile(
-    r"^(?P<marker>[*!~ ]) (?P<time>\d\d:\d\d:\d\d|time unknown) "
+    r"^(?P<marker>[*!~ ]) (?P<time>\d\d:\d\d:\d\d|time not reported) "
     r"(?P<state>\S+) (?P<operation>.+?) \(job (?P<id>[^)]+)\) - "
     r"(?P<detail>.*)$"
 )
@@ -710,6 +710,42 @@ def test_jobs_waiting_progress_uses_user_language() -> None:
     assert waiting != "waiting to write the index 0"
     assert compound == "embedding and writing sections 64 of 196"
     assert "upsert" not in compound
+
+
+def test_jobs_missing_context_uses_reported_absence_language(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "source": "code",
+                    "trigger": "tool",
+                    "phase": "running",
+                    "runtime_seconds": 4.0,
+                    "progress": {"step": "embed", "completed": 1, "total": 2},
+                }
+            ],
+            "total": 1,
+            "returned": 1,
+            "summary": {"running": 1, "phases": {"running": 1}},
+            "filters": {"limit": 1},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["time"] == "time not reported"
+    assert row["id"] == "not reported"
+    assert row["operation"] == "code index operation"
+    assert "project unknown" not in output
+    assert "unknown" not in output
 
 
 def test_jobs_humanizes_cancelled_automatic_update(
