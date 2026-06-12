@@ -128,7 +128,6 @@ state cannot be established.
 
 ## Deferred
 
-- True queue wait is still not measured.
 - Search while indexing still needs a controlled manual reproduction.
 - `server status --port` was later implemented in the status convergence follow-up.
 
@@ -207,3 +206,32 @@ Observed against current resident service PID `58528` on port `8766`:
 - `postprocess_seconds` was about 0.095s,
 - the remaining cold cost was attributable to setup fields, especially project/model
   setup outside the core query phases.
+
+## Follow-Up: GPU Queue Wait Timing
+
+Added true GPU-lock wait timing inside the service-domain searcher:
+
+- Query embedding and CrossEncoder reranking now acquire the shared GPU lock through a
+  timed context.
+- `phases.gpu_queue_wait_seconds` and `phases.queue_wait_seconds` accumulate time spent
+  waiting to enter those GPU sections.
+- The top-level `/search` timing payload now reports numeric `queue_wait_seconds` instead
+  of `null`.
+
+Verification:
+
+- `uv run ruff check src/vaultspec_rag/search/_searcher.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run ty check src/vaultspec_rag/search/_searcher.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
+- `uv run --no-sync python tools/complexity_gate.py`
+- `uv run vaultspec-rag server stop`
+- `uv run vaultspec-rag server start --port 8766`
+- `uv run vaultspec-rag search "queue wait gpu lock timing" --type code --json --max-results 2 --port 8766 --timeout 180`
+
+Observed against resident service PID `18512` on port `8766`:
+
+- `queue_wait_seconds` was numeric rather than `null`.
+- `phases.gpu_queue_wait_seconds` matched the top-level queue wait value.
+- The manual run showed near-zero queue wait (`~0.000002s`) and cold cost remained under
+  `project_lease_seconds` (`~6.53s`), confirming the remaining startup slowdown is setup
+  latency, not observed GPU-lock contention.

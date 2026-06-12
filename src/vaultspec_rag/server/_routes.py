@@ -636,7 +636,10 @@ async def search_route(request: Request) -> JSONResponse:
                     "rerank_seconds": phase_timing.get("rerank_seconds"),
                     "postprocess_seconds": phase_timing.get("postprocess_seconds"),
                     "serialization_seconds": serialization_seconds,
-                    "queue_wait_seconds": None,
+                    "queue_wait_seconds": phase_timing.get(
+                        "queue_wait_seconds",
+                        0.0,
+                    ),
                     "timing_scope": "server_route",
                     "phases": phase_timing,
                 },

@@ -12,7 +12,7 @@ import fnmatch
 import logging
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, cast
 
 from ._models import ParsedQuery, SearchResult
@@ -80,6 +80,15 @@ def _record_seconds(
 ) -> None:
     if timings is not None:
         timings[key] = time.perf_counter() - started
+
+
+def _add_seconds(
+    timings: dict[str, float] | None,
+    key: str,
+    seconds: float,
+) -> None:
+    if timings is not None:
+        timings[key] = timings.get(key, 0.0) + seconds
 
 
 class VaultGraphError(RuntimeError):
@@ -154,6 +163,22 @@ class VaultSearcher:
         self._reranker = reranker
         self._reranker_lock = threading.Lock()
 
+    @contextmanager
+    def _gpu_section(self, timings: dict[str, float] | None = None):
+        if self._gpu_lock is None:
+            with nullcontext():
+                yield
+            return
+        started = time.perf_counter()
+        self._gpu_lock.acquire()
+        wait_seconds = time.perf_counter() - started
+        _add_seconds(timings, "gpu_queue_wait_seconds", wait_seconds)
+        _add_seconds(timings, "queue_wait_seconds", wait_seconds)
+        try:
+            yield
+        finally:
+            self._gpu_lock.release()
+
     def _get_reranker(self) -> CrossEncoder:
         """Lazily load the CrossEncoder reranker model onto GPU.
 
@@ -197,6 +222,8 @@ class VaultSearcher:
         query: str,
         results: list[SearchResult],
         top_k: int,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Rerank results using CrossEncoder if enabled.
 
@@ -227,7 +254,7 @@ class VaultSearcher:
         pairs = [(query, r.snippet) for r in results]
         batch_size = get_config().reranker_batch_size
         scores: list[float] = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+        with self._gpu_section(timings):
             while True:
                 try:
                     raw_scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete
@@ -377,7 +404,7 @@ class VaultSearcher:
         _record_seconds(timings, "result_mapping_seconds", phase_started)
 
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, top_k)
+        results = self._rerank(query_text, results, top_k, timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
 
         phase_started = time.perf_counter()
@@ -605,7 +632,7 @@ class VaultSearcher:
         _record_seconds(timings, "result_mapping_seconds", phase_started)
 
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, top_k)
+        results = self._rerank(query_text, results, top_k, timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
 
         # --prefer post-rerank score nudge. Apply ±PREFER_SCORE_NUDGE
@@ -638,6 +665,8 @@ class VaultSearcher:
     def _encode_query(
         self,
         raw_query: str,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> tuple[ParsedQuery, str, list[float], SparseResult | None]:
         """Parse and encode a query, returning shared components.
 
@@ -654,7 +683,7 @@ class VaultSearcher:
         """
         parsed = parse_query(raw_query)
         query_text = parsed.text or raw_query
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+        with self._gpu_section(timings):
             query_vector = self.model.encode_query(query_text).tolist()
             sparse_vector = (
                 self.model.encode_query_sparse(query_text)
@@ -721,7 +750,10 @@ class VaultSearcher:
         """Search vault and return phase timings for service diagnostics."""
         timings: dict[str, float] = {}
         phase_started = time.perf_counter()
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            timings=timings,
+        )
         timings["embedding_seconds"] = time.perf_counter() - phase_started
         results = self._search_vault_encoded(
             query_vector,
@@ -822,7 +854,10 @@ class VaultSearcher:
         """Search codebase and return phase timings for service diagnostics."""
         timings: dict[str, float] = {}
         phase_started = time.perf_counter()
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            timings=timings,
+        )
         timings["embedding_seconds"] = time.perf_counter() - phase_started
         results = self._search_codebase_encoded(
             query_vector,

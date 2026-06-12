@@ -672,6 +672,8 @@ Status as of 2026-06-12:
   - redundant cold pre-search status work was removed; manual cold search showed
     near-zero `status_seconds`, and remaining cold cost is now visible through setup and
     search phase fields.
+  - GPU-lock queue wait is measured as numeric `queue_wait_seconds` and
+    `phases.gpu_queue_wait_seconds`.
 - Process identity parity shipped:
   - `/health` reports serving PID and interpreter/venv context.
   - heartbeat and `server start` persist the serving daemon PID instead of the Windows
@@ -702,4 +704,5 @@ Manual integration persona:
 
 Remaining deferred work:
 
-- True queue wait is still not measured.
+- Cold service-backed search still shows high project/model setup latency under
+  `project_lease_seconds`; this is now observable, but not yet optimized.

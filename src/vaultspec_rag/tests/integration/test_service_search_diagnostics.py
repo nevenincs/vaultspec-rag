@@ -23,6 +23,7 @@ def _assert_search_phase_timing(result: dict[str, object]) -> dict[str, object]:
         "qdrant_seconds",
         "rerank_seconds",
         "postprocess_seconds",
+        "queue_wait_seconds",
     ):
         assert isinstance(timing[key], float)
     phases = cast("dict[str, object]", timing["phases"])
@@ -30,6 +31,8 @@ def _assert_search_phase_timing(result: dict[str, object]) -> dict[str, object]:
         "model_load_seconds",
         "project_lease_seconds",
         "embedding_seconds",
+        "gpu_queue_wait_seconds",
+        "queue_wait_seconds",
         "qdrant_seconds",
     ):
         assert isinstance(phases[key], float)
