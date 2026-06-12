@@ -222,5 +222,5 @@ def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None
         "Matched rule": "*.pdf",
         "Outcome": "preprocessed",
         "Preprocessor": "fake 1.0",
-        "Output": "1 extracted unit",
+        "Output": "1 extracted text section",
     }

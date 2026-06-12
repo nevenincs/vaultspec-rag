@@ -59,8 +59,8 @@ def _format_preprocess_result(status: str) -> str:
 
 def _format_unit_count(unit_count: int) -> str:
     if unit_count == 1:
-        return "1 extracted unit"
-    return f"{unit_count} extracted units"
+        return "1 extracted text section"
+    return f"{unit_count} extracted text sections"
 
 
 @preprocess_app.command("list", help="List resolved preprocess rules for the project.")
