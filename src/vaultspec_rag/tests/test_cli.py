@@ -726,6 +726,22 @@ class TestIndexRebuild:
         assert result.exit_code == 0, result.output
         assert "files would be indexed" in result.output
 
+    def test_index_dry_run_rejects_document_indexing_in_user_language(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--type", "vault", "--dry-run"],
+        )
+
+        assert result.exit_code == 2
+        assert "--dry-run" in result.output
+        assert "source code" in result.output
+        assert "codebase" not in result.output
+
     def test_index_rebuild_without_explicit_type_exits_2(self, tmp_path: Path):
         """--rebuild without --type is rejected.
 

@@ -85,10 +85,10 @@ def _handle_dry_run(
             _emit_json_error_and_exit(
                 "index",
                 "dry_run_requires_code",
-                "--dry-run only applies to codebase indexing.",
+                "--dry-run only applies when indexing source code.",
                 2,
             )
-        _cli.console.print("--dry-run only applies to codebase indexing.")
+        _cli.console.print("--dry-run only applies when indexing source code.")
         raise typer.Exit(code=2)
     import vaultspec_rag
 
