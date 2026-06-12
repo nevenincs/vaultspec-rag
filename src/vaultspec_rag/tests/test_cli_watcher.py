@@ -212,7 +212,8 @@ def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
     result = runner.invoke(app, ["server", "updates", "reconfigure", "--help"])
     assert result.exit_code == 0
     assert "--update-delay-ms" in result.stdout
-    assert "--same-source-delay-s" in result.stdout
+    assert "--same-project-delay-s" in result.stdout
+    assert "--same-source-delay-s" not in result.stdout
     assert "--debounce-ms" not in result.stdout
     assert "--cooldown-s" not in result.stdout
 
@@ -227,6 +228,14 @@ def test_updates_reconfigure_help_uses_user_facing_timing_flags() -> None:
             "/tmp/x",
             "--update-delay-ms",
             "500",
+            "--same-project-delay-s",
+            "2",
+        ],
+        [
+            "server",
+            "updates",
+            "reconfigure",
+            "/tmp/x",
             "--same-source-delay-s",
             "2",
         ],

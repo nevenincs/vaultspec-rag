@@ -1949,7 +1949,8 @@ class TestHelpCleanup:
         assert "--updates" in result.output
         assert "--no-updates" in result.output
         assert "--update-delay-ms" in result.output
-        assert "--same-source-delay-s" in result.output
+        assert "--same-project-delay-s" in result.output
+        assert "--same-source-delay-s" not in result.output
         assert "--watch" not in result.output
         assert "--no-watch" not in result.output
         assert "--watch-debounce-ms" not in result.output
@@ -2025,7 +2026,7 @@ class TestHelpCleanup:
                 "--updates",
                 "--update-delay-ms",
                 "250",
-                "--same-source-delay-s",
+                "--same-project-delay-s",
                 "1.5",
             ],
         )
@@ -2034,6 +2035,21 @@ class TestHelpCleanup:
         assert captured["watch"] is True
         assert captured["watch_debounce_ms"] == 250
         assert captured["watch_cooldown_s"] == 1.5
+
+        legacy = runner.invoke(
+            app,
+            [
+                "server",
+                "start",
+                "--updates",
+                "--same-source-delay-s",
+                "2.5",
+            ],
+        )
+
+        assert legacy.exit_code == 0, legacy.output
+        assert captured["watch"] is True
+        assert captured["watch_cooldown_s"] == 2.5
 
     def test_server_start_legacy_watch_aliases_still_parse(
         self, monkeypatch: pytest.MonkeyPatch

@@ -228,11 +228,19 @@ def service_watcher_reconfigure(
             hidden=True,
         ),
     ] = None,
+    same_project_delay_s: Annotated[
+        float | None,
+        typer.Option(
+            "--same-project-delay-s",
+            help="Minimum wait before indexing the same project again, in seconds.",
+        ),
+    ] = None,
     same_source_delay_s: Annotated[
         float | None,
         typer.Option(
             "--same-source-delay-s",
-            help="Minimum wait before indexing the same source again, in seconds.",
+            help="Legacy name for --same-project-delay-s.",
+            hidden=True,
         ),
     ] = None,
     cooldown_s: Annotated[
@@ -259,7 +267,11 @@ def service_watcher_reconfigure(
         update_delay_ms if update_delay_ms is not None else debounce_ms
     )
     selected_same_source_delay_s = (
-        same_source_delay_s if same_source_delay_s is not None else cooldown_s
+        same_project_delay_s
+        if same_project_delay_s is not None
+        else same_source_delay_s
+        if same_source_delay_s is not None
+        else cooldown_s
     )
     if selected_update_delay_ms is not None:
         args["debounce_ms"] = selected_update_delay_ms

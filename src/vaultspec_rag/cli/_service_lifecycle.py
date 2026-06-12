@@ -202,11 +202,19 @@ def service_start(
             hidden=True,
         ),
     ] = None,
+    same_project_delay_s: Annotated[
+        float | None,
+        typer.Option(
+            "--same-project-delay-s",
+            help="Minimum wait before indexing the same project again, in seconds.",
+        ),
+    ] = None,
     same_source_delay_s: Annotated[
         float | None,
         typer.Option(
             "--same-source-delay-s",
-            help="Minimum wait before indexing the same source again, in seconds.",
+            help="Legacy name for --same-project-delay-s.",
+            hidden=True,
         ),
     ] = None,
     watch_cooldown_s: Annotated[
@@ -266,7 +274,11 @@ def service_start(
         update_delay_ms if update_delay_ms is not None else watch_debounce_ms
     )
     selected_same_source_delay_s = (
-        same_source_delay_s if same_source_delay_s is not None else watch_cooldown_s
+        same_project_delay_s
+        if same_project_delay_s is not None
+        else same_source_delay_s
+        if same_source_delay_s is not None
+        else watch_cooldown_s
     )
     pid = _spawn_service(
         port,
