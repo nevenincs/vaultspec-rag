@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import typing
@@ -33,6 +34,126 @@ from ..torch_config import TorchConfigAction
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+
+def _status_contract_server() -> tuple[typing.Any, typing.Any]:
+    """Start a local HTTP service exposing /health and /jobs for status tests."""
+    import http.server
+    import threading
+    import time
+
+    running_job_started_at = time.time() - 42
+
+    class _StatusContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = (
+                _status_contract_jobs_payload(running_job_started_at)
+                if self.path.startswith("/jobs")
+                else _status_contract_health_payload()
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _StatusContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _status_contract_jobs_payload(started_at: float) -> dict[str, object]:
+    return {
+        "ok": True,
+        "jobs": [
+            {
+                "id": "running-job",
+                "source": "code",
+                "trigger": "tool",
+                "phase": "running",
+                "started_at": started_at,
+                "finished_at": None,
+                "result": None,
+                "progress": {
+                    "step": "embed",
+                    "completed": 7,
+                    "total": 20,
+                },
+                "initiator": {"command": "reindex_codebase"},
+            },
+            {"id": "done-1", "phase": "done"},
+            {"id": "done-2", "phase": "done"},
+        ],
+        "total": 3,
+        "returned": 3,
+        "summary": {"running": 1, "phases": {"running": 1, "done": 2}},
+    }
+
+
+def _status_contract_health_payload() -> dict[str, object]:
+    return {
+        "status": "ready",
+        "cuda": True,
+        "models_loaded": True,
+        "project_count": 3,
+        "uptime_s": 312.0,
+        "backend_capabilities": {
+            "same_project_search_strategy": "serialized",
+            "cross_project_search_strategy": "parallel",
+            "local_storage_process_model": "exclusive",
+        },
+    }
+
+
+def _slow_search_contract_server() -> tuple[typing.Any, typing.Any]:
+    """Start a local service that lets /search time out while probes work."""
+    import http.server
+    import threading
+    import time
+
+    class _SlowSearchHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            time.sleep(0.05)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            with contextlib.suppress(OSError):
+                self.wfile.write(json.dumps({"ok": True, "results": []}).encode())
+
+        def do_GET(self):
+            if self.path == "/health":
+                payload = _status_contract_health_payload()
+            elif self.path.startswith("/jobs"):
+                payload = {
+                    "ok": True,
+                    "jobs": [],
+                    "total": 0,
+                    "returned": 0,
+                    "summary": {"running": 0, "phases": {}},
+                }
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowSearchHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
 
 
 class TestSearchTimeoutDefaults:
@@ -334,6 +455,68 @@ class TestServerCommands:
             reset_base_config()
             reset_rag_config()
 
+    def test_service_health_human_output_is_minimal_probe(self):
+        """server health is automation-oriented and points humans to status."""
+        import http.server
+        import json
+        import threading
+
+        class _HealthHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "status": "ready",
+                            "cuda": True,
+                            "models_loaded": True,
+                            "project_count": 3,
+                            "uptime_s": 42.0,
+                            "backend_capabilities": {
+                                "same_project_search_strategy": "serialized",
+                                "cross_project_search_strategy": "parallel",
+                                "local_storage_process_model": "exclusive",
+                            },
+                        },
+                    ).encode("utf-8"),
+                )
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            human = runner.invoke(app, ["server", "health", "--port", str(port)])
+            assert human.exit_code == 0
+            assert "Health: ready for requests" in human.output
+            assert f"vaultspec-rag server status --port {port}" in human.output
+            assert "Models loaded" not in human.output
+            assert "Search Concurrency" not in human.output
+            for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+                assert forbidden not in human.output
+
+            json_result = runner.invoke(
+                app,
+                ["server", "health", "--port", str(port), "--json"],
+            )
+            assert json_result.exit_code == 0
+            envelope = json.loads(json_result.output)
+            assert envelope["ok"] is True
+            assert envelope["data"]["models_loaded"] is True
+            assert (
+                envelope["data"]["backend_capabilities"]["same_project_search_strategy"]
+                == "serialized"
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
 
 class TestServerRoutingFlattened:
     """Verify the flattened `server` command surface (W03.P05.S12 #169).
@@ -352,6 +535,12 @@ class TestServerRoutingFlattened:
     def test_server_status_help(self):
         result = runner.invoke(app, ["server", "status", "--help"])
         assert result.exit_code == 0, result.output
+        assert "operator summary" in result.output
+
+    def test_server_health_help_points_to_status(self):
+        result = runner.invoke(app, ["server", "health", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Use `server status`" in result.output
 
     def test_server_watcher_status_help(self):
         result = runner.invoke(app, ["server", "watcher", "status", "--help"])
@@ -920,8 +1109,8 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "falling back to in-process" not in normalized
 
-    def test_search_results_via_service_indicator(self):
-        """via='service' renders '(via service)' in the table title."""
+    def test_search_results_service_uses_line_records(self):
+        """Service results render as grep-like lines, not a table."""
         from io import StringIO
 
         from rich.console import Console
@@ -938,11 +1127,12 @@ class TestSearchSafetyContract:
                 via="service",
             )
         rendered = " ".join(out.getvalue().split())
-        assert "Search Results: code" in rendered
-        assert "(via service)" in rendered
+        assert rendered == "foo.py: rank=1 x"
+        assert "Search Results" not in rendered
+        assert "score" not in rendered
 
-    def test_search_results_via_in_process_indicator(self):
-        """via='in-process' renders '(via in-process)' in the title."""
+    def test_search_results_in_process_uses_same_line_contract(self):
+        """The via marker does not change the human result shape."""
         from io import StringIO
 
         from rich.console import Console
@@ -959,8 +1149,8 @@ class TestSearchSafetyContract:
                 via="in-process",
             )
         rendered = " ".join(out.getvalue().split())
-        assert "Search Results: code" in rendered
-        assert "(via in-process)" in rendered
+        assert rendered == "foo.py: rank=1 x"
+        assert "Search Results" not in rendered
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
@@ -1062,6 +1252,106 @@ class TestSearchSafetyContract:
         msg = res["message"]
         assert isinstance(msg, str)
         assert "timed out after" in msg
+        assert "same_project_search_strategy" not in msg
+
+    def test_search_timeout_human_output_is_plain_diagnostic(
+        self, tmp_path: Path
+    ) -> None:
+        """Default search timeout output is natural text, not a backend table."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server()
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        normalized = " ".join(result.output.split())
+        assert "search request to the service" in normalized
+        assert "timed out after 0.001 seconds" in normalized
+        assert "Service: reachable; health status ready; 3 project(s) loaded" in (
+            result.output
+        )
+        assert "Work: no running jobs reported" in result.output
+        assert f"vaultspec-rag server status --port {port}" in result.output
+        assert f"vaultspec-rag server jobs --running --port {port}" in result.output
+        for forbidden in (
+            "same_project_search_strategy",
+            "Backend Contract",
+            "Search Concurrency",
+            "Cross-project Search",
+            "Storage Process Model",
+            "http_search_timeout",
+            "┌",
+            "│",
+            "└",
+        ):
+            assert forbidden not in result.output
+
+    def test_search_timeout_json_preserves_backend_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        """JSON timeout output keeps full diagnostic fields for agents."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server()
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                    "--json",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "search"
+        assert envelope["error"] == "http_search_timeout"
+        assert envelope["backend_capabilities"]["same_project_search_strategy"] == (
+            "serialized"
+        )
+        diagnostics = envelope["diagnostics"]
+        assert diagnostics["backpressure"]["same_project_search_strategy"] == (
+            "serialized"
+        )
+        assert diagnostics["health"]["status"] == "ready"
+        assert diagnostics["jobs"]["running_count"] == 0
 
 
 _FORBIDDEN_DOCSTRING_TOKENS = ("Args:", "Raises:", "CLIState", " ctx ")
@@ -1178,12 +1468,18 @@ class TestCleanRequiredTarget:
         assert result.exit_code != 0
 
 
-class TestNoTruncateFlag:
-    """--no-truncate bypasses snippet truncation."""
+class TestSearchResultRendering:
+    """Human search results are line-oriented and never silently truncated."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _render(self, snippet: str, no_truncate: bool) -> str:
+    def _render(
+        self,
+        result: dict[str, object],
+        *,
+        no_truncate: bool = False,
+        show_scores: bool = False,
+    ) -> str:
         from io import StringIO
 
         from rich.console import Console
@@ -1195,24 +1491,40 @@ class TestNoTruncateFlag:
                 Console(file=out, force_terminal=False, width=400),
             )
             _display_search_results(
-                [{"path": "foo.py", "score": 0.9, "snippet": snippet}],
+                [result],
                 "code",
                 via="service",
                 no_truncate=no_truncate,
+                show_scores=show_scores,
             )
-        # Strip Rich wrapping whitespace before substring matching.
-        return "".join(out.getvalue().split())
+        return out.getvalue()
 
-    def test_no_truncate_keeps_full_snippet(self):
-        """no_truncate=True renders the snippet untruncated."""
-        rendered = self._render("a" * 300, no_truncate=True)
+    def test_default_keeps_full_snippet(self):
+        """Default output renders the full snippet."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
         assert "a" * 250 in rendered
 
-    def test_default_truncates_at_120(self):
-        """Default behaviour caps the snippet at 120 chars."""
-        rendered = self._render("a" * 300, no_truncate=False)
-        # 300 chars truncated to 120 - a 200-a run cannot appear.
-        assert "a" * 200 not in rendered
+    def test_no_truncate_flag_keeps_full_snippet_for_compatibility(self):
+        """The legacy flag remains accepted but default output is already full."""
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "a" * 300},
+            no_truncate=True,
+        )
+        assert "a" * 250 in rendered
+
+    def test_scores_are_hidden_by_default(self):
+        """Default output shows rank, not numeric relevance score."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
+        assert rendered.strip() == "foo.py: rank=1 test"
+        assert "score=" not in rendered
+
+    def test_scores_flag_renders_numeric_score(self):
+        """--scores detail mode includes the relevance score."""
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "test"},
+            show_scores=True,
+        )
+        assert rendered.strip() == "foo.py: rank=1 score=0.9000 test"
 
     def test_display_empty_results(self):
         """Empty results list renders without raising."""
@@ -1224,17 +1536,28 @@ class TestNoTruncateFlag:
 
     def test_display_with_line_start(self):
         """Result with line_start appends :N to location."""
-        _display_search_results(
-            [{"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42}],
-            "vault",
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
         )
+        assert rendered.strip() == "foo.py:42: rank=1 test"
 
     def test_display_without_line_start(self):
         """Result without line_start renders location as bare path."""
-        _display_search_results(
-            [{"path": "foo.py", "score": 0.9, "snippet": "test"}],
-            "vault",
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
+        assert rendered.strip() == "foo.py: rank=1 test"
+
+    def test_display_with_anchor_prefers_deep_link(self):
+        """Anchor locators stay mechanically grabbable."""
+        rendered = self._render(
+            {
+                "path": "report.pdf",
+                "anchor": "report.pdf#page=4",
+                "line_start": 12,
+                "score": 0.9,
+                "snippet": "test",
+            }
         )
+        assert rendered.strip() == "report.pdf#page=4: rank=1 test"
 
     def test_backend_contract_rows_render(self):
         """Backend contract rows render stable concurrency wording."""
@@ -1264,10 +1587,10 @@ class TestNoTruncateFlag:
         assert "supported; same-project local backend access serialized" in rendered
         assert "Storage Process Model" in rendered
 
-    def test_display_service_lock_error_renders_contract(
+    def test_display_service_lock_error_hides_backend_contract(
         self, capsys: pytest.CaptureFixture[str]
     ):
-        """Structured local-store errors show remediation and backend contract."""
+        """Default service errors do not render backend contract tables."""
         _display_service_error(
             {
                 "ok": False,
@@ -1285,8 +1608,59 @@ class TestNoTruncateFlag:
         out = capsys.readouterr().out
         assert "Route concurrent searches through one service." in out
         assert "local_store_locked" in out
-        assert "same-project local backend access" in out
-        assert "serialized" in out
+        assert "same-project local backend access" not in out
+        assert "same_project_search_strategy" not in out
+        assert "serialized" not in out
+        for forbidden in ("┌", "└", "│"):
+            assert forbidden not in out
+
+    def test_display_search_timeout_error_humanizes_diagnostics(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        """Search timeout errors answer health/work status without raw strategy keys."""
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": (
+                    "HTTP search on port 8766 timed out after 180.0s. "
+                    "The service may still be processing the request. "
+                    "Service status=unknown; running_jobs=unknown; "
+                    "same_project_search_strategy=serialized."
+                ),
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                    "cross_project_search_strategy": "parallel",
+                    "local_storage_process_model": "exclusive",
+                },
+                "diagnostics": {
+                    "health": {
+                        "available": False,
+                        "error": "TimeoutError",
+                        "message": "timed out",
+                    },
+                    "jobs": {
+                        "available": True,
+                        "running_count": 2,
+                    },
+                },
+                "remediation": [
+                    "vaultspec-rag search ... --port 8766 --timeout 360",
+                    "vaultspec-rag server status",
+                    "vaultspec-rag server jobs --running --port 8766",
+                ],
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "HTTP search on port 8766 timed out after 180.0s." in out
+        assert "Service: status check timed out" in out
+        assert "Work: 2 running job(s) reported" in out
+        assert "vaultspec-rag server jobs --running --port 8766" in out
+        assert "same_project_search_strategy" not in out
+        assert "serialized" not in out
+        for forbidden in ("┌", "└", "│"):
+            assert forbidden not in out
 
 
 class TestWinShutdownLog:
@@ -1722,46 +2096,12 @@ class TestServiceDaemonHelpers:
             server.server_close()
             t.join(timeout=5)
 
-    def test_service_status_renders_health_contract(self, tmp_path: Path):
-        """service status renders project_count and backend capabilities."""
-        import http.server
+    def test_service_status_default_human_output_is_plain_summary(self, tmp_path: Path):
+        """service status renders the W06.P01 plain operator summary by default."""
         import json
-        import threading
 
-        class _HealthHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(
-                        {
-                            "status": "ready",
-                            "cuda": True,
-                            "models_loaded": True,
-                            "project_count": 3,
-                            "uptime_s": 12.0,
-                            "backend_capabilities": {
-                                "same_project_search_strategy": "serialized",
-                                "cross_project_search_strategy": "parallel",
-                                "local_storage_process_model": "exclusive",
-                            },
-                        },
-                    ).encode("utf-8"),
-                )
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
+        server, thread = _status_contract_server()
         port = server.server_address[1]
-        # service_status calls _port_is_listening first (one TCP
-        # connect that the HTTPServer accepts but cannot satisfy
-        # with HTTP). Use serve_forever so multiple incoming
-        # connections are handled - the listening probe plus
-        # the /health probe.
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             # A healthy running service writes last_heartbeat to
@@ -1779,15 +2119,46 @@ class TestServiceDaemonHelpers:
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0
-            assert "Projects" in result.output
-            assert "3" in result.output
-            assert "Search Concurrency" in result.output
-            assert "Cross-project Search" in result.output
+            expected = [
+                "Server: running",
+                "Health: ready for requests",
+                "Busy: processing 1 job",
+                f"Address: http://127.0.0.1:{port}",
+                "Uptime: 5m 12s",
+                "Queue: no queued work; 1 active job",
+                "Jobs: 2 processed jobs; 1 running; 3 recent jobs",
+                "Current job: reindex_codebase (",
+                "embed 7/20",
+            ]
+            hidden = [
+                "Search Concurrency",
+                "Cross-project Search",
+                "Models loaded",
+                "Service Token Match",
+                "─",
+                "│",
+                "┌",
+                "┐",
+                "└",
+                "┘",
+            ]
+            assert [text for text in expected if text not in result.output] == []
+            assert [text for text in hidden if text in result.output] == []
+
+            verbose = runner.invoke(app, ["server", "status", "--verbose"])
+            assert verbose.exit_code == 0
+            verbose_expected = [
+                "Search Concurrency",
+                "Cross-project Search",
+                "Models loaded",
+            ]
+            assert [
+                text for text in verbose_expected if text not in verbose.output
+            ] == []
         finally:
             server.shutdown()
             server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
-            server.server_close()
             thread.join(timeout=5)
 
     def test_service_status_port_only_json(self, tmp_path: Path):

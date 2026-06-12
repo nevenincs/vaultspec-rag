@@ -96,8 +96,9 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
             # Yield so the freshly created task runs its startup log line.
             await asyncio.sleep(0.1)
         assert root.resolve() in server._watcher_tasks
-        assert "debounce=123ms" in caplog.text
-        assert "cooldown=4s" in caplog.text
+        assert "service.watcher event=started" in caplog.text
+        assert "debounce_ms=123" in caplog.text
+        assert "cooldown_seconds=4" in caplog.text
     finally:
         for var, prev in saved:
             _restore_env(var, prev)

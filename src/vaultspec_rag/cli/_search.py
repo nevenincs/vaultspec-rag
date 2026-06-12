@@ -7,7 +7,6 @@ import os
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -52,6 +51,8 @@ def _handle_service_results(
     search_type: str,
     json_mode: bool,
     no_truncate: bool,
+    show_scores: bool,
+    target: pathlib.Path | None = None,
 ) -> None:
     if isinstance(service_results, dict):
         if "results" in service_results:
@@ -61,6 +62,8 @@ def _handle_service_results(
                 search_type,
                 json_mode,
                 no_truncate,
+                show_scores,
+                target,
             )
             return
         _display_service_error(
@@ -91,6 +94,8 @@ def _handle_service_results(
         search_type,
         via="service",
         no_truncate=no_truncate,
+        show_scores=show_scores,
+        root=target,
     )
 
 
@@ -100,6 +105,8 @@ def _handle_service_success(
     search_type: str,
     json_mode: bool,
     no_truncate: bool,
+    show_scores: bool,
+    target: pathlib.Path | None = None,
 ) -> None:
     raw_results = payload.get("results")
     results = (
@@ -122,6 +129,8 @@ def _handle_service_success(
         search_type,
         via="service",
         no_truncate=no_truncate,
+        show_scores=show_scores,
+        root=target,
     )
 
 
@@ -340,6 +349,8 @@ def _render_in_process_results(
     search_type: str,
     json_mode: bool,
     no_truncate: bool,
+    show_scores: bool,
+    target: pathlib.Path,
 ) -> None:
     if json_mode:
         from dataclasses import asdict
@@ -362,30 +373,16 @@ def _render_in_process_results(
         )
         return
 
-    table = Table(
-        title=f"Search Results: {search_type}",
-        box=None,
+    from dataclasses import asdict
+
+    _display_search_results(
+        [asdict(r) for r in results],
+        search_type,
+        via="in-process",
+        no_truncate=no_truncate,
+        show_scores=show_scores,
+        root=target,
     )
-    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Location", style="green")
-    table.add_column("Snippet", style="white")
-
-    for r in results:
-        snippet_raw = r.snippet.replace("\n", " ")
-        snippet = snippet_raw if no_truncate else snippet_raw[:120]
-        # Preprocess-hook results carry a deep-link anchor / locator (#185);
-        # prefer them over the line number so hits point into the source.
-        if r.anchor:
-            location = r.anchor
-        elif r.locator:
-            location = f"{r.path} ({r.locator})"
-        elif r.line_start:
-            location = f"{r.path}:{r.line_start}"
-        else:
-            location = r.path
-        table.add_row(f"{r.score:.2f}", location, snippet)
-
-    _cli.console.print(table)
 
 
 @app.command(
@@ -395,6 +392,7 @@ def _render_in_process_results(
         "Delegates to a running service when one is detected; falls back to "
         "in-process GPU search otherwise."
     ),
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def handle_search(
     ctx: typer.Context,
@@ -539,15 +537,11 @@ def handle_search(
             rich_help_panel="Vault filters",
         ),
     ] = None,
-    no_truncate: Annotated[
+    show_scores: Annotated[
         bool,
         typer.Option(
-            "--no-truncate",
-            help=(
-                "Disable the 120-character snippet truncation in the "
-                "results table so sibling files with long paths stay "
-                "distinguishable."
-            ),
+            "--scores",
+            help="Show numeric relevance scores in human search output.",
         ),
     ] = False,
     port: Annotated[
@@ -605,6 +599,7 @@ def handle_search(
     ] = None,
 ) -> None:
     """Search vault documents or source code."""
+    _validate_search_extra_args(ctx)
     if not verbose:
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj
@@ -657,7 +652,13 @@ def handle_search(
         )
         if service_results is not None:
             _handle_service_results(
-                service_results, query, search_type, json_mode, no_truncate
+                service_results,
+                query,
+                search_type,
+                json_mode,
+                False,
+                show_scores,
+                target,
             )
             return
         if not allow_fallback:
@@ -689,4 +690,22 @@ def handle_search(
         json_mode,
     )
 
-    _render_in_process_results(results, query, search_type, json_mode, no_truncate)
+    _render_in_process_results(
+        results,
+        query,
+        search_type,
+        json_mode,
+        False,
+        show_scores,
+        target,
+    )
+
+
+def _validate_search_extra_args(ctx: typer.Context) -> None:
+    """Accept legacy no-op render flags while preserving strict option errors."""
+    extras = list(ctx.args)
+    if not extras or all(item == "--no-truncate" for item in extras):
+        return
+    unexpected = " ".join(extras)
+    _cli.console.print(f"[red]Unexpected search option(s): {unexpected}[/]")
+    raise typer.Exit(code=2)

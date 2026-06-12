@@ -302,17 +302,16 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
     if not isinstance(caps, dict):
         caps = {}
     running_count = jobs.get("running_count", "unknown")
-    status = health.get("status", "unknown")
     strategy = caps.get("same_project_search_strategy", "unknown")
     retry_timeout = max(DEFAULT_SEARCH_TIMEOUT_SECONDS, timeout * 2)
     return {
         "ok": False,
         "error": "http_search_timeout",
         "message": (
-            f"HTTP search on port {port} timed out after {timeout}s. "
-            "The service may still be processing the request. "
-            f"Service status={status}; running_jobs={running_count}; "
-            f"same_project_search_strategy={strategy}."
+            f"The search request to the service on port {port} timed out "
+            f"after {timeout:g} seconds. The service may still be working "
+            "on that request; check service status and running jobs before "
+            "retrying."
         ),
         "port": port,
         "timeout_seconds": timeout,
@@ -327,9 +326,9 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
             },
         },
         "remediation": [
-            f"vaultspec-rag search ... --port {port} --timeout {retry_timeout:g}",
-            "vaultspec-rag server status",
+            f"vaultspec-rag server status --port {port}",
             f"vaultspec-rag server jobs --running --port {port}",
+            f"Rerun the same search with --timeout {retry_timeout:g}",
         ],
     }
 

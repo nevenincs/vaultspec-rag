@@ -160,7 +160,10 @@ def test_search_request_id_is_log_correlatable(
     lines = logs["lines"]
     assert isinstance(lines, list)
     assert any(
-        request_id in str(line) and "event=search" in str(line) for line in lines
+        request_id in str(line)
+        and "service.search" in str(line)
+        and "event=completed" in str(line)
+        for line in lines
     )
 
 
@@ -195,7 +198,7 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     backpressure = cast("dict[str, object]", diagnostics["backpressure"])
     assert backpressure["active_indexing_conflict"] is False
     assert isinstance(remediation, list)
-    assert "vaultspec-rag server status" in remediation
+    assert f"vaultspec-rag server status --port {port}" in remediation
     assert any("server jobs --running" in str(item) for item in remediation)
 
 

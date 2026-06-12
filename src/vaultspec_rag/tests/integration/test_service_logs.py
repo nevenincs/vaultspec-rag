@@ -15,8 +15,11 @@ Three layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
-from typing import TYPE_CHECKING, cast
+import threading
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -34,7 +37,7 @@ from ...logging_config import read_service_log
 from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 runner = CliRunner()
@@ -42,6 +45,69 @@ runner = CliRunner()
 # A port with nothing listening: _try_mcp_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59234"
+
+
+class _LogsHTTPHandler(http.server.BaseHTTPRequestHandler):
+    payloads: ClassVar[list[dict[str, object]]] = []
+    request_paths: ClassVar[list[str]] = []
+    request_count = 0
+
+    def do_GET(self) -> None:
+        payload_index = min(self.request_count, len(self.payloads) - 1)
+        payload = self.payloads[payload_index]
+        type(self).request_count += 1
+        type(self).request_paths.append(self.path)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def log_message(self, format: str, *args: object) -> None:
+        _ = format, args
+
+
+@contextlib.contextmanager
+def _logs_http_server(
+    payloads: list[dict[str, object]],
+) -> Generator[tuple[http.server.HTTPServer, int]]:
+    _LogsHTTPHandler.payloads = payloads
+    _LogsHTTPHandler.request_paths = []
+    _LogsHTTPHandler.request_count = 0
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsHTTPHandler)
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, port
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _activity_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 08:46:27,900 INFO     uvicorn.access: "
+                '127.0.0.1:60001 - "POST /search HTTP/1.1" 200'
+            ),
+            (
+                "2026-06-12 08:46:28,123 WARNING  vaultspec_rag.server: "
+                "service.lifecycle event=search "
+                "request_id=6793374dabcdef001122334455667788 "
+                "search_type=vault "
+                "root=chore-476-restructure-execution "
+                "results=10 total_seconds=1.383"
+            ),
+            (
+                "2026-06-12 08:46:29,000 WARNING  vaultspec_rag.server: "
+                "service.lifecycle event=startup pid=4242"
+            ),
+        ],
+        "total": 3,
+        "filters": {},
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -295,6 +361,85 @@ def test_logs_not_running_prose() -> None:
 def test_logs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "logs", "--help"])
     assert result.exit_code == 0
+    assert "--raw" in result.stdout
+
+
+def test_logs_human_output_is_activity_feed() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--lines", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert (
+        "08:46:28 search vault 10 results 1.38s "
+        "chore-476-restructure-execution request=6793374d"
+    ) in output
+    assert "08:46:29 service started pid=4242" in output
+    assert "service.lifecycle" not in output
+    assert "POST /search" not in output
+    assert "uvicorn.access" not in output
+    for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+        assert forbidden not in output
+
+
+def test_logs_raw_mode_preserves_log_lines() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--lines", "8", "--port", str(port), "--raw"],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "service.lifecycle event=search" in output
+    assert "POST /search HTTP/1.1" in output
+    assert "request_id=6793374dabcdef001122334455667788" in output
+
+
+def test_logs_json_preserves_raw_service_payload() -> None:
+    payload = _activity_payload()
+    with _logs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--lines", "8", "--port", str(port), "--json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.output)
+    assert envelope["ok"] is True
+    assert envelope["command"] == "service.logs"
+    assert envelope["data"]["lines"] == payload["lines"]
+    assert "service.lifecycle event=search" in envelope["data"]["lines"][1]
+
+
+def test_logs_cli_filters_are_passed_to_service() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "logs",
+                "--lines",
+                "8",
+                "--contains",
+                "6793374d",
+                "--job-id",
+                "job-abc",
+                "--port",
+                str(port),
+                "--raw",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request_path = _LogsHTTPHandler.request_paths[-1]
+    assert request_path.startswith("/logs/json?")
+    assert "lines=8" in request_path
+    assert "contains=6793374d" in request_path
+    assert "job_id=job-abc" in request_path
 
 
 def test_logs_cli_mcp_parity() -> None:

@@ -1,13 +1,15 @@
-"""``server logs``: tail the rotated service log.
+"""``server logs``: show recent service activity.
 
-Tier-2a observability subcommand (``service-observability`` ADR, plan
-P03). Calls the logs admin endpoint through the shared HTTP admin client
-and prints the lines (or the JSON envelope). Service-not-running yields
-exit code 3.
+Calls the logs admin endpoint through the shared HTTP admin client and
+renders a compact operator activity feed by default. Raw log access is
+kept behind ``--raw`` and ``--json`` remains the full-fidelity machine
+format. Service-not-running yields exit code 3.
 """
 
 from __future__ import annotations
 
+import re
+import sys
 from typing import Annotated, cast
 
 import typer
@@ -18,6 +20,249 @@ from ._app import server_app
 from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
+
+_LOG_LINE_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2}) "
+    r"(?P<clock>\d{2}:\d{2}:\d{2})(?:,\d+)?\s+"
+    r"(?P<level>\S+)\s+"
+    r"(?P<logger>[^:]+):\s+"
+    r"(?P<message>.*)$"
+)
+_FIELD_RE = re.compile(
+    r"(?P<key>[A-Za-z_][\w.-]*)=(?P<value>.*?)(?=\s+[A-Za-z_][\w.-]*=|$)"
+)
+_ACCESS_RE = re.compile(
+    r'"(?P<method>[A-Z]+)\s+(?P<path>[^ ]+)\s+HTTP/[^"]+"\s+(?P<status>\d{3})'
+)
+
+
+def _log_parts(raw: str) -> dict[str, str]:
+    match = _LOG_LINE_RE.match(raw)
+    if match is None:
+        return {
+            "clock": "??:??:??",
+            "level": "",
+            "logger": "",
+            "message": raw,
+            "timestamped": "",
+        }
+    parts = match.groupdict()
+    parts["timestamped"] = "1"
+    return parts
+
+
+def _structured_fields(message: str) -> dict[str, str] | None:
+    marker = "service.lifecycle "
+    if marker not in message:
+        return None
+    _, _, tail = message.partition(marker)
+    fields = {
+        match.group("key"): match.group("value").strip()
+        for match in _FIELD_RE.finditer(tail)
+    }
+    return fields or None
+
+
+def _project_label(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    parts = raw.replace("\\", "/").rstrip("/").split("/")
+    return parts[-1] if parts and parts[-1] else raw
+
+
+def _format_duration(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return raw
+    if seconds < 10:
+        return f"{seconds:.2f}s"
+    if seconds < 100:
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
+
+
+def _result_count(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    try:
+        count = int(raw)
+    except ValueError:
+        return f"{raw} results"
+    noun = "result" if count == 1 else "results"
+    return f"{count} {noun}"
+
+
+def _short_id(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    return raw[:8] if len(raw) > 8 else raw
+
+
+def _compact_kv(key: str, value: str | None) -> str | None:
+    if value in (None, ""):
+        return None
+    return f"{key}={value}"
+
+
+def _join_row(parts: list[str | None]) -> str:
+    return " ".join(part for part in parts if part)
+
+
+def _activity_search(clock: str, fields: dict[str, str]) -> str:
+    search_type = fields.get("search_type") or fields.get("type") or "search"
+    return _join_row(
+        [
+            clock,
+            "search",
+            search_type,
+            _result_count(fields.get("results")),
+            _format_duration(fields.get("total_seconds")),
+            _project_label(fields.get("root") or fields.get("project_root")),
+            _compact_kv("request", _short_id(fields.get("request_id"))),
+        ]
+    )
+
+
+def _activity_startup(clock: str, fields: dict[str, str]) -> str:
+    return _join_row(
+        [clock, "service", "started", _compact_kv("pid", fields.get("pid"))]
+    )
+
+
+def _activity_shutdown(clock: str, fields: dict[str, str]) -> str:
+    return _join_row(
+        [
+            clock,
+            "service",
+            "stopped",
+            _compact_kv("reason", fields.get("reason")),
+            _compact_kv("pid", fields.get("pid")),
+        ]
+    )
+
+
+def _activity_cleanup_failed(clock: str, fields: dict[str, str]) -> str:
+    return _join_row(
+        [
+            clock,
+            "service",
+            "cleanup failed",
+            _compact_kv("error", fields.get("error")),
+        ]
+    )
+
+
+def _activity_generic(clock: str, event: str, fields: dict[str, str]) -> str:
+    row_parts = [clock, "service", event.replace("_", " ")]
+    for key in ("job_id", "request_id", "root", "project_root", "reason", "error"):
+        value = fields.get(key)
+        if key in ("root", "project_root"):
+            value = _project_label(value)
+            key = "project"
+        elif key in ("request_id",):
+            key = "request"
+            value = _short_id(value)
+        elif key == "job_id":
+            key = "job"
+            value = _short_id(value)
+        rendered = _compact_kv(key, value)
+        if rendered:
+            row_parts.append(rendered)
+    return " ".join(row_parts)
+
+
+def _activity_from_lifecycle(parts: dict[str, str], fields: dict[str, str]) -> str:
+    clock = parts["clock"]
+    event = fields.get("event", "activity")
+    if event == "search":
+        return _activity_search(clock, fields)
+    if event == "startup":
+        return _activity_startup(clock, fields)
+    if event == "shutdown":
+        return _activity_shutdown(clock, fields)
+    if event in ("heartbeat_failed", "heartbeat_initial_failed"):
+        return f"{clock} service heartbeat failed"
+    if event == "cleanup_failed":
+        return _activity_cleanup_failed(clock, fields)
+    return _activity_generic(clock, event, fields)
+
+
+def _activity_from_access(parts: dict[str, str]) -> tuple[str, str] | None:
+    match = _ACCESS_RE.search(parts["message"])
+    if match is None:
+        return None
+    method = match.group("method")
+    path = match.group("path").split("?", 1)[0]
+    status = match.group("status")
+    row = f"{parts['clock']} http {method} {path} {status}"
+    return row, f"{method} {path}"
+
+
+def _activity_from_unstructured(parts: dict[str, str]) -> str | None:
+    level = parts["level"].lower()
+    if level not in ("warning", "error", "critical"):
+        return None
+    logger_name = parts["logger"].rsplit(".", 1)[-1] or "service"
+    return f"{parts['clock']} {level} {logger_name} details=use --raw"
+
+
+def _activity_feed_lines(log_lines: list[object]) -> list[str]:
+    activities: list[tuple[str | None, str]] = []
+    saw_lifecycle_search = False
+    for raw_line in log_lines:
+        parts = _log_parts(str(raw_line))
+        if not parts["timestamped"]:
+            continue
+        fields = _structured_fields(parts["message"])
+        if fields is not None:
+            if fields.get("event") == "search":
+                saw_lifecycle_search = True
+            activities.append((None, _activity_from_lifecycle(parts, fields)))
+            continue
+        access = _activity_from_access(parts)
+        if access is not None:
+            row, key = access
+            activities.append((key, row))
+            continue
+        unstructured = _activity_from_unstructured(parts)
+        if unstructured:
+            activities.append((None, unstructured))
+
+    if saw_lifecycle_search:
+        activities = [
+            (key, row)
+            for key, row in activities
+            if key not in ("POST /search", "GET /search")
+        ]
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for _key, row in activities:
+        if row in seen:
+            continue
+        seen.add(row)
+        deduped.append(row)
+    return deduped
+
+
+def _render_raw_lines(log_lines: list[object]) -> None:
+    for line in log_lines:
+        sys.stdout.write(f"{line}\n")
+    sys.stdout.flush()
+
+
+def _render_activity_feed(log_lines: list[object]) -> None:
+    activity_lines = _activity_feed_lines(log_lines)
+    if not activity_lines:
+        _cli.console.print(
+            "[dim]No activity entries in log tail. Use --raw for diagnostic lines.[/]"
+        )
+        return
+    for line in activity_lines:
+        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
 @server_app.command("logs")
@@ -42,8 +287,12 @@ def service_logs(
         bool,
         typer.Option("--json", help="Emit one JSON envelope instead of plain text."),
     ] = False,
+    raw: Annotated[
+        bool,
+        typer.Option("--raw", help="Show raw implementation log lines."),
+    ] = False,
 ) -> None:
-    """Show the last N lines of the running service's rotated log."""
+    """Show recent activity from the running service log."""
     resolved_port = port if port is not None else _default_service_port()
     args: dict[str, object] = {"lines": lines}
     if job_id:
@@ -76,5 +325,7 @@ def service_logs(
     if not log_lines:
         _cli.console.print("[dim]No log lines available.[/]")
         return
-    for line in log_lines:
-        _cli.console.print(str(line), markup=False, highlight=False)
+    if raw:
+        _render_raw_lines(log_lines)
+        return
+    _render_activity_feed(log_lines)

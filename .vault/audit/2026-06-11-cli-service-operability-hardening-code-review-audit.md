@@ -196,6 +196,16 @@ any project lease.
 real subprocess lifecycle test asserts that the ready service reports
 `reranker_loaded: true` with `project_count == 0`.
 
+### CR-17 | LOW | Jobs watch call indentation obscured argument grouping
+
+The W06.P02 jobs human-output implementation correctly routed `trigger` and `query` into
+the watch refresh path, but the call-site indentation made those arguments appear outside
+the `_watch_jobs` invocation. This was not a runtime bug, but it reduced maintainability
+in a command path that now carries more rendering and monitoring behavior.
+
+**Disposition:** Fixed. The `_watch_jobs` call-site arguments now align with the rest of
+the keyword argument block. Ruff and Ty pass on the touched jobs files after the fix.
+
 ## Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`
@@ -209,6 +219,13 @@ real subprocess lifecycle test asserts that the ready service reports
   - `uv run vaultspec-rag index --type code --port 8766 --json`
   - `uv run vaultspec-rag server jobs --source codebase --limit 5 --json`
   - `uv run vaultspec-rag search "intentional short timeout diagnostics" --type code --json --max-results 2 --port 8766 --timeout 0.000001`
+- W06.P02 jobs human output and monitoring checks:
+  - `uv run ruff check src/vaultspec_rag/cli/_service_jobs.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/watcher.py src/vaultspec_rag/tests/integration/test_service_jobs.py`
+  - `uv run ty check src/vaultspec_rag/cli/_service_jobs.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/watcher.py src/vaultspec_rag/tests/integration/test_service_jobs.py`
+  - `uv run --no-sync python tools/complexity_gate.py`
+  - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`
+  - `uv run vaultspec-rag server jobs --limit 5 --port 8766`
+  - `uv run vaultspec-rag server jobs --limit 5 --port 8766 --watch --interval 1 --refresh-count 2`
 
 ## Residual risks
 

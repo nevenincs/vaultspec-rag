@@ -30,6 +30,7 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from ..logging_config import log_event
 from ._state import _HEARTBEAT_INTERVAL_SECONDS
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -63,20 +64,14 @@ def _status_file_path() -> Path:
 
 
 def _lifecycle_log(event: str, **kv: object) -> None:
-    """Emit a structured lifecycle entry at WARNING level.
-
-    WARNING (not INFO) because ``VAULTSPEC_RAG_LOG_LEVEL`` defaults to
-    WARNING, so INFO lines are silent by default. Operators see the
-    lifecycle without opt-in.
+    """Emit a structured lifecycle entry at activity level.
 
     Args:
         event: Short identifier (``startup`` / ``shutdown``).
         **kv: Extra key=value fields rendered space-separated for
             greppability.
     """
-    parts = [f"event={event}"]
-    parts.extend(f"{k}={v}" for k, v in kv.items())
-    logger.warning("service.lifecycle %s", " ".join(parts))
+    log_event(logger, "service.lifecycle", event, fields=kv)
 
 
 def _unlink_status_file_silently() -> None:
@@ -93,10 +88,13 @@ def _unlink_status_file_silently() -> None:
         # Already-removed is the expected idempotent case.
         logger.debug("service.json already gone at %s: %s", path, exc)
     except OSError as exc:
-        logger.warning(
-            "service.lifecycle event=cleanup_failed path=%s error=%s",
-            path,
-            exc,
+        log_event(
+            logger,
+            "service.lifecycle",
+            "cleanup_failed",
+            severity=logging.WARNING,
+            path=path,
+            error=exc,
         )
 
 
@@ -164,8 +162,11 @@ async def _heartbeat_loop() -> None:
         except asyncio.CancelledError:
             return
         except Exception:  # heartbeat must never crash the service
-            logger.warning(
-                "service.lifecycle event=heartbeat_failed",
+            log_event(
+                logger,
+                "service.lifecycle",
+                "heartbeat_failed",
+                severity=logging.WARNING,
                 exc_info=True,
             )
 

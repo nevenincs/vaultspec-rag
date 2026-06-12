@@ -1,7 +1,7 @@
-"""Output rendering: JSON envelopes, backend-contract rows, result tables.
+"""Output rendering: JSON envelopes, backend-contract rows, and human output.
 
-Holds the shared ``--json`` envelope helpers plus the Rich renderers
-for search results and install/uninstall reports. Renderers read
+Holds the shared ``--json`` envelope helpers plus the renderers for
+search results and install/uninstall reports. Renderers read
 ``console`` from the package namespace at call time so tests that
 swap ``vaultspec_rag.cli.console`` observe the substitution.
 """
@@ -9,15 +9,19 @@ swap ``vaultspec_rag.cli.console`` observe the substitution.
 from __future__ import annotations
 
 import json
+import re
 import sys
-from typing import Any, Literal, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
 from ..capabilities import backend_capabilities_dict
+
+if TYPE_CHECKING:
+    from rich.table import Table
 
 __all__ = [
     "_add_backend_contract_rows",
@@ -153,36 +157,74 @@ def _display_service_error(
             **extra,
         )
         return
-    _cli.console.print(f"[bold red]Error:[/] {message}")
-    _cli.console.print(f"[dim]code={error}[/]")
+    _cli.console.print(f"[bold red]Error:[/] {_human_service_error_message(message)}")
+    if error != "http_search_timeout":
+        _cli.console.print(f"[dim]code={error}[/]")
     db_path = payload.get("db_path")
     if db_path:
         _cli.console.print(f"[dim]db_path={db_path}[/]")
+    _display_service_diagnostic_summary(payload.get("diagnostics"))
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:
         _cli.console.print("[bold]Next actions:[/]")
         for item in remediation:
             _cli.console.print(f"  - {item}")
-    diagnostics = payload.get("diagnostics")
-    if isinstance(diagnostics, dict):
-        health = diagnostics.get("health")
-        jobs = diagnostics.get("jobs")
-        if isinstance(health, dict):
-            _cli.console.print(
-                "[dim]"
-                f"service_status={health.get('status', 'unknown')}; "
-                f"project_count={health.get('project_count', '?')}"
-                "[/]"
-            )
-        if isinstance(jobs, dict):
-            _cli.console.print(f"[dim]running_jobs={jobs.get('running_count', '?')}[/]")
-    caps = payload.get("backend_capabilities")
-    if isinstance(caps, dict):
-        table = Table(title="Backend Contract", show_header=False, padding=(0, 2))
-        table.add_column("Key", style="bold")
-        table.add_column("Value")
-        _add_backend_contract_rows(table, cast("dict[str, object]", caps))
-        _cli.console.print(table)
+
+
+def _human_service_error_message(message: str) -> str:
+    """Remove raw backend diagnostics from default human error prose."""
+    return re.sub(
+        r"\s+Service status=.*?same_project_search_strategy=[^.\s]+\.?",
+        "",
+        message,
+    ).strip()
+
+
+def _display_service_diagnostic_summary(diagnostics: object) -> None:
+    """Render timeout/error diagnostics without backend contract internals."""
+    if not isinstance(diagnostics, dict):
+        return
+    health = diagnostics.get("health")
+    jobs = diagnostics.get("jobs")
+    if isinstance(health, dict):
+        _cli.console.print(
+            f"Service: {_health_diagnostic_text(cast('dict[str, object]', health))}"
+        )
+    if isinstance(jobs, dict):
+        _cli.console.print(
+            f"Work: {_jobs_diagnostic_text(cast('dict[str, object]', jobs))}"
+        )
+
+
+def _health_diagnostic_text(health: dict[str, object]) -> str:
+    if health.get("available") is False:
+        return _unavailable_diagnostic_text(health, "status check")
+    status = str(health.get("status", "unknown"))
+    project_count = health.get("project_count")
+    if project_count is None:
+        return f"reachable; health status {status}"
+    return f"reachable; health status {status}; {project_count} project(s) loaded"
+
+
+def _jobs_diagnostic_text(jobs: dict[str, object]) -> str:
+    if jobs.get("available") is False:
+        return _unavailable_diagnostic_text(jobs, "jobs check")
+    running = jobs.get("running_count")
+    if isinstance(running, int):
+        if running == 0:
+            return "no running jobs reported"
+        return f"{running} running job(s) reported"
+    return "running work status unknown"
+
+
+def _unavailable_diagnostic_text(data: dict[str, object], label: str) -> str:
+    error = str(data.get("error", "")).strip()
+    message = str(data.get("message", "")).strip()
+    if error == "TimeoutError" or "timed out" in message.lower():
+        return f"{label} timed out"
+    if message:
+        return f"{label} unavailable ({message})"
+    return f"{label} unavailable"
 
 
 def _display_search_results(
@@ -191,44 +233,137 @@ def _display_search_results(
     via: Literal["service", "in-process"] = "service",
     *,
     no_truncate: bool = False,
+    show_scores: bool = False,
+    root: Path | None = None,
 ) -> None:
-    """Display search results as a Rich table.
+    """Display search results as stable line-oriented records.
 
     Args:
         results: List of result dicts with ``score``, ``path``,
             ``snippet``, and optional ``line_start`` keys.
-        search_type: Label for the table title (e.g.
-            ``vault``, ``code``, ``all``).
-        via: Transport path indicator (e.g. ``service``, ``in-process``).
-        no_truncate: Bypass the 120-character snippet truncation
-            so sibling files with long paths stay distinguishable.
+        search_type: Search source label retained for API compatibility
+            (e.g. ``vault``, ``code``).
+        via: Transport path indicator retained for API compatibility
+            (e.g. ``service``, ``in-process``).
+        no_truncate: Backwards-compatible no-op. Default human output
+            no longer truncates snippets.
+        show_scores: Include numeric relevance scores after the rank.
+        root: Workspace root used to read full source lines when a
+            result includes a local relative path and line range.
 
     """
-    table = Table(title=f"Search Results: {search_type} (via {via})", box=None)
-    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Location", style="green")
-    table.add_column("Snippet", style="white")
+    _ = search_type, via, no_truncate
+    for rank, result in enumerate(results, start=1):
+        location = _search_result_location(result)
+        snippet = _search_result_text(result, root=root)
+        details = f"rank={rank}"
+        if show_scores:
+            details += f" score={_search_result_score(result):.4f}"
+        line = f"{location}: {details}"
+        if snippet:
+            line += f" {snippet}"
+        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
-    for r in results:
-        snippet_raw = str(r.get("snippet", "")).replace("\n", " ")
-        snippet = snippet_raw if no_truncate else snippet_raw[:120]
-        location = str(r.get("path", ""))
-        # Preprocess-hook results carry a deep-link anchor / locator (#185);
-        # prefer them over the line number so hits point into the source.
-        anchor = r.get("anchor")
-        locator = r.get("locator")
-        line_start = r.get("line_start")
-        if anchor:
-            location = str(anchor)
-        elif locator:
-            location += f" ({locator})"
-        elif line_start:
-            location += f":{line_start}"
-        raw_score = r.get("score", 0.0)
-        score = float(raw_score) if isinstance(raw_score, (int, float, str)) else 0.0
-        table.add_row(f"{score:.2f}", location, snippet)
 
-    _cli.console.print(table)
+def _single_line_text(value: object) -> str:
+    """Collapse multiline display text into one copyable result line."""
+    return " ".join(str(value).splitlines())
+
+
+def _search_result_text(result: dict[str, object], *, root: Path | None) -> str:
+    source_text = _source_line_text(result, root=root)
+    if source_text:
+        return source_text
+    return _single_line_text(result.get("snippet", ""))
+
+
+def _source_line_text(result: dict[str, object], *, root: Path | None) -> str:
+    path_text = _non_empty_result_string(result, "source_path") or (
+        _non_empty_result_string(result, "path")
+    )
+    line_start = result.get("line_start")
+    if path_text is None or not isinstance(line_start, int):
+        return ""
+    line_end = result.get("line_end")
+    end = (
+        line_end if isinstance(line_end, int) and line_end >= line_start else line_start
+    )
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = (root or Path.cwd()) / path
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    selected = lines[line_start - 1 : end]
+    return _single_line_text("\n".join(selected))
+
+
+def _search_result_score(result: dict[str, object]) -> float:
+    raw_score = result.get("score", 0.0)
+    if isinstance(raw_score, (int, float, str)):
+        try:
+            return float(raw_score)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _search_result_location(result: dict[str, object]) -> str:
+    """Return the best stable locator already present on a result."""
+    anchor = _non_empty_result_string(result, "anchor")
+    if anchor is not None:
+        return anchor
+
+    path = (
+        _non_empty_result_string(result, "path")
+        or _non_empty_result_string(result, "source_path")
+        or _non_empty_result_string(result, "doc_id")
+        or _non_empty_result_string(result, "id")
+        or "<unknown>"
+    )
+    line_start = _result_int(result, "line_start")
+    if line_start is not None:
+        column = (
+            _result_int(result, "column_start")
+            or _result_int(result, "col_start")
+            or _result_int(result, "column")
+        )
+        suffix = f":{line_start}"
+        if column is not None:
+            suffix += f":{column}"
+        return f"{path}{suffix}"
+
+    locator = _non_empty_result_string(result, "locator")
+    if locator is not None:
+        return f"{path} ({locator})"
+    return path
+
+
+def _non_empty_result_string(
+    result: dict[str, object],
+    key: str,
+) -> str | None:
+    value = result.get(key)
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
+def _result_int(result: dict[str, object], key: str) -> int | None:
+    value = result.get(key)
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
 
 
 def _display_port_unreachable_error(

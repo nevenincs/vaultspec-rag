@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 from typing import Annotated, Any, cast
@@ -420,6 +421,64 @@ def _get_token_label(token_match: bool | None) -> str:
     return "[red]no[/]"
 
 
+def _plain_status_label(state: str) -> str:
+    return re.sub(r"\[[^]]*\]", "", state)
+
+
+def _format_status_duration(raw: object) -> str:
+    if not isinstance(raw, int | float):
+        return "unknown"
+    seconds = max(0, int(float(raw)))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
+
+
+def _job_progress_summary(job: dict[str, object]) -> str:
+    progress = job.get("progress")
+    if not isinstance(progress, dict):
+        return ""
+    progress_dict = cast("dict[str, object]", progress)
+    step = str(progress_dict.get("step") or "")
+    completed = progress_dict.get("completed")
+    total = progress_dict.get("total")
+    if step and isinstance(total, int | float):
+        return f", {step} {completed}/{total}"
+    if step:
+        return f", {step}"
+    return ""
+
+
+def _job_command_name(job: dict[str, object]) -> str:
+    initiator = job.get("initiator")
+    if isinstance(initiator, dict):
+        command = initiator.get("command")
+        if command:
+            return str(command)
+    source = str(job.get("source") or "job")
+    trigger = str(job.get("trigger") or "service")
+    return f"{trigger}_{source}"
+
+
+def _current_job_summary(job: dict[str, object] | None) -> str:
+    if job is None:
+        return "none"
+    started_at = job.get("started_at")
+    age = (
+        _format_status_duration(time.time() - float(started_at))
+        if isinstance(started_at, int | float)
+        else "unknown"
+    )
+    return f"{_job_command_name(job)} ({age}{_job_progress_summary(job)})"
+
+
 def _add_health_rows(
     table: Table, health: dict[str, object] | None, port_listening: bool
 ) -> None:
@@ -438,6 +497,48 @@ def _add_health_rows(
         table.add_row("Health", "[yellow]unreachable[/]")
 
 
+def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object]]:
+    jobs = result.get("jobs")
+    if not isinstance(jobs, list):
+        return []
+    return [
+        cast("dict[str, object]", entry) for entry in jobs if isinstance(entry, dict)
+    ]
+
+
+def _first_running_job(
+    job_records: list[dict[str, object]],
+) -> dict[str, object] | None:
+    return next(
+        (entry for entry in job_records if entry.get("phase") == "running"), None
+    )
+
+
+def _queued_job_count(job_records: list[dict[str, object]]) -> int:
+    queued = 0
+    for entry in job_records:
+        progress = entry.get("progress")
+        if entry.get("phase") == "running" and isinstance(progress, dict):
+            queued += int(progress.get("step") == "queued")
+    return queued
+
+
+def _summary_count(
+    value: object,
+    *,
+    fallback: int = 0,
+) -> int:
+    return value if isinstance(value, int) and value > 0 else fallback
+
+
+def _running_job_count(
+    summary: dict[str, object],
+    job_records: list[dict[str, object]],
+) -> int:
+    fallback = sum(1 for entry in job_records if entry.get("phase") == "running")
+    return _summary_count(summary.get("running"), fallback=fallback)
+
+
 def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, object]:
     if not isinstance(result, dict):
         return {"available": False}
@@ -451,11 +552,16 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
     summary_dict = (
         cast("dict[str, object]", summary) if isinstance(summary, dict) else {}
     )
+    job_records = _job_records_from_result(result)
+    total_count = _summary_count(result.get("total"), fallback=len(job_records))
+    returned_count = _summary_count(result.get("returned"), fallback=len(job_records))
     return {
         "available": True,
-        "running": summary_dict.get("running", 0),
-        "total": result.get("total", 0),
-        "returned": result.get("returned", 0),
+        "running": _running_job_count(summary_dict, job_records),
+        "total": total_count,
+        "returned": returned_count,
+        "queued": _queued_job_count(job_records),
+        "current_job": _first_running_job(job_records),
         "phases": summary_dict.get("phases", {}),
         "sources": summary_dict.get("sources", {}),
         "triggers": summary_dict.get("triggers", {}),
@@ -538,6 +644,134 @@ def _add_operational_rows(
         table.add_row("Next action", str(next_action))
 
 
+def _status_health_label(
+    health: dict[str, object] | None,
+    *,
+    port_listening: bool,
+) -> str:
+    if isinstance(health, dict):
+        status = str(health.get("status", "unknown"))
+        if status == "ready":
+            return "ready for requests"
+        if status == "starting":
+            return "starting up"
+        return status.replace("_", " ")
+    return "not reachable" if port_listening else "not available"
+
+
+def _status_busy_label(jobs: dict[str, object] | None) -> str:
+    if not isinstance(jobs, dict) or jobs.get("available") is not True:
+        return "unknown"
+    running = jobs.get("running")
+    running_count = running if isinstance(running, int) else 0
+    if running_count <= 0:
+        return "idle"
+    if running_count == 1:
+        return "processing 1 job"
+    return f"processing {running_count} jobs"
+
+
+def _status_queue_label(jobs: dict[str, object] | None) -> str:
+    if not isinstance(jobs, dict) or jobs.get("available") is not True:
+        return "unavailable"
+    running = jobs.get("running")
+    queued = jobs.get("queued")
+    running_count = running if isinstance(running, int) else 0
+    queued_count = queued if isinstance(queued, int) else 0
+    if running_count <= 0:
+        return "no queued work"
+    active_count = max(0, running_count - queued_count)
+    if queued_count > 0:
+        active_text = (
+            "1 active job" if active_count == 1 else f"{active_count} active jobs"
+        )
+        queued_text = (
+            "1 queued job" if queued_count == 1 else f"{queued_count} queued jobs"
+        )
+        return f"{queued_text}; {active_text}"
+    running_text = (
+        "1 active job" if running_count == 1 else f"{running_count} active jobs"
+    )
+    return f"no queued work; {running_text}"
+
+
+def _status_jobs_label(jobs: dict[str, object] | None) -> str:
+    if not isinstance(jobs, dict) or jobs.get("available") is not True:
+        return "unavailable"
+    phases = jobs.get("phases")
+    total = jobs.get("total")
+    running = jobs.get("running")
+    total_count = total if isinstance(total, int) else 0
+    running_count = running if isinstance(running, int) else 0
+    processed = max(0, total_count - running_count)
+    if isinstance(phases, dict):
+        phase_dict = cast("dict[str, object]", phases)
+        phase_processed = sum(
+            int(count)
+            for phase, count in phase_dict.items()
+            if phase != "running" and isinstance(count, int)
+        )
+        if phase_processed > 0:
+            processed = phase_processed
+    processed_word = "job" if processed == 1 else "jobs"
+    running_text = (
+        "none running"
+        if running_count == 0
+        else ("1 running" if running_count == 1 else f"{running_count} running")
+    )
+    total_word = "job" if total_count == 1 else "jobs"
+    return (
+        f"{processed} processed {processed_word}; "
+        f"{running_text}; {total_count} recent {total_word}"
+    )
+
+
+def _status_current_job_label(jobs: dict[str, object] | None) -> str:
+    if not isinstance(jobs, dict) or jobs.get("available") is not True:
+        return "unavailable"
+    current_job = jobs.get("current_job")
+    current_job_dict = (
+        cast("dict[str, object]", current_job)
+        if isinstance(current_job, dict)
+        else None
+    )
+    summary = _current_job_summary(current_job_dict)
+    return "none active" if summary == "none" else summary
+
+
+def _status_uptime_label(health: dict[str, object] | None) -> str:
+    if not isinstance(health, dict):
+        return "unknown"
+    return _format_status_duration(health.get("uptime_s"))
+
+
+def _render_status_summary(
+    *,
+    state_label: str,
+    port: int,
+    port_listening: bool,
+    health: dict[str, object] | None,
+    operational: dict[str, object] | None,
+    exit_code: int,
+) -> None:
+    jobs = operational.get("jobs") if isinstance(operational, dict) else None
+    jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
+    lines = [
+        f"Server: {_plain_status_label(state_label)}",
+        f"Health: {_status_health_label(health, port_listening=port_listening)}",
+        f"Busy: {_status_busy_label(jobs_dict)}",
+        f"Address: http://127.0.0.1:{port}",
+        f"Uptime: {_status_uptime_label(health)}",
+        f"Queue: {_status_queue_label(jobs_dict)}",
+        f"Jobs: {_status_jobs_label(jobs_dict)}",
+        f"Current job: {_status_current_job_label(jobs_dict)}",
+    ]
+    for line in lines:
+        _cli.console.print(line, markup=False, highlight=False)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
 def _render_status_table(
     pid: int,
     port: int,
@@ -591,29 +825,11 @@ def _render_status_table(
         raise typer.Exit(code=exit_code)
 
 
-def _render_health_table(port: int, health: dict[str, object]) -> None:
-    table = Table(title="Service Health", show_header=False, padding=(0, 2))
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("Port", str(port))
-    table.add_row("Health", str(health.get("status", "unknown")))
-    table.add_row("CUDA", str(health.get("cuda", "unknown")))
-    table.add_row("Models loaded", str(health.get("models_loaded", "unknown")))
-    table.add_row("Reranker loaded", str(health.get("reranker_loaded", "unknown")))
-    table.add_row("Projects", str(health.get("project_count", "unknown")))
-    uptime = health.get("uptime_s")
-    if isinstance(uptime, int | float):
-        table.add_row("Uptime", f"{float(uptime):.0f}s")
-    caps = health.get("backend_capabilities")
-    if isinstance(caps, dict):
-        _add_backend_contract_rows(table, cast("dict[str, object]", caps))
-    _cli.console.print(table)
-
-
 def _render_port_only_status(
     port: int,
     *,
     json_mode: bool,
+    verbose: bool = False,
 ) -> None:
     port_listening = _port_is_listening(port)
     health = _health_probe(port) if port_listening else None
@@ -663,6 +879,20 @@ def _render_port_only_status(
             raise typer.Exit(code=exit_code)
         return
 
+    if not verbose:
+        rendered_state = (
+            "[green]running[/]" if state == "running" else f"[red]{state}[/]"
+        )
+        _render_status_summary(
+            state_label=rendered_state,
+            port=port,
+            port_listening=port_listening,
+            health=health,
+            operational=operational,
+            exit_code=exit_code,
+        )
+        return
+
     table = Table(title="Service Status", show_header=False, padding=(0, 2))
     table.add_column("Key", style="bold")
     table.add_column("Value")
@@ -710,6 +940,7 @@ def _render_explicit_port_status(
     target_port: int,
     *,
     json_mode: bool,
+    verbose: bool = False,
 ) -> None:
     pid = int(status.get("pid", 0))
     status_file_port = int(status.get("port", 0))
@@ -762,24 +993,40 @@ def _render_explicit_port_status(
         _cli.console.print(
             f"[yellow]Status file port is {status_file_port}; probing {target_port}.[/]"
         )
-    _render_status_table(
-        pid,
-        target_port,
-        started_at,
-        pid_alive,
-        pid_is_ours,
-        port_listening,
-        heartbeat_age,
-        heartbeat_stale,
-        token_match,
-        state_label,
-        exit_code,
-        health,
-        operational,
+    if verbose:
+        _render_status_table(
+            pid,
+            target_port,
+            started_at,
+            pid_alive,
+            pid_is_ours,
+            port_listening,
+            heartbeat_age,
+            heartbeat_stale,
+            token_match,
+            state_label,
+            exit_code,
+            health,
+            operational,
+        )
+        return
+    _render_status_summary(
+        state_label=state_label,
+        port=target_port,
+        port_listening=port_listening,
+        health=health,
+        operational=operational,
+        exit_code=exit_code,
     )
 
 
-@server_app.command("health")
+@server_app.command(
+    "health",
+    help=(
+        "Readiness probe for automation and adapters. Use `server status` for "
+        "human service state and next actions."
+    ),
+)
 def service_health(
     port: Annotated[
         int | None,
@@ -787,7 +1034,10 @@ def service_health(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of a table."),
+        typer.Option(
+            "--json",
+            help="Emit the full /health JSON envelope for automation.",
+        ),
     ] = False,
 ) -> None:
     """Probe the resident service ``/health`` endpoint."""
@@ -802,8 +1052,10 @@ def service_health(
                 3,
             )
         _cli.console.print(
-            "[red]Service is not running.[/] "
-            "Start it with [bold]vaultspec-rag server start[/].",
+            "Health: unavailable\n"
+            "Use `vaultspec-rag server status` for service state and next actions.",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(3)
 
@@ -821,17 +1073,35 @@ def service_health(
                 3,
                 port=resolved_port,
             )
-        _cli.console.print(f"[bold red]Error:[/] {message}")
+        _cli.console.print(
+            "Health: unreachable\n"
+            f"Use `vaultspec-rag server status --port {resolved_port}` for "
+            "service state and next actions.",
+            markup=False,
+            highlight=False,
+        )
         raise typer.Exit(3)
 
     if json_mode:
         _emit_json(True, "service.health", data=health, port=resolved_port)
         return
 
-    _render_health_table(resolved_port, health)
+    _cli.console.print(
+        f"Health: {_status_health_label(health, port_listening=True)}\n"
+        f"Use `vaultspec-rag server status --port {resolved_port}` for "
+        "service state and next actions.",
+        markup=False,
+        highlight=False,
+    )
 
 
-@server_app.command("status")
+@server_app.command(
+    "status",
+    help=(
+        "Show the human operator summary for service state, health, work, "
+        "and next checks."
+    ),
+)
 def service_status(
     requested_port: Annotated[
         int | None,
@@ -842,9 +1112,19 @@ def service_status(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Preserves exit codes 0 (running) / 3 (stopped) "
+                "Emit one full-fidelity JSON envelope to stdout instead of the "
+                "plain human summary. Preserves exit codes 0 (running) / 3 (stopped) "
                 "/ 4 (crashed-* or divergent)."
+            ),
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help=(
+                "Show process, heartbeat, token, model, and backend diagnostic "
+                "rows in the human output."
             ),
         ),
     ] = False,
@@ -868,7 +1148,11 @@ def service_status(
 
     if status is None:
         if requested_port is not None:
-            _render_port_only_status(requested_port, json_mode=json_mode)
+            _render_port_only_status(
+                requested_port,
+                json_mode=json_mode,
+                verbose=verbose,
+            )
             return
         # No service.json in the configured status dir => this config's
         # service is stopped (exit 3), per the documented contract (exit 4
@@ -886,16 +1170,32 @@ def service_status(
                 data={"service_json_present": False, "state": "stopped"},
             )
             raise typer.Exit(code=3)
-        table = Table(title="Service Status", show_header=False, padding=(0, 2))
-        table.add_column("Key", style="bold")
-        table.add_column("Value")
-        table.add_row("Service JSON", "[red]missing[/]")
-        table.add_row("State", "[red]stopped[/]")
-        _cli.console.print(table)
+        if verbose:
+            table = Table(title="Service Status", show_header=False, padding=(0, 2))
+            table.add_column("Key", style="bold")
+            table.add_column("Value")
+            table.add_row("Service JSON", "[red]missing[/]")
+            table.add_row("State", "[red]stopped[/]")
+            _cli.console.print(table)
+        else:
+            _render_status_summary(
+                state_label="[red]stopped[/]",
+                port=_default_service_port() or 8766,
+                port_listening=False,
+                health=None,
+                operational=None,
+                exit_code=3,
+            )
+            return
         raise typer.Exit(code=3)
 
     if requested_port is not None:
-        _render_explicit_port_status(status, requested_port, json_mode=json_mode)
+        _render_explicit_port_status(
+            status,
+            requested_port,
+            json_mode=json_mode,
+            verbose=verbose,
+        )
         return
 
     (
@@ -941,20 +1241,30 @@ def service_status(
         )
         return
 
-    _render_status_table(
-        pid,
-        target_port,
-        started_at,
-        pid_alive,
-        pid_is_ours,
-        port_listening,
-        heartbeat_age,
-        heartbeat_stale,
-        token_match,
-        state_label,
-        exit_code,
-        health,
-        operational,
+    if verbose:
+        _render_status_table(
+            pid,
+            target_port,
+            started_at,
+            pid_alive,
+            pid_is_ours,
+            port_listening,
+            heartbeat_age,
+            heartbeat_stale,
+            token_match,
+            state_label,
+            exit_code,
+            health,
+            operational,
+        )
+        return
+    _render_status_summary(
+        state_label=state_label,
+        port=target_port,
+        port_listening=port_listening,
+        health=health,
+        operational=operational,
+        exit_code=exit_code,
     )
 
 

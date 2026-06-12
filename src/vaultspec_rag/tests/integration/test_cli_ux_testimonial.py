@@ -67,8 +67,12 @@ class TestFirstTimeIndexer:
 
     pytestmark: typing.ClassVar = [pytest.mark.integration]
 
-    def test_persona(self) -> None:
+    def test_persona(self, tmp_path: Path) -> None:
+        from ._helpers import _service_env
+
         observations: list[_Observation] = []
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
 
         # Step 1: discover top-level commands.
         r = runner.invoke(app, ["--help"])
@@ -93,10 +97,11 @@ class TestFirstTimeIndexer:
         )
 
         # Step 3: run status (no GPU required; no Qdrant lock opened).
-        r = runner.invoke(app, ["status"])
+        with _service_env(tmp_path):
+            r = runner.invoke(app, ["--target", str(tmp_path), "status"])
         observations.append(
             _Observation(
-                command=["status"],
+                command=["--target", str(tmp_path), "status"],
                 exit_code=r.exit_code,
                 output=r.output,
                 friction="" if r.exit_code == 0 else "unexpected non-zero exit",
@@ -207,52 +212,54 @@ class TestSearchPowerUser:
             encoding="utf-8",
         )
 
-        # Index codebase in-process (subprocess to avoid VRAM clash with
-        # any session-scoped embedding_model fixture).
-        index_result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "vaultspec_rag",
-                "--target",
-                str(root),
-                "index",
-                "--type",
-                "code",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(root),
-            encoding="utf-8",
-            errors="replace",
-        )
-        assert index_result.returncode == 0, (
-            f"index --type code failed:\nstdout: {index_result.stdout}\n"
-            f"stderr: {index_result.stderr}"
-        )
+        from ._helpers import _service_env
 
-        search_result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "vaultspec_rag",
-                "--target",
-                str(root),
-                "search",
-                "embedding model",
-                "--type",
-                "code",
-                "--language",
-                "python",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=str(root),
-            encoding="utf-8",
-            errors="replace",
-        )
+        # Index/search in the same isolated service-state environment
+        # so an unrelated resident service cannot claim this workspace.
+        with _service_env(root):
+            index_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "vaultspec_rag",
+                    "--target",
+                    str(root),
+                    "index",
+                    "--type",
+                    "code",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=str(root),
+                encoding="utf-8",
+                errors="replace",
+            )
+            assert index_result.returncode == 0, (
+                f"index --type code failed:\nstdout: {index_result.stdout}\n"
+                f"stderr: {index_result.stderr}"
+            )
+            search_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "vaultspec_rag",
+                    "--target",
+                    str(root),
+                    "search",
+                    "embedding model",
+                    "--type",
+                    "code",
+                    "--language",
+                    "python",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=str(root),
+                encoding="utf-8",
+                errors="replace",
+            )
         obs = _Observation(
             command=[
                 "search",
@@ -271,13 +278,11 @@ class TestSearchPowerUser:
             f"search command exited {obs.exit_code}.\n"
             f"stdout:\n{obs.output}\nstderr:\n{obs.friction}"
         )
-        # Results table must contain at least one scored result.
+        # Human search output is a line-oriented ranked result, not a score table.
         output_lower = obs.output.lower()
-        assert (
-            "score" in output_lower
-            or "0." in obs.output
-            or "load_embedding_model" in obs.output
-        ), f"Expected ranked code-search result in output:\n{obs.output}"
+        assert "rank=1" in output_lower or "load_embedding_model" in obs.output, (
+            f"Expected ranked code-search result in output:\n{obs.output}"
+        )
 
 
 # ---------------------------------------------------------------------------

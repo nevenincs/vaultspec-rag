@@ -16,9 +16,12 @@ Three layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
+import threading
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -45,6 +48,112 @@ runner = CliRunner()
 # A port with nothing listening: _try_mcp_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59235"
+
+
+class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
+    payloads: ClassVar[list[dict[str, object]]] = []
+    request_count = 0
+
+    def do_GET(self) -> None:
+        payload_index = min(self.request_count, len(self.payloads) - 1)
+        payload = self.payloads[payload_index]
+        type(self).request_count += 1
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def log_message(self, format: str, *args: object) -> None:
+        _ = format, args
+
+
+@contextlib.contextmanager
+def _jobs_http_server(
+    payloads: list[dict[str, object]],
+) -> Iterator[tuple[http.server.HTTPServer, int]]:
+    _JobsHTTPHandler.payloads = payloads
+    _JobsHTTPHandler.request_count = 0
+    server = http.server.HTTPServer(("127.0.0.1", 0), _JobsHTTPHandler)
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, port
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _cli_jobs_payload(now: float) -> dict[str, object]:
+    return {
+        "jobs": [
+            {
+                "id": "runjob12",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": now - 10,
+                "finished_at": None,
+                "result": None,
+                "progress": {"step": "embed", "completed": 2, "total": 5},
+                "runtime_seconds": 10.0,
+                "last_progress_age_seconds": 1.0,
+                "initiator": {
+                    "kind": "watcher",
+                    "command": "watcher_code_index",
+                    "project_root": "proj-a",
+                },
+                "runtime": {"pid": 123, "user": "operator"},
+                "resources": {"current": {"rss_mb": 10.0}},
+            },
+            {
+                "id": "failjob1",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "error",
+                "started_at": now - 120,
+                "finished_at": now - 100,
+                "result": "boom",
+                "progress": None,
+                "runtime_seconds": 20.0,
+                "last_progress_age_seconds": 100.0,
+                "initiator": {
+                    "kind": "cli",
+                    "command": "reindex_vault",
+                    "project_root": "proj-b",
+                },
+                "runtime": {"pid": 124, "user": "operator"},
+                "resources": {"finished": {"rss_mb": 11.0}},
+            },
+            {
+                "id": "donejob1",
+                "source": "code",
+                "trigger": "tool",
+                "phase": "done",
+                "started_at": now - 320,
+                "finished_at": now - 300,
+                "result": "+3 /1 -0 (22231ms)",
+                "progress": None,
+                "runtime_seconds": 20.0,
+                "last_progress_age_seconds": 300.0,
+                "initiator": {
+                    "kind": "cli",
+                    "command": "reindex_codebase",
+                    "project_root": "proj-c",
+                },
+                "runtime": {"pid": 125, "user": "operator"},
+                "resources": {"finished": {"rss_mb": 12.0}},
+            },
+        ],
+        "total": 3,
+        "returned": 3,
+        "summary": {
+            "running": 1,
+            "phases": {"running": 1, "error": 1, "done": 1},
+        },
+        "filters": {"limit": 5},
+    }
 
 
 @pytest.fixture
@@ -203,6 +312,89 @@ def test_jobs_subcommand_registered() -> None:
     assert "--failed" in result.stdout
     assert "--job-id" in result.stdout
     assert "--since" in result.stdout
+    assert "--watch" in result.stdout
+    assert "--interval" in result.stdout
+
+
+def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
+    now = time.time()
+    with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert f"Jobs on service port {port}: 3/3 shown, 1 running, 1 failed" in output
+    assert "Latest shown last" in output
+    assert "project=proj-a" in output
+    assert "project=proj-b" in output
+    assert "project=proj-c" in output
+    assert "* " in output
+    assert "! " in output
+    assert "FAILED" in output
+    assert "code index update" in output
+    assert "watcher" not in output
+    assert "added 3, updated 1, removed 0, finished in 22s" in output
+    assert "embedding chunks 2 of 5; running for 10s" in output
+    for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+        assert forbidden not in output
+    assert output.index("donejob1") < output.index("failjob1")
+    assert output.index("failjob1") < output.index("runjob12")
+
+
+def test_jobs_json_preserves_raw_service_payload() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port), "--json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.output)
+    assert envelope["ok"] is True
+    jobs = envelope["data"]["jobs"]
+    assert jobs[0]["trigger"] == "watcher"
+    assert jobs[2]["result"] == "+3 /1 -0 (22231ms)"
+
+
+def test_jobs_watch_refreshes_managed_terminal_view() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    with _jobs_http_server([payload, payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--limit",
+                "5",
+                "--port",
+                str(port),
+                "--watch",
+                "--interval",
+                "0.01",
+                "--refresh-count",
+                "2",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Watching; press Ctrl+C to stop." in result.output
+    assert result.output.count("Jobs on service port") == 2
+
+
+def test_jobs_watch_is_human_only() -> None:
+    result = runner.invoke(
+        app,
+        ["server", "jobs", "--port", _DEAD_PORT, "--watch", "--json"],
+    )
+    assert result.exit_code == 2
+    envelope = json.loads(result.output)
+    assert envelope["error"] == "invalid_watch"
 
 
 def test_jobs_cli_mcp_parity() -> None:
@@ -320,6 +512,25 @@ def test_jobs_route_prioritises_running_before_limit(
     assert payload["jobs"][0]["id"] == running_id
     assert payload["jobs"][0]["phase"] == "running"
     assert "current" in payload["jobs"][0]["resources"]
+
+
+def test_jobs_route_prioritises_failed_before_completed_limit(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    _jobs.record_finish(_jobs.record_start("code", "tool"), result="newer done")
+    failed_id = _jobs.record_start("code", "tool")
+    _jobs.record_finish(failed_id, error="boom")
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "limit": "1"}),
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["jobs"][0]["id"] == failed_id
+    assert payload["jobs"][0]["phase"] == "error"
 
 
 def test_jobs_route_filters_phase_source_trigger_and_query(

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import logging
 import textwrap
 from typing import TYPE_CHECKING, cast
 
@@ -179,3 +180,30 @@ class TestJobsLifecycle:
         id2 = record_start("code", "tool")
         ids = [r["id"] for r in snapshot()]
         assert ids.index(id2) < ids.index(id1)
+
+    def test_job_events_preserve_job_id_and_phase_fields(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger="vaultspec_rag.jobs"):
+            job_id = record_start("vault", "tool", command="reindex_vault")
+            record_finish(job_id, result="ok")
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "vaultspec_rag.jobs"
+        ]
+        assert any(
+            "service.job event=started" in message
+            and f"job_id={job_id}" in message
+            and "source=vault" in message
+            and "phase=running" in message
+            for message in messages
+        )
+        assert any(
+            "service.job event=finished" in message
+            and f"job_id={job_id}" in message
+            and "phase=done" in message
+            for message in messages
+        )

@@ -96,7 +96,7 @@ def main(port: int | None = None) -> None:
         # fds 1/2 onto the rotating stream.  Rotation is a stdio-mode
         # asymmetry on purpose: stdio is one-shot CLI tooling, not a
         # long-lived daemon, so no rotation is needed there.
-        configure_logging()
+        configure_logging(level="INFO")
         cfg = get_config()
         install_daemon_log_rotation(
             _m._resolve_log_path(),

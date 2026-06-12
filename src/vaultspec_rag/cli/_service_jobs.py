@@ -1,18 +1,17 @@
 """``server jobs``: list recent index/reindex activity.
 
-Tier-2b observability subcommand (``service-observability`` ADR, plan
-P04). Calls the jobs admin endpoint through the shared HTTP admin client
-and renders a Rich table (or the JSON envelope). Service-not-running
-yields exit code 3.
+Calls the jobs admin endpoint through the shared HTTP admin client and
+renders either a line-oriented operator feed or the JSON envelope.
+Service-not-running yields exit code 3.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Annotated, NoReturn, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -21,56 +20,10 @@ from ._http_search import _try_http_admin
 from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
-
-def _format_running_job_result(job: dict[str, object]) -> str:
-    prog = job.get("progress")
-    if not isinstance(prog, dict):
-        return ""
-    prog_dict = cast("dict[str, object]", prog)
-    step = str(prog_dict.get("step", ""))
-    completed = prog_dict.get("completed", 0)
-    total = prog_dict.get("total")
-    started_at = job.get("started_at")
-    elapsed_str = ""
-    if isinstance(started_at, float | int):
-        import time
-
-        elapsed = time.time() - started_at
-        elapsed_str = f" ({int(elapsed)}s elapsed)"
-
-    if step == "queued":
-        return f"[yellow]queued behind writer lock[/]{elapsed_str}"
-    if total is not None:
-        return f"[yellow]{step} ({completed}/{total})[/]{elapsed_str}"
-    return f"[yellow]{step} ({completed})[/]{elapsed_str}"
-
-
-def _format_progress_text(job: dict[str, object]) -> str:
-    prog = job.get("progress")
-    if not isinstance(prog, dict):
-        return ""
-    prog_dict = cast("dict[str, object]", prog)
-    step = str(prog_dict.get("step", ""))
-    completed = prog_dict.get("completed", 0)
-    total = prog_dict.get("total")
-    if total is not None:
-        return f"{step} ({completed}/{total})"
-    return f"{step} ({completed})" if step else str(completed)
-
-
-def _format_job_age(job: dict[str, object]) -> str:
-    timestamp = job.get("finished_at") or job.get("started_at")
-    if not isinstance(timestamp, float | int):
-        return "?"
-    age_s = max(0, int(time.time() - float(timestamp)))
-    if age_s < 60:
-        return f"{age_s}s"
-    if age_s < 3600:
-        minutes, seconds = divmod(age_s, 60)
-        return f"{minutes}m {seconds}s"
-    hours, rem = divmod(age_s, 3600)
-    minutes = rem // 60
-    return f"{hours}h {minutes}m"
+_RESULT_RE = re.compile(
+    r"^\+(?P<added>\d+)\s*/(?P<updated>\d+)\s*-(?P<removed>\d+)"
+    r"\s*\((?P<duration_ms>\d+)ms\)(?:\s*~(?P<skipped>\d+))?$"
+)
 
 
 def _format_seconds(raw: object) -> str:
@@ -86,23 +39,16 @@ def _format_seconds(raw: object) -> str:
     return f"{hours}h {minutes}m"
 
 
+def _format_milliseconds(raw: object) -> str:
+    if not isinstance(raw, int | float):
+        return "?"
+    return _format_seconds(float(raw) / 1000.0)
+
+
 def _format_mb(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "?"
     return f"{float(raw):.1f} MB"
-
-
-def _job_owner(job: dict[str, object]) -> str:
-    initiator = job.get("initiator")
-    kind = "?"
-    if isinstance(initiator, dict):
-        kind = str(initiator.get("kind", "?"))
-    runtime = job.get("runtime")
-    if isinstance(runtime, dict):
-        user = runtime.get("user")
-        if user:
-            return f"{kind}/{user}"
-    return kind
 
 
 def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
@@ -132,12 +78,221 @@ def _resource_summary(job: dict[str, object]) -> str:
     )
 
 
-def _job_detail(job: dict[str, object]) -> str:
+def _phase_label(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "?"))
-    result_str = str(job.get("result") or "")
-    if phase == "running" and not result_str:
-        return _format_running_job_result(job)
-    return result_str
+    if phase in ("error", "failed"):
+        return "FAILED"
+    if phase == "running":
+        return "running"
+    return phase
+
+
+def _job_prefix(job: dict[str, object]) -> str:
+    phase = str(job.get("phase", ""))
+    if phase == "running":
+        return "*"
+    if phase in ("error", "failed"):
+        return "!"
+    return " "
+
+
+def _job_timestamp(job: dict[str, object]) -> float:
+    timestamp = job.get("finished_at") or job.get("started_at")
+    return float(timestamp) if isinstance(timestamp, int | float) else 0.0
+
+
+def _job_time_label(job: dict[str, object]) -> str:
+    timestamp = _job_timestamp(job)
+    if timestamp <= 0:
+        return "time unknown"
+    return time.strftime("%H:%M:%S", time.localtime(timestamp))
+
+
+def _project_label(job: dict[str, object]) -> str:
+    initiator = job.get("initiator")
+    if not isinstance(initiator, dict):
+        return "project unknown"
+    project_root = initiator.get("project_root")
+    if not project_root:
+        return "project unknown"
+    parts = str(project_root).replace("\\", "/").rstrip("/").split("/")
+    return parts[-1] if parts and parts[-1] else str(project_root)
+
+
+def _project_root(job: dict[str, object]) -> str | None:
+    initiator = job.get("initiator")
+    if not isinstance(initiator, dict):
+        return None
+    root = initiator.get("project_root")
+    return str(root) if root else None
+
+
+def _source_label(job: dict[str, object]) -> str:
+    source = str(job.get("source", "?"))
+    if source == "code":
+        return "code"
+    if source == "vault":
+        return "vault"
+    return source
+
+
+def _operation_label(job: dict[str, object]) -> str:
+    source = _source_label(job)
+    trigger = str(job.get("trigger", ""))
+    initiator = job.get("initiator")
+    command = ""
+    if isinstance(initiator, dict):
+        command = str(initiator.get("command") or "")
+    if trigger == "watcher":
+        return f"{source} index update"
+    if command.startswith("reindex_"):
+        return f"{source} index refresh"
+    return f"{source} index operation"
+
+
+def _progress_step_label(step: str) -> str:
+    labels = {
+        "queued": "waiting for writer lock",
+        "discover": "discovering items",
+        "chunk": "chunking files",
+        "embed": "embedding chunks",
+        "index": "writing index",
+        "upsert": "writing vectors",
+    }
+    return labels.get(step, step.replace("_", " "))
+
+
+def _human_progress(job: dict[str, object]) -> str:
+    progress = job.get("progress")
+    if not isinstance(progress, dict):
+        return ""
+    step = str(progress.get("step", ""))
+    label = _progress_step_label(step)
+    completed = progress.get("completed")
+    total = progress.get("total")
+    if isinstance(completed, int | float) and isinstance(total, int | float):
+        return f"{label} {int(completed)} of {int(total)}"
+    if isinstance(completed, int | float) and step:
+        return f"{label} {int(completed)}"
+    return label
+
+
+def _human_result(raw: object) -> str:
+    if not raw:
+        return ""
+    result = str(raw)
+    match = _RESULT_RE.match(result.strip())
+    if match is None:
+        return result
+    added = int(match.group("added"))
+    updated = int(match.group("updated"))
+    removed = int(match.group("removed"))
+    duration_ms = int(match.group("duration_ms"))
+    parts = [
+        f"added {added}",
+        f"updated {updated}",
+        f"removed {removed}",
+        f"finished in {_format_milliseconds(duration_ms)}",
+    ]
+    skipped = match.group("skipped")
+    if skipped is not None:
+        parts.append(f"skipped {int(skipped)}")
+    return ", ".join(parts)
+
+
+def _job_summary_detail(job: dict[str, object]) -> str:
+    phase = str(job.get("phase", ""))
+    if phase == "running":
+        detail = _human_progress(job)
+        runtime = _format_seconds(job.get("runtime_seconds"))
+        if detail:
+            return f"{detail}; running for {runtime}"
+        return f"running for {runtime}"
+    if phase in ("error", "failed"):
+        result = _human_result(job.get("result"))
+        return f"error: {result}" if result else "error reported"
+    result = _human_result(job.get("result"))
+    if result:
+        return result
+    progress = _human_progress(job)
+    return progress
+
+
+def _human_sorted_jobs(jobs: list[object]) -> list[dict[str, object]]:
+    normalised = [
+        cast("dict[str, object]", entry) if isinstance(entry, dict) else {}
+        for entry in jobs
+    ]
+    return sorted(normalised, key=_job_timestamp)
+
+
+def _summary_count(summary: object, key: str) -> int:
+    if not isinstance(summary, dict):
+        return 0
+    value = summary.get(key)
+    return int(value) if isinstance(value, int | float) else 0
+
+
+def _summary_phase_count(summary: object, *phases: str) -> int:
+    if not isinstance(summary, dict):
+        return 0
+    phase_counts = summary.get("phases")
+    if not isinstance(phase_counts, dict):
+        return 0
+    total = 0
+    for phase in phases:
+        value = phase_counts.get(phase, 0)
+        if isinstance(value, int | float):
+            total += int(value)
+    return total
+
+
+def _filters_label(result: dict[str, object]) -> str:
+    filters = result.get("filters")
+    if not isinstance(filters, dict):
+        return ""
+    visible: list[str] = []
+    for key in ("phase", "source", "trigger", "query", "job_id", "since"):
+        value = filters.get(key)
+        if value not in (None, "", False):
+            visible.append(f"{key}={value}")
+    if filters.get("failed") is True:
+        visible.append("failed=true")
+    return f" filters: {', '.join(visible)}" if visible else ""
+
+
+def _render_jobs_feed(
+    result: dict[str, object],
+    jobs: list[object],
+    *,
+    port: int,
+    monitoring: bool = False,
+) -> None:
+    total = result.get("total", len(jobs))
+    returned = result.get("returned", len(jobs))
+    summary = result.get("summary")
+    running = _summary_count(summary, "running")
+    failed = _summary_phase_count(summary, "error", "failed")
+    filter_text = _filters_label(result)
+    monitor_text = ""
+    if monitoring:
+        monitor_text = f" refreshed {time.strftime('%H:%M:%S', time.localtime())}"
+    _cli.console.print(
+        f"Jobs on service port {port}: {returned}/{total} shown, "
+        f"{running} running, {failed} failed. Latest shown last.{filter_text}"
+        f"{monitor_text}",
+        soft_wrap=True,
+    )
+    if monitoring:
+        _cli.console.print("[dim]Watching; press Ctrl+C to stop.[/]")
+    for job in _human_sorted_jobs(jobs):
+        job_id = str(job.get("id", ""))[:8]
+        _cli.console.print(
+            f"{_job_prefix(job)} {_job_time_label(job)} {_phase_label(job)} "
+            f"{_operation_label(job)} project={_project_label(job)} id={job_id} - "
+            f"{_job_summary_detail(job)}",
+            soft_wrap=True,
+        )
 
 
 def _exit_invalid_jobs_filter(json_mode: bool) -> NoReturn:
@@ -233,96 +388,55 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
     return cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
 
 
-def _running_count(result: dict[str, object], jobs: list[object]) -> object:
-    summary = result.get("summary")
-    if isinstance(summary, dict):
-        return summary.get("running", 0)
-    return sum(
-        1
-        for entry in jobs
-        if isinstance(entry, dict) and entry.get("phase") == "running"
-    )
-
-
-def _render_jobs_table(result: dict[str, object], jobs: list[object]) -> None:
-    total = result.get("total", len(jobs))
-    returned = result.get("returned", len(jobs))
-    running = _running_count(result, jobs)
-    table = Table(
-        title=f"Jobs ({returned}/{total} shown, {running} running)",
-        padding=(0, 1),
-    )
-    table.add_column("ID", no_wrap=True)
-    table.add_column("Source", style="bold", no_wrap=True)
-    table.add_column("Trigger", no_wrap=True)
-    table.add_column("By", no_wrap=True)
-    table.add_column("Phase", no_wrap=True)
-    table.add_column("Age", justify="right", no_wrap=True)
-    table.add_column("Detail", overflow="fold")
-    for entry in jobs:
-        job = cast("dict[str, object]", entry) if isinstance(entry, dict) else {}
-        table.add_row(
-            str(job.get("id", ""))[:8],
-            str(job.get("source", "?")),
-            str(job.get("trigger", "?")),
-            _job_owner(job),
-            str(job.get("phase", "?")),
-            _format_job_age(job),
-            _job_detail(job),
-        )
-    _cli.console.print(table)
-
-
 def _render_job_detail(job: dict[str, object]) -> None:
-    table = Table(title=f"Job {str(job.get('id', ''))[:12]}", show_header=False)
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("ID", str(job.get("id", "")))
-    table.add_row("Source", str(job.get("source", "?")))
-    table.add_row("Trigger", str(job.get("trigger", "?")))
-    table.add_row("Phase", str(job.get("phase", "?")))
-    table.add_row("Runtime", _format_seconds(job.get("runtime_seconds")))
-    table.add_row(
-        "Last progress age",
-        _format_seconds(job.get("last_progress_age_seconds")),
+    _cli.console.print(f"Job {job.get('id', '')!s}")
+    _cli.console.print(f"Operation: {_operation_label(job)}")
+    _cli.console.print(f"Project: {_project_label(job)}")
+    root = _project_root(job)
+    if root:
+        _cli.console.print(f"Project root: {root}")
+    _cli.console.print(f"State: {_phase_label(job)}")
+    _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
+    _cli.console.print(
+        "Last progress update: "
+        f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
     )
     initiator = job.get("initiator")
     if isinstance(initiator, dict):
-        table.add_row("Initiator", str(initiator.get("kind", "?")))
-        table.add_row("Command", str(initiator.get("command", "?")))
-        project_root = initiator.get("project_root")
-        if project_root:
-            table.add_row("Project root", str(project_root))
+        _cli.console.print(f"Initiator: {initiator.get('kind', '?')}")
+        _cli.console.print(f"Command: {initiator.get('command', '?')}")
     runtime = job.get("runtime")
     if isinstance(runtime, dict):
         pid = runtime.get("pid")
         user = runtime.get("user")
         if pid is not None:
-            table.add_row("PID", str(pid))
+            _cli.console.print(f"PID: {pid}")
         if user:
-            table.add_row("OS user", str(user))
+            _cli.console.print(f"OS user: {user}")
         executable = runtime.get("executable")
         if executable:
-            table.add_row("Executable", str(executable))
+            _cli.console.print(f"Executable: {executable}")
         virtual_env = runtime.get("virtual_env") or runtime.get("prefix")
         if virtual_env:
-            table.add_row("Virtual env", str(virtual_env))
+            _cli.console.print(f"Virtual env: {virtual_env}")
     progress = job.get("progress")
     if isinstance(progress, dict):
-        table.add_row("Progress", _format_progress_text(job))
+        _cli.console.print(f"Progress: {_human_progress(job)}")
     resource_summary = _resource_summary(job)
     if resource_summary:
-        table.add_row("Resources", resource_summary)
+        _cli.console.print(f"Resources: {resource_summary}")
     result = job.get("result")
     if result:
-        table.add_row("Result", str(result))
-    _cli.console.print(table)
+        label = "Error" if str(job.get("phase")) in ("error", "failed") else "Result"
+        _cli.console.print(f"{label}: {_human_result(result)}")
 
 
 def _render_jobs_result(
     result: dict[str, object],
     *,
     job_id: str | None,
+    port: int,
+    monitoring: bool = False,
 ) -> None:
     jobs = _jobs_from_result(result)
     if not jobs:
@@ -336,14 +450,94 @@ def _render_jobs_result(
                 f"[bold red]Error:[/] job id prefix [cyan]{job_id}[/] "
                 f"matches {len(jobs)} jobs. Use a longer prefix."
             )
-            _render_jobs_table(result, jobs)
+            _render_jobs_feed(result, jobs, port=port)
             raise typer.Exit(2)
         first = jobs[0]
         _render_job_detail(
             cast("dict[str, object]", first) if isinstance(first, dict) else {}
         )
         return
-    _render_jobs_table(result, jobs)
+    _render_jobs_feed(result, jobs, port=port, monitoring=monitoring)
+
+
+def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
+    message = "--watch is human-only and --interval must be greater than zero."
+    if interval > 0:
+        message = "--watch cannot be combined with --json."
+    if json_mode:
+        _emit_json_error_and_exit("service.jobs", "invalid_watch", message, 2)
+    _cli.console.print(f"[bold red]Error:[/] {message}")
+    raise typer.Exit(2)
+
+
+def _fetch_jobs_result(
+    *,
+    limit: int,
+    phase: str | None,
+    source: str | None,
+    trigger: str | None,
+    query: str | None,
+    failed: bool,
+    job_id: str | None,
+    since: float | None,
+    port: int,
+) -> dict[str, object] | None:
+    return _try_http_admin(
+        "get_jobs",
+        _jobs_args(
+            limit=limit,
+            phase=phase,
+            source=source,
+            trigger=trigger,
+            query=query,
+            failed=failed,
+            job_id=job_id,
+            since=since,
+        ),
+        port,
+    )
+
+
+def _watch_jobs(
+    *,
+    limit: int,
+    phase: str | None,
+    source: str | None,
+    trigger: str | None,
+    query: str | None,
+    failed: bool,
+    job_id: str | None,
+    since: float | None,
+    port: int,
+    interval: float,
+    refresh_count: int | None,
+) -> None:
+    refreshes = 0
+    while refresh_count is None or refreshes < refresh_count:
+        result = _fetch_jobs_result(
+            limit=limit,
+            phase=phase,
+            source=source,
+            trigger=trigger,
+            query=query,
+            failed=failed,
+            job_id=job_id,
+            since=since,
+            port=port,
+        )
+        if result is None:
+            _exit_jobs_not_running(False)
+        _cli.console.clear()
+        _render_jobs_result(
+            result,
+            job_id=job_id,
+            port=port,
+            monitoring=True,
+        )
+        refreshes += 1
+        if refresh_count is not None and refreshes >= refresh_count:
+            return
+        time.sleep(interval)
 
 
 @server_app.command("jobs")
@@ -394,25 +588,63 @@ def service_jobs(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope instead of a table."),
+        typer.Option("--json", help="Emit one JSON envelope instead of human output."),
     ] = False,
+    watch: Annotated[
+        bool,
+        typer.Option("--watch", help="Continuously refresh the human jobs view."),
+    ] = False,
+    interval: Annotated[
+        float,
+        typer.Option("--interval", help="Seconds between --watch refreshes."),
+    ] = 2.0,
+    refresh_count: Annotated[
+        int | None,
+        typer.Option(
+            "--refresh-count",
+            help="Stop --watch after N refreshes.",
+            hidden=True,
+        ),
+    ] = None,
 ) -> None:
     """Show recent index/reindex activity from the running service."""
     phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()
-    result = _try_http_admin(
-        "get_jobs",
-        _jobs_args(
-            limit=limit,
-            phase=phase,
-            source=source,
-            trigger=trigger,
-            query=query,
-            failed=failed,
-            job_id=job_id,
-            since=since,
-        ),
-        resolved_port,
+    if resolved_port is None:
+        _exit_jobs_not_running(json_mode)
+    if interval <= 0:
+        _exit_invalid_watch_args(json_mode, interval)
+    if watch and json_mode:
+        _exit_invalid_watch_args(json_mode, interval)
+    if watch:
+        try:
+            _watch_jobs(
+                limit=limit,
+                phase=phase,
+                source=source,
+                trigger=trigger,
+                query=query,
+                failed=failed,
+                job_id=job_id,
+                since=since,
+                port=resolved_port,
+                interval=interval,
+                refresh_count=refresh_count,
+            )
+        except KeyboardInterrupt:
+            _cli.console.print("\n[dim]Stopped watching jobs.[/]")
+        return
+
+    result = _fetch_jobs_result(
+        limit=limit,
+        phase=phase,
+        source=source,
+        trigger=trigger,
+        query=query,
+        failed=failed,
+        job_id=job_id,
+        since=since,
+        port=resolved_port,
     )
     if result is None:
         _exit_jobs_not_running(json_mode)
@@ -421,4 +653,4 @@ def service_jobs(
         _emit_json(True, "service.jobs", data=result)
         return
 
-    _render_jobs_result(result, job_id=job_id)
+    _render_jobs_result(result, job_id=job_id, port=resolved_port)

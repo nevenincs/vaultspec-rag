@@ -24,6 +24,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 import vaultspec_rag.server as _m
 
 from ..capabilities import backend_capabilities_dict
+from ..logging_config import log_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -91,8 +92,11 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     try:
         await asyncio.to_thread(_m._heartbeat_tick_sync)
     except Exception:
-        logger.warning(
-            "service.lifecycle event=heartbeat_initial_failed",
+        log_event(
+            logger,
+            "service.lifecycle",
+            "heartbeat_initial_failed",
+            severity=logging.WARNING,
             exc_info=True,
         )
 
