@@ -218,6 +218,9 @@ class TestTestCommand:
         result = runner.invoke(app, ["test", "--help"])
         assert result.exit_code == 0
         assert "pytest" in result.output.lower()
+        assert "Extra arguments are passed to pytest" in result.output
+        for forbidden in ("Args:", "Raises:", "Examples::", "ctx:"):
+            assert forbidden not in result.output
 
     def test_accepts_marker_flag(self):
         """Verify the command accepts -m without erroring on arg parsing."""

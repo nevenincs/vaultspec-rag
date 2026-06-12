@@ -12,26 +12,10 @@ from ._app import app
 @app.command(
     "test",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    help="Run the test suite. Extra arguments are passed to pytest.",
 )
 def handle_test(ctx: typer.Context) -> None:
-    """Run the test suite via pytest.
-
-    All extra arguments are forwarded to pytest.
-
-    Args:
-        ctx: Typer context whose ``args`` are passed through
-            to pytest.
-
-    Raises:
-        SystemExit: Propagates pytest's exit code.
-
-    Examples::
-
-        vaultspec-rag test
-        vaultspec-rag test -m unit
-        vaultspec-rag test -m integration -v --timeout=120
-
-    """
+    """Run the test suite, forwarding extra arguments to pytest."""
     test_dir = str(Path(__file__).resolve().parent.parent / "tests")
     cmd = [sys.executable, "-m", "pytest", test_dir, *ctx.args]
     raise SystemExit(subprocess.call(cmd))
