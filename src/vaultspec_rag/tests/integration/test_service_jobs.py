@@ -374,7 +374,7 @@ def test_jobs_help_uses_operator_language() -> None:
         "Show only active or waiting jobs",
         "Continuously refresh the human jobs view",
         "Stop --watch after this many refreshes",
-        "running, finished, or failed",
+        "running, finished, failed, or cancelled",
     )
     missing = [phrase for phrase in expected_phrases if phrase not in normalized]
     assert not missing, f"missing operator phrasing: {missing}"
@@ -424,23 +424,6 @@ def test_jobs_filter_summary_humanizes_finished_state() -> None:
     assert rendered == " Filtered by state finished."
     assert "state=done" not in rendered
     assert "state=" not in rendered
-
-
-def test_jobs_trigger_filter_accepts_user_language() -> None:
-    from ...cli._service_jobs import _jobs_args
-
-    args = _jobs_args(
-        limit=5,
-        phase=None,
-        source=None,
-        trigger="automatic",
-        query=None,
-        failed=False,
-        job_id=None,
-        since=None,
-    )
-
-    assert args["trigger"] == "watcher"
 
 
 def test_jobs_index_filter_is_operator_facing_cli_alias() -> None:
@@ -513,24 +496,7 @@ def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
     assert "--trigger" not in result.output
 
 
-def test_jobs_phase_filter_accepts_user_language() -> None:
-    from ...cli._service_jobs import _jobs_args
-
-    args = _jobs_args(
-        limit=5,
-        phase="finished",
-        source=None,
-        trigger=None,
-        query=None,
-        failed=False,
-        job_id=None,
-        since=None,
-    )
-
-    assert args["phase"] == "done"
-
-
-def test_jobs_state_option_replaces_phase_in_help_but_phase_still_parses() -> None:
+def test_jobs_state_filter_sends_service_phase() -> None:
     with _jobs_http_server(
         [{"jobs": [], "filters": {"phase": "done"}, "total": 0}]
     ) as (
@@ -539,30 +505,81 @@ def test_jobs_state_option_replaces_phase_in_help_but_phase_still_parses() -> No
     ):
         result = runner.invoke(
             app,
-            ["server", "jobs", "--port", str(port), "--phase", "finished"],
+            ["server", "jobs", "--port", str(port), "--state", "finished"],
         )
 
     assert result.exit_code == 0, result.stdout
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["phase"] == ["done"]
     assert "No matching jobs." in result.stdout
 
 
-def test_jobs_state_and_phase_conflict_is_actionable() -> None:
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (
+            ["server", "jobs", "--state", "bananas"],
+            'Invalid --state "bananas". Use running, finished, failed, or cancelled.',
+        ),
+        (
+            ["server", "jobs", "--index", "database"],
+            'Invalid --index "database". Use vault or code.',
+        ),
+        (
+            ["server", "jobs", "--started-by", "robot"],
+            'Invalid --started-by "robot". Use manual or automatic.',
+        ),
+    ],
+)
+def test_jobs_rejects_invalid_filter_values(argv: list[str], message: str) -> None:
+    result = runner.invoke(
+        app,
+        [*argv, "--port", _DEAD_PORT],
+    )
+
+    assert result.exit_code == 2
+    assert message in result.stdout
+    assert "not running" not in result.stdout.lower()
+
+
+def test_jobs_rejects_invalid_filter_values_as_json() -> None:
     result = runner.invoke(
         app,
         [
             "server",
             "jobs",
+            "--state",
+            "bananas",
             "--port",
             _DEAD_PORT,
-            "--state",
-            "running",
-            "--phase",
-            "finished",
+            "--json",
         ],
     )
 
     assert result.exit_code == 2
-    assert "--state and --phase received different values" in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == "service.jobs"
+    assert payload["error"] == "invalid_filter"
+    assert 'Invalid --state "bananas"' in payload["message"]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["server", "jobs", "--phase", "finished"],
+        ["server", "jobs", "--source", "code"],
+        ["server", "jobs", "--trigger", "automatic"],
+    ],
+)
+def test_jobs_removed_legacy_filter_flags_are_not_supported(
+    argv: list[str],
+) -> None:
+    result = runner.invoke(app, [*argv, "--port", _DEAD_PORT])
+
+    assert result.exit_code != 0
+    assert "not running" not in result.stdout.lower()
 
 
 @pytest.mark.parametrize(

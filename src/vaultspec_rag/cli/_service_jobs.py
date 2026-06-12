@@ -476,8 +476,7 @@ def _render_jobs_feed(
         )
 
 
-def _exit_invalid_jobs_filter(json_mode: bool) -> NoReturn:
-    message = "--running cannot be combined with --state unless it is running."
+def _exit_invalid_jobs_filter(json_mode: bool, message: str) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
             "service.jobs",
@@ -489,6 +488,17 @@ def _exit_invalid_jobs_filter(json_mode: bool) -> NoReturn:
     raise typer.Exit(2)
 
 
+def _exit_invalid_jobs_filter_value(
+    *,
+    option: str,
+    value: str,
+    allowed: str,
+    json_mode: bool,
+) -> NoReturn:
+    message = f'Invalid {option} "{value}". Use {allowed}.'
+    _exit_invalid_jobs_filter(json_mode, message)
+
+
 def _resolve_jobs_phase(
     phase: str | None,
     running: bool,
@@ -498,7 +508,8 @@ def _resolve_jobs_phase(
     if not running:
         return normalized_phase
     if normalized_phase is not None and normalized_phase.lower() != "running":
-        _exit_invalid_jobs_filter(json_mode)
+        message = "--running cannot be combined with --state unless it is running."
+        _exit_invalid_jobs_filter(json_mode, message)
     return "running"
 
 
@@ -515,10 +526,7 @@ def _resolve_jobs_filters(
         and resolved_phase not in ("error", "failed")
     ):
         message = "--failed can only be combined with --state failed."
-        if json_mode:
-            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
-        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
-        raise typer.Exit(2)
+        _exit_invalid_jobs_filter(json_mode, message)
     return resolved_phase, failed
 
 
@@ -528,7 +536,7 @@ def _jobs_trigger_value(trigger: str | None) -> str | None:
     value = trigger.strip().lower()
     if value in ("automatic", "automatic-updates", "updates"):
         return "watcher"
-    if value in ("manual", "manual-request"):
+    if value in ("manual", "manual-request", "manual-requests"):
         return "tool"
     return trigger
 
@@ -537,57 +545,68 @@ def _jobs_phase_value(phase: str | None) -> str | None:
     if phase is None:
         return None
     value = phase.strip().lower()
+    if value in ("running", "active", "waiting"):
+        return "running"
     if value in ("finished", "complete", "completed"):
         return "done"
-    return phase
+    if value in ("failed", "failure", "error"):
+        return "error"
+    if value in ("cancelled", "canceled"):
+        return "cancelled"
+    return value
 
 
 def _jobs_state_filter(
     state: str | None,
-    phase: str | None,
     json_mode: bool,
 ) -> str | None:
-    if state is not None and phase is not None and state.strip() != phase.strip():
-        message = "--state and --phase received different values; use --state."
-        if json_mode:
-            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
-        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
-        raise typer.Exit(2)
-    return state if state is not None else phase
+    if state is None:
+        return None
+    normalized = _jobs_phase_value(state)
+    if normalized in ("running", "done", "error", "cancelled"):
+        return normalized
+    _exit_invalid_jobs_filter_value(
+        option="--state",
+        value=state,
+        allowed="running, finished, failed, or cancelled",
+        json_mode=json_mode,
+    )
 
 
 def _jobs_started_by_filter(
     started_by: str | None,
-    trigger: str | None,
     json_mode: bool,
 ) -> str | None:
-    if (
-        started_by is not None
-        and trigger is not None
-        and started_by.strip() != trigger.strip()
-    ):
-        message = (
-            "--started-by and --trigger received different values; use --started-by."
-        )
-        if json_mode:
-            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
-        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
-        raise typer.Exit(2)
-    return started_by if started_by is not None else trigger
+    if started_by is None:
+        return None
+    normalized = _jobs_trigger_value(started_by)
+    if normalized in ("watcher", "tool"):
+        return normalized
+    _exit_invalid_jobs_filter_value(
+        option="--started-by",
+        value=started_by,
+        allowed="manual or automatic",
+        json_mode=json_mode,
+    )
 
 
 def _jobs_index_filter(
     index: str | None,
-    source: str | None,
     json_mode: bool,
 ) -> str | None:
-    if index is not None and source is not None and index.strip() != source.strip():
-        message = "--index and --source received different values; use --index."
-        if json_mode:
-            _emit_json_error_and_exit("service.jobs", "invalid_filter", message, 2)
-        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
-        raise typer.Exit(2)
-    return index if index is not None else source
+    if index is None:
+        return None
+    normalized = index.strip().lower()
+    if normalized in ("code", "source-code", "source code", "codebase"):
+        return "code"
+    if normalized == "vault":
+        return "vault"
+    _exit_invalid_jobs_filter_value(
+        option="--index",
+        value=index,
+        allowed="vault or code",
+        json_mode=json_mode,
+    )
 
 
 def _jobs_args(
@@ -828,23 +847,7 @@ def service_jobs(
         str | None,
         typer.Option(
             "--state",
-            help="Filter by job state, for example running, finished, or failed.",
-        ),
-    ] = None,
-    phase: Annotated[
-        str | None,
-        typer.Option(
-            "--phase",
-            help="Legacy name for --state.",
-            hidden=True,
-        ),
-    ] = None,
-    source: Annotated[
-        str | None,
-        typer.Option(
-            "--source",
-            help="Legacy name for --index.",
-            hidden=True,
+            help=("Filter by job state: running, finished, failed, or cancelled."),
         ),
     ] = None,
     index: Annotated[
@@ -856,14 +859,6 @@ def service_jobs(
         typer.Option(
             "--started-by",
             help="Filter by who started the job: manual requests or automatic updates.",
-        ),
-    ] = None,
-    trigger: Annotated[
-        str | None,
-        typer.Option(
-            "--trigger",
-            help="Legacy name for --started-by.",
-            hidden=True,
         ),
     ] = None,
     query: Annotated[
@@ -915,9 +910,9 @@ def service_jobs(
     ] = None,
 ) -> None:
     """Show recent index update activity from the running service."""
-    phase = _jobs_state_filter(state, phase, json_mode)
-    source = _jobs_index_filter(index, source, json_mode)
-    trigger = _jobs_started_by_filter(started_by, trigger, json_mode)
+    phase = _jobs_state_filter(state, json_mode)
+    source = _jobs_index_filter(index, json_mode)
+    trigger = _jobs_started_by_filter(started_by, json_mode)
     phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
