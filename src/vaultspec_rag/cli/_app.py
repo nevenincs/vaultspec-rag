@@ -141,11 +141,19 @@ def main(
             help="Search data directory (default: .vault/data/search-data)",
         ),
     ] = None,
+    storage_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--storage-dir",
+            help="Search storage directory relative to --data-dir",
+        ),
+    ] = None,
     qdrant_dir: Annotated[
         str | None,
         typer.Option(
             "--qdrant-dir",
-            help="Search storage directory relative to --data-dir",
+            help="Legacy name for --storage-dir.",
+            hidden=True,
         ),
     ] = None,
     index_meta: Annotated[
@@ -153,6 +161,7 @@ def main(
         typer.Option(
             "--index-meta",
             help="Document index state filename",
+            hidden=True,
         ),
     ] = None,
     code_index_meta: Annotated[
@@ -160,6 +169,7 @@ def main(
         typer.Option(
             "--code-index-meta",
             help="Code index state filename",
+            hidden=True,
         ),
     ] = None,
     status_dir: Annotated[
@@ -196,8 +206,9 @@ def main(
     cli_overrides: dict[str, Any] = {}
     if data_dir is not None:
         cli_overrides["data_dir"] = data_dir
-    if qdrant_dir is not None:
-        cli_overrides["qdrant_dir"] = qdrant_dir
+    selected_storage_dir = storage_dir if storage_dir is not None else qdrant_dir
+    if selected_storage_dir is not None:
+        cli_overrides["qdrant_dir"] = selected_storage_dir
     if index_meta is not None:
         cli_overrides["index_metadata_file"] = index_meta
     if code_index_meta is not None:

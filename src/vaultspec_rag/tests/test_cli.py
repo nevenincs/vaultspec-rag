@@ -1403,13 +1403,23 @@ class TestHelpCleanup:
         assert "search project documentation and source code" in result.output
         assert "Manage the background search service" in result.output
         assert "Inspect and validate document preprocessing rules" in result.output
+        assert "--storage-dir" in result.output
         for forbidden in (
             "Qdrant",
+            "--qdrant-dir",
+            "--index-meta",
+            "--code-index-meta",
             "MCP protocol adapter",
             "#185",
             "metadata filename",
         ):
             assert forbidden not in result.output
+
+    def test_legacy_qdrant_dir_option_still_parses_hidden(self):
+        result = runner.invoke(app, ["--qdrant-dir", "legacy-storage", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--qdrant-dir" not in result.output
+        assert "--storage-dir" in result.output
 
     def test_server_help_uses_user_facing_language(self):
         result = runner.invoke(app, ["server", "--help"])
