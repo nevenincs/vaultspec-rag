@@ -172,6 +172,8 @@ def _hold_local_index_lock(root: Path):
 
 def _status_contract_server(
     last_progress_age_seconds: float = 2.0,
+    *,
+    extra_running_job: bool = False,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a local HTTP service exposing /health and /jobs for status tests."""
     import http.server
@@ -186,6 +188,7 @@ def _status_contract_server(
                 _status_contract_jobs_payload(
                     running_job_started_at,
                     last_progress_age_seconds=last_progress_age_seconds,
+                    extra_running_job=extra_running_job,
                 )
                 if self.path.startswith("/jobs")
                 else _status_contract_health_payload()
@@ -208,38 +211,65 @@ def _status_contract_jobs_payload(
     started_at: float,
     *,
     last_progress_age_seconds: float,
+    extra_running_job: bool,
 ) -> dict[str, object]:
-    return {
-        "ok": True,
-        "jobs": [
+    jobs: list[dict[str, object]] = [
+        {
+            "id": "running-job",
+            "source": "code",
+            "trigger": "tool",
+            "phase": "running",
+            "started_at": started_at,
+            "finished_at": None,
+            "result": None,
+            "progress": {
+                "step": "embed",
+                "completed": 7,
+                "total": 20,
+            },
+            "last_progress_age_seconds": last_progress_age_seconds,
+            "initiator": {
+                "command": "reindex_codebase",
+                "project_root": (
+                    r"vaultspec-rag"
+                    r"\feature-server-supervision"
+                ),
+            },
+        },
+    ]
+    if extra_running_job:
+        jobs.append(
             {
-                "id": "running-job",
-                "source": "code",
-                "trigger": "tool",
+                "id": "vault-running-job",
+                "source": "vault",
+                "trigger": "watcher",
                 "phase": "running",
-                "started_at": started_at,
+                "started_at": started_at - 60,
                 "finished_at": None,
                 "result": None,
                 "progress": {
-                    "step": "embed",
-                    "completed": 7,
-                    "total": 20,
+                    "step": "index_documents",
+                    "completed": 5,
+                    "total": 9,
                 },
-                "last_progress_age_seconds": last_progress_age_seconds,
+                "last_progress_age_seconds": 3.0,
                 "initiator": {
-                    "command": "reindex_codebase",
-                    "project_root": (
-                        r"vaultspec-rag"
-                        r"\feature-server-supervision"
-                    ),
+                    "command": "watcher_vault_index",
+                    "project_root": r"other-project",
                 },
-            },
-            {"id": "done-1", "phase": "done"},
-            {"id": "done-2", "phase": "done"},
-        ],
-        "total": 3,
-        "returned": 3,
-        "summary": {"running": 1, "phases": {"running": 1, "done": 2}},
+            }
+        )
+    jobs.extend([{"id": "done-1", "phase": "done"}, {"id": "done-2", "phase": "done"}])
+    running_count = 2 if extra_running_job else 1
+    return {
+        "ok": True,
+        "jobs": jobs,
+        "total": len(jobs),
+        "returned": len(jobs),
+        "summary": {
+            "running": running_count,
+            "phases": {"running": running_count, "done": 2},
+        },
     }
 
 
@@ -2864,6 +2894,45 @@ class TestServiceDaemonHelpers:
             ] == []
             assert [text for text in verbose_hidden if text in verbose.output] == []
             assert "Started: 2026-" not in verbose.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_lists_multiple_active_jobs(self, tmp_path: Path):
+        import json
+
+        server, thread = _status_contract_server(extra_running_job=True)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            assert "Busy: processing 2 jobs" in result.output
+            assert "Queue: nothing waiting; 2 active jobs" in result.output
+            assert "Active jobs:" in result.output
+            assert (
+                "  * code index refresh for feature-server-supervision" in result.output
+            )
+            assert "embedding chunks 7 of 20" in result.output
+            assert "  * vault index update for other-project" in result.output
+            assert "index documents 5 of 9" in result.output
+            active_rows = [
+                line for line in result.output.splitlines() if line.startswith("  * ")
+            ]
+            assert len(active_rows) == 2
+            assert all(row.count("no progress for") <= 1 for row in active_rows)
+            assert "Current job:" not in result.output
         finally:
             server.shutdown()
             server.server_close()

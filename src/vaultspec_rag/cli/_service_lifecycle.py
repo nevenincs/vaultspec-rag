@@ -614,9 +614,37 @@ def _current_job_summary(job: dict[str, object] | None) -> str:
     return f"{_job_command_name(job)} ({age}{_job_progress_summary(job)})"
 
 
+def _active_job_records(
+    job_records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    active: list[dict[str, object]] = []
+    for entry in job_records:
+        if entry.get("phase") != "running":
+            continue
+        progress = entry.get("progress")
+        if isinstance(progress, dict) and progress.get("step") == "queued":
+            continue
+        active.append(entry)
+    return active
+
+
+def _running_job_line(job: dict[str, object]) -> str:
+    return f"  * {_current_job_summary(job)}"
+
+
 def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
         return ["Current job: unavailable"]
+    current_jobs = jobs.get("current_jobs")
+    if isinstance(current_jobs, list) and len(current_jobs) > 1:
+        return [
+            "Active jobs:",
+            *[
+                _running_job_line(cast("dict[str, object]", job))
+                for job in current_jobs
+                if isinstance(job, dict)
+            ],
+        ]
     current_job = jobs.get("current_job")
     if not isinstance(current_job, dict):
         return ["Current job: none active"]
@@ -646,7 +674,7 @@ def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
 
 def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
     for line in _current_job_detail_lines(jobs):
-        _cli.console.print(line, markup=False, highlight=False)
+        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
 def _print_detail_line(label: str, value: object) -> None:
@@ -690,14 +718,6 @@ def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object
     ]
 
 
-def _first_running_job(
-    job_records: list[dict[str, object]],
-) -> dict[str, object] | None:
-    return next(
-        (entry for entry in job_records if entry.get("phase") == "running"), None
-    )
-
-
 def _queued_job_count(job_records: list[dict[str, object]]) -> int:
     queued = 0
     for entry in job_records:
@@ -737,6 +757,7 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
         cast("dict[str, object]", summary) if isinstance(summary, dict) else {}
     )
     job_records = _job_records_from_result(result)
+    active_job_records = _active_job_records(job_records)
     total_count = _summary_count(result.get("total"), fallback=len(job_records))
     returned_count = _summary_count(result.get("returned"), fallback=len(job_records))
     return {
@@ -745,7 +766,8 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
         "total": total_count,
         "returned": returned_count,
         "queued": _queued_job_count(job_records),
-        "current_job": _first_running_job(job_records),
+        "current_job": next(iter(active_job_records), None),
+        "current_jobs": active_job_records,
         "phases": summary_dict.get("phases", {}),
         "sources": summary_dict.get("sources", {}),
         "triggers": summary_dict.get("triggers", {}),
