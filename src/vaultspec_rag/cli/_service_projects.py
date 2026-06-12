@@ -89,17 +89,17 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
     last_access = hms or "not recorded"
-    request_text = (
-        "none active"
+    use_text = (
+        "not currently in use"
         if refs <= 0
-        else f"{refs} active request{'s' if refs != 1 else ''}"
+        else f"{refs} active use{'s' if refs != 1 else ''}"
     )
     return [
         f"- Project: {_project_name(root_str)}",
         f"  Path: {root_str}",
-        f"  Requests: {request_text}",
+        f"  In use: {use_text}",
         f"  Last activity: {_humanize_idle(idle_s)} ago",
-        f"  Last request: {last_access}",
+        f"  Last used: {last_access}",
     ]
 
 

@@ -3323,14 +3323,14 @@ class TestServiceProjectsCli:
         assert "Automatic unload: after 30m idle." in out
         assert "- Project: example" in out
         assert r"  Path: example" in out
-        assert "  Requests: 1 active request" in out
+        assert "  In use: 1 active use" in out
         assert "  Last activity: 2m 5s ago" in out
-        assert "  Last request: 14:05:06" in out
+        assert "  Last used: 14:05:06" in out
         assert "Handling 1 active request; idle for 2m 5s" not in out
-        assert "in use:" not in out
+        assert "Requests:" not in out
+        assert "Last request:" not in out
         assert "yes" not in out.lower()
         assert "no" not in out.lower()
-        assert "last used" not in out
         assert "Auto-unload" not in out
         assert "project slots" not in out.lower()
         assert "idle ttl" not in out.lower()
@@ -3378,17 +3378,19 @@ class TestServiceProjectsCli:
         assert "Automatic unload: after 10m idle." in lines
         assert "- Project: busy" in lines
         assert r"Path: busy" in lines
-        assert "Requests: 2 active requests" in lines
+        assert "In use: 2 active uses" in lines
         assert "Last activity: 1m 5s ago" in lines
-        assert "Last request: 14:05:06" in lines
+        assert "Last used: 14:05:06" in lines
         assert "- Project: ready" in lines
         assert r"Path: ready" in lines
-        assert "Requests: none active" in lines
+        assert "In use: not currently in use" in lines
         assert "Last activity: 4s ago" in lines
-        assert "Last request: 14:06:01" in lines
+        assert "Last used: 14:06:01" in lines
         assert not any("Handling 2 active requests" in line for line in lines)
+        assert not any(line.startswith("Requests:") for line in lines)
+        assert not any(line.startswith("Last request:") for line in lines)
         assert not any("Available for new requests" in line for line in lines)
-        assert not any("in use:" in line or line in {"yes", "no"} for line in lines)
+        assert not any(line in {"yes", "no"} for line in lines)
         _assert_no_table_borders(result.output)
 
     def test_projects_unload_unexpected_response_stays_actionable(self) -> None:
