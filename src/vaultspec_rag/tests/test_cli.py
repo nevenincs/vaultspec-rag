@@ -1776,6 +1776,29 @@ class TestSearchSafetyContract:
         assert "\n" not in str(records[0]["text"])
         _assert_no_table_borders(result.output)
 
+    def test_search_structure_filter_is_operator_facing_cli_alias(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(
+                tmp_path,
+                server.server_port,
+                "--structure",
+                "function",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["node_type"] = "function"
+        assert requests == [expected]
+        assert "--node-type" not in result.output
+
     def test_search_command_humanizes_missing_result_location(
         self, tmp_path: Path
     ) -> None:
@@ -2261,12 +2284,13 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["search", "--help"])
         assert result.exit_code == 0, result.output
         descriptions = _help_option_descriptions(result.output)
-        assert {"--language", "--node-type", "--doc-type"} <= descriptions.keys()
-        node_type_help = descriptions["--node-type"].lower()
-        assert "code results" in node_type_help
-        assert any(word in node_type_help for word in ("structure", "construct"))
+        assert {"--language", "--structure", "--doc-type"} <= descriptions.keys()
+        assert "--node-type" not in descriptions
+        structure_help = descriptions["--structure"].lower()
+        assert "code results" in structure_help
+        assert any(word in structure_help for word in ("structure", "construct"))
         for jargon in ("syntax", "ast", "tree-sitter"):
-            assert jargon not in node_type_help
+            assert jargon not in structure_help
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
 

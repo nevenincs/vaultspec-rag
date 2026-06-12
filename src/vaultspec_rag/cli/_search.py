@@ -386,6 +386,26 @@ def _validate_and_handle_filters(
         raise typer.Exit(code=2) from None
 
 
+def _search_structure_filter(
+    structure: str | None,
+    node_type: str | None,
+    json_mode: bool,
+) -> str | None:
+    if (
+        structure is not None
+        and node_type is not None
+        and structure.strip() != node_type.strip()
+    ):
+        message = (
+            "--structure and --node-type received different values; use --structure."
+        )
+        if json_mode:
+            _emit_json_error_and_exit("search", "invalid_filter", message, 2)
+        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+        raise typer.Exit(code=2)
+    return structure if structure is not None else node_type
+
+
 def _render_in_process_results(
     results: list[SearchResult],
     query: str,
@@ -438,7 +458,7 @@ def _render_in_process_results(
     ),
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
-def handle_search(
+def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI options.
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
     search_type: Annotated[
@@ -512,6 +532,14 @@ def handle_search(
         str | None,
         typer.Option(
             "--node-type",
+            help="Legacy name for --structure.",
+            hidden=True,
+        ),
+    ] = None,
+    structure: Annotated[
+        str | None,
+        typer.Option(
+            "--structure",
             help="Only show code results for this source-code structure.",
         ),
     ] = None,
@@ -610,6 +638,7 @@ def handle_search(
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
+    node_type = _search_structure_filter(structure, node_type, json_mode)
 
     _validate_and_handle_filters(
         search_type=search_type,
