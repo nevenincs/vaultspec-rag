@@ -2466,6 +2466,32 @@ class TestSearchResultRendering:
         for forbidden in ("┌", "└", "│"):
             assert forbidden not in out
 
+    def test_display_search_timeout_missing_job_count_uses_absence_language(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": "HTTP search on port 8766 timed out after 180.0s.",
+                "diagnostics": {
+                    "health": {
+                        "available": True,
+                        "status": "ready",
+                    },
+                    "jobs": {
+                        "available": True,
+                    },
+                },
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "Service: reachable; status check passed" in out
+        assert "Work: running job count not reported by service" in out
+        assert "running work status unknown" not in out
+        assert "unknown" not in out
+
 
 class TestWinShutdownLog:
     """CLI appends a lifecycle shutdown line on win32.

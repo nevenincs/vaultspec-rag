@@ -201,7 +201,7 @@ def _jobs_diagnostic_text(jobs: dict[str, object]) -> str:
             return "no index jobs running"
         word = "job" if running == 1 else "jobs"
         return f"{running} index {word} running"
-    return "running work status unknown"
+    return "running job count not reported by service"
 
 
 def _unavailable_diagnostic_text(data: dict[str, object], label: str) -> str:
