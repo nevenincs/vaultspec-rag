@@ -91,6 +91,36 @@ def code_project(
     store.close()
 
 
+class TestCodeEmbedFormatRebuild:
+    """A pre-header store triggers a one-time clean rebuild."""
+
+    @pytest.mark.timeout(180)
+    def test_missing_embed_marker_triggers_rebuild(
+        self, code_project: _CodeProject
+    ) -> None:
+        import json
+
+        from ...config import get_config
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        indexer.full_index(reporter=NullProgressReporter())
+        chunk_total = store.count_code()
+        assert chunk_total > 0
+
+        cfg = get_config()
+        meta_path = code_project["root"] / cfg.data_dir / cfg.code_index_metadata_file
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta.pop("__code_embed_schema__")
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        result = indexer.incremental_index(reporter=NullProgressReporter())
+        # A rebuild re-embeds everything instead of a no-op pass.
+        assert result.added == chunk_total
+        stamped = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert stamped["__code_embed_schema__"] == "2"
+
+
 class TestCodebaseFullIndex:
     """Tests for CodebaseIndexer.full_index with real source files."""
 
