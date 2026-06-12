@@ -599,6 +599,41 @@ def _current_job_summary(job: dict[str, object] | None) -> str:
     return f"{_job_command_name(job)} ({age}{_job_progress_summary(job)})"
 
 
+def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
+    if not isinstance(jobs, dict) or jobs.get("available") is not True:
+        return ["Current job: unavailable"]
+    current_job = jobs.get("current_job")
+    if not isinstance(current_job, dict):
+        return ["Current job: none active"]
+    job = cast("dict[str, object]", current_job)
+    started_at = job.get("started_at")
+    runtime = (
+        _format_status_duration(time.time() - float(started_at))
+        if isinstance(started_at, int | float)
+        else "unknown"
+    )
+    lines = [
+        "Current job:",
+        f"  Operation: {_operation_label(job)}",
+    ]
+    project = _project_label(job)
+    if project != "project unknown":
+        lines.append(f"  Project: {project}")
+    lines.append(f"  Runtime: {runtime}")
+    progress = _human_progress(job)
+    if progress:
+        lines.append(f"  Progress: {progress}")
+    warning = _stale_progress_label(job)
+    if warning:
+        lines.append(f"  Warning: {warning}")
+    return lines
+
+
+def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
+    for line in _current_job_detail_lines(jobs):
+        _cli.console.print(line, markup=False, highlight=False)
+
+
 def _print_detail_line(label: str, value: object) -> None:
     _cli.console.print(f"{label}: {value}", markup=False, highlight=False)
 
@@ -773,7 +808,7 @@ def _print_operational_detail(
             _print_detail_line("Busy", _status_busy_label(jobs_dict))
             _print_detail_line("Queue", _status_queue_label(jobs_dict))
             _print_detail_line("Jobs", _status_jobs_label(jobs_dict))
-            _print_detail_line("Current job", _status_current_job_label(jobs_dict))
+            _print_current_job_detail(jobs_dict)
         else:
             _print_detail_line("Jobs", "unavailable")
     next_action = operational.get("next_action")
@@ -927,10 +962,10 @@ def _render_status_summary(
         f"Uptime: {_status_uptime_label(health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Jobs: {_status_jobs_label(jobs_dict)}",
-        f"Current job: {_status_current_job_label(jobs_dict)}",
     ]
     for line in lines:
         _cli.console.print(line, markup=False, highlight=False)
+    _print_current_job_detail(jobs_dict)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 

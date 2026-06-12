@@ -226,7 +226,13 @@ def _status_contract_jobs_payload(
                     "total": 20,
                 },
                 "last_progress_age_seconds": last_progress_age_seconds,
-                "initiator": {"command": "reindex_codebase"},
+                "initiator": {
+                    "command": "reindex_codebase",
+                    "project_root": (
+                        r"vaultspec-rag"
+                        r"\feature-server-supervision"
+                    ),
+                },
             },
             {"id": "done-1", "phase": "done"},
             {"id": "done-2", "phase": "done"},
@@ -2755,8 +2761,11 @@ class TestServiceDaemonHelpers:
                 "Uptime: 5m 12s",
                 "Queue: nothing waiting; 1 active job",
                 "Jobs: 2 processed jobs; 1 active job; no waiting jobs; 3 recent jobs",
-                "Current job: code index refresh (",
-                "embedding chunks 7 of 20",
+                "Current job:",
+                "  Operation: code index refresh",
+                "  Project: feature-server-supervision",
+                "  Runtime:",
+                "  Progress: embedding chunks 7 of 20",
             ]
             hidden = [
                 "Search Concurrency",
@@ -2769,6 +2778,7 @@ class TestServiceDaemonHelpers:
                 "Port listening",
                 "Service token match",
                 "Service Token Match",
+                "Current job: code index refresh (",
                 "─",
                 "│",
                 "┌",
@@ -2778,6 +2788,9 @@ class TestServiceDaemonHelpers:
             ]
             assert [text for text in expected if text not in result.output] == []
             assert [text for text in hidden if text in result.output] == []
+            assert [
+                line for line in result.output.splitlines() if len(line) > 100
+            ] == []
 
             verbose = runner.invoke(app, ["server", "status", "--verbose"])
             assert verbose.exit_code == 0
@@ -2796,7 +2809,11 @@ class TestServiceDaemonHelpers:
                 "Search models: ready",
                 "Reranking: ready",
                 "Loaded projects:",
-                "Current job: code index refresh (",
+                "Current job:",
+                "  Operation: code index refresh",
+                "  Project: feature-server-supervision",
+                "  Runtime:",
+                "  Progress: embedding chunks 7 of 20",
                 "Next action:",
                 "vaultspec-rag server jobs --running",
             ]
@@ -2813,6 +2830,7 @@ class TestServiceDaemonHelpers:
                 "Reranker loaded",
                 "Service token match",
                 "Service Token Match",
+                "Current job: code index refresh (",
                 "─",
                 "│",
                 "┌",
@@ -2878,8 +2896,9 @@ class TestServiceDaemonHelpers:
 
         assert "Current job:" in fresh_status
         assert "Current job:" in stalled_status
+        assert "Progress: embedding chunks 7 of 20" in stalled_status
         assert "no progress for" not in fresh_status
-        assert "no progress for 10m 0s" in stalled_status
+        assert "Warning: no progress for 10m 0s" in stalled_status
         assert stalled_status != fresh_status
 
     def test_service_status_distinguishes_waiting_from_processing(self):
