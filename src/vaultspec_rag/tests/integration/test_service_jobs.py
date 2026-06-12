@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import http.server
 import json
+import re
 import threading
 import time
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -48,6 +49,35 @@ runner = CliRunner()
 # A port with nothing listening: _try_mcp_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59235"
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_JOB_ROW_RE = re.compile(
+    r"^(?P<marker>[*!~ ]) (?P<time>\d\d:\d\d:\d\d|time unknown) "
+    r"(?P<state>\S+) (?P<operation>.+?) \(job (?P<id>[^)]+)\) - "
+    r"(?P<detail>.*)$"
+)
+
+
+def _plain_lines(output: str) -> list[str]:
+    clean = _ANSI_RE.sub("", output)
+    return [line.strip() for line in clean.splitlines() if line.strip()]
+
+
+def _jobs_feed_rows(output: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for raw_line in _ANSI_RE.sub("", output).splitlines():
+        match = _JOB_ROW_RE.fullmatch(raw_line)
+        if match is not None:
+            rows.append(match.groupdict())
+    return rows
+
+
+def _label_values(output: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in _plain_lines(output):
+        if ": " in line:
+            label, value = line.split(": ", 1)
+            values[label] = value
+    return values
 
 
 class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
@@ -483,25 +513,27 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
-    expected_lines = (
+    lines = _plain_lines(output)
+    assert lines[:5] == [
         f"Jobs on service port {port}",
         "Shown: 3 jobs",
         "Recent jobs on service: 3 jobs",
         "States: 1 active, 0 waiting, 1 finished, 1 failed",
         "Order: latest shown last",
-        "for proj-a (job runjob12)",
-        "for proj-b (job failjob1)",
-        "for proj-c (job donejob1)",
-        "* ",
-        "! ",
-        "FAILED",
-        "finished code index refresh",
-        "code index update",
-        "added 3, updated 1, removed 0, finished in 22s",
-        "embedding chunks 2 of 5; running for 10s",
-    )
-    missing = [text for text in expected_lines if text not in output]
-    assert not missing, f"missing feed content: {missing}"
+    ]
+    rows = _jobs_feed_rows(output)
+    assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
+    assert rows[0]["marker"] == " "
+    assert rows[0]["state"] == "finished"
+    assert rows[0]["operation"] == "code index refresh for proj-c"
+    assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22s"
+    assert rows[1]["marker"] == "!"
+    assert rows[1]["state"] == "FAILED"
+    assert rows[1]["operation"] == "vault index refresh for proj-b"
+    assert rows[2]["marker"] == "*"
+    assert rows[2]["state"] == "running"
+    assert rows[2]["operation"] == "code index update for proj-a"
+    assert rows[2]["detail"] == "embedding chunks 2 of 5; running for 10s"
     forbidden_fragments = (
         "3/3 shown:",
         "Shown: 3 of 3",
@@ -521,8 +553,6 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     )
     leaked = [text for text in forbidden_fragments if text in output]
     assert not leaked, f"internal or table fragments leaked: {leaked}"
-    assert output.index("donejob1") < output.index("failjob1")
-    assert output.index("failjob1") < output.index("runjob12")
 
 
 def test_jobs_humanizes_disk_space_failures() -> None:
@@ -583,16 +613,21 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     )
 
     output = capsys.readouterr().out
-    assert "Shown: 1 job" in output
-    assert "Recent jobs on service: 1 job" in output
-    assert "States: 0 active, 1 waiting, 0 finished, 0 failed" in output
-    assert "1 running" not in output
-    assert "~ " in output
-    assert "* " not in output
-    assert "waiting code index update" in output
-    assert "waiting to write the index for 20s" in output
-    assert "running code index update" not in output
-    assert "running for 20s" not in output
+    lines = _plain_lines(output)
+    assert lines[:5] == [
+        "Jobs on service port 8766",
+        "Shown: 1 job",
+        "Recent jobs on service: 1 job",
+        "States: 0 active, 1 waiting, 0 finished, 0 failed",
+        "Order: latest shown last",
+    ]
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["marker"] == "~"
+    assert row["state"] == "waiting"
+    assert row["operation"] == "code index update for proj-waiting"
+    assert row["detail"] == "waiting to write the index for 20s"
 
 
 def test_jobs_filtered_header_separates_matches_from_service_total(
@@ -633,9 +668,19 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
     )
 
     output = capsys.readouterr().out
-    assert "Shown: 2 matching jobs" in output
-    assert "Recent jobs on service: 58 jobs" in output
-    assert "Shown: 2 of 58" not in output
+    lines = _plain_lines(output)
+    assert lines[:6] == [
+        "Jobs on service port 8766",
+        "Shown: 2 matching jobs",
+        "Recent jobs on service: 58 jobs",
+        "States: 2 active, 0 waiting, 0 finished, 0 failed",
+        "Order: latest shown last",
+        "Filter: state active or waiting",
+    ]
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 2
+    assert {row["id"] for row in rows} == {"running-a", "running-b"}
+    assert all(row["marker"] == "*" and row["state"] == "running" for row in rows)
 
 
 def test_jobs_waiting_progress_uses_user_language() -> None:
@@ -695,7 +740,12 @@ def test_jobs_humanizes_cancelled_automatic_update(
     )
 
     output = capsys.readouterr().out
-    assert "automatic update cancelled" in output
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["state"] == "cancelled"
+    assert row["operation"] == "vault index update for example"
+    assert row["detail"] == "automatic update cancelled"
     assert "watcher" not in output
 
 
@@ -735,14 +785,15 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     )
 
     output = capsys.readouterr().out
-    assert "Started by: automatic updates" in output
-    assert "Request: automatic code index update" in output
-    assert "Process: 123" in output
-    assert "User: operator" in output
-    assert "Python: .venv/Scripts/python.exe" in output
-    assert "Python environment: .venv" in output
+    values = _label_values(output)
+    assert values["Started by"] == "automatic updates"
+    assert values["Request"] == "automatic code index update"
+    assert values["Process"] == "123"
+    assert values["User"] == "operator"
+    assert values["Python"] == ".venv/Scripts/python.exe"
+    assert values["Python environment"] == ".venv"
+    assert values["Memory"] == "memory 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB"
     assert r".venv\Scripts\python.exe" not in output
-    assert "Memory: memory 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB" in output
     for forbidden in (
         "Initiator:",
         "Command:",

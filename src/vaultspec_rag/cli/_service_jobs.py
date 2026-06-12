@@ -313,6 +313,25 @@ def _human_sorted_jobs(jobs: list[object]) -> list[dict[str, object]]:
     return sorted(normalised, key=_job_timestamp)
 
 
+def _job_id_labels(jobs: list[dict[str, object]]) -> dict[int, str]:
+    raw_ids = [str(job.get("id", "")) for job in jobs]
+    labels: dict[int, str] = {}
+    for index, raw_id in enumerate(raw_ids):
+        if not raw_id:
+            labels[index] = "unknown"
+            continue
+        min_length = min(8, len(raw_id))
+        label = raw_id[:min_length]
+        for length in range(min_length, len(raw_id) + 1):
+            prefix = raw_id[:length]
+            matches = [other for other in raw_ids if other and other.startswith(prefix)]
+            if len(matches) == 1:
+                label = prefix
+                break
+        labels[index] = label
+    return labels
+
+
 def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int]:
     active = 0
     waiting = 0
@@ -425,8 +444,9 @@ def _render_jobs_feed(
         )
     if monitoring:
         _cli.console.print("Watching; press Ctrl+C to stop.")
-    for job in sorted_jobs:
-        job_id = str(job.get("id", ""))[:8]
+    job_id_labels = _job_id_labels(sorted_jobs)
+    for index, job in enumerate(sorted_jobs):
+        job_id = job_id_labels[index]
         _cli.console.print(
             f"{_job_prefix(job)} {_job_time_label(job)} {_phase_label(job)} "
             f"{_operation_label(job)}{_project_phrase(job)} (job {job_id}) - "
