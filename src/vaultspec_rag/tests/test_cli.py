@@ -939,6 +939,37 @@ class TestServerRoutingFlattened:
         result = runner.invoke(app, ["server", "service", "--help"])
         assert result.exit_code != 0
 
+    def test_qdrant_status_splits_service_managed_process_details(self, tmp_path: Path):
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        reset_base_config()
+        reset_rag_config()
+        try:
+            _write_service_status(pid=os.getpid(), port=8766)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            data.update(
+                {
+                    "qdrant_pid": 43210,
+                    "qdrant_alive": True,
+                    "qdrant_port": 6334,
+                }
+            )
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "qdrant", "status"])
+
+            assert result.exit_code == 0, result.output
+            assert "Qdrant process: running under this service" in result.output
+            assert "Process: 43210" in result.output
+            assert "Qdrant port: 6334" in result.output
+            assert "process id" not in result.output.lower()
+            assert "unknown" not in result.output.lower()
+            assert ";" not in result.output
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
+
 
 class TestServiceLifecycleHelpers:
     """_port_is_listening + _heartbeat_age_seconds helpers."""

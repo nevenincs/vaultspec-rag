@@ -202,16 +202,15 @@ def qdrant_status(
     service = payload["service"]
     if isinstance(service, dict) and service.get("recorded"):
         alive = (
-            "running"
+            "running under this service"
             if service.get("qdrant_alive") is True
             else "not running"
             if service.get("qdrant_alive") is False
-            else "unknown"
+            else "state not reported"
         )
-        _print_line(
-            f"Qdrant process: {alive}; process id {service.get('qdrant_pid')}; "
-            f"port {service.get('qdrant_port')}"
-        )
+        _print_line(f"Qdrant process: {alive}")
+        _print_line(f"Process: {service.get('qdrant_pid', 'not reported')}")
+        _print_line(f"Qdrant port: {service.get('qdrant_port', 'not reported')}")
     else:
         _print_line("Qdrant process: not started by this service")
     provisioned = payload["provisioned"]
