@@ -546,7 +546,7 @@ def _model_ready_label(value: object) -> str:
         return "ready"
     if value is False:
         return "not ready"
-    return "unknown"
+    return "not reported by service"
 
 
 def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:
@@ -571,7 +571,7 @@ def _plain_status_label(state: str) -> str:
 
 def _format_status_duration(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "unknown"
+        return "not reported by service"
     seconds = max(0, int(float(raw)))
     if seconds < 60:
         return f"{seconds}s"
@@ -711,7 +711,7 @@ def _print_health_detail(
             if health.get("cuda") is True
             else "no supported GPU detected"
             if health.get("cuda") is False
-            else "unknown"
+            else "not reported by service"
         )
         _print_detail_line("Compute", compute)
         _print_detail_line(
@@ -720,7 +720,10 @@ def _print_health_detail(
         _print_detail_line(
             "Reranking", _model_ready_label(health.get("reranker_loaded"))
         )
-        _print_detail_line("Loaded projects", health.get("project_count", "unknown"))
+        _print_detail_line(
+            "Loaded projects",
+            health.get("project_count", "not reported by service"),
+        )
         _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
         _print_detail_line("Ready", "not reachable")
