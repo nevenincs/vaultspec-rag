@@ -931,6 +931,64 @@ class TestServerRoutingFlattened:
         assert "Emit JSON for scripts" in result.output
         assert "JSON envelope" not in result.output
 
+    def test_server_updates_status_explains_missing_timing(self, tmp_path: Path):
+        import http.server
+        import threading
+
+        project = tmp_path / "project-alpha"
+        project.mkdir()
+        paths: list[str] = []
+
+        class WatcherStateHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                paths.append(self.path)
+                response = {
+                    "watch_enabled": True,
+                    "watching": [str(project)],
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), WatcherStateHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "updates",
+                    "status",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert paths == ["/watcher"]
+
+        output = _ANSI_RE.sub("", result.output)
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        assert lines[0] == "Automatic index updates: enabled"
+        assert lines[1].startswith("File change delay:")
+        assert lines[1].endswith("not reported by service.")
+        assert lines[2].startswith("Same-project delay:")
+        assert lines[2].endswith("not reported by service.")
+        assert lines[3] == "Projects updating automatically: 1"
+        assert lines[4] == "- Project: project-alpha"
+        assert lines[5] == f"Path: {project}"
+        assert "unknown" not in output.lower()
+        assert "wait not reported" not in output.lower()
+
     def test_server_projects_list_help(self):
         result = runner.invoke(app, ["server", "projects", "list", "--help"])
         assert result.exit_code == 0, result.output

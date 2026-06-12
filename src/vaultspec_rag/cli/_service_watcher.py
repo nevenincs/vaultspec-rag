@@ -16,7 +16,7 @@ from ._service_status import _default_service_port
 
 def _format_milliseconds(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "unknown"
+        return "not reported"
     milliseconds = max(0.0, float(raw))
     if milliseconds == 0:
         return "immediately"
@@ -30,7 +30,7 @@ def _format_milliseconds(raw: object) -> str:
 
 def _format_seconds(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "unknown"
+        return "not reported"
     seconds = max(0.0, float(raw))
     if seconds == 0:
         return "immediately"
@@ -51,15 +51,29 @@ def _project_name(root: object) -> str:
 
 
 def _print_update_timing(result: dict[str, object]) -> None:
+    update_delay = _format_milliseconds(result.get("debounce_ms"))
+    same_project_delay = _format_seconds(result.get("cooldown_s"))
+    if update_delay == "not reported":
+        _cli.console.print(
+            "File change delay: not reported by service.",
+            markup=False,
+            highlight=False,
+        )
+    else:
+        _cli.console.print(
+            f"File change delay: wait {update_delay} before updating.",
+            markup=False,
+            highlight=False,
+        )
+    if same_project_delay == "not reported":
+        _cli.console.print(
+            "Same-project delay: not reported by service.",
+            markup=False,
+            highlight=False,
+        )
+        return
     _cli.console.print(
-        f"File changes: wait {_format_milliseconds(result.get('debounce_ms'))} "
-        "before updating.",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Same project: wait {_format_seconds(result.get('cooldown_s'))} "
-        "before updating again.",
+        f"Same-project delay: wait {same_project_delay} before updating again.",
         markup=False,
         highlight=False,
     )
@@ -131,7 +145,12 @@ def service_watcher_status(
             markup=False,
             highlight=False,
         )
-        _cli.console.print(f"  Path: {entry}", markup=False, highlight=False)
+        _cli.console.print(
+            f"  Path: {entry}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
 
 @server_watcher_app.command("start")
