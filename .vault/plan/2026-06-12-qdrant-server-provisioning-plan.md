@@ -37,8 +37,8 @@ Wire server mode into config, lifespan, heartbeat, health, and the service-state
 
 Ship the server qdrant command group and the server start consent flags
 
-- [ ] `P04.S08` - Add the server qdrant command group with install (upgrade, dry-run, binary, json), bounded status, and yes-gated clean; `src/vaultspec_rag/cli/_service_qdrant.py, src/vaultspec_rag/cli/_app.py`.
-- [ ] `P04.S09` - Add server start --qdrant and --qdrant-auto-provision consent flags translated to daemon env, hard-failing with the exact install command when the binary is absent without consent; `src/vaultspec_rag/cli/_service_lifecycle.py, src/vaultspec_rag/cli/_process.py`.
+- [x] `P04.S08` - Add the server qdrant command group with install (upgrade, dry-run, binary, json), bounded status, and yes-gated clean; `src/vaultspec_rag/cli/_service_qdrant.py, src/vaultspec_rag/cli/_app.py`.
+- [x] `P04.S09` - Add server start --qdrant and --qdrant-auto-provision consent flags translated to daemon env, hard-failing with the exact install command when the binary is absent without consent; `src/vaultspec_rag/cli/_service_lifecycle.py, src/vaultspec_rag/cli/_process.py`.
 
 ### Phase `P05` - Validation: integration, benchmark, persona
 

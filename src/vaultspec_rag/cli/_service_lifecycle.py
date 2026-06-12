@@ -36,6 +36,39 @@ from ._service_status import (
 )
 
 
+def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
+    """Fail fast (or provision with consent) before a --qdrant start.
+
+    Never downloads silently: an absent binary without
+    ``auto_provision`` prints the exact install command and exits
+    non-zero.
+    """
+    from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+
+    if resolve_binary() is not None:
+        return
+    if not auto_provision:
+        _print_lifecycle_lines(
+            "Service start failed",
+            "qdrant server mode needs the server binary, which is not installed.",
+            "Run: vaultspec-rag server qdrant install",
+            "(or re-run with --qdrant-auto-provision to consent to the download)",
+        )
+        raise typer.Exit(code=1)
+    report = provision()
+    if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
+        _print_lifecycle_lines(
+            "Service start failed",
+            f"qdrant provisioning failed: {report.message}",
+        )
+        raise typer.Exit(code=1)
+    _print_lifecycle_lines(
+        "Provisioned qdrant server",
+        f"Version: {report.version}",
+        f"Binary: {report.binary}",
+    )
+
+
 def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
     serving_pid = health.get("pid")
     if isinstance(serving_pid, int) and serving_pid > 0:
@@ -103,12 +136,34 @@ def service_start(
             help="Per-source re-index cooldown in seconds (default 30).",
         ),
     ] = None,
+    qdrant: Annotated[
+        bool | None,
+        typer.Option(
+            "--qdrant/--no-qdrant",
+            help="Run the daemon in qdrant server mode: it supervises the "
+            "pinned Rust qdrant binary as a loopback child and routes all "
+            "stores at it. Unset leaves VAULTSPEC_RAG_QDRANT_SERVER "
+            "untouched.",
+        ),
+    ] = None,
+    qdrant_auto_provision: Annotated[
+        bool,
+        typer.Option(
+            "--qdrant-auto-provision",
+            help="Consent to downloading the pinned qdrant binary when it "
+            "is absent. Without this flag an absent binary fails the start "
+            "with the exact install command.",
+        ),
+    ] = False,
 ) -> None:
     """Start the background RAG service as a detached process."""
     # Port-level guard: prevents concurrent start races (ADR D1)
     if not _port_is_available(port):
         _print_lifecycle_lines("Service start failed", f"Port {port} is in use.")
         raise typer.Exit(code=1)
+
+    if qdrant:
+        _ensure_qdrant_binary(auto_provision=qdrant_auto_provision)
 
     # Check for existing service
     status = _read_service_status()
@@ -141,6 +196,7 @@ def service_start(
         watch=watch,
         watch_debounce_ms=watch_debounce_ms,
         watch_cooldown_s=watch_cooldown_s,
+        qdrant=qdrant,
     )
     _write_service_status(pid, port)
 

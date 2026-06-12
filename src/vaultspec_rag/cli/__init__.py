@@ -42,6 +42,7 @@ from ._app import (
     mcp_app,
     server_app,
     server_projects_app,
+    server_qdrant_app,
     server_watcher_app,
     version_callback,
 )
@@ -114,6 +115,11 @@ from ._service_logs import service_logs
 from ._service_projects import (
     service_projects_evict,
     service_projects_list,
+)
+from ._service_qdrant import (
+    qdrant_clean,
+    qdrant_install,
+    qdrant_status,
 )
 from ._service_status import (
     _append_lifecycle_shutdown_log,
@@ -194,8 +200,12 @@ __all__ = [
     "mcp_start",
     "mcp_status",
     "mcp_stop",
+    "qdrant_clean",
+    "qdrant_install",
+    "qdrant_status",
     "server_app",
     "server_projects_app",
+    "server_qdrant_app",
     "server_watcher_app",
     "service_health",
     "service_info",
