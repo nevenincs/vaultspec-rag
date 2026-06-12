@@ -131,7 +131,7 @@ def service_projects_list(
         ),
     ] = False,
 ) -> None:
-    """List projects currently loaded by the running RAG service."""
+    """List projects currently loaded by the running search service."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("list_projects", {}, resolved_port)
     if result is None:
@@ -214,7 +214,7 @@ def service_projects_evict(
         ),
     ] = False,
 ) -> None:
-    """Unload a project from the running RAG service."""
+    """Unload a project from the running search service."""
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin(
         "evict_project",

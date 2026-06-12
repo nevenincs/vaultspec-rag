@@ -67,9 +67,8 @@ def _print_lifecycle_lines(title: str, *lines: str) -> None:
 @server_app.command(
     "start",
     help=(
-        "Start the background RAG service as a detached process. "
-        "Polls /health until ready and writes a status record to "
-        "~/.vaultspec-rag/service.json."
+        "Start the background search service. Waits until it is ready "
+        "and records how the CLI can reach it."
     ),
 )
 def service_start(
@@ -77,7 +76,7 @@ def service_start(
         int,
         typer.Option(
             "--port",
-            help="TCP port for the HTTP service.",
+            help="Port for the background search service.",
             envvar=EnvVar.PORT,
         ),
     ] = 8766,
@@ -85,26 +84,28 @@ def service_start(
         bool | None,
         typer.Option(
             "--watch/--no-watch",
-            help="Enable or disable filesystem auto-reindex (default: enabled). "
-            "Unset leaves VAULTSPEC_RAG_WATCH_ENABLED untouched.",
+            help=(
+                "Enable or disable automatic index updates when files change "
+                "(default: enabled)."
+            ),
         ),
     ] = None,
     watch_debounce_ms: Annotated[
         int | None,
         typer.Option(
             "--watch-debounce-ms",
-            help="Watcher debounce window in milliseconds (default 2000).",
+            help="Delay before indexing a burst of file changes, in milliseconds.",
         ),
     ] = None,
     watch_cooldown_s: Annotated[
         float | None,
         typer.Option(
             "--watch-cooldown-s",
-            help="Per-source re-index cooldown in seconds (default 30).",
+            help="Minimum wait before indexing the same source again, in seconds.",
         ),
     ] = None,
 ) -> None:
-    """Start the background RAG service as a detached process."""
+    """Start the background search service."""
     # Port-level guard: prevents concurrent start races (ADR D1)
     if not _port_is_available(port):
         _print_lifecycle_lines("Service start failed", f"Port {port} is in use.")
@@ -196,9 +197,9 @@ def service_start(
     raise typer.Exit(code=1)
 
 
-@server_app.command("stop")
+@server_app.command("stop", help="Stop the background search service.")
 def service_stop() -> None:
-    """Stop the background RAG service.
+    """Stop the background search service.
 
     Reads the status file from ``~/.vaultspec-rag/service.json``, verifies
     the PID is still alive and belongs to a vaultspec-rag process, sends
@@ -1074,13 +1075,13 @@ def service_status(
         typer.Option(
             "--verbose",
             help=(
-                "Show process, heartbeat, token, model, and backend diagnostic "
-                "rows in the human output."
+                "Show process, heartbeat, token, model, and extra diagnostic "
+                "details in the human output."
             ),
         ),
     ] = False,
 ) -> None:
-    """Display the current status of the background RAG service.
+    """Display the current status of the background search service.
 
     Gathers four signals before rendering - ``service.json`` present,
     PID alive, port listening, heartbeat fresh - and surfaces each as
@@ -1219,14 +1220,14 @@ def service_status(
 @server_app.command(
     "warmup",
     help=(
-        "Pre-download GPU model files to the HuggingFace cache. "
-        "Run once before the first index to avoid model-download latency at "
+        "Download GPU model files before they are needed. "
+        "Run once before the first index to avoid model download latency at "
         "search time. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
 def service_warmup() -> None:
-    """Pre-download GPU model files to the HuggingFace cache."""
+    """Download GPU model files before they are needed."""
     try:
         import torch
     except ImportError:

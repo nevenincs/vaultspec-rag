@@ -1366,6 +1366,27 @@ class TestHelpCleanup:
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
 
+    def test_root_help_uses_user_facing_language(self):
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "search project documentation and source code" in result.output
+        assert "Manage the background search service" in result.output
+        assert "Inspect and validate document preprocessing rules" in result.output
+        for forbidden in (
+            "Qdrant",
+            "MCP protocol adapter",
+            "#185",
+            "metadata filename",
+        ):
+            assert forbidden not in result.output
+
+    def test_server_help_uses_user_facing_language(self):
+        result = runner.invoke(app, ["server", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Manage the background search service" in result.output
+        assert "Manage the HTTP RAG service" not in result.output
+        assert "MCP protocol adapter" not in result.output
+
     def test_status_help_clean(self):
         result = runner.invoke(app, ["status", "--help"])
         assert result.exit_code == 0, result.output
@@ -1384,6 +1405,10 @@ class TestHelpCleanup:
         self._assert_clean(result)
         out = result.output.lower()
         assert "detached" in out or "background" in out
+        assert "/health" not in result.output
+        assert "auto-reindex" not in out
+        assert "watcher" not in out
+        assert "VAULTSPEC_RAG_WATCH_ENABLED" not in result.output
 
     def test_server_warmup_help_clean(self):
         result = runner.invoke(app, ["server", "warmup", "--help"])

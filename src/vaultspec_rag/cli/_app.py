@@ -35,14 +35,14 @@ __all__ = [
 ]
 
 app = typer.Typer(
-    help="VaultSpec RAG: Unified search over documentation and code.",
+    help="VaultSpec RAG: search project documentation and source code.",
     rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
 
 # Command Groups
 server_root_app = typer.Typer(
-    help="Manage the HTTP RAG service and the MCP protocol adapter.",
+    help="Manage the background search service.",
     rich_markup_mode=None,
 )
 # Alias kept for backward-compatible decorator references in command modules.
@@ -52,7 +52,7 @@ mcp_app = typer.Typer(
     rich_markup_mode=None,
 )
 server_projects_app = typer.Typer(
-    help="Inspect and unload projects held by the running RAG service.",
+    help="Inspect and unload projects held by the running search service.",
     rich_markup_mode=None,
 )
 server_watcher_app = typer.Typer(
@@ -60,7 +60,7 @@ server_watcher_app = typer.Typer(
     rich_markup_mode=None,
 )
 preprocess_app = typer.Typer(
-    help="Inspect and validate document-preprocessing rules (#185).",
+    help="Inspect and validate document preprocessing rules.",
     rich_markup_mode=None,
 )
 
@@ -138,42 +138,42 @@ def main(
         str | None,
         typer.Option(
             "--data-dir",
-            help="RAG data root (default: .vault/data/search-data)",
+            help="Search data directory (default: .vault/data/search-data)",
         ),
     ] = None,
     qdrant_dir: Annotated[
         str | None,
         typer.Option(
             "--qdrant-dir",
-            help="Qdrant storage directory relative to data-dir",
+            help="Search storage directory relative to --data-dir",
         ),
     ] = None,
     index_meta: Annotated[
         str | None,
         typer.Option(
             "--index-meta",
-            help="Vault index metadata filename",
+            help="Document index state filename",
         ),
     ] = None,
     code_index_meta: Annotated[
         str | None,
         typer.Option(
             "--code-index-meta",
-            help="Code index metadata filename",
+            help="Code index state filename",
         ),
     ] = None,
     status_dir: Annotated[
         str | None,
         typer.Option(
             "--status-dir",
-            help="Service status directory (default: ~/.vaultspec-rag)",
+            help="Directory for service status files (default: ~/.vaultspec-rag)",
         ),
     ] = None,
     log_file: Annotated[
         str | None,
         typer.Option(
             "--log-file",
-            help="Service log filename relative to status-dir",
+            help="Service log filename relative to --status-dir",
         ),
     ] = None,
     _version: Annotated[
