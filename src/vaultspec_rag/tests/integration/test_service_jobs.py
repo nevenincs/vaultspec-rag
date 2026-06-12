@@ -485,7 +485,8 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     output = result.output
     expected_lines = (
         f"Jobs on service port {port}",
-        "Shown: 3 of 3",
+        "Shown: 3 jobs",
+        "Recent jobs on service: 3 jobs",
         "States: 1 active, 0 waiting, 1 finished, 1 failed",
         "Order: latest shown last",
         "for proj-a (job runjob12)",
@@ -503,6 +504,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert not missing, f"missing feed content: {missing}"
     forbidden_fragments = (
         "3/3 shown:",
+        "Shown: 3 of 3",
         "Latest shown last.",
         "Filtered by",
         "project=",
@@ -539,6 +541,8 @@ def test_jobs_humanizes_disk_space_failures() -> None:
         )
 
     assert result.exit_code == 0, result.output
+    assert "Shown: 3 matching jobs" in result.output
+    assert "Recent jobs on service: 3 jobs" in result.output
     assert "Filter: failed only" in result.output
     assert "Filtered by failed only" not in result.output
     assert "not enough disk space; free disk space and retry" in result.output
@@ -579,7 +583,8 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     )
 
     output = capsys.readouterr().out
-    assert "Shown: 1 of 1" in output
+    assert "Shown: 1 job" in output
+    assert "Recent jobs on service: 1 job" in output
     assert "States: 0 active, 1 waiting, 0 finished, 0 failed" in output
     assert "1 running" not in output
     assert "~ " in output
@@ -588,6 +593,49 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     assert "waiting to write the index for 20s" in output
     assert "running code index update" not in output
     assert "running for 20s" not in output
+
+
+def test_jobs_filtered_header_separates_matches_from_service_total(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    now = time.time()
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "id": "running-a",
+                    "source": "code",
+                    "trigger": "watcher",
+                    "phase": "running",
+                    "started_at": now - 40,
+                    "progress": {"step": "embed", "completed": 1, "total": 4},
+                    "initiator": {"project_root": r"proj-a"},
+                },
+                {
+                    "id": "running-b",
+                    "source": "vault",
+                    "trigger": "watcher",
+                    "phase": "running",
+                    "started_at": now - 20,
+                    "progress": {"step": "embed + upsert documents"},
+                    "initiator": {"project_root": r"proj-b"},
+                },
+            ],
+            "total": 58,
+            "returned": 2,
+            "summary": {"running": 2, "phases": {"running": 2, "done": 56}},
+            "filters": {"limit": 20, "phase": "running"},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    assert "Shown: 2 matching jobs" in output
+    assert "Recent jobs on service: 58 jobs" in output
+    assert "Shown: 2 of 58" not in output
 
 
 def test_jobs_waiting_progress_uses_user_language() -> None:

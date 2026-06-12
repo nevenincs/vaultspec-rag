@@ -370,6 +370,16 @@ def _filter_line(result: dict[str, object]) -> str:
     return text.removesuffix(".")
 
 
+def _job_count_text(
+    count: object,
+    singular: str = "job",
+    plural: str | None = None,
+) -> str:
+    value = count if isinstance(count, int) else 0
+    word = singular if value == 1 else (plural or f"{singular}s")
+    return f"{value} {word}"
+
+
 def _render_jobs_feed(
     result: dict[str, object],
     jobs: list[object],
@@ -382,7 +392,22 @@ def _render_jobs_feed(
     sorted_jobs = _human_sorted_jobs(jobs)
     active, waiting, finished, failed = _shown_job_counts(sorted_jobs)
     _cli.console.print(f"Jobs on service port {port}", markup=False, highlight=False)
-    _cli.console.print(f"Shown: {returned} of {total}", markup=False, highlight=False)
+    filter_text = _filter_line(result)
+    shown_count = (
+        _job_count_text(returned, "matching job", "matching jobs")
+        if filter_text
+        else _job_count_text(returned)
+    )
+    _cli.console.print(
+        f"Shown: {shown_count}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Recent jobs on service: {_job_count_text(total)}",
+        markup=False,
+        highlight=False,
+    )
     _cli.console.print(
         f"States: {active} active, {waiting} waiting, "
         f"{finished} finished, {failed} failed",
@@ -390,7 +415,6 @@ def _render_jobs_feed(
         highlight=False,
     )
     _cli.console.print("Order: latest shown last", markup=False, highlight=False)
-    filter_text = _filter_line(result)
     if filter_text:
         _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
     if monitoring:
