@@ -676,6 +676,54 @@ Agent brief:
 - Do not change generated provider artifacts unless the project tooling requires it.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
+### Phase W06.P02 - Redesign `server jobs` Human Output And Monitoring
+
+Objective: Replace the fragile table-shaped default `server jobs` output with a
+command-line-native operator feed that makes running, failed, and recent jobs readable,
+project-scoped, and monitorable.
+
+Progress tracking:
+
+- [ ] Remove table rendering from the default human `server jobs` output.
+- [ ] Use common command-line notation for job state, including a simple prefix such as
+  `*` for running/current jobs.
+- [ ] Keep a simple header or summary line, not a box/table layout.
+- [ ] Include project or repository identity for each job so the user can tell which
+  project requested the operation.
+- [ ] Reword implementation triggers into user-facing operation names, for example
+  `index update` instead of raw `watcher`.
+- [ ] Show failed jobs clearly in the default or an obvious filtered view.
+- [ ] Order output so the latest job is last in the default human stream, matching common
+  terminal/log reading expectations.
+- [ ] Translate compact internal results such as `+0 /1 -0 (22231ms)` into human-facing
+  language.
+- [ ] Preserve `--json` as the full-fidelity agent/script format.
+- [ ] Add continuous monitoring with auto-refresh and complete terminal content
+  management for interactive monitoring.
+- [ ] Add or update real-behavior tests for default output, filters, failed jobs, and
+  monitoring behavior where feasible.
+- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+
+Agent brief:
+
+- Start with Phase `W06.P02`.
+- Read the original jobs audit findings, `service-jobs-operability` ADR and research,
+  and the current `server jobs` implementation before editing code.
+- Treat the human review feedback as accepted design input:
+  - default `server jobs` table output is the worst remaining interface and must be
+    replaced,
+  - running jobs should be visually obvious with a simple CLI notation such as `*`,
+  - output should read like a terminal feed or compact report, not a registry dump,
+  - latest information should appear last by default,
+  - project/repository identity is required,
+  - failed jobs must be visible and filterable,
+  - `watcher` should become a human phrase such as `index update`,
+  - continuous monitoring should use a proper auto-refresh/watch mode rather than users
+    repeatedly rerunning the command.
+- Keep advanced or raw registry fields behind `--json` or detail flags.
+- Do not change generated provider artifacts unless the project tooling requires it.
+- Use `uv run` or `uv run --no-sync` for project commands.
+
 Pipeline:
 
 Hardening:
