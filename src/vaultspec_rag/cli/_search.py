@@ -512,7 +512,7 @@ def handle_search(
         str | None,
         typer.Option(
             "--node-type",
-            help="Only show code results with this syntax node type.",
+            help="Only show code results for this source-code structure.",
         ),
     ] = None,
     function_name: Annotated[

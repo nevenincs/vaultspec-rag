@@ -70,6 +70,31 @@ def _assert_no_table_borders(output: str) -> None:
     assert not any(glyph in output for glyph in ("─", "│", "┌", "┐", "└", "┘"))
 
 
+def _help_option_descriptions(output: str) -> dict[str, str]:
+    descriptions: dict[str, str] = {}
+    active_options: list[str] = []
+    for raw_line in _ANSI_RE.sub("", output).splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            active_options = []
+            continue
+
+        if stripped.startswith("--"):
+            parts = re.split(r"\s{2,}", stripped, maxsplit=1)
+            active_options = re.findall(r"--[a-z0-9-]+", parts[0])
+            description = parts[1] if len(parts) == 2 else ""
+            for option in active_options:
+                descriptions[option] = description
+            continue
+
+        if active_options:
+            for option in active_options:
+                descriptions[option] = f"{descriptions[option]} {stripped}".strip()
+
+    return descriptions
+
+
 def _invoke_search_contract(
     tmp_path: Path,
     port: int,
@@ -1770,8 +1795,13 @@ class TestHelpCleanup:
         """search --help must list filters without Rich box panels."""
         result = runner.invoke(app, ["search", "--help"])
         assert result.exit_code == 0, result.output
-        assert "--language" in result.output
-        assert "--doc-type" in result.output
+        descriptions = _help_option_descriptions(result.output)
+        assert {"--language", "--node-type", "--doc-type"} <= descriptions.keys()
+        node_type_help = descriptions["--node-type"].lower()
+        assert "code results" in node_type_help
+        assert any(word in node_type_help for word in ("structure", "construct"))
+        for jargon in ("syntax", "ast", "tree-sitter"):
+            assert jargon not in node_type_help
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
 
