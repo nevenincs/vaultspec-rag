@@ -2942,16 +2942,16 @@ class TestServiceDaemonHelpers:
             assert "Busy: processing 2 jobs" in result.output
             assert "Queue: nothing waiting; 2 active jobs" in result.output
             assert "Active jobs:" in result.output
-            assert (
-                "  * code index refresh for feature-server-supervision" in result.output
-            )
-            assert "embedding chunks 7 of 20" in result.output
-            assert "  * vault index update for other-project" in result.output
-            assert "index documents 5 of 9" in result.output
             active_rows = [
                 line for line in result.output.splitlines() if line.startswith("  * ")
             ]
             assert len(active_rows) == 2
+            assert active_rows[0].startswith("  * vault index update for other-project")
+            assert "index documents 5 of 9" in active_rows[0]
+            assert active_rows[1].startswith(
+                "  * code index refresh for feature-server-supervision"
+            )
+            assert "embedding chunks 7 of 20" in active_rows[1]
             assert all(row.count("no progress for") <= 1 for row in active_rows)
             assert "Current job:" not in result.output
         finally:

@@ -625,7 +625,12 @@ def _active_job_records(
         if isinstance(progress, dict) and progress.get("step") == "queued":
             continue
         active.append(entry)
-    return active
+    return sorted(active, key=_job_started_timestamp)
+
+
+def _job_started_timestamp(job: dict[str, object]) -> float:
+    started_at = job.get("started_at")
+    return float(started_at) if isinstance(started_at, int | float) else 0.0
 
 
 def _running_job_line(job: dict[str, object]) -> str:
