@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 from typing import Annotated, Any, cast
 
 import typer
@@ -472,6 +473,16 @@ def _format_status_duration(raw: object) -> str:
     return f"{days}d {hours}h"
 
 
+def _format_started_label(raw: object) -> str:
+    if not isinstance(raw, str) or not raw:
+        return "unknown"
+    try:
+        started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    return f"{started.astimezone().strftime('%H:%M:%S')} local time"
+
+
 def _job_progress_summary(job: dict[str, object]) -> str:
     progress = _human_progress(job)
     return f", {progress}" if progress else ""
@@ -850,9 +861,9 @@ def _render_status_detail(
 ) -> None:
     _cli.console.print("Service status")
     _print_detail_line("Service file", "present")
-    _print_detail_line("PID", pid)
-    _print_detail_line("Port", port)
-    _print_detail_line("Started", started_at)
+    _print_detail_line("Process id", pid)
+    _print_detail_line("Address", f"http://127.0.0.1:{port}")
+    _print_detail_line("Started", _format_started_label(started_at))
     _print_detail_line("Process", "running" if pid_alive else "not running")
     _print_detail_line(
         "Service process",
@@ -941,8 +952,8 @@ def _render_port_only_status(
 
     _cli.console.print("Service status")
     _print_detail_line("Service file", "missing")
-    _print_detail_line("PID", "n/a")
-    _print_detail_line("Port", port)
+    _print_detail_line("Process id", "not recorded")
+    _print_detail_line("Address", f"http://127.0.0.1:{port}")
     _print_detail_line("Network", _network_label(port_listening, pid_alive=False))
     _print_detail_line("State", state)
     _print_health_detail(health, port_listening)

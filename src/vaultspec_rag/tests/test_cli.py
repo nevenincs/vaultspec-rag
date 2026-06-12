@@ -2375,6 +2375,10 @@ class TestServiceDaemonHelpers:
             verbose_expected = [
                 "Service status",
                 "Service file: present",
+                f"Process id: {os.getpid()}",
+                f"Address: http://127.0.0.1:{port}",
+                "Started:",
+                "local time",
                 "Process: running",
                 "Service process: verified",
                 "Service identity: not checked",
@@ -2391,8 +2395,10 @@ class TestServiceDaemonHelpers:
                 "Search Concurrency",
                 "Cross-project Search",
                 "CUDA:",
+                "PID:",
                 "PID alive",
                 "PID matches service",
+                "Port:",
                 "Port listening",
                 "Models loaded",
                 "Reranker loaded",
@@ -2409,6 +2415,7 @@ class TestServiceDaemonHelpers:
                 text for text in verbose_expected if text not in verbose.output
             ] == []
             assert [text for text in verbose_hidden if text in verbose.output] == []
+            assert "Started: 2026-" not in verbose.output
         finally:
             server.shutdown()
             server.server_close()
@@ -2511,7 +2518,11 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 3
             assert "Service file: missing" in result.output
+            assert "Process id: not recorded" in result.output
+            assert f"Address: http://127.0.0.1:{port}" in result.output
             assert "Network: not checked" in result.output
+            assert "PID:" not in result.output
+            assert "Port:" not in result.output
             assert "Port listening" not in result.output
             assert "Port listening: yes" not in result.output
             assert "Port listening: no" not in result.output
