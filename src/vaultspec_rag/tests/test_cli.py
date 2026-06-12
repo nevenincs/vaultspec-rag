@@ -1331,7 +1331,11 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["index", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
+        normalized = " ".join(result.output.split())
         assert "Build or update" in result.output
+        assert "Uses the running service" in normalized
+        for forbidden in ("Qdrant", "tqdm", "agent / CI", "fast path"):
+            assert forbidden not in normalized
 
     def test_index_help_cross_ref(self):
         """index --help must reference docs/indexing.md."""
@@ -1343,7 +1347,11 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["clean", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "Drop selected" in result.output
+        normalized = " ".join(result.output.split())
+        assert "Delete selected search index data" in normalized
+        assert "Required so nothing is deleted by accident" in normalized
+        for forbidden in ("Qdrant", "metadata sidecars", "collections", "footgun"):
+            assert forbidden not in normalized
 
     def test_clean_help_cross_ref(self):
         """clean --help must reference docs/indexing.md."""

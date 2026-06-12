@@ -1,4 +1,4 @@
-"""``index`` and ``clean`` commands: build or drop index collections."""
+"""``index`` and ``clean`` commands: build or delete search index data."""
 
 from __future__ import annotations
 
@@ -244,9 +244,8 @@ def _print_service_results(
 @app.command(
     "index",
     help=(
-        "Build or update the vault and/or codebase search index. "
-        "Delegates to a running service when one is detected; falls back to "
-        "in-process GPU indexing otherwise. "
+        "Build or update the project documentation and source-code search index. "
+        "Uses the running service when available; otherwise runs locally. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -256,7 +255,10 @@ def handle_index(
         Literal["vault", "code", "all"],
         typer.Option(
             "--type",
-            help="What to index: 'vault' (docs), 'code' (source), or 'all'.",
+            help=(
+                "What to index: 'vault' for documents, 'code' for source files, "
+                "or 'all'."
+            ),
             show_default=True,
         ),
     ] = "all",
@@ -268,14 +270,14 @@ def handle_index(
         bool,
         typer.Option(
             "--rebuild",
-            help="Drop the selected index collections before re-indexing.",
+            help="Delete the selected index data before rebuilding it.",
         ),
     ] = False,
     port: Annotated[
         int | None,
         typer.Option(
             "--port",
-            help="Port of running RAG service (fast path).",
+            help="Use the service running on this port.",
         ),
     ] = None,
     dry_run: Annotated[
@@ -297,11 +299,8 @@ def handle_index(
         typer.Option(
             "--allow-fallback",
             help=(
-                "When --port is given but the service is unreachable, "
-                "silently fall back to in-process indexing. Defaults "
-                "off; the CLI hard-fails with remediation instead, to "
-                "avoid re-entering the Qdrant lock that the resident "
-                "service is meant to own."
+                "If the selected service is unavailable, build the index "
+                "locally instead of stopping with an error."
             ),
         ),
     ] = False,
@@ -309,20 +308,14 @@ def handle_index(
         bool,
         typer.Option(
             "--verbose",
-            help="Re-enable HuggingFace tqdm progress bars.",
+            help="Show model loading and indexing progress messages.",
         ),
     ] = False,
     json_mode: Annotated[
         bool,
         typer.Option(
             "--json",
-            help=(
-                "Emit one JSON envelope to stdout instead of text. "
-                "Wraps per-source summaries in "
-                '{"ok": true, "command": "index", "data": '
-                '{"sources": [...]}}. Use this for agent / CI '
-                "consumption."
-            ),
+            help="Emit JSON for scripts instead of human text.",
         ),
     ] = False,
 ) -> None:
@@ -456,9 +449,8 @@ def _try_in_process_indexing(
 @app.command(
     "clean",
     help=(
-        "Drop selected index collections without re-indexing. "
-        "Does not load models or touch the GPU — only clears Qdrant collections "
-        "and metadata sidecars. "
+        "Delete selected search index data without rebuilding it. "
+        "Does not load models or use the GPU. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -468,9 +460,8 @@ def handle_clean(
         Literal["vault", "code", "all"],
         typer.Argument(
             help=(
-                "What to wipe (REQUIRED): 'vault' (docs), 'code' "
-                "(source), or 'all'. No default - a destructive "
-                "'all' default would be a footgun."
+                "What to delete: 'vault' for documents, 'code' for source files, "
+                "or 'all'. Required so nothing is deleted by accident."
             ),
         ),
     ],
@@ -487,14 +478,13 @@ def handle_clean(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of text. "
-                "Requires --yes (no interactive confirm) so "
-                "the JSON stream stays uncorrupted."
+                "Emit JSON for scripts instead of human text. Requires --yes "
+                "so no prompt interrupts the JSON output."
             ),
         ),
     ] = False,
 ) -> None:
-    """Drop selected index collections without re-indexing."""
+    """Delete selected search index data without rebuilding it."""
     state: CLIState = ctx.obj
     target = state.target
     if json_mode and not yes:
