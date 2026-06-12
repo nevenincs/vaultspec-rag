@@ -218,7 +218,7 @@ def _activity_from_store_update(parts: dict[str, str]) -> str | None:
     if kind in ("codebase chunk", "code chunk"):
         noun = "source code section" if count == "1" else "source code sections"
     elif kind == "document":
-        noun = "doc" if count == "1" else "docs"
+        noun = "vault document" if count == "1" else "vault documents"
     else:
         noun = f"{kind}s"
     return f"{parts['clock']} index {verb} {count} {noun}"
