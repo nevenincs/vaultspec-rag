@@ -257,6 +257,8 @@ def _human_result(raw: object) -> str:
     result = str(raw)
     if result == "watcher task cancelled":
         return "automatic update cancelled"
+    if "[Errno 28]" in result or "No space left on device" in result:
+        return "not enough disk space; free disk space and retry"
     match = _RESULT_RE.match(result.strip())
     if match is None:
         return result

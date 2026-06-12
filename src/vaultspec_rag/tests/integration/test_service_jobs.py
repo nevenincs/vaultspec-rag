@@ -519,6 +519,25 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert output.index("failjob1") < output.index("runjob12")
 
 
+def test_jobs_humanizes_disk_space_failures() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    failed_job = jobs[1]
+    failed_job["result"] = "[Errno 28] No space left on device"
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--failed", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "not enough disk space; free disk space and retry" in result.output
+    assert "[Errno 28]" not in result.output
+    assert "No space left on device" not in result.output
+
+
 def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
     from ...cli._service_jobs import _render_jobs_result
 
