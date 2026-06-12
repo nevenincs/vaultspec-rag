@@ -61,7 +61,7 @@ server_watcher_app = typer.Typer(
     rich_markup_mode=None,
 )
 server_qdrant_app = typer.Typer(
-    help="Provision and inspect the supervised qdrant server binary.",
+    help="Install and inspect the managed Qdrant server.",
     rich_markup_mode=None,
 )
 preprocess_app = typer.Typer(

@@ -41,7 +41,7 @@ from ._service_status import (
 def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
     """Fail fast (or provision with consent) before a --qdrant start.
 
-    Never downloads silently: an absent binary without
+    Never downloads silently: an absent executable without
     ``auto_provision`` prints the exact install command and exits
     non-zero.
     """
@@ -52,7 +52,10 @@ def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
     if not auto_provision:
         _print_lifecycle_lines(
             "Service start failed",
-            "qdrant server mode needs the server binary, which is not installed.",
+            (
+                "Qdrant server mode needs the managed Qdrant server, "
+                "which is not installed."
+            ),
             "Run: vaultspec-rag server qdrant install",
             "(or re-run with --qdrant-auto-provision to consent to the download)",
         )
@@ -61,13 +64,13 @@ def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
     if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
         _print_lifecycle_lines(
             "Service start failed",
-            f"qdrant provisioning failed: {report.message}",
+            f"Qdrant install failed: {report.message}",
         )
         raise typer.Exit(code=1)
     _print_lifecycle_lines(
-        "Provisioned qdrant server",
+        "Installed Qdrant server",
         f"Version: {report.version}",
-        f"Binary: {report.binary}",
+        f"Install: {report.binary}",
     )
 
 
@@ -107,13 +110,6 @@ def _address_line(port: object) -> str:
     return f"Address: http://127.0.0.1:{port}"
 
 
-@server_app.command(
-    "start",
-    help=(
-        "Start the background search service. Waits until it is ready "
-        "and records how the CLI can reach it."
-    ),
-)
 def _existing_service_running() -> bool:
     """Report a live service and clean up stale state.
 
@@ -146,6 +142,13 @@ def _existing_service_running() -> bool:
     return False
 
 
+@server_app.command(
+    "start",
+    help=(
+        "Start the background search service. Waits until it is ready "
+        "and records how the CLI can reach it."
+    ),
+)
 def service_start(
     port: Annotated[
         int,
@@ -207,19 +210,20 @@ def service_start(
         bool | None,
         typer.Option(
             "--qdrant/--no-qdrant",
-            help="Run the daemon in qdrant server mode: it supervises the "
-            "pinned Rust qdrant binary as a loopback child and routes all "
-            "stores at it. Unset leaves VAULTSPEC_RAG_QDRANT_SERVER "
-            "untouched.",
+            help=(
+                "Use a managed Qdrant server for index storage. "
+                "Unset leaves the current Qdrant setting unchanged."
+            ),
         ),
     ] = None,
     qdrant_auto_provision: Annotated[
         bool,
         typer.Option(
             "--qdrant-auto-provision",
-            help="Consent to downloading the pinned qdrant binary when it "
-            "is absent. Without this flag an absent binary fails the start "
-            "with the exact install command.",
+            help=(
+                "Download the managed Qdrant server if it is missing. "
+                "Without this flag, start prints the install command."
+            ),
         ),
     ] = False,
 ) -> None:

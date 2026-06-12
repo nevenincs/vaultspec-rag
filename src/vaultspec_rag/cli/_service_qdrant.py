@@ -35,7 +35,7 @@ def _print_line(text: str) -> None:
 
 
 def _readyz_probe(port: int) -> bool:
-    """True when a qdrant server answers ready on the loopback port."""
+    """True when a Qdrant server answers ready on the loopback port."""
     try:
         with urllib.request.urlopen(
             f"http://127.0.0.1:{port}/readyz", timeout=2.0
@@ -46,15 +46,19 @@ def _readyz_probe(port: int) -> bool:
         return False
 
 
+def _action_label(action: object) -> str:
+    return str(action).replace("_", " ")
+
+
 def _render_install_report(report: ProvisionReport) -> None:
-    _print_line(f"Action: {report.action}")
+    _print_line(f"Action: {_action_label(report.action)}")
     _print_line(f"Version: {report.version}")
     if report.asset:
-        _print_line(f"Asset: {report.asset}")
+        _print_line(f"Release package: {report.asset}")
     if report.url:
-        _print_line(f"URL: {report.url}")
+        _print_line(f"Download: {report.url}")
     if report.binary is not None:
-        _print_line(f"Binary: {report.binary}")
+        _print_line(f"Install: {report.binary}")
     if report.sha256:
         _print_line(f"SHA256: {report.sha256}")
     if report.message:
@@ -64,9 +68,8 @@ def _render_install_report(report: ProvisionReport) -> None:
 @server_qdrant_app.command(
     "install",
     help=(
-        "Download and verify the pinned qdrant server binary into the "
-        "managed bin dir. Idempotent: a verified install reports "
-        "'unchanged' with no network I/O."
+        "Download and verify the managed Qdrant server. If the requested "
+        "version is already installed, nothing is downloaded."
     ),
 )
 def qdrant_install(
@@ -74,23 +77,27 @@ def qdrant_install(
         bool,
         typer.Option(
             "--upgrade",
-            help="Replace a stale or pin-divergent install.",
+            help="Replace an installed Qdrant server when the managed version changed.",
         ),
     ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
             "--dry-run",
-            help="Preview the version, asset, URL, destination, and digest "
-            "without downloading or writing anything.",
+            help=(
+                "Preview the version, release package, download, install path, "
+                "and digest without downloading or writing anything."
+            ),
         ),
     ] = False,
     binary: Annotated[
         Path | None,
         typer.Option(
             "--binary",
-            help="Register an operator-supplied binary instead of "
-            "downloading (air-gapped escape hatch; no checksum pin applies).",
+            help=(
+                "Register an operator-supplied Qdrant executable instead of "
+                "downloading the managed release."
+            ),
         ),
     ] = None,
     json_mode: Annotated[
@@ -98,7 +105,7 @@ def qdrant_install(
         typer.Option("--json", help="Emit one JSON envelope to stdout."),
     ] = False,
 ) -> None:
-    """Provision the pinned qdrant server binary."""
+    """Install the managed Qdrant server."""
     report = provision(upgrade=upgrade, dry_run=dry_run, binary=binary)
     failed = report.action == QdrantProvisionAction.FAILED
 
@@ -120,7 +127,7 @@ def qdrant_install(
 
 
 def _service_qdrant_block() -> dict[str, Any]:
-    """The running service's recorded qdrant child, if any."""
+    """The running service's recorded Qdrant process, if any."""
     status = _read_service_status()
     if status is None:
         return {"recorded": False}
@@ -156,10 +163,7 @@ def _qdrant_status_payload() -> dict[str, Any]:
 
 @server_qdrant_app.command(
     "status",
-    help=(
-        "Show the pinned version, the active binary and its resolution "
-        "source, provisioned versions (bounded), and live server state."
-    ),
+    help=("Show the managed Qdrant version, install path, address, and live state."),
 )
 def qdrant_status(
     json_mode: Annotated[
@@ -167,48 +171,64 @@ def qdrant_status(
         typer.Option("--json", help="Emit one JSON envelope to stdout."),
     ] = False,
 ) -> None:
-    """Show qdrant runtime provisioning and liveness state."""
+    """Show Qdrant runtime install and liveness state."""
     payload = _qdrant_status_payload()
 
     if json_mode:
         _emit_json(True, "server.qdrant.status", data=payload)
         return
 
-    _print_line(f"Pinned version: {payload['pinned_version']}")
+    _print_line("Qdrant runtime")
+    _print_line(f"Version: {payload['pinned_version']}")
     active = payload["active_binary"]
     if isinstance(active, dict):
-        _print_line(f"Active binary: {active['path']} (source: {active['source']})")
+        _print_line(f"Install: {active['path']}")
     else:
-        _print_line("Active binary: none")
+        _print_line("Install: not installed")
         _print_line("Next action:")
         _print_line("  vaultspec-rag server qdrant install")
-    _print_line(f"Server port: {payload['port']}")
-    _print_line(f"Server ready: {'yes' if payload['ready'] else 'no'}")
+    address = f"http://127.0.0.1:{payload['port']}"
+    _print_line(f"Address: {address}")
+    if payload["ready"]:
+        _print_line(f"State: Qdrant is answering on {address}.")
+    else:
+        _print_line(f"State: Qdrant is not answering on {address}.")
     service = payload["service"]
     if isinstance(service, dict) and service.get("recorded"):
+        alive = (
+            "running"
+            if service.get("qdrant_alive") is True
+            else "not running"
+            if service.get("qdrant_alive") is False
+            else "unknown"
+        )
         _print_line(
-            f"Service child: pid {service.get('qdrant_pid')} "
-            f"(alive: {service.get('qdrant_alive')}, "
-            f"port: {service.get('qdrant_port')})"
+            f"Managed process: {alive}; process id {service.get('qdrant_pid')}; "
+            f"port {service.get('qdrant_port')}"
         )
     else:
-        _print_line("Service child: none recorded")
+        _print_line("Managed process: none recorded")
     provisioned = payload["provisioned"]
     if isinstance(provisioned, list) and provisioned:
-        _print_line("Provisioned versions:")
+        _print_line("Installed versions:")
         for entry in provisioned:
-            marker = " (current pin)" if entry.get("current") else ""
-            _print_line(f"  {entry.get('version')} - {entry.get('source')}{marker}")
+            marker = " (current)" if entry.get("current") else ""
+            source = (
+                "downloaded release"
+                if entry.get("source") == "download"
+                else entry.get("source")
+            )
+            _print_line(f"  {entry.get('version')} - {source}{marker}")
     else:
-        _print_line("Provisioned versions: none")
+        _print_line("Installed versions: none")
 
 
 @server_qdrant_app.command(
     "clean",
     help=(
-        "Delete provisioned qdrant binaries from the managed bin dir. "
-        "Destructive: requires --yes. --keep-current preserves the "
-        "pinned version. Server storage (collections) is never touched."
+        "Delete managed Qdrant server installs. Destructive: requires --yes. "
+        "--keep-current preserves the current managed version. "
+        "Index data is never touched."
     ),
 )
 def qdrant_clean(
@@ -216,7 +236,7 @@ def qdrant_clean(
         bool,
         typer.Option(
             "--keep-current",
-            help="Preserve the install matching the pinned version.",
+            help="Preserve the current managed Qdrant version.",
         ),
     ] = False,
     yes: Annotated[
@@ -232,7 +252,7 @@ def qdrant_clean(
         typer.Option("--json", help="Emit one JSON envelope to stdout."),
     ] = False,
 ) -> None:
-    """Remove provisioned qdrant binaries (gated on ``--yes``)."""
+    """Remove managed Qdrant installs (gated on ``--yes``)."""
     targets = [
         str(entry["version"])
         for entry in provisioned_versions()
@@ -284,9 +304,9 @@ def _perform_clean(*, keep_current: bool, json_mode: bool) -> list[str]:
         return clean_provisioned(keep_current=keep_current)
     except OSError as exc:
         message = (
-            f"Failed to remove a provisioned install: {exc}. A running "
-            "qdrant child may be holding the binary - stop the service "
-            "first (vaultspec-rag server stop)."
+            f"Failed to remove a managed Qdrant install: {exc}. A running "
+            "Qdrant process may still be using it - stop the service first "
+            "(vaultspec-rag server stop)."
         )
         if json_mode:
             _emit_json(
