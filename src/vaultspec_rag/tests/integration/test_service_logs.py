@@ -391,6 +391,8 @@ def test_logs_not_running_prose() -> None:
 def test_logs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "logs", "--help"])
     assert result.exit_code == 0
+    assert "--limit" in result.stdout
+    assert "--lines" in result.stdout
     assert "--raw" in result.stdout
     assert "Emit JSON for scripts" in result.stdout
     assert "Number of recent activity entries to inspect" in result.stdout
@@ -515,7 +517,7 @@ def test_logs_cli_filters_are_passed_to_service() -> None:
             [
                 "server",
                 "logs",
-                "--lines",
+                "--limit",
                 "8",
                 "--contains",
                 "6793374d",

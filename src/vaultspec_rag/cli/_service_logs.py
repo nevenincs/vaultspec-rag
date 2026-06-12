@@ -311,7 +311,11 @@ def _render_activity_feed(log_lines: list[object], *, port: int) -> None:
 def service_logs(
     lines: Annotated[
         int,
-        typer.Option("--lines", help="Number of recent activity entries to inspect."),
+        typer.Option(
+            "--limit",
+            "--lines",
+            help="Number of recent activity entries to inspect.",
+        ),
     ] = 200,
     job_id: Annotated[
         str | None,
