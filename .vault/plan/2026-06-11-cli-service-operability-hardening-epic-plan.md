@@ -893,6 +893,49 @@ Agent brief:
 - Add flags only where needed for the accepted design; avoid broad command tree churn.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
+### Phase W06.P07 - Remove Human CLI Table Formatting Mandate-Wide
+
+Objective: Treat table removal as an endemic CLI operability hardening mandate for
+human-facing default output, not as a one-command preference.
+
+Progress tracking:
+
+- [ ] Remove Rich table output from user-facing default paths touched by the current
+  operability wave.
+- [ ] Replace backend-contract tables in search timeout/error diagnostics with plain,
+  human-facing text.
+- [ ] Translate internal backend fields such as `same_project_search_strategy` into
+  natural user-facing language or move them behind `--json` or an explicit detail/debug
+  path.
+- [ ] Keep machine-readable and full-fidelity diagnostic fields in `--json`.
+- [ ] Add tests that fail on table borders, wrapped columns, or internal strategy names
+  in default human output.
+- [ ] Record remaining table-using CLI commands as follow-up inventory if they are
+  outside the current review wave.
+- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+
+Agent brief:
+
+- Start with Phase `W06.P07` after or alongside W06.P06 if the same renderer owns the
+  output.
+- The human reviewer has identified the table problem as endemic. Do not solve only the
+  success-path search result table while leaving timeout/error tables in place.
+- In default human output, remove:
+  - boxed Rich table borders,
+  - column truncation,
+  - backend-contract labels,
+  - raw internal field names such as `same_project_search_strategy`.
+- Preferred timeout/error language should answer:
+  - did the request time out,
+  - is the service reachable,
+  - is work currently running,
+  - what should the user run next.
+- Keep detailed backend capability fields available through JSON; do not delete useful
+  diagnostic data from the service contract.
+- Avoid broad unrelated rewrites of older CLI commands unless they are directly emitted
+  by the reviewed status/jobs/logs/search/timeout surfaces.
+- Use `uv run` or `uv run --no-sync` for project commands.
+
 Pipeline:
 
 Hardening:
