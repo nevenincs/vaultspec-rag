@@ -245,15 +245,19 @@ def test_updates_reconfigure_timing_flags_parse(argv: list[str]) -> None:
     assert "not running" in result.stdout.lower()
 
 
-def test_watcher_alias_hidden_but_still_compatible() -> None:
+def test_watcher_alias_removed_from_user_facing_cli() -> None:
     server_help = runner.invoke(app, ["server", "--help"])
     assert server_help.exit_code == 0
     assert "updates" in server_help.stdout
     assert "watcher" not in server_help.stdout.lower()
 
+    updates = runner.invoke(app, ["server", "updates", "status", "--port", _DEAD_PORT])
+    assert updates.exit_code == 3
+    assert "not running" in updates.stdout.lower()
+
     legacy = runner.invoke(app, ["server", "watcher", "status", "--port", _DEAD_PORT])
-    assert legacy.exit_code == 3
-    assert "not running" in legacy.stdout.lower()
+    assert legacy.exit_code != 0
+    assert "No such command" in legacy.output
 
 
 def test_cli_mcp_control_parity() -> None:
