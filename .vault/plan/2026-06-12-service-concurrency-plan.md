@@ -93,8 +93,8 @@ Rebuild corpora, run the full saturation matrix against the W01 baseline, verify
 Adversarial matrix vs baseline, quality parity, persona verification.
 
 - [x] `W05.P08.S23` - Rebuild both corpora under the new schema and run the adversarial saturation matrix against the W01 baseline, recording results; `.vault/exec/2026-06-12-service-concurrency`.
-- [ ] `W05.P08.S24` - Run the quality harness comparison and manual persona CLI verification in human and JSON modes; `src/vaultspec_rag/tests/benchmarks`.
-- [ ] `W05.P08.S25` - Record the execution summary and prepare the review handoff; `.vault/exec/2026-06-12-service-concurrency`.
+- [x] `W05.P08.S24` - Run the quality harness comparison and manual persona CLI verification in human and JSON modes; `src/vaultspec_rag/tests/benchmarks`.
+- [x] `W05.P08.S25` - Record the execution summary and prepare the review handoff; `.vault/exec/2026-06-12-service-concurrency`.
 
 ## Description
 

@@ -16,6 +16,14 @@ related:
 
 ## Description
 
+- Write the wave phase summary consolidating migration, measurements,
+  diagnosis, and the follow-on handoffs; close the plan.
+
 ## Outcome
+
+Summary persisted alongside this record; review handoff prepared for the
+code-review phase. Two follow-on features are queued with research already
+persisted: the qdrant server-mode promotion (implementation dispatched to an
+isolated worktree) and the deferred model/sparse evaluations.
 
 ## Notes

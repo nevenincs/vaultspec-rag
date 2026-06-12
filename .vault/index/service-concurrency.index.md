@@ -30,6 +30,7 @@ related:
   - '[[2026-06-12-service-concurrency-W05-P08-S23]]'
   - '[[2026-06-12-service-concurrency-W05-P08-S24]]'
   - '[[2026-06-12-service-concurrency-W05-P08-S25]]'
+  - '[[2026-06-12-service-concurrency-W05-P08-summary]]'
   - '[[2026-06-12-service-concurrency-adr]]'
   - '[[2026-06-12-service-concurrency-plan]]'
   - '[[2026-06-12-service-concurrency-research]]'
@@ -72,6 +73,7 @@ Auto-generated index of all documents tagged with `#service-concurrency`.
 - `2026-06-12-service-concurrency-W05-P08-S23` - Rebuild both corpora under the new schema and run the adversarial saturation matrix against the W01 baseline, recording results
 - `2026-06-12-service-concurrency-W05-P08-S24` - Run the quality harness comparison and manual persona CLI verification in human and JSON modes
 - `2026-06-12-service-concurrency-W05-P08-S25` - Record the execution summary and prepare the review handoff
+- `2026-06-12-service-concurrency-W05-P08-summary` - `service-concurrency` `W05.P08` summary
 
 ### plan
 
