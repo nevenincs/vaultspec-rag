@@ -10,31 +10,26 @@ from ._app import app
 from ._gpu_errors import _handle_gpu_error
 
 
-@app.command("quality")
+@app.command(
+    "quality",
+    help=(
+        "Run built-in search quality checks on a temporary test project. "
+        "This is a developer regression check, not a report on your current project."
+    ),
+)
 def handle_quality() -> None:
-    """Run quality-scoring probes against a synthetic test corpus.
-
-    Generates a temporary synthetic vault, indexes it, runs
-    needle-based precision probes, and reports results. Exits 1
-    if fewer than 75% of probes pass.
-
-    This is a developer regression tool -- not tied to a specific
-    user vault.
-
-    Raises:
-        typer.Exit: On GPU errors or when precision drops below 75%.
-    """
+    """Run built-in search quality checks on a temporary test project."""
     from ..api import run_quality_probe
 
     try:
-        msg = "Running quality probes on synthetic corpus..."
+        msg = "Running built-in search quality checks..."
         with _cli.console.status(msg):
             results = run_quality_probe()
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
         return
 
-    _cli.console.print("Quality probes: synthetic corpus")
+    _cli.console.print("Quality checks: built-in temporary project")
     for i, probe in enumerate(results["probes"], 1):
         status = "PASS" if probe["passed"] else "FAIL"
         _cli.console.print(

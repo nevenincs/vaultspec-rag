@@ -1439,6 +1439,23 @@ class TestHelpCleanup:
         self._assert_clean(result)
         assert "stdio" in result.output.lower() or "MCP" in result.output
 
+    def test_benchmark_help_clean(self):
+        result = runner.invoke(app, ["benchmark", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "Measure search speed" in result.output
+        for forbidden in ("Args:", "Raises:", "CLIState", "VRAM usage"):
+            assert forbidden not in result.output
+
+    def test_quality_help_clean(self):
+        result = runner.invoke(app, ["quality", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        assert "built-in search quality checks" in result.output
+        assert "not a report on your current project" in result.output
+        for forbidden in ("Args:", "Raises:", "synthetic test corpus"):
+            assert forbidden not in result.output
+
 
 class TestCleanRequiredTarget:
     """Clean target is required (no default)."""
@@ -3183,6 +3200,8 @@ class TestBenchmarkAndQualityCommands:
         assert "512.0 MB" in result.output
         assert "42" in result.output
         assert "Search latency: 10 queries" in result.output
+        assert "vault documents" in result.output
+        assert "vram_allocated" not in result.output
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
 
@@ -3243,7 +3262,8 @@ class TestBenchmarkAndQualityCommands:
         assert result.exit_code == 0
         assert len(called) == 1
         assert "PASS" in result.output
-        assert "Quality probes: synthetic corpus" in result.output
+        assert "Quality checks: built-in temporary project" in result.output
+        assert "synthetic corpus" not in result.output
         for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
             assert forbidden not in result.output
         import re

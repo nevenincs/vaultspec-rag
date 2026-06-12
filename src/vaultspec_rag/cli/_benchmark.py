@@ -12,7 +12,13 @@ from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
 
 
-@app.command("benchmark")
+@app.command(
+    "benchmark",
+    help=(
+        "Measure search speed on the current project index. "
+        "Run `vaultspec-rag index` first if there are no indexed documents."
+    ),
+)
 def handle_benchmark(
     ctx: typer.Context,
     n_queries: Annotated[
@@ -20,21 +26,7 @@ def handle_benchmark(
         typer.Option("--n-queries", help="Number of search queries to time."),
     ] = 20,
 ) -> None:
-    """Run search latency benchmarks against the indexed vault.
-
-    Requires an indexed vault (run ``vaultspec-rag index``
-    first). Reports p50/p95/p99 latency, store counts, and
-    GPU VRAM usage.
-
-    Args:
-        ctx: Typer context carrying ``CLIState``.
-        n_queries: Number of search queries to time.
-
-    Raises:
-        typer.Exit: When vault is empty (code 1) or on GPU
-            errors.
-
-    """
+    """Measure search speed on the current project index."""
     state: CLIState = ctx.obj
     target = state.target
 
@@ -67,13 +59,13 @@ def handle_benchmark(
         highlight=False,
     )
     _cli.console.print(
-        f"Index: vault_docs={results['vault_count']} "
-        f"code_chunks={results['code_count']}",
+        f"Index: {results['vault_count']} vault documents; "
+        f"{results['code_count']} code chunks",
         markup=False,
         highlight=False,
     )
     _cli.console.print(
-        f"GPU: {results['gpu']} vram_allocated={results['vram_mb']:.1f} MB",
+        f"GPU: {results['gpu']} using {results['vram_mb']:.1f} MB",
         markup=False,
         highlight=False,
     )
