@@ -1477,6 +1477,36 @@ class TestHelpCleanup:
         for forbidden in ("Args:", "Raises:", "synthetic test corpus"):
             assert forbidden not in result.output
 
+    def test_install_help_clean(self):
+        result = runner.invoke(app, ["install", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Set up vaultspec-rag in a workspace" in result.output
+        assert "Emit JSON for scripts" in result.output
+        for forbidden in (
+            "Torch-config gating",
+            "MCP source files",
+            "provider concept",
+            "torch_config_action",
+            "rag's bundled",
+            "Output result as JSON",
+        ):
+            assert forbidden not in result.output
+
+    def test_uninstall_help_clean(self):
+        result = runner.invoke(app, ["uninstall", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Remove vaultspec-rag setup" in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "search data under .vault/data/" in result.output
+        for forbidden in (
+            "MCP source files",
+            "rag's index",
+            "forward compat",
+            "vaultspec-core",
+            "Output result as JSON",
+        ):
+            assert forbidden not in result.output
+
 
 class TestCleanRequiredTarget:
     """Clean target is required (no default)."""

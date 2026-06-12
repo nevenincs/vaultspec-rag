@@ -29,7 +29,7 @@ def handle_install(
         bool,
         typer.Option(
             "--upgrade",
-            help="Re-seed bundled rule and MCP files even if present.",
+            help="Refresh bundled rules and integration files even if present.",
         ),
     ] = False,
     dry_run: Annotated[
@@ -62,7 +62,7 @@ def handle_install(
         typer.Option(
             "--torch-config/--no-torch-config",
             help=(
-                "Patch pyproject.toml with the cu130 torch index. "
+                "Configure the CUDA PyTorch package source in pyproject.toml. "
                 "--no-torch-config takes precedence over --force / --yes."
             ),
         ),
@@ -73,9 +73,8 @@ def handle_install(
             "--yes",
             "-y",
             help=(
-                "Skip the torch-config confirmation prompt (required on "
-                "non-TTY runs). --no-torch-config opts out without "
-                "applying."
+                "Skip the PyTorch configuration prompt. Required for "
+                "non-interactive installs unless --no-torch-config is used."
             ),
         ),
     ] = False,
@@ -84,50 +83,22 @@ def handle_install(
         typer.Option(
             "--sync",
             help=(
-                "Run `uv sync --reinstall-package torch` after the patch "
-                "lands. Silently no-ops when the patch step did not apply."
+                "Run `uv sync --reinstall-package torch` after PyTorch "
+                "configuration changes are applied."
             ),
         ),
     ] = False,
     json_output: Annotated[
         bool,
-        typer.Option("--json", help="Output result as JSON."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
-    """Install vaultspec-rag enrollment into a workspace.
+    """Set up vaultspec-rag in a workspace.
 
-    Seeds rag's bundled rule and MCP source files into
-    ``.vaultspec/rules/`` and invokes vaultspec-core's sync to
-    propagate them to ``.mcp.json`` and provider directories. The
-    workspace is created if it does not yet exist; rag is fully
-    self-sufficient and does not require core to have run install
-    first.
-
-    Torch-config gating (highest precedence first):
-
-    - ``--no-torch-config`` always wins. The patch is not applied
-      regardless of any other flag, and ``torch_config_action`` is
-      reported as ``disabled``.
-    - On a non-TTY without ``--yes`` or ``--force``, the patch is
-      skipped with a warning naming the bypass flags.
-      ``torch_config_action`` is ``skipped-non-tty`` and the command
-      exits with a non-zero code so CI fails loudly.
-    - ``--yes`` and ``--force`` both bypass the confirmation prompt.
-      They differ elsewhere: ``--force`` also re-seeds bundled files
-      and prunes orphaned sync state.
-    - On a TTY without ``--yes`` / ``--force``, the user is prompted.
-      Pressing Enter declines (default-no) - pass ``--yes`` to say
-      yes to all confirmations in one shot.
-    - The command exits non-zero (code 2) when torch-config terminates
-      in ``error``, ``skipped-eof``, or ``skipped-non-tty``. Other
-      non-applied terminal states (``declined``, ``conflict``,
-      ``absent``, ``disabled``) exit 0 because they reflect user
-      intent or expected workspace state.
-
-    Flag names mirror ``vaultspec-core install`` exactly. The
-    positional ``provider`` argument core takes is omitted because
-    rag has no provider concept of its own - propagation flows
-    through core's existing per-provider sync.
+    Creates the required workspace folders, installs bundled rules and
+    integration files, and syncs the files used by supported tools. By default,
+    install asks before changing PyTorch package configuration; use ``--yes``
+    or ``--no-torch-config`` for non-interactive runs.
     """
     import sys as _sys
 
@@ -220,7 +191,7 @@ def handle_uninstall(
         bool,
         typer.Option(
             "--remove-data",
-            help="Also remove .vault/data/ (rag's index, preserved by default).",
+            help="Also remove search data under .vault/data/.",
         ),
     ] = False,
     dry_run: Annotated[
@@ -249,25 +220,18 @@ def handle_uninstall(
         typer.Option(
             "--yes",
             "-y",
-            help="Skip confirmation prompts (reserved for forward compat).",
+            help="Skip confirmation prompts.",
         ),
     ] = False,
     json_output: Annotated[
         bool,
-        typer.Option("--json", help="Output result as JSON."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
-    """Remove vaultspec-rag enrollment from a workspace.
+    """Remove vaultspec-rag setup from a workspace.
 
-    Symmetric mirror of ``install``: removes rag's bundled rule and
-    MCP source files from ``.vaultspec/rules/`` and invokes
-    vaultspec-core's sync to propagate the removal to ``.mcp.json``
-    and provider directories.
-
-    Without ``--force``, returns a dry-run preview only. ``.vault/``
-    documents are always preserved. The rag index under
-    ``.vault/data/`` is preserved unless ``--remove-data`` is set.
-    rag never touches vaultspec-core's installation.
+    Without ``--force``, this only previews what would be removed. Vault
+    documents and search data are preserved unless ``--remove-data`` is set.
     """
     from ..commands import uninstall_run
 
