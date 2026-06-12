@@ -2972,7 +2972,7 @@ class TestServiceDaemonHelpers:
                 "local time",
                 "Process: running",
                 "Service process: verified",
-                "Service identity: not checked",
+                "Service identity: not verified by this status check",
                 "Network: accepting connections",
                 "Compute: GPU available",
                 "Search models: ready",
@@ -3012,6 +3012,7 @@ class TestServiceDaemonHelpers:
                 text for text in verbose_expected if text not in verbose.output
             ] == []
             assert [text for text in verbose_hidden if text in verbose.output] == []
+            assert "Service identity: not checked" not in verbose.output
             assert "Started: 2026-" not in verbose.output
         finally:
             server.shutdown()

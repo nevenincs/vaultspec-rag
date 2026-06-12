@@ -535,7 +535,7 @@ def _render_status_json(
 
 def _get_token_label(token_match: bool | None) -> str:
     if token_match is None:
-        return "not checked"
+        return "not verified by this status check"
     if token_match:
         return "verified"
     return "does not match the recorded service"
