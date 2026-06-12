@@ -209,11 +209,11 @@ def qdrant_status(
             else "unknown"
         )
         _print_line(
-            f"Managed process: {alive}; process id {service.get('qdrant_pid')}; "
+            f"Qdrant process: {alive}; process id {service.get('qdrant_pid')}; "
             f"port {service.get('qdrant_port')}"
         )
     else:
-        _print_line("Managed process: none recorded")
+        _print_line("Qdrant process: not started by this service")
     provisioned = payload["provisioned"]
     if isinstance(provisioned, list) and provisioned:
         _print_line("Installed versions:")

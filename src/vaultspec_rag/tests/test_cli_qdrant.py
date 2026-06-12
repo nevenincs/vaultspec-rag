@@ -111,7 +111,7 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert labels["Install"] == "not installed"
     assert labels["Address"].startswith("http://127.0.0.1:")
     assert labels["State"].startswith("Qdrant is not answering on http://127.0.0.1:")
-    assert labels["Managed process"] == "none recorded"
+    assert labels["Qdrant process"] == "not started by this service"
     assert labels["Installed versions"] == "none"
     assert "vaultspec-rag server qdrant install" in result.output
     for old_term in (
@@ -119,6 +119,8 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
         "Active binary",
         "Server ready",
         "Service child",
+        "Managed process",
+        "none recorded",
     ):
         assert old_term not in result.output
 
