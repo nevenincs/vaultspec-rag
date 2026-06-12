@@ -107,7 +107,7 @@ def qdrant_install(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope to stdout."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Install the managed Qdrant server."""
@@ -173,7 +173,7 @@ def _qdrant_status_payload() -> dict[str, Any]:
 def qdrant_status(
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope to stdout."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Show Qdrant runtime install and liveness state."""
@@ -255,7 +255,7 @@ def qdrant_clean(
     ] = False,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit one JSON envelope to stdout."),
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Remove managed Qdrant installs (gated on ``--yes``)."""

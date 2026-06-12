@@ -90,6 +90,11 @@ def test_qdrant_help_uses_managed_server_language() -> None:
 
 
 def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> None:
+    help_result = runner.invoke(app, ["server", "qdrant", "status", "--help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert "Emit JSON for scripts instead of human text" in help_result.output
+    assert "JSON envelope" not in help_result.output
+
     result = runner.invoke(
         app,
         [
@@ -146,6 +151,11 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
 
 
 def test_qdrant_install_dry_run_uses_install_language(tmp_path: Path) -> None:
+    help_result = runner.invoke(app, ["server", "qdrant", "install", "--help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert "Emit JSON for scripts instead of human text" in help_result.output
+    assert "JSON envelope" not in help_result.output
+
     result = runner.invoke(
         app,
         [
@@ -175,6 +185,8 @@ def test_qdrant_clean_help_names_destructive_target() -> None:
     assert result.exit_code == 0, result.output
     assert "managed Qdrant server installs" in result.output
     assert "Confirm deletion of managed Qdrant installs" in result.output
+    assert "Emit JSON for scripts instead of human text" in result.output
+    assert "JSON envelope" not in result.output
     for old_term in ("provisioned qdrant binaries", "managed bin dir", "pinned"):
         assert old_term not in result.output
 
