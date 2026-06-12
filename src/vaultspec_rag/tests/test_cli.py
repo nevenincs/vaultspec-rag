@@ -2621,9 +2621,14 @@ class TestServiceProjectsCli:
 
         out = capsys.readouterr().out
         assert "Loaded projects: 1/16." in out
-        assert "Auto-unload: projects idle for 30m." in out
+        assert "Automatic unload: after 30m idle." in out
         assert r"- example" in out
-        assert "idle for 2m 5s; active requests: 1; last used: 14:05:06" in out
+        assert (
+            "in use: yes (1 active request); idle for 2m 5s; last request: 14:05:06"
+        ) in out
+        assert "active requests" not in out
+        assert "last used" not in out
+        assert "Auto-unload" not in out
         assert "project slots" not in out.lower()
         assert "idle ttl" not in out.lower()
         assert "references" not in out.lower()
