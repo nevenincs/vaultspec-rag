@@ -60,7 +60,10 @@ def validate_search_filters(
     """
     if prefer is not None and prefer not in {"prod", "tests", "docs"}:
         raise InvalidPreferValueError(
-            f"--prefer must be one of 'prod', 'tests', 'docs'; got {prefer!r}.",
+            (
+                "--prefer must be one of production, tests, or documentation; "
+                f"got {prefer!r}."
+            ),
             prefer_value=prefer,
         )
 

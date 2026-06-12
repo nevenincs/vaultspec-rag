@@ -1570,7 +1570,7 @@ class TestMcpFastPath:
         assert "require --type code" in result.output
 
     def test_search_cmd_rejects_invalid_prefer_value(self):
-        """CLI: --prefer must be prod|tests|docs."""
+        """CLI: --prefer reports user-facing supported values."""
         result = runner.invoke(
             app,
             [
@@ -1583,7 +1583,8 @@ class TestMcpFastPath:
             ],
         )
         assert result.exit_code == 2
-        assert "must be one of" in result.output
+        assert "production, tests, or documentation" in result.output
+        assert "prod|tests|docs" not in result.output
 
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
@@ -1798,6 +1799,28 @@ class TestSearchSafetyContract:
         expected["node_type"] = "function"
         assert requests == [expected]
         assert "--node-type" not in result.output
+
+    def test_search_prefer_accepts_user_facing_value_alias(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(
+                tmp_path,
+                server.server_port,
+                "--prefer",
+                "production",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["prefer"] = "prod"
+        assert requests == [expected]
 
     def test_search_command_humanizes_missing_result_location(
         self, tmp_path: Path
@@ -2277,6 +2300,8 @@ class TestHelpCleanup:
         normalized = " ".join(result.output.split())
         assert "selected service is not reachable" in normalized
         assert "selected service is unavailable" not in normalized
+        assert "production, tests, or documentation" in normalized
+        assert "'prod', 'tests', or 'docs'" not in normalized
         assert "hybrid" in result.output.lower() or "Search" in result.output
 
     def test_search_help_filter_options_are_plain(self):

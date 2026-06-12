@@ -406,6 +406,17 @@ def _search_structure_filter(
     return structure if structure is not None else node_type
 
 
+def _search_prefer_filter(prefer: str | None) -> str | None:
+    if prefer is None:
+        return None
+    aliases = {
+        "production": "prod",
+        "documentation": "docs",
+    }
+    normalized = prefer.strip().lower()
+    return aliases.get(normalized, normalized)
+
+
 def _render_in_process_results(
     results: list[SearchResult],
     query: str,
@@ -525,7 +536,9 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
         str | None,
         typer.Option(
             "--prefer",
-            help=("Prefer one kind of code result: 'prod', 'tests', or 'docs'."),
+            help=(
+                "Prefer one kind of code result: production, tests, or documentation."
+            ),
         ),
     ] = None,
     node_type: Annotated[
@@ -639,6 +652,7 @@ def handle_search(  # noqa: PLR0913 - Typer command signature mirrors CLI option
     state: CLIState = ctx.obj
     target = state.target
     node_type = _search_structure_filter(structure, node_type, json_mode)
+    prefer = _search_prefer_filter(prefer)
 
     _validate_and_handle_filters(
         search_type=search_type,
