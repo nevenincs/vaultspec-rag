@@ -54,6 +54,18 @@ def test_updates_subcommands_registered() -> None:
     assert "automatic index update" in result.stdout.lower()
 
 
+def test_update_timing_output_uses_user_language(capsys) -> None:
+    from ..cli._service_watcher import _print_update_timing
+
+    _print_update_timing({"debounce_ms": 2000, "cooldown_s": 30.0})
+
+    output = capsys.readouterr().out
+    assert "File changes: wait 2s before updating." in output
+    assert "Same source: wait 30s before updating again." in output
+    assert "debounce=" not in output
+    assert "cooldown=" not in output
+
+
 def test_watcher_alias_hidden_but_still_compatible() -> None:
     server_help = runner.invoke(app, ["server", "--help"])
     assert server_help.exit_code == 0

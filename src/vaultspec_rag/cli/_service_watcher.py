@@ -14,6 +14,51 @@ from ._render import _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
 
+def _format_milliseconds(raw: object) -> str:
+    if not isinstance(raw, int | float):
+        return "unknown"
+    milliseconds = max(0.0, float(raw))
+    if milliseconds == 0:
+        return "immediately"
+    if milliseconds < 1000:
+        return f"{int(milliseconds)}ms"
+    seconds = milliseconds / 1000.0
+    if seconds.is_integer():
+        return f"{int(seconds)}s"
+    return f"{seconds:.1f}s"
+
+
+def _format_seconds(raw: object) -> str:
+    if not isinstance(raw, int | float):
+        return "unknown"
+    seconds = max(0.0, float(raw))
+    if seconds == 0:
+        return "immediately"
+    if seconds < 60:
+        if seconds.is_integer():
+            return f"{int(seconds)}s"
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(int(seconds), 60)
+    if remainder:
+        return f"{minutes}m {remainder}s"
+    return f"{minutes}m"
+
+
+def _print_update_timing(result: dict[str, object]) -> None:
+    _cli.console.print(
+        f"File changes: wait {_format_milliseconds(result.get('debounce_ms'))} "
+        "before updating.",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Same source: wait {_format_seconds(result.get('cooldown_s'))} "
+        "before updating again.",
+        markup=False,
+        highlight=False,
+    )
+
+
 def _watcher_service_unreachable(
     command: str,
     json_mode: bool,
@@ -61,18 +106,13 @@ def service_watcher_status(
     if json_mode:
         _emit_json(True, "service.watcher.status", data=result)
         return
-    mode = "enabled" if enabled else "disabled (pull-only)"
-    _cli.console.print(
-        f"Automatic index updates: {mode}  "
-        f"debounce={result.get('debounce_ms')}ms  "
-        f"cooldown={result.get('cooldown_s')}s",
-        markup=False,
-        highlight=False,
-    )
+    mode = "enabled" if enabled else "disabled; indexes update when requested"
+    _cli.console.print(f"Automatic index updates: {mode}", markup=False)
+    _print_update_timing(result)
     if not watching:
         _cli.console.print("No roots currently have automatic index updates.")
         return
-    _cli.console.print(f"Roots with automatic index updates: {len(watching)}")
+    _cli.console.print(f"Projects updating automatically: {len(watching)}")
     for entry in watching:
         _cli.console.print(f"- {entry}", markup=False, highlight=False)
 
@@ -154,11 +194,17 @@ def service_watcher_reconfigure(
     root: Annotated[str, typer.Argument(help="Project root to reconfigure.")],
     debounce_ms: Annotated[
         int | None,
-        typer.Option("--debounce-ms", help="New debounce window (ms)."),
+        typer.Option(
+            "--debounce-ms",
+            help="Delay before indexing a burst of file changes, in milliseconds.",
+        ),
     ] = None,
     cooldown_s: Annotated[
         float | None,
-        typer.Option("--cooldown-s", help="New per-source cooldown (s)."),
+        typer.Option(
+            "--cooldown-s",
+            help="Minimum wait before indexing the same source again, in seconds.",
+        ),
     ] = None,
     port: Annotated[
         int | None,
@@ -169,7 +215,7 @@ def service_watcher_reconfigure(
         typer.Option("--json", help="Emit one JSON envelope instead of prose."),
     ] = False,
 ) -> None:
-    """Change automatic index update debounce/cooldown settings."""
+    """Change automatic index update timing."""
     resolved_port = port if port is not None else _default_service_port()
     args: dict[str, object] = {"root": root}
     if debounce_ms is not None:
@@ -189,13 +235,8 @@ def service_watcher_reconfigure(
         _emit_json(True, "service.watcher.reconfigure", data=result)
         return
     if restarted:
-        _cli.console.print(
-            f"Automatic index updates reconfigured for {root}: "
-            f"debounce={result.get('debounce_ms')}ms "
-            f"cooldown={result.get('cooldown_s')}s",
-            markup=False,
-            highlight=False,
-        )
+        _cli.console.print(f"Automatic index updates reconfigured for: {root}")
+        _print_update_timing(result)
     else:
         _cli.console.print(
             f"Automatic index updates are disabled; {root} will update on demand.",
