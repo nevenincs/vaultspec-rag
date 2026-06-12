@@ -33,6 +33,36 @@ def _root(ctx: typer.Context) -> Path:
     return cast("CLIState", ctx.obj).target
 
 
+def _format_timeout(timeout_s: object) -> str:
+    if timeout_s is None:
+        return "no timeout"
+    return f"{timeout_s:g}s" if isinstance(timeout_s, float) else f"{timeout_s}s"
+
+
+def _format_failure_handling(on_error: object) -> str:
+    if on_error == "fail":
+        return "stop on failure"
+    if on_error == "passthrough":
+        return "use original file on failure"
+    return "skip file on failure"
+
+
+def _format_preprocess_result(status: str) -> str:
+    if status == "ok":
+        return "preprocessed"
+    if status == "skipped":
+        return "skipped"
+    if status == "passthrough":
+        return "using original file"
+    return status
+
+
+def _format_unit_count(unit_count: int) -> str:
+    if unit_count == 1:
+        return "1 extracted unit"
+    return f"{unit_count} extracted units"
+
+
 @preprocess_app.command("list", help="List resolved preprocess rules for the project.")
 def handle_preprocess_list(
     ctx: typer.Context,
@@ -61,22 +91,18 @@ def handle_preprocess_list(
         return
     _cli.console.print(f"Preprocess rules: {len(rules)}")
     for index, rule in enumerate(rules, start=1):
-        timeout = "-" if rule["timeout_s"] is None else str(rule["timeout_s"])
+        _cli.console.print(f"{index}. Files: {rule['pattern']}", markup=False)
+        _cli.console.print(f"   Priority: {rule['priority']}", markup=False)
         _cli.console.print(
-            " ".join(
-                [
-                    f"{index}.",
-                    f"pattern={rule['pattern']}",
-                    f"priority={rule['priority']}",
-                    f"on_error={rule['on_error']}",
-                    f"timeout_s={timeout}",
-                ]
-            ),
+            f"   Failure handling: {_format_failure_handling(rule['on_error'])}",
             markup=False,
-            highlight=False,
         )
         _cli.console.print(
-            f"   command={rule['command']}",
+            f"   Timeout: {_format_timeout(rule['timeout_s'])}",
+            markup=False,
+        )
+        _cli.console.print(
+            f"   Command: {rule['command']}",
             markup=False,
             highlight=False,
         )
@@ -104,14 +130,17 @@ def handle_preprocess_check(
                 1,
             )
         _cli.console.print(
-            f"Invalid preprocess config: {exc}", markup=False, highlight=False
+            f"Preprocess config has a problem: {exc}",
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(code=1) from exc
     count = len(config.rules)
     if json_mode:
         _emit_json(True, "preprocess check", data={"valid": True, "rule_count": count})
         return
-    _cli.console.print(f"OK - {count} valid preprocess rule(s).")
+    rule_word = "rule" if count == 1 else "rules"
+    _cli.console.print(f"Preprocess config is valid: {count} {rule_word}.")
 
 
 @preprocess_app.command(
@@ -141,7 +170,7 @@ def handle_preprocess_run_one(
         if json_mode:
             _emit_json(True, "preprocess run-one", data={"matched": False, "path": rel})
             return
-        _cli.console.print(f"No preprocess rule matches {rel}.")
+        _cli.console.print(f"No preprocess rule matches: {rel}.")
         return
 
     max_bytes = int(get_config().preprocess_max_emitted_bytes)
@@ -156,7 +185,7 @@ def handle_preprocess_run_one(
                 1,
             )
         _cli.console.print(
-            f"Preprocessor failed (on_error=fail): {exc}",
+            f"Preprocess failed: {exc}",
             markup=False,
             highlight=False,
         )
@@ -176,17 +205,13 @@ def handle_preprocess_run_one(
     if json_mode:
         _emit_json(True, "preprocess run-one", data=data)
         return
-    _cli.console.print(
-        f"Rule: {rule.pattern} -> status {result.status}",
-        markup=False,
-        highlight=False,
-    )
+    _cli.console.print(f"Rule: {rule.pattern}", markup=False, highlight=False)
+    _cli.console.print(f"Result: {_format_preprocess_result(result.status)}")
     if result.reason:
         _cli.console.print(f"Reason: {result.reason}")
     if output is not None:
-        mode = "units" if output.units else "text"
+        content = _format_unit_count(unit_count) if output.units else "text output"
         _cli.console.print(
-            f"Preprocessor: {output.preprocessor_id} v{output.preprocessor_version} "
-            f"(schema v{output.schema_version}); mode={mode}"
-            + (f", {unit_count} unit(s)" if unit_count else "")
+            f"Extractor: {output.preprocessor_id} {output.preprocessor_version}"
         )
+        _cli.console.print(f"Content: {content}")
