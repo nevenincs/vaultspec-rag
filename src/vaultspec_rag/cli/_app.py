@@ -176,14 +176,14 @@ def main(
         str | None,
         typer.Option(
             "--status-dir",
-            help="Directory for service status files (default: ~/.vaultspec-rag)",
+            help="Directory for service runtime files (default: ~/.vaultspec-rag)",
         ),
     ] = None,
     log_file: Annotated[
         str | None,
         typer.Option(
             "--log-file",
-            help="Service log filename relative to --status-dir",
+            help="Service log filename inside --status-dir",
         ),
     ] = None,
     _version: Annotated[
