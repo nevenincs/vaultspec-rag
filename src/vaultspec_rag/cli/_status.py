@@ -111,7 +111,7 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
 @app.command(
     "status",
     help=(
-        "Show project index counts, storage location, and compute device. "
+        "Show project index counts, index data location, and compute device. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -125,7 +125,7 @@ def handle_status(
         ),
     ] = False,
 ) -> None:
-    """Show project index counts, storage location, and compute device."""
+    """Show project index counts, index data location, and compute device."""
     state: CLIState = ctx.obj
     target = state.target
 
