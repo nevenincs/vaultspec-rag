@@ -532,7 +532,7 @@ def handle_clean(
         )
     if not yes:
         confirmed = typer.confirm(
-            f"Delete {clean_type} RAG index data for {target}?",
+            f"Delete {clean_type} search index data for {target}?",
             default=False,
         )
         if not confirmed:

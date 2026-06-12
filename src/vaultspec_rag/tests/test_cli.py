@@ -490,6 +490,19 @@ class TestCleanCommand:
         assert result.exit_code == 0
         assert "wipe" in result.output.lower()
 
+    def test_clean_confirm_prompt_uses_search_index_language(self, tmp_path: Path):
+        root = self._workspace(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--target", str(root), "clean", "all"],
+            input="n\n",
+        )
+
+        assert result.exit_code == 1
+        assert "Delete all search index data for" in result.output
+        assert "Clean cancelled." in result.output
+        assert "RAG index data" not in result.output
+
     def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
         from ..config import get_config
         from ..store import VaultStore
