@@ -854,6 +854,7 @@ class TestStatusCommand:
         assert labels["Vault documents"] == "12"
         assert labels["Source code sections"] == "34"
         assert labels["Address"] == "http://127.0.0.1:8766"
+        assert labels["Service status"] == "vaultspec-rag server status --port 8766"
         assert "Read from" not in labels
         assert "Source code chunks" not in labels
 
@@ -920,6 +921,10 @@ class TestStatusCommand:
         assert labels["Vault documents"] == "7"
         assert labels["Source code sections"] == "9"
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert (
+            labels["Service status"]
+            == f"vaultspec-rag server status --port {server.server_port}"
+        )
         assert "Read from" not in labels
         assert "remote storage" not in result.output
 

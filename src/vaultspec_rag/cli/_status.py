@@ -69,6 +69,9 @@ def _render_status_text(
     ]
     if service_port is not None:
         lines.append(f"Address: http://127.0.0.1:{service_port}")
+        lines.append(
+            f"Service status: vaultspec-rag server status --port {service_port}"
+        )
     for line in lines:
         _cli.console.print(
             line,
