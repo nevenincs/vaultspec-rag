@@ -101,26 +101,34 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     lines = _plain_lines(output)
     assert lines[0] == "Service status"
     labels = _label_values(output)
-    assert labels["Local record"] == "found"
-    assert labels["Process id"] == str(os.getpid())
-    assert labels["Address"] == f"http://127.0.0.1:{port}"
-    assert labels["Process"] == "running"
-    assert labels["Process check"] == "verified"
-    assert labels["Identity check"] == "not verified by this status check"
-    assert labels["Network"] == "accepting connections"
-    assert labels["Server"] == "running"
-    assert "State" not in labels
-    assert labels["Readiness"] == "ready for requests"
-    assert "Health" not in labels
-    assert labels["Compute"] == "GPU available"
-    assert labels["Search models"] == "ready"
-    assert labels["Reranking"] == "ready"
+    expected_labels = {
+        "Local record": "found",
+        "Process id": str(os.getpid()),
+        "Address": f"http://127.0.0.1:{port}",
+        "Process": "running",
+        "Process check": "verified",
+        "Identity check": "not verified by this status check",
+        "Network": "accepting connections",
+        "Server": "running",
+        "Readiness": "ready for requests",
+        "Compute": "GPU available",
+        "Search models": "ready",
+        "Reranking": "ready",
+    }
+    for label, value in expected_labels.items():
+        assert labels[label] == value
+    for absent in ("State", "Health"):
+        assert absent not in labels
     assert re.search(r"\d+ local time", labels["Started"])
     job = _section_label_values(output, "Current job")
-    assert job["Operation"] == "code index refresh"
-    assert job["Project"] == "feature-server-supervision"
+    expected_job = {
+        "Operation": "code index refresh",
+        "Project": "feature-server-supervision",
+        "Progress": "embedding source code sections 7 of 20",
+    }
+    for label, value in expected_job.items():
+        assert job[label] == value
     assert re.fullmatch(r"\d+s", job["Runtime"])
-    assert job["Progress"] == "embedding source code sections 7 of 20"
     next_action_index = lines.index("Next action:")
     assert lines[next_action_index + 1] == "vaultspec-rag server jobs --state active"
     _assert_no_table_borders(output)
@@ -4564,7 +4572,7 @@ class TestServiceJobsCli:
                     "server",
                     "jobs",
                     "--state",
-                    "running",
+                    "active",
                     "--limit",
                     "5",
                     "--port",
@@ -4586,8 +4594,8 @@ class TestServiceJobsCli:
             "Total: 0 jobs",
             "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
             "Order: latest shown last",
-            "Filter: state active or waiting",
-            "There are no active or waiting jobs.",
+            "Filter: state active",
+            "There are no active jobs.",
             "Next actions:",
             f"vaultspec-rag server status --port {server.server_port}",
             f"vaultspec-rag server logs --limit 20 --port {server.server_port}",
@@ -4621,16 +4629,16 @@ class TestServiceJobsCli:
             for line in lines
             if "finished code index refresh for finished-project" in line
         ]
-        running = [
+        active = [
             line
             for line in lines
-            if "running vault index update for running-project" in line
+            if "active vault index update for running-project" in line
         ]
         assert len(finished) == 1
-        assert len(running) == 1
+        assert len(active) == 1
         assert finished[0].startswith("- ")
-        assert running[0].startswith("* ")
-        assert lines.index(finished[0]) < lines.index(running[0])
+        assert active[0].startswith("* ")
+        assert lines.index(finished[0]) < lines.index(active[0])
         _assert_no_table_borders(result.output)
 
 

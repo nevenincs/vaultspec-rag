@@ -44,11 +44,12 @@ from ._service_status import (
 
 
 def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
-    """Fail fast (or provision with consent) before a --qdrant start.
+    """Fail fast (or provision with consent) before a server-mode start.
 
-    Never downloads silently: an absent executable without
-    ``auto_provision`` prints the exact install command and exits
-    non-zero.
+    Server mode is the default backend, so this guard runs by default and
+    only ``--local-only`` (or an explicit ``--no-qdrant``) skips it. Never
+    downloads silently: an absent executable without ``auto_provision``
+    prints the exact install command and exits non-zero.
     """
     from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
 
@@ -242,7 +243,11 @@ def service_start(
         )
         raise typer.Exit(code=1)
 
-    if qdrant:
+    # Server mode is the default backend, so the qdrant-binary guard runs
+    # by default. --local-only (and an explicit --no-qdrant) select the
+    # on-disk store and skip it, so a default start fails fast on a missing
+    # binary while the local opt-out never touches the server.
+    if not local_only and qdrant is not False:
         _ensure_qdrant_binary(auto_provision=qdrant_auto_provision)
 
     if _existing_service_running():

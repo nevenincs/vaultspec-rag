@@ -250,3 +250,129 @@ class TestSupervision:
             assert supervisor.server_version().startswith("1.18")
         finally:
             supervisor.stop()
+
+
+class TestServerFirstStartupSelection:
+    """The service-startup selection contract: server mode by default,
+    local store only under --local-only, loud failure when the default
+    server backend cannot start.
+
+    These exercise the real selection (``effective_server_mode``) and the
+    real failure path the service lifespan routes through, without
+    spawning the GPU daemon or disturbing any running service.
+    """
+
+    def test_default_config_selects_server_mode(self) -> None:
+        """With no opt-out set, the resident service starts server mode."""
+        from ...config import get_config
+
+        prev_server = os.environ.get(EnvVar.QDRANT_SERVER.value)
+        prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
+        os.environ.pop(EnvVar.QDRANT_SERVER.value, None)
+        os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
+        reset_config()
+        try:
+            cfg = get_config()
+            assert cfg.qdrant_server is True
+            assert cfg.local_only is False
+            # The one selection point the lifespan consults.
+            assert cfg.effective_server_mode() is True
+        finally:
+            if prev_server is None:
+                os.environ.pop(EnvVar.QDRANT_SERVER.value, None)
+            else:
+                os.environ[EnvVar.QDRANT_SERVER.value] = prev_server
+            if prev_local is None:
+                os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
+            else:
+                os.environ[EnvVar.LOCAL_ONLY.value] = prev_local
+            reset_config()
+
+    def test_local_only_opt_out_opens_the_on_disk_store(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """--local-only deselects server mode and opens the local store.
+
+        With ``local_only`` set the lifespan never spawns the child and
+        never publishes ``QDRANT_URL``, so a store opens in on-disk mode
+        with point-operation locks engaged - the backend-aware local path.
+        """
+        from ... import VaultStore
+        from ...config import get_config
+
+        prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
+        prev_url = os.environ.get(EnvVar.QDRANT_URL.value)
+        os.environ[EnvVar.LOCAL_ONLY.value] = "1"
+        # No server URL is published in local-only mode.
+        os.environ.pop(EnvVar.QDRANT_URL.value, None)
+        reset_config()
+        try:
+            cfg = get_config()
+            assert cfg.effective_server_mode() is False
+
+            store = VaultStore(tmp_path)
+            try:
+                assert store._server_mode is False
+                # Local mode takes a real reentrant point lock, never the
+                # server-mode null context.
+                assert not isinstance(
+                    store._point_lock(store.TABLE_NAME), contextlib.nullcontext
+                )
+            finally:
+                store.close()
+        finally:
+            if prev_local is None:
+                os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
+            else:
+                os.environ[EnvVar.LOCAL_ONLY.value] = prev_local
+            if prev_url is not None:
+                os.environ[EnvVar.QDRANT_URL.value] = prev_url
+            reset_config()
+
+    def test_missing_binary_default_path_fails_loud_and_actionable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The default server backend with no binary aborts actionably.
+
+        Server mode is the default; with the managed dir empty, no
+        operator binary, and ``qdrant`` absent from ``PATH``,
+        ``start_supervised_from_config`` (the call the lifespan wraps)
+        raises a ``RuntimeError`` that names the install command. The
+        service lifespan turns this into the startup abort that also
+        names ``--local-only``; here we prove the underlying loud failure
+        the contract depends on.
+        """
+        from ...qdrant_runtime import resolve_binary, start_supervised_from_config
+
+        prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
+        prev_binary = os.environ.get(EnvVar.QDRANT_BINARY.value)
+        prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
+        # Isolate the managed dir to an empty tmp so nothing is
+        # provisioned, point the operator-binary knob at a path that does
+        # not exist, and keep server mode the default (no local-only).
+        os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
+        os.environ[EnvVar.QDRANT_BINARY.value] = str(tmp_path / "does-not-exist")
+        os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
+        reset_config()
+        try:
+            if resolve_binary() is not None:
+                pytest.fail(
+                    "a qdrant binary resolved on PATH; this host cannot "
+                    "exercise the missing-binary loud-failure contract"
+                )
+            with pytest.raises(RuntimeError, match="server qdrant install"):
+                start_supervised_from_config()
+        finally:
+            if prev_status is None:
+                os.environ.pop(EnvVar.STATUS_DIR.value, None)
+            else:
+                os.environ[EnvVar.STATUS_DIR.value] = prev_status
+            if prev_binary is None:
+                os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
+            else:
+                os.environ[EnvVar.QDRANT_BINARY.value] = prev_binary
+            if prev_local is not None:
+                os.environ[EnvVar.LOCAL_ONLY.value] = prev_local
+            reset_config()
