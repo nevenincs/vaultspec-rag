@@ -313,6 +313,15 @@ def _raw_logs_command(
     return " ".join(parts)
 
 
+def _activity_filter_text(job_id: str | None, contains: str | None) -> str | None:
+    filters: list[str] = []
+    if job_id:
+        filters.append(f"job {_short_id(job_id)}")
+    if contains:
+        filters.append(f'text "{contains}"')
+    return " and ".join(filters) if filters else None
+
+
 def _render_no_activity_hint(
     port: int,
     *,
@@ -320,12 +329,8 @@ def _render_no_activity_hint(
     job_id: str | None,
     contains: str | None,
 ) -> None:
-    filters: list[str] = []
-    if job_id:
-        filters.append(f"job {_short_id(job_id)}")
-    if contains:
-        filters.append(f'text "{contains}"')
-    scope = f" matching {' and '.join(filters)}" if filters else ""
+    filter_text = _activity_filter_text(job_id, contains)
+    scope = f" matching {filter_text}" if filter_text else ""
     _cli.console.print(
         f"Address: http://127.0.0.1:{port}",
         markup=False,
@@ -365,6 +370,39 @@ def _render_no_activity_hint(
     )
 
 
+def _render_activity_header(
+    *,
+    port: int,
+    shown: int,
+    lines: int,
+    job_id: str | None,
+    contains: str | None,
+) -> None:
+    noun = "entry" if shown == 1 else "entries"
+    _cli.console.print("Activity", markup=False, highlight=False)
+    _cli.console.print(
+        f"Address: http://127.0.0.1:{port}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print(f"Shown: {shown} {noun}", markup=False, highlight=False)
+    _cli.console.print(
+        f"Source: last {lines} log lines",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    filter_text = _activity_filter_text(job_id, contains)
+    if filter_text:
+        _cli.console.print(
+            f"Filter: {filter_text}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
+
 def _render_activity_feed(
     log_lines: list[object],
     *,
@@ -377,6 +415,13 @@ def _render_activity_feed(
     if not activity_lines:
         _render_no_activity_hint(port, lines=lines, job_id=job_id, contains=contains)
         return
+    _render_activity_header(
+        port=port,
+        shown=len(activity_lines),
+        lines=lines,
+        job_id=job_id,
+        contains=contains,
+    )
     for line in activity_lines:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 

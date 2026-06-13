@@ -428,6 +428,13 @@ def test_logs_human_output_is_activity_feed() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+    ]
     assert (
         "08:46:28 search vault 10 results 1.38s "
         "chore-476-restructure-execution request 6793374d"
@@ -451,6 +458,13 @@ def test_logs_human_output_shows_index_updates() -> None:
 
     assert result.exit_code == 0, result.output
     output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+    ]
     assert "13:12:09 index updated 64 source code sections" in output
     assert "13:12:10 index removed 2 vault documents" in output
     assert "2 docs" not in output
@@ -468,8 +482,14 @@ def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
     assert result.exit_code == 0, result.output
     output = result.output
     lines = _plain_lines(output)
-    assert len(lines) == 1
-    head, hint = lines[0].split("; ", 1)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 1 entry",
+        "Source: last 8 log lines",
+    ]
+    assert len(lines) == 5
+    head, hint = lines[4].split("; ", 1)
     clock, level, source = head.split()
     assert clock == "13:14:09"
     assert level == "warning"
@@ -537,6 +557,40 @@ def test_logs_empty_output_preserves_filters_in_raw_followup() -> None:
         "vaultspec-rag server logs --raw --limit 12 "
         f'--port {port} --job-id abc123456789 --contains "disk space"'
     ) in result.output
+
+
+def test_logs_activity_header_reports_filters() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "logs",
+                "--limit",
+                "8",
+                "--contains",
+                "6793374d",
+                "--job-id",
+                "job-abcdef123",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    lines = _plain_lines(result.output)
+    assert lines[:5] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+        'Filter: job job-abcd and text "6793374d"',
+    ]
+    request_path = _LogsHTTPHandler.request_paths[-1]
+    assert request_path.startswith("/logs/json?")
+    assert "lines=8" in request_path
+    assert "contains=6793374d" in request_path
+    assert "job_id=job-abcdef123" in request_path
 
 
 def test_logs_raw_mode_preserves_log_lines() -> None:
