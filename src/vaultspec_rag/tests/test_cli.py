@@ -82,10 +82,7 @@ def _assert_default_status_summary(output: str, port: int) -> None:
     assert labels["Address"] == f"http://127.0.0.1:{port}"
     assert labels["Uptime"] == "5m 12s"
     assert labels["Queue"] == "nothing waiting; 1 active job"
-    assert (
-        labels["Jobs"]
-        == "2 processed jobs; 1 active job; no waiting jobs; 3 recent jobs"
-    )
+    assert labels["Jobs"] == "2 finished, 1 active, 0 waiting, 0 failed"
     job = _section_label_values(output, "Current job")
     assert job["Operation"] == "code index refresh"
     assert job["Project"] == "feature-server-supervision"
@@ -244,6 +241,7 @@ def _status_contract_server(
     last_progress_age_seconds: float = 2.0,
     *,
     extra_running_job: bool = False,
+    failed_jobs: int = 0,
     omit_project: bool = False,
     omit_job_started_at: bool = False,
 ) -> tuple[typing.Any, typing.Any]:
@@ -261,6 +259,7 @@ def _status_contract_server(
                     running_job_started_at,
                     last_progress_age_seconds=last_progress_age_seconds,
                     extra_running_job=extra_running_job,
+                    failed_jobs=failed_jobs,
                     omit_project=omit_project,
                     omit_job_started_at=omit_job_started_at,
                 )
@@ -286,6 +285,7 @@ def _status_contract_jobs_payload(
     *,
     last_progress_age_seconds: float,
     extra_running_job: bool,
+    failed_jobs: int,
     omit_project: bool,
     omit_job_started_at: bool,
 ) -> dict[str, object]:
@@ -337,7 +337,13 @@ def _status_contract_jobs_payload(
             }
         )
     jobs.extend([{"id": "done-1", "phase": "done"}, {"id": "done-2", "phase": "done"}])
+    jobs.extend(
+        {"id": f"failed-{index}", "phase": "error"} for index in range(failed_jobs)
+    )
     running_count = 2 if extra_running_job else 1
+    phases = {"running": running_count, "done": 2}
+    if failed_jobs:
+        phases["error"] = failed_jobs
     return {
         "ok": True,
         "jobs": jobs,
@@ -345,7 +351,7 @@ def _status_contract_jobs_payload(
         "returned": len(jobs),
         "summary": {
             "running": running_count,
-            "phases": {"running": running_count, "done": 2},
+            "phases": phases,
         },
     }
 
@@ -3474,6 +3480,34 @@ class TestServiceDaemonHelpers:
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
 
+    def test_service_status_summary_reports_failed_jobs(self, tmp_path: Path):
+        import json
+
+        server, thread = _status_contract_server(failed_jobs=2)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Jobs"] == "2 finished, 1 active, 0 waiting, 2 failed"
+            assert "recent jobs" not in result.output
+            assert "processed jobs" not in result.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
     def test_service_status_omits_missing_current_job_project(self, tmp_path: Path):
         import json
 
@@ -3600,7 +3634,7 @@ class TestServiceDaemonHelpers:
         assert _status_queue_label(jobs) == "1 waiting job; 0 active jobs"
         assert (
             _status_jobs_label({**jobs, "total": 3, "phases": {"done": 2}})
-            == "2 processed jobs; no active jobs; 1 waiting job; 3 recent jobs"
+            == "2 finished, 0 active, 1 waiting, 0 failed"
         )
 
     def test_service_status_port_only_json(self, tmp_path: Path):
