@@ -636,6 +636,31 @@ class TestMainHelp:
         # but some versions exit with 2; accept both
         assert "Usage" in result.output
 
+    @pytest.mark.parametrize(
+        ("args", "expected_commands"),
+        [
+            (["server"], ("status", "jobs", "logs")),
+            (["server", "projects"], ("list", "unload")),
+            (["server", "updates"], ("status", "start", "stop", "timing")),
+            (["server", "qdrant"], ("install", "status", "clean")),
+            (["preprocess"], ("list", "check", "run-one")),
+        ],
+    )
+    def test_nested_groups_without_command_show_help(
+        self,
+        args: list[str],
+        expected_commands: tuple[str, ...],
+    ) -> None:
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        assert "Usage:" in result.output
+        assert "Missing command" not in result.output
+        missing = [
+            command for command in expected_commands if command not in result.output
+        ]
+        assert not missing, f"missing commands from help: {missing}"
+
     def test_version_flag(self):
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
@@ -4073,6 +4098,41 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
     return server, thread, requests
 
 
+def _logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _LogsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "lines": [
+                            "2026-06-13 10:05:06 INFO vaultspec_rag.service: "
+                            "service.lifecycle event=search search_type=code "
+                            "results=3 total_seconds=0.42 "
+                            r"root=feature-server-supervision "
+                            "request_id=abcdef123456"
+                        ]
+                    }
+                ).encode("utf-8")
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     import http.server
     import threading
@@ -4196,6 +4256,47 @@ def _projects_unload_contract_server(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread, requests
+
+
+class TestServiceLogsCli:
+    """In-process CLI coverage for `server logs`."""
+
+    def test_logs_accepts_lines_alias_for_limit(self) -> None:
+        server, thread, requests = _logs_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "logs",
+                    "--lines",
+                    "7",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/logs/json?lines=7"]
+        lines = _plain_lines(result.output)
+        expected_present = [
+            "Activity",
+            f"Address: http://127.0.0.1:{server.server_port}",
+            "Shown: 1 entry",
+            "Source: last 7 log lines",
+            (
+                "10:05:06 search code 3 results 0.42s "
+                "feature-server-supervision request abcdef12"
+            ),
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing activity lines: {missing}"
+        _assert_no_table_borders(result.output)
+        assert "--lines" not in result.output
 
 
 class TestServiceJobsCli:

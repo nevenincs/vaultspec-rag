@@ -43,24 +43,29 @@ app = typer.Typer(
 server_root_app = typer.Typer(
     help="Manage the background search service.",
     rich_markup_mode=None,
+    no_args_is_help=False,
 )
 # Alias kept for backward-compatible decorator references in command modules.
 server_app = server_root_app
 server_projects_app = typer.Typer(
     help="Inspect and unload projects held by the running search service.",
     rich_markup_mode=None,
+    no_args_is_help=False,
 )
 server_watcher_app = typer.Typer(
     help="Inspect and control automatic index updates.",
     rich_markup_mode=None,
+    no_args_is_help=False,
 )
 server_qdrant_app = typer.Typer(
     help="Install and inspect the managed Qdrant server.",
     rich_markup_mode=None,
+    no_args_is_help=False,
 )
 preprocess_app = typer.Typer(
     help="Inspect and validate document preprocessing rules.",
     rich_markup_mode=None,
+    no_args_is_help=False,
 )
 
 app.add_typer(server_root_app, name="server")
@@ -68,6 +73,42 @@ server_root_app.add_typer(server_projects_app, name="projects")
 server_root_app.add_typer(server_watcher_app, name="updates")
 server_root_app.add_typer(server_qdrant_app, name="qdrant")
 app.add_typer(preprocess_app, name="preprocess")
+
+
+def _show_group_help_if_no_command(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
+
+
+@server_root_app.callback(invoke_without_command=True)
+def server_main(ctx: typer.Context) -> None:
+    """Show server command help when no server subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_projects_app.callback(invoke_without_command=True)
+def server_projects_main(ctx: typer.Context) -> None:
+    """Show project command help when no project subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_watcher_app.callback(invoke_without_command=True)
+def server_updates_main(ctx: typer.Context) -> None:
+    """Show update command help when no update subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_qdrant_app.callback(invoke_without_command=True)
+def server_qdrant_main(ctx: typer.Context) -> None:
+    """Show Qdrant command help when no Qdrant subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@preprocess_app.callback(invoke_without_command=True)
+def preprocess_main(ctx: typer.Context) -> None:
+    """Show preprocess command help when no preprocess subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
 
 
 class CLIState:

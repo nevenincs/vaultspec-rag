@@ -432,6 +432,7 @@ def service_logs(
         int,
         typer.Option(
             "--limit",
+            "--lines",
             help="Number of recent service log lines to inspect.",
         ),
     ] = 200,
