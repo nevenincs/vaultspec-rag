@@ -169,6 +169,11 @@ def search_vault(
     )
     root = _resolve(root_dir)
     registry = get_registry()
+    # An empty or unbuilt vault index needs no query encoding: short-circuit
+    # to an empty result without loading the GPU model (so an empty search is
+    # cheap and works on a CPU-only host).
+    if registry.vault_doc_count(root) == 0:
+        return []
     registry.load_model()
     with registry.lease(root) as slot:
         return slot.searcher.search_vault(
@@ -207,6 +212,9 @@ def search_vault_timed(
     )
     root = _resolve(root_dir)
     registry = get_registry()
+    # Empty/unbuilt index: return an empty result without loading the model.
+    if registry.vault_doc_count(root) == 0:
+        return [], {"model_load_seconds": 0.0, "project_lease_seconds": 0.0}
     phase_started = time.perf_counter()
     registry.load_model()
     model_load_seconds = time.perf_counter() - phase_started
@@ -290,6 +298,9 @@ def search_codebase(
     )
     root = _resolve(root_dir)
     registry = get_registry()
+    # Empty/unbuilt code index: return an empty result without loading the model.
+    if registry.code_chunk_count(root) == 0:
+        return []
     registry.load_model()
     with registry.lease(root) as slot:
         return slot.searcher.search_codebase(
@@ -343,6 +354,9 @@ def search_codebase_timed(
     )
     root = _resolve(root_dir)
     registry = get_registry()
+    # Empty/unbuilt code index: return an empty result without loading the model.
+    if registry.code_chunk_count(root) == 0:
+        return [], {"model_load_seconds": 0.0, "project_lease_seconds": 0.0}
     phase_started = time.perf_counter()
     registry.load_model()
     model_load_seconds = time.perf_counter() - phase_started
