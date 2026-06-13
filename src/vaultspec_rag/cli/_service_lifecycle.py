@@ -827,6 +827,11 @@ def _print_operational_detail(
             _print_detail_line("Jobs", "not reported by service")
     next_action = operational.get("next_action")
     if next_action:
+        _print_next_action(next_action)
+
+
+def _print_next_action(next_action: object) -> None:
+    if next_action:
         _cli.console.print("Next action:", markup=False, highlight=False)
         _cli.console.print(f"  {next_action}", markup=False, highlight=False)
 
@@ -972,6 +977,8 @@ def _render_status_summary(
     for line in lines:
         _cli.console.print(line, markup=False, highlight=False)
     _print_current_job_detail(jobs_dict)
+    if isinstance(operational, dict):
+        _print_next_action(operational.get("next_action"))
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 

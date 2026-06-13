@@ -89,6 +89,9 @@ def _assert_default_status_summary(output: str, port: int) -> None:
     assert job["Project"] == "feature-server-supervision"
     assert re.fullmatch(r"\d+s", job["Runtime"])
     assert job["Progress"] == "embedding source code sections 7 of 20"
+    lines = _plain_lines(output)
+    next_action_index = lines.index("Next action:")
+    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --running"
     _assert_no_table_borders(output)
     assert max(len(line) for line in output.splitlines()) <= 100
 
