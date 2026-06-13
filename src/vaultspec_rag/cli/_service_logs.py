@@ -327,13 +327,13 @@ def _render_no_activity_hint(
         filters.append(f'text "{contains}"')
     scope = f" matching {' and '.join(filters)}" if filters else ""
     _cli.console.print(
-        f"Service is reachable at http://127.0.0.1:{port}.",
+        f"Address: http://127.0.0.1:{port}",
         markup=False,
         highlight=False,
         soft_wrap=True,
     )
     _cli.console.print(
-        f"No service activity{scope} was found in the last {lines} log lines.",
+        f"Activity: none found{scope} in the last {lines} log lines.",
         markup=False,
         highlight=False,
         soft_wrap=True,

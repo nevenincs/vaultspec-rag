@@ -492,8 +492,8 @@ def test_logs_empty_output_routes_operator_to_next_commands() -> None:
 
     assert result.exit_code == 0, result.output
     lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-    assert lines[0] == f"Service is reachable at http://127.0.0.1:{port}."
-    assert lines[1] == "No service activity was found in the last 8 log lines."
+    assert lines[0] == f"Address: http://127.0.0.1:{port}"
+    assert lines[1] == "Activity: none found in the last 8 log lines."
     assert "Next actions:" in lines
     assert "Try:" not in lines
     commands = [line for line in lines if line.startswith("vaultspec-rag ")]
@@ -529,8 +529,8 @@ def test_logs_empty_output_preserves_filters_in_raw_followup() -> None:
 
     assert result.exit_code == 0, result.output
     assert (
-        'No service activity matching job abc12345 and text "disk space" '
-        "was found in the last 12 log lines."
+        'Activity: none found matching job abc12345 and text "disk space" '
+        "in the last 12 log lines."
     ) in result.output
     assert (
         "vaultspec-rag server logs --raw --limit 12 "
