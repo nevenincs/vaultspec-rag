@@ -25,7 +25,7 @@ from ._process import (
     _port_is_listening,
     _spawn_service,
 )
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import _emit_json
 from ._service_jobs import (
     _human_progress,
     _operation_label,
@@ -1213,74 +1213,6 @@ def _render_explicit_port_status(
         health=health,
         operational=operational,
         exit_code=exit_code,
-    )
-
-
-def service_health(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help="Emit JSON for scripts with health details.",
-        ),
-    ] = False,
-) -> None:
-    """Internal compatibility helper for probing the service ``/health`` endpoint."""
-    resolved_port = port if port is not None else _default_service_port()
-    if resolved_port is None:
-        message = "Service is not running. Start it with `vaultspec-rag server start`."
-        if json_mode:
-            _emit_json_error_and_exit(
-                "service.health",
-                "service_not_running",
-                message,
-                3,
-            )
-        _cli.console.print(
-            "Ready: unavailable\n"
-            "Use `vaultspec-rag server status` for service state and next actions.",
-            markup=False,
-            highlight=False,
-        )
-        raise typer.Exit(3)
-
-    health = _health_probe(resolved_port)
-    if health is None:
-        message = (
-            f"Service on port {resolved_port} is unreachable. "
-            "Start it with `vaultspec-rag server start`."
-        )
-        if json_mode:
-            _emit_json_error_and_exit(
-                "service.health",
-                "service_not_running",
-                message,
-                3,
-                port=resolved_port,
-            )
-        _cli.console.print(
-            "Ready: unreachable\n"
-            f"Use `vaultspec-rag server status --port {resolved_port}` for "
-            "service state and next actions.",
-            markup=False,
-            highlight=False,
-        )
-        raise typer.Exit(3)
-
-    if json_mode:
-        _emit_json(True, "service.health", data=health, port=resolved_port)
-        return
-
-    _cli.console.print(
-        f"Ready: {_status_health_label(health, port_listening=True)}\n"
-        f"Use `vaultspec-rag server status --port {resolved_port}` for "
-        "service state and next actions.",
-        markup=False,
-        highlight=False,
     )
 
 

@@ -100,10 +100,8 @@ from ._search import (
     _suppress_hf_progress,  # pyright: ignore[reportPrivateUsage]  # _search lacks __all__; re-exported intentionally
     handle_search,
 )
-from ._service_info import service_info
 from ._service_jobs import service_jobs
 from ._service_lifecycle import (
-    service_health,
     service_start,
     service_status,
     service_stop,
@@ -201,8 +199,6 @@ __all__ = [
     "server_projects_app",
     "server_qdrant_app",
     "server_watcher_app",
-    "service_health",
-    "service_info",
     "service_jobs",
     "service_logs",
     "service_projects_list",
