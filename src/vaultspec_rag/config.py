@@ -79,6 +79,9 @@ class EnvVar(StrEnum):
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
     QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
     QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    # First-class local-backend opt-out. When set truthy it selects the
+    # on-disk store regardless of the server-mode default.
+    LOCAL_ONLY = "VAULTSPEC_RAG_LOCAL_ONLY"
 
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
@@ -136,6 +139,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_port": EnvVar.QDRANT_PORT,
     "qdrant_binary": EnvVar.QDRANT_BINARY,
     "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
+    # First-class local-backend opt-out knob.
+    "local_only": EnvVar.LOCAL_ONLY,
 }
 
 

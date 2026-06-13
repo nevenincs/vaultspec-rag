@@ -23,7 +23,7 @@ Make the resident service default to the supervised Qdrant server backend, with 
 Flip the runtime backend default to server mode in config and introduce a single local-only selection knob honored across config resolution.
 
 - [x] `W01.P01.S01` - flip the qdrant_server default from False to True in the RAG defaults so server mode is the assumed backend; `src/vaultspec_rag/config.py`.
-- [ ] `W01.P01.S02` - add the LOCAL_ONLY env var member and its \_ENV_OVERRIDE_MAP entry so a single knob selects the local backend across config resolution; `src/vaultspec_rag/config.py`.
+- [x] `W01.P01.S02` - add the LOCAL_ONLY env var member and its \_ENV_OVERRIDE_MAP entry so a single knob selects the local backend across config resolution; `src/vaultspec_rag/config.py`.
 - [ ] `W01.P01.S03` - add a local_only RAG default and resolve effective server mode as qdrant_server and not local_only so local-only deterministically wins; `src/vaultspec_rag/config.py`.
 - [ ] `W01.P01.S04` - add unit tests asserting the server-mode default and the local-only override precedence across env and default resolution; `src/vaultspec_rag/tests/test_config.py`.
 
