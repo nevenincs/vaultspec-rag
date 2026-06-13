@@ -39,7 +39,10 @@ def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
 def _format_seconds(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "not reported"
-    seconds = max(0, int(float(raw)))
+    raw_seconds = max(0.0, float(raw))
+    if raw_seconds < 1:
+        return "less than 1 second"
+    seconds = int(raw_seconds)
     if seconds < 60:
         return _counted_unit(seconds, "second")
     minutes, rem = divmod(seconds, 60)

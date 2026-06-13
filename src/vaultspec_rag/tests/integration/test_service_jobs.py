@@ -787,6 +787,43 @@ def test_jobs_humanizes_disk_space_failures() -> None:
     assert "No space left on device" not in result.output
 
 
+def test_jobs_humanizes_subsecond_finish_duration() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "fastjob1",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "done",
+                "started_at": now - 1,
+                "finished_at": now,
+                "runtime_seconds": 0.1,
+                "result": "+0/1-0 (50ms)",
+                "initiator": {"kind": "tool", "project_root": r"fast"},
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 0, "phases": {"done": 1}},
+        "filters": {"limit": 5},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    rows = _jobs_feed_rows(result.output)
+    assert len(rows) == 1
+    assert rows[0]["detail"] == (
+        "added 0, updated 1, removed 0, finished in less than 1 second"
+    )
+    assert "finished in 0 seconds" not in result.output
+
+
 def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
     now = time.time()
     payload: dict[str, object] = {
