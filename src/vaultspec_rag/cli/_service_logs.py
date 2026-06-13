@@ -82,11 +82,18 @@ def _format_duration(raw: str | None) -> str | None:
         seconds = float(raw)
     except ValueError:
         return raw
+    seconds = max(0.0, seconds)
+    if seconds < 1:
+        return "less than 1 second"
+    if seconds == 1:
+        return "1 second"
     if seconds < 10:
-        return f"{seconds:.2f}s"
+        value = f"{seconds:.2f}".rstrip("0").rstrip(".")
+        return f"{value} seconds"
     if seconds < 100:
-        return f"{seconds:.1f}s"
-    return f"{seconds:.0f}s"
+        value = f"{seconds:.1f}".rstrip("0").rstrip(".")
+        return f"{value} seconds"
+    return f"{seconds:.0f} seconds"
 
 
 def _result_count(raw: str | None) -> str | None:

@@ -436,7 +436,7 @@ def test_logs_human_output_is_activity_feed() -> None:
         "Source: last 8 log lines",
     ]
     assert (
-        "08:46:28 search vault 10 results 1.38s "
+        "08:46:28 search vault 10 results 1.38 seconds "
         "chore-476-restructure-execution request 6793374d"
     ) in output
     assert "08:46:29 service started process 4242" in output
@@ -447,6 +447,16 @@ def test_logs_human_output_is_activity_feed() -> None:
     assert "uvicorn.access" not in output
     for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
         assert forbidden not in output
+
+
+def test_logs_duration_uses_words() -> None:
+    from ...cli._service_logs import _format_duration
+
+    assert _format_duration("0.050") == "less than 1 second"
+    assert _format_duration("1") == "1 second"
+    assert _format_duration("1.500") == "1.5 seconds"
+    assert _format_duration("12.04") == "12 seconds"
+    assert _format_duration("120.6") == "121 seconds"
 
 
 def test_logs_human_output_shows_index_updates() -> None:

@@ -4979,8 +4979,11 @@ class TestIndexSummaryCLI:
         lines = [line.strip() for line in result.output.splitlines() if line.strip()]
         assert lines == [
             "Indexing summary: ran in running service.",
-            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2s",
-            "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms",
+            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2 seconds",
+            (
+                "Source code: added 4; updated 5; removed 6; total 15; "
+                "finished in 50 milliseconds"
+            ),
         ]
 
     def test_index_all_handles_sparse_service_summary_without_unknown_text(
