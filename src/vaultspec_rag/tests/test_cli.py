@@ -84,7 +84,7 @@ def _assert_default_status_summary(output: str, port: int) -> None:
     assert labels["Address"] == f"http://127.0.0.1:{port}"
     assert labels["Uptime"] == "5m 12s"
     assert labels["Queue"] == "nothing waiting; 1 active job"
-    assert labels["Jobs"] == "2 finished, 1 active, 0 waiting, 0 failed"
+    assert labels["Processed jobs"] == "2 finished, 1 active, 0 waiting, 0 failed"
     job = _section_label_values(output, "Current job")
     assert job["Operation"] == "code index refresh"
     assert job["Project"] == "feature-server-supervision"
@@ -3745,9 +3745,11 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
-            assert labels["Jobs"] == "2 finished, 1 active, 0 waiting, 2 failed"
+            assert (
+                labels["Processed jobs"] == "2 finished, 1 active, 0 waiting, 2 failed"
+            )
             assert "recent jobs" not in result.output
-            assert "processed jobs" not in result.output
+            assert "Jobs:" not in result.output
         finally:
             server.shutdown()
             server.server_close()
@@ -4111,7 +4113,7 @@ class TestServiceDaemonHelpers:
             assert "Ready" not in labels
             assert labels["Busy"] == "not reported by service"
             assert labels["Queue"] == "not reported by service"
-            assert labels["Jobs"] == "not reported by service"
+            assert labels["Processed jobs"] == "not reported by service"
             assert labels["Current job"] == "not reported by service"
             assert "unknown" not in result.output.lower()
             assert "unavailable" not in result.output.lower()

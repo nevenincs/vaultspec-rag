@@ -994,7 +994,7 @@ def _render_status_summary(
         f"Address: http://127.0.0.1:{port}",
         f"Uptime: {_status_uptime_label(health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
-        f"Jobs: {_status_jobs_label(jobs_dict)}",
+        f"Processed jobs: {_status_jobs_label(jobs_dict)}",
     ]
     for line in lines:
         _cli.console.print(line, markup=False, highlight=False)
