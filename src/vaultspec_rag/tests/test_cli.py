@@ -4252,12 +4252,12 @@ class TestServiceProjectsCli:
         assert r"  Path: example" in out
         assert "  In use: 1 active service use" in out
         assert "  Last activity: 2m 5s ago" in out
-        assert "  Last used: 14:05:06" in out
+        assert "  Last request: 14:05:06" in out
         assert "Handling 1 active request; idle for 2m 5s" not in out
         assert "Requests:" not in out
-        assert "Last request:" not in out
-        assert "yes" not in out.lower()
-        assert "no" not in out.lower()
+        assert "Last used:" not in out
+        assert "no timestamp from service" not in out.lower()
+        assert not any(line.strip() in {"yes", "no"} for line in _plain_lines(out))
         assert "Auto-unload" not in out
         assert "project slots" not in out.lower()
         assert "project handle" not in out.lower()
@@ -4310,12 +4310,12 @@ class TestServiceProjectsCli:
             r"Path: busy",
             "In use: 2 active service uses",
             "Last activity: 1m 5s ago",
-            "Last used: 14:05:06",
+            "Last request: 14:05:06",
             "- Project: ready",
             r"Path: ready",
             "In use: not currently in use",
             "Last activity: 4s ago",
-            "Last used: no timestamp from service",
+            "Last request: not reported by service",
         ]
         missing = [text for text in expected_present if text not in lines]
         assert not missing, f"missing operator lines: {missing}"
@@ -4324,6 +4324,8 @@ class TestServiceProjectsCli:
             "handling 2 active requests",
             "available for new requests",
             "last used: not recorded",
+            "last used:",
+            "no timestamp from service",
             "project handle",
             "references",
         ]
@@ -4332,7 +4334,7 @@ class TestServiceProjectsCli:
         leaked_prefixes = [
             line
             for line in lines
-            if line.startswith(("Requests:", "Last request:")) or line in {"yes", "no"}
+            if line.startswith("Requests:") or line in {"yes", "no"}
         ]
         assert not leaked_prefixes, f"internal fields leaked: {leaked_prefixes}"
         _assert_no_table_borders(result.output)

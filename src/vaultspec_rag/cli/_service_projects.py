@@ -88,7 +88,7 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     refs = int(refs_raw) if isinstance(refs_raw, int | float) else 0
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
-    last_access = hms or "no timestamp from service"
+    last_request = hms or "not reported by service"
     use_text = (
         "not currently in use"
         if refs <= 0
@@ -99,7 +99,7 @@ def _project_summary(raw_entry: object) -> list[str] | None:
         f"  Path: {root_str}",
         f"  In use: {use_text}",
         f"  Last activity: {_humanize_idle(idle_s)} ago",
-        f"  Last used: {last_access}",
+        f"  Last request: {last_request}",
     ]
 
 
