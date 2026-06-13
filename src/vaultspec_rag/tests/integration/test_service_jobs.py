@@ -375,7 +375,7 @@ def test_jobs_help_uses_operator_language() -> None:
         "Show only active or waiting jobs",
         "Continuously refresh the human jobs view",
         "Stop --watch after this many refreshes",
-        "running, finished, failed, or cancelled",
+        "active, waiting, finished, failed, or cancelled",
     )
     missing = [phrase for phrase in expected_phrases if phrase not in normalized]
     assert not missing, f"missing operator phrasing: {missing}"
@@ -497,23 +497,50 @@ def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
     assert "--trigger" not in result.output
 
 
-def test_jobs_state_filter_sends_service_phase() -> None:
-    with _jobs_http_server(
-        [{"jobs": [], "filters": {"phase": "done"}, "total": 0}]
-    ) as (
+@pytest.mark.parametrize(
+    ("state", "phase", "filter_line", "empty_message"),
+    [
+        (
+            "active",
+            "running",
+            "Filter: state active or waiting",
+            "There are no active or waiting jobs.",
+        ),
+        (
+            "waiting",
+            "running",
+            "Filter: state active or waiting",
+            "There are no active or waiting jobs.",
+        ),
+        (
+            "finished",
+            "done",
+            "Filter: state finished",
+            "No jobs matched these filters.",
+        ),
+    ],
+)
+def test_jobs_state_filter_sends_service_phase(
+    state: str,
+    phase: str,
+    filter_line: str,
+    empty_message: str,
+) -> None:
+    with _jobs_http_server([{"jobs": [], "filters": {"phase": phase}, "total": 0}]) as (
         _server,
         port,
     ):
         result = runner.invoke(
             app,
-            ["server", "jobs", "--port", str(port), "--state", "finished"],
+            ["server", "jobs", "--port", str(port), "--state", state],
         )
 
     assert result.exit_code == 0, result.stdout
     request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
     query = urllib.parse.parse_qs(request.query)
-    assert query["phase"] == ["done"]
-    assert "No matching jobs." in result.stdout
+    assert query["phase"] == [phase]
+    assert filter_line in result.stdout
+    assert empty_message in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -521,7 +548,8 @@ def test_jobs_state_filter_sends_service_phase() -> None:
     [
         (
             ["server", "jobs", "--state", "bananas"],
-            'Invalid --state "bananas". Use running, finished, failed, or cancelled.',
+            'Invalid --state "bananas". Use active, waiting, finished, failed, '
+            "or cancelled.",
         ),
         (
             ["server", "jobs", "--index", "database"],

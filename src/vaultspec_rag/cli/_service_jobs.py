@@ -565,7 +565,12 @@ def _exit_invalid_jobs_filter(json_mode: bool, message: str) -> NoReturn:
             message,
             2,
         )
-    _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+    _cli.console.print(
+        f"Error: {message}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
     raise typer.Exit(2)
 
 
@@ -589,7 +594,9 @@ def _resolve_jobs_phase(
     if not running:
         return normalized_phase
     if normalized_phase is not None and normalized_phase.lower() != "running":
-        message = "--running cannot be combined with --state unless it is running."
+        message = (
+            "--running cannot be combined with --state unless it is active or waiting."
+        )
         _exit_invalid_jobs_filter(json_mode, message)
     return "running"
 
@@ -649,7 +656,7 @@ def _jobs_state_filter(
     _exit_invalid_jobs_filter_value(
         option="--state",
         value=state,
-        allowed="running, finished, failed, or cancelled",
+        allowed="active, waiting, finished, failed, or cancelled",
         json_mode=json_mode,
     )
 
@@ -972,7 +979,9 @@ def service_jobs(
         str | None,
         typer.Option(
             "--state",
-            help=("Filter by job state: running, finished, failed, or cancelled."),
+            help=(
+                "Filter by job state: active, waiting, finished, failed, or cancelled."
+            ),
         ),
     ] = None,
     index: Annotated[
