@@ -81,13 +81,13 @@ def _assert_default_status_summary(output: str, port: int) -> None:
     assert "Ready" not in labels
     assert labels["Busy"] == "processing 1 job"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
-    assert labels["Uptime"] == "5m 12s"
+    assert labels["Uptime"] == "5 minutes 12 seconds"
     assert labels["Queue"] == "nothing waiting; 1 active job"
     assert labels["Processed jobs"] == "2 finished, 1 active, 0 waiting, 0 failed"
     job = _section_label_values(output, "Current job")
     assert job["Operation"] == "code index refresh"
     assert job["Project"] == "feature-server-supervision"
-    assert re.fullmatch(r"\d+s", job["Runtime"])
+    assert re.fullmatch(r"\d+ seconds?", job["Runtime"])
     assert job["Progress"] == "embedding source code sections 7 of 20"
     lines = _plain_lines(output)
     next_action_index = lines.index("Next action:")
@@ -127,7 +127,7 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     }
     for label, value in expected_job.items():
         assert job[label] == value
-    assert re.fullmatch(r"\d+s", job["Runtime"])
+    assert re.fullmatch(r"\d+ seconds?", job["Runtime"])
     next_action_index = lines.index("Next action:")
     assert lines[next_action_index + 1] == "vaultspec-rag server jobs --state active"
     _assert_no_table_borders(output)
@@ -3869,7 +3869,7 @@ class TestServiceDaemonHelpers:
         assert "Current job:" in stalled_status
         assert "Progress: embedding source code sections 7 of 20" in stalled_status
         assert "no progress for" not in fresh_status
-        assert "Warning: no progress for 10m 0s" in stalled_status
+        assert "Warning: no progress for 10 minutes" in stalled_status
         assert stalled_status != fresh_status
 
     def test_service_status_distinguishes_waiting_from_processing(self):
@@ -4059,7 +4059,7 @@ class TestServiceDaemonHelpers:
             assert labels["Readiness"] == "not reported by service"
             assert "Health" not in labels
             assert "Ready" not in labels
-            assert labels["Uptime"] == "12s"
+            assert labels["Uptime"] == "12 seconds"
             assert "unknown" not in result.output.lower()
         finally:
             server.shutdown()

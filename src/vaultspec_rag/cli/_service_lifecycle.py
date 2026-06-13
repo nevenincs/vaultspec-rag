@@ -546,20 +546,33 @@ def _plain_status_label(state: str) -> str:
     return re.sub(r"\[[^]]*\]", "", state)
 
 
+def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
+    unit = singular if value == 1 else plural or f"{singular}s"
+    return f"{value} {unit}"
+
+
 def _format_status_duration(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "not reported by service"
     seconds = max(0, int(float(raw)))
     if seconds < 60:
-        return f"{seconds}s"
+        return _counted_unit(seconds, "second")
     minutes, seconds = divmod(seconds, 60)
     if minutes < 60:
-        return f"{minutes}m {seconds}s"
+        if seconds:
+            return (
+                f"{_counted_unit(minutes, 'minute')} {_counted_unit(seconds, 'second')}"
+            )
+        return _counted_unit(minutes, "minute")
     hours, minutes = divmod(minutes, 60)
     if hours < 24:
-        return f"{hours}h {minutes}m"
+        if minutes:
+            return f"{_counted_unit(hours, 'hour')} {_counted_unit(minutes, 'minute')}"
+        return _counted_unit(hours, "hour")
     days, hours = divmod(hours, 24)
-    return f"{days}d {hours}h"
+    if hours:
+        return f"{_counted_unit(days, 'day')} {_counted_unit(hours, 'hour')}"
+    return _counted_unit(days, "day")
 
 
 def _format_started_label(raw: object) -> str:

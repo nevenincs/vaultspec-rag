@@ -106,6 +106,6 @@ def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
     fresh_line = next(line for line in lines if "fresh-project" in line)
     quiet_line = next(line for line in lines if "quiet-project" in line)
     assert "no progress for" not in fresh_line
-    assert "no progress for 10m 0s" in quiet_line
+    assert "no progress for 10 minutes" in quiet_line
     assert "last_progress_age_seconds" not in result.output
     assert "stale" not in result.output.lower()
