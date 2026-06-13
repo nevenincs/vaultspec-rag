@@ -68,15 +68,18 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
 
-    # Qdrant server mode: spawn the supervised child BEFORE model load
-    # so a missing/broken binary fails startup fast (no GPU memory
-    # committed yet) and the registry's stores open server-mode from
-    # the first lease. An operator-set URL wins over spawning: it is
-    # the remote-server escape hatch.
+    # Qdrant server mode is the default backend: spawn the supervised
+    # child BEFORE model load so a missing/broken binary fails startup
+    # fast (no GPU memory committed yet) and the registry's stores open
+    # server-mode from the first lease. Selection reads
+    # ``effective_server_mode`` (``qdrant_server and not local_only``)
+    # so the ``--local-only`` escape hatch deterministically selects the
+    # on-disk store. An operator-set URL wins over spawning: it is the
+    # remote-server escape hatch.
     from .. import qdrant_runtime as _qr
 
     cfg = get_config()
-    if bool(cfg.qdrant_server):
+    if cfg.effective_server_mode():
         if str(cfg.qdrant_url or ""):
             logger.info(
                 "qdrant server mode requested but %s is set; using remote %s",
