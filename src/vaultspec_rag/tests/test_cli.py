@@ -5056,10 +5056,54 @@ class TestIndexSummaryCLI:
         assert lines == [
             "Indexing summary: ran in running service.",
             "Vault: added 0; updated 2; removed 0; total 0; duration not reported",
-            "Source code: added 4; updated 5; removed 6; total 15; finished in 50ms",
+            (
+                "Source code: added 4; updated 5; removed 6; total 15; "
+                "finished in 50 milliseconds"
+            ),
         ]
         assert "unknown" not in result.output.lower()
         assert "finished in not reported" not in result.output.lower()
+
+    def test_index_summary_spells_out_reported_durations(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._index import _print_index_summary
+
+        _print_index_summary(
+            [
+                {
+                    "source": "vault",
+                    "added": 1,
+                    "updated": 0,
+                    "removed": 0,
+                    "total": 1,
+                    "duration_ms": 1000,
+                },
+                {
+                    "source": "codebase",
+                    "added": 0,
+                    "updated": 1,
+                    "removed": 0,
+                    "total": 1,
+                    "duration_ms": 1500,
+                },
+                {
+                    "source": "vault",
+                    "added": 0,
+                    "updated": 0,
+                    "removed": 1,
+                    "total": 0,
+                    "duration_ms": 10_000,
+                },
+            ],
+            via="service",
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        assert lines[1].endswith("finished in 1 second")
+        assert lines[2].endswith("finished in 1.5 seconds")
+        assert lines[3].endswith("finished in 10 seconds")
+        assert not any("ms" in line for line in lines)
 
     def test_index_summary_humanizes_missing_source_label(
         self, capsys: pytest.CaptureFixture[str]

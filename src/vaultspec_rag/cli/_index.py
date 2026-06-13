@@ -44,6 +44,11 @@ def _index_source_label(source: str) -> str:
     return source.replace("_", " ").capitalize()
 
 
+def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
+    unit = singular if value == 1 else plural or f"{singular}s"
+    return f"{value} {unit}"
+
+
 def _format_index_duration(raw: object) -> str:
     if isinstance(raw, int | float):
         raw_milliseconds = float(raw)
@@ -59,11 +64,13 @@ def _format_index_duration(raw: object) -> str:
     except (OverflowError, ValueError):
         return "not reported"
     if milliseconds < 1000:
-        return f"{milliseconds}ms"
+        return _counted_unit(milliseconds, "millisecond")
     seconds = milliseconds / 1000.0
     if seconds < 10:
-        return f"{seconds:.1f}s"
-    return f"{seconds:.0f}s"
+        if seconds.is_integer():
+            return _counted_unit(int(seconds), "second")
+        return f"{seconds:.1f} seconds"
+    return _counted_unit(round(seconds), "second")
 
 
 def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
@@ -92,6 +99,7 @@ def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
             f"{duration_text}",
             markup=False,
             highlight=False,
+            soft_wrap=True,
         )
 
 
