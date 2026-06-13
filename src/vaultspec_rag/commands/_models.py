@@ -12,9 +12,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..torch_config import TorchConfigAction
+
+if TYPE_CHECKING:
+    from ._provision import ProvisionOutcome
 
 ConfirmFn = Callable[[str], bool]
 
@@ -58,6 +61,12 @@ class InstallReport:
     torch_direct_dep_action: str = "skipped"
     torch_direct_dep_location: str = ""
     torch_sync_action: str = "skipped"
+    # Heterogeneous per-dependency provisioning outcome from the unified
+    # front door (``provision_dependencies``). ``None`` when provisioning
+    # did not run (e.g. ``provision=False``); otherwise carries one result
+    # per considered dependency for the renderer to surface honestly,
+    # including torch's two-phase "configured, sync pending" state.
+    provision_outcome: ProvisionOutcome | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +83,11 @@ class InstallReport:
             "torch_direct_dep_action": self.torch_direct_dep_action,
             "torch_direct_dep_location": self.torch_direct_dep_location,
             "torch_sync_action": self.torch_sync_action,
+            "provisioning": (
+                self.provision_outcome.to_dict()
+                if self.provision_outcome is not None
+                else None
+            ),
         }
 
 

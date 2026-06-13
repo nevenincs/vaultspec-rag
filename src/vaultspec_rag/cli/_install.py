@@ -88,6 +88,50 @@ def handle_install(
             ),
         ),
     ] = False,
+    provision: Annotated[
+        bool,
+        typer.Option(
+            "--provision/--no-provision",
+            help=(
+                "Provision external dependencies (models and the Qdrant "
+                "server binary) after enrollment. On by default; "
+                "--no-provision sets up the workspace only."
+            ),
+        ),
+    ] = True,
+    local_only: Annotated[
+        bool,
+        typer.Option(
+            "--local-only",
+            help=(
+                "Use the on-disk store instead of the supervised Qdrant "
+                "server: skips the Qdrant binary download and persists the "
+                "local backend so `server start` honours it. The minimal / "
+                "CI / air-gapped alternative to the server-first default."
+            ),
+        ),
+    ] = False,
+    skip_torch: Annotated[
+        bool,
+        typer.Option(
+            "--skip-torch",
+            help="Skip the PyTorch provisioning step (finer than --local-only).",
+        ),
+    ] = False,
+    skip_models: Annotated[
+        bool,
+        typer.Option(
+            "--skip-models",
+            help="Skip the embedding/reranker model provisioning step.",
+        ),
+    ] = False,
+    skip_qdrant: Annotated[
+        bool,
+        typer.Option(
+            "--skip-qdrant",
+            help="Skip the Qdrant server binary provisioning step.",
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit JSON for scripts instead of human text."),
@@ -96,9 +140,14 @@ def handle_install(
     """Set up vaultspec-rag in a workspace.
 
     Creates the required workspace folders, installs bundled rules and
-    integration files, and syncs the files used by supported tools. By default,
-    install asks before changing PyTorch package configuration; use --yes
-    or --no-torch-config for non-interactive runs.
+    integration files, and syncs the files used by supported tools. By
+    default, install also provisions the external dependencies the
+    server-first default needs - the embedding/reranker models and the
+    pinned Qdrant server binary - and asks before changing PyTorch package
+    configuration. Use --local-only for the minimal local backend (skips
+    the binary), the finer --skip-torch/--skip-models/--skip-qdrant flags
+    for partial opt-out, and --no-provision to set up the workspace only;
+    use --yes or --no-torch-config for non-interactive runs.
     """
     import sys as _sys
 
@@ -125,6 +174,18 @@ def handle_install(
     # instructs the user to pass --yes or --no-torch-config.
     confirm_fn = _confirm if _sys.stdin.isatty() else None
 
+    # Map the per-dependency opt-out flags onto the front door's skip
+    # token set. ``--local-only`` already drops the qdrant binary in the
+    # front door, so the explicit ``--skip-qdrant`` is the redundant-but-
+    # honest finer control; both are unioned here.
+    provision_skip: set[str] = set()
+    if skip_torch:
+        provision_skip.add("torch")
+    if skip_models:
+        provision_skip.add("models")
+    if skip_qdrant:
+        provision_skip.add("qdrant")
+
     try:
         report = install_run(
             path=effective_target,
@@ -136,6 +197,9 @@ def handle_install(
             assume_yes=yes,
             sync_after=sync_after,
             confirm=confirm_fn,
+            provision=provision,
+            local_only=local_only,
+            provision_skip=provision_skip,
         )
     except Exception as exc:
         _cli.console.print(

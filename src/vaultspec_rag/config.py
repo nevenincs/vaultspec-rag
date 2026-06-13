@@ -6,9 +6,11 @@ VaultSpecConfig is missing RAG-specific attributes.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, ClassVar
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
@@ -142,6 +144,97 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # First-class local-backend opt-out knob.
     "local_only": EnvVar.LOCAL_ONLY,
 }
+
+
+# Name of the persisted local-only marker inside the managed service
+# (``status_dir``) directory. ``install --local-only`` writes this so the
+# resident service honours the local backend on a later ``server start``
+# without the operator re-passing the flag. It lives under ``status_dir``
+# (``~/.vaultspec-rag`` by default, overridable via
+# ``VAULTSPEC_RAG_STATUS_DIR``) because that is the per-host, gitignored,
+# test-isolatable home for runtime selections - never the project tree, so
+# the pure-Python wheel and the repository stay untouched.
+_LOCAL_ONLY_MARKER_FILENAME = "local-only.json"
+
+# Default managed service directory. Kept in lock-step with the
+# ``status_dir`` entry in ``_RAG_DEFAULTS`` below (asserted at import) so
+# the persistence helpers resolve the same directory the config does
+# without importing the class they feed.
+_STATUS_DIR_DEFAULT = "~/.vaultspec-rag"
+
+
+def _status_dir_path() -> Path:
+    """Resolve the managed service directory, honouring the env override.
+
+    Read straight from the resolution chain (env override -> default) so
+    the persisted local-only marker lands in the same directory the
+    daemon and CLI already use for ``service.json`` and the log. Reading
+    the env directly (rather than via the cached config) keeps the
+    persistence layer free of the config singleton it feeds.
+    """
+    raw = os.environ.get(EnvVar.STATUS_DIR.value) or _STATUS_DIR_DEFAULT
+    return Path(raw).expanduser()
+
+
+def _local_only_marker_path() -> Path:
+    """Return the path of the persisted local-only marker file."""
+    return _status_dir_path() / _LOCAL_ONLY_MARKER_FILENAME
+
+
+def persist_local_only(value: bool) -> Path:
+    """Persist the local-only backend selection to the managed service dir.
+
+    ``install --local-only`` calls this so a later ``server start`` (in a
+    fresh process, with no flag and no env) still selects the on-disk
+    store. The marker is a small JSON document (``{"local_only": bool}``)
+    written atomically through a ``.tmp`` sibling and ``os.replace`` so a
+    concurrent reader never observes a half-written file. Writing
+    ``False`` records an explicit server-mode selection, overwriting any
+    prior local-only marker rather than deleting it, so the persisted
+    choice is always unambiguous.
+
+    Args:
+        value: ``True`` to persist the local backend selection, ``False``
+            to persist an explicit server-mode selection.
+
+    Returns:
+        The path the marker was written to.
+    """
+    path = _local_only_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"local_only": bool(value)}), encoding="utf-8")
+    os.replace(tmp, path)
+    logger.debug("persisted local_only=%s to %s", value, path)
+    return path
+
+
+def read_persisted_local_only() -> bool | None:
+    """Read the persisted local-only selection, if any.
+
+    Returns ``None`` when no marker has been written (the common case on a
+    fresh host), so the resolver falls through to the module default. A
+    malformed or unreadable marker is treated as absent and logged at
+    debug rather than raised, because a corrupt runtime hint must never
+    crash startup - the default backend remains the safe fallback.
+
+    Returns:
+        The persisted boolean, or ``None`` when no usable marker exists.
+    """
+    path = _local_only_marker_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.debug("local-only marker unreadable at %s: %s", path, exc)
+        return None
+    try:
+        value = json.loads(raw).get("local_only")
+    except (ValueError, AttributeError) as exc:
+        logger.debug("local-only marker malformed at %s: %s", path, exc)
+        return None
+    return bool(value) if isinstance(value, bool) else None
 
 
 class VaultSpecConfigWrapper:
@@ -346,6 +439,17 @@ class VaultSpecConfigWrapper:
                     return float(env_val)
                 return env_val
 
+        # 2.5. Persisted runtime selection (local_only only). When
+        # ``install --local-only`` wrote the marker, a later
+        # ``server start`` with no flag and no env honours it. Precedence
+        # is explicit env/flag (above) > persisted config (here) >
+        # module default (below), so an operator who re-passes the flag or
+        # sets the env always overrides the persisted choice.
+        if name == "local_only":
+            persisted = read_persisted_local_only()
+            if persisted is not None:
+                return persisted
+
         # 3. Default
         return self._RAG_DEFAULTS[name]
 
@@ -450,3 +554,10 @@ def reset_config() -> None:
     """
     global _cached_config
     _cached_config = None
+
+
+# Keep the persistence-layer default in lock-step with the class default
+# so the marker lands in the same managed directory the config resolves.
+assert VaultSpecConfigWrapper._RAG_DEFAULTS["status_dir"] == _STATUS_DIR_DEFAULT, (
+    "status_dir default drifted between persistence layer and config defaults"
+)
