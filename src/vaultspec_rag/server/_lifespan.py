@@ -88,7 +88,31 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             )
         else:
             t_q = time.perf_counter()
-            supervisor = await _run_in_thread(_qr.start_supervised_from_config)
+            try:
+                supervisor = await _run_in_thread(_qr.start_supervised_from_config)
+            except Exception as exc:
+                # Server mode is the default, so a startup failure here
+                # is the default-path failure. Per the server-first
+                # failure contract it must be loud and actionable, never
+                # a silent fall-through to the local store: abort startup
+                # with a message naming the cause, the install command,
+                # and the --local-only escape hatch. No GPU memory has
+                # been committed yet.
+                log_event(
+                    logger,
+                    "service.lifecycle",
+                    "qdrant_start_failed",
+                    severity=logging.ERROR,
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    "qdrant server mode (the default backend) failed to "
+                    f"start: {exc}\n"
+                    "Provision the server binary with: "
+                    "vaultspec-rag server qdrant install\n"
+                    "Or run the service in local-only mode (on-disk store, "
+                    "no server) with: vaultspec-rag server start --local-only"
+                ) from exc
             # Publish the in-process URL through the env so every
             # config read (registry stores, watcher reindexes) sees
             # server mode for the daemon's lifetime.
