@@ -179,10 +179,12 @@ class TestModelStep:
         assert result.step == ProvisionStep.MODELS
 
     def test_cached_models_report_unchanged_with_no_download(self) -> None:
-        # The dev host has the configured repos cached. A real cache hit
-        # is an ``unchanged`` no-op with no network - the idempotency
-        # contract for an already-satisfied dependency.
-        result = provision_models(dry_run=False)
+        # The model step never downloads under dry-run: a host with the
+        # configured repos already cached reports ``unchanged``; a host
+        # without them reports ``dry_run`` (the would-download preview).
+        # Either way no network is touched, so the assertion holds on a
+        # warm dev host and a cold CI runner alike (hermetic, no auth).
+        result = provision_models(dry_run=True)
         assert result.action in {
             ProvisionAction.UNCHANGED,
             ProvisionAction.DRY_RUN,
@@ -380,25 +382,28 @@ class TestFrontDoorIdempotency:
         # An idempotent no-op must not have rewritten the verified binary.
         assert binary.stat().st_mtime_ns == before
 
-    def test_satisfied_front_door_with_cached_models_is_unchanged(
+    def test_satisfied_front_door_is_unchanged_on_second_run(
         self, isolated_status_dir: Path, consumer_workspace: Path
     ) -> None:
-        # When models are NOT opted out and the dev host already has the
-        # repos cached, every considered dependency reports ``unchanged``
-        # so the whole front door collapses to a single ``unchanged`` run
-        # with no network. If the host's model cache is cold the model
-        # step would fetch, so this asserts the idempotent shape only on
-        # the network-free outcomes (cached -> unchanged; otherwise the
-        # step self-reports skipped/dry_run and the front door is mixed).
+        # Idempotency of the controllable steps: with the binary seeded and
+        # torch configured by the first run, the second run reports both
+        # torch and qdrant ``unchanged``. The model step is opted out so the
+        # test is hermetic (no network / no model cache assumption); the
+        # model step's own cached/dry-run contract is covered by
+        # ``TestModelStep``.
         binary = _seed_verified_install()
         assert binary.is_relative_to(isolated_status_dir)
-        provision_dependencies(consumer_workspace, assume_yes=True)  # warm torch
+        provision_dependencies(
+            consumer_workspace, skip={"models"}, assume_yes=True
+        )  # warm torch
 
-        second = provision_dependencies(consumer_workspace, assume_yes=True)
-        models = second.result_for(ProvisionStep.MODELS)
-        assert models is not None
-        if models.action == ProvisionAction.UNCHANGED:
-            assert second.status == "unchanged"
+        second = provision_dependencies(
+            consumer_workspace, skip={"models"}, assume_yes=True
+        )
+        torch = second.result_for(ProvisionStep.TORCH)
+        qdrant = second.result_for(ProvisionStep.QDRANT)
+        assert torch is not None and torch.action == ProvisionAction.UNCHANGED
+        assert qdrant is not None and qdrant.action == ProvisionAction.UNCHANGED
 
     def test_dry_run_previews_every_step_without_writing(
         self, isolated_status_dir: Path, consumer_workspace: Path
