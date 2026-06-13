@@ -585,37 +585,15 @@ def _exit_invalid_jobs_filter_value(
     _exit_invalid_jobs_filter(json_mode, message)
 
 
-def _resolve_jobs_phase(
-    phase: str | None,
-    running: bool,
-    json_mode: bool,
-) -> str | None:
-    normalized_phase = _jobs_phase_value(phase)
-    if not running:
-        return normalized_phase
-    if normalized_phase is not None and normalized_phase.lower() != "running":
-        message = (
-            "--running cannot be combined with --state unless it is active or waiting."
-        )
-        _exit_invalid_jobs_filter(json_mode, message)
-    return "running"
-
-
 def _resolve_jobs_filters(
     phase: str | None,
-    running: bool,
     failed: bool,
     json_mode: bool,
 ) -> tuple[str | None, bool]:
-    resolved_phase = _resolve_jobs_phase(phase, running, json_mode)
-    if (
-        failed
-        and resolved_phase is not None
-        and resolved_phase not in ("error", "failed")
-    ):
+    if failed and phase is not None and phase not in ("error", "failed"):
         message = "--failed can only be combined with --state failed."
         _exit_invalid_jobs_filter(json_mode, message)
-    return resolved_phase, failed
+    return phase, failed
 
 
 def _jobs_trigger_value(trigger: str | None) -> str | None:
@@ -1003,10 +981,6 @@ def service_jobs(
             help="Filter by text in job id, outcome, or progress.",
         ),
     ] = None,
-    running: Annotated[
-        bool,
-        typer.Option("--running", help="Show only active or waiting jobs."),
-    ] = False,
     failed: Annotated[
         bool,
         typer.Option("--failed", help="Show only failed jobs."),
@@ -1047,7 +1021,7 @@ def service_jobs(
     phase = _jobs_state_filter(state, json_mode)
     source = _jobs_index_filter(index, json_mode)
     trigger = _jobs_started_by_filter(started_by, json_mode)
-    phase, failed = _resolve_jobs_filters(phase, running, failed, json_mode)
+    phase, failed = _resolve_jobs_filters(phase, failed, json_mode)
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
         _exit_jobs_not_running(json_mode)

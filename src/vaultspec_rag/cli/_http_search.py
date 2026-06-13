@@ -310,7 +310,7 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
         "message": (
             f"The search request to the service on port {port} timed out "
             f"after {timeout:g} seconds. The service may still be working "
-            "on that request; check service status and running index jobs "
+            "on that request; check service status and active index jobs "
             "before retrying."
         ),
         "port": port,
@@ -327,7 +327,7 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
         },
         "remediation": [
             f"vaultspec-rag server status --port {port}",
-            f"vaultspec-rag server jobs --running --port {port}",
+            f"vaultspec-rag server jobs --state active --port {port}",
             f"Rerun the same search with --timeout {retry_timeout:g}",
         ],
     }

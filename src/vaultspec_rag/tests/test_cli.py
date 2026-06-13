@@ -91,7 +91,7 @@ def _assert_default_status_summary(output: str, port: int) -> None:
     assert job["Progress"] == "embedding source code sections 7 of 20"
     lines = _plain_lines(output)
     next_action_index = lines.index("Next action:")
-    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --running"
+    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --state active"
     _assert_no_table_borders(output)
     assert max(len(line) for line in output.splitlines()) <= 100
 
@@ -119,7 +119,7 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     assert re.fullmatch(r"\d+s", job["Runtime"])
     assert job["Progress"] == "embedding source code sections 7 of 20"
     next_action_index = lines.index("Next action:")
-    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --running"
+    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --state active"
     _assert_no_table_borders(output)
 
 
@@ -2242,17 +2242,18 @@ class TestSearchSafetyContract:
             r"timed out after 0\.001 seconds",
             folded,
         )
-        assert "running index jobs before retrying." in folded
+        assert "active index jobs before retrying." in folded
         assert labels["Service"] == "reachable; health check passed; 3 projects loaded"
-        assert labels["Work"] == "no index jobs running"
+        assert labels["Work"] == "no active index jobs"
         lines = _plain_lines(result.output)
         next_actions = lines[lines.index("Next actions:") + 1 :]
         assert next_actions == [
             f"- vaultspec-rag server status --port {port}",
-            f"- vaultspec-rag server jobs --running --port {port}",
+            f"- vaultspec-rag server jobs --state active --port {port}",
             "- Rerun the same search with --timeout 300",
         ]
         assert "running jobs before retrying" not in result.output
+        assert "running index jobs" not in result.output
         for forbidden in (
             "same_project_search_strategy",
             "Backend Contract",
@@ -2308,7 +2309,7 @@ class TestSearchSafetyContract:
             labels["Service"]
             == "reachable; health not reported by service; 1 project loaded"
         )
-        assert labels["Work"] == "no index jobs running"
+        assert labels["Work"] == "no active index jobs"
         assert "unknown" not in result.output.lower()
         _assert_no_table_borders(result.output)
 
@@ -2602,7 +2603,9 @@ class TestHelpCleanup:
         assert "Another process is already using this service address." in result.output
         assert "Next actions:" in result.output
         assert f"vaultspec-rag server status --port {port}" in result.output
-        assert f"vaultspec-rag server jobs --running --port {port}" in result.output
+        assert (
+            f"vaultspec-rag server jobs --state active --port {port}" in result.output
+        )
         assert "vaultspec-rag server start --port <free-port>" in result.output
         assert "Traceback" not in result.output
 
@@ -2911,7 +2914,7 @@ class TestSearchResultRendering:
                 "remediation": [
                     "vaultspec-rag search ... --port 8766 --timeout 360",
                     "vaultspec-rag server status",
-                    "vaultspec-rag server jobs --running --port 8766",
+                    "vaultspec-rag server jobs --state active --port 8766",
                 ],
             },
         )
@@ -2919,8 +2922,8 @@ class TestSearchResultRendering:
         out = capsys.readouterr().out
         assert "HTTP search on port 8766 timed out after 180.0s." in out
         assert "Service: status check timed out" in out
-        assert "Work: 2 index jobs running" in out
-        assert "vaultspec-rag server jobs --running --port 8766" in out
+        assert "Work: 2 active index jobs" in out
+        assert "vaultspec-rag server jobs --state active --port 8766" in out
         assert "same_project_search_strategy" not in out
         assert "serialized" not in out
         for forbidden in ("┌", "└", "│"):
@@ -2948,7 +2951,7 @@ class TestSearchResultRendering:
 
         out = capsys.readouterr().out
         assert "Service: reachable; health check passed" in out
-        assert "Work: running job count not reported by service" in out
+        assert "Work: active job count not reported by service" in out
         assert "running work status unknown" not in out
         assert "unknown" not in out
 

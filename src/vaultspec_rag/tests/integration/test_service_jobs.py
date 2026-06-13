@@ -344,7 +344,6 @@ def test_jobs_subcommand_registered() -> None:
     expected_flags = (
         "--state",
         "--index",
-        "--running",
         "--query",
         "--failed",
         "--job-id",
@@ -359,6 +358,7 @@ def test_jobs_subcommand_registered() -> None:
     assert "--phase" not in result.stdout
     assert "--source" not in result.stdout
     assert "--trigger" not in result.stdout
+    assert "--running" not in result.stdout
 
 
 def test_jobs_help_uses_operator_language() -> None:
@@ -372,7 +372,6 @@ def test_jobs_help_uses_operator_language() -> None:
         "manual requests",
         "index update activity",
         "Show only failed jobs",
-        "Show only active or waiting jobs",
         "Continuously refresh the human jobs view",
         "Stop --watch after this many refreshes",
         "active, waiting, finished, failed, or cancelled",
@@ -1244,7 +1243,8 @@ def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
             [
                 "server",
                 "jobs",
-                "--running",
+                "--state",
+                "active",
                 "--port",
                 str(port),
                 "--watch",

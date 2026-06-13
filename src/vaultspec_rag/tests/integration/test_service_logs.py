@@ -519,7 +519,7 @@ def test_logs_empty_output_routes_operator_to_next_commands() -> None:
     assert "Try:" not in lines
     commands = [line for line in lines if line.startswith("vaultspec-rag ")]
     assert {
-        f"vaultspec-rag server jobs --running --port {port}",
+        f"vaultspec-rag server jobs --state active --port {port}",
         f"vaultspec-rag server status --port {port}",
         f"vaultspec-rag server logs --raw --limit 8 --port {port}",
     } == set(commands)

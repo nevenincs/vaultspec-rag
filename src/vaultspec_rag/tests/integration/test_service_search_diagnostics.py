@@ -199,7 +199,7 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     assert backpressure["active_indexing_conflict"] is False
     assert isinstance(remediation, list)
     assert f"vaultspec-rag server status --port {port}" in remediation
-    assert any("server jobs --running" in str(item) for item in remediation)
+    assert any("server jobs --state active" in str(item) for item in remediation)
 
 
 def _unused_local_port() -> int:

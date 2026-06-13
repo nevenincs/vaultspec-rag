@@ -224,7 +224,7 @@ def service_start(
         )
         _print_lifecycle_next_actions(
             f"vaultspec-rag server status --port {port}",
-            f"vaultspec-rag server jobs --running --port {port}",
+            f"vaultspec-rag server jobs --state active --port {port}",
             "vaultspec-rag server start --port <free-port>",
         )
         raise typer.Exit(code=1)
@@ -785,7 +785,7 @@ def _status_next_action(
         return f"vaultspec-rag server status --verbose{port_arg}"
     running_jobs = jobs.get("running")
     if isinstance(running_jobs, int) and running_jobs > 0:
-        return f"vaultspec-rag server jobs --running{port_arg}"
+        return f"vaultspec-rag server jobs --state active{port_arg}"
     return f'vaultspec-rag search "<query>" --type code{port_arg} --timeout 120'
 
 

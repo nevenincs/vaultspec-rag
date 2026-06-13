@@ -98,7 +98,7 @@ def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
     with _jobs_http_server(payload) as (_server, port):
         result = runner.invoke(
             app,
-            ["server", "jobs", "--running", "--port", str(port)],
+            ["server", "jobs", "--state", "active", "--port", str(port)],
         )
 
     assert result.exit_code == 0, result.output
