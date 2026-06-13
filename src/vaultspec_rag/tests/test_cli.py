@@ -104,6 +104,8 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     assert labels["Process check"] == "verified"
     assert labels["Identity check"] == "not verified by this status check"
     assert labels["Network"] == "accepting connections"
+    assert labels["Server"] == "running"
+    assert "State" not in labels
     assert labels["Compute"] == "GPU available"
     assert labels["Search models"] == "ready"
     assert labels["Reranking"] == "ready"
@@ -3890,6 +3892,9 @@ class TestServiceDaemonHelpers:
             assert "Process: not reported" in result.output
             assert f"Address: http://127.0.0.1:{port}" in result.output
             assert "Network: not accepting connections" in result.output
+            labels = _label_values(result.output)
+            assert labels["Server"] == "stopped"
+            assert "State" not in labels
             assert "Process id:" not in result.output
             assert "not checked" not in result.output
             assert "not recorded" not in result.output

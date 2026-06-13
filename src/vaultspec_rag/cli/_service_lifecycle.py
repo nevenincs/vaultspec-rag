@@ -293,7 +293,7 @@ def service_start(
         "Service start timed out",
         f"Waited: {deadline:.0f}s",
         _process_line(pid),
-        "State: process is running but not ready",
+        "Server: process is running but not ready",
         f"Log: {log_path}",
     )
     raise typer.Exit(code=1)
@@ -1008,7 +1008,7 @@ def _render_status_detail(
     else:
         suffix = " (stale)" if heartbeat_stale else ""
         _print_detail_line("Heartbeat", f"{heartbeat_age:.0f}s ago{suffix}")
-    _print_detail_line("State", _plain_status_label(state_label))
+    _print_detail_line("Server", _plain_status_label(state_label))
 
     _print_health_detail(health, port_listening)
     _print_operational_detail(operational)
@@ -1090,7 +1090,7 @@ def _render_port_only_status(
         "Network",
         "accepting connections" if port_listening else "not accepting connections",
     )
-    _print_detail_line("State", state)
+    _print_detail_line("Server", state)
     _print_health_detail(health, port_listening)
     _print_operational_detail(operational)
     if exit_code != 0:
@@ -1244,7 +1244,7 @@ def service_status(
 
     Gathers four signals before rendering - ``service.json`` present,
     PID alive, port listening, heartbeat fresh - and surfaces each as
-    its own row plus a derived ``State`` row. Avoids the previous
+    its own row plus a derived ``Server`` row. Avoids the previous
     "pick one source of truth" behaviour where conflicting signals
     rendered as a misleading verdict.
 
@@ -1284,7 +1284,7 @@ def service_status(
         if verbose:
             _cli.console.print("Service status")
             _print_detail_line("Local record", "not found")
-            _print_detail_line("State", "stopped")
+            _print_detail_line("Server", "stopped")
         else:
             _render_status_summary(
                 state_label="stopped",
