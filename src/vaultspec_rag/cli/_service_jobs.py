@@ -31,17 +31,26 @@ _RESULT_RE = re.compile(
 _STALE_PROGRESS_SECONDS = 300.0
 
 
+def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
+    unit = singular if value == 1 else plural or f"{singular}s"
+    return f"{value} {unit}"
+
+
 def _format_seconds(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "not reported"
     seconds = max(0, int(float(raw)))
     if seconds < 60:
-        return f"{seconds}s"
+        return _counted_unit(seconds, "second")
     minutes, rem = divmod(seconds, 60)
     if minutes < 60:
-        return f"{minutes}m {rem}s"
+        if rem:
+            return f"{_counted_unit(minutes, 'minute')} {_counted_unit(rem, 'second')}"
+        return _counted_unit(minutes, "minute")
     hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{_counted_unit(hours, 'hour')} {_counted_unit(minutes, 'minute')}"
+    return _counted_unit(hours, "hour")
 
 
 def _format_milliseconds(raw: object) -> str:

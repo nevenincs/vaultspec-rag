@@ -692,7 +692,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert rows[0]["marker"] == "-"
     assert rows[0]["state"] == "finished"
     assert rows[0]["operation"] == "code index refresh for proj-c"
-    assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22s"
+    assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22 seconds"
     assert rows[1]["marker"] == "!"
     assert rows[1]["state"] == "failed"
     assert rows[1]["operation"] == "vault index refresh for proj-b"
@@ -700,7 +700,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert rows[2]["state"] == "active"
     assert rows[2]["operation"] == "code index update for proj-a"
     assert rows[2]["detail"] == (
-        "embedding source code sections 2 of 5; running for 10s"
+        "embedding source code sections 2 of 5; running for 10 seconds"
     )
     forbidden_fragments = (
         "3/3 shown:",
@@ -882,7 +882,7 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     assert row["marker"] == "~"
     assert row["state"] == "waiting"
     assert row["operation"] == "code index update for proj-waiting"
-    assert row["detail"] == "waiting to write the index for 20s"
+    assert row["detail"] == "waiting to write the index for 20 seconds"
 
 
 def test_jobs_filtered_header_separates_matches_from_service_total(
@@ -1345,8 +1345,8 @@ def test_job_detail_only_reports_progress_freshness_while_running(
     )
     failed_output = capsys.readouterr().out
 
-    assert "10m" in running_output
-    assert "10m" not in failed_output
+    assert "10 minutes" in running_output
+    assert "10 minutes" not in failed_output
 
 
 def test_jobs_json_preserves_raw_service_payload() -> None:
