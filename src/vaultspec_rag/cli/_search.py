@@ -286,11 +286,22 @@ def _try_in_process_search(
 ) -> list[SearchResult]:
     import vaultspec_rag
 
+    from ..registry import get_registry
+
+    # An empty or unbuilt index has nothing to search, so skip the
+    # "Searching..." status spinner: the search returns an empty, actionable
+    # result either way, and the spinner's control codes otherwise leak into
+    # non-interactive (captured / piped) output as a spurious first line.
+    has_index = (
+        get_registry().code_chunk_count(target) > 0
+        if search_type == "code"
+        else get_registry().vault_doc_count(target) > 0
+    )
     try:
         status_ctx = (
-            contextlib.nullcontext()
-            if json_mode
-            else _cli.console.status(f"Searching {search_type}...")
+            _cli.console.status(f"Searching {search_type}...")
+            if has_index and not json_mode
+            else contextlib.nullcontext()
         )
         with status_ctx:
             if search_type == "code":
