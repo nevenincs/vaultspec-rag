@@ -33,4 +33,11 @@ load_dotenv()
 # this exact name.
 logger = logging.getLogger("vaultspec_rag.cli")
 
-console = Console(legacy_windows=False)
+# highlight=False disables Rich's automatic number/path styling (bold reprs).
+# force_interactive=False disables Live/status spinner animation. Together they
+# keep the CLI's output plain and deterministic: the operator text is parseable
+# and nothing leaks ANSI styling or animated spinner frames into captured/piped
+# output. This matters because CI sets FORCE_COLOR, which otherwise makes Rich
+# treat captured output as an interactive terminal and emit styling/animation a
+# scripted or test consumer cannot parse. Status messages still print once.
+console = Console(legacy_windows=False, highlight=False, force_interactive=False)

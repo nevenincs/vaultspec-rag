@@ -213,7 +213,9 @@ def handle_install(
     if json_output:
         import json as _json
 
-        _cli.console.print_json(_json.dumps(report.to_dict(), default=str))
+        _cli.console.print_json(
+            _json.dumps(report.to_dict(), default=str), highlight=False
+        )
     else:
         _render_install_report(report)
 
@@ -324,7 +326,9 @@ def handle_uninstall(
     if json_output:
         import json as _json
 
-        _cli.console.print_json(_json.dumps(report.to_dict(), default=str))
+        _cli.console.print_json(
+            _json.dumps(report.to_dict(), default=str), highlight=False
+        )
         return
 
     _render_uninstall_report(report)
