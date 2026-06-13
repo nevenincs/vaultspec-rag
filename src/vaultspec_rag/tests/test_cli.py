@@ -99,12 +99,12 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     lines = _plain_lines(output)
     assert lines[0] == "Service status"
     labels = _label_values(output)
-    assert labels["Service record"] == "present"
+    assert labels["Local record"] == "found"
     assert labels["Process id"] == str(os.getpid())
     assert labels["Address"] == f"http://127.0.0.1:{port}"
     assert labels["Process"] == "running"
-    assert labels["Service process"] == "verified"
-    assert labels["Service identity"] == "not verified by this status check"
+    assert labels["Process check"] == "verified"
+    assert labels["Identity check"] == "not verified by this status check"
     assert labels["Network"] == "accepting connections"
     assert labels["Compute"] == "GPU available"
     assert labels["Search models"] == "ready"
@@ -3357,10 +3357,11 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 4
             assert "Process: not running" in result.output
             assert (
-                "Service process: not verified because the process is not running"
+                "Process check: not verified because the process is not running"
                 in result.output
             )
             assert "Network: not accepting connections" in result.output
+            assert "Service process:" not in result.output
             assert "not checked" not in result.output
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
@@ -3423,7 +3424,10 @@ class TestServiceDaemonHelpers:
             verbose = runner.invoke(app, ["server", "status", "--verbose"])
             assert verbose.exit_code == 0
             _assert_verbose_status_summary(verbose.output, port)
-            assert "Service identity: not checked" not in verbose.output
+            assert "Service record:" not in verbose.output
+            assert "Service process:" not in verbose.output
+            assert "Service identity:" not in verbose.output
+            assert "Identity check: not checked" not in verbose.output
             assert "Started: 2026-" not in verbose.output
         finally:
             server.shutdown()
@@ -3522,7 +3526,7 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
-            assert labels["Started"] == "not reported by service record"
+            assert labels["Started"] == "not reported by local record"
             assert labels["Runtime"] == "not reported by service"
             assert "unknown" not in result.output.lower()
         finally:
@@ -3844,7 +3848,7 @@ class TestServiceDaemonHelpers:
             )
 
             assert result.exit_code == 3
-            assert "Service record: missing" in result.output
+            assert "Local record: not found" in result.output
             assert "Process: not reported" in result.output
             assert f"Address: http://127.0.0.1:{port}" in result.output
             assert "Network: not accepting connections" in result.output
@@ -3857,6 +3861,7 @@ class TestServiceDaemonHelpers:
             assert "Port listening: yes" not in result.output
             assert "Port listening: no" not in result.output
             assert "Service file:" not in result.output
+            assert "Service record:" not in result.output
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 

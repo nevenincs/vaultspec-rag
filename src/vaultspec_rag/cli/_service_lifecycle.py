@@ -544,7 +544,7 @@ def _format_status_duration(raw: object) -> str:
 
 def _format_started_label(raw: object) -> str:
     if not isinstance(raw, str) or not raw or raw == "unknown":
-        return "not reported by service record"
+        return "not reported by local record"
     try:
         started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
@@ -1003,16 +1003,16 @@ def _render_status_detail(
     operational: dict[str, object] | None,
 ) -> None:
     _cli.console.print("Service status")
-    _print_detail_line("Service record", "present")
+    _print_detail_line("Local record", "found")
     _print_detail_line("Process id", pid)
     _print_detail_line("Address", f"http://127.0.0.1:{port}")
     _print_detail_line("Started", _format_started_label(started_at))
     _print_detail_line("Process", "running" if pid_alive else "not running")
     _print_detail_line(
-        "Service process",
+        "Process check",
         _process_identity_label(pid_alive, pid_is_ours),
     )
-    _print_detail_line("Service identity", _get_token_label(token_match))
+    _print_detail_line("Identity check", _get_token_label(token_match))
     _print_detail_line("Network", _network_label(port_listening, pid_alive))
     if heartbeat_age is None:
         _print_detail_line("Heartbeat", "absent")
@@ -1094,7 +1094,7 @@ def _render_port_only_status(
         return
 
     _cli.console.print("Service status")
-    _print_detail_line("Service record", "missing")
+    _print_detail_line("Local record", "not found")
     _print_detail_line("Process", "not reported")
     _print_detail_line("Address", f"http://127.0.0.1:{port}")
     _print_detail_line(
@@ -1292,7 +1292,7 @@ def service_status(
             raise typer.Exit(code=3)
         if verbose:
             _cli.console.print("Service status")
-            _print_detail_line("Service record", "missing")
+            _print_detail_line("Local record", "not found")
             _print_detail_line("State", "stopped")
         else:
             _render_status_summary(
