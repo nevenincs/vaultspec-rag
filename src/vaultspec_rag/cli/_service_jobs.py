@@ -435,6 +435,11 @@ def _render_jobs_feed(
     sorted_jobs = _human_sorted_jobs(jobs)
     active, waiting, finished, failed = _shown_job_counts(sorted_jobs)
     _cli.console.print(f"Jobs on service port {port}", markup=False, highlight=False)
+    _cli.console.print(
+        f"Address: http://127.0.0.1:{port}",
+        markup=False,
+        highlight=False,
+    )
     filter_text = _filter_line(result)
     shown_count = (
         _job_count_text(returned, "matching job", "matching jobs")
@@ -477,6 +482,62 @@ def _render_jobs_feed(
             f"{_job_summary_detail(job)}",
             soft_wrap=True,
         )
+
+
+def _render_empty_jobs_result(
+    result: dict[str, object],
+    *,
+    job_id: str | None,
+    port: int,
+    monitoring: bool,
+) -> None:
+    total = result.get("total", 0)
+    returned = result.get("returned", 0)
+    filter_text = _filter_line(result)
+    shown_count = (
+        _job_count_text(returned, "matching job", "matching jobs")
+        if filter_text or job_id
+        else _job_count_text(returned)
+    )
+    _cli.console.print(f"Jobs on service port {port}", markup=False, highlight=False)
+    _cli.console.print(
+        f"Address: http://127.0.0.1:{port}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(f"Shown: {shown_count}", markup=False, highlight=False)
+    _cli.console.print(
+        f"Recent jobs on service: {_job_count_text(total)}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        "States: 0 active, 0 waiting, 0 finished, 0 failed",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print("Order: latest shown last", markup=False, highlight=False)
+    if filter_text:
+        _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
+    if monitoring:
+        _cli.console.print(
+            f"Refreshed: {time.strftime('%H:%M:%S', time.localtime())}",
+            markup=False,
+            highlight=False,
+        )
+        _cli.console.print("Watching; press Ctrl+C to stop.")
+    _cli.console.print(_empty_jobs_message(result, job_id))
+    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _cli.console.print(
+        f"  vaultspec-rag server status --port {port}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"  vaultspec-rag server logs --limit 20 --port {port}",
+        markup=False,
+        highlight=False,
+    )
 
 
 def _exit_invalid_jobs_filter(json_mode: bool, message: str) -> NoReturn:
@@ -665,23 +726,23 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
 
 def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
     if job_id:
-        return "No matching jobs."
+        return "No job matched that id."
     filters = result.get("filters")
     if not isinstance(filters, dict):
-        return "No recent jobs."
+        return "No jobs have been reported by this service yet."
     if filters.get("failed") is True:
-        return "No failed jobs."
+        return "There are no failed jobs."
     phase = filters.get("phase")
     if isinstance(phase, str) and phase.lower() == "running":
-        return "No running jobs."
+        return "There are no active or waiting jobs."
     active_filters = [
         key
         for key, value in filters.items()
         if key != "limit" and value not in (None, "", False)
     ]
     if active_filters:
-        return "No matching jobs."
-    return "No recent jobs."
+        return "No jobs matched these filters."
+    return "No jobs have been reported by this service yet."
 
 
 def _render_job_progress_detail(job: dict[str, object]) -> None:
@@ -764,7 +825,12 @@ def _render_jobs_result(
 ) -> None:
     jobs = _jobs_from_result(result)
     if not jobs:
-        _cli.console.print(_empty_jobs_message(result, job_id))
+        _render_empty_jobs_result(
+            result,
+            job_id=job_id,
+            port=port,
+            monitoring=monitoring,
+        )
         return
     if job_id:
         if len(jobs) > 1:

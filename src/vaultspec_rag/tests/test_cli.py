@@ -3871,6 +3871,45 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
     return server, thread, requests
 
 
+def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+    import urllib.parse
+
+    requests: list[str] = []
+
+    class _JobsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            payload = {
+                "jobs": [],
+                "total": 0,
+                "returned": 0,
+                "filters": {
+                    "limit": int(query.get("limit", ["20"])[0]),
+                    "phase": query.get("phase", [None])[0],
+                    "source": query.get("source", [None])[0],
+                    "trigger": query.get("trigger", [None])[0],
+                    "query": query.get("query", [None])[0],
+                    "failed": query.get("failed", [False])[0],
+                },
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _JobsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 def _projects_unload_contract_server() -> tuple[
     typing.Any, typing.Any, list[dict[str, object]]
 ]:
@@ -3895,6 +3934,52 @@ def _projects_unload_contract_server() -> tuple[
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread, requests
+
+
+class TestServiceJobsCli:
+    """In-process CLI coverage for `server jobs`."""
+
+    def test_jobs_empty_filtered_result_stays_actionable(self) -> None:
+        server, thread, requests = _jobs_empty_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "jobs",
+                    "--state",
+                    "running",
+                    "--limit",
+                    "5",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/jobs?limit=5&phase=running"]
+        lines = _plain_lines(result.output)
+        expected_present = [
+            f"Jobs on service port {server.server_port}",
+            f"Address: http://127.0.0.1:{server.server_port}",
+            "Shown: 0 matching jobs",
+            "Recent jobs on service: 0 jobs",
+            "States: 0 active, 0 waiting, 0 finished, 0 failed",
+            "Order: latest shown last",
+            "Filter: state active or waiting",
+            "There are no active or waiting jobs.",
+            "Next actions:",
+            f"vaultspec-rag server status --port {server.server_port}",
+            f"vaultspec-rag server logs --limit 20 --port {server.server_port}",
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing operator lines: {missing}"
+        _assert_no_table_borders(result.output)
+        assert "watcher" not in result.output.lower()
 
 
 class TestServiceProjectsCli:
