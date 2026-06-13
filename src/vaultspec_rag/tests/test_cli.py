@@ -76,9 +76,8 @@ def _section_label_values(output: str, section: str) -> dict[str, str]:
 def _assert_default_status_summary(output: str, port: int) -> None:
     labels = _label_values(output)
     assert labels["Server"] == "running"
-    assert labels["Readiness"] == "ready for requests"
+    assert labels["Requests"] == "ready for requests"
     assert "Health" not in labels
-    assert "Ready" not in labels
     assert labels["Busy"] == "processing 1 job"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
     assert labels["Uptime"] == "5 minutes 12 seconds"
@@ -102,14 +101,14 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     labels = _label_values(output)
     expected_labels = {
         "Local record": "found",
-        "Process id": str(os.getpid()),
+        "Process ID": str(os.getpid()),
         "Address": f"http://127.0.0.1:{port}",
         "Process": "running",
         "Process check": "verified",
         "Identity check": "not verified by this status check",
         "Network": "accepting connections",
         "Server": "running",
-        "Readiness": "ready for requests",
+        "Requests": "ready for requests",
         "Compute": "GPU available",
         "Search models": "ready",
         "Reranking": "ready",
@@ -3298,7 +3297,7 @@ class TestWinShutdownLog:
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
-            assert f"Process id: {os.getpid()}" in result.output
+            assert f"Process ID: {os.getpid()}" in result.output
             assert "PID:" not in result.output
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
@@ -3343,7 +3342,7 @@ class TestWinShutdownLog:
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
-            assert f"Process id: {os.getpid()}" in result.output
+            assert f"Process ID: {os.getpid()}" in result.output
             assert "PID:" not in result.output
 
             # No CLI-emitted line on POSIX.
@@ -3996,9 +3995,8 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
-            assert labels["Readiness"] == "ready for requests"
+            assert labels["Requests"] == "ready for requests"
             assert "Health" not in labels
-            assert "Ready" not in labels
             assert labels["Compute"] == "not reported by service"
             assert labels["Search models"] == "not reported by service"
             assert labels["Reranking"] == "not reported by service"
@@ -4055,9 +4053,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 4, result.output
             labels = _label_values(result.output)
             assert labels["Server"] == "unreachable"
-            assert labels["Readiness"] == "not reported by service"
+            assert labels["Requests"] == "not reported by service"
             assert "Health" not in labels
-            assert "Ready" not in labels
             assert labels["Uptime"] == "12 seconds"
             assert "unknown" not in result.output.lower()
         finally:
@@ -4110,9 +4107,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
             assert labels["Server"] == "running"
-            assert labels["Readiness"] == "ready for requests"
+            assert labels["Requests"] == "ready for requests"
             assert "Health" not in labels
-            assert "Ready" not in labels
             assert labels["Busy"] == "not reported by service"
             assert labels["Queue"] == "not reported by service"
             assert labels["Processed jobs"] == "not reported by service"
@@ -4145,7 +4141,7 @@ class TestServiceDaemonHelpers:
             labels = _label_values(result.output)
             assert labels["Server"] == "stopped"
             assert "State" not in labels
-            assert "Process id:" not in result.output
+            assert "Process ID:" not in result.output
             assert "not checked" not in result.output
             assert "not recorded" not in result.output
             assert "PID:" not in result.output

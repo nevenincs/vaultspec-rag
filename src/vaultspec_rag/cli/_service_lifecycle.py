@@ -116,7 +116,7 @@ def _print_lifecycle_next_actions(*commands: str) -> None:
 
 
 def _process_line(pid: object) -> str:
-    return f"Process id: {pid}"
+    return f"Process ID: {pid}"
 
 
 def _address_line(port: object) -> str:
@@ -693,7 +693,7 @@ def _print_health_detail(
 ) -> None:
     if isinstance(health, dict):
         _print_detail_line(
-            "Readiness",
+            "Requests",
             _status_health_label(health, port_listening=port_listening),
         )
         compute = (
@@ -716,7 +716,7 @@ def _print_health_detail(
         )
         _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
-        _print_detail_line("Readiness", "not reachable")
+        _print_detail_line("Requests", "not reachable")
 
 
 def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object]]:
@@ -856,10 +856,10 @@ def _print_operational_detail(
             jobs_dict = cast("dict[str, object]", jobs)
             _print_detail_line("Busy", _status_busy_label(jobs_dict))
             _print_detail_line("Queue", _status_queue_label(jobs_dict))
-            _print_detail_line("Jobs", _status_jobs_label(jobs_dict))
+            _print_detail_line("Processed jobs", _status_jobs_label(jobs_dict))
             _print_current_job_detail(jobs_dict)
         else:
-            _print_detail_line("Jobs", "not reported by service")
+            _print_detail_line("Processed jobs", "not reported by service")
     next_action = operational.get("next_action")
     if next_action:
         _print_next_action(next_action)
@@ -1002,7 +1002,7 @@ def _render_status_summary(
     jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
     lines = [
         f"Server: {_plain_status_label(state_label)}",
-        f"Readiness: {_status_health_label(health, port_listening=port_listening)}",
+        f"Requests: {_status_health_label(health, port_listening=port_listening)}",
         f"Busy: {_status_busy_label(jobs_dict)}",
         f"Address: http://127.0.0.1:{port}",
         f"Uptime: {_status_uptime_label(health)}",
@@ -1035,7 +1035,7 @@ def _render_status_detail(
 ) -> None:
     _cli.console.print("Service status")
     _print_detail_line("Local record", "found")
-    _print_detail_line("Process id", pid)
+    _print_detail_line("Process ID", pid)
     _print_detail_line("Address", f"http://127.0.0.1:{port}")
     _print_detail_line("Started", _format_started_label(started_at))
     _print_detail_line("Process", "running" if pid_alive else "not running")
