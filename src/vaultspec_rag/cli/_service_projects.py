@@ -93,7 +93,7 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     return [
         f"- Project: {_project_name(root_str)}",
         f"  Path: {root_str}",
-        f"  Active uses: {use_text}",
+        f"  Active requests: {use_text}",
         f"  Last activity: {_humanize_idle(idle_s)} ago",
         f"  Last request: {last_request}",
     ]

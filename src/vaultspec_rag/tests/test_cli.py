@@ -4268,6 +4268,42 @@ class TestServiceJobsCli:
         _assert_no_table_borders(result.output)
 
 
+def _assert_project_summary_language(out: str) -> None:
+    expected = {
+        "Capacity: 1 of 16 projects loaded",
+        "Automatic unload: after 30m idle",
+        "- Project: example",
+        r"  Path: example",
+        "  Active requests: 1",
+        "  Last activity: 2m 5s ago",
+        "  Last request: 14:05:06",
+    }
+    missing = [line for line in expected if line not in out]
+    assert not missing, f"missing project summary lines: {missing}"
+    forbidden = (
+        "Handling 1 active request; idle for 2m 5s",
+        "Active uses:",
+        "Requests:",
+        "Last used:",
+        "Auto-unload",
+        "Loaded projects:",
+        "In use:",
+    )
+    leaked = [text for text in forbidden if text in out]
+    assert not leaked, f"internal project summary language leaked: {leaked}"
+    lower = out.lower()
+    forbidden_lower = (
+        "no timestamp from service",
+        "project slots",
+        "project handle",
+        "idle ttl",
+        "references",
+    )
+    lower_leaks = [text for text in forbidden_lower if text in lower]
+    assert not lower_leaks, f"internal project summary language leaked: {lower_leaks}"
+    assert {"yes", "no"}.isdisjoint({line.strip() for line in _plain_lines(out)})
+
+
 class TestServiceProjectsCli:
     """In-process CLI coverage for `server projects list|unload`."""
 
@@ -4324,25 +4360,7 @@ class TestServiceProjectsCli:
         )
 
         out = capsys.readouterr().out
-        assert "Capacity: 1 of 16 projects loaded" in out
-        assert "Automatic unload: after 30m idle" in out
-        assert "- Project: example" in out
-        assert r"  Path: example" in out
-        assert "  Active uses: 1" in out
-        assert "  Last activity: 2m 5s ago" in out
-        assert "  Last request: 14:05:06" in out
-        assert "Handling 1 active request; idle for 2m 5s" not in out
-        assert "Requests:" not in out
-        assert "Last used:" not in out
-        assert "no timestamp from service" not in out.lower()
-        assert not any(line.strip() in {"yes", "no"} for line in _plain_lines(out))
-        assert "Auto-unload" not in out
-        assert "project slots" not in out.lower()
-        assert "project handle" not in out.lower()
-        assert "idle ttl" not in out.lower()
-        assert "references" not in out.lower()
-        assert "Loaded projects:" not in out
-        assert "In use:" not in out
+        _assert_project_summary_language(out)
 
     def test_projects_list_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
@@ -4390,12 +4408,12 @@ class TestServiceProjectsCli:
             "Automatic unload: after 10m idle",
             "- Project: busy",
             r"Path: busy",
-            "Active uses: 2",
+            "Active requests: 2",
             "Last activity: 1m 5s ago",
             "Last request: 14:05:06",
             "- Project: ready",
             r"Path: ready",
-            "Active uses: none",
+            "Active requests: none",
             "Last activity: 4s ago",
             "Last request: not reported by service",
         ]
@@ -4412,6 +4430,7 @@ class TestServiceProjectsCli:
             "references",
             "loaded projects:",
             "in use:",
+            "active uses:",
             "not currently in use",
         ]
         leaked = [text for text in forbidden_substrings if text in joined]
