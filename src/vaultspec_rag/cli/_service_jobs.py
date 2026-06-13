@@ -144,7 +144,7 @@ def _job_prefix(job: dict[str, object]) -> str:
         return "*"
     if phase in ("error", "failed"):
         return "!"
-    return " "
+    return "-"
 
 
 def _job_timestamp(job: dict[str, object]) -> float:
@@ -463,6 +463,11 @@ def _render_jobs_feed(
         highlight=False,
     )
     _cli.console.print("Order: latest shown last", markup=False, highlight=False)
+    _cli.console.print(
+        "Legend: * active, ~ waiting, ! failed, - finished",
+        markup=False,
+        highlight=False,
+    )
     if filter_text:
         _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
     if monitoring:

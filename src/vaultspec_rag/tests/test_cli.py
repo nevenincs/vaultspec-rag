@@ -3984,6 +3984,65 @@ def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     return server, thread, requests
 
 
+def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _JobsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            payload = {
+                "jobs": [
+                    {
+                        "id": "finished-job-123",
+                        "source": "code",
+                        "phase": "done",
+                        "started_at": 1000.0,
+                        "finished_at": 1001.0,
+                        "result": "+1 /0 -0 (1000ms)",
+                        "initiator": {
+                            "command": "reindex_codebase",
+                            "project_root": r"finished-project",
+                        },
+                    },
+                    {
+                        "id": "running-job-456",
+                        "source": "vault",
+                        "trigger": "watcher",
+                        "phase": "running",
+                        "started_at": 1002.0,
+                        "progress": {
+                            "step": "embed",
+                            "completed": 2,
+                            "total": 5,
+                        },
+                        "runtime_seconds": 7,
+                        "initiator": {
+                            "command": "watcher_vault_index",
+                            "project_root": r"running-project",
+                        },
+                    },
+                ],
+                "total": 2,
+                "returned": 2,
+                "filters": {"limit": 2},
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _JobsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 def _projects_unload_contract_server() -> tuple[
     typing.Any, typing.Any, list[dict[str, object]]
 ]:
@@ -4054,6 +4113,39 @@ class TestServiceJobsCli:
         assert not missing, f"missing operator lines: {missing}"
         _assert_no_table_borders(result.output)
         assert "watcher" not in result.output.lower()
+
+    def test_jobs_populated_feed_uses_visible_prefixes(self) -> None:
+        server, thread, requests = _jobs_populated_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "jobs", "--limit", "2", "--port", str(server.server_port)],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/jobs?limit=2"]
+        lines = _plain_lines(result.output)
+        assert "Legend: * active, ~ waiting, ! failed, - finished" in lines
+        finished = [
+            line
+            for line in lines
+            if "finished code index refresh for finished-project" in line
+        ]
+        running = [
+            line
+            for line in lines
+            if "running vault index update for running-project" in line
+        ]
+        assert len(finished) == 1
+        assert len(running) == 1
+        assert finished[0].startswith("- ")
+        assert running[0].startswith("* ")
+        assert lines.index(finished[0]) < lines.index(running[0])
+        _assert_no_table_borders(result.output)
 
 
 class TestServiceProjectsCli:
