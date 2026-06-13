@@ -620,7 +620,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         f"Address: http://127.0.0.1:{port}",
         "Shown: 3 jobs",
         "Total: 3 jobs",
-        "Summary: 1 active, 0 waiting, 1 finished, 1 failed",
+        "Shown summary: 1 active, 0 waiting, 1 finished, 1 failed",
         "Order: latest shown last",
     ]
     rows = _jobs_feed_rows(output)
@@ -807,7 +807,7 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
         "Address: http://127.0.0.1:8766",
         "Shown: 1 job",
         "Total: 1 job",
-        "Summary: 0 active, 1 waiting, 0 finished, 0 failed",
+        "Shown summary: 0 active, 1 waiting, 0 finished, 0 failed",
         "Order: latest shown last",
     ]
     rows = _jobs_feed_rows(output)
@@ -863,7 +863,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
         "Address: http://127.0.0.1:8766",
         "Shown: 2 matching jobs",
         "Total: 58 jobs",
-        "Summary: 2 active, 0 waiting, 0 finished, 0 failed",
+        "Shown summary: 2 active, 0 waiting, 0 finished, 0 failed",
         "Order: latest shown last",
         "Legend: * active, ~ waiting, ! failed, - finished",
         "Filter: state active or waiting",

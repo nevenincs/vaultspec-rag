@@ -469,7 +469,7 @@ def _render_jobs_feed(
         highlight=False,
     )
     _cli.console.print(
-        f"Summary: {active} active, {waiting} waiting, "
+        f"Shown summary: {active} active, {waiting} waiting, "
         f"{finished} finished, {failed} failed",
         markup=False,
         highlight=False,
@@ -529,7 +529,7 @@ def _render_empty_jobs_result(
         highlight=False,
     )
     _cli.console.print(
-        "Summary: 0 active, 0 waiting, 0 finished, 0 failed",
+        "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
         markup=False,
         highlight=False,
     )

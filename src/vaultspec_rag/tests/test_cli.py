@@ -4212,7 +4212,7 @@ class TestServiceJobsCli:
             f"Address: http://127.0.0.1:{server.server_port}",
             "Shown: 0 matching jobs",
             "Total: 0 jobs",
-            "Summary: 0 active, 0 waiting, 0 finished, 0 failed",
+            "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
             "Order: latest shown last",
             "Filter: state active or waiting",
             "There are no active or waiting jobs.",
