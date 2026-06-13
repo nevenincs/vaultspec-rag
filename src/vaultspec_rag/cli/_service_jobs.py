@@ -78,7 +78,7 @@ def _resource_summary(job: dict[str, object]) -> str:
         return ""
     parts: list[str] = []
     if "rss_mb" in snapshot:
-        parts.append(f"memory {_format_mb(snapshot.get('rss_mb'))}")
+        parts.append(f"process {_format_mb(snapshot.get('rss_mb'))}")
     if "cuda_allocated_mb" in snapshot:
         parts.append(f"GPU used {_format_mb(snapshot.get('cuda_allocated_mb'))}")
     if "cuda_reserved_mb" in snapshot:

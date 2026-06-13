@@ -1019,7 +1019,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert values["User"] == "operator"
     assert values["Python"] == ".venv/Scripts/python.exe"
     assert values["Python environment"] == ".venv"
-    assert values["Memory"] == "memory 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB"
+    assert values["Memory"] == "process 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB"
     assert r".venv\Scripts\python.exe" not in output
     for forbidden in (
         "Initiator:",
@@ -1035,6 +1035,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert "rss " not in output
     assert "cuda alloc" not in output
     assert "cuda reserved" not in output
+    assert "Memory: memory " not in output
 
 
 def test_jobs_job_id_detail_uses_precise_process_label() -> None:
