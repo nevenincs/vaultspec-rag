@@ -1349,7 +1349,7 @@ class TestServiceLifecycleHelpers:
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
-    def test_service_status_next_action_uses_logs_limit(self, tmp_path: Path):
+    def test_service_status_next_action_starts_stopped_service(self, tmp_path: Path):
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             result = runner.invoke(
@@ -1362,8 +1362,8 @@ class TestServiceLifecycleHelpers:
         assert result.exit_code == 3
         payload = json.loads(result.output)
         next_action = payload["data"]["operational"]["next_action"]
-        assert next_action == "vaultspec-rag server logs --limit 80 --port 1"
-        assert "--lines" not in next_action
+        assert next_action == "vaultspec-rag server start --port 1"
+        assert "logs" not in next_action
 
 
 class TestMcpFastPath:
