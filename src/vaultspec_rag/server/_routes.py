@@ -897,6 +897,16 @@ async def get_service_state_route(request: Request) -> JSONResponse:
     return JSONResponse(res)
 
 
+async def get_readiness_route(request: Request) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    import vaultspec_rag
+
+    res = await _run_in_thread(vaultspec_rag.get_readiness)
+    return JSONResponse(res)
+
+
 async def code_file_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
@@ -1046,6 +1056,7 @@ ROUTES: list[Route] = [
     Route("/logs/json", logs_json_route, methods=["GET"]),
     Route("/jobs", jobs_route, methods=["GET"]),
     Route("/metrics", metrics_route, methods=["GET"]),
+    Route("/readiness", get_readiness_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
     Route("/reindex", reindex_route, methods=["POST"]),
     Route("/projects", list_projects_route, methods=["GET"]),

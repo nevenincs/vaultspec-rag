@@ -26,6 +26,7 @@ except PackageNotFoundError:
 from .api import (
     GraphCache,
     clean,
+    get_readiness,
     get_related,
     get_service_state,
     get_status,
@@ -71,6 +72,7 @@ __all__ = [
     "VaultStore",
     "__version__",
     "clean",
+    "get_readiness",
     "get_related",
     "get_service_state",
     "get_status",

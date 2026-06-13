@@ -328,3 +328,117 @@ class TestFrontDoorComposition:
         models = outcome.result_for(ProvisionStep.MODELS)
         assert models is not None
         assert models.action == ProvisionAction.SKIPPED
+
+
+class TestFrontDoorIdempotency:
+    """Whole-front-door idempotency, dry-run, and local-only skip.
+
+    These exercise the orchestrator end-to-end (not a single step) against
+    real backends with no mocks and no network: torch patches a real temp
+    pyproject, qdrant runs against a preseeded temp-isolated managed dir,
+    and the model step uses the real Hugging Face cache probe (asserted
+    only on the network-free outcomes a cached or skipped dev host emits).
+    """
+
+    def test_second_run_reports_unchanged_with_no_network(
+        self, isolated_status_dir: Path, consumer_workspace: Path
+    ) -> None:
+        binary = _seed_verified_install()
+        assert binary.is_relative_to(isolated_status_dir)
+
+        # First run configures torch (created) and verifies the preseeded
+        # qdrant binary (unchanged). Models are opted out so the front door
+        # never touches the network for a fetch.
+        first = provision_dependencies(
+            consumer_workspace,
+            skip={"models"},
+            assume_yes=True,
+        )
+        first_torch = first.result_for(ProvisionStep.TORCH)
+        assert first_torch is not None
+        assert first_torch.action == ProvisionAction.CREATED
+
+        before = binary.stat().st_mtime_ns
+
+        # Second run: torch is already configured and the qdrant binary is
+        # already verified, so each satisfied dependency reports
+        # ``unchanged`` and the verified binary is never rewritten. The
+        # opted-out model step stays ``skipped`` (its own honest outcome),
+        # so the aggregate is ``mixed`` - per-step idempotency is the
+        # contract, not a single collapsed status.
+        second = provision_dependencies(
+            consumer_workspace,
+            skip={"models"},
+            assume_yes=True,
+        )
+        torch = second.result_for(ProvisionStep.TORCH)
+        qdrant = second.result_for(ProvisionStep.QDRANT)
+        models = second.result_for(ProvisionStep.MODELS)
+        assert torch is not None and torch.action == ProvisionAction.UNCHANGED
+        assert qdrant is not None and qdrant.action == ProvisionAction.UNCHANGED
+        assert models is not None and models.action == ProvisionAction.SKIPPED
+        # An idempotent no-op must not have rewritten the verified binary.
+        assert binary.stat().st_mtime_ns == before
+
+    def test_satisfied_front_door_with_cached_models_is_unchanged(
+        self, isolated_status_dir: Path, consumer_workspace: Path
+    ) -> None:
+        # When models are NOT opted out and the dev host already has the
+        # repos cached, every considered dependency reports ``unchanged``
+        # so the whole front door collapses to a single ``unchanged`` run
+        # with no network. If the host's model cache is cold the model
+        # step would fetch, so this asserts the idempotent shape only on
+        # the network-free outcomes (cached -> unchanged; otherwise the
+        # step self-reports skipped/dry_run and the front door is mixed).
+        binary = _seed_verified_install()
+        assert binary.is_relative_to(isolated_status_dir)
+        provision_dependencies(consumer_workspace, assume_yes=True)  # warm torch
+
+        second = provision_dependencies(consumer_workspace, assume_yes=True)
+        models = second.result_for(ProvisionStep.MODELS)
+        assert models is not None
+        if models.action == ProvisionAction.UNCHANGED:
+            assert second.status == "unchanged"
+
+    def test_dry_run_previews_every_step_without_writing(
+        self, isolated_status_dir: Path, consumer_workspace: Path
+    ) -> None:
+        outcome = provision_dependencies(
+            consumer_workspace,
+            skip={"models"},
+            dry_run=True,
+            assume_yes=True,
+        )
+        assert outcome.dry_run is True
+        torch = outcome.result_for(ProvisionStep.TORCH)
+        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        assert torch is not None and torch.action == ProvisionAction.DRY_RUN
+        assert torch.sync_pending is True
+        assert qdrant is not None and qdrant.action == ProvisionAction.DRY_RUN
+        # A preview must not have patched the real pyproject nor provisioned
+        # a binary into the isolated managed dir.
+        assert (
+            detect_state(consumer_workspace / "pyproject.toml")
+            != TorchConfigState.CANONICAL
+        )
+        assert not (isolated_status_dir / "bin").exists()
+
+    def test_local_only_skips_only_the_binary_step(
+        self, isolated_status_dir: Path, consumer_workspace: Path
+    ) -> None:
+        outcome = provision_dependencies(
+            consumer_workspace,
+            local_only=True,
+            skip={"models"},
+            assume_yes=True,
+        )
+        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        torch = outcome.result_for(ProvisionStep.TORCH)
+        assert qdrant is not None
+        assert qdrant.action == ProvisionAction.SKIPPED
+        assert "local-only" in qdrant.detail
+        # local-only is the binary escape hatch only: torch still ran.
+        assert torch is not None
+        assert torch.action == ProvisionAction.CREATED
+        # No binary was provisioned into the isolated managed dir.
+        assert not (isolated_status_dir / "bin").exists()

@@ -71,10 +71,10 @@ Wire the provisioning front door into the install/setup CLI command with --local
 
 Extend the install report to carry heterogeneous per-dependency outcomes honestly and cover idempotency, dry-run, and local-only skipping with tests.
 
-- [ ] `W02.P06.S22` - extend InstallReport with per-dependency provisioning outcomes and render them honestly in the human and JSON report; `src/vaultspec_rag/commands/_models.py`.
-- [ ] `W02.P06.S23` - render the heterogeneous provisioning outcomes in the install report renderer including the torch sync-pending wording; `src/vaultspec_rag/cli/_render.py`.
-- [ ] `W02.P06.S24` - add tests for front-door idempotency, dry-run preview, and the local-only binary skip on the provisioning orchestrator; `src/vaultspec_rag/tests/test_provision.py`.
-- [ ] `W02.P06.S25` - add an integration test for the default install provisioning path reporting heterogeneous per-dependency outcomes; `src/vaultspec_rag/tests/integration/test_install.py`.
+- [x] `W02.P06.S22` - extend InstallReport with per-dependency provisioning outcomes and render them honestly in the human and JSON report; `src/vaultspec_rag/commands/_models.py`.
+- [x] `W02.P06.S23` - render the heterogeneous provisioning outcomes in the install report renderer including the torch sync-pending wording; `src/vaultspec_rag/cli/_render.py`.
+- [x] `W02.P06.S24` - add tests for front-door idempotency, dry-run preview, and the local-only binary skip on the provisioning orchestrator; `src/vaultspec_rag/tests/test_provision.py`.
+- [x] `W02.P06.S25` - add an integration test for the default install provisioning path reporting heterogeneous per-dependency outcomes; `src/vaultspec_rag/tests/integration/test_install.py`.
 
 ## Wave `W03` - readiness verb
 
@@ -94,10 +94,10 @@ Build the bounded, read-only readiness model in the service domain that aggregat
 
 Expose the readiness reporter through a CLI verb and the MCP tool surface as thin adapters over the shared service-domain behavior, in human and JSON modes.
 
-- [ ] `W03.P08.S31` - add a server doctor readiness CLI verb that renders the shared readiness snapshot in human and JSON modes as a thin adapter; `src/vaultspec_rag/cli/_service_status.py`.
-- [ ] `W03.P08.S32` - register the readiness verb under the server command group; `src/vaultspec_rag/cli/_app.py`.
-- [ ] `W03.P08.S33` - add a get_readiness MCP tool that returns the same readiness snapshot envelope as the CLI verb; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `W03.P08.S34` - add tests asserting the CLI readiness verb and MCP readiness tool return the same bounded snapshot in both modes; `src/vaultspec_rag/tests/test_cli.py`.
+- [x] `W03.P08.S31` - add a server doctor readiness CLI verb that renders the shared readiness snapshot in human and JSON modes as a thin adapter; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W03.P08.S32` - register the readiness verb under the server command group; `src/vaultspec_rag/cli/_app.py`.
+- [x] `W03.P08.S33` - add a get_readiness MCP tool that returns the same readiness snapshot envelope as the CLI verb; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W03.P08.S34` - add tests asserting the CLI readiness verb and MCP readiness tool return the same bounded snapshot in both modes; `src/vaultspec_rag/tests/test_cli.py`.
 
 ## Wave `W04` - documentation reframe and persona validation
 

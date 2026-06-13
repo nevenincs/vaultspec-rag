@@ -12,11 +12,14 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
+
+if TYPE_CHECKING:
+    from ..commands import ProvisionOutcome
 
 __all__ = [
     "_display_port_unreachable_error",
@@ -537,8 +540,83 @@ def _render_install_report(report: Any) -> None:
             markup=False,
             highlight=False,
         )
+    _render_provisioning_outcome(getattr(report, "provision_outcome", None))
     for warning in report.warnings:
         _print_warning_or_note(warning)
+
+
+# Human labels for the heterogeneous provisioning steps. The torch step
+# is the only two-phase one: a ``created``/``updated`` torch result with
+# ``sync_pending`` reads as "configured, sync pending", distinct from a
+# fetched binary that is terminally "downloaded"/"unchanged". Driven by a
+# flat table so the renderer stays a single bounded loop.
+_PROVISION_STEP_LABELS = {
+    "torch": "PyTorch",
+    "models": "Models",
+    "qdrant": "Qdrant binary",
+}
+_PROVISION_ACTION_LABELS = {
+    "created": "downloaded",
+    "updated": "updated",
+    "unchanged": "already present",
+    "skipped": "skipped",
+    "failed": "failed",
+    "dry_run": "preview only",
+}
+
+
+def _provision_step_label(step: object) -> str:
+    text = str(step)
+    return _PROVISION_STEP_LABELS.get(text, text)
+
+
+def _provision_action_phrase(step: dict[str, object]) -> str:
+    """Phrase one provisioning step honestly, surfacing torch's two phases.
+
+    A ``created``/``updated`` torch step carries ``sync_pending=True`` and
+    must read as "configured, sync pending" - the half-done state the ADR
+    requires the front door to communicate - rather than a binary's
+    terminal "downloaded".
+    """
+    action = str(step.get("action", ""))
+    if step.get("sync_pending") and action in ("created", "updated"):
+        return "configured, sync pending"
+    return _PROVISION_ACTION_LABELS.get(action, action.replace("_", " "))
+
+
+def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
+    """Render the heterogeneous per-dependency provisioning outcome.
+
+    Bounded and honest: one line per considered dependency through the
+    shared sync vocabulary, the torch two-phase "configured, sync
+    pending" wording kept distinct from a binary's "downloaded", and the
+    detail appended so a ``skipped`` step always carries its reason.
+    Reads the JSON-serialisable ``to_dict`` view so the human and JSON
+    reports describe exactly the same outcome.
+    """
+    if outcome is None:
+        return
+    data = outcome.to_dict()
+    steps = data.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return
+    _cli.console.print(
+        f"Provisioning: {data.get('status', 'unchanged')}",
+        markup=False,
+        highlight=False,
+    )
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        label = _provision_step_label(step.get("step", ""))
+        phrase = _provision_action_phrase(cast("dict[str, object]", step))
+        detail = str(step.get("detail", "")).strip()
+        suffix = f" ({detail})" if detail else ""
+        _cli.console.print(
+            f"  {label}: {phrase}{suffix}",
+            markup=False,
+            highlight=False,
+        )
 
 
 def _render_uninstall_report(report: Any) -> None:
