@@ -429,7 +429,14 @@ def start_supervised_from_config() -> QdrantSupervisor:
         log_path=log_path,
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
-    supervisor.start()
+    try:
+        supervisor.start()
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{exc}. The qdrant server backing the default server mode "
+            "could not start; inspect the log above, then re-run, or fall "
+            "back to local mode: vaultspec-rag server start --local-only"
+        ) from exc
     set_active_supervisor(supervisor)
     return supervisor
 

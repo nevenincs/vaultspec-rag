@@ -100,7 +100,7 @@ def _print_update_result(port: int, status: str, project: str) -> None:
 
 def _print_update_timing(result: dict[str, object]) -> None:
     update_delay = _format_milliseconds(result.get("debounce_ms"))
-    same_project_delay = _format_seconds(result.get("cooldown_s"))
+    repeat_update_delay = _format_seconds(result.get("cooldown_s"))
     if update_delay == "not reported":
         _cli.console.print(
             "File changes: not reported by service.",
@@ -113,15 +113,15 @@ def _print_update_timing(result: dict[str, object]) -> None:
             markup=False,
             highlight=False,
         )
-    if same_project_delay == "not reported":
+    if repeat_update_delay == "not reported":
         _cli.console.print(
-            "Same project: not reported by service.",
+            "Repeat updates: not reported by service.",
             markup=False,
             highlight=False,
         )
         return
     _cli.console.print(
-        f"Same project: wait {same_project_delay} before updating again.",
+        f"Repeat updates: wait {repeat_update_delay} before updating a project again.",
         markup=False,
         highlight=False,
     )

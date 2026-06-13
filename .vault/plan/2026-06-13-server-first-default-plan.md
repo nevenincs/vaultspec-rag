@@ -3,7 +3,6 @@ tags:
   - '#plan'
   - '#server-first-default'
 date: '2026-06-13'
-modified: '2026-06-13'
 tier: L3
 related:
   - '[[2026-06-13-server-first-default-adr]]'
@@ -33,7 +32,7 @@ Make the resident service start server mode by default, select the local store w
 
 - [x] `W01.P02.S05` - make service_lifespan select server mode by default and use the local store only when local-only is set, reading effective server mode from config; `src/vaultspec_rag/server/_lifespan.py`.
 - [x] `W01.P02.S06` - convert the qdrant child startup failure into a loud, actionable startup abort that names the install command and the --local-only escape hatch; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `W01.P02.S07` - surface the loud server-start failure remediation in the start-supervised entry point error message preserving verify-before-execute; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W01.P02.S07` - surface the loud server-start failure remediation in the start-supervised entry point error message preserving verify-before-execute; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
 - [x] `W01.P02.S08` - add integration tests for the server-first default startup path and the local-only opt-out startup path; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
 
 ### Phase `W01.P03` - CLI start surface and tests
@@ -43,7 +42,7 @@ Expose --local-only on the start surface, translate it to the daemon env, and co
 - [x] `W01.P03.S09` - add a --local-only flag to server start that selects the local backend and reframe the existing --qdrant flag as the redundant explicit-server opt-in; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `W01.P03.S10` - translate the --local-only start flag into the VAULTSPEC_RAG_LOCAL_ONLY daemon env, leaving operator-set env untouched when unset; `src/vaultspec_rag/cli/_process.py`.
 - [x] `W01.P03.S11` - default the qdrant-binary pre-start guard to run by default and skip it under --local-only so a default start fails fast on a missing binary; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `W01.P03.S12` - add CLI tests covering --local-only env translation, the default server-mode start, and the missing-binary loud-failure path; `src/vaultspec_rag/tests/test_cli.py`.
+- [x] `W01.P03.S12` - add CLI tests covering --local-only env translation, the default server-mode start, and the missing-binary loud-failure path; `src/vaultspec_rag/tests/test_cli.py`.
 
 ## Wave `W02` - unified setup front door
 
@@ -63,10 +62,10 @@ Add an opt-out provisioning orchestrator over the existing torch, model, and qdr
 
 Wire the provisioning front door into the install/setup CLI command with --local-only and finer per-dependency skip flags, honoring local-only at the runtime layer too.
 
-- [ ] `W02.P05.S18` - call the provisioning front door by default from install_run and thread its result into the install report; `src/vaultspec_rag/commands/_install.py`.
-- [ ] `W02.P05.S19` - add --local-only to the install command so it skips the qdrant binary and selects the local runtime default; `src/vaultspec_rag/cli/_install.py`.
-- [ ] `W02.P05.S20` - add per-dependency skip flags for torch, models, and qdrant to the install command for finer opt-out than --local-only; `src/vaultspec_rag/cli/_install.py`.
-- [ ] `W02.P05.S21` - honor --local-only in install_run by writing the local-only runtime selection so the setup choice persists to runtime; `src/vaultspec_rag/commands/_install.py`.
+- [x] `W02.P05.S18` - call the provisioning front door by default from install_run and thread its result into the install report; `src/vaultspec_rag/commands/_install.py`.
+- [x] `W02.P05.S19` - add --local-only to the install command so it skips the qdrant binary and selects the local runtime default; `src/vaultspec_rag/cli/_install.py`.
+- [x] `W02.P05.S20` - add per-dependency skip flags for torch, models, and qdrant to the install command for finer opt-out than --local-only; `src/vaultspec_rag/cli/_install.py`.
+- [x] `W02.P05.S21` - honor --local-only in install_run by writing the local-only runtime selection so the setup choice persists to runtime; `src/vaultspec_rag/commands/_install.py`.
 
 ### Phase `W02.P06` - provisioning report and tests
 
@@ -85,11 +84,11 @@ Add a bounded, read-only readiness/doctor command in the service domain that rep
 
 Build the bounded, read-only readiness model in the service domain that aggregates per-dependency provisioned and usable state.
 
-- [ ] `W03.P07.S26` - add a get_readiness facade function that aggregates the bounded per-dependency readiness snapshot in the service domain; `src/vaultspec_rag/api.py`.
-- [ ] `W03.P07.S27` - report torch CUDA availability as a readiness dimension without forcing model load; `src/vaultspec_rag/api.py`.
-- [ ] `W03.P07.S28` - report model presence by checking the HuggingFace cache for the configured dense, sparse, and reranker repos; `src/vaultspec_rag/api.py`.
-- [ ] `W03.P07.S29` - report the qdrant binary resolution source and supervised-server liveness by reading the qdrant runtime state; `src/vaultspec_rag/api.py`.
-- [ ] `W03.P07.S30` - add unit tests asserting the readiness snapshot is bounded and read-only across the three dependency dimensions; `src/vaultspec_rag/tests/test_readiness.py`.
+- [x] `W03.P07.S26` - add a get_readiness facade function that aggregates the bounded per-dependency readiness snapshot in the service domain; `src/vaultspec_rag/api.py`.
+- [x] `W03.P07.S27` - report torch CUDA availability as a readiness dimension without forcing model load; `src/vaultspec_rag/api.py`.
+- [x] `W03.P07.S28` - report model presence by checking the HuggingFace cache for the configured dense, sparse, and reranker repos; `src/vaultspec_rag/api.py`.
+- [x] `W03.P07.S29` - report the qdrant binary resolution source and supervised-server liveness by reading the qdrant runtime state; `src/vaultspec_rag/api.py`.
+- [x] `W03.P07.S30` - add unit tests asserting the readiness snapshot is bounded and read-only across the three dependency dimensions; `src/vaultspec_rag/tests/test_readiness.py`.
 
 ### Phase `W03.P08` - readiness CLI and MCP adapters
 
