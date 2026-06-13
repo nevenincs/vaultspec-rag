@@ -1,23 +1,23 @@
-# Using vaultspec-rag with MCP clients
+# Use vaultspec-rag with MCP clients
 
-The Model Context Protocol (MCP) is a JSON-RPC interface AI clients use to call external tools. vaultspec-rag ships an MCP server that exposes its search and indexing operations as MCP tools, so an assistant like Claude Desktop or Claude Code can query your vault and source code directly. Any client that speaks stdio MCP or streamable HTTP MCP can connect, including Claude Desktop, Claude Code, and similar tools.
+An assistant like Claude Desktop or Claude Code can search your vault and source code directly. The Model Context Protocol (MCP) is a JSON-RPC interface assistants use to call external tools, and vaultspec-rag ships an MCP server that exposes its search and indexing operations as MCP tools. Any client that speaks stdio MCP or streamable HTTP MCP can connect.
 
-Before you start, this page assumes you have vaultspec-rag installed and have run at least one search successfully. See [installation.md](installation.md) for setup and [getting-started.md](getting-started.md) for the smoke-test path. The MCP server binary `vaultspec-search-mcp` lands on `PATH` automatically when the package is installed.
+Before you start, this page assumes you've installed vaultspec-rag and run at least one search. See the [installation guide](installation.md) for setup and the [getting-started tutorial](getting-started.md) for the first-search path. The MCP server binary `vaultspec-search-mcp` lands on `PATH` when you install the package.
 
 ## Choose a transport
 
-vaultspec-rag offers two transports, and the right pick depends on how you work.
+vaultspec-rag offers two transports. The right pick depends on how you work.
 
-- **stdio**: the client launches `vaultspec-search-mcp` as a child process, one process per project. Suitable for Claude Desktop and any client where each workspace gets its own MCP server.
-- **HTTP**: the client connects to a long-running HTTP service on `127.0.0.1:8766`. One daemon serves any number of projects. Suitable for Claude Code or any setup where several projects share one daemon.
+- **stdio**: the client launches `vaultspec-search-mcp` as a child process, one per project. The server reads the project from `VAULTSPEC_RAG_ROOT`.
+- **HTTP**: the client connects to one long-running service that serves many projects. Start the service first, then point the client at its MCP endpoint.
 
-Pick stdio if you work in one project at a time, HTTP if you switch between projects or already run the service.
+Pick stdio when you work in one project at a time. Pick HTTP when several projects share one service. The next two sections are common examples - either transport works with any compatible client.
 
-## Configure Claude Desktop (stdio)
+## Configure a stdio client (Claude Desktop)
 
-Claude Desktop reads its MCP config from `claude_desktop_config.json`. The exact location varies by operating system; open Claude Desktop's settings dialog to see the path on your machine.
+Claude Desktop reads its MCP config from `claude_desktop_config.json`. The location varies by operating system; open Claude Desktop's settings dialog to find the path on your machine.
 
-Add a `vaultspec-rag` entry under `mcpServers`, pointing at the stdio binary and setting `VAULTSPEC_RAG_ROOT` to the absolute path of the project you want the assistant to search.
+Add a `vaultspec-rag` entry under `mcpServers`, point it at `vaultspec-search-mcp`, and set `VAULTSPEC_RAG_ROOT` to the absolute path of the project you want the assistant to search.
 
 ```json
 {
@@ -34,15 +34,15 @@ Add a `vaultspec-rag` entry under `mcpServers`, pointing at the stdio binary and
 
 Restart Claude Desktop after editing the file so it picks up the new server.
 
-## Configure Claude Code (HTTP)
+## Configure an HTTP client (Claude Code)
 
-Claude Code talks to vaultspec-rag over HTTP. Start the service first, then register it in your project's `.mcp.json`.
+The HTTP transport connects to the running service, so start the service first.
 
 ```bash
-uv run vaultspec-rag server service start
+uv run vaultspec-rag server start
 ```
 
-Create or edit `.mcp.json` at the project root and add the entry:
+Create or edit `.mcp.json` at the project root and add the entry. Note the trailing slash on the endpoint:
 
 ```json
 {
@@ -55,48 +55,54 @@ Create or edit `.mcp.json` at the project root and add the entry:
 }
 ```
 
-The HTTP service is multi-tenant and refuses tool calls that do not include a `project_root`. The client must send an absolute project path on every call. Claude Code resolves `${workspaceFolder}` from the editor's project root, so the path travels automatically once the server is registered.
+The HTTP service is multi-tenant, so it needs the project path on every tool call. An editor like Claude Code sends its workspace path automatically once the server is registered. See how to [run and supervise the service](service-mode.md).
 
 ## Confirm the assistant sees the tools
 
-In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` server. In Claude Code, run `/mcp` and check that `vaultspec-rag` appears in the connected-servers list. A connected server publishes fifteen tools covering search, indexing, status, project management, watcher control, and service observability. Beyond the search and indexing tools, this includes filesystem-watcher control (`get_watcher_state`, `start_watcher`, `stop_watcher`, `reconfigure_watcher`) and service observability (`get_service_state`, `get_logs`, `get_jobs`). For the full parameter list, see [cli.md](cli.md); the same tools surface there.
+In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` server. In Claude Code, run `/mcp` and check that `vaultspec-rag` appears in the connected-servers list.
 
-For a smoke test, ask the assistant a question that requires retrieval, for example "find the ADR about caching", and confirm it cites vault hits in the response.
+A connected server publishes the search and indexing tools, including `search_vault` and `search_codebase`. For the full tool list and parameters, see the [search and index guide](search-and-index.md) and the [CLI reference](cli.md).
+
+For a smoke test, ask the assistant a retrieval question about your project, such as "find the ADR about caching" or "where is authentication handled?". A successful answer cites file locations from your project - a document path or a source file and line - rather than answering from general knowledge.
 
 ## Troubleshooting
 
-### Assistant does not see the tools
+### Assistant doesn't see the tools
 
-In stdio mode, verify `vaultspec-search-mcp` is on `PATH`:
+In stdio mode, confirm `vaultspec-search-mcp` is on `PATH`:
 
 ```bash
 which vaultspec-search-mcp
 ```
 
-In HTTP mode, verify the service is running:
+In HTTP mode, confirm the service is running:
 
 ```bash
-uv run vaultspec-rag server service status
+uv run vaultspec-rag server status
 ```
 
-If the service is down, start it with `uv run vaultspec-rag server service start` and reconnect from the client.
+If the service is down, start it with `uv run vaultspec-rag server start` and reconnect from the client.
 
 ### Results come from the wrong project
 
-In HTTP mode, the client must send the correct `project_root` on every call. Check the client's MCP-call logs and confirm the path matches the workspace you expect. If your client does not auto-resolve the workspace path, set it explicitly in the client config.
+In HTTP mode, the client must send the right project path on every call. Check the client's MCP-call logs and confirm the path matches the workspace you expect. If your client doesn't auto-resolve the workspace path, set it explicitly in the client config.
 
-In stdio mode, set `VAULTSPEC_RAG_ROOT` in the `env` block of `claude_desktop_config.json` and restart the client. Without that variable, the server falls back to its current working directory, which rarely matches the project you want.
+In stdio mode, set `VAULTSPEC_RAG_ROOT` to the absolute project path in the `env` block and restart the client. Without that variable, the server falls back to its working directory, which rarely matches the project you want.
 
 ### First call is slow
 
 Embedding and reranker models load on first use, which can take several seconds. Pre-warm them before launching the assistant:
 
 ```bash
-uv run vaultspec-rag server service warmup
+uv run vaultspec-rag server warmup
 ```
 
 Otherwise, accept the one-time delay on the first search of the session.
 
-## Need help?
+## Where to go next
 
-If something still does not work, check the [Support](../README.md#support-and-help) section of the repo README.
+- [Run and supervise the HTTP service](service-mode.md).
+- [Browse the full tool list and search filters](search-and-index.md).
+- [Look up commands and parameters in the CLI reference](cli.md).
+
+If something still doesn't work, check the [Support](../README.md#support-and-help) section of the repo README.
