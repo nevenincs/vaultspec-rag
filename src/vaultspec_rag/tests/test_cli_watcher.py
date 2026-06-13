@@ -61,13 +61,14 @@ class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
 
 class _SlowUpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
     requests: ClassVar[list[dict[str, object]]] = []
+    delay_seconds: ClassVar[float] = 0.5
 
     def do_POST(self) -> None:
         body_length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(body_length).decode("utf-8")
         body = json.loads(raw_body) if raw_body else {}
         self.requests.append({"method": "POST", "path": self.path, "body": body})
-        time.sleep(0.5)
+        time.sleep(self.delay_seconds)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -97,8 +98,11 @@ def _updates_http_server(
 
 
 @contextlib.contextmanager
-def _slow_updates_http_server() -> Iterator[tuple[http.server.HTTPServer, int]]:
+def _slow_updates_http_server(
+    delay_seconds: float = 0.5,
+) -> Iterator[tuple[http.server.HTTPServer, int]]:
     _SlowUpdatesHTTPHandler.requests = []
+    _SlowUpdatesHTTPHandler.delay_seconds = delay_seconds
     server = http.server.HTTPServer(("127.0.0.1", 0), _SlowUpdatesHTTPHandler)
     port = int(server.server_address[1])
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -336,6 +340,32 @@ def test_updates_start_times_out_with_next_actions(tmp_path: Path) -> None:
     assert "Next actions:" in result.output
     assert f"vaultspec-rag server status --port {port}" in result.output
     assert f"vaultspec-rag server logs --limit 200 --port {port}" in result.output
+
+
+def test_updates_start_timeout_uses_singular_second(tmp_path: Path) -> None:
+    project = str(tmp_path.resolve())
+    previous = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
+    os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "1"
+    try:
+        with _slow_updates_http_server(delay_seconds=1.5) as (_server, port):
+            result = runner.invoke(
+                app,
+                ["server", "updates", "start", project, "--port", str(port)],
+            )
+    finally:
+        if previous is None:
+            os.environ.pop("VAULTSPEC_RAG_ADMIN_TIMEOUT", None)
+        else:
+            os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = previous
+
+    assert result.exit_code == 1, result.output
+    lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+    joined = " ".join(lines)
+    assert (
+        f"Automatic index updates: The service on port {port} "
+        "did not answer within 1 second."
+    ) in joined
+    assert "1 seconds" not in result.output
 
 
 @pytest.mark.parametrize(

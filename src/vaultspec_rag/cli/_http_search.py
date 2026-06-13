@@ -66,6 +66,12 @@ def _get_admin_timeout(timeout: float | None = None) -> float:
     return DEFAULT_ADMIN_TIMEOUT_SECONDS
 
 
+def _format_timeout_seconds(timeout: float) -> str:
+    value = f"{timeout:g}"
+    noun = "second" if timeout == 1 else "seconds"
+    return f"{value} {noun}"
+
+
 def _do_http_call(
     port: int,
     path: str,
@@ -255,7 +261,7 @@ def _try_http_admin(
                 "error": "admin_timeout",
                 "message": (
                     f"The service on port {port} did not answer within "
-                    f"{resolved_timeout:g} seconds."
+                    f"{_format_timeout_seconds(resolved_timeout)}."
                 ),
             }
         logger.debug(
