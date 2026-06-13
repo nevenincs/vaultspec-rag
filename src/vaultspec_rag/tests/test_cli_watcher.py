@@ -242,8 +242,8 @@ def test_updates_status_empty_output_uses_project_language() -> None:
 
     assert result.exit_code == 0, result.output
     labels = _label_values(result.output)
-    assert labels["File changes"] == "wait 2s before updating."
-    assert labels["Same project"] == "wait 30s before updating again."
+    assert labels["File changes"] == "wait 2 seconds before updating."
+    assert labels["Same project"] == "wait 30 seconds before updating again."
     assert "Same source" not in labels
     assert "No projects currently have automatic index updates." in result.output
     assert "No roots" not in result.output
@@ -503,8 +503,8 @@ def test_updates_timing_output_uses_project_block() -> None:
     assert labels["Automatic index updates"] == "timing updated"
     assert labels["Project"] == "feature-server-supervision"
     assert labels["Path"] == project
-    assert labels["File changes"] == "wait 500ms before updating."
-    assert labels["Same project"] == "wait 2s before updating again."
+    assert labels["File changes"] == "wait 500 milliseconds before updating."
+    assert labels["Same project"] == "wait 2 seconds before updating again."
     assert "reconfigured for:" not in result.output.lower()
 
 

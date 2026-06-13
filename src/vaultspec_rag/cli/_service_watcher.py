@@ -19,6 +19,11 @@ from ._render import (
 from ._service_status import _default_service_port
 
 
+def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
+    unit = singular if value == 1 else plural or f"{singular}s"
+    return f"{value} {unit}"
+
+
 def _format_milliseconds(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "not reported"
@@ -26,11 +31,11 @@ def _format_milliseconds(raw: object) -> str:
     if milliseconds == 0:
         return "immediately"
     if milliseconds < 1000:
-        return f"{int(milliseconds)}ms"
+        return _counted_unit(int(milliseconds), "millisecond")
     seconds = milliseconds / 1000.0
     if seconds.is_integer():
-        return f"{int(seconds)}s"
-    return f"{seconds:.1f}s"
+        return _counted_unit(int(seconds), "second")
+    return f"{seconds:.1f} seconds"
 
 
 def _format_seconds(raw: object) -> str:
@@ -41,12 +46,14 @@ def _format_seconds(raw: object) -> str:
         return "immediately"
     if seconds < 60:
         if seconds.is_integer():
-            return f"{int(seconds)}s"
-        return f"{seconds:.1f}s"
+            return _counted_unit(int(seconds), "second")
+        return f"{seconds:.1f} seconds"
     minutes, remainder = divmod(int(seconds), 60)
     if remainder:
-        return f"{minutes}m {remainder}s"
-    return f"{minutes}m"
+        return (
+            f"{_counted_unit(minutes, 'minute')} {_counted_unit(remainder, 'second')}"
+        )
+    return _counted_unit(minutes, "minute")
 
 
 def _project_name(root: object) -> str:
