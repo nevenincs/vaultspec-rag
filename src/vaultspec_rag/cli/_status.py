@@ -25,9 +25,15 @@ def _status_counts(status: dict[str, object]) -> tuple[int, int]:
     return int(cast("Any", vault_count)), int(cast("Any", code_count))
 
 
-def _human_index_data_location(storage_path: object) -> str:
+def _human_index_data_location(
+    storage_path: object,
+    *,
+    service_port: int | None = None,
+) -> str:
     raw = str(storage_path)
     if "://" in raw:
+        if service_port is not None:
+            return "running service storage"
         return "remote storage"
     path = Path(raw)
     if path.name.lower() == "qdrant":
@@ -44,7 +50,10 @@ def _render_status_text(
     cuda_available = bool(status["cuda"])
     gpu_name = cast("Any", status["gpu_name"])
     vram_mb = int(cast("Any", status["vram_mb"]))
-    index_data_path = _human_index_data_location(status["storage_path"])
+    index_data_path = _human_index_data_location(
+        status["storage_path"],
+        service_port=service_port,
+    )
     vault_count, code_count = _status_counts(status)
     device = (
         f"GPU - {gpu_name} ({vram_mb} MB VRAM)"

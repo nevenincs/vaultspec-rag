@@ -880,11 +880,12 @@ class TestStatusCommand:
             "/service-state?project_root=" + urllib.parse.quote(str(root))
         ]
         labels = _label_values(result.output)
-        assert labels["Index data"] == "remote storage"
+        assert labels["Index data"] == "running service storage"
         assert labels["Vault documents"] == "7"
         assert labels["Source code sections"] == "9"
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
         assert "Read from" not in labels
+        assert "remote storage" not in result.output
 
     def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = self._workspace(tmp_path)
