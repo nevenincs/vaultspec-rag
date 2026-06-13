@@ -1,115 +1,165 @@
-# Your first search
+# Get started with vaultspec-rag
 
-Keyword tools like grep find files that use the same words as your query. They miss files that mean the same thing in different words. vaultspec-rag closes that gap for your own project by searching on meaning, not just spelling.
+By the end of this tutorial, you'll have vaultspec-rag installed, its dependencies provisioned, and a search service running. You'll index your project, get a first search result on screen, read it, and then narrow it down.
 
-By the end of this tutorial you will have installed vaultspec-rag, provisioned a server-backed RAG over your project, run a search written in plain English, and read the ranked results. To follow along you need a working command line and a project directory that contains some source code. Model downloads, the one-time server-binary fetch, and the first index build take longer than later runs and depend on your network and project size, so plan for an unhurried first pass.
+You'll need an NVIDIA GPU with CUDA and around 3 GB of free video memory, [uv](https://docs.astral.sh/uv/), and Python 3.13 or newer. The first run downloads the search model files once, so it takes longer than later runs. Follow the steps in order.
 
-## Before you start
+For the full setup reference, see the [installation guide](installation.md). For how the pieces fit together, see the [architecture overview](architecture.md).
 
-- An NVIDIA GPU with CUDA support and roughly 3 GB of free GPU memory.
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) installed and on your `PATH`.
-- Python 3.13 or newer.
+## Step 1: Install the package
 
-For full environment setup, see [installation](installation.md). For why the GPU is required, see [architecture](architecture.md).
+Add vaultspec-rag to your environment:
 
-## Step 1: add vaultspec-rag
-
-Add the package to a uv-managed project:
-
-```bash
+```
 uv add vaultspec-rag
 ```
 
-uv downloads vaultspec-rag and its dependencies. Wait for the prompt to return before continuing.
+Confirm the install by printing the version:
 
-Verify the package resolved:
-
-```bash
+```
 uv run vaultspec-rag --version
 ```
 
-You should see a version line.
+You'll see:
 
-## Step 2: install and provision
+```
+vaultspec-rag v0.2.20
+```
 
-`install` sets up the workspace and, by default, provisions everything the **server-first** backend needs: it configures the CUDA `torch` build, ensures the search and rerank models are cached, and downloads the pinned Qdrant server binary. Server mode is the default backend because, at the scale this product exists to serve, the supervised Qdrant server returns large-codebase searches at interactive latency where the on-disk store cannot.
+## Step 2: Provision dependencies
 
-```bash
+Provision the GPU build, the search models, and the managed vector-store binary:
+
+```
 uv run vaultspec-rag install
 ```
 
-The command prompts before changing PyTorch configuration; press `y` to accept. Each provisioning step reports through the shared sync vocabulary (`created` / `updated` / `unchanged` / `skipped` / `failed`), so you can read what happened at a glance. Torch is configured in two phases: `install` writes the GPU index into `pyproject.toml` and reports it as "configured, sync pending", then you pull the GPU build:
+The command pauses at the PyTorch configuration prompt. Type `y` and press Enter. To skip the prompt, run `uv run vaultspec-rag install --yes` instead.
 
-```bash
+The command then prints a per-dependency report:
+
+```
+PyTorch: configured, sync pending
+Models: downloaded
+Qdrant binary: downloaded
+```
+
+PyTorch reads `configured, sync pending` because the GPU build is fetched in the next step.
+
+## Step 3: Fetch the GPU build
+
+Download the GPU PyTorch build that the previous step configured:
+
+```
 uv sync
 ```
 
-Preview the whole run first with `uv run vaultspec-rag install --dry-run` if you want to see what each step would do before it runs. If a step errors, see [installation](installation.md) for recovery.
+uv resolves the dependency graph and installs the GPU build. You'll see uv list the packages it adds and updates.
 
-### Minimal alternative: local-only
+## Step 4: Move into your project
 
-If you are on CI, an air-gapped host, or a small project that does not need the server, opt out with `--local-only`. This skips the Qdrant binary download and flips the runtime to the on-disk local store (persisted so `server start` honours it later):
+Change into a project directory that contains source code:
 
-```bash
-uv run vaultspec-rag install --local-only
 ```
-
-Local mode stays fully supported; it is a deliberate, first-class opt-out, not a fallback.
-
-## Step 3: move into your project
-
-Change into the directory you want to search. Any directory you would open in your editor counts as a project; vaultspec-rag treats every `.md` file as a document and walks the source tree for code files.
-
-```bash
 cd path/to/your/project
 ```
 
-## Step 4: build the search index
+## Step 5: Start the search service
 
-Build the index for both documents and code:
+Start the background search service:
 
-```bash
+```
+uv run vaultspec-rag server start
+```
+
+The command starts the managed Qdrant server on the loopback address `127.0.0.1:8765` and warms the search models. It then binds the service on port 8766 and waits until the service reports ready. When it finishes, it prints the service address.
+
+## Step 6: Build the index
+
+Index your project through the running service:
+
+```
 uv run vaultspec-rag index
 ```
 
-On the first run, vaultspec-rag downloads any not-yet-cached GPU model files into your HuggingFace cache. This happens once; later runs reuse the cached files. The indexer prints per-file progress as it works and finishes with a per-source summary that lists vault and code counts. The exact format may differ between versions, but the summary will appear once indexing is complete.
+The service queues the work as a background job and prints:
 
-## Step 5: run your first search
+```
+Check progress with: vaultspec-rag server jobs
+```
 
-Ask a question about your code in plain English:
+Watch the job until it completes:
 
-```bash
+```
+uv run vaultspec-rag server jobs
+```
+
+Wait until both index runs show as `finished`, marked by the `-` legend prefix:
+
+```
+Jobs
+Address: http://127.0.0.1:8766
+Displayed: 2 of 2
+Legend: * active, ~ waiting, ! failed, - finished
+
+- 14:03:21 finished vault index update for my-project (job 9f2a1c7d) - added 24, updated 0, removed 0, finished in 3.1s
+- 14:03:27 finished code index update for my-project (job a1b2c3d4) - added 120, updated 0, removed 0, finished in 6.4s
+```
+
+A small project usually finishes within a minute. Wait until both sources show `finished` before you search.
+
+## Step 7: Run your first search
+
+Search your code for a concept:
+
+```
 uv run vaultspec-rag search "how authentication works" --type code
 ```
 
-You will see a ranked table:
+The service returns up to ten ranked records. Each record shows a numbered rank, the file location, and the matching text:
 
-```text
-  Score   Location                          Snippet
-  0.87    src/auth/middleware.py:42         def authenticate(request): ...
-  0.81    src/auth/session.py:118           class SessionManager: ...
-  0.74    src/api/login.py:27               @router.post("/login") ...
+```
+1. src/auth/middleware.py:42
+   def authenticate(request): ...
+2. src/auth/session.py:118
+   class SessionManager: ...
 ```
 
-`Score` shows how closely each chunk matches your query in meaning, with higher being closer. `Location` names the file and the starting line of the matching chunk. `Snippet` shows the first line of the matching code. By default the command returns the top 10 results.
+Relevance scores stay hidden by default. To see them, add `--scores`.
 
-## Step 6: narrow the results to one area
+## Step 8: Narrow the results
 
-Scope the same query to a single subdirectory using `--include-path`:
+Restrict the same search to one part of your tree with a path glob:
 
-```bash
+```
 uv run vaultspec-rag search "how authentication works" --type code --include-path 'src/auth/**'
 ```
 
-`--include-path` is a glob filter applied after the search runs: only results whose path matches the pattern survive. Compare the output to Step 5 and you will see the result list shrink to files under `src/auth/`. For the full set of refinement flags, see [search and index](search-and-index.md).
+The result list shrinks to the files under that path:
+
+```
+1. src/auth/middleware.py:42
+   def authenticate(request): ...
+2. src/auth/session.py:118
+   class SessionManager: ...
+```
 
 ## Wrap up
 
-You now have a server-backed install, a code search, and a narrowed search. From here:
+You installed vaultspec-rag, provisioned its dependencies, started a search service, indexed a project, and ran your first searches - including a path-scoped one.
 
-- [Search and index](search-and-index.md) covers vault search and the other refinement flags you skipped here.
-- [Service mode](service-mode.md) keeps the GPU model resident and runs the supervised Qdrant server for repeat searches; it also covers `server doctor` for a readiness check.
-- [MCP](mcp.md) wires vaultspec-rag into Claude Desktop and Claude Code.
-- [Architecture](architecture.md) explains how the search actually works under the hood.
+From here:
 
-If anything went wrong, see the [Support section of the project README](../README.md#support-and-help).
+- Refine searches and search vault documents with the [search and index guide](search-and-index.md).
+- Manage and observe the running service with the [service mode guide](service-mode.md).
+- Compare the server-backed default with the local-only minimal setup in the [backends guide](backends.md).
+- Wire vaultspec-rag into an AI assistant with the [MCP guide](mcp.md).
+- Learn how the system works in the [architecture overview](architecture.md).
+
+When you're done, stop the service:
+
+```
+uv run vaultspec-rag server stop
+```
+
+Need help? See [support and help](../README.md#support-and-help).
