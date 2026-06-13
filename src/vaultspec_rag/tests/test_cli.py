@@ -4043,13 +4043,14 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
     return server, thread, requests
 
 
-def _projects_unload_contract_server() -> tuple[
-    typing.Any, typing.Any, list[dict[str, object]]
-]:
+def _projects_unload_contract_server(
+    response: dict[str, object] | None = None,
+) -> tuple[typing.Any, typing.Any, list[dict[str, object]]]:
     import http.server
     import threading
 
     requests: list[dict[str, object]] = []
+    payload = response or {"unexpected": {"raw": True}}
 
     class _ProjectsEvictHandler(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:
@@ -4058,7 +4059,7 @@ def _projects_unload_contract_server() -> tuple[
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"unexpected": {"raw": True}}).encode())
+            self.wfile.write(json.dumps(payload).encode())
 
         def log_message(self, format: str, *args: object) -> None:
             _ = format, args
@@ -4316,11 +4317,48 @@ class TestServiceProjectsCli:
 
         assert result.exit_code == 1, result.output
         assert requests == [{"root": r"example"}]
-        message = " ".join(_plain_lines(result.output))
-        assert r"example" in message
-        assert "vaultspec-rag server status" in message
+        labels = _label_values(result.output)
+        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert labels["Project"] == "example"
+        assert labels["Path"] == r"example"
+        assert labels["Unload"] == "service could not confirm unload"
+        assert (
+            labels["Next action"]
+            == f"vaultspec-rag server status --port {server.server_port}"
+        )
         assert "unexpected" not in result.output
         assert "{" not in result.output
+
+    def test_projects_unload_not_found_uses_project_block(self) -> None:
+        server, thread, requests = _projects_unload_contract_server(
+            {"evicted": False, "reason": "not_found"}
+        )
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "projects",
+                    "unload",
+                    r"not-loaded",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 2, result.output
+        assert requests == [{"root": r"not-loaded"}]
+        labels = _label_values(result.output)
+        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert labels["Project"] == "not-loaded"
+        assert labels["Path"] == r"not-loaded"
+        assert labels["Unload"] == "project is not loaded"
+        assert "Project is not loaded:" not in result.output
+        _assert_no_table_borders(result.output)
 
     def test_projects_unload_json_message_stays_user_facing(self) -> None:
         server, thread, requests = _projects_unload_contract_server()

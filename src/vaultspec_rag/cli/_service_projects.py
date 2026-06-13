@@ -218,6 +218,38 @@ def _project_unload_failure_message(root: str, reason: str) -> str:
     )
 
 
+def _print_project_unload_result(
+    *,
+    port: int,
+    project: str,
+    status: str,
+    next_action: str | None = None,
+) -> None:
+    _cli.console.print(
+        f"Address: http://127.0.0.1:{port}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Project: {_project_name(project)}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Path: {project}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print(f"Unload: {status}", markup=False, highlight=False)
+    if next_action:
+        _cli.console.print(
+            f"Next action: {next_action}",
+            markup=False,
+            highlight=False,
+        )
+
+
 def _handle_evict_json(
     evicted: bool, reason: str, root: str, result: dict[str, Any]
 ) -> None:
@@ -257,6 +289,8 @@ def service_projects_unload(
 ) -> None:
     """Unload a project from the running search service."""
     resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        _handle_unload_not_running(json_mode, project)
     result = _try_http_admin(
         "evict_project",
         {"root": project},
@@ -272,21 +306,30 @@ def service_projects_unload(
         _handle_evict_json(evicted, reason, project, result)
 
     if evicted:
-        _cli.console.print(f"Project unloaded: {project}", markup=False)
+        _print_project_unload_result(
+            port=resolved_port,
+            project=project,
+            status="unloaded",
+        )
         raise typer.Exit(0)
     if reason == "busy":
-        _cli.console.print(
-            _project_unload_failure_message(project, reason), markup=False
+        _print_project_unload_result(
+            port=resolved_port,
+            project=project,
+            status="project is in use; retry shortly",
         )
         raise typer.Exit(1)
     if reason == "not_found":
-        _cli.console.print(
-            _project_unload_failure_message(project, reason), markup=False
+        _print_project_unload_result(
+            port=resolved_port,
+            project=project,
+            status="project is not loaded",
         )
         raise typer.Exit(2)
-    _cli.console.print(
-        _project_unload_failure_message(project, reason),
-        markup=False,
-        highlight=False,
+    _print_project_unload_result(
+        port=resolved_port,
+        project=project,
+        status="service could not confirm unload",
+        next_action=f"vaultspec-rag server status --port {resolved_port}",
     )
     raise typer.Exit(1)
