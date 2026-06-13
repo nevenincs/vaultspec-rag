@@ -502,14 +502,14 @@ def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
         (
             "active",
             "running",
-            "Filter: state active or waiting",
-            "There are no active or waiting jobs.",
+            "Filter: state active",
+            "There are no active jobs.",
         ),
         (
             "waiting",
             "running",
-            "Filter: state active or waiting",
-            "There are no active or waiting jobs.",
+            "Filter: state waiting",
+            "There are no waiting jobs.",
         ),
         (
             "finished",
@@ -904,6 +904,132 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
     assert len(rows) == 2
     assert {row["id"] for row in rows} == {"running-a", "running-b"}
     assert all(row["marker"] == "*" and row["state"] == "active" for row in rows)
+
+
+def test_jobs_state_active_only_shows_processing_jobs() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "waiting-job",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": now - 30,
+                "progress": {"step": "queued", "completed": 0},
+                "runtime_seconds": 30.0,
+                "initiator": {"project_root": r"waiting-project"},
+            },
+            {
+                "id": "active-job",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "running",
+                "started_at": now - 10,
+                "progress": {"step": "embed", "completed": 2, "total": 4},
+                "runtime_seconds": 10.0,
+                "initiator": {"project_root": r"active-project"},
+            },
+        ],
+        "total": 7,
+        "returned": 2,
+        "summary": {"running": 2, "phases": {"running": 2, "done": 5}},
+        "filters": {"limit": 5, "phase": "running"},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--state",
+                "active",
+                "--limit",
+                "5",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["phase"] == ["running"]
+    lines = _plain_lines(result.output)
+    assert "Shown: 1 matching job" in lines
+    assert "Total: 7 jobs" in lines
+    assert "Shown summary: 1 active, 0 waiting, 0 finished, 0 failed" in lines
+    assert "Filter: state active" in lines
+    rows = _jobs_feed_rows(result.output)
+    assert [row["id"] for row in rows] == ["active-j"]
+    assert rows[0]["marker"] == "*"
+    assert rows[0]["state"] == "active"
+    assert "waiting-job" not in result.output
+    assert "active or waiting" not in result.output
+
+
+def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "active-job",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "running",
+                "started_at": now - 10,
+                "progress": {"step": "embed", "completed": 2, "total": 4},
+                "runtime_seconds": 10.0,
+                "initiator": {"project_root": r"active-project"},
+            },
+            {
+                "id": "waiting-job",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": now - 30,
+                "progress": {"step": "queued", "completed": 0},
+                "runtime_seconds": 30.0,
+                "initiator": {"project_root": r"waiting-project"},
+            },
+        ],
+        "total": 7,
+        "returned": 2,
+        "summary": {"running": 2, "phases": {"running": 2, "done": 5}},
+        "filters": {"limit": 5, "phase": "running"},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--state",
+                "waiting",
+                "--limit",
+                "5",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["phase"] == ["running"]
+    lines = _plain_lines(result.output)
+    assert "Shown: 1 matching job" in lines
+    assert "Total: 7 jobs" in lines
+    assert "Shown summary: 0 active, 1 waiting, 0 finished, 0 failed" in lines
+    assert "Filter: state waiting" in lines
+    rows = _jobs_feed_rows(result.output)
+    assert [row["id"] for row in rows] == ["waiting-"]
+    assert rows[0]["marker"] == "~"
+    assert rows[0]["state"] == "waiting"
+    assert "active-job" not in result.output
+    assert "active or waiting" not in result.output
 
 
 def test_jobs_waiting_progress_uses_user_language() -> None:

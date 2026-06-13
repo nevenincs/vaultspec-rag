@@ -404,7 +404,17 @@ def _filters_label(result: dict[str, object]) -> str:
         "watcher": "automatic updates",
         "tool": "manual request",
     }
+    state = filters.get("state")
+    if state == "active":
+        visible.append("state active")
+    elif state == "waiting":
+        visible.append("state waiting")
+    elif state not in (None, "", False):
+        visible.append(f"state {state}")
+
     for key in ("phase", "source", "trigger", "query", "job_id", "since"):
+        if key == "phase" and state in ("active", "waiting"):
+            continue
         value = filters.get(key)
         if value not in (None, "", False):
             value_text = values.get(str(value), str(value))
@@ -631,12 +641,15 @@ def _jobs_phase_value(phase: str | None) -> str | None:
 def _jobs_state_filter(
     state: str | None,
     json_mode: bool,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     if state is None:
-        return None
+        return None, None
     normalized = _jobs_phase_value(state)
-    if normalized in ("running", "done", "error", "cancelled"):
-        return normalized
+    requested = state.strip().lower()
+    if requested in ("active", "waiting"):
+        return "running", requested
+    if normalized in ("done", "error", "cancelled"):
+        return normalized, None
     _exit_invalid_jobs_filter_value(
         option="--state",
         value=state,
@@ -736,6 +749,11 @@ def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
         return "No jobs have been reported by this service yet."
     if filters.get("failed") is True:
         return "There are no failed jobs."
+    state = filters.get("state")
+    if state == "active":
+        return "There are no active jobs."
+    if state == "waiting":
+        return "There are no waiting jobs."
     phase = filters.get("phase")
     if isinstance(phase, str) and phase.lower() == "running":
         return "There are no active or waiting jobs."
@@ -903,6 +921,38 @@ def _fetch_jobs_result(
     )
 
 
+def _client_state_matches(job: dict[str, object], state: str | None) -> bool:
+    if state == "active":
+        return str(job.get("phase", "")) == "running" and not _job_is_waiting(job)
+    if state == "waiting":
+        return _job_is_waiting(job)
+    return True
+
+
+def _apply_client_state_filter(
+    result: dict[str, object],
+    state: str | None,
+) -> dict[str, object]:
+    if state not in ("active", "waiting"):
+        return result
+    jobs: list[dict[str, object]] = []
+    for job in _jobs_from_result(result):
+        if not isinstance(job, dict):
+            continue
+        job_dict = cast("dict[str, object]", job)
+        if _client_state_matches(job_dict, state):
+            jobs.append(job_dict)
+    filtered = dict(result)
+    filtered["jobs"] = jobs
+    filtered["returned"] = len(jobs)
+    filters = result.get("filters")
+    filter_dict = (
+        cast("dict[str, object]", filters) if isinstance(filters, dict) else {}
+    )
+    filtered["filters"] = {**filter_dict, "state": state}
+    return filtered
+
+
 def _watch_status_text(refresh_number: int, refresh_count: int | None) -> str:
     if refresh_count is None:
         return "Watch: press Ctrl+C to stop."
@@ -922,6 +972,7 @@ def _watch_jobs(
     port: int,
     interval: float,
     refresh_count: int | None,
+    client_state: str | None,
 ) -> None:
     refreshes = 0
     while refresh_count is None or refreshes < refresh_count:
@@ -938,6 +989,7 @@ def _watch_jobs(
         )
         if result is None:
             _exit_jobs_not_running(False, port)
+        result = _apply_client_state_filter(result, client_state)
         _cli.console.clear()
         refresh_number = refreshes + 1
         _render_jobs_result(
@@ -1024,7 +1076,7 @@ def service_jobs(
     ] = None,
 ) -> None:
     """Show recent index update activity from the running service."""
-    phase = _jobs_state_filter(state, json_mode)
+    phase, client_state = _jobs_state_filter(state, json_mode)
     source = _jobs_index_filter(index, json_mode)
     trigger = _jobs_started_by_filter(started_by, json_mode)
     phase, failed = _resolve_jobs_filters(phase, failed, json_mode)
@@ -1049,6 +1101,7 @@ def service_jobs(
                 port=resolved_port,
                 interval=interval,
                 refresh_count=refresh_count,
+                client_state=client_state,
             )
         except KeyboardInterrupt:
             _cli.console.print("\n[dim]Stopped watching jobs.[/]")
@@ -1067,6 +1120,7 @@ def service_jobs(
     )
     if result is None:
         _exit_jobs_not_running(json_mode, resolved_port)
+    result = _apply_client_state_filter(result, client_state)
 
     if json_mode:
         _emit_json(True, "service.jobs", data=result)
