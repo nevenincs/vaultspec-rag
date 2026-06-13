@@ -5622,10 +5622,16 @@ class TestBenchmarkAndQualityCommands:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / ".vaultspec").mkdir()
+        monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_NO_ADVISORY_WARNINGS", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
 
         called: list[bool] = []
 
         def mock_run_quality_probe() -> dict[str, object]:
+            assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
+            assert os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] == "1"
+            assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
             called.append(True)
             return {
                 "passed": 8,

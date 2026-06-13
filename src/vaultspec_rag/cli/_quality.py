@@ -21,6 +21,7 @@ def handle_quality() -> None:
     """Run built-in search quality checks on a temporary test project."""
     from ..api import run_quality_probe
 
+    _cli._suppress_hf_progress()
     try:
         msg = "Running built-in search quality checks..."
         with _cli.console.status(msg):
