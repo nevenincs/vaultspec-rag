@@ -386,15 +386,30 @@ def _validate_and_handle_filters(
         raise typer.Exit(code=2) from None
 
 
-def _search_prefer_filter(prefer: str | None) -> str | None:
+def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str | None:
     if prefer is None:
         return None
-    aliases = {
+    values = {
         "production": "prod",
+        "tests": "tests",
         "documentation": "docs",
     }
     normalized = prefer.strip().lower()
-    return aliases.get(normalized, normalized)
+    if normalized in values:
+        return values[normalized]
+    msg = (
+        f"--prefer must be one of production, tests, or documentation; got {prefer!r}."
+    )
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "invalid_prefer_value",
+            msg,
+            2,
+            value=prefer,
+        )
+    _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+    raise typer.Exit(code=2)
 
 
 def _render_in_process_results(
@@ -623,7 +638,7 @@ def handle_search(
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
-    prefer = _search_prefer_filter(prefer)
+    prefer = _search_prefer_filter(prefer, json_mode=json_mode)
 
     _validate_and_handle_filters(
         search_type=search_type,

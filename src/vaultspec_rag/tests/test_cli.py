@@ -1576,7 +1576,7 @@ class TestMcpFastPath:
                 "--type",
                 "vault",
                 "--prefer",
-                "prod",
+                "production",
             ],
         )
         assert result.exit_code == 2
@@ -1598,6 +1598,24 @@ class TestMcpFastPath:
         assert result.exit_code == 2
         assert "production, tests, or documentation" in result.output
         assert "prod|tests|docs" not in result.output
+
+    @pytest.mark.parametrize("prefer", ["prod", "docs"])
+    def test_search_cmd_rejects_internal_prefer_values(self, prefer: str):
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--prefer",
+                prefer,
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "production, tests, or documentation" in result.output
+        assert prefer in result.output
 
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
