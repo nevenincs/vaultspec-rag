@@ -4487,42 +4487,11 @@ def _projects_unload_contract_server(
 class TestServiceLogsCli:
     """In-process CLI coverage for `server logs`."""
 
-    def test_logs_accepts_lines_alias_for_limit(self) -> None:
-        server, thread, requests = _logs_contract_server()
-        try:
-            result = runner.invoke(
-                app,
-                [
-                    "server",
-                    "logs",
-                    "--lines",
-                    "7",
-                    "--port",
-                    str(server.server_port),
-                ],
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=1)
+    def test_logs_lines_alias_is_not_supported(self) -> None:
+        result = runner.invoke(app, ["server", "logs", "--lines", "7"])
 
-        assert result.exit_code == 0, result.output
-        assert requests == ["/logs/json?lines=7"]
-        lines = _plain_lines(result.output)
-        expected_present = [
-            "Activity",
-            f"Address: http://127.0.0.1:{server.server_port}",
-            "Shown: 1 entry",
-            "Source: last 7 log lines",
-            (
-                "10:05:06 search code 3 results 0.42s "
-                "feature-server-supervision request abcdef12"
-            ),
-        ]
-        missing = [text for text in expected_present if text not in lines]
-        assert not missing, f"missing activity lines: {missing}"
-        _assert_no_table_borders(result.output)
-        assert "--lines" not in result.output
+        assert result.exit_code != 0
+        assert "No such option" in result.output
 
     def test_empty_logs_offer_wider_bounded_search(self) -> None:
         server, thread, requests = _empty_logs_contract_server()
