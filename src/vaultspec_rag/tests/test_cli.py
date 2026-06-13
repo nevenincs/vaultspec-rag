@@ -5954,6 +5954,30 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 1
         assert "No vault documents indexed" in result.output
+        assert "Benchmark: running 20 local search queries." in result.output
+
+    def test_benchmark_rejects_non_positive_query_count(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "benchmark",
+                "--queries",
+                "0",
+            ],
+        )
+
+        assert result.exit_code == 2
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Benchmark query count must be one or greater.",
+            "Run:",
+            "vaultspec-rag benchmark --queries 10",
+        ]
+        assert "Loading weights" not in result.output
 
     def test_quality_command_delegation_pass(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

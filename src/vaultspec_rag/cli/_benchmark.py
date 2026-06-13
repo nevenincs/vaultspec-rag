@@ -8,8 +8,10 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
+from ._render import _format_local_index_busy_message
 
 
 @app.command(
@@ -37,6 +39,21 @@ def handle_benchmark(
 
     from ..api import run_benchmark
 
+    if n_queries < 1:
+        _cli.console.print(
+            "Benchmark query count must be one or greater.",
+            markup=False,
+            highlight=False,
+        )
+        _cli.console.print("Run:", markup=False, highlight=False)
+        _cli.console.print(
+            "  vaultspec-rag benchmark --queries 10",
+            markup=False,
+            highlight=False,
+        )
+        raise typer.Exit(code=2)
+
+    _cli._suppress_hf_progress()
     try:
         query_noun = "query" if n_queries == 1 else "queries"
         _cli.console.print(
@@ -54,6 +71,13 @@ def handle_benchmark(
             )
             raise typer.Exit(code=1) from e
         raise
+    except VaultStoreLockedError:
+        _cli.console.print(
+            _format_local_index_busy_message("run the benchmark"),
+            markup=False,
+            highlight=False,
+        )
+        raise typer.Exit(code=1) from None
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)
         return
