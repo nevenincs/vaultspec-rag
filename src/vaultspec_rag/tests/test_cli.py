@@ -1212,9 +1212,10 @@ class TestServerRoutingFlattened:
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
             assert labels["Qdrant process"] == "running under this service"
-            assert labels["Qdrant process id"] == "43210"
-            assert labels["Qdrant port"] == "6334"
-            assert "Process: 43210" not in result.output
+            assert labels["Process id"] == "43210"
+            assert labels["Port"] == "6334"
+            assert "Qdrant process id:" not in result.output
+            assert "Qdrant port:" not in result.output
             assert "unknown" not in result.output.lower()
             assert ";" not in result.output
         finally:

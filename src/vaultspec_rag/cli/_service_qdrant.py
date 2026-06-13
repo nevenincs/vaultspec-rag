@@ -197,8 +197,8 @@ def _print_qdrant_process(service: object) -> None:
         else "state not reported"
     )
     _print_line(f"Qdrant process: {alive}")
-    _print_line(f"Qdrant process id: {service.get('qdrant_pid', 'not reported')}")
-    _print_line(f"Qdrant port: {service.get('qdrant_port', 'not reported')}")
+    _print_line(f"Process id: {service.get('qdrant_pid', 'not reported')}")
+    _print_line(f"Port: {service.get('qdrant_port', 'not reported')}")
 
 
 def _print_qdrant_versions(provisioned: object) -> None:
