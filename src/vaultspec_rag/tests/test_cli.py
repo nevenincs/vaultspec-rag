@@ -2464,7 +2464,9 @@ class TestSearchSafetyContract:
             folded,
         )
         assert "active index jobs before retrying." in folded
-        assert labels["Service"] == "reachable; health check passed; 3 projects loaded"
+        assert (
+            labels["Service"] == "reachable; readiness check passed; 3 projects loaded"
+        )
         assert labels["Work"] == "no active index jobs"
         lines = _plain_lines(result.output)
         next_actions = lines[lines.index("Next actions:") + 1 :]
@@ -2475,6 +2477,7 @@ class TestSearchSafetyContract:
         ]
         assert "running jobs before retrying" not in result.output
         assert "running index jobs" not in result.output
+        assert "health check" not in result.output
         for forbidden in (
             "same_project_search_strategy",
             "Backend Contract",
@@ -2528,7 +2531,7 @@ class TestSearchSafetyContract:
         labels = _label_values(result.output)
         assert (
             labels["Service"]
-            == "reachable; health not reported by service; 1 project loaded"
+            == "reachable; readiness not reported by service; 1 project loaded"
         )
         assert labels["Work"] == "no active index jobs"
         assert "unknown" not in result.output.lower()
@@ -2572,7 +2575,9 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
-        assert labels["Service"] == "reachable; health check passed; 3 projects loaded"
+        assert (
+            labels["Service"] == "reachable; readiness check passed; 3 projects loaded"
+        )
         assert (
             labels["Work"]
             == "jobs check not reported by service (Job summary is not available.)"
@@ -3110,7 +3115,7 @@ class TestSearchResultRendering:
     def test_display_search_timeout_error_humanizes_diagnostics(
         self, capsys: pytest.CaptureFixture[str]
     ):
-        """Search timeout errors answer health/work status without raw strategy keys."""
+        """Search timeout errors answer readiness/work status without raw keys."""
         _display_service_error(
             {
                 "ok": False,
@@ -3147,7 +3152,7 @@ class TestSearchResultRendering:
 
         out = capsys.readouterr().out
         assert "HTTP search on port 8766 timed out after 180.0s." in out
-        assert "Service: status check timed out" in out
+        assert "Service: readiness check timed out" in out
         assert "Work: 2 active index jobs" in out
         assert "vaultspec-rag server jobs --state active --port 8766" in out
         assert "same_project_search_strategy" not in out
@@ -3176,10 +3181,11 @@ class TestSearchResultRendering:
         )
 
         out = capsys.readouterr().out
-        assert "Service: reachable; health check passed" in out
+        assert "Service: reachable; readiness check passed" in out
         assert "Work: active job count not reported by service" in out
         assert "running work status unknown" not in out
         assert "unknown" not in out
+        assert "health check" not in out
 
 
 class TestWinShutdownLog:
