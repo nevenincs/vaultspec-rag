@@ -333,7 +333,7 @@ def _try_in_process_search(
 
 
 def _validate_and_handle_filters(
-    search_type: Literal["vault", "code"],
+    search_type: Literal["vault", "docs", "code"],
     language: str | None,
     path: str | None,
     node_type: str | None,
@@ -425,6 +425,31 @@ def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str
     raise typer.Exit(code=2)
 
 
+def _validate_search_type(
+    search_type: str, *, json_mode: bool
+) -> Literal["vault", "docs", "code"]:
+    normalized = search_type.strip().lower()
+    if normalized in {"vault", "docs", "code"}:
+        return cast("Literal['vault', 'docs', 'code']", normalized)
+    msg = f"--type must be docs, vault, or code; got {search_type!r}."
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "invalid_search_type",
+            msg,
+            2,
+            value=search_type,
+        )
+    _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+    raise typer.Exit(code=2)
+
+
+def _canonical_search_type(
+    search_type: Literal["vault", "docs", "code"],
+) -> Literal["vault", "code"]:
+    return "vault" if search_type == "docs" else search_type
+
+
 def _render_in_process_results(
     results: list[SearchResult],
     query: str,
@@ -513,10 +538,13 @@ def handle_search(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
     search_type: Annotated[
-        Literal["vault", "code"],
+        str,
         typer.Option(
             "--type",
-            help="Search area: 'vault' for documents or 'code' for source files.",
+            metavar="docs|vault|code",
+            help=(
+                "Search area: 'docs' or 'vault' for documents; 'code' for source files."
+            ),
             show_default=True,
         ),
     ] = "vault",
@@ -684,6 +712,7 @@ def handle_search(
     state: CLIState = ctx.obj
     target = state.target
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)
+    search_type = _validate_search_type(search_type, json_mode=json_mode)
 
     _validate_and_handle_filters(
         search_type=search_type,
@@ -702,6 +731,7 @@ def handle_search(
         prefer=prefer,
         json_mode=json_mode,
     )
+    search_type = _canonical_search_type(search_type)
 
     if port is None:
         port = _default_service_port()
