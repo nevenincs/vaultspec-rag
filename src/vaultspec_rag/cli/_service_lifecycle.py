@@ -778,7 +778,7 @@ def _status_next_action(
 ) -> str:
     port_arg = f" --port {port}" if port is not None else ""
     if state != "running":
-        return f"vaultspec-rag server logs --lines 80{port_arg}"
+        return f"vaultspec-rag server logs --limit 80{port_arg}"
     if not isinstance(health, dict) or health.get("status") != "ready":
         return f"vaultspec-rag server status --verbose{port_arg}"
     running_jobs = jobs.get("running")
