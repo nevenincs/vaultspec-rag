@@ -2018,12 +2018,17 @@ class TestSearchSafetyContract:
         count_match = re.fullmatch(r"Indexed source code sections: (\d+)\.", lines[2])
         assert count_match is not None
         assert int(count_match.group(1)) == 0
-        assert any(line.startswith("Project mismatch:") for line in lines)
+        assert "Project mismatch: requested project differs from indexed project." in (
+            lines
+        )
+        assert "Requested project: current project" in lines
+        assert "Indexed project: other project" in lines
         next_actions = lines[lines.index("Next actions:") + 1 :]
         assert next_actions == [
             "- vaultspec-rag index --type code --port 8766",
             "- vaultspec-rag server status",
         ]
+        assert "index is for" not in result.output
         assert not any("=" in line for line in lines)
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):

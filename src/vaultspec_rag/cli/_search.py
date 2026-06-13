@@ -194,15 +194,28 @@ def _render_empty_index_state(
         return
     if index_state.get("target_matches") is False and requested != indexed_target:
         _cli.console.print(
-            f"Project mismatch: requested {requested}; index is for {indexed_target}.",
+            "Project mismatch: requested project differs from indexed project.",
             markup=False,
             highlight=False,
         )
+        _cli.console.print(
+            f"Requested project: {requested}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        _cli.console.print(
+            f"Indexed project: {indexed_target}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         return
     _cli.console.print(
-        f"Project: {requested}.",
+        f"Project: {requested}",
         markup=False,
         highlight=False,
+        soft_wrap=True,
     )
 
 
