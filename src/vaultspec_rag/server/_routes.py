@@ -59,6 +59,18 @@ _BAD_REQUEST_MISSING_ROOT = JSONResponse(
     status_code=400,
 )
 
+_BAD_REQUEST_EMPTY_QUERY = JSONResponse(
+    {
+        "ok": False,
+        "error": "bad_request",
+        "message": (
+            "query is empty - supply search text, or filter tokens such as "
+            "'lang:python class:Engine' when searching by metadata alone."
+        ),
+    },
+    status_code=400,
+)
+
 
 def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
     return JSONResponse(
@@ -581,6 +593,12 @@ async def search_route(request: Request) -> JSONResponse:
 
     top_k = _clamp_top_k(top_k)
     query = _validate_query(query)
+    # An empty/whitespace query has no text and no filter tokens to act
+    # on; encoding it retrieves arbitrary nearest neighbours, so reject
+    # it. A filter-only query like "lang:python" is non-empty here and
+    # proceeds (its filters drive the search after token stripping).
+    if not query.strip():
+        return _BAD_REQUEST_EMPTY_QUERY
     try:
         root = _resolve_root(project_root)
     except ProjectRootRequiredError:

@@ -73,6 +73,24 @@ def _locator_component(
     return None
 
 
+def _join_doc_path(docs_prefix: str, stored_path: str) -> str:
+    """Return a vault doc's path relative to the project root.
+
+    Vault chunks store their path relative to the docs directory
+    (e.g. ``research/foo.md``); prepending the docs prefix
+    (``.vault``) yields a path that resolves from the project root the
+    same way code-result paths do. Idempotent if the prefix is already
+    present.
+    """
+    if not docs_prefix:
+        return stored_path
+    normalised = stored_path.replace("\\", "/")
+    prefix = docs_prefix.replace("\\", "/").rstrip("/")
+    if normalised == prefix or normalised.startswith(prefix + "/"):
+        return normalised
+    return f"{prefix}/{normalised}"
+
+
 def _group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
     """Collapse chunk-level vault hits to one result per document.
 
@@ -179,6 +197,12 @@ class VaultSearcher:
         self._sparse_enabled: bool = cfg.sparse_enabled
         self._reranker = reranker
         self._reranker_lock = threading.Lock()
+
+    def _vault_docs_prefix(self) -> str:
+        """The docs directory (e.g. ``.vault``) vault paths are stored under."""
+        from ..config import get_config
+
+        return str(get_config().docs_dir)
 
     @contextmanager
     def _gpu_section(self, timings: dict[str, float] | None = None):
@@ -412,6 +436,7 @@ class VaultSearcher:
         _record_seconds(timings, "qdrant_seconds", phase_started)
 
         phase_started = time.perf_counter()
+        docs_prefix = self._vault_docs_prefix()
         results: list[SearchResult] = []
         for r in raw_results:
             raw_score = r.get("_relevance_score", 0.0)
@@ -420,7 +445,7 @@ class VaultSearcher:
             results.append(
                 SearchResult(
                     id=str(r["id"]),
-                    path=str(r["path"]),
+                    path=_join_doc_path(docs_prefix, str(r["path"])),
                     title=str(r.get("title", "")),
                     score=score,
                     snippet=content[:200].strip(),

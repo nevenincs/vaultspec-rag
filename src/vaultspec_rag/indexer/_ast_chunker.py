@@ -319,13 +319,23 @@ class ASTChunker:
             merged_nt = prev[3] if prev[3] == chunk[3] else None
         else:
             merged_nt = prev[3] or chunk[3]
+        # Keep the (function_name, class_name) pair coherent: take both
+        # from whichever source chunk has a structural identity, rather
+        # than crossing prev's class_name with chunk's function_name.
+        # Cross-pairing would imply a method-of-class relationship that
+        # does not exist when a chunk spans a class tail into an adjacent
+        # module-level function.
+        if prev[4] is not None or prev[5] is not None:
+            merged_fn, merged_cls = prev[4], prev[5]
+        else:
+            merged_fn, merged_cls = chunk[4], chunk[5]
         return (
             prev[0] + "\n" + chunk[0],
             prev[1],
             chunk[2],
             merged_nt,
-            prev[4] or chunk[4],
-            prev[5] or chunk[5],
+            merged_fn,
+            merged_cls,
         )
 
     def _merge_small(
