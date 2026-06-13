@@ -660,7 +660,7 @@ def _print_health_detail(
 ) -> None:
     if isinstance(health, dict):
         _print_detail_line(
-            "Ready",
+            "Health",
             _status_health_label(health, port_listening=port_listening),
         )
         compute = (
@@ -683,7 +683,7 @@ def _print_health_detail(
         )
         _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
-        _print_detail_line("Ready", "not reachable")
+        _print_detail_line("Health", "not reachable")
 
 
 def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object]]:
@@ -962,7 +962,7 @@ def _render_status_summary(
     jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
     lines = [
         f"Server: {_plain_status_label(state_label)}",
-        f"Ready: {_status_health_label(health, port_listening=port_listening)}",
+        f"Health: {_status_health_label(health, port_listening=port_listening)}",
         f"Busy: {_status_busy_label(jobs_dict)}",
         f"Address: http://127.0.0.1:{port}",
         f"Uptime: {_status_uptime_label(health)}",

@@ -77,7 +77,8 @@ def _section_label_values(output: str, section: str) -> dict[str, str]:
 def _assert_default_status_summary(output: str, port: int) -> None:
     labels = _label_values(output)
     assert labels["Server"] == "running"
-    assert labels["Ready"] == "ready for requests"
+    assert labels["Health"] == "ready for requests"
+    assert "Ready" not in labels
     assert labels["Busy"] == "processing 1 job"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
     assert labels["Uptime"] == "5m 12s"
@@ -3746,7 +3747,8 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
-            assert labels["Ready"] == "ready for requests"
+            assert labels["Health"] == "ready for requests"
+            assert "Ready" not in labels
             assert labels["Compute"] == "not reported by service"
             assert labels["Search models"] == "not reported by service"
             assert labels["Reranking"] == "not reported by service"
@@ -3803,7 +3805,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 4, result.output
             labels = _label_values(result.output)
             assert labels["Server"] == "unreachable"
-            assert labels["Ready"] == "not reported by service"
+            assert labels["Health"] == "not reported by service"
+            assert "Ready" not in labels
             assert labels["Uptime"] == "12s"
             assert "unknown" not in result.output.lower()
         finally:
@@ -3856,7 +3859,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
             assert labels["Server"] == "running"
-            assert labels["Ready"] == "ready for requests"
+            assert labels["Health"] == "ready for requests"
+            assert "Ready" not in labels
             assert labels["Busy"] == "not reported by service"
             assert labels["Queue"] == "not reported by service"
             assert labels["Jobs"] == "not reported by service"
