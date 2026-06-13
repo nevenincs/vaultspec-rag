@@ -1031,6 +1031,93 @@ class TestIndexRebuild:
         )
         assert envelope["remediation"] == ["vaultspec-rag index --type code --dry-run"]
 
+    def test_index_dry_run_human_output_is_bounded(self, tmp_path: Path) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        for name in ("alpha.py", "beta.py", "gamma.py"):
+            (tmp_path / name).write_text("print('indexed')\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--dry-run",
+                "--dry-run-limit",
+                "2",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Dry run: 3 source-code files would be indexed.",
+            "Files shown:",
+            "- alpha.py",
+            "- beta.py",
+            (
+                "1 more files not shown. Use --dry-run-limit 3 "
+                "or --json for the full list."
+            ),
+        ]
+        assert "gamma.py" not in result.output
+
+    def test_index_dry_run_json_keeps_full_file_list(self, tmp_path: Path) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        for name in ("alpha.py", "beta.py", "gamma.py"):
+            (tmp_path / name).write_text("print('indexed')\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--dry-run",
+                "--dry-run-limit",
+                "1",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is True
+        files = set(envelope["data"]["files"])
+        assert files == {"alpha.py", "beta.py", "gamma.py"}
+
+    def test_index_dry_run_rejects_negative_limit(self, tmp_path: Path) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--dry-run",
+                "--dry-run-limit",
+                "-1",
+            ],
+        )
+
+        assert result.exit_code == 2
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Dry-run file limit must be zero or greater.",
+            "Run:",
+            "vaultspec-rag index --type code --dry-run --dry-run-limit 50",
+        ]
+
     def test_index_rebuild_without_explicit_type_exits_2(self, tmp_path: Path):
         """--rebuild without --type is rejected.
 
@@ -2513,6 +2600,7 @@ class TestHelpCleanup:
         assert "Build or update" in result.output
         assert "Uses the running service" in normalized
         assert "selected service is not reachable" in normalized
+        assert "--dry-run-limit" in result.output
         assert "selected service is unavailable" not in normalized
         for forbidden in ("Qdrant", "tqdm", "agent / CI", "fast path"):
             assert forbidden not in normalized

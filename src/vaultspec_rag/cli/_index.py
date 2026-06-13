@@ -96,7 +96,11 @@ def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
 
 
 def _handle_dry_run(
-    index_type: str, json_mode: bool, target: pathlib.Path, exclude: list[str] | None
+    index_type: str,
+    json_mode: bool,
+    target: pathlib.Path,
+    exclude: list[str] | None,
+    dry_run_limit: int,
 ) -> None:
     if index_type not in ("code", "all"):
         message = "Dry run is available for source-code indexing only."
@@ -116,6 +120,24 @@ def _handle_dry_run(
     import vaultspec_rag
 
     files = vaultspec_rag.scan_codebase_files(target, extra_excludes=exclude)
+    if dry_run_limit < 0:
+        message = "Dry-run file limit must be zero or greater."
+        if json_mode:
+            _emit_json_error_and_exit(
+                "index",
+                "invalid_dry_run_limit",
+                message,
+                2,
+                remediation=["Use --dry-run-limit 0 or a positive number."],
+            )
+        _cli.console.print(message, markup=False, highlight=False)
+        _cli.console.print("Run:", markup=False, highlight=False)
+        _cli.console.print(
+            "  vaultspec-rag index --type code --dry-run --dry-run-limit 50",
+            markup=False,
+            highlight=False,
+        )
+        raise typer.Exit(code=2)
     if json_mode:
         _emit_json(
             True,
@@ -127,9 +149,30 @@ def _handle_dry_run(
             },
         )
         return
-    _cli.console.print(f"{len(files)} files would be indexed:")
-    for f in sorted(files):
-        _cli.console.print(f"  {f.relative_to(target)}")
+    sorted_files = sorted(files)
+    shown_files = sorted_files[:dry_run_limit]
+    total = len(sorted_files)
+    noun = "file" if total == 1 else "files"
+    _cli.console.print(
+        f"Dry run: {total} source-code {noun} would be indexed.",
+        markup=False,
+        highlight=False,
+    )
+    if shown_files:
+        _cli.console.print("Files shown:", markup=False, highlight=False)
+        for f in shown_files:
+            _cli.console.print(f"  - {f.relative_to(target)}")
+    elif total:
+        _cli.console.print("Files shown: none.", markup=False, highlight=False)
+    hidden = total - len(shown_files)
+    if hidden > 0:
+        _cli.console.print(
+            f"{hidden} more files not shown. Use --dry-run-limit {total} "
+            "or --json for the full list.",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
 
 def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
@@ -351,6 +394,17 @@ def handle_index(
             ),
         ),
     ] = False,
+    dry_run_limit: Annotated[
+        int,
+        typer.Option(
+            "--dry-run-limit",
+            help=(
+                "Maximum source-code file paths to show in human dry-run output. "
+                "JSON output still includes every path."
+            ),
+            show_default=True,
+        ),
+    ] = 50,
     exclude: Annotated[
         list[str] | None,
         typer.Option(
@@ -390,7 +444,7 @@ def handle_index(
     target = state.target
 
     if dry_run:
-        _handle_dry_run(index_type, json_mode, target, exclude)
+        _handle_dry_run(index_type, json_mode, target, exclude, dry_run_limit)
         return
 
     if rebuild:
