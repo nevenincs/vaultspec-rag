@@ -130,7 +130,7 @@ def _job_is_waiting(job: dict[str, object]) -> bool:
 def _phase_label(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "not-reported"))
     if phase in ("error", "failed"):
-        return "FAILED"
+        return "failed"
     if _job_is_waiting(job):
         return "waiting"
     if phase == "running":

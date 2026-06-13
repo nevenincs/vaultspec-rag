@@ -630,7 +630,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert rows[0]["operation"] == "code index refresh for proj-c"
     assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22s"
     assert rows[1]["marker"] == "!"
-    assert rows[1]["state"] == "FAILED"
+    assert rows[1]["state"] == "failed"
     assert rows[1]["operation"] == "vault index refresh for proj-b"
     assert rows[2]["marker"] == "*"
     assert rows[2]["state"] == "running"
@@ -646,6 +646,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         "Jobs on service port",
         "Recent jobs on service",
         "States:",
+        "FAILED",
         "project=",
         " project proj-",
         " id runjob12",
