@@ -1059,7 +1059,7 @@ class TestIndexRebuild:
             "- alpha.py",
             "- beta.py",
             (
-                "1 more files not shown. Use --dry-run-limit 3 "
+                "1 more file not shown. Use --dry-run-limit 3 "
                 "or --json for the full list."
             ),
         ]

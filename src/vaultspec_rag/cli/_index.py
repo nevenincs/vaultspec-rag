@@ -166,8 +166,9 @@ def _handle_dry_run(
         _cli.console.print("Files shown: none.", markup=False, highlight=False)
     hidden = total - len(shown_files)
     if hidden > 0:
+        hidden_noun = "file" if hidden == 1 else "files"
         _cli.console.print(
-            f"{hidden} more files not shown. Use --dry-run-limit {total} "
+            f"{hidden} more {hidden_noun} not shown. Use --dry-run-limit {total} "
             "or --json for the full list.",
             markup=False,
             highlight=False,
