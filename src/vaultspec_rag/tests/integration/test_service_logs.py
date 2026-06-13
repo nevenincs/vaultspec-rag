@@ -396,7 +396,7 @@ def test_logs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "logs", "--help"])
     assert result.exit_code == 0
     assert "--limit" in result.stdout
-    assert "--lines" in result.stdout
+    assert "--lines" not in result.stdout
     assert "--raw" in result.stdout
     assert "Emit JSON for scripts" in result.stdout
     assert "Number of recent service log lines to inspect" in result.stdout
@@ -411,11 +411,18 @@ def test_logs_subcommand_registered() -> None:
     assert "raw implementation" not in result.stdout
 
 
+def test_logs_lines_alias_is_not_supported() -> None:
+    result = runner.invoke(app, ["server", "logs", "--lines", "8", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
+
+
 def test_logs_human_output_is_activity_feed() -> None:
     with _logs_http_server([_activity_payload()]) as (_server, port):
         result = runner.invoke(
             app,
-            ["server", "logs", "--lines", "8", "--port", str(port)],
+            ["server", "logs", "--limit", "8", "--port", str(port)],
         )
 
     assert result.exit_code == 0, result.output
@@ -438,7 +445,7 @@ def test_logs_human_output_shows_index_updates() -> None:
     with _logs_http_server([_store_update_payload()]) as (_server, port):
         result = runner.invoke(
             app,
-            ["server", "logs", "--lines", "8", "--port", str(port)],
+            ["server", "logs", "--limit", "8", "--port", str(port)],
         )
 
     assert result.exit_code == 0, result.output
@@ -454,7 +461,7 @@ def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
     with _logs_http_server([_unstructured_warning_payload()]) as (_server, port):
         result = runner.invoke(
             app,
-            ["server", "logs", "--lines", "8", "--port", str(port)],
+            ["server", "logs", "--limit", "8", "--port", str(port)],
         )
 
     assert result.exit_code == 0, result.output
@@ -480,7 +487,7 @@ def test_logs_empty_output_routes_operator_to_next_commands() -> None:
     ):
         result = runner.invoke(
             app,
-            ["server", "logs", "--lines", "8", "--port", str(port)],
+            ["server", "logs", "--limit", "8", "--port", str(port)],
         )
 
     assert result.exit_code == 0, result.output
@@ -535,7 +542,7 @@ def test_logs_raw_mode_preserves_log_lines() -> None:
     with _logs_http_server([_activity_payload()]) as (_server, port):
         result = runner.invoke(
             app,
-            ["server", "logs", "--lines", "8", "--port", str(port), "--raw"],
+            ["server", "logs", "--limit", "8", "--port", str(port), "--raw"],
         )
 
     assert result.exit_code == 0, result.output
@@ -550,7 +557,7 @@ def test_logs_json_preserves_raw_service_payload() -> None:
     with _logs_http_server([payload]) as (_server, port):
         result = runner.invoke(
             app,
-            ["server", "logs", "--lines", "8", "--port", str(port), "--json"],
+            ["server", "logs", "--limit", "8", "--port", str(port), "--json"],
         )
 
     assert result.exit_code == 0, result.output
