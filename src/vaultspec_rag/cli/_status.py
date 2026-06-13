@@ -59,13 +59,13 @@ def _render_status_text(
         f"Project: {target}",
     ]
     if service_port is not None:
-        lines.append(f"Read from: running service at http://127.0.0.1:{service_port}")
+        lines.append(f"Address: http://127.0.0.1:{service_port}")
     for line in lines:
         _cli.console.print(
             line,
             markup=False,
             highlight=False,
-            soft_wrap=line.startswith(("Index data:", "Project:", "Read from:")),
+            soft_wrap=line.startswith(("Index data:", "Project:", "Address:")),
         )
 
 

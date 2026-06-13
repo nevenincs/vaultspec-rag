@@ -811,7 +811,8 @@ class TestStatusCommand:
         assert labels["Compute"] == "CPU only (no supported GPU detected)"
         assert labels["Vault documents"] == "12"
         assert labels["Source code sections"] == "34"
-        assert labels["Read from"] == "running service at http://127.0.0.1:8766"
+        assert labels["Address"] == "http://127.0.0.1:8766"
+        assert "Read from" not in labels
         assert "Source code chunks" not in labels
 
     def test_status_prefers_running_service_index_state(self, tmp_path: Path) -> None:
@@ -876,10 +877,8 @@ class TestStatusCommand:
         assert labels["Index data"] == "remote storage"
         assert labels["Vault documents"] == "7"
         assert labels["Source code sections"] == "9"
-        assert (
-            labels["Read from"]
-            == f"running service at http://127.0.0.1:{server.server_port}"
-        )
+        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert "Read from" not in labels
 
     def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = self._workspace(tmp_path)
