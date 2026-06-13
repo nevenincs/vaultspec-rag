@@ -4095,6 +4095,7 @@ class TestServiceProjectsCli:
         assert requests == ["/projects"]
         lines = _plain_lines(result.output)
         expected_present = [
+            f"Address: http://127.0.0.1:{server.server_port}",
             "Loaded projects: 2/8.",
             "Automatic unload: after 10m idle.",
             "- Project: busy",

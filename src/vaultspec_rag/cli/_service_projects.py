@@ -104,8 +104,18 @@ def _project_summary(raw_entry: object) -> list[str] | None:
 
 
 def _print_projects_summary(
-    projects: list[object], max_projects: int, idle_ttl: int
+    projects: list[object],
+    max_projects: int,
+    idle_ttl: int,
+    *,
+    port: int | None = None,
 ) -> None:
+    if port is not None:
+        _cli.console.print(
+            f"Address: http://127.0.0.1:{port}",
+            markup=False,
+            highlight=False,
+        )
     if not projects:
         _cli.console.print(
             f"Loaded projects: 0/{max_projects}.",
@@ -172,7 +182,12 @@ def service_projects_list(
         )
         return
 
-    _print_projects_summary(projects, int(max_projects), int(idle_ttl))
+    _print_projects_summary(
+        projects,
+        int(max_projects),
+        int(idle_ttl),
+        port=resolved_port,
+    )
 
 
 def _handle_unload_not_running(json_mode: bool, root: str) -> NoReturn:
