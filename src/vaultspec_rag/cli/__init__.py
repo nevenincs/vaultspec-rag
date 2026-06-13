@@ -39,7 +39,6 @@ from ._app import (
     _global_target,
     app,
     main,
-    mcp_app,
     server_app,
     server_projects_app,
     server_qdrant_app,
@@ -71,7 +70,6 @@ from ._http_search import (
 #     ``@*_app.command()`` decorators against the apps nested in step 2.
 from ._index import handle_clean, handle_index
 from ._install import handle_install, handle_uninstall
-from ._mcp_admin import mcp_start, mcp_status, mcp_stop
 from ._preprocess import (
     handle_preprocess_check,
     handle_preprocess_list,
@@ -196,10 +194,6 @@ __all__ = [
     "handle_uninstall",
     "logger",
     "main",
-    "mcp_app",
-    "mcp_start",
-    "mcp_status",
-    "mcp_stop",
     "qdrant_clean",
     "qdrant_install",
     "qdrant_status",

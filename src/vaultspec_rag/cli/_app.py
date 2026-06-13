@@ -1,10 +1,9 @@
 """Typer application objects, sub-app nesting, state, and root callback.
 
 This submodule MUST be imported first by the package ``__init__`` so
-the ``app`` / ``server_root_app`` / ``server_app`` / ``mcp_app`` /
-``server_projects_app`` / ``server_watcher_app`` objects exist and
-are nested before any command submodule's ``@*.command()`` decorator
-runs.
+the ``app`` / ``server_root_app`` / ``server_app`` /
+``server_projects_app`` / ``server_watcher_app`` objects exist and are nested
+before any command submodule's ``@*.command()`` decorator runs.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ __all__ = [
     "_global_target",
     "app",
     "main",
-    "mcp_app",
     "preprocess_app",
     "server_app",
     "server_projects_app",
@@ -48,10 +46,6 @@ server_root_app = typer.Typer(
 )
 # Alias kept for backward-compatible decorator references in command modules.
 server_app = server_root_app
-mcp_app = typer.Typer(
-    help="Control the Model Context Protocol (MCP) server.",
-    rich_markup_mode=None,
-)
 server_projects_app = typer.Typer(
     help="Inspect and unload projects held by the running search service.",
     rich_markup_mode=None,
