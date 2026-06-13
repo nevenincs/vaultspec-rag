@@ -692,7 +692,7 @@ def handle_search(
             "--timeout",
             help=(
                 "Connection and read timeout budget in seconds "
-                "for searches handled by the service (default 300; "
+                "for searches handled by the service (default 300 seconds; "
                 "override with VAULTSPEC_RAG_SEARCH_TIMEOUT)."
             ),
         ),

@@ -2708,6 +2708,7 @@ class TestHelpCleanup:
         assert "selected service is unavailable" not in normalized
         assert "production, tests, or documentation" in normalized
         assert "'prod', 'tests', or 'docs'" not in normalized
+        assert "default 300 seconds" in normalized
         assert "hybrid" in result.output.lower() or "Search" in result.output
 
     def test_search_help_filter_options_are_plain(self):
