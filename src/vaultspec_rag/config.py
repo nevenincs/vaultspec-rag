@@ -164,15 +164,19 @@ class VaultSpecConfigWrapper:
         "qdrant_quantization": None,
         # Supervised qdrant server mode. ``qdrant_server`` opts the
         # resident service into spawning the pinned Rust qdrant binary
-        # as a loopback child and routing stores at it; local mode
-        # stays the zero-dependency default. The server's HTTP port
+        # as a loopback child and routing stores at it. Server mode is
+        # the assumed backend: an adversarial A/B on a 469k-chunk corpus
+        # measured a ~54x end-to-end win, so the default points at the
+        # mode that scales. Local mode stays a first-class explicit
+        # opt-out via ``local_only``; ``qdrant_server`` itself remains
+        # the redundant server-mode env knob. The server's HTTP port
         # defaults to one below the service port (8766); its gRPC
         # listener binds one below that. ``qdrant_binary`` overrides
         # binary resolution entirely (air-gapped escape hatch).
         # Server storage is shared and multi-root (per-root data is
         # namespaced collections inside it), so it lives under the
         # managed service directory, never a project data dir.
-        "qdrant_server": False,
+        "qdrant_server": True,
         "qdrant_port": 8765,
         "qdrant_binary": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",

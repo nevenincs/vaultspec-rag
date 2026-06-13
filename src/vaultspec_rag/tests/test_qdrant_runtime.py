@@ -421,7 +421,7 @@ class TestConfigKnobs:
         from ..config import get_config
 
         cfg = get_config()
-        assert cfg.qdrant_server is False
+        assert cfg.qdrant_server is True
         assert cfg.qdrant_port == 8765
         assert cfg.qdrant_binary is None
         assert "qdrant-server" in str(cfg.qdrant_storage_dir)
