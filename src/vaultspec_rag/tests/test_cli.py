@@ -808,13 +808,88 @@ class TestStatusCommand:
         assert labels["Read from"] == "running service at http://127.0.0.1:8766"
         assert "Source code chunks" not in labels
 
+    def test_status_prefers_running_service_index_state(self, tmp_path: Path) -> None:
+        import http.server
+        import threading
+        import urllib.parse
+
+        root = self._workspace(tmp_path)
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        requests: list[str] = []
+
+        class ServiceStateHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                requests.append(self.path)
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
+                assert parsed.path == "/service-state"
+                assert query["project_root"] == [str(root)]
+                response = {
+                    "ok": True,
+                    "index": {
+                        "cuda": False,
+                        "gpu_name": "",
+                        "vram_mb": 0,
+                        "storage_path": "http://127.0.0.1:8765",
+                        "vault_documents": 7,
+                        "codebase_chunks": 9,
+                        "target_dir": str(root),
+                    },
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), ServiceStateHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
+        try:
+            _write_service_status(pid=os.getpid(), port=server.server_port)
+            result = runner.invoke(app, ["--target", str(root), "status"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
+
+        assert result.exit_code == 0, result.output
+        assert requests == [
+            "/service-state?project_root=" + urllib.parse.quote(str(root))
+        ]
+        labels = _label_values(result.output)
+        assert labels["Index data"] == "remote storage"
+        assert labels["Vault documents"] == "7"
+        assert labels["Source code sections"] == "9"
+        assert (
+            labels["Read from"]
+            == f"running service at http://127.0.0.1:{server.server_port}"
+        )
+
     def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = self._workspace(tmp_path)
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
         lock = _hold_local_index_lock(root)
         try:
             result = runner.invoke(app, ["--target", str(root), "status"])
         finally:
             lock.release()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
 
         assert result.exit_code == 1, result.output
         assert "Cannot read index status because the local index is busy" in (

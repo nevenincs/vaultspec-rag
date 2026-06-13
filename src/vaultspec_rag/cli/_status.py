@@ -134,6 +134,15 @@ def handle_status(
     from ..store import VaultStoreLockedError
     from ._gpu_errors import _handle_gpu_error
 
+    service_status = _service_index_status(target)
+    if service_status is not None:
+        status, service_port = service_status
+        if json_mode:
+            _emit_status_json(status, target=target, service_port=service_port)
+            return
+        _render_status_text(status, target=target, service_port=service_port)
+        return
+
     try:
         status = vaultspec_rag.get_status(target)
     except VaultStoreLockedError as exc:
