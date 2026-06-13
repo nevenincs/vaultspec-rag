@@ -650,9 +650,9 @@ def test_empty_jobs_output_is_actionable(
     expected_present = [
         "Jobs",
         "Address: http://127.0.0.1:8766",
-        "Shown: 0 matching jobs" if expected_filter else "Shown: 0 jobs",
-        "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
-        "Order: latest shown last",
+        "Displayed: 0 matching jobs" if expected_filter else "Displayed: 0 jobs",
+        "Displayed jobs: 0 active, 0 waiting, 0 finished, 0 failed",
+        "Order: latest job appears last",
         expected_message,
         "Next actions:",
         "vaultspec-rag server status --port 8766",
@@ -680,12 +680,12 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert lines[:6] == [
         "Jobs",
         f"Address: http://127.0.0.1:{port}",
-        "Shown: 3 jobs",
+        "Displayed: 3 jobs",
         "Total: 3 jobs",
-        "Shown summary: 1 active, 0 waiting, 1 finished, 1 failed",
-        "Selection: active, waiting, failed, then latest finished",
+        "Displayed jobs: 1 active, 0 waiting, 1 finished, 1 failed",
+        "Showing: active, waiting, failed, then latest finished",
     ]
-    assert lines[6] == "Order: latest shown last"
+    assert lines[6] == "Order: latest job appears last"
     assert lines[7] == "Legend: * active, ~ waiting, ! failed, - finished"
     rows = _jobs_feed_rows(output)
     assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
@@ -704,7 +704,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     )
     forbidden_fragments = (
         "3/3 shown:",
-        "Shown: 3 of 3",
+        "Displayed: 3 of 3",
         "Latest shown last.",
         "Filtered by",
         "Jobs on service port",
@@ -778,7 +778,7 @@ def test_jobs_humanizes_disk_space_failures() -> None:
         )
 
     assert result.exit_code == 0, result.output
-    assert "Shown: 3 matching jobs" in result.output
+    assert "Displayed: 3 matching jobs" in result.output
     assert "Total: 3 jobs" in result.output
     assert "Filter: failed only" in result.output
     assert "Filtered by failed only" not in result.output
@@ -828,7 +828,7 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
         "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
     )
     lines = _plain_lines(result.output)
-    assert "Selection: active, waiting, failed, then latest finished" in lines
+    assert "Showing: active, waiting, failed, then latest finished" in lines
     assert "Legend: * active, ~ waiting, ! failed, - finished" in lines
     assert lines[-1].endswith(rows[0]["detail"])
 
@@ -870,12 +870,12 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     assert lines[:6] == [
         "Jobs",
         "Address: http://127.0.0.1:8766",
-        "Shown: 1 job",
+        "Displayed: 1 job",
         "Total: 1 job",
-        "Shown summary: 0 active, 1 waiting, 0 finished, 0 failed",
-        "Selection: active, waiting, failed, then latest finished",
+        "Displayed jobs: 0 active, 1 waiting, 0 finished, 0 failed",
+        "Showing: active, waiting, failed, then latest finished",
     ]
-    assert lines[6] == "Order: latest shown last"
+    assert lines[6] == "Order: latest job appears last"
     rows = _jobs_feed_rows(output)
     assert len(rows) == 1
     row = rows[0]
@@ -927,14 +927,14 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
     assert lines[:8] == [
         "Jobs",
         "Address: http://127.0.0.1:8766",
-        "Shown: 2 matching jobs",
+        "Displayed: 2 matching jobs",
         "Total: 58 jobs",
-        "Shown summary: 2 active, 0 waiting, 0 finished, 0 failed",
-        "Order: latest shown last",
+        "Displayed jobs: 2 active, 0 waiting, 0 finished, 0 failed",
+        "Order: latest job appears last",
         "Legend: * active, ~ waiting, ! failed, - finished",
         "Filter: state active or waiting",
     ]
-    assert "Selection:" not in output
+    assert "Showing:" not in output
     rows = _jobs_feed_rows(output)
     assert len(rows) == 2
     assert {row["id"] for row in rows} == {"running-a", "running-b"}
@@ -992,9 +992,9 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
     query = urllib.parse.parse_qs(request.query)
     assert query["phase"] == ["running"]
     lines = _plain_lines(result.output)
-    assert "Shown: 1 matching job" in lines
+    assert "Displayed: 1 matching job" in lines
     assert "Total: 7 jobs" in lines
-    assert "Shown summary: 1 active, 0 waiting, 0 finished, 0 failed" in lines
+    assert "Displayed jobs: 1 active, 0 waiting, 0 finished, 0 failed" in lines
     assert "Filter: state active" in lines
     rows = _jobs_feed_rows(result.output)
     assert [row["id"] for row in rows] == ["active-j"]
@@ -1055,9 +1055,9 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
     query = urllib.parse.parse_qs(request.query)
     assert query["phase"] == ["running"]
     lines = _plain_lines(result.output)
-    assert "Shown: 1 matching job" in lines
+    assert "Displayed: 1 matching job" in lines
     assert "Total: 7 jobs" in lines
-    assert "Shown summary: 0 active, 1 waiting, 0 finished, 0 failed" in lines
+    assert "Displayed jobs: 0 active, 1 waiting, 0 finished, 0 failed" in lines
     assert "Filter: state waiting" in lines
     rows = _jobs_feed_rows(result.output)
     assert [row["id"] for row in rows] == ["waiting-"]

@@ -469,7 +469,7 @@ def _render_jobs_feed(
         else _job_count_text(returned)
     )
     _cli.console.print(
-        f"Shown: {shown_count}",
+        f"Displayed: {shown_count}",
         markup=False,
         highlight=False,
     )
@@ -479,18 +479,18 @@ def _render_jobs_feed(
         highlight=False,
     )
     _cli.console.print(
-        f"Shown summary: {active} active, {waiting} waiting, "
+        f"Displayed jobs: {active} active, {waiting} waiting, "
         f"{finished} finished, {failed} failed",
         markup=False,
         highlight=False,
     )
     if not filter_text:
         _cli.console.print(
-            "Selection: active, waiting, failed, then latest finished",
+            "Showing: active, waiting, failed, then latest finished",
             markup=False,
             highlight=False,
         )
-    _cli.console.print("Order: latest shown last", markup=False, highlight=False)
+    _cli.console.print("Order: latest job appears last", markup=False, highlight=False)
     _cli.console.print(
         "Legend: * active, ~ waiting, ! failed, - finished",
         markup=False,
@@ -538,18 +538,18 @@ def _render_empty_jobs_result(
         markup=False,
         highlight=False,
     )
-    _cli.console.print(f"Shown: {shown_count}", markup=False, highlight=False)
+    _cli.console.print(f"Displayed: {shown_count}", markup=False, highlight=False)
     _cli.console.print(
         f"Total: {_job_count_text(total)}",
         markup=False,
         highlight=False,
     )
     _cli.console.print(
-        "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
+        "Displayed jobs: 0 active, 0 waiting, 0 finished, 0 failed",
         markup=False,
         highlight=False,
     )
-    _cli.console.print("Order: latest shown last", markup=False, highlight=False)
+    _cli.console.print("Order: latest job appears last", markup=False, highlight=False)
     if filter_text:
         _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
     if monitoring:

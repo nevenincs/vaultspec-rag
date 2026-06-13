@@ -4572,10 +4572,10 @@ class TestServiceJobsCli:
         expected_present = [
             "Jobs",
             f"Address: http://127.0.0.1:{server.server_port}",
-            "Shown: 0 matching jobs",
+            "Displayed: 0 matching jobs",
             "Total: 0 jobs",
-            "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
-            "Order: latest shown last",
+            "Displayed jobs: 0 active, 0 waiting, 0 finished, 0 failed",
+            "Order: latest job appears last",
             "Filter: state active",
             "There are no active jobs.",
             "Next actions:",
