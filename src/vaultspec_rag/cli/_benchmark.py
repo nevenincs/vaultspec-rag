@@ -15,7 +15,8 @@ from ._gpu_errors import _handle_gpu_error
 @app.command(
     "benchmark",
     help=(
-        "Measure search speed on the current project index. "
+        "Measure local search speed on the current project index. "
+        "This can take several minutes because it loads the local search stack. "
         "Run `vaultspec-rag index` first if there are no indexed documents."
     ),
 )
@@ -37,6 +38,12 @@ def handle_benchmark(
     from ..api import run_benchmark
 
     try:
+        query_noun = "query" if n_queries == 1 else "queries"
+        _cli.console.print(
+            f"Benchmark: running {n_queries} local search {query_noun}.",
+            markup=False,
+            highlight=False,
+        )
         results = run_benchmark(target, n_queries=n_queries)
     except ValueError as e:
         if "No vault documents" in str(e):

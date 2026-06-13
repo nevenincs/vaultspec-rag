@@ -14,6 +14,8 @@ from ._gpu_errors import _handle_gpu_error
     "quality",
     help=(
         "Run built-in search quality checks on a temporary test project. "
+        "This can take several minutes because it builds and searches a local "
+        "temporary index. "
         "This is a developer regression check, not a report on your current project."
     ),
 )
@@ -24,6 +26,7 @@ def handle_quality() -> None:
     _cli._suppress_hf_progress()
     try:
         msg = "Running built-in search quality checks..."
+        _cli.console.print(msg, markup=False, highlight=False)
         with _cli.console.status(msg):
             results = run_quality_probe()
     except (ImportError, RuntimeError) as e:

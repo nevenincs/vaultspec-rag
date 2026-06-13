@@ -2843,7 +2843,9 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["benchmark", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "Measure search speed" in result.output
+        normalized = " ".join(result.output.split())
+        assert "Measure local search speed" in result.output
+        assert "can take several minutes" in normalized
         for forbidden in ("Args:", "Raises:", "CLIState", "VRAM usage"):
             assert forbidden not in result.output
 
@@ -2851,7 +2853,9 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["quality", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
+        normalized = " ".join(result.output.split())
         assert "built-in search quality checks" in result.output
+        assert "can take several minutes" in normalized
         assert "not a report on your current project" in result.output
         for forbidden in ("Args:", "Raises:", "synthetic test corpus"):
             assert forbidden not in result.output
@@ -5904,7 +5908,8 @@ class TestBenchmarkAndQualityCommands:
         assert len(called) == 1
         assert called[0][1] == 10
         lines = _plain_lines(result.output)
-        assert re.fullmatch(r"Search latency: 10 queries", lines[0])
+        assert lines[0] == "Benchmark: running 10 local search queries."
+        assert re.fullmatch(r"Search latency: 10 queries", lines[1])
         assert _latency_values(lines) == {
             "Median": 1.2,
             "95th percentile": 3.4,
@@ -5991,10 +5996,11 @@ class TestBenchmarkAndQualityCommands:
         assert result.exit_code == 0
         assert len(called) == 1
         lines = _plain_lines(result.output)
-        assert _quality_probe_line(lines[1]) == ("passed", "L1", "q1")
+        assert lines[0] == "Running built-in search quality checks..."
+        assert _quality_probe_line(lines[2]) == ("passed", "L1", "q1")
         summary_match = re.fullmatch(
             r"Result: (\d+) of (\d+) probes passed \((\d+)%\)\.",
-            lines[2],
+            lines[3],
         )
         assert summary_match is not None
         assert tuple(map(int, summary_match.groups())) == (8, 8, 100)
@@ -6032,7 +6038,8 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 1
         lines = _plain_lines(result.output)
-        assert _quality_probe_line(lines[1]) == ("failed", "L1", "q1")
+        assert lines[0] == "Running built-in search quality checks..."
+        assert _quality_probe_line(lines[2]) == ("failed", "L1", "q1")
         failure_match = re.fullmatch(
             r"Failed: (\d+)% passed; required (\d+)%.",
             lines[-1],
