@@ -20,7 +20,8 @@ Unfamiliar terms in flag descriptions are defined in the [glossary](glossary.md)
 - [clean](#clean)
 - [status](#status)
 - [server mcp start](#server-mcp-start)
-- [server service start](#server-service-start)
+- [server doctor](#server-doctor)
+- [server start](#server-start)
 - [server service stop](#server-service-stop)
 - [server service status](#server-service-status)
 - [server service warmup](#server-service-warmup)
@@ -155,21 +156,35 @@ Start the MCP server in the foreground over stdio. Used by MCP clients that spaw
 
 Exit codes: `0` clean shutdown; `1` startup failure.
 
-## server service start
+## server doctor
 
-Start the background RAG service as a detached process. Spawns the MCP server on the given port, polls `/health` with exponential backoff until ready, and writes a status file to `~/.vaultspec-rag/service.json`.
+Report a bounded, read-only readiness snapshot for every external dependency the server-first backend needs, so a user learns what is missing before a runtime failure. Reports, per dependency, the backend in use plus torch CUDA availability, model-snapshot presence, and the Qdrant binary's resolution source and the supervised server's liveness. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
 
-| Flag                  | Default                          | Description                                                                              |
-| --------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| `--port`              | `8766` (or `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                           |
-| `--watch/--no-watch`  | unset                            | Enable/disable the auto-reindex watcher. Unset leaves `VAULTSPEC_RAG_WATCH_ENABLED` env. |
-| `--watch-debounce-ms` | unset (`2000`)                   | Watcher debounce window in milliseconds.                                                 |
-| `--watch-cooldown-s`  | unset (`30`)                     | Per-source re-index cooldown in seconds.                                                 |
-| `--help`              | off                              | Show the help message and exit.                                                          |
+| Flag     | Default | Description                                     |
+| -------- | ------- | ----------------------------------------------- |
+| `--json` | off     | Emit the readiness snapshot as a JSON envelope. |
+| `--help` | off     | Show the help message and exit.                 |
+
+Exit codes: `0` success.
+
+## server start
+
+Start the background RAG service as a detached process. Spawns the MCP server on the given port, polls `/health` until ready, and records how the CLI can reach it. Starts in **server mode** by default (supervising the managed Qdrant child); if the Qdrant binary is missing, `start` prints the install command rather than failing opaquely.
+
+| Flag                      | Default                          | Description                                                                                                                                                                                                           |
+| ------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--port`                  | `8766` (or `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                                                                                                                                                        |
+| `--updates/--no-updates`  | `--updates`                      | Enable/disable automatic index updates when files change.                                                                                                                                                             |
+| `--update-delay-ms`       | unset (`2000`)                   | Delay before indexing a burst of file changes, in milliseconds.                                                                                                                                                       |
+| `--repeat-update-delay-s` | unset (`30`)                     | Minimum wait before automatically updating a project again, in seconds.                                                                                                                                               |
+| `--local-only`            | off                              | Use the on-disk local store instead of the default managed Qdrant server. First-class opt-out for CI, offline, and small-project hosts.                                                                               |
+| `--qdrant/--no-qdrant`    | unset                            | Explicitly opt in to or out of the managed Qdrant server. Server mode is already the default, so `--qdrant` is redundant; use `--local-only` to select the on-disk store. Unset leaves the current setting unchanged. |
+| `--qdrant-auto-provision` | off                              | Download the managed Qdrant server if it is missing. Without this flag, `start` prints the install command.                                                                                                           |
+| `--help`                  | off                              | Show the help message and exit.                                                                                                                                                                                       |
 
 The daemon inherits configuration only through the environment, so each set
-watcher flag is translated to its `VAULTSPEC_RAG_WATCH*` variable on the child
-process before spawn. See [automation.md](automation.md#automatic-re-indexing-the-filesystem-watcher).
+flag is translated to its `VAULTSPEC_RAG_*` variable on the child process
+before spawn. See [automation.md](automation.md#automatic-re-indexing-the-filesystem-watcher).
 
 Exit codes: `0` service ready; `1` failure to start or health-check timeout.
 
@@ -334,20 +349,27 @@ The running service exposes read-only HTTP routes on its loopback port. `GET /he
 
 ## install
 
-Install vaultspec-rag enrollment into a workspace. Seeds rag's bundled rule and MCP source files into `.vaultspec/rules/` and invokes vaultspec-core's sync to propagate them to `.mcp.json` and provider directories.
+Set up vaultspec-rag in a workspace. Creates the required workspace folders, seeds rag's bundled rules and integration files, invokes vaultspec-core's sync, and — by **default** — provisions the external dependencies the server-first backend needs: the CUDA `torch` configuration, the embedding/reranker models, and the pinned Qdrant server binary. Provisioning is opt-out and reports through the shared sync vocabulary (`created` / `updated` / `unchanged` / `skipped` / `failed`). The distribution wheel stays pure-Python; the Qdrant binary is fetched at runtime (digest-verified before extraction and execution, HTTPS host-pinned), never bundled.
 
-| Flag                                   | Default                   | Description                                                                                                                                  |
-| -------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--target`, `-t`                       | current working directory | Workspace path.                                                                                                                              |
-| `--upgrade`                            | off                       | Re-seed bundled rule and MCP files even if present.                                                                                          |
-| `--dry-run`                            | off                       | Preview changes without writing.                                                                                                             |
-| `--force`                              | off                       | Override existing files. Also bypasses the torch-config confirmation prompt (implies `--yes` for that step). `--no-torch-config` still wins. |
-| `--skip`                               | unset                     | Skip a component, repeatable.                                                                                                                |
-| `--torch-config` / `--no-torch-config` | `--torch-config`          | Patch `pyproject.toml` with the cu130 torch index. `--no-torch-config` takes precedence over `--force` and `--yes`.                          |
-| `--yes`, `-y`                          | off                       | Skip the torch-config confirmation prompt (required on non-TTY runs).                                                                        |
-| `--sync`                               | off                       | Run `uv sync --reinstall-package torch` after the patch lands. No-ops when the patch step did not apply.                                     |
-| `--json`                               | off                       | Output result as JSON.                                                                                                                       |
-| `--help`                               | off                       | Show the help message and exit.                                                                                                              |
+| Flag                                   | Default                   | Description                                                                                                                                                                                                                         |
+| -------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--target`, `-t`                       | current working directory | Workspace path.                                                                                                                                                                                                                     |
+| `--upgrade`                            | off                       | Refresh bundled rules and integration files even if present.                                                                                                                                                                        |
+| `--dry-run`                            | off                       | Preview changes without writing.                                                                                                                                                                                                    |
+| `--force`                              | off                       | Override existing files. Also bypasses the torch-config confirmation prompt (implies `--yes` for that step). `--no-torch-config` still wins.                                                                                        |
+| `--skip`                               | unset                     | Skip a component, repeatable.                                                                                                                                                                                                       |
+| `--torch-config` / `--no-torch-config` | `--torch-config`          | Configure the cu130 CUDA PyTorch source in `pyproject.toml`. `--no-torch-config` takes precedence over `--force` and `--yes`.                                                                                                       |
+| `--yes`, `-y`                          | off                       | Skip the torch-config confirmation prompt (required on non-TTY runs).                                                                                                                                                               |
+| `--sync`                               | off                       | Run `uv sync --reinstall-package torch` after the torch configuration lands. No-ops when the patch step did not apply.                                                                                                              |
+| `--provision` / `--no-provision`       | `--provision`             | Provision models and the Qdrant server binary after enrollment. `--no-provision` sets up the workspace only.                                                                                                                        |
+| `--local-only`                         | off                       | Use the on-disk store instead of the supervised Qdrant server: skips the Qdrant binary download and persists the local backend so `server start` honours it. The minimal / CI / air-gapped alternative to the server-first default. |
+| `--skip-torch`                         | off                       | Skip the PyTorch provisioning step (finer than `--local-only`).                                                                                                                                                                     |
+| `--skip-models`                        | off                       | Skip the embedding/reranker model provisioning step.                                                                                                                                                                                |
+| `--skip-qdrant`                        | off                       | Skip the Qdrant server binary provisioning step.                                                                                                                                                                                    |
+| `--json`                               | off                       | Emit JSON for scripts instead of human text.                                                                                                                                                                                        |
+| `--help`                               | off                       | Show the help message and exit.                                                                                                                                                                                                     |
+
+Torch provisioning is two-phase: `install` configures the index in `pyproject.toml` and reports it as "configured, sync pending"; the GPU build lands only after a follow-up `uv sync` (or `--sync`).
 
 Exit codes: `0` success, including torch-config terminal states `declined`, `conflict`, `absent`, and `disabled`; `1` install failure; `2` torch-config terminated in `error`, `skipped-eof`, or `skipped-non-tty`.
 

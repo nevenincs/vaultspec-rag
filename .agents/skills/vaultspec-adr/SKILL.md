@@ -5,58 +5,54 @@ description: Use this skill to persist Architecture Decision Records (ADRs) afte
   and consequences.
 ---
 
-# ADR: Architecture Decision Record Writing Skill
+# ADR writing skill (vaultspec-adr)
 
 Use this skill:
 
 - After a `vaultspec-research` session has concluded with a recommendation.
-
 - When multiple competing technical choices need a grounding document.
-
 - When a significant architectural decision is made that affects the project's
-  fundations, feature set, or development trajectory.
+  foundations, feature set, or development trajectory.
+- To document the blast radius, "why", and "what" of major architectural choices.
 
-- To document the blast radius, "why", "what" of major architectural choices.
+**Announce at start:** "I'm using the `vaultspec-adr` skill to create a new ADR."
 
 ## Required steps
 
-- **Announce at start:** "I'm using the `vaultspec-adr` skill to create a new ADR."
-- **You MUST read and use the template** at `.vaultspec/rules/templates/adr.md`.
-- **MUST save document to:** `.vault/adr/yyyy-mm-dd-{feature}-adr.md`
+- **Read and use the template** at `.vaultspec/rules/templates/adr.md`; its embedded
+  hint blocks govern the body structure.
+
+- **Scaffold via the CLI:**
+  `vaultspec-core vault add adr --feature {feature} --related <research-stem>`, then
+  author the body prose in the scaffolded file. The CLI owns the filename
+  (`.vault/adr/yyyy-mm-dd-{feature}-adr.md`) and the frontmatter; never hand-write
+  either. The full frontmatter schema is defined in the `vaultspec` rule; verify after
+  scaffolding with `vaultspec-core vault check all` rather than hand-editing
+  frontmatter.
+
 - **Read and link related Research from:**
   `.vault/research/yyyy-mm-dd-{feature}-research.md`.
-- **Terminate if related research is not found** and prompt user to first invoke
+
+- **Terminate if related research is not found** and prompt the user to first invoke
   `vaultspec-research`.
-
-### Frontmatter & Tagging Mandate
-
-Every document MUST strictly adhere to the following schema:
-
-- **`tags`**: MUST contain the required tag pair in a YAML list.
-
-  - **Directory Tag**: Exactly `#adr`.
-  - **Feature Tag**: Exactly one kebab-case `#{feature}` tag.
-  - *Syntax:* `tags: ['#adr', '#feature']` (Must be quoted strings in a list).
-
-- **`related`**: MUST be a YAML list of quoted `'[[wiki-links]]'`.
-
-  - *Constraint:* No relative paths (`../`), no bare strings, no `@ref`.
-
-- **`date`**: MUST use `yyyy-mm-dd` format.
-
-- **No `feature` key**: Use `tags:` exclusively for feature identification.
 
 ## Workflow
 
 - **Derive from Research:** ADRs should always be preceded by a `vaultspec-research`
   session.
 
-- **CRITICAL: you MUST always** present adr findings as an interactive prompt for user
-  approval. Without explicit user sign-off the ADR is considere null and void.
+- **CRITICAL: you MUST always** present ADR findings as an interactive prompt for user
+  approval. Without explicit user sign-off the ADR is considered null and void.
 
-- **Draft ADR using an appropriate agent persona**, such as `vaultspec-writer`
+- **Draft the ADR using the `vaultspec-adr-researcher` agent persona**, which formalizes
+  the research-backed decisions into ADR content and returns it for persistence into the
+  scaffolded document (the `vaultspec-writer` persona's mandate is plan-only).
 
-- Associate ADR with `{feature}` based on the findings in `[[...-research.md]]`.
+- Associate the ADR with `{feature}` based on the findings in `[[...-research.md]]`.
+
+- **Supersession:** when a new ADR replaces an old one, run
+  `vaultspec-core vault adr supersede` rather than editing status lines by hand; the
+  verb records the `superseded_by:` back-pointer on the old ADR.
 
 - **Linking:** Use `[[wiki-links]]` for references. DO NOT use `@ref` or
   `[label](path)`.

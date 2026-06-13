@@ -9,6 +9,16 @@ related:
   - '[[2026-06-13-provisioning-setup-adr]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `server-first-default` plan
 
 Flip the RAG default to the supervised Qdrant server backend, consolidate dependency provisioning behind one opt-out setup front door, add a bounded readiness verb, and reframe the docs so server-first is standard and local-only is the explicit minimal alternative.
@@ -118,7 +128,7 @@ Reframe getting-started, installation, service-mode docs, and CLI help to server
 Run a manual operator-persona validation across the real command surface in human and JSON modes and record the outcome, closing the CLI operability loop.
 
 - [x] `W04.P10.S40` - run the operator-persona validation exercising default server start, --local-only start, setup provisioning, and the readiness verb in human and JSON modes and record observed confusion or acceptance; `.vault/audit/2026-06-13-server-first-default-audit.md`.
-- [ ] `W04.P10.S41` - run the full unit and integration suite confirming the server-first default, provisioning, and readiness changes pass; `src/vaultspec_rag/tests/test_cli.py`.
+- [x] `W04.P10.S41` - run the full unit and integration suite confirming the server-first default, provisioning, and readiness changes pass; `src/vaultspec_rag/tests/test_cli.py`.
 - [ ] `W04.P10.S42` - update the human CLI documentation so the readiness verb and install opt-out flags match the live command surface; `docs/cli.md`.
 
 ## Description

@@ -556,8 +556,11 @@ def reset_config() -> None:
     _cached_config = None
 
 
-# Keep the persistence-layer default in lock-step with the class default
-# so the marker lands in the same managed directory the config resolves.
-assert VaultSpecConfigWrapper._RAG_DEFAULTS["status_dir"] == _STATUS_DIR_DEFAULT, (
-    "status_dir default drifted between persistence layer and config defaults"
-)
+# Keep the persistence-layer default in lock-step with the class default so the
+# local-only marker lands in the same managed directory the config resolves. An
+# explicit raise (not assert) so the invariant holds under python -O, where a
+# silent drift would write the marker to a directory the resolver never reads.
+if VaultSpecConfigWrapper._RAG_DEFAULTS["status_dir"] != _STATUS_DIR_DEFAULT:
+    raise RuntimeError(
+        "status_dir default drifted between persistence layer and config defaults"
+    )

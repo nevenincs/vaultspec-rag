@@ -18,7 +18,9 @@ The workflow persists the following documents:
 - `.vault/reference/yyyy-mm-dd-<feature>-reference.md`: The implementation
   `<Reference>`.
 
-- `.vault/audit/yyyy-mm-dd-<feature>-audit.md`: The `<Audit>` report.
+- `.vault/audit/yyyy-mm-dd-<feature>-audit.md`: The `<Audit>` report. A feature with
+  multiple audits disambiguates each with an optional narrative infix:
+  `yyyy-mm-dd-<feature>-<topic>-audit.md`.
 
 - `.vault/exec/yyyy-mm-dd-<feature>/.../<step>.md`: The individual `<Step Record>`.
 
@@ -33,18 +35,28 @@ Where appropriate, use the following skills:
 - `vaultspec-research`
 - `vaultspec-code-research`
 - `vaultspec-adr`
-- `vaultspec-write-plan`
+- `vaultspec-write`
 - `vaultspec-execute`
-- `vaultspec-documentation`
+- `vaultspec-code-review`
 - `vaultspec-codify`
+- `vaultspec-curate`
+- `vaultspec-documentation`
+- `vaultspec-team`
+- `vaultspec-projectmanager`
 
 ## Documentation Hierarchy
 
 The documentation trail follows a strict dependency graph. Artifacts lower in the
 hierarchy should reference those above them.
 
-- **Brainstorm** / **Research / Reference Audit** (`.vault/research/`,
+- **Brainstorm** / **Research** / **Reference** (`.vault/research/`,
   `.vault/reference/`)
+
+- **Audits** (`.vault/audit/yyyy-mm-dd-{feature}-audit.md`, optionally
+  `.vault/audit/yyyy-mm-dd-{feature}-{topic}-audit.md`)
+
+  - *Depends on:* the artifacts under review (plans, execution records, code)
+  - *References:* the artifacts under review
 
 - **Architecture Decision Records (ADR)** (`.vault/adr/`)
 
@@ -73,7 +85,7 @@ hierarchy should reference those above them.
 - **Summaries**
   (`.vault/exec/{yyyy-mm-dd-feature}/{yyyy-mm-dd-feature-{phase}-summary}.md`)
 
-  - *Depends on:* Execution Logs.
+  - *Depends on:* Execution Records.
   - *References:* The Plan and key Artifacts produced.
   - *Location:* Inside feature-specific folder.
   - *Filename:* `{yyyy-mm-dd-feature-{phase}-summary}.md` where `{phase}` is the
@@ -130,15 +142,15 @@ extra tags may be appended when the template allows them.
 
 The directory tag is determined by the file's location in `.vault/`:
 
-| Directory           | Tag          | Description                           |
-| :------------------ | :----------- | :------------------------------------ |
-| `.vault/adr/`       | `#adr`       | Architecture Decision Records         |
-| `.vault/audit/`     | `#audit`     | Audit reports and assessments         |
-| `.vault/exec/`      | `#exec`      | Execution records (steps & summaries) |
-| `.vault/index/`     | `#index`     | Auto-generated feature indexes        |
-| `.vault/plan/`      | `#plan`      | Implementation plans                  |
-| `.vault/reference/` | `#reference` | Reference audits and blueprints       |
-| `.vault/research/`  | `#research`  | Research and brainstorming            |
+| Directory           | Tag          | Description                              |
+| :------------------ | :----------- | :--------------------------------------- |
+| `.vault/adr/`       | `#adr`       | Architecture Decision Records            |
+| `.vault/audit/`     | `#audit`     | Audit reports and assessments            |
+| `.vault/exec/`      | `#exec`      | Execution records (steps & summaries)    |
+| `.vault/index/`     | `#index`     | Auto-generated feature indexes           |
+| `.vault/plan/`      | `#plan`      | Implementation plans                     |
+| `.vault/reference/` | `#reference` | Implementation references and blueprints |
+| `.vault/research/`  | `#research`  | Research and brainstorming               |
 
 ### Tag Format
 
@@ -150,11 +162,16 @@ tag; additional tags are allowed):
 tags:
   - '#plan'
   - '#feature-name'
-date: 2026-02-06
+date: '2026-02-06'
+modified: '2026-02-06'
 related:
   - '[[related-file]]'
 ---
 ```
+
+`modified:` is a CLI-maintained last-modified stamp: set equal to `date:` at scaffold,
+refreshed by every mutating verb and by `vaultspec-core vault check all --fix`, parsed
+leniently but rewritten to the canonical quoted `yyyy-mm-dd` form, never hand-edited.
 
 **Examples:**
 
@@ -191,12 +208,13 @@ Follow these conventions:
 | `{yyyy-mm-dd}`   | lowercase, ISO 8601   | `2026-02-06`              |
 | `{yyyy-mm-dd-*}` | lowercase pattern     | `2026-02-04-feature-plan` |
 | `{tier}`         | uppercase enum        | `L1`, `L2`, `L3`, `L4`    |
+| `modified`       | CLI-maintained stamp  | `2026-02-06`              |
 
 ### Document Body Placeholders
 
 Container identifiers (`{wave}`, `{phase}`, `{step}`) use the canonical uppercase
-zero-padded form from the convention ADR. `{feature}` uses lowercase kebab-case.
-Narrative placeholders (`{topic}`, `{title}`) use concise prose.
+zero-padded form from the plan template hint blocks. `{feature}` uses lowercase
+kebab-case. Narrative placeholders (`{topic}`, `{title}`) use concise prose.
 
 | Placeholder | Format              | Example                   |
 | :---------- | :------------------ | :------------------------ |
@@ -207,6 +225,21 @@ Narrative placeholders (`{topic}`, `{title}`) use concise prose.
 | `{topic}`   | concise prose       | `event handling`          |
 | `{title}`   | concise prose       | `display map integration` |
 
+### Machine-Filled Placeholders
+
+A separate placeholder class is filled by the CLI, never by the author. Machine-filled
+placeholders use snake_case to distinguish them from author-replaced placeholders; do
+not fill or rename them by hand - scaffold the document through the owning CLI verb
+instead.
+
+| Placeholder       | Filled by                            | Value                                           |
+| :---------------- | :----------------------------------- | :---------------------------------------------- |
+| `{heading}`       | `vaultspec-core vault add exec`      | The originating Step row's action text          |
+| `{step_id}`       | `vaultspec-core vault add exec`      | The Step's canonical identifier (`S##`)         |
+| `{plan_stem}`     | `vaultspec-core vault add exec`      | The parent plan's filename stem                 |
+| `{scope_block}`   | `vaultspec-core vault add exec`      | A Scope section listing the Step's scoped files |
+| `{document_list}` | `vaultspec-core vault feature index` | The feature's full document list                |
+
 ### General Rules
 
 - **YAML frontmatter**: Always lowercase, kebab-case
@@ -215,9 +248,9 @@ Narrative placeholders (`{topic}`, `{title}`) use concise prose.
   headings. Top-level vault documents use backticks around both the `{feature}` segment
   and the narrative `{title}`, `{topic}`, or `{phase}` segment. Examples:
   `# {feature} research: {topic}` represents the literal template heading '# `{feature}`
-  research: `{topic}`', and `# {feature} {phase} plan` represents '# `{feature}`
-  `{phase}` plan'. Narrative segments should be concise prose; canonical uppercase
-  identifiers remain required for `{wave}`, `{phase}`, and `{step}` identifier segments.
+  research: `{topic}`', and `# {feature} plan` represents '# `{feature}` plan'.
+  Narrative segments should be concise prose; canonical uppercase identifiers remain
+  required for `{wave}`, `{phase}`, and `{step}` identifier segments.
 
 - **File names**: lowercase kebab-case for narrative segments (`{feature}`, `{type}`);
   canonical uppercase identifiers for `{wave}`, `{phase}`, `{step}` segments. Patterns:

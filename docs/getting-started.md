@@ -2,7 +2,7 @@
 
 Keyword tools like grep find files that use the same words as your query. They miss files that mean the same thing in different words. vaultspec-rag closes that gap for your own project by searching on meaning, not just spelling.
 
-By the end of this tutorial you will have installed vaultspec-rag, pointed it at a project, run a search written in plain English, and read the ranked results. To follow along you need a working command line and a project directory that contains some source code. Model downloads and the first index build take longer than later runs and depend on your network and project size, so plan for an unhurried first pass.
+By the end of this tutorial you will have installed vaultspec-rag, provisioned a server-backed RAG over your project, run a search written in plain English, and read the ranked results. To follow along you need a working command line and a project directory that contains some source code. Model downloads, the one-time server-binary fetch, and the first index build take longer than later runs and depend on your network and project size, so plan for an unhurried first pass.
 
 ## Before you start
 
@@ -12,7 +12,7 @@ By the end of this tutorial you will have installed vaultspec-rag, pointed it at
 
 For full environment setup, see [installation](installation.md). For why the GPU is required, see [architecture](architecture.md).
 
-## Step 1: install vaultspec-rag
+## Step 1: add vaultspec-rag
 
 Add the package to a uv-managed project:
 
@@ -22,27 +22,39 @@ uv add vaultspec-rag
 
 uv downloads vaultspec-rag and its dependencies. Wait for the prompt to return before continuing.
 
-Verify the install:
+Verify the package resolved:
 
 ```bash
 uv run vaultspec-rag --version
 ```
 
-You should see:
+You should see a version line.
 
-```text
-vaultspec-rag v0.2.11
-```
+## Step 2: install and provision
 
-## Step 2: configure the GPU build
-
-vaultspec-rag ships a one-shot command that patches your `pyproject.toml` to pull the correct CUDA-enabled `torch` wheel:
+`install` sets up the workspace and, by default, provisions everything the **server-first** backend needs: it configures the CUDA `torch` build, ensures the search and rerank models are cached, and downloads the pinned Qdrant server binary. Server mode is the default backend because, at the scale this product exists to serve, the supervised Qdrant server returns large-codebase searches at interactive latency where the on-disk store cannot.
 
 ```bash
 uv run vaultspec-rag install
 ```
 
-The command asks for confirmation before editing `pyproject.toml`. Press `y` to accept. When it finishes, expect a final summary line that includes `torch_config_action=applied` to confirm the patch landed. If you see an error instead, see [installation](installation.md) for recovery steps.
+The command prompts before changing PyTorch configuration; press `y` to accept. Each provisioning step reports through the shared sync vocabulary (`created` / `updated` / `unchanged` / `skipped` / `failed`), so you can read what happened at a glance. Torch is configured in two phases: `install` writes the GPU index into `pyproject.toml` and reports it as "configured, sync pending", then you pull the GPU build:
+
+```bash
+uv sync
+```
+
+Preview the whole run first with `uv run vaultspec-rag install --dry-run` if you want to see what each step would do before it runs. If a step errors, see [installation](installation.md) for recovery.
+
+### Minimal alternative: local-only
+
+If you are on CI, an air-gapped host, or a small project that does not need the server, opt out with `--local-only`. This skips the Qdrant binary download and flips the runtime to the on-disk local store (persisted so `server start` honours it later):
+
+```bash
+uv run vaultspec-rag install --local-only
+```
+
+Local mode stays fully supported; it is a deliberate, first-class opt-out, not a fallback.
 
 ## Step 3: move into your project
 
@@ -60,7 +72,7 @@ Build the index for both documents and code:
 uv run vaultspec-rag index
 ```
 
-On the first run, vaultspec-rag downloads the GPU model files into your HuggingFace cache. This happens once; later runs reuse the cached files. The indexer prints per-file progress as it works and finishes with a per-source summary that lists vault and code counts. The exact format may differ between versions, but the summary will appear once indexing is complete.
+On the first run, vaultspec-rag downloads any not-yet-cached GPU model files into your HuggingFace cache. This happens once; later runs reuse the cached files. The indexer prints per-file progress as it works and finishes with a per-source summary that lists vault and code counts. The exact format may differ between versions, but the summary will appear once indexing is complete.
 
 ## Step 5: run your first search
 
@@ -93,10 +105,10 @@ uv run vaultspec-rag search "how authentication works" --type code --include-pat
 
 ## Wrap up
 
-You now have a working install, a code search, and a narrowed search. From here:
+You now have a server-backed install, a code search, and a narrowed search. From here:
 
 - [Search and index](search-and-index.md) covers vault search and the other refinement flags you skipped here.
-- [Service mode](service-mode.md) keeps the GPU model resident so repeat searches return faster.
+- [Service mode](service-mode.md) keeps the GPU model resident and runs the supervised Qdrant server for repeat searches; it also covers `server doctor` for a readiness check.
 - [MCP](mcp.md) wires vaultspec-rag into Claude Desktop and Claude Code.
 - [Architecture](architecture.md) explains how the search actually works under the hood.
 

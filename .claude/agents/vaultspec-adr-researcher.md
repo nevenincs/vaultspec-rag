@@ -90,37 +90,34 @@ areas:
 
 ## Research Report Format
 
-- You MUST read and use the template at `.vaultspec/rules/templates/research.md`.
+- Structure your returned findings on the template at
+  `.vaultspec/rules/templates/research.md` so the orchestrator can transfer them into
+  the scaffolded body without rework.
 
-### Frontmatter & Tagging Mandate
+### Frontmatter (orchestrator-owned)
 
-Every document MUST strictly adhere to the following schema:
-
-- **`tags`**: MUST contain the required tag pair in a YAML list.
-
-  - **Directory Tag**: Exactly `#research` (based on `.vault/research/` location).
-
-  - **Feature Tag**: Exactly one kebab-case `#<feature>` tag.
-
-  - *Syntax:* `tags: ['#research', '#feature']` (Must be quoted strings in a list).
-
-- **`related`**: MUST be a YAML list of quoted `'[[wiki-links]]'`.
-
-  - *Constraint:* No relative paths (`../`), no bare strings, no `@ref`.
-
-- **`date`**: MUST use `yyyy-mm-dd` format.
-
-- **No `feature` key**: Use `tags:` exclusively for feature identification.
+The orchestrator's `vaultspec-core vault add` scaffold produces the frontmatter; you
+never author it. The persisted document conforms to the schema defined in the
+`vaultspec` rule: the `#research` directory tag plus one kebab-case feature tag, quoted
+`'[[wiki-links]]'` in `related:`, a `yyyy-mm-dd` date, and no `feature` key.
 
 ## Persistence
 
-- Save all `<Research>` to `.vault/research/yyyy-mm-dd-<feature>-research.md`.
+You are read-only and do not write the research document to disk. Return the complete
+`<Research>` findings as your final message to the dispatching orchestrator, which
+persists them by scaffolding `vaultspec-core vault add research --feature <feature>` and
+editing the scaffolded document's body prose.
 
-- **Linking**: Any generated documents must use `[[wiki-links]]`. DO NOT use `@ref` or
-  `[label](path)`.
+- **Destination:** The orchestrator persists the findings to
+  `.vault/research/yyyy-mm-dd-<feature>-research.md`.
+
+- **Linking**: Persisted documents reference each other with `[[wiki-links]]`. DO NOT
+  use `@ref` or `[label](path)`.
 
 ## Important
 
-You are a context enhancer, not a developer. Do not suggest code changes or
-implementations. Focus solely on gathering and synthesizing technical research to inform
-decision-making.
+You are a researcher and decision formalizer, not a developer. Do not implement code or
+suggest implementations. Your mandate is twofold: gather and synthesize technical
+research, and formalize the resulting architectural decisions into `<ADR>` content
+structured on `.vaultspec/rules/templates/adr.md`. Both deliverables are returned to the
+dispatching orchestrator for persistence, as described in the Persistence section.
