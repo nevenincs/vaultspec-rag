@@ -1069,6 +1069,46 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert "PID:" not in result.output
 
 
+def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "cleanupjob",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "error",
+                "started_at": now - 12,
+                "finished_at": now - 3,
+                "result": "timed out",
+                "progress": {"step": "delete removed", "completed": 0, "total": 1},
+                "runtime_seconds": 9.0,
+                "initiator": {
+                    "kind": "watcher",
+                    "command": "watcher_code_index",
+                    "project_root": r"proj-a",
+                },
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 0, "phases": {"error": 1}},
+        "filters": {"limit": 20, "job_id": "cleanupjob"},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--job-id", "cleanupjob", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    values = _label_values(result.output)
+    assert values["Progress"] == "removing stale source files 0 of 1"
+    assert values["Error"] == "timed out"
+    assert "delete removed" not in result.output
+
+
 def test_job_detail_only_reports_progress_freshness_while_running(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

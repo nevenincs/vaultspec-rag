@@ -225,6 +225,13 @@ def _progress_step_label(step: str, source: str) -> str:
         "queued": "waiting to write the index",
         "discover": "discovering items",
         "chunk": "preparing files",
+        "delete removed": (
+            "removing stale source files"
+            if source == "code"
+            else "removing deleted vault documents"
+            if source == "vault"
+            else "removing stale index entries"
+        ),
         "embed": f"embedding {sections}",
         "embed + upsert chunks": f"embedding and writing {sections}",
         "embed + upsert documents": "embedding and writing documents",
