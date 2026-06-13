@@ -139,7 +139,7 @@ def _resolve_env_binary() -> ResolvedBinary | None:
     candidate = Path(raw).expanduser()
     if candidate.is_file():
         return ResolvedBinary(path=candidate, source="env")
-    logger.warning(
+    logger.debug(
         "%s points at %s which does not exist; ignoring",
         EnvVar.QDRANT_BINARY.value,
         candidate,

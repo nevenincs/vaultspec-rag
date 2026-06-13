@@ -77,6 +77,26 @@ def test_server_start_help_exposes_qdrant_options_in_operator_language() -> None
         assert old_term not in result.output
 
 
+def test_server_start_missing_qdrant_names_local_only_escape_hatch(
+    tmp_path: Path,
+) -> None:
+    result = runner.invoke(
+        app,
+        ["server", "start", "--port", str(_closed_port())],
+        env={
+            EnvVar.STATUS_DIR.value: str(tmp_path),
+            EnvVar.QDRANT_BINARY.value: str(tmp_path / "missing-qdrant"),
+            EnvVar.LOCAL_ONLY.value: "0",
+        },
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Service start failed" in result.output
+    assert "vaultspec-rag server qdrant install" in result.output
+    assert "vaultspec-rag server start --local-only" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_qdrant_help_uses_managed_server_language() -> None:
     result = runner.invoke(app, ["server", "qdrant", "--help"])
 

@@ -408,7 +408,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
     if resolved is None:
         raise RuntimeError(
             "qdrant server mode is enabled but no server binary is "
-            "available. Run: vaultspec-rag server qdrant install"
+            "available. Run: vaultspec-rag server qdrant install. "
+            "Local-only option: vaultspec-rag server start --local-only"
         )
     if resolved.source == "provisioned" and resolved.sha256:
         actual = file_sha256(resolved.path)

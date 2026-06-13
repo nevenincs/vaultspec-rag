@@ -362,8 +362,11 @@ class TestServerFirstStartupSelection:
                     "a qdrant binary resolved on PATH; this host cannot "
                     "exercise the missing-binary loud-failure contract"
                 )
-            with pytest.raises(RuntimeError, match="server qdrant install"):
+            with pytest.raises(RuntimeError) as exc_info:
                 start_supervised_from_config()
+            message = str(exc_info.value)
+            assert "vaultspec-rag server qdrant install" in message
+            assert "vaultspec-rag server start --local-only" in message
         finally:
             if prev_status is None:
                 os.environ.pop(EnvVar.STATUS_DIR.value, None)

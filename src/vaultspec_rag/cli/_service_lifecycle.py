@@ -64,6 +64,7 @@ def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
             ),
             "Run: vaultspec-rag server qdrant install",
             "(or re-run with --qdrant-auto-provision to consent to the download)",
+            "Local-only option: vaultspec-rag server start --local-only",
         )
         raise typer.Exit(code=1)
     report = provision()
