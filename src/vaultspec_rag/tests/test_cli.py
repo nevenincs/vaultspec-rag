@@ -4305,11 +4305,11 @@ class TestServiceProjectsCli:
         )
 
         out = capsys.readouterr().out
-        assert "Loaded projects: 1/16." in out
-        assert "Automatic unload: after 30m idle." in out
+        assert "Capacity: 1 of 16 projects loaded" in out
+        assert "Automatic unload: after 30m idle" in out
         assert "- Project: example" in out
         assert r"  Path: example" in out
-        assert "  In use: 1 active service use" in out
+        assert "  Active uses: 1" in out
         assert "  Last activity: 2m 5s ago" in out
         assert "  Last request: 14:05:06" in out
         assert "Handling 1 active request; idle for 2m 5s" not in out
@@ -4322,6 +4322,8 @@ class TestServiceProjectsCli:
         assert "project handle" not in out.lower()
         assert "idle ttl" not in out.lower()
         assert "references" not in out.lower()
+        assert "Loaded projects:" not in out
+        assert "In use:" not in out
 
     def test_projects_list_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
@@ -4365,16 +4367,16 @@ class TestServiceProjectsCli:
         lines = _plain_lines(result.output)
         expected_present = [
             f"Address: http://127.0.0.1:{server.server_port}",
-            "Loaded projects: 2/8.",
-            "Automatic unload: after 10m idle.",
+            "Capacity: 2 of 8 projects loaded",
+            "Automatic unload: after 10m idle",
             "- Project: busy",
             r"Path: busy",
-            "In use: 2 active service uses",
+            "Active uses: 2",
             "Last activity: 1m 5s ago",
             "Last request: 14:05:06",
             "- Project: ready",
             r"Path: ready",
-            "In use: not currently in use",
+            "Active uses: none",
             "Last activity: 4s ago",
             "Last request: not reported by service",
         ]
@@ -4389,6 +4391,9 @@ class TestServiceProjectsCli:
             "no timestamp from service",
             "project handle",
             "references",
+            "loaded projects:",
+            "in use:",
+            "not currently in use",
         ]
         leaked = [text for text in forbidden_substrings if text in joined]
         assert not leaked, f"internal phrasing leaked: {leaked}"

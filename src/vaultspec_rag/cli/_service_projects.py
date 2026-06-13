@@ -89,15 +89,11 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
     last_request = hms or "not reported by service"
-    use_text = (
-        "not currently in use"
-        if refs <= 0
-        else f"{refs} active service use{'s' if refs != 1 else ''}"
-    )
+    use_text = "none" if refs <= 0 else str(refs)
     return [
         f"- Project: {_project_name(root_str)}",
         f"  Path: {root_str}",
-        f"  In use: {use_text}",
+        f"  Active uses: {use_text}",
         f"  Last activity: {_humanize_idle(idle_s)} ago",
         f"  Last request: {last_request}",
     ]
@@ -118,18 +114,18 @@ def _print_projects_summary(
         )
     if not projects:
         _cli.console.print(
-            f"Loaded projects: 0/{max_projects}.",
+            f"Capacity: 0 of {max_projects} projects loaded",
         )
         _cli.console.print(
-            f"Automatic unload: after {_humanize_duration(idle_ttl)} idle.",
+            f"Automatic unload: after {_humanize_duration(idle_ttl)} idle",
         )
         return
 
     _cli.console.print(
-        f"Loaded projects: {len(projects)}/{max_projects}.",
+        f"Capacity: {len(projects)} of {max_projects} projects loaded",
     )
     _cli.console.print(
-        f"Automatic unload: after {_humanize_duration(idle_ttl)} idle.",
+        f"Automatic unload: after {_humanize_duration(idle_ttl)} idle",
     )
     for raw_entry in projects:
         summary = _project_summary(raw_entry)
