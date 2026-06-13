@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "GraphCache",
     "clean",
+    "get_readiness",
     "get_related",
     "get_service_state",
     "get_status",
@@ -723,6 +724,32 @@ def run_quality_probe(
             "threshold": threshold,
             "probes": probes,
         }
+
+
+def get_readiness() -> dict[str, Any]:
+    """Return a bounded, read-only dependency-readiness snapshot.
+
+    Reports, per external dependency, whether it is provisioned and
+    usable - torch CUDA availability, model presence in the Hugging
+    Face cache, and the qdrant binary resolution source plus supervised
+    server liveness. It is the read-only mirror of the provisioning
+    front door: it loads no model, touches no GPU, downloads nothing,
+    and mutates nothing, so it is safe to call before the runtime is up.
+
+    Readiness is a process-wide, project-independent concern (the three
+    dependencies live outside any one workspace), so this facade takes
+    no ``root_dir`` and acquires no project lease.
+
+    Returns:
+        The JSON-serialisable :meth:`ReadinessReport.to_dict` view: a
+        top-level ``ready`` boolean, ``server_mode``, and a
+        ``dependencies`` list with one ``{name, status, detail, info}``
+        node per dependency. Designed to serve both a human render and
+        a JSON envelope.
+    """
+    from ._readiness import compute_readiness
+
+    return compute_readiness().to_dict()
 
 
 def get_service_state(
