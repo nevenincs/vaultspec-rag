@@ -95,6 +95,7 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert "Emit JSON for scripts instead of human text" in help_result.output
     assert "JSON envelope" not in help_result.output
 
+    port = _closed_port()
     result = runner.invoke(
         app,
         [
@@ -102,7 +103,10 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
             "qdrant",
             "status",
         ],
-        env={EnvVar.STATUS_DIR.value: str(tmp_path)},
+        env={
+            EnvVar.STATUS_DIR.value: str(tmp_path),
+            EnvVar.QDRANT_PORT.value: str(port),
+        },
     )
 
     assert result.exit_code == 0, result.output
@@ -110,8 +114,8 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert labels["Version"]
     assert labels["Install"] == "not installed"
     assert labels["Address"].startswith("http://127.0.0.1:")
-    assert labels["State"].startswith("Qdrant is not answering on http://127.0.0.1:")
-    assert labels["Qdrant process"] == "not started by this service"
+    assert labels["Ready"] == "not accepting requests"
+    assert labels["Process"] == "not started by this service"
     assert labels["Installed versions"] == "none"
     assert "vaultspec-rag server qdrant install" in result.output
     for old_term in (
@@ -121,6 +125,8 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
         "Service child",
         "Managed process",
         "none recorded",
+        "Qdrant process:",
+        "State: Qdrant",
     ):
         assert old_term not in result.output
 
@@ -144,7 +150,7 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
     labels = _labels(result.output)
     assert labels["Install"] != "not installed"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
-    assert labels["State"] == f"Qdrant is not answering on http://127.0.0.1:{port}."
+    assert labels["Ready"] == "not accepting requests"
     assert "Next action:" in result.output
     assert "vaultspec-rag server start --qdrant" in result.output
     assert "vaultspec-rag server qdrant install" not in result.output

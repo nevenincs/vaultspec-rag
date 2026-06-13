@@ -177,16 +177,16 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     address = f"http://127.0.0.1:{payload['port']}"
     _print_line(f"Address: {address}")
     if payload["ready"]:
-        _print_line(f"State: Qdrant is answering on {address}.")
+        _print_line("Ready: accepting requests")
         return
-    _print_line(f"State: Qdrant is not answering on {address}.")
+    _print_line("Ready: not accepting requests")
     if isinstance(active, dict):
         _print_next_action("vaultspec-rag server start --qdrant")
 
 
 def _print_qdrant_process(service: object) -> None:
     if not (isinstance(service, dict) and service.get("recorded")):
-        _print_line("Qdrant process: not started by this service")
+        _print_line("Process: not started by this service")
         return
     alive_flag = service.get("qdrant_alive")
     alive = (
@@ -196,7 +196,7 @@ def _print_qdrant_process(service: object) -> None:
         if alive_flag is False
         else "state not reported"
     )
-    _print_line(f"Qdrant process: {alive}")
+    _print_line(f"Process: {alive}")
     _print_line(f"Process id: {service.get('qdrant_pid', 'not reported')}")
     _print_line(f"Port: {service.get('qdrant_port', 'not reported')}")
 
