@@ -133,6 +133,11 @@ def service_watcher_status(
         _emit_json(True, _UPDATES_STATUS_COMMAND, data=result)
         return
     mode = "enabled" if enabled else "disabled; indexes update when requested"
+    _cli.console.print(
+        f"Address: http://127.0.0.1:{resolved_port}",
+        markup=False,
+        highlight=False,
+    )
     _cli.console.print(f"Automatic index updates: {mode}", markup=False)
     _print_update_timing(result)
     if not watching:

@@ -1094,14 +1094,13 @@ class TestServerRoutingFlattened:
 
         output = _ANSI_RE.sub("", result.output)
         lines = [line.strip() for line in output.splitlines() if line.strip()]
-        assert lines[0] == "Automatic index updates: enabled"
-        assert lines[1].startswith("File change delay:")
-        assert lines[1].endswith("not reported by service.")
-        assert lines[2].startswith("Same-project delay:")
-        assert lines[2].endswith("not reported by service.")
-        assert lines[3] == "Projects updating automatically: 1"
-        assert lines[4] == "- Project: project-alpha"
-        assert lines[5] == f"Path: {project}"
+        assert lines[0] == f"Address: http://127.0.0.1:{server.server_port}"
+        assert lines[1] == "Automatic index updates: enabled"
+        assert lines[2] == "File changes: not reported by service."
+        assert lines[3] == "Same project: not reported by service."
+        assert lines[4] == "Projects updating automatically: 1"
+        assert lines[5] == "- Project: project-alpha"
+        assert lines[6] == f"Path: {project}"
         assert "unknown" not in output.lower()
         assert "wait not reported" not in output.lower()
 
