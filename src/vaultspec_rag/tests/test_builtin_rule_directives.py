@@ -1,11 +1,10 @@
 """Maintenance guard for the shipped built-in rule (#145).
 
 The bundled rule (`.vaultspec/rules/rules/vaultspec-rag.builtin.md`) is the
-standing agent guidance every consumer inherits. When service behaviour
-changes (e.g. auto-reindex), its DO/DO NOT directives must be updated in the
-same change. This test fails if the load-bearing auto-reindex / opt-out
-directive tokens go missing, so a behaviour change cannot silently leave the
-rule stale.
+standing agent operating manual every consumer inherits. This test fails if the
+rule's load-bearing directives go missing, so a behaviour or wording change
+cannot silently leave the rule without its core guidance: use semantic search,
+run the server-bound backend, and do not manually reindex.
 """
 
 from __future__ import annotations
@@ -18,13 +17,13 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _RULE_PATH = _REPO_ROOT / ".vaultspec" / "rules" / "rules" / "vaultspec-rag.builtin.md"
 
-# Tokens the rule MUST carry once the auto-reindex feature ships (#143/#144/#145).
+# Load-bearing directives the rule MUST carry. Keep this list in lockstep with
+# the rule's core mandates: semantic search is the primary use, the server-bound
+# Qdrant backend is the standard, and the watcher makes manual reindex redundant.
 _REQUIRED_DIRECTIVE_TOKENS = [
-    "auto-reindex",
+    "semantic search",
+    "--qdrant",
     "DO NOT manually reindex",
-    "--no-watch",
-    "VAULTSPEC_RAG_WATCH_ENABLED",
-    "watcher status",
 ]
 
 
@@ -33,9 +32,9 @@ def test_builtin_rule_source_exists() -> None:
 
 
 @pytest.mark.parametrize("token", _REQUIRED_DIRECTIVE_TOKENS)
-def test_builtin_rule_carries_auto_reindex_directive(token: str) -> None:
+def test_builtin_rule_carries_core_directive(token: str) -> None:
     text = _RULE_PATH.read_text(encoding="utf-8")
     assert token in text, (
         f"built-in rule is missing the required directive token {token!r}; "
-        "service behaviour changed without updating the rule (see #145)"
+        "the rule's core guidance changed without updating it (see #145)"
     )
