@@ -31,18 +31,18 @@ Flip the runtime backend default to server mode in config and introduce a single
 
 Make the resident service start server mode by default, select the local store when local-only is chosen, and fail loudly and actionably when the server cannot start.
 
-- [ ] `W01.P02.S05` - make service_lifespan select server mode by default and use the local store only when local-only is set, reading effective server mode from config; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `W01.P02.S06` - convert the qdrant child startup failure into a loud, actionable startup abort that names the install command and the --local-only escape hatch; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `W01.P02.S05` - make service_lifespan select server mode by default and use the local store only when local-only is set, reading effective server mode from config; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `W01.P02.S06` - convert the qdrant child startup failure into a loud, actionable startup abort that names the install command and the --local-only escape hatch; `src/vaultspec_rag/server/_lifespan.py`.
 - [ ] `W01.P02.S07` - surface the loud server-start failure remediation in the start-supervised entry point error message preserving verify-before-execute; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W01.P02.S08` - add integration tests for the server-first default startup path and the local-only opt-out startup path; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
+- [x] `W01.P02.S08` - add integration tests for the server-first default startup path and the local-only opt-out startup path; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
 
 ### Phase `W01.P03` - CLI start surface and tests
 
 Expose --local-only on the start surface, translate it to the daemon env, and cover the default flip plus opt-out with tests.
 
-- [ ] `W01.P03.S09` - add a --local-only flag to server start that selects the local backend and reframe the existing --qdrant flag as the redundant explicit-server opt-in; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `W01.P03.S10` - translate the --local-only start flag into the VAULTSPEC_RAG_LOCAL_ONLY daemon env, leaving operator-set env untouched when unset; `src/vaultspec_rag/cli/_process.py`.
-- [ ] `W01.P03.S11` - default the qdrant-binary pre-start guard to run by default and skip it under --local-only so a default start fails fast on a missing binary; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `W01.P03.S09` - add a --local-only flag to server start that selects the local backend and reframe the existing --qdrant flag as the redundant explicit-server opt-in; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `W01.P03.S10` - translate the --local-only start flag into the VAULTSPEC_RAG_LOCAL_ONLY daemon env, leaving operator-set env untouched when unset; `src/vaultspec_rag/cli/_process.py`.
+- [x] `W01.P03.S11` - default the qdrant-binary pre-start guard to run by default and skip it under --local-only so a default start fails fast on a missing binary; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [ ] `W01.P03.S12` - add CLI tests covering --local-only env translation, the default server-mode start, and the missing-binary loud-failure path; `src/vaultspec_rag/tests/test_cli.py`.
 
 ## Wave `W02` - unified setup front door
@@ -53,11 +53,11 @@ Give install/setup one opt-out provisioning front door that configures torch (re
 
 Add an opt-out provisioning orchestrator over the existing torch, model, and qdrant backends that reports through the shared sync vocabulary, is idempotent, and supports dry-run.
 
-- [ ] `W02.P04.S13` - create a provisioning front-door module that orchestrates torch, model, and qdrant provisioning and returns a heterogeneous per-dependency result; `src/vaultspec_rag/commands/_provision.py`.
-- [ ] `W02.P04.S14` - wrap the torch configurator step in the front door so it reports configured-with-sync-pending through the shared sync vocabulary; `src/vaultspec_rag/commands/_provision.py`.
-- [ ] `W02.P04.S15` - add a model-ensure provisioning step that reuses the warmup snapshot-download path and reports cached versus downloaded idempotently; `src/vaultspec_rag/commands/_models.py`.
-- [ ] `W02.P04.S16` - add a qdrant-binary provisioning step that delegates to the existing provisioner and maps its action onto the shared sync vocabulary; `src/vaultspec_rag/commands/_provision.py`.
-- [ ] `W02.P04.S17` - export the front-door orchestrator from the commands package public surface; `src/vaultspec_rag/commands/__init__.py`.
+- [x] `W02.P04.S13` - create a provisioning front-door module that orchestrates torch, model, and qdrant provisioning and returns a heterogeneous per-dependency result; `src/vaultspec_rag/commands/_provision.py`.
+- [x] `W02.P04.S14` - wrap the torch configurator step in the front door so it reports configured-with-sync-pending through the shared sync vocabulary; `src/vaultspec_rag/commands/_provision.py`.
+- [x] `W02.P04.S15` - add a model-ensure provisioning step that reuses the warmup snapshot-download path and reports cached versus downloaded idempotently; `src/vaultspec_rag/commands/_models.py`.
+- [x] `W02.P04.S16` - add a qdrant-binary provisioning step that delegates to the existing provisioner and maps its action onto the shared sync vocabulary; `src/vaultspec_rag/commands/_provision.py`.
+- [x] `W02.P04.S17` - export the front-door orchestrator from the commands package public surface; `src/vaultspec_rag/commands/__init__.py`.
 
 ### Phase `W02.P05` - setup CLI surface and opt-outs
 
