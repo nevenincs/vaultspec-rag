@@ -3,6 +3,7 @@ tags:
   - '#exec'
   - '#qdrant-performance'
 date: '2026-06-06'
+modified: '2026-06-06'
 step_id: 'S05'
 related:
   - '[[2026-06-05-qdrant-performance-plan]]'

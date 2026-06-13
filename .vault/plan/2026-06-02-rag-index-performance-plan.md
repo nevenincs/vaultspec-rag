@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#rag-index-performance'
 date: '2026-06-02'
+modified: '2026-06-02'
 tier: L2
 related:
   - '[[2026-06-02-rag-index-performance-adr]]'

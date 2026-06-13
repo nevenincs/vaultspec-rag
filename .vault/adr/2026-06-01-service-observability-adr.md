@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#service-observability'
 date: '2026-06-01'
+modified: '2026-06-01'
 related:
   - "[[2026-06-01-service-observability-research]]"
   - "[[2026-06-01-service-operability-adr]]"

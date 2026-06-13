@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#search-postprocess'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-05-31-search-postprocess-adr]]'
   - '[[2026-05-31-search-postprocess-plan]]'

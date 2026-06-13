@@ -3,6 +3,7 @@ tags:
   - '#research'
   - '#{feature}'
 date: '{yyyy-mm-dd}'
+modified: '{yyyy-mm-dd}'
 related:
   - '[[{yyyy-mm-dd-*}]]'
 ---
@@ -12,10 +13,13 @@ related:
      Replace {feature} with a kebab-case feature tag, e.g. #foo-bar.
      Additional tags may be appended below the required pair.
 
-     Related: use wiki-links as '[[YYYY-MM-DD-foo-bar]]'.
+     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
 
-     DO NOT add frontmatter fields
-     outside the frontmatter. -->
+     modified: CLI-maintained last-modified stamp; set at scaffold time,
+     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
+
+     DO NOT add fields beyond those scaffolded; metadata lives
+     only in the frontmatter. -->
 
 <!-- LINK RULES:
      - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.

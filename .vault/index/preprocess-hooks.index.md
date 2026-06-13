@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#preprocess-hooks'
 date: '2026-06-11'
+modified: '2026-06-11'
 related:
   - '[[2026-06-10-preprocess-hooks-W01-P01-S01]]'
   - '[[2026-06-10-preprocess-hooks-W01-P01-S02]]'

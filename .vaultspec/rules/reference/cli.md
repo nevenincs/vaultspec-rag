@@ -32,29 +32,34 @@ command-specific.
 
 ## Command inventory
 
-Every leaf-command signature, matching the live Typer usage lines.
+Every leaf-command signature, matching the live Typer usage lines. This block is
+generator-owned: run `vaultspec-core spec reference generate` to refresh it. Do not
+hand-edit between the markers.
+
+<!-- vaultspec:generated:begin command-inventory -->
 
 ```text
 vaultspec-core install [OPTIONS] [PROVIDER]
 vaultspec-core uninstall [OPTIONS] [PROVIDER]
 vaultspec-core sync [OPTIONS] [PROVIDER]
-vaultspec-core config set [OPTIONS] KEY VALUE
-vaultspec-core config unset [OPTIONS] KEY
+vaultspec-core doctor [OPTIONS]
 vaultspec-core vault add [OPTIONS] DOC_TYPE
 vaultspec-core vault stats [OPTIONS]
+vaultspec-core vault status [OPTIONS] [TARGET]
 vaultspec-core vault list [OPTIONS] [DOC_TYPE]
+vaultspec-core vault graph [OPTIONS]
 vaultspec-core vault repair [OPTIONS]
 vaultspec-core vault feature list [OPTIONS]
 vaultspec-core vault feature index [OPTIONS]
 vaultspec-core vault feature archive [OPTIONS] FEATURE_TAG
 vaultspec-core vault feature unarchive [OPTIONS] FEATURE_TAG
-vaultspec-core vault adr supersede [OPTIONS] OLD_ADR
 vaultspec-core vault check all [OPTIONS]
 vaultspec-core vault check body-links [OPTIONS]
 vaultspec-core vault check annotations [OPTIONS]
 vaultspec-core vault check dangling [OPTIONS]
 vaultspec-core vault check orphans [OPTIONS]
 vaultspec-core vault check frontmatter [OPTIONS]
+vaultspec-core vault check modified-stamp [OPTIONS]
 vaultspec-core vault check links [OPTIONS]
 vaultspec-core vault check features [OPTIONS]
 vaultspec-core vault check references [OPTIONS]
@@ -62,6 +67,8 @@ vaultspec-core vault check schema [OPTIONS]
 vaultspec-core vault check structure [OPTIONS]
 vaultspec-core vault check rename-integrity [OPTIONS]
 vaultspec-core vault sanitize annotations [OPTIONS]
+vaultspec-core vault rule promote [OPTIONS]
+vaultspec-core vault adr supersede [OPTIONS] OLD_ADR
 vaultspec-core vault plan status [OPTIONS] PATH
 vaultspec-core vault plan check [OPTIONS] PATH
 vaultspec-core vault plan query [OPTIONS] PATH
@@ -89,6 +96,9 @@ vaultspec-core vault plan epic intent edit [OPTIONS] PATH
 vaultspec-core vault plan tier show [OPTIONS] PATH
 vaultspec-core vault plan tier promote [OPTIONS] PATH
 vaultspec-core vault plan tier demote [OPTIONS] PATH
+vaultspec-core vault link list [OPTIONS] [SRC]
+vaultspec-core vault link add [OPTIONS] SRC DST
+vaultspec-core vault link remove [OPTIONS] SRC DST
 vaultspec-core spec doctor [OPTIONS]
 vaultspec-core spec rules list [OPTIONS]
 vaultspec-core spec rules add [OPTIONS] NAME
@@ -98,6 +108,7 @@ vaultspec-core spec rules remove [OPTIONS] NAME
 vaultspec-core spec rules rename [OPTIONS] OLD_NAME NEW_NAME
 vaultspec-core spec rules sync [OPTIONS] [PROVIDER]
 vaultspec-core spec rules restore [OPTIONS] FILENAME
+vaultspec-core spec rules status [OPTIONS]
 vaultspec-core spec skills list [OPTIONS]
 vaultspec-core spec skills add [OPTIONS] NAME
 vaultspec-core spec skills show [OPTIONS] NAME
@@ -106,6 +117,7 @@ vaultspec-core spec skills remove [OPTIONS] NAME
 vaultspec-core spec skills rename [OPTIONS] OLD_NAME NEW_NAME
 vaultspec-core spec skills sync [OPTIONS] [PROVIDER]
 vaultspec-core spec skills restore [OPTIONS] FILENAME
+vaultspec-core spec skills status [OPTIONS]
 vaultspec-core spec agents list [OPTIONS]
 vaultspec-core spec agents add [OPTIONS] NAME
 vaultspec-core spec agents show [OPTIONS] NAME
@@ -114,20 +126,34 @@ vaultspec-core spec agents remove [OPTIONS] NAME
 vaultspec-core spec agents rename [OPTIONS] OLD_NAME NEW_NAME
 vaultspec-core spec agents sync [OPTIONS] [PROVIDER]
 vaultspec-core spec agents restore [OPTIONS] FILENAME
+vaultspec-core spec agents status [OPTIONS]
 vaultspec-core spec system show [OPTIONS]
 vaultspec-core spec system sync [OPTIONS] [PROVIDER]
 vaultspec-core spec hooks list [OPTIONS]
 vaultspec-core spec hooks add [OPTIONS] NAME
+vaultspec-core spec hooks show [OPTIONS] NAME
+vaultspec-core spec hooks edit [OPTIONS] NAME
+vaultspec-core spec hooks rename [OPTIONS] OLD_NAME NEW_NAME
+vaultspec-core spec hooks remove [OPTIONS] NAME
 vaultspec-core spec hooks restore [OPTIONS] FILENAME
+vaultspec-core spec hooks sync [OPTIONS] [PROVIDER]
+vaultspec-core spec hooks status [OPTIONS]
 vaultspec-core spec hooks run [OPTIONS] EVENT
 vaultspec-core spec mcps list [OPTIONS]
 vaultspec-core spec mcps status [OPTIONS]
 vaultspec-core spec mcps add [OPTIONS]
 vaultspec-core spec mcps remove [OPTIONS] NAME
 vaultspec-core spec mcps sync [OPTIONS] [PROVIDER]
+vaultspec-core spec reference generate [OPTIONS]
 vaultspec-core migrations status [OPTIONS]
 vaultspec-core migrations run [OPTIONS]
+vaultspec-core config get [OPTIONS] KEY
+vaultspec-core config set [OPTIONS] KEY VALUE
+vaultspec-core config unset [OPTIONS] KEY
+vaultspec-core config list [OPTIONS]
 ```
+
+<!-- vaultspec:generated:end command-inventory -->
 
 ## Workspace commands
 
@@ -174,6 +200,16 @@ not a valid sync target.
 | `--skip`    | `[]`    | Skip a component (repeatable).                      |
 | `--json`    | off     | Emit machine-readable output.                       |
 
+### Sync output vocabulary
+
+Sync-shaped results (`vaultspec-core install`, `vaultspec-core sync`,
+`vaultspec-core spec <resource> sync`, `vaultspec-core migrations run`) share one
+vocabulary: `created`, `updated`, `unchanged`, `removed`, `restored`, `skipped`,
+`failed`. `unchanged` is a successful no-op, not a failure; `skipped` always carries a
+reason worth reading; only `failed` stops the pipeline. With `--json`, the payload
+declares schema `vaultspec.sync.v1` and the top-level `status` is the run's aggregate
+outcome (`mixed` when items disagree).
+
 ## Vault commands
 
 ### vaultspec-core vault add
@@ -182,16 +218,61 @@ Create a `.vault/` document from a template.
 
 `DOC_TYPE`: `adr`, `audit`, `exec`, `plan`, `reference`, `research`.
 
-| Option          | Short | Default  | Description                           |
-| --------------- | ----- | -------- | ------------------------------------- |
-| `--feature TAG` | `-f`  | required | Feature tag (kebab-case).             |
-| `--date DATE`   | -     | today    | Override date (ISO 8601).             |
-| `--title TITLE` | -     | None     | Document title.                       |
-| `--related DOC` | `-r`  | None     | Related document(s). Repeatable.      |
-| `--tags TAG`    | -     | None     | Additional freeform tags. Repeatable. |
-| `--force`       | -     | off      | Overwrite an existing document.       |
-| `--dry-run`     | -     | off      | Preview without writing.              |
-| `--json`        | -     | off      | Emit machine-readable output.         |
+| Option          | Short | Default | Description                                                          |
+| --------------- | ----- | ------- | -------------------------------------------------------------------- |
+| `--feature TAG` | `-f`  | None    | Feature tag (kebab-case).                                            |
+| `--date DATE`   | -     | today   | Override date (ISO 8601).                                            |
+| `--title TITLE` | -     | None    | Document title.                                                      |
+| `--related DOC` | `-r`  | None    | Related document(s). Repeatable.                                     |
+| `--tags TAG`    | -     | None    | Additional freeform tags. Repeatable.                                |
+| `--force`       | -     | off     | Overwrite an existing document.                                      |
+| `--dry-run`     | -     | off     | Preview without writing.                                             |
+| `--json`        | -     | off     | Emit machine-readable output.                                        |
+| `--no-hints`    | -     | off     | Suppress next-step advisory hints.                                   |
+| `--tier TIER`   | -     | `L1`    | Plan tier (`L1`..`L4`). Ignored for non-plan document types.         |
+| `--step ID`     | -     | None    | Canonical ID or display path of the Step to scaffold (exec records). |
+| `--all-steps`   | -     | off     | Scaffold execution records for all Steps in the parent plan.         |
+
+### vaultspec-core vault status
+
+Signature: `vaultspec-core vault status [OPTIONS] [TARGET]`. Orient in a vaultspec
+vault: rollup or a grounding trace for a target. Read-only - it never writes and
+produces no artifact.
+
+**Rollup mode** (no `TARGET`): reports in-flight plans with open/closed step counts and
+completion percent, recently modified documents grouped by type, active features, and
+vault totals. Advisory hints point at the targeted mode and at
+`vaultspec-core spec doctor` for health checks.
+
+**Targeted mode** (`TARGET` is a plan stem, plan path, or feature tag): renders the
+grounding trace for that target - each plan step (canonical id, display path, open or
+closed) mapped to its execution-record stem, or `no record` for open steps without one,
+or `unlinked` for exec records that reference the plan without a resolvable `step_id:`.
+Grounding documents are grouped by type beneath the step list. A feature-tag target
+traces every plan under the feature. Advisory hints point at
+`vaultspec-core vault graph` for full graph exploration and at
+`vaultspec-core vault plan status` for deep single-plan validation.
+
+`vaultspec-core vault status` is orientation, not auditing: it describes what exists
+without judging conformance. Use `vaultspec-core vault check` to audit and
+`vaultspec-core spec doctor` for framework health.
+
+| Option       | Short | Default | Description                                     |
+| ------------ | ----- | ------- | ----------------------------------------------- |
+| `--limit N`  | -     | `10`    | Number of recently modified documents to show.  |
+| `--since N`  | -     | None    | Show documents modified within the last N days. |
+| `--json`     | -     | off     | Emit machine-readable output.                   |
+| `--no-hints` | -     | off     | Suppress next-step advisory hints.              |
+
+`--limit` and `--since` apply only in rollup mode; in targeted mode they are accepted
+but have no effect. `--limit` and `--since` are mutually exclusive in rollup mode:
+`--since` switches from last-N to a day-window query.
+
+`--json` emits the versioned envelope with schema id `vaultspec.vault.status.v1` and
+`unchanged` outcome semantics (status rollup is always a read-only, no-mutation
+operation). The `data` payload carries `plans_in_flight`, `recent_documents`,
+`active_features`, and `hints` under stable keys. Schema bumps follow the standard
+version integer convention.
 
 ### vaultspec-core vault list
 
@@ -221,13 +302,22 @@ Show vault statistics and document counts.
 Signature: `vaultspec-core vault graph [OPTIONS]`. Hierarchical dependency tree grouped
 by feature and type.
 
-| Option          | Short | Default | Description                           |
-| --------------- | ----- | ------- | ------------------------------------- |
-| `--feature TAG` | `-f`  | None    | Scope to a single feature.            |
-| `--json`        | -     | off     | Output as networkx node-link JSON.    |
-| `--metrics`     | `-m`  | off     | Show aggregate graph metrics.         |
-| `--ascii`       | -     | off     | Render ASCII topology.                |
-| `--body`        | -     | off     | Include document body in JSON output. |
+| Option                   | Short | Default | Description                                       |
+| ------------------------ | ----- | ------- | ------------------------------------------------- |
+| `--feature TAG`          | `-f`  | None    | Scope to a single feature.                        |
+| `--json`                 | -     | off     | Output as networkx node-link JSON.                |
+| `--metrics`              | `-m`  | off     | Show aggregate graph metrics.                     |
+| `--ascii`                | -     | off     | Render ASCII topology.                            |
+| `--body`                 | -     | off     | Include document body in JSON output.             |
+| `--node STEM`            | -     | None    | Scope JSON to a node's local (ego) neighbourhood. |
+| `--depth N`              | -     | 1       | Ego-graph radius in hops; only used with --node.  |
+| `--derived/--no-derived` | -     | on      | Include the derived relatedness edge set in JSON. |
+
+The `--json` payload (schema `vaultspec.vault.graph.v2`) carries typed weighted explicit
+edges (`kind`, `multiplicity`, `weight`), node-size hints (`pagerank`, `in_degree`), and
+a separate `derived_edges` array of implicit relatedness edges that is never mixed into
+the canonical `edges` array. A missing `--node` stem fails with exit code 1 and a
+`failed` envelope.
 
 ### vaultspec-core vault repair
 
@@ -278,8 +368,15 @@ Generate or update `<feature>.index.md` files in `.vault/index/`.
 
 ### vaultspec-core vault feature archive
 
-`vaultspec-core vault feature archive [OPTIONS] FEATURE_TAG` — move all documents for a
-feature tag to the archive. Option: `--json`.
+`vaultspec-core vault feature archive [OPTIONS] FEATURE_TAG` - move all documents for a
+feature tag to the archive. Options: `--dry-run` (preview planned changes), `--json`,
+`--no-hints` (suppress next-step advisory hints).
+
+### vaultspec-core vault feature unarchive
+
+`vaultspec-core vault feature unarchive [OPTIONS] FEATURE_TAG` - restore all archived
+documents for a feature tag. Options: `--dry-run` (preview planned changes), `--json`.
+The `--no-hints` flag is not accepted here.
 
 ### vaultspec-core vault check
 
@@ -289,9 +386,12 @@ on `.vault/`. Exits `1` if errors are found.
 Shared options: `--fix` (apply auto-fixes), `--feature TAG` / `-f` (limit to a feature),
 `--verbose` / `-v` (INFO diagnostics).
 
-Subcommands: `all`, `annotations`, `body-links`, `dangling`, `frontmatter`, `links`,
-`orphans`, `features`, `references`, `schema`, `structure`. The `structure` subcommand
-does not support `--feature`.
+Subcommands: `all`, `annotations`, `body-links`, `dangling`, `frontmatter`,
+`modified-stamp`, `links`, `orphans`, `features`, `references`, `schema`, `structure`,
+`rename-integrity`. The `structure` subcommand does not support `--feature`. The
+`rename-integrity` subcommand checks name/filename integrity for rules, skills, and
+agents. The `modified-stamp` subcommand flags missing, unparseable, or stale `modified:`
+stamps; with `--fix` it normalizes parsed values to canonical `yyyy-mm-dd` form.
 
 ### vaultspec-core vault plan
 
@@ -302,15 +402,21 @@ identifiers (`S##`, `P##`, `W##`) are append-only and gap-no-reuse.
 Read commands: `status`, `check` (accepts `--fix`), `query` (accepts `--phase`,
 `--wave`, `--open`, `--closed`).
 
+Every mutating plan verb accepts `--dry-run` (preview changes without writing to disk)
+and `--canonicalise` (strip unknown prose blocks during serialization; off by default,
+so authored prose sections are preserved).
+
 Step commands operate on `PATH STEP_ID`: `add`, `insert`, `edit`, `move`, `remove`,
-`check`, `uncheck`, `toggle`. The `add` command requires `--action` and `--scope`. The
-`insert` command takes `--before` / `--after`. The `edit` command takes `--action`
-and/or `--scope`. The `move` command takes `--to-phase`, `--before`, `--after`.
+`check`, `uncheck`, `toggle`. The `add` command requires `--action` and `--scope`, and
+takes `--phase` (parent Phase id, required at `L2`+, omitted at `L1`). The `insert`
+command takes `--before` / `--after`. The `edit` command takes `--action` and/or
+`--scope`. The `move` command takes `--to-phase`, `--before`, `--after`.
 
 Phase commands operate on `PATH PHASE_ID`: `add`, `insert`, `edit`, `move`, `renumber`,
-`remove`. The `add` command requires `--title` and `--intent`. The `edit` command takes
-`--title` and/or `--intent`. The `move` command takes `--to-wave`, `--before`,
-`--after`. The `renumber` command takes `--to`.
+`remove`. The `add` command requires `--title` and `--intent`, and takes `--wave`
+(parent Wave id, `L3`+ only). The `edit` command takes `--title` and/or `--intent`. The
+`move` command takes `--to-wave`, `--before`, `--after`. The `renumber` command takes
+`--to`.
 
 Wave commands operate on `PATH WAVE_ID`: `add`, `insert`, `edit`, `move`, `remove`. Same
 flag shape as Phase minus the re-parent flag. Wave operations require tier `L3` or `L4`.
@@ -320,7 +426,7 @@ command takes `--text`.
 
 Tier commands: `tier show`, `tier promote`, `tier demote`. The `promote` command takes
 `--phase-title`, `--phase-intent`, `--wave-title`, `--wave-intent`, `--epic-intent` for
-synthesised containers. The `demote` command takes `--force`.
+synthesized containers. The `demote` command takes `--force`.
 
 ## Spec commands
 

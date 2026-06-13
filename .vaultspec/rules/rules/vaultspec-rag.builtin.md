@@ -6,7 +6,8 @@ name: vaultspec-rag
 
 vaultspec-rag is a companion package to vaultspec-core. It provides
 GPU-accelerated semantic search across vault documents and codebase
-using dense/sparse hybrid embeddings and a local Qdrant vector store.
+using dense/sparse hybrid embeddings and a Qdrant vector store (an
+embedded local store by default, or a managed Qdrant server).
 
 Both packages share the same workspace (`.vault/`, `.vaultspec/`) but
 operate independently: core handles structured vault CRUD and health
@@ -15,21 +16,22 @@ checks, RAG handles semantic search and retrieval.
 ## Auto-reindex (DO / DO NOT)
 
 The resident HTTP service runs a filesystem watcher that incrementally
-re-indexes on change. Default is **on**.
+re-indexes on change. Default is **on**. The CLI calls this feature
+"automatic index updates".
 
 - **DO NOT manually reindex during normal work.** The running service watches
   `.vault/` docs and tracked source and re-indexes incrementally; manual
   reindex is redundant and competes for the single-writer GPU/Qdrant path.
-- **DO use `--no-watch` (or `VAULTSPEC_RAG_WATCH_ENABLED=0`)** to make the
+- **DO use `--no-updates` (or `VAULTSPEC_RAG_WATCH_ENABLED=0`)** to make the
   service pull-only when you want manual or externally-scheduled indexing.
-- **DO check watcher state before assuming staleness:** run
-  `vaultspec-rag server watcher status` (or the `get_watcher_state`
+- **DO check update state before assuming staleness:** run
+  `vaultspec-rag server updates status` (or the `get_watcher_state`
   MCP tool) instead of guessing whether the index is current.
-- **DO tune, don't disable, for noise:** raise `--watch-debounce-ms` /
-  `--watch-cooldown-s` rather than turning the watcher off. `0` on either knob
+- **DO tune, don't disable, for noise:** raise `--update-delay-ms` /
+  `--same-project-delay-s` rather than turning updates off. `0` on either knob
   means "no delay", not "disabled" — only `watch_enabled=false` disables.
-- **DO reindex explicitly only** for a first-time index, after `--no-watch`, or
-  to force a clean rebuild (`reindex_*(clean=true)`).
+- **DO reindex explicitly only** for a first-time index, after `--no-updates`,
+  or to force a clean rebuild (`index --rebuild`, or `reindex_*(clean=true)`).
 
 ## When to use RAG vs Core
 
@@ -50,66 +52,77 @@ environments.
 Search and indexing:
 
 ```
-index [--type vault|code|all] [--rebuild] [--port N] [--allow-fallback] [--verbose]
-                             Index vault docs and/or codebase. --port delegates to
-                             a running service; on dead port, the CLI hard-fails
-                             unless --allow-fallback is set. --rebuild REQUIRES
-                             an explicit --type since 0.2.9 (#115); bare `index`
-                             stays incremental + safe. --rebuild --type X is now
-                             scoped to X (was: whole-directory rmtree).
-search <query> [--type vault|code] [--max-results N=10] [--no-truncate]
-       [--port N] [--allow-fallback] [--verbose]
-                             Code filters: --language --path --node-type
-                             --function-name --class-name
+index [--type vault|code|all] [--rebuild] [--port N] [--allow-fallback]
+      [--dry-run] [--exclude PATTERN] [--model NAME] [--verbose] [--json]
+                             Build or update the index. Uses the running
+                             service when available; otherwise runs locally.
+                             --type defaults to all. --rebuild deletes the
+                             selected index data before rebuilding it. --port
+                             targets a running service; on a dead port the CLI
+                             hard-fails unless --allow-fallback is set.
+                             --dry-run lists files that would be indexed.
+search QUERY [--type vault|code] [--max-results/--limit N=10] [--port N]
+       [--allow-fallback] [--json]
+                             Vault filters: --doc-type --feature --date --tag
+                             Code filters: --language --path --function-name
+                             --class-name --structure --prefer --dedup-locales
                              Code path globs (post-query fnmatch, repeatable):
                              --include-path PATTERN, --exclude-path PATTERN
-                             Vault filters: --doc-type --feature --date --tag
                              Or use in-query tokens: type:adr feature:auth
                              path:src/foo lang:python func:main class:Engine
                              date:2026-03 tag:auth nodetype:function_definition
-status                       Show index status and GPU info.
+status                       Show index counts, index data location, and
+                             compute device.
+clean vault|code|all [-y] [--json]
+                             Delete selected index data without rebuilding it.
+                             The target is required so nothing is wiped by
+                             accident; --json requires --yes.
 ```
 
-Path indicator: search results table title is suffixed `(via MCP)` when
-delegated, `(via in-process)` when the local fallback ran. Default
-`--max-results` is 10 (raised from 5 to mitigate top-k crowding).
-`clean` requires an explicit target since 0.2.9 — `vaultspec-rag clean`
-without an argument errors out instead of wiping everything.
+Path indicator: the search results table title is suffixed `(via MCP)` when
+the query was delegated to the running service, `(via in-process)` when the
+local fallback ran. Default `--max-results` is 10.
 
-Every command supports `--json` for structured stdout. Envelope:
-`{"ok": bool, "command": str, "data" | "error" + "message"}`.
-`clean --json` requires `--yes`. Exit codes match table-mode.
+Most commands accept `--json` for machine-readable output; exit codes match
+human mode.
 
 Server management:
 
 ```
-server mcp start             Start the MCP server (stdio)
-server mcp stop              Stop the MCP server
-server mcp status            Show MCP server status
-server start [--watch/--no-watch] [--watch-debounce-ms N]
-             [--watch-cooldown-s S]
-                             Start the HTTP RAG service. Watcher flags are
-                             translated to VAULTSPEC_RAG_WATCH* env on the
-                             daemon (it inherits only env). Unset flags leave
-                             any operator-set env untouched.
-server stop                  Stop the HTTP RAG service
-server status                Show service status. Exit codes: 0 running,
-                             3 stopped (no service.json), 4 crashed or
-                             divergent (file present but PID dead, port
-                             silent, heartbeat stale, or PID reused).
-                             Daemon writes last_heartbeat every 15s;
-                             stale threshold 60s.
-server warmup                Pre-load GPU models without serving
-server projects list|evict   Inspect / evict project slots.
-server info                  Consolidated state: index counts + GPU + projects
-                             + watcher rollup (get_service_state).
-server logs [--lines N]      Tail the service log (rotated-set aware).
-server jobs [--limit N]      Recent + in-flight index/reindex activity.
-server watcher status        Show watcher config + watched roots.
-server watcher start <root>  Eagerly watch a root (no-op if disabled).
-server watcher stop <root>   Stop watching a root (pull-only for it).
-server watcher reconfigure <root> [--debounce-ms N] [--cooldown-s S]
-                             Restart a root's watcher with new tuning.
+server start [--updates/--no-updates] [--update-delay-ms N]
+             [--same-project-delay-s S] [--qdrant/--no-qdrant]
+             [--qdrant-auto-provision] [--port N]
+                             Start the background HTTP search service and wait
+                             until it is ready. --updates toggles automatic
+                             index updates. --qdrant selects the managed Qdrant
+                             server; --qdrant-auto-provision downloads it if
+                             missing (otherwise start prints the install
+                             command).
+server stop                  Stop the background search service.
+server status [--verbose] [--json]
+                             Human operator summary for service health, work,
+                             and next checks. Exit codes: 0 running, 3 stopped
+                             (no service.json), 4 crashed or divergent (file
+                             present but PID dead, port silent, heartbeat
+                             stale, or PID reused). --verbose adds process,
+                             heartbeat, identity, and model detail.
+server warmup                Download GPU model files before they are needed.
+server logs [--limit N] [--job-id ID] [--contains TEXT] [--raw]
+                             Show recent activity from the service log
+                             (rotated-set aware), filtered to a bounded window.
+server jobs [--limit N] [--state S] [--index vault|code]
+            [--started-by WHO] [-q TEXT] [--running] [--failed]
+            [--job-id ID] [--since SECONDS] [--watch]
+                             Recent and in-flight index update activity,
+                             bounded and filterable.
+server projects list|unload  Inspect or unload projects held by the service.
+server updates status|start|stop|timing
+                             Inspect and control automatic index updates.
+                             start/stop/timing take a PROJECT argument; timing
+                             accepts --update-delay-ms / --same-project-delay-s.
+server qdrant install|status|clean
+                             Install, inspect, or remove the managed Qdrant
+                             server binary.
 ```
 
 Read-only HTTP routes on the running service (loopback-bound). `GET /health`
@@ -121,14 +134,18 @@ are monitoring surfaces, not an auth boundary — keep the service on loopback.
 Development:
 
 ```
-benchmark                    Run search quality benchmarks
-quality                      Run search quality checks
-test [PYTEST_ARGS...]        Run the test suite
+benchmark                    Measure search speed on the current index.
+quality                      Run built-in search quality checks.
+test [PYTEST_ARGS...]        Run the test suite.
+preprocess list|check|run-one  Inspect and validate document preprocessing
+                             rules (.vaultragpreprocess.toml).
 ```
 
 ## MCP Tools
 
-The `vaultspec-search-mcp` server exposes the following tools:
+The `vaultspec-search-mcp` server exposes the following tools. The admin tool
+names retain `watcher`/`evict` even though the CLI renamed those surfaces to
+`updates`/`unload`.
 
 - `search_vault(query, top_k, doc_type?, feature?, date?, tag?, project_root?)` —
   semantic search across vault documents. Filters mirror the CLI
@@ -151,19 +168,22 @@ The `vaultspec-search-mcp` server exposes the following tools:
 - `list_projects()` — list active project slots (root, idle, refs);
   mirrors `server projects list`.
 - `evict_project(root)` — evict a project's resident slot; mirrors
-  `server projects evict`.
-- `get_watcher_state(project_root?)` — report watcher config
-  (`watch_enabled`, `debounce_ms`, `cooldown_s`) and watched roots.
-- `start_watcher(root)` — eagerly start the watcher for a root
+  `server projects unload`.
+- `get_watcher_state(project_root?)` — report update config
+  (`watch_enabled`, `debounce_ms`, `cooldown_s`) and watched roots;
+  mirrors `server updates status`.
+- `start_watcher(root)` — eagerly start updates for a root
   (no-op when `watch_enabled` is false).
-- `stop_watcher(root)` — stop watching a root (pull-only for it).
+- `stop_watcher(root)` — stop updating a root (pull-only for it).
 - `reconfigure_watcher(root, debounce_ms?, cooldown_s?)` — restart a
-  root's watcher with new tuning (stop + restart).
+  root's updates with new tuning (stop + restart).
 - `get_service_state(project_root?)` — consolidated read: per-source index
-  counts, GPU/device, project slots, and a watcher rollup.
+  counts, GPU/device, project slots, and an update rollup.
 - `get_logs(lines?)` — tail of the service log across the rotated set.
-- `get_jobs(limit?)` — recent and in-flight index/reindex activity from the
+- `get_jobs(limit?)` — recent and in-flight index update activity from the
   in-flight registry.
+- `benchmark(...)` / `quality()` — run search speed or quality checks against
+  the running service.
 
 Resource: `vault://{doc_id}` — retrieve full vault document content by
 stem ID (e.g., `vault://adr/gpu-only-rag-stack`).
@@ -174,9 +194,8 @@ to analyze a feature across docs and code.
 ## Entry Points
 
 - `vaultspec-rag` — CLI (package: `vaultspec_rag.__main__:main`)
-- `vaultspec-search-mcp` — MCP server stdio mode
+- `vaultspec-search-mcp` — MCP server, stdio mode
   (package: `vaultspec_rag.server:main`)
-- `vaultspec-rag server mcp start` — MCP server via CLI
 - `vaultspec-rag server start` — HTTP RAG service
 
 ## Data Directory
@@ -195,6 +214,9 @@ RAG-specific configuration uses the `VAULTSPEC_RAG_` prefix:
 - `VAULTSPEC_RAG_LOG_LEVEL` — logging verbosity
 - `VAULTSPEC_RAG_WATCH_ENABLED` — auto-reindex on/off (default: `1`; set
   `0` for a pull-only service)
-- `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` — watcher debounce window (default: 2000)
+- `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` — update debounce window (default: 2000)
 - `VAULTSPEC_RAG_WATCH_COOLDOWN_S` — per-source re-index cooldown
   (default: 30)
+- `VAULTSPEC_RAG_QDRANT_SERVER` / `VAULTSPEC_RAG_QDRANT_URL` — opt into and
+  address a managed or external Qdrant server (the `--qdrant` flags are the
+  CLI equivalents)

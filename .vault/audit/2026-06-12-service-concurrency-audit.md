@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#service-concurrency'
 date: '2026-06-12'
+modified: '2026-06-12'
 related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-12-service-concurrency-plan]]"

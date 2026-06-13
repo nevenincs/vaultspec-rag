@@ -6,6 +6,7 @@ tags:
   - '#adr'
   - '#qdrant-performance'
 date: '2026-06-05'
+modified: '2026-06-05'
 related:
   - "[[2026-06-05-qdrant-performance-research]]"
 ---

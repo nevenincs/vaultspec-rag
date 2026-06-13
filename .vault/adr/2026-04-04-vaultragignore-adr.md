@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#vaultragignore'
 date: '2026-04-04'
+modified: '2026-04-04'
 related:
   - '[[2026-04-04-vaultragignore-research]]'
 ---

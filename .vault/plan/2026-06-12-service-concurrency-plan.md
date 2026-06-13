@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#service-concurrency'
 date: '2026-06-12'
+modified: '2026-06-12'
 tier: L3
 related:
   - '[[2026-06-12-service-concurrency-adr]]'

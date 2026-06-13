@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
+modified: '2026-03-07'
 related:
   - '[[2026-03-07-mcp-sync-tools-adr]]'
   - '[[2026-03-08-fastmcp-lifespan-research]]'

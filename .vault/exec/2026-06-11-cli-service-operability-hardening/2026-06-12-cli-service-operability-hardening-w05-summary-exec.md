@@ -3,6 +3,7 @@ tags:
   - '#exec'
   - '#cli-service-operability-hardening'
 date: '2026-06-12'
+modified: '2026-06-12'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

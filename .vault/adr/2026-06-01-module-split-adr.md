@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#module-split'
 date: '2026-06-01'
+modified: '2026-06-01'
 related:
   - "[[2026-06-01-module-split-research]]"
   - "[[2026-06-01-module-split-audit]]"

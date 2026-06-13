@@ -3,6 +3,7 @@ tags:
   - '#exec'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
+modified: '2026-06-12'
 step_id: 'S01'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-plan]]"

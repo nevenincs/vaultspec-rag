@@ -3,6 +3,7 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: 2026-03-07
+modified: '2026-03-07'
 ---
 
 # Library Documentation Verification Audit

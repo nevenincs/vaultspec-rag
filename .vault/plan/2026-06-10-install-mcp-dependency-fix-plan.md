@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
+modified: '2026-06-10'
 tier: L1
 related:
   - '[[2026-06-10-install-mcp-dependency-fix-adr]]'

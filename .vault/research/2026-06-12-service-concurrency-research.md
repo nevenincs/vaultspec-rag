@@ -3,6 +3,7 @@ tags:
   - '#research'
   - '#service-concurrency'
 date: '2026-06-12'
+modified: '2026-06-12'
 related:
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - "[[2026-04-02-service-graph-adr]]"

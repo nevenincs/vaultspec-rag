@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#watcher-targeted-reindex'
 date: '2026-06-02'
+modified: '2026-06-02'
 tier: L2
 related:
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'

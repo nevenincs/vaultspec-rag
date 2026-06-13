@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
+modified: '2026-06-12'
 tier: L2
 related:
   - '[[2026-06-12-qdrant-server-provisioning-adr]]'

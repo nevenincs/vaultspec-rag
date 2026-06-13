@@ -3,6 +3,7 @@ tags:
   - '#reference'
   - '#install-command'
 date: 2026-04-12
+modified: '2026-04-12'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---

@@ -1,5 +1,6 @@
 ---
 name: cli-operability-needs-persona-tests
+trigger: always_on
 ---
 
 # CLI Operability Needs Persona Tests

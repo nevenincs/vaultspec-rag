@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#search-freshness-and-empty-results'
 date: '2026-06-11'
+modified: '2026-06-11'
 related:
   - '[[2026-06-11-search-freshness-and-empty-results-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

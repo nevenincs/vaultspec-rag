@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#cli-backend-parity'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-05-28-cli-backend-parity-adr]]'
   - '[[2026-05-28-cli-backend-parity-plan]]'

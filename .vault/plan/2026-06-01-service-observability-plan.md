@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#service-observability'
 date: '2026-06-01'
+modified: '2026-06-01'
 tier: L2
 related:
   - '[[2026-06-01-service-observability-adr]]'

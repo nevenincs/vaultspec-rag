@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#sparse-search-latency'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---

@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#service-token-identity'
 date: '2026-05-31'
+modified: '2026-05-31'
 related:
   - '[[2026-05-31-service-token-identity-research]]'
 ---
