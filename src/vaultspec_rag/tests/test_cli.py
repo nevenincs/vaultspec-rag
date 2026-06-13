@@ -4546,7 +4546,7 @@ class TestServiceLogsCli:
         expected_present = [
             f"Address: http://127.0.0.1:{server.server_port}",
             (
-                'Activity: none found matching text "service.lifecycle" '
+                'No service activity found matching text "service.lifecycle" '
                 "in the last 5 log lines."
             ),
             "Next actions:",
@@ -4564,6 +4564,7 @@ class TestServiceLogsCli:
         ]
         missing = [text for text in expected_present if text not in lines]
         assert not missing, f"missing empty-log guidance lines: {missing}"
+        assert "Activity: none found" not in result.output
         _assert_no_table_borders(result.output)
 
 

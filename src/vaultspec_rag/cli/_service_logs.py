@@ -362,7 +362,7 @@ def _render_no_activity_hint(
         soft_wrap=True,
     )
     _cli.console.print(
-        f"Activity: none found{scope} in the last {lines} log lines.",
+        f"No service activity found{scope} in the last {lines} log lines.",
         markup=False,
         highlight=False,
         soft_wrap=True,
