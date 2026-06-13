@@ -6,11 +6,13 @@ requires = ["hatchling"]
 authors = [{ name = "Gergely Wootsch", email = "hello@gergely-wootsch.com" }]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Environment :: GPU :: NVIDIA CUDA",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Documentation",
   "Topic :: Text Processing :: Indexing",
   "Typing :: Typed",
 ]
@@ -34,16 +36,22 @@ dependencies = [
   "tomlkit>=0.13",
   "packaging>=24.0",
 ]
-description = "GPU-accelerated RAG module for vaultspec vault search"
+description = "GPU-accelerated semantic search for your docs and source code: hybrid dense + sparse RAG on a local Qdrant backend, served to Claude Code and other MCP clients."
 keywords = [
+  "claude-code",
+  "code-search",
   "cuda",
   "embeddings",
   "gpu",
+  "hybrid-search",
   "mcp",
   "qdrant",
   "rag",
+  "reranking",
+  "retrieval-augmented-generation",
   "semantic-search",
   "sentence-transformers",
+  "splade",
   "vaultspec",
   "vector-search",
 ]
@@ -59,7 +67,8 @@ version = "0.2.20"
 
   [project.urls]
   "Bug Tracker" = "https://github.com/wgergely/vaultspec-rag/issues"
-  Documentation = "https://github.com/wgergely/vaultspec-rag/tree/main/.vaultspec/README.md"
+  Changelog = "https://github.com/wgergely/vaultspec-rag/blob/main/CHANGELOG.md"
+  Documentation = "https://github.com/wgergely/vaultspec-rag/tree/main/docs"
   Homepage = "https://github.com/wgergely/vaultspec-rag"
   Repository = "https://github.com/wgergely/vaultspec-rag"
 
