@@ -633,7 +633,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert rows[1]["state"] == "failed"
     assert rows[1]["operation"] == "vault index refresh for proj-b"
     assert rows[2]["marker"] == "*"
-    assert rows[2]["state"] == "running"
+    assert rows[2]["state"] == "active"
     assert rows[2]["operation"] == "code index update for proj-a"
     assert rows[2]["detail"] == (
         "embedding source code sections 2 of 5; running for 10s"
@@ -871,7 +871,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
     rows = _jobs_feed_rows(output)
     assert len(rows) == 2
     assert {row["id"] for row in rows} == {"running-a", "running-b"}
-    assert all(row["marker"] == "*" and row["state"] == "running" for row in rows)
+    assert all(row["marker"] == "*" and row["state"] == "active" for row in rows)
 
 
 def test_jobs_waiting_progress_uses_user_language() -> None:
@@ -1013,7 +1013,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
 
     output = capsys.readouterr().out
     values = _label_values(output)
-    assert values["Status"] == "running"
+    assert values["Status"] == "active"
     assert values["Started by"] == "automatic updates"
     assert values["Request"] == "automatic code index update"
     assert values["Job process id"] == "123"
@@ -1061,7 +1061,7 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert query["job_id"] == ["runjob12"]
     values = _label_values(result.output)
     assert values["Address"] == f"http://127.0.0.1:{port}"
-    assert values["Status"] == "running"
+    assert values["Status"] == "active"
     assert values["Project"] == "proj-a"
     assert values["Path"] == r"proj-a"
     assert values["Job process id"] == "123"

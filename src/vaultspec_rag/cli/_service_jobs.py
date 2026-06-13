@@ -134,7 +134,7 @@ def _phase_label(job: dict[str, object]) -> str:
     if _job_is_waiting(job):
         return "waiting"
     if phase == "running":
-        return "running"
+        return "active"
     if phase == "done":
         return "finished"
     return phase
