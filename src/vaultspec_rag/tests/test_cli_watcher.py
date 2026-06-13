@@ -394,7 +394,7 @@ def test_updates_start_timeout_uses_singular_second(tmp_path: Path) -> None:
                 ".",
                 "--update-delay-ms",
                 "500",
-                "--same-project-delay-s",
+                "--repeat-update-delay-s",
                 "2",
             ],
             {"restarted": True, "debounce_ms": 500, "cooldown_s": 2.0},
@@ -438,7 +438,8 @@ def test_updates_timing_help_uses_user_facing_timing_flags() -> None:
     result = runner.invoke(app, ["server", "updates", "timing", "--help"])
     assert result.exit_code == 0
     assert "--update-delay-ms" in result.stdout
-    assert "--same-project-delay-s" in result.stdout
+    assert "--repeat-update-delay-s" in result.stdout
+    assert "--same-project-delay-s" not in result.stdout
     assert "--same-source-delay-s" not in result.stdout
     assert "--debounce-ms" not in result.stdout
     assert "--cooldown-s" not in result.stdout
@@ -454,7 +455,7 @@ def test_updates_timing_help_uses_user_facing_timing_flags() -> None:
             "/tmp/x",
             "--update-delay-ms",
             "500",
-            "--same-project-delay-s",
+            "--repeat-update-delay-s",
             "2",
         ],
     ],
@@ -484,7 +485,7 @@ def test_updates_timing_output_uses_project_block() -> None:
                 project,
                 "--update-delay-ms",
                 "500",
-                "--same-project-delay-s",
+                "--repeat-update-delay-s",
                 "2",
                 "--port",
                 str(port),
@@ -513,6 +514,14 @@ def test_updates_timing_output_uses_project_block() -> None:
     "argv",
     [
         ["server", "updates", "reconfigure", "/tmp/x"],
+        [
+            "server",
+            "updates",
+            "timing",
+            "/tmp/x",
+            "--same-project-delay-s",
+            "2",
+        ],
         [
             "server",
             "updates",

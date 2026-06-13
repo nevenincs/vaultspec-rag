@@ -188,11 +188,14 @@ def service_start(
             help="Delay before indexing a burst of file changes, in milliseconds.",
         ),
     ] = None,
-    same_project_delay_s: Annotated[
+    repeat_update_delay_s: Annotated[
         float | None,
         typer.Option(
-            "--same-project-delay-s",
-            help="Minimum wait before indexing the same project again, in seconds.",
+            "--repeat-update-delay-s",
+            help=(
+                "Minimum wait before automatically updating a project again, "
+                "in seconds."
+            ),
         ),
     ] = None,
     local_only: Annotated[
@@ -261,7 +264,7 @@ def service_start(
         log_path,
         watch=updates,
         watch_debounce_ms=update_delay_ms,
-        watch_cooldown_s=same_project_delay_s,
+        watch_cooldown_s=repeat_update_delay_s,
         qdrant=qdrant,
         local_only=local_only,
     )

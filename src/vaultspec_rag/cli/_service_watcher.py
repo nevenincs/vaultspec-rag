@@ -362,11 +362,14 @@ def service_watcher_timing(
             help="Delay before indexing a burst of file changes, in milliseconds.",
         ),
     ] = None,
-    same_project_delay_s: Annotated[
+    repeat_update_delay_s: Annotated[
         float | None,
         typer.Option(
-            "--same-project-delay-s",
-            help="Minimum wait before indexing the same project again, in seconds.",
+            "--repeat-update-delay-s",
+            help=(
+                "Minimum wait before automatically updating a project again, "
+                "in seconds."
+            ),
         ),
     ] = None,
     port: Annotated[
@@ -391,8 +394,8 @@ def service_watcher_timing(
     args: dict[str, object] = {"root": resolved_project}
     if update_delay_ms is not None:
         args["debounce_ms"] = update_delay_ms
-    if same_project_delay_s is not None:
-        args["cooldown_s"] = same_project_delay_s
+    if repeat_update_delay_s is not None:
+        args["cooldown_s"] = repeat_update_delay_s
     result = _try_http_admin("reconfigure_watcher", args, resolved_port)
     if result is None:
         _watcher_service_unreachable(

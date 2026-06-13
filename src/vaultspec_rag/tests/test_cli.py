@@ -2814,7 +2814,8 @@ class TestHelpCleanup:
         assert "--updates" in result.output
         assert "--no-updates" in result.output
         assert "--update-delay-ms" in result.output
-        assert "--same-project-delay-s" in result.output
+        assert "--repeat-update-delay-s" in result.output
+        assert "--same-project-delay-s" not in result.output
         assert "--same-source-delay-s" not in result.output
         assert "--watch" not in result.output
         assert "--no-watch" not in result.output
@@ -2866,7 +2867,7 @@ class TestHelpCleanup:
                     "--updates",
                     "--update-delay-ms",
                     "250",
-                    "--same-project-delay-s",
+                    "--repeat-update-delay-s",
                     "1.5",
                 ],
             )
@@ -2883,6 +2884,7 @@ class TestHelpCleanup:
             ["server", "start", "--watch"],
             ["server", "start", "--no-watch"],
             ["server", "start", "--watch-debounce-ms", "250"],
+            ["server", "start", "--same-project-delay-s", "1.5"],
             ["server", "start", "--same-source-delay-s", "1.5"],
             ["server", "start", "--watch-cooldown-s", "1.5"],
         ],
