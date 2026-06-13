@@ -132,6 +132,7 @@ def test_updates_command_not_running_json(argv: list[str]) -> None:
 def test_updates_command_not_running_prose(argv: list[str]) -> None:
     result = runner.invoke(app, [*argv, "--port", _DEAD_PORT])
     assert result.exit_code == 3
+    assert f"Address: http://127.0.0.1:{_DEAD_PORT}" in result.stdout
     assert "not running" in result.stdout.lower()
 
 

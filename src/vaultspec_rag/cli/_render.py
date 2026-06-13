@@ -22,6 +22,7 @@ __all__ = [
     "_display_port_unreachable_error",
     "_display_search_results",
     "_display_service_error",
+    "_display_service_not_running",
     "_emit_json",
     "_emit_json_error_and_exit",
     "_format_local_index_busy_message",
@@ -81,6 +82,20 @@ def _emit_json_error_and_exit(
         **extra,
     )
     raise typer.Exit(code=code)
+
+
+def _display_service_not_running(port: int | None = None) -> None:
+    if port is not None:
+        _cli.console.print(
+            f"Address: http://127.0.0.1:{port}",
+            markup=False,
+            highlight=False,
+        )
+    _cli.console.print(
+        "Service is not running. Start it with `vaultspec-rag server start`.",
+        markup=False,
+        highlight=False,
+    )
 
 
 def _format_local_index_busy_message(action: str) -> str:

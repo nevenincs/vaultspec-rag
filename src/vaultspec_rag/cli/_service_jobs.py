@@ -17,7 +17,11 @@ import vaultspec_rag.cli as _cli
 
 from ._app import server_app
 from ._http_search import _try_http_admin
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import (
+    _display_service_not_running,
+    _emit_json,
+    _emit_json_error_and_exit,
+)
 from ._service_status import _default_service_port
 
 _RESULT_RE = re.compile(
@@ -712,15 +716,11 @@ def _jobs_args(
     return args
 
 
-def _exit_jobs_not_running(json_mode: bool) -> NoReturn:
+def _exit_jobs_not_running(json_mode: bool, port: int | None = None) -> NoReturn:
     message = "Service is not running. Start it with `vaultspec-rag server start`."
     if json_mode:
         _emit_json_error_and_exit("service.jobs", "service_not_running", message, 3)
-    _cli.console.print(
-        "Service is not running. Start it with `vaultspec-rag server start`.",
-        markup=False,
-        highlight=False,
-    )
+    _display_service_not_running(port)
     raise typer.Exit(3)
 
 
@@ -928,7 +928,7 @@ def _watch_jobs(
             port=port,
         )
         if result is None:
-            _exit_jobs_not_running(False)
+            _exit_jobs_not_running(False, port)
         _cli.console.clear()
         _render_jobs_result(
             result,
@@ -1057,7 +1057,7 @@ def service_jobs(
         port=resolved_port,
     )
     if result is None:
-        _exit_jobs_not_running(json_mode)
+        _exit_jobs_not_running(json_mode, resolved_port)
 
     if json_mode:
         _emit_json(True, "service.jobs", data=result)

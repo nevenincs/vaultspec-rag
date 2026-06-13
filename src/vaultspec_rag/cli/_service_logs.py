@@ -18,7 +18,7 @@ import vaultspec_rag.cli as _cli
 
 from ._app import server_app
 from ._http_search import _try_http_admin
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import _display_service_not_running, _emit_json, _emit_json_error_and_exit
 from ._service_status import _default_service_port
 
 _LOG_LINE_RE = re.compile(
@@ -421,11 +421,7 @@ def service_logs(
                 "Service is not running. Start it with `vaultspec-rag server start`.",
                 3,
             )
-        _cli.console.print(
-            "Service is not running. Start it with `vaultspec-rag server start`.",
-            markup=False,
-            highlight=False,
-        )
+        _display_service_not_running(resolved_port)
         raise typer.Exit(3)
     args: dict[str, object] = {"lines": lines}
     if job_id:
@@ -441,11 +437,7 @@ def service_logs(
                 "Service is not running. Start it with `vaultspec-rag server start`.",
                 3,
             )
-        _cli.console.print(
-            "Service is not running. Start it with `vaultspec-rag server start`.",
-            markup=False,
-            highlight=False,
-        )
+        _display_service_not_running(resolved_port)
         raise typer.Exit(3)
 
     if json_mode:

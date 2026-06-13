@@ -4280,6 +4280,7 @@ class TestServiceProjectsCli:
             ["server", "projects", "list", "--port", str(port)],
         )
         assert result.exit_code == 3
+        assert f"Address: http://127.0.0.1:{port}" in result.output
 
     def test_projects_unload_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
@@ -4295,6 +4296,7 @@ class TestServiceProjectsCli:
             ],
         )
         assert result.exit_code == 3
+        assert f"Address: http://127.0.0.1:{port}" in result.output
 
     def test_projects_list_command_humanizes_service_payload(self) -> None:
         server, thread, requests = _projects_list_contract_server()

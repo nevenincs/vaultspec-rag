@@ -10,7 +10,11 @@ import vaultspec_rag.cli as _cli
 
 from ._app import server_projects_app
 from ._http_search import _try_http_admin
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import (
+    _display_service_not_running,
+    _emit_json,
+    _emit_json_error_and_exit,
+)
 from ._service_status import _default_service_port
 
 __all__ = [
@@ -61,7 +65,7 @@ def _project_name(root: str) -> str:
     return parts[-1] if parts and parts[-1] else root
 
 
-def _handle_list_not_running(json_mode: bool) -> NoReturn:
+def _handle_list_not_running(json_mode: bool, port: int | None = None) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
             "service.projects.list",
@@ -69,11 +73,7 @@ def _handle_list_not_running(json_mode: bool) -> NoReturn:
             "Service is not running. Start it with `vaultspec-rag server start`.",
             3,
         )
-    _cli.console.print(
-        "Service is not running. Start it with `vaultspec-rag server start`.",
-        markup=False,
-        highlight=False,
-    )
+    _display_service_not_running(port)
     raise typer.Exit(3)
 
 
@@ -161,7 +161,7 @@ def service_projects_list(
     resolved_port = port if port is not None else _default_service_port()
     result = _try_http_admin("list_projects", {}, resolved_port)
     if result is None:
-        _handle_list_not_running(json_mode)
+        _handle_list_not_running(json_mode, resolved_port)
 
     raw_projects = result.get("projects")
     projects: list[object] = (
@@ -190,7 +190,9 @@ def service_projects_list(
     )
 
 
-def _handle_unload_not_running(json_mode: bool, root: str) -> NoReturn:
+def _handle_unload_not_running(
+    json_mode: bool, root: str, port: int | None = None
+) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
             "service.projects.unload",
@@ -199,11 +201,7 @@ def _handle_unload_not_running(json_mode: bool, root: str) -> NoReturn:
             3,
             root=root,
         )
-    _cli.console.print(
-        "Service is not running. Start it with `vaultspec-rag server start`.",
-        markup=False,
-        highlight=False,
-    )
+    _display_service_not_running(port)
     raise typer.Exit(3)
 
 
@@ -297,7 +295,7 @@ def service_projects_unload(
         resolved_port,
     )
     if result is None:
-        _handle_unload_not_running(json_mode, project)
+        _handle_unload_not_running(json_mode, project, resolved_port)
 
     reason = str(result.get("reason", ""))
     evicted = bool(result.get("evicted", False))
