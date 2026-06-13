@@ -11,6 +11,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +28,7 @@ __all__ = [
 ]
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
+DEFAULT_ADMIN_TIMEOUT_SECONDS = 10.0
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
@@ -40,6 +42,28 @@ def _is_connection_refused(exc: BaseException) -> bool:
         ):
             return True
     return bool(isinstance(exc, ConnectionRefusedError))
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError | socket.timeout):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        return isinstance(reason, TimeoutError | socket.timeout)
+    return False
+
+
+def _get_admin_timeout(timeout: float | None = None) -> float:
+    if timeout is not None:
+        return timeout
+    env_timeout = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
+    if env_timeout:
+        try:
+            parsed = float(env_timeout)
+        except ValueError:
+            return DEFAULT_ADMIN_TIMEOUT_SECONDS
+        return parsed if parsed > 0 else DEFAULT_ADMIN_TIMEOUT_SECONDS
+    return DEFAULT_ADMIN_TIMEOUT_SECONDS
 
 
 def _do_http_call(
@@ -138,8 +162,11 @@ def _route_admin_tool(
     port: int,
 ) -> dict[str, Any] | None:
     """Map an admin tool name to an HTTP call and return the raw result."""
+    raw_timeout = args.get("_timeout")
+    timeout = float(raw_timeout) if isinstance(raw_timeout, int | float) else None
+    args = {key: value for key, value in args.items() if key != "_timeout"}
     if tool_name == "get_logs":
-        return _do_http_call(port, _logs_route_path(args), None)
+        return _do_http_call(port, _logs_route_path(args), None, timeout=timeout)
 
     if tool_name == "get_jobs":
         url_path = "/jobs"
@@ -160,29 +187,37 @@ def _route_admin_tool(
         }
         if params:
             url_path += "?" + urllib.parse.urlencode(params)
-        return _do_http_call(port, url_path, None)
+        return _do_http_call(port, url_path, None, timeout=timeout)
 
     if tool_name == "get_index_status":
-        return _do_http_call(port, _admin_url_with_root("/status", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/status", args), None, timeout=timeout
+        )
 
     if tool_name == "get_code_file":
-        return _do_http_call(port, "/code-file", args)
+        return _do_http_call(port, "/code-file", args, timeout=timeout)
 
     if tool_name == "list_projects":
-        return _do_http_call(port, _admin_url_with_root("/projects", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/projects", args), None, timeout=timeout
+        )
 
     if tool_name == "evict_project":
-        return _do_http_call(port, "/projects/evict", args)
+        return _do_http_call(port, "/projects/evict", args, timeout=timeout)
 
     if tool_name == "get_watcher_state":
-        return _do_http_call(port, _admin_url_with_root("/watcher", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/watcher", args), None, timeout=timeout
+        )
 
     if tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
         verb = tool_name.split("_")[0]
-        return _do_http_call(port, f"/watcher/{verb}", args)
+        return _do_http_call(port, f"/watcher/{verb}", args, timeout=timeout)
 
     if tool_name == "get_service_state":
-        return _do_http_call(port, _admin_url_with_root("/service-state", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/service-state", args), None, timeout=timeout
+        )
 
     return {
         "ok": False,
@@ -195,11 +230,13 @@ def _try_http_admin(
     tool_name: str,
     args: dict[str, Any],
     port: int | None,
+    timeout: float | None = None,
 ) -> dict[str, Any] | None:
     if port is None:
         return None
+    resolved_timeout = _get_admin_timeout(timeout)
     try:
-        res = _route_admin_tool(tool_name, args, port)
+        res = _route_admin_tool(tool_name, {**args, "_timeout": resolved_timeout}, port)
         return res if res is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
@@ -207,6 +244,20 @@ def _try_http_admin(
                 "HTTP admin call on port %s: connection refused (%s)", port, exc
             )
             return None
+        if _is_timeout(exc):
+            logger.debug(
+                "HTTP admin call on port %s timed out after %ss",
+                port,
+                resolved_timeout,
+            )
+            return {
+                "ok": False,
+                "error": "admin_timeout",
+                "message": (
+                    f"The service on port {port} did not answer within "
+                    f"{resolved_timeout:g} seconds."
+                ),
+            }
         logger.debug(
             "HTTP admin call on port %s raised non-refused exception",
             port,

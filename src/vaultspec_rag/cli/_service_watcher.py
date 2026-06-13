@@ -139,6 +139,36 @@ def _watcher_service_unreachable(
     raise typer.Exit(3)
 
 
+def _watcher_admin_error(
+    command: str,
+    json_mode: bool,
+    result: dict[str, object],
+    port: int,
+    *,
+    root: str | None = None,
+) -> None:
+    error = str(result.get("error") or "service_error")
+    message = str(result.get("message") or "Service did not complete the request.")
+    if json_mode:
+        _emit_json_error_and_exit(command, error, message, 1, root=root, port=port)
+    _print_update_address(port)
+    _cli.console.print(f"Automatic index updates: {message}", markup=False)
+    if root is not None:
+        _print_update_project(root)
+    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _cli.console.print(
+        f"  vaultspec-rag server status --port {port}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"  vaultspec-rag server logs --limit 200 --port {port}",
+        markup=False,
+        highlight=False,
+    )
+    raise typer.Exit(1)
+
+
 _UPDATES_STATUS_COMMAND = "service.updates.status"
 _UPDATES_START_COMMAND = "service.updates.start"
 _UPDATES_STOP_COMMAND = "service.updates.stop"
@@ -166,6 +196,9 @@ def service_watcher_status(
         _watcher_service_unreachable(
             _UPDATES_STATUS_COMMAND, json_mode, port=resolved_port
         )
+        return
+    if result.get("ok") is False:
+        _watcher_admin_error(_UPDATES_STATUS_COMMAND, json_mode, result, resolved_port)
         return
     raw_watching = result.get("watching")
     watching: list[object] = (
@@ -225,6 +258,15 @@ def service_watcher_start(
             _UPDATES_START_COMMAND, json_mode, port=resolved_port, root=project
         )
         return
+    if result.get("ok") is False:
+        _watcher_admin_error(
+            _UPDATES_START_COMMAND,
+            json_mode,
+            result,
+            resolved_port,
+            root=resolved_project,
+        )
+        return
     started = bool(result.get("started", False))
     enabled = bool(result.get("watch_enabled", False))
     if json_mode:
@@ -277,6 +319,15 @@ def service_watcher_stop(
     if result is None:
         _watcher_service_unreachable(
             _UPDATES_STOP_COMMAND, json_mode, port=resolved_port, root=project
+        )
+        return
+    if result.get("ok") is False:
+        _watcher_admin_error(
+            _UPDATES_STOP_COMMAND,
+            json_mode,
+            result,
+            resolved_port,
+            root=resolved_project,
         )
         return
     stopped = bool(result.get("stopped", False))
@@ -342,6 +393,15 @@ def service_watcher_timing(
             json_mode,
             port=resolved_port,
             root=project,
+        )
+        return
+    if result.get("ok") is False:
+        _watcher_admin_error(
+            _UPDATES_TIMING_COMMAND,
+            json_mode,
+            result,
+            resolved_port,
+            root=resolved_project,
         )
         return
     restarted = bool(result.get("restarted", False))
