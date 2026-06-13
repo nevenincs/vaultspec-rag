@@ -310,7 +310,7 @@ def _running_jobs_summary(port: int) -> dict[str, object]:
     summary = jobs.get("summary")
     running_count: object = jobs.get("returned", 0)
     if isinstance(summary, dict):
-        running_count = summary.get("running", running_count)
+        running_count = cast("dict[str, object]", summary).get("running", running_count)
     return {
         "available": True,
         "running_count": running_count,
@@ -355,9 +355,10 @@ def _active_indexing_conflict(running_count: object) -> bool | None:
 def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
     health = _health_summary(port)
     jobs = _running_jobs_summary(port)
-    caps = health.get("backend_capabilities")
-    if not isinstance(caps, dict):
-        caps = {}
+    raw_caps = health.get("backend_capabilities")
+    caps: dict[str, object] = (
+        cast("dict[str, object]", raw_caps) if isinstance(raw_caps, dict) else {}
+    )
     running_count = jobs.get("running_count", "unknown")
     strategy = caps.get("same_project_search_strategy", "unknown")
     retry_timeout = max(DEFAULT_SEARCH_TIMEOUT_SECONDS, timeout * 2)

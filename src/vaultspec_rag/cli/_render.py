@@ -165,7 +165,7 @@ def _display_service_error(
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:
         _cli.console.print("Next actions:")
-        for item in remediation:
+        for item in cast("list[object]", remediation):
             _cli.console.print(f"  - {item}")
 
 
@@ -182,8 +182,9 @@ def _display_service_diagnostic_summary(diagnostics: object) -> None:
     """Render timeout/error diagnostics without backend contract internals."""
     if not isinstance(diagnostics, dict):
         return
-    health = diagnostics.get("health")
-    jobs = diagnostics.get("jobs")
+    diagnostics_map = cast("dict[str, object]", diagnostics)
+    health = diagnostics_map.get("health")
+    jobs = diagnostics_map.get("jobs")
     if isinstance(health, dict):
         _cli.console.print(
             f"Service: {_health_diagnostic_text(cast('dict[str, object]', health))}"
@@ -449,7 +450,7 @@ def _action_label(action: object) -> str:
 
 
 def _render_sync_summary(added: int, updated: int, removed: int) -> None:
-    parts = []
+    parts: list[str] = []
     if added:
         parts.append(f"added {added}")
     if updated:
@@ -603,12 +604,13 @@ def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
         markup=False,
         highlight=False,
     )
-    for step in steps:
+    for step in cast("list[object]", steps):
         if not isinstance(step, dict):
             continue
-        label = _provision_step_label(step.get("step", ""))
-        phrase = _provision_action_phrase(cast("dict[str, object]", step))
-        detail = str(step.get("detail", "")).strip()
+        step_map = cast("dict[str, object]", step)
+        label = _provision_step_label(step_map.get("step", ""))
+        phrase = _provision_action_phrase(step_map)
+        detail = str(step_map.get("detail", "")).strip()
         suffix = f" ({detail})" if detail else ""
         _cli.console.print(
             f"  {label}: {phrase}{suffix}",

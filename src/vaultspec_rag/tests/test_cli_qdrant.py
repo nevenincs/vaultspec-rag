@@ -20,7 +20,7 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:
+def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     reset_config()
     yield
     reset_config()

@@ -422,6 +422,7 @@ def _slow_search_contract_server(
                 self.wfile.write(json.dumps({"ok": True, "results": []}).encode())
 
         def do_GET(self):
+            payload: dict[str, object]
             if self.path == "/health":
                 payload = (
                     health_payload
@@ -574,7 +575,7 @@ def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8"))
             requests.append(body)
-            payload = {
+            payload: dict[str, object] = {
                 "ok": True,
                 "results": [],
                 "empty": {
@@ -3893,6 +3894,7 @@ class TestServiceDaemonHelpers:
 
         class _StatusHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                payload: dict[str, object]
                 if self.path == "/health":
                     payload = {
                         "status": "ready",
@@ -3959,6 +3961,7 @@ class TestServiceDaemonHelpers:
 
         class _SparseHealthHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                payload: dict[str, object]
                 if self.path == "/health":
                     payload = {"status": "ready"}
                 elif self.path.startswith("/jobs"):
@@ -4016,6 +4019,7 @@ class TestServiceDaemonHelpers:
 
         class _MissingHealthStatusHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                payload: dict[str, object]
                 if self.path == "/health":
                     payload = {"uptime_s": 12}
                 elif self.path.startswith("/jobs"):
@@ -4161,6 +4165,7 @@ class TestServiceDaemonHelpers:
 
         class _StatusHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                payload: dict[str, object]
                 if self.path == "/health":
                     payload = {
                         "status": "ready",
@@ -4295,7 +4300,9 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
     return server, thread, requests
 
 
-def _logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
+    tuple[typing.Any, typing.Any, list[str]]
+):
     import http.server
     import threading
 
@@ -4365,7 +4372,7 @@ def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
             requests.append(self.path)
             parsed = urllib.parse.urlparse(self.path)
             query = urllib.parse.parse_qs(parsed.query)
-            payload = {
+            payload: dict[str, object] = {
                 "jobs": [],
                 "total": 0,
                 "returned": 0,
@@ -4693,7 +4700,9 @@ class TestServiceProjectsCli:
         assert result.exit_code != 0
         assert "No such command" in result.output
 
-    def test_projects_list_summary_uses_operator_language(self, capsys) -> None:
+    def test_projects_list_summary_uses_operator_language(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         from ..cli._service_projects import _print_projects_summary
 
         _print_projects_summary(
@@ -4998,7 +5007,7 @@ class TestIndexSummaryCLI:
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 requests.append(body)
 
-                response_by_type = {
+                response_by_type: dict[str, dict[str, object]] = {
                     "vault": {
                         "ok": True,
                         "added": "not-a-number",

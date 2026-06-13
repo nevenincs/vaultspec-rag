@@ -147,7 +147,7 @@ def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
     cfg = get_config()
     resolved = resolve_binary()
     service = _service_qdrant_block()
-    service_port = service.get("qdrant_port") if isinstance(service, dict) else None
+    service_port: object = service.get("qdrant_port")
     qdrant_port = int(
         port
         if port is not None
@@ -193,10 +193,14 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
 
 
 def _print_qdrant_process(service: object) -> None:
-    if not (isinstance(service, dict) and service.get("recorded")):
+    if not isinstance(service, dict):
         _print_line("Process: not started by vaultspec-rag")
         return
-    alive_flag = service.get("qdrant_alive")
+    service_block = cast("dict[str, object]", service)
+    if not service_block.get("recorded"):
+        _print_line("Process: not started by vaultspec-rag")
+        return
+    alive_flag = service_block.get("qdrant_alive")
     alive = (
         "running, started by vaultspec-rag"
         if alive_flag is True
@@ -205,8 +209,8 @@ def _print_qdrant_process(service: object) -> None:
         else "state not reported"
     )
     _print_line(f"Process: {alive}")
-    _print_line(f"Process ID: {service.get('qdrant_pid', 'not reported')}")
-    _print_line(f"Process port: {service.get('qdrant_port', 'not reported')}")
+    _print_line(f"Process ID: {service_block.get('qdrant_pid', 'not reported')}")
+    _print_line(f"Process port: {service_block.get('qdrant_port', 'not reported')}")
 
 
 def _print_qdrant_versions(provisioned: object) -> None:
@@ -214,7 +218,7 @@ def _print_qdrant_versions(provisioned: object) -> None:
         _print_line("Available installs: none")
         return
     _print_line("Available installs:")
-    for raw_entry in provisioned:
+    for raw_entry in cast("list[object]", provisioned):
         if not isinstance(raw_entry, dict):
             continue
         entry = cast("dict[str, object]", raw_entry)

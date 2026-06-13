@@ -83,7 +83,7 @@ def consumer_workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def _clear_local_only_env() -> Iterator[None]:
+def _clear_local_only_env() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Ensure no ambient local-only env leaks into precedence assertions."""
     saved: dict[str, str | None] = {
         EnvVar.LOCAL_ONLY.value: os.environ.pop(EnvVar.LOCAL_ONLY.value, None),
@@ -328,7 +328,7 @@ class TestInstallProvisionWiring:
         )
         payload = report.to_dict()
         assert "provisioning" in payload
-        provisioning = payload["provisioning"]
+        provisioning = cast("dict[str, object]", payload["provisioning"])
         assert isinstance(provisioning, dict)
         steps = provisioning["steps"]
         assert isinstance(steps, list)
@@ -355,8 +355,8 @@ class TestInstallCliFlags:
     def _provisioning(self, output: str) -> dict[str, object]:
         # ``install --json`` prints the report dict directly (not the
         # shared envelope), so ``provisioning`` is a top-level key.
-        report = json.loads(output)
-        provisioning = report["provisioning"]
+        report = cast("dict[str, object]", json.loads(output))
+        provisioning = cast("dict[str, object]", report["provisioning"])
         assert isinstance(provisioning, dict)
         return provisioning
 

@@ -135,9 +135,12 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
     if not isinstance(result, dict) or result.get("ok") is False:
         return None
     raw_index = result.get("index")
-    if not isinstance(raw_index, dict) or raw_index.get("error"):
+    if not isinstance(raw_index, dict):
         return None
-    return cast("dict[str, object]", raw_index), port
+    index_dict = cast("dict[str, object]", raw_index)
+    if index_dict.get("error"):
+        return None
+    return index_dict, port
 
 
 @app.command(

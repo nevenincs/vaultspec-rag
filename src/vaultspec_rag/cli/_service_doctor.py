@@ -9,7 +9,7 @@ domain owns operability; adapters only render it).
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
@@ -59,11 +59,13 @@ def _render_readiness(report: dict[str, object]) -> None:
         highlight=False,
     )
     deps = report.get("dependencies")
-    for dep in deps if isinstance(deps, list) else []:
+    dep_list = cast("list[object]", deps) if isinstance(deps, list) else []
+    for dep in dep_list:
         if not isinstance(dep, dict):
             continue
-        name = str(dep.get("name", "?"))
-        status = str(dep.get("status", "unknown"))
-        detail = str(dep.get("detail", ""))
+        dep_map = cast("dict[str, object]", dep)
+        name = str(dep_map.get("name", "?"))
+        status = str(dep_map.get("status", "unknown"))
+        detail = str(dep_map.get("detail", ""))
         line = f"  {name}: {status}" + (f" - {detail}" if detail else "")
         _cli.console.print(line, markup=False, highlight=False)

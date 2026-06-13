@@ -590,7 +590,7 @@ def _format_started_label(raw: object) -> str:
 
 
 def _job_progress_summary(job: dict[str, object]) -> str:
-    parts = []
+    parts: list[str] = []
     progress = _human_progress(job)
     if progress:
         parts.append(progress)
@@ -628,7 +628,10 @@ def _active_job_records(
         if entry.get("phase") != "running":
             continue
         progress = entry.get("progress")
-        if isinstance(progress, dict) and progress.get("step") == "queued":
+        if (
+            isinstance(progress, dict)
+            and cast("dict[str, object]", progress).get("step") == "queued"
+        ):
             continue
         active.append(entry)
     return sorted(active, key=_job_started_timestamp)
@@ -646,8 +649,13 @@ def _running_job_line(job: dict[str, object]) -> str:
 def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
         return ["Current job: not reported by service"]
-    current_jobs = jobs.get("current_jobs")
-    if isinstance(current_jobs, list) and len(current_jobs) > 1:
+    raw_current_jobs = jobs.get("current_jobs")
+    current_jobs = (
+        cast("list[object]", raw_current_jobs)
+        if isinstance(raw_current_jobs, list)
+        else None
+    )
+    if current_jobs is not None and len(current_jobs) > 1:
         return [
             "Active jobs:",
             *[
@@ -728,7 +736,9 @@ def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object
     if not isinstance(jobs, list):
         return []
     return [
-        cast("dict[str, object]", entry) for entry in jobs if isinstance(entry, dict)
+        cast("dict[str, object]", entry)
+        for entry in cast("list[object]", jobs)
+        if isinstance(entry, dict)
     ]
 
 
@@ -737,7 +747,7 @@ def _queued_job_count(job_records: list[dict[str, object]]) -> int:
     for entry in job_records:
         progress = entry.get("progress")
         if entry.get("phase") == "running" and isinstance(progress, dict):
-            queued += int(progress.get("step") == "queued")
+            queued += int(cast("dict[str, object]", progress).get("step") == "queued")
     return queued
 
 
@@ -849,15 +859,15 @@ def _status_operational_summary(
 def _print_operational_detail(
     operational: dict[str, object] | None,
 ) -> None:
-    if not isinstance(operational, dict):
+    if operational is None:
         return
     status_file_port = operational.get("status_file_port")
     if status_file_port:
         _print_detail_line("Status file port", status_file_port)
     jobs = operational.get("jobs")
     if isinstance(jobs, dict):
-        if jobs.get("available") is True:
-            jobs_dict = cast("dict[str, object]", jobs)
+        jobs_dict = cast("dict[str, object]", jobs)
+        if jobs_dict.get("available") is True:
             _print_detail_line("Busy", _status_busy_label(jobs_dict))
             _print_detail_line("Queue", _status_queue_label(jobs_dict))
             _print_detail_line("Processed jobs", _status_jobs_label(jobs_dict))
@@ -972,19 +982,6 @@ def _status_jobs_label(jobs: dict[str, object] | None) -> str:
         f"{finished_count} finished, {active_count} active, "
         f"{queued_count} waiting, {failed_count} failed"
     )
-
-
-def _status_current_job_label(jobs: dict[str, object] | None) -> str:
-    if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "not reported by service"
-    current_job = jobs.get("current_job")
-    current_job_dict = (
-        cast("dict[str, object]", current_job)
-        if isinstance(current_job, dict)
-        else None
-    )
-    summary = _current_job_summary(current_job_dict)
-    return "none active" if summary == "none" else summary
 
 
 def _status_uptime_label(health: dict[str, object] | None) -> str:

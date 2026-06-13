@@ -8,8 +8,9 @@ Three independent fixes surfaced by the server-mode quality audit:
   query still proceeds.
 """
 
-from typing import ClassVar
+from typing import ClassVar, cast
 
+import httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -87,16 +88,18 @@ class TestMergeKeepsIdentityCoherent:
 
 
 @pytest.fixture
-def _search_app(monkeypatch: pytest.MonkeyPatch):
+def _search_app(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[httpx.Client, str]:
     monkeypatch.setattr(_m, "_SERVICE_TOKEN", "test-token-q")
-    client = TestClient(Starlette(routes=ROUTES))
+    client = cast("httpx.Client", TestClient(Starlette(routes=ROUTES)))
     return client, "test-token-q"
 
 
 class TestEmptyQueryRejected:
     pytestmark: ClassVar = [pytest.mark.unit]
 
-    def _post(self, client, token, query):
+    def _post(self, client: httpx.Client, token: str, query: str) -> httpx.Response:
         return client.post(
             "/search",
             json={
@@ -108,18 +111,20 @@ class TestEmptyQueryRejected:
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    def test_empty_query_returns_400(self, _search_app):
+    def test_empty_query_returns_400(self, _search_app: tuple[httpx.Client, str]):
         client, token = _search_app
         resp = self._post(client, token, "")
         assert resp.status_code == 400
         assert resp.json()["error"] == "bad_request"
 
-    def test_whitespace_query_returns_400(self, _search_app):
+    def test_whitespace_query_returns_400(self, _search_app: tuple[httpx.Client, str]):
         client, token = _search_app
         resp = self._post(client, token, "   \t  ")
         assert resp.status_code == 400
 
-    def test_filter_only_query_is_not_empty(self, _search_app):
+    def test_filter_only_query_is_not_empty(
+        self, _search_app: tuple[httpx.Client, str]
+    ):
         # "lang:python" is non-empty raw text: it must pass the empty
         # guard (and then fail later on the bogus root, not on emptiness).
         client, token = _search_app

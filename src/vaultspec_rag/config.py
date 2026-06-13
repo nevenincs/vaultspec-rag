@@ -560,7 +560,12 @@ def reset_config() -> None:
 # local-only marker lands in the same managed directory the config resolves. An
 # explicit raise (not assert) so the invariant holds under python -O, where a
 # silent drift would write the marker to a directory the resolver never reads.
-if VaultSpecConfigWrapper._RAG_DEFAULTS["status_dir"] != _STATUS_DIR_DEFAULT:
+# Same-module invariant check: the class-private defaults table is read here to
+# fail fast at import if the persistence-layer default drifts from the config default.
+_rag_status_dir_default: object = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyright: ignore[reportPrivateUsage]
+    "status_dir"
+]
+if _rag_status_dir_default != _STATUS_DIR_DEFAULT:
     raise RuntimeError(
         "status_dir default drifted between persistence layer and config defaults"
     )

@@ -1,11 +1,15 @@
 """Unit tests for sparse-tensor conversion parity and the query cache."""
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 import pytest
 
 from ..embeddings import QueryEmbeddingCache, SparseResult, _sparse_tensor_to_results
+
+# pytest.approx's `expected` parameter is untyped in the stub; cast once so
+# call sites stay free of per-call ignores.
+_approx = cast("type[Any]", pytest.approx)  # pyright: ignore[reportUnknownMemberType]
 
 
 def _reference_conversion(dense_rows: list[list[float]]) -> list[SparseResult]:
@@ -34,7 +38,7 @@ class TestSparseTensorConversionParity:
         assert len(converted) == len(reference)
         for got, want in zip(converted, reference, strict=True):
             assert got.indices == want.indices
-            assert got.values == pytest.approx(want.values)
+            assert got.values == _approx(want.values)
 
     def test_dense_tensor_path(self):
         import torch

@@ -24,6 +24,14 @@ from ._render import (
 )
 from ._service_status import _default_service_port
 
+__all__ = [
+    "_human_progress",
+    "_operation_label",
+    "_project_label",
+    "_stale_progress_label",
+    "service_jobs",
+]
+
 _RESULT_RE = re.compile(
     r"^\+(?P<added>\d+)\s*/(?P<updated>\d+)\s*-(?P<removed>\d+)"
     r"\s*\((?P<duration_ms>\d+)ms\)(?:\s*~(?P<skipped>\d+))?$"
@@ -72,7 +80,7 @@ def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
     resources = job.get("resources")
     if not isinstance(resources, dict):
         return None
-    value = resources.get(key)
+    value = cast("dict[str, object]", resources).get(key)
     return cast("dict[str, object]", value) if isinstance(value, dict) else None
 
 
@@ -136,7 +144,10 @@ def _job_is_waiting(job: dict[str, object]) -> bool:
     if str(job.get("phase", "")) != "running":
         return False
     progress = job.get("progress")
-    return isinstance(progress, dict) and progress.get("step") == "queued"
+    return (
+        isinstance(progress, dict)
+        and cast("dict[str, object]", progress).get("step") == "queued"
+    )
 
 
 def _phase_label(job: dict[str, object]) -> str:
@@ -179,7 +190,7 @@ def _project_label(job: dict[str, object]) -> str:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
         return "project not reported"
-    project_root = initiator.get("project_root")
+    project_root = cast("dict[str, object]", initiator).get("project_root")
     if not project_root:
         return "project not reported"
     parts = str(project_root).replace("\\", "/").rstrip("/").split("/")
@@ -197,7 +208,7 @@ def _project_root(job: dict[str, object]) -> str | None:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
         return None
-    root = initiator.get("project_root")
+    root = cast("dict[str, object]", initiator).get("project_root")
     return str(root) if root else None
 
 
@@ -216,7 +227,7 @@ def _operation_label(job: dict[str, object]) -> str:
     initiator = job.get("initiator")
     command = ""
     if isinstance(initiator, dict):
-        command = str(initiator.get("command") or "")
+        command = str(cast("dict[str, object]", initiator).get("command") or "")
     if trigger == "watcher":
         return f"{source} index update"
     if command.startswith("reindex_"):
@@ -255,9 +266,10 @@ def _progress_step_label(step: str, source: str) -> str:
 
 
 def _human_progress(job: dict[str, object]) -> str:
-    progress = job.get("progress")
-    if not isinstance(progress, dict):
+    raw_progress = job.get("progress")
+    if not isinstance(raw_progress, dict):
         return ""
+    progress = cast("dict[str, object]", raw_progress)
     step = str(progress.get("step", ""))
     label = _progress_step_label(step, _source_label(job))
     completed = progress.get("completed")
@@ -398,9 +410,10 @@ def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int
 
 
 def _filters_label(result: dict[str, object]) -> str:
-    filters = result.get("filters")
-    if not isinstance(filters, dict):
+    raw_filters = result.get("filters")
+    if not isinstance(raw_filters, dict):
         return ""
+    filters = cast("dict[str, object]", raw_filters)
     visible: list[str] = []
     labels = {
         "phase": "state",
@@ -756,9 +769,10 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
 def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
     if job_id:
         return "No job matched that id."
-    filters = result.get("filters")
-    if not isinstance(filters, dict):
+    raw_filters = result.get("filters")
+    if not isinstance(raw_filters, dict):
         return "No jobs have been reported by this service yet."
+    filters = cast("dict[str, object]", raw_filters)
     if filters.get("failed") is True:
         return "There are no failed jobs."
     state = filters.get("state")

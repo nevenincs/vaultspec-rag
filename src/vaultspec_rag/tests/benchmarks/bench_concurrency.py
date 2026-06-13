@@ -30,7 +30,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 __all__ = [
     "RequestOutcome",
@@ -202,14 +202,16 @@ def _extract_phases(timing: object) -> dict[str, float]:
     phases: dict[str, float] = {}
     if not isinstance(timing, dict):
         return phases
+    timing_map = cast("dict[str, object]", timing)
     for key in _PHASE_KEYS:
-        value = timing.get(key)
+        value = timing_map.get(key)
         if isinstance(value, (int, float)):
             phases[key] = float(value)
-    nested = timing.get("phases")
+    nested = timing_map.get("phases")
     if isinstance(nested, dict):
+        nested_map = cast("dict[str, object]", nested)
         for key in _NESTED_PHASE_KEYS:
-            value = nested.get(key)
+            value = nested_map.get(key)
             if isinstance(value, (int, float)):
                 phases[key] = float(value)
     return phases
@@ -252,10 +254,12 @@ def run_scenario(
 ) -> ScenarioResult:
     """Fire all payloads through a bounded thread pool and aggregate."""
     started = time.perf_counter()
+
+    def _run(payload: dict[str, object]) -> RequestOutcome:
+        return _one_request(target, payload, timeout)
+
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        outcomes = list(
-            pool.map(lambda p: _one_request(target, p, timeout), payloads),
-        )
+        outcomes = list(pool.map(_run, payloads))
     wall = time.perf_counter() - started
     return ScenarioResult(
         name=name,

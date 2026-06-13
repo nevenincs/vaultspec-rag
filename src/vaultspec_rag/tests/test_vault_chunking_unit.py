@@ -1,5 +1,6 @@
 """Unit tests for vault document chunking, grouping, and graph nudges."""
 
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -122,7 +123,7 @@ class TestGroupChunksByDocument:
 class TestBoundedGraphNudge:
     pytestmark: ClassVar = [pytest.mark.unit]
 
-    def _build_vault(self, root) -> None:
+    def _build_vault(self, root: Path) -> None:
         adr_dir = root / ".vault" / "adr"
         adr_dir.mkdir(parents=True)
         (adr_dir / "target.md").write_text(
@@ -136,7 +137,7 @@ class TestBoundedGraphNudge:
             encoding="utf-8",
         )
 
-    def test_nudge_is_additive_and_bounded(self, tmp_path):
+    def test_nudge_is_additive_and_bounded(self, tmp_path: Path):
         from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
             VaultGraph,
         )

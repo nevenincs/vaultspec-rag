@@ -10,7 +10,7 @@ the old one-point-per-document layout triggers a one-time rebuild.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
 import pytest
 
@@ -18,10 +18,20 @@ from ...progress import NullProgressReporter
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from ... import VaultIndexer, VaultStore
     from ...embeddings import EmbeddingModel
+
+
+class _ChunkedCorpus(TypedDict):
+    root: Path
+    store: VaultStore
+    indexer: VaultIndexer
+    long_doc_id: str
+    model: EmbeddingModel
+
 
 #: A needle phrase placed deep past the old 8000-char embed horizon.
 _TAIL_NEEDLE = "the heliotrope calibration winch requires manual lubrication"
@@ -69,7 +79,7 @@ def _build_indexed_root(
 def chunked_corpus(
     embedding_model: EmbeddingModel,
     tmp_path_factory: pytest.TempPathFactory,
-):
+) -> Iterator[_ChunkedCorpus]:
     root = tmp_path_factory.mktemp("chunked-vault")
     store, indexer, long_doc_id = _build_indexed_root(root, embedding_model)
     yield {
@@ -85,13 +95,15 @@ def chunked_corpus(
 class TestChunkedVaultLayout:
     pytestmark: ClassVar = [pytest.mark.integration]
 
-    def test_long_document_expands_to_multiple_points(self, chunked_corpus):
+    def test_long_document_expands_to_multiple_points(
+        self, chunked_corpus: _ChunkedCorpus
+    ) -> None:
         store = chunked_corpus["store"]
         doc_ids = store.get_all_ids()
         assert chunked_corpus["long_doc_id"] in doc_ids
         assert store.count() > len(doc_ids)
 
-    def test_tail_content_is_retrievable(self, chunked_corpus):
+    def test_tail_content_is_retrievable(self, chunked_corpus: _ChunkedCorpus) -> None:
         from ...search import VaultSearcher
 
         searcher = VaultSearcher(
@@ -109,7 +121,9 @@ class TestChunkedVaultLayout:
         hit = next(r for r in results if r.id == chunked_corpus["long_doc_id"])
         assert "heliotrope" in (hit.rerank_text or hit.snippet)
 
-    def test_results_are_grouped_one_row_per_document(self, chunked_corpus):
+    def test_results_are_grouped_one_row_per_document(
+        self, chunked_corpus: _ChunkedCorpus
+    ) -> None:
         from ...search import VaultSearcher
 
         searcher = VaultSearcher(
@@ -124,7 +138,9 @@ class TestChunkedVaultLayout:
         ids = [r.id for r in results]
         assert len(ids) == len(set(ids)), f"duplicate documents in results: {ids}"
 
-    def test_get_by_id_returns_exact_full_body(self, chunked_corpus):
+    def test_get_by_id_returns_exact_full_body(
+        self, chunked_corpus: _ChunkedCorpus
+    ) -> None:
         store = chunked_corpus["store"]
         root = chunked_corpus["root"]
         doc_id = chunked_corpus["long_doc_id"]
@@ -135,7 +151,9 @@ class TestChunkedVaultLayout:
         assert payload["content"] == body
         assert _TAIL_NEEDLE in payload["content"]
 
-    def test_list_all_documents_one_row_per_document(self, chunked_corpus):
+    def test_list_all_documents_one_row_per_document(
+        self, chunked_corpus: _ChunkedCorpus
+    ) -> None:
         store = chunked_corpus["store"]
         docs = store.list_all_documents()
         ids = [d["id"] for d in docs]
@@ -148,7 +166,9 @@ class TestChunkedVaultLayout:
 class TestChunkedVaultLifecycle:
     pytestmark: ClassVar = [pytest.mark.integration]
 
-    def test_delete_removes_every_chunk(self, embedding_model, tmp_path):
+    def test_delete_removes_every_chunk(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, indexer, long_doc_id = _build_indexed_root(tmp_path, embedding_model)
         try:
             count_before = store.count()
@@ -161,7 +181,9 @@ class TestChunkedVaultLifecycle:
         finally:
             store.close()
 
-    def test_shrunk_document_purges_stale_tail_chunks(self, embedding_model, tmp_path):
+    def test_shrunk_document_purges_stale_tail_chunks(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         store, indexer, long_doc_id = _build_indexed_root(tmp_path, embedding_model)
         try:
             counts_before = store.get_chunk_counts()
@@ -182,7 +204,9 @@ class TestChunkedVaultLifecycle:
         finally:
             store.close()
 
-    def test_old_point_layout_triggers_rebuild(self, embedding_model, tmp_path):
+    def test_old_point_layout_triggers_rebuild(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
         from ...config import get_config
 
         store, indexer, _ = _build_indexed_root(tmp_path, embedding_model)
@@ -193,7 +217,7 @@ class TestChunkedVaultLifecycle:
             # before chunking existed.
             cfg = get_config()
             meta_path = tmp_path / cfg.data_dir / cfg.index_metadata_file
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.pop("__vault_point_schema__")
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
@@ -201,7 +225,7 @@ class TestChunkedVaultLifecycle:
             # A layout rebuild re-adds every document instead of
             # reporting a no-op incremental pass.
             assert result.added == doc_total
-            stamped = json.loads(meta_path.read_text(encoding="utf-8"))
+            stamped: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
             assert stamped["__vault_point_schema__"] == "2"
         finally:
             store.close()

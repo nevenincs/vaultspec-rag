@@ -19,7 +19,7 @@ import platform as _platform
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..config import EnvVar, get_config
 from ._constants import (
@@ -129,7 +129,7 @@ def read_manifest(version_dir: Path) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         logger.debug("qdrant manifest at %s is not a dict", path)
         return None
-    return data
+    return cast("dict[str, Any]", data)
 
 
 def _resolve_env_binary() -> ResolvedBinary | None:

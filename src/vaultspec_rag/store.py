@@ -406,8 +406,11 @@ class VaultStore:
         # per-root prefix; the bare names stay the suffix. Local mode
         # keeps the bare names (one store per project data dir).
         _prefix = root_collection_prefix(self.root_dir) if self._server_mode else ""
-        self.TABLE_NAME = _prefix + VaultStore.TABLE_NAME
-        self.CODE_TABLE_NAME = _prefix + VaultStore.CODE_TABLE_NAME
+        # Per-instance namespaced names intentionally shadow the bare class
+        # constants; basedpyright's uppercase-is-constant rule does not model
+        # the class-constant / instance-override split this class relies on.
+        self.TABLE_NAME: str = _prefix + VaultStore.TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
+        self.CODE_TABLE_NAME: str = _prefix + VaultStore.CODE_TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
         # Locking is backend-aware and split per concern. The lifecycle
         # lock guards client open/close, collection create/drop, and the
         # ensure flags. Point operations take their collection's own

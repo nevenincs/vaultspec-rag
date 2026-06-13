@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 from ..cli import app
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
 runner = CliRunner()
@@ -44,7 +44,7 @@ class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         body_length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(body_length).decode("utf-8")
-        body = json.loads(raw_body) if raw_body else {}
+        body: dict[str, object] = json.loads(raw_body) if raw_body else {}
         self.requests.append({"method": "POST", "path": self.path, "body": body})
         self._send_payload()
 
@@ -66,7 +66,7 @@ class _SlowUpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         body_length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(body_length).decode("utf-8")
-        body = json.loads(raw_body) if raw_body else {}
+        body: dict[str, object] = json.loads(raw_body) if raw_body else {}
         self.requests.append({"method": "POST", "path": self.path, "body": body})
         time.sleep(self.delay_seconds)
         self.send_response(200)
@@ -82,7 +82,7 @@ class _SlowUpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
 @contextlib.contextmanager
 def _updates_http_server(
     payload: dict[str, object],
-) -> Iterator[tuple[http.server.HTTPServer, int]]:
+) -> Generator[tuple[http.server.HTTPServer, int]]:
     _UpdatesHTTPHandler.payloads = [payload]
     _UpdatesHTTPHandler.requests = []
     server = http.server.HTTPServer(("127.0.0.1", 0), _UpdatesHTTPHandler)
@@ -100,7 +100,7 @@ def _updates_http_server(
 @contextlib.contextmanager
 def _slow_updates_http_server(
     delay_seconds: float = 0.5,
-) -> Iterator[tuple[http.server.HTTPServer, int]]:
+) -> Generator[tuple[http.server.HTTPServer, int]]:
     _SlowUpdatesHTTPHandler.requests = []
     _SlowUpdatesHTTPHandler.delay_seconds = delay_seconds
     server = http.server.HTTPServer(("127.0.0.1", 0), _SlowUpdatesHTTPHandler)

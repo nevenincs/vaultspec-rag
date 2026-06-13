@@ -22,7 +22,7 @@ import hmac
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -259,9 +259,10 @@ def _job_progress_text(record: dict[str, object]) -> str:
     progress = record.get("progress")
     if not isinstance(progress, dict):
         return ""
-    step = progress.get("step")
-    completed = progress.get("completed")
-    total = progress.get("total")
+    progress_map = cast("dict[str, object]", progress)
+    step = progress_map.get("step")
+    completed = progress_map.get("completed")
+    total = progress_map.get("total")
     parts = [str(step)] if step else []
     if total is not None:
         parts.append(f"{completed}/{total}")
@@ -273,7 +274,7 @@ def _job_progress_text(record: dict[str, object]) -> str:
 def _job_updated_timestamp(record: dict[str, object]) -> float | None:
     progress = record.get("progress")
     if isinstance(progress, dict):
-        last_updated = progress.get("last_updated")
+        last_updated = cast("dict[str, object]", progress).get("last_updated")
         if isinstance(last_updated, int | float):
             return float(last_updated)
     timestamp = record.get("finished_at") or record.get("started_at")
@@ -298,7 +299,7 @@ def _job_last_progress_age_seconds(
     progress = record.get("progress")
     if not isinstance(progress, dict):
         return None
-    last_updated = progress.get("last_updated")
+    last_updated = cast("dict[str, object]", progress).get("last_updated")
     if not isinstance(last_updated, int | float):
         return None
     return max(0.0, now - float(last_updated))
@@ -314,9 +315,12 @@ def _job_with_liveness(
     enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
     resources = record.get("resources")
     if isinstance(resources, dict):
-        enriched_resources = {
-            str(key): dict(value) if isinstance(value, dict) else value
-            for key, value in resources.items()
+        resources_map = cast("dict[str, object]", resources)
+        enriched_resources: dict[str, object] = {
+            str(key): dict(cast("dict[str, object]", value))
+            if isinstance(value, dict)
+            else value
+            for key, value in resources_map.items()
         }
         if record.get("phase") == "running":
             enriched_resources["current"] = _jobs.resource_snapshot()
@@ -376,7 +380,8 @@ def _job_matches(
 def _job_nested_values(raw: object) -> list[str]:
     if not isinstance(raw, dict):
         return []
-    return [str(value) for value in raw.values() if value is not None]
+    raw_map = cast("dict[str, object]", raw)
+    return [str(value) for value in raw_map.values() if value is not None]
 
 
 def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
@@ -395,13 +400,13 @@ def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
         triggers[trigger] = triggers.get(trigger, 0) + 1
         initiator = record.get("initiator")
         if isinstance(initiator, dict):
-            kind = str(initiator.get("kind", "unknown"))
+            kind = str(cast("dict[str, object]", initiator).get("kind", "unknown"))
             initiators[kind] = initiators.get(kind, 0) + 1
             if phase == "running":
                 active_initiators[kind] = active_initiators.get(kind, 0) + 1
         runtime = record.get("runtime")
         if isinstance(runtime, dict):
-            user = str(runtime.get("user", "unknown"))
+            user = str(cast("dict[str, object]", runtime).get("user", "unknown"))
             users[user] = users.get(user, 0) + 1
     return {
         "phases": phases,
@@ -698,7 +703,7 @@ async def search_route(request: Request) -> JSONResponse:
             timing["server_total_seconds"] = total_seconds
         if not result["results"]:
             result["empty"] = _empty_search_diagnostics(
-                result.get("index_state", {}),
+                cast("dict[str, object]", result.get("index_state", {})),
                 port=request.url.port,
             )
         _m._ensure_watcher_soon(root)

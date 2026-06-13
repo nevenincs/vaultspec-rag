@@ -79,7 +79,7 @@ def test_empty_service_search_reports_missing_index(
     empty = cast("dict[str, object]", result["empty"])
     assert isinstance(empty, dict)
     assert empty["reason"] == "index_missing"
-    remediation = empty["remediation"]
+    remediation = cast("list[object]", empty["remediation"])
     assert isinstance(remediation, list)
     assert any("index --type vault" in str(item) for item in remediation)
 
@@ -116,7 +116,7 @@ def test_direct_http_code_search_reports_code_index_state(
     empty = cast("dict[str, object]", result["empty"])
     assert isinstance(empty, dict)
     assert empty["reason"] == "index_missing"
-    remediation = empty["remediation"]
+    remediation = cast("list[object]", empty["remediation"])
     assert isinstance(remediation, list)
     assert any("index --type code" in str(item) for item in remediation)
 
@@ -157,7 +157,7 @@ def test_search_request_id_is_log_correlatable(
         time.sleep(0.1)
 
     assert isinstance(logs, dict)
-    lines = logs["lines"]
+    lines = cast("list[object]", logs["lines"])
     assert isinstance(lines, list)
     assert any(
         request_id in str(line)
@@ -192,7 +192,7 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     diagnostics = cast("dict[str, object]", result["diagnostics"])
     health = cast("dict[str, object]", diagnostics["health"])
     jobs = cast("dict[str, object]", diagnostics["jobs"])
-    remediation = result["remediation"]
+    remediation = cast("list[object]", result["remediation"])
     assert health["status"] == "ready"
     assert jobs["available"] is True
     backpressure = cast("dict[str, object]", diagnostics["backpressure"])

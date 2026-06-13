@@ -42,7 +42,7 @@ from ...server import _jobs
 from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 runner = CliRunner()
@@ -103,7 +103,7 @@ class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
 @contextlib.contextmanager
 def _jobs_http_server(
     payloads: list[dict[str, object]],
-) -> Iterator[tuple[http.server.HTTPServer, int]]:
+) -> Generator[tuple[http.server.HTTPServer, int]]:
     _JobsHTTPHandler.payloads = payloads
     _JobsHTTPHandler.paths = []
     _JobsHTTPHandler.request_count = 0
@@ -1580,7 +1580,7 @@ def test_jobs_route_prioritises_running_before_limit(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "limit": "1"}),
+        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 200
     payload: dict[str, Any] = response.json()
@@ -1599,7 +1599,7 @@ def test_jobs_route_prioritises_failed_before_completed_limit(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "limit": "1"}),
+        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
 
     assert response.status_code == 200
@@ -1615,7 +1615,7 @@ def test_jobs_route_filters_phase_source_trigger_and_query(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get(
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
             "/jobs",
             params={
                 "token": token,
@@ -1641,7 +1641,7 @@ def test_jobs_route_accepts_codebase_source_alias(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "source": "codebase"}),
+        client.get("/jobs", params={"token": token, "source": "codebase"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 200
     payload: dict[str, Any] = response.json()
@@ -1660,7 +1660,7 @@ def test_jobs_route_filters_failed_job_id_and_since(
 
     response = cast(
         "httpx.Response",
-        client.get(
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
             "/jobs",
             params={
                 "token": token,
@@ -1696,7 +1696,7 @@ def test_jobs_route_query_matches_runtime_and_initiator(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "query": "cli"}),
+        client.get("/jobs", params={"token": token, "query": "cli"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
 
     assert response.status_code == 200
@@ -1715,7 +1715,7 @@ def test_jobs_route_since_uses_progress_update_time(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "since": "0.1"}),
+        client.get("/jobs", params={"token": token, "since": "0.1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
 
     assert response.status_code == 200
@@ -1736,7 +1736,7 @@ def test_jobs_route_job_id_prefix_can_return_multiple_matches(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "job_id": prefix}),
+        client.get("/jobs", params={"token": token, "job_id": prefix}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
 
     assert response.status_code == 200

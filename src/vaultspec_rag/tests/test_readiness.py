@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -192,7 +192,7 @@ class TestModelsDimension:
         report = compute_readiness()
         models = report.dimension("models")
         assert models is not None
-        repos = models.info["repos"]
+        repos = cast("dict[str, object]", models.info["repos"])
         assert isinstance(repos, dict)
         # The probe reports presence for each configured repo, keyed by
         # the repo id, with a boolean value (no download triggered).
@@ -208,7 +208,7 @@ class TestModelsDimension:
         report = compute_readiness()
         models = report.dimension("models")
         assert models is not None
-        repos = models.info["repos"]
+        repos = cast("dict[str, object]", models.info["repos"])
         assert isinstance(repos, dict)
         all_present = all(repos.values())
         if all_present:

@@ -29,7 +29,7 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def _routes_app() -> Iterator[tuple[TestClient, str]]:
+def _routes_app() -> Iterator[tuple[TestClient, str]]:  # pyright: ignore[reportUnusedFunction]
     """A real ASGI TestClient over ROUTES with a known service token."""
     prev_token = _m._SERVICE_TOKEN
     _m._SERVICE_TOKEN = "test-token-readiness"
@@ -44,7 +44,7 @@ def test_readiness_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _ = _routes_app
-    response = cast("httpx.Response", client.get("/readiness"))
+    response = cast("httpx.Response", client.get("/readiness"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 401
 
 
@@ -54,7 +54,7 @@ def test_readiness_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/readiness", headers={"Authorization": f"Bearer {token}"}),
+        client.get("/readiness", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     )
     assert response.status_code == 200
     # Route and CLI verb read the same reporter, so the snapshot is identical.

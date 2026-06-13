@@ -144,15 +144,17 @@ def _render_empty_service_results(
     remediation: object = None
     empty = payload.get("empty")
     if isinstance(empty, dict):
-        message = str(empty.get("message", "No matching indexed items found."))
+        empty_map = cast("dict[str, object]", empty)
+        message = str(empty_map.get("message", "No matching indexed items found."))
         _cli.console.print(f"Why: {message}", markup=False)
-        remediation = empty.get("remediation")
+        remediation = empty_map.get("remediation")
     index_state = payload.get("index_state")
     if isinstance(index_state, dict):
         _render_empty_index_state(cast("dict[str, object]", index_state), search_type)
     if isinstance(remediation, list) and remediation:
+        remediation_items = cast("list[object]", remediation)
         _cli.console.print("Next actions:")
-        for item in remediation:
+        for item in remediation_items:
             _cli.console.print(f"  - {item}")
 
 
