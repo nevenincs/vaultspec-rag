@@ -825,7 +825,7 @@ def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> No
     root = _project_root(job)
     if root:
         _cli.console.print(f"Path: {root}", markup=False, highlight=False)
-    _cli.console.print(f"State: {_phase_label(job)}")
+    _cli.console.print(f"Status: {_phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
     _render_job_progress_detail(job)
     _render_job_initiator_detail(job)

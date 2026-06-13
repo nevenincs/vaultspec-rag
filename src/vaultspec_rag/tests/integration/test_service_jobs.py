@@ -1013,6 +1013,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
 
     output = capsys.readouterr().out
     values = _label_values(output)
+    assert values["Status"] == "running"
     assert values["Started by"] == "automatic updates"
     assert values["Request"] == "automatic code index update"
     assert values["Job process id"] == "123"
@@ -1036,6 +1037,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert "cuda alloc" not in output
     assert "cuda reserved" not in output
     assert "Memory: memory " not in output
+    assert "State:" not in output
 
 
 def test_jobs_job_id_detail_uses_precise_process_label() -> None:
@@ -1059,6 +1061,7 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert query["job_id"] == ["runjob12"]
     values = _label_values(result.output)
     assert values["Address"] == f"http://127.0.0.1:{port}"
+    assert values["Status"] == "running"
     assert values["Project"] == "proj-a"
     assert values["Path"] == r"proj-a"
     assert values["Job process id"] == "123"
@@ -1066,6 +1069,7 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert values["Started by"] == "automatic updates"
     assert values["Request"] == "automatic code index update"
     assert "Project root:" not in result.output
+    assert "State:" not in result.output
     assert "Process: 123" not in result.output
     assert "PID:" not in result.output
 
@@ -1105,8 +1109,10 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
 
     assert result.exit_code == 0, result.output
     values = _label_values(result.output)
+    assert values["Status"] == "failed"
     assert values["Progress"] == "removing stale source files 0 of 1"
     assert values["Error"] == "timed out"
+    assert "State:" not in result.output
     assert "delete removed" not in result.output
 
 
