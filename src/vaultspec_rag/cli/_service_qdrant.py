@@ -178,42 +178,42 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     active = payload["active_binary"]
     if isinstance(active, dict):
         active_binary = cast("dict[str, object]", active)
-        _print_line(f"Install: {active_binary['path']}")
+        _print_line(f"Executable: {active_binary['path']}")
     else:
-        _print_line("Install: not installed")
+        _print_line("Executable: not installed")
         _print_next_action("vaultspec-rag server qdrant install")
     address = f"http://127.0.0.1:{payload['port']}"
     _print_line(f"Address: {address}")
     if payload["ready"]:
-        _print_line("Readiness: accepting requests")
+        _print_line("Connection: accepting requests")
         return
-    _print_line("Readiness: not accepting requests")
+    _print_line("Connection: not accepting requests")
     if isinstance(active, dict):
         _print_next_action("vaultspec-rag server start --qdrant")
 
 
 def _print_qdrant_process(service: object) -> None:
     if not (isinstance(service, dict) and service.get("recorded")):
-        _print_line("Process: not started by this service")
+        _print_line("Process: not started by vaultspec-rag")
         return
     alive_flag = service.get("qdrant_alive")
     alive = (
-        "running under this service"
+        "running, started by vaultspec-rag"
         if alive_flag is True
         else "not running"
         if alive_flag is False
         else "state not reported"
     )
     _print_line(f"Process: {alive}")
-    _print_line(f"Process id: {service.get('qdrant_pid', 'not reported')}")
-    _print_line(f"Port: {service.get('qdrant_port', 'not reported')}")
+    _print_line(f"Process ID: {service.get('qdrant_pid', 'not reported')}")
+    _print_line(f"Process port: {service.get('qdrant_port', 'not reported')}")
 
 
 def _print_qdrant_versions(provisioned: object) -> None:
     if not (isinstance(provisioned, list) and provisioned):
-        _print_line("Installed versions: none")
+        _print_line("Available installs: none")
         return
-    _print_line("Installed versions:")
+    _print_line("Available installs:")
     for raw_entry in provisioned:
         if not isinstance(raw_entry, dict):
             continue
@@ -229,7 +229,7 @@ def _print_qdrant_versions(provisioned: object) -> None:
 
 @server_qdrant_app.command(
     "status",
-    help=("Show the managed Qdrant version, install path, address, and live state."),
+    help=("Show the managed Qdrant executable, address, connection, and process."),
 )
 def qdrant_status(
     port: Annotated[
@@ -253,8 +253,8 @@ def qdrant_status(
         _emit_json(True, "server.qdrant.status", data=payload)
         return
 
-    _print_line("Qdrant runtime")
-    _print_line(f"Version: {payload['pinned_version']}")
+    _print_line("Qdrant storage service")
+    _print_line(f"Managed version: {payload['pinned_version']}")
     _print_qdrant_install_and_state(payload)
     _print_qdrant_process(payload["service"])
     _print_qdrant_versions(payload["provisioned"])

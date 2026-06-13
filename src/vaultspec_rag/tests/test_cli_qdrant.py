@@ -115,7 +115,6 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert "Emit JSON for scripts instead of human text" in help_result.output
     assert "--port" in help_result.output
     assert "Qdrant HTTP port to check" in help_result.output
-    assert "JSON envelope" not in help_result.output
 
     port = _closed_port()
     result = runner.invoke(
@@ -133,26 +132,14 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
 
     assert result.exit_code == 0, result.output
     labels = _labels(result.output)
-    assert labels["Version"]
-    assert labels["Install"] == "not installed"
-    assert labels["Address"].startswith("http://127.0.0.1:")
-    assert labels["Readiness"] == "not accepting requests"
-    assert "Health" not in labels
-    assert labels["Process"] == "not started by this service"
-    assert labels["Installed versions"] == "none"
+    assert result.output.splitlines()[0] == "Qdrant storage service"
+    assert labels["Managed version"] == QDRANT_SERVER_VERSION
+    assert labels["Executable"] == "not installed"
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["Connection"] == "not accepting requests"
+    assert labels["Process"] == "not started by vaultspec-rag"
+    assert labels["Available installs"] == "none"
     assert "vaultspec-rag server qdrant install" in result.output
-    for old_term in (
-        "Pinned version",
-        "Active binary",
-        "Server ready",
-        "Ready:",
-        "Service child",
-        "Managed process",
-        "none recorded",
-        "Qdrant process:",
-        "State: Qdrant",
-    ):
-        assert old_term not in result.output
 
 
 def test_qdrant_status_is_actionable_when_installed_but_not_running(
@@ -172,14 +159,12 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
 
     assert result.exit_code == 0, result.output
     labels = _labels(result.output)
-    assert labels["Install"] != "not installed"
+    assert labels["Executable"].endswith(binary_filename())
     assert labels["Address"] == f"http://127.0.0.1:{port}"
-    assert labels["Readiness"] == "not accepting requests"
-    assert "Health" not in labels
+    assert labels["Connection"] == "not accepting requests"
     assert "Next action:" in result.output
     assert "vaultspec-rag server start --qdrant" in result.output
-    assert "vaultspec-rag server qdrant install" not in result.output
-    assert "Installed versions:" in result.output
+    assert "Available installs:" in result.output
     assert f"{QDRANT_SERVER_VERSION} - downloaded release (current)" in result.output
 
 

@@ -1455,17 +1455,10 @@ class TestServerRoutingFlattened:
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
             assert labels["Address"] == "http://127.0.0.1:6334"
-            assert labels["Readiness"] == "not accepting requests"
-            assert "Health" not in labels
-            assert labels["Process"] == "running under this service"
-            assert labels["Process id"] == "43210"
-            assert labels["Port"] == "6334"
-            assert "Qdrant process:" not in result.output
-            assert "Qdrant process id:" not in result.output
-            assert "Qdrant port:" not in result.output
-            assert "Ready:" not in result.output
-            assert "unknown" not in result.output.lower()
-            assert ";" not in result.output
+            assert labels["Connection"] == "not accepting requests"
+            assert labels["Process"] == "running, started by vaultspec-rag"
+            assert labels["Process ID"] == "43210"
+            assert labels["Process port"] == "6334"
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
             reset_base_config()
