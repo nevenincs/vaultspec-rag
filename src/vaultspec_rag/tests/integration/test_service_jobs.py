@@ -648,8 +648,10 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         "Shown: 3 jobs",
         "Total: 3 jobs",
         "Shown summary: 1 active, 0 waiting, 1 finished, 1 failed",
-        "Order: latest shown last",
+        "Selection: active, waiting, failed, then latest finished",
     ]
+    assert lines[6] == "Order: latest shown last"
+    assert lines[7] == "Legend: * active, ~ waiting, ! failed, - finished"
     rows = _jobs_feed_rows(output)
     assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
     assert rows[0]["marker"] == "-"
@@ -791,7 +793,8 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
         "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
     )
     lines = _plain_lines(result.output)
-    assert len(lines) == 6
+    assert "Selection: active, waiting, failed, then latest finished" in lines
+    assert "Legend: * active, ~ waiting, ! failed, - finished" in lines
     assert lines[-1].endswith(rows[0]["detail"])
 
 
@@ -835,8 +838,9 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
         "Shown: 1 job",
         "Total: 1 job",
         "Shown summary: 0 active, 1 waiting, 0 finished, 0 failed",
-        "Order: latest shown last",
+        "Selection: active, waiting, failed, then latest finished",
     ]
+    assert lines[6] == "Order: latest shown last"
     rows = _jobs_feed_rows(output)
     assert len(rows) == 1
     row = rows[0]
@@ -895,6 +899,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
         "Legend: * active, ~ waiting, ! failed, - finished",
         "Filter: state active or waiting",
     ]
+    assert "Selection:" not in output
     rows = _jobs_feed_rows(output)
     assert len(rows) == 2
     assert {row["id"] for row in rows} == {"running-a", "running-b"}

@@ -474,6 +474,12 @@ def _render_jobs_feed(
         markup=False,
         highlight=False,
     )
+    if not filter_text:
+        _cli.console.print(
+            "Selection: active, waiting, failed, then latest finished",
+            markup=False,
+            highlight=False,
+        )
     _cli.console.print("Order: latest shown last", markup=False, highlight=False)
     _cli.console.print(
         "Legend: * active, ~ waiting, ! failed, - finished",
