@@ -182,6 +182,14 @@ class VaultSpecConfigWrapper:
         # namespaced collections inside it), so it lives under the
         # managed service directory, never a project data dir.
         "qdrant_server": True,
+        # First-class local-backend opt-out. When true, the resident
+        # service uses the per-project on-disk store regardless of the
+        # server-mode default; it is the deliberate, trivially
+        # selectable escape hatch for CI, offline, and small-project
+        # hosts. Effective server mode is ``qdrant_server and not
+        # local_only`` (see ``effective_server_mode``), so local-only
+        # always wins over the server default.
+        "local_only": False,
         "qdrant_port": 8765,
         "qdrant_binary": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
@@ -340,6 +348,24 @@ class VaultSpecConfigWrapper:
 
         # 3. Default
         return self._RAG_DEFAULTS[name]
+
+    def effective_server_mode(self) -> bool:
+        """Return whether the supervised server backend is in effect.
+
+        The supervised Qdrant server is the assumed backend
+        (``qdrant_server`` defaults true), and ``local_only`` is the
+        first-class opt-out that always wins: effective server mode is
+        ``qdrant_server and not local_only``. Callers selecting the
+        store backend MUST consult this rather than reading
+        ``qdrant_server`` directly, so the local-only escape hatch is
+        honoured at every selection point.
+
+        Returns:
+            ``True`` when the resident service should supervise the
+            Qdrant child and route stores at it; ``False`` when the
+            per-project on-disk store should be used.
+        """
+        return bool(self.qdrant_server) and not bool(self.local_only)
 
     def __getattr__(self, name: str) -> Any:
         """Return a config attribute, checking env overrides then defaults.
