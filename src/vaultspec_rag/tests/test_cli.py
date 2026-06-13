@@ -2809,6 +2809,8 @@ class TestSearchResultRendering:
         out = capsys.readouterr().out
         assert "Route concurrent searches through one service." in out
         assert "local_store_locked" in out
+        assert "Index data: /tmp/qdrant" in out
+        assert "DB path:" not in out
         assert "same-project local backend access" not in out
         assert "same_project_search_strategy" not in out
         assert "serialized" not in out

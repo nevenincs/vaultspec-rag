@@ -142,7 +142,7 @@ def _display_service_error(
         _cli.console.print(f"Code: {error}", markup=False, highlight=False)
     db_path = payload.get("db_path")
     if db_path:
-        _cli.console.print(f"DB path: {db_path}", markup=False, highlight=False)
+        _cli.console.print(f"Index data: {db_path}", markup=False, highlight=False)
     _display_service_diagnostic_summary(payload.get("diagnostics"))
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:
