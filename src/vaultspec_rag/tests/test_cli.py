@@ -871,14 +871,19 @@ class TestStatusCommand:
         )
 
         output = capsys.readouterr().out
+        lines = _plain_lines(output)
         labels = _label_values(output)
+        assert lines[0] == "Project index"
+        assert labels["Project"] == str(tmp_path)
+        assert labels["Index data"] == str(tmp_path / ".vault" / "data" / "search-data")
         assert labels["Compute"] == "CPU only (no supported GPU detected)"
         assert labels["Vault documents"] == "12"
         assert labels["Source code sections"] == "34"
+        assert labels["Server"] == "running"
         assert labels["Address"] == "http://127.0.0.1:8766"
-        assert labels["Service status"] == "vaultspec-rag server status --port 8766"
-        assert "Read from" not in labels
-        assert "Source code chunks" not in labels
+        assert lines[lines.index("Server details:") + 1] == (
+            "vaultspec-rag server status --port 8766"
+        )
         assert "Next action:" not in output
 
     def test_status_empty_index_output_is_actionable(
@@ -984,16 +989,17 @@ class TestStatusCommand:
             "/service-state?project_root=" + urllib.parse.quote(str(root))
         ]
         labels = _label_values(result.output)
+        lines = _plain_lines(result.output)
+        assert lines[0] == "Project index"
+        assert labels["Project"] == str(root)
         assert labels["Index data"] == "running service storage"
         assert labels["Vault documents"] == "7"
         assert labels["Source code sections"] == "9"
+        assert labels["Server"] == "running"
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
-        assert (
-            labels["Service status"]
-            == f"vaultspec-rag server status --port {server.server_port}"
+        assert lines[lines.index("Server details:") + 1] == (
+            f"vaultspec-rag server status --port {server.server_port}"
         )
-        assert "Read from" not in labels
-        assert "remote storage" not in result.output
 
     def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = self._workspace(tmp_path)

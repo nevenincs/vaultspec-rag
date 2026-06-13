@@ -71,17 +71,17 @@ def _render_status_text(
         else "CPU only (no supported GPU detected)"
     )
     lines = [
-        f"Compute: {device}",
+        "Project index",
+        f"Project: {target}",
         f"Index data: {index_data_path}",
         f"Vault documents: {vault_count}",
         f"Source code sections: {code_count}",
-        f"Project: {target}",
+        f"Compute: {device}",
     ]
     if service_port is not None:
+        lines.append("Server: running")
         lines.append(f"Address: http://127.0.0.1:{service_port}")
-        lines.append(
-            f"Service status: vaultspec-rag server status --port {service_port}"
-        )
+        lines.append("Server details:")
     next_action = _status_next_action(vault_count, code_count)
     for line in lines:
         _cli.console.print(
@@ -89,6 +89,12 @@ def _render_status_text(
             markup=False,
             highlight=False,
             soft_wrap=line.startswith(("Index data:", "Project:", "Address:")),
+        )
+    if service_port is not None:
+        _cli.console.print(
+            f"  vaultspec-rag server status --port {service_port}",
+            markup=False,
+            highlight=False,
         )
     if next_action:
         _cli.console.print("Next action:", markup=False, highlight=False)
