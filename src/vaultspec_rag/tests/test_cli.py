@@ -4627,17 +4627,17 @@ class TestServiceJobsCli:
 def _assert_project_summary_language(out: str) -> None:
     expected = {
         "Capacity: 1 of 16 projects loaded",
-        "Automatic unload: after 30m idle",
+        "Automatic unload: after 30 minutes idle",
         "- Project: example",
         r"  Path: example",
         "  Active requests: 1",
-        "  Last activity: 2m 5s ago",
+        "  Last activity: 2 minutes 5 seconds ago",
         "  Last request: 14:05:06",
     }
     missing = [line for line in expected if line not in out]
     assert not missing, f"missing project summary lines: {missing}"
     forbidden = (
-        "Handling 1 active request; idle for 2m 5s",
+        "Handling 1 active request; idle for 2 minutes 5 seconds",
         "Active uses:",
         "Requests:",
         "Last used:",
@@ -4761,16 +4761,16 @@ class TestServiceProjectsCli:
         expected_present = [
             f"Address: http://127.0.0.1:{server.server_port}",
             "Capacity: 2 of 8 projects loaded",
-            "Automatic unload: after 10m idle",
+            "Automatic unload: after 10 minutes idle",
             "- Project: busy",
             r"Path: busy",
             "Active requests: 2",
-            "Last activity: 1m 5s ago",
+            "Last activity: 1 minute 5 seconds ago",
             "Last request: 14:05:06",
             "- Project: ready",
             r"Path: ready",
             "Active requests: none",
-            "Last activity: 4s ago",
+            "Last activity: 4 seconds ago",
             "Last request: not reported by service",
         ]
         missing = [text for text in expected_present if text not in lines]

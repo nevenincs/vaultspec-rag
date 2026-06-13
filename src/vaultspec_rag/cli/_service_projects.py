@@ -24,34 +24,46 @@ __all__ = [
 ]
 
 
+def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
+    unit = singular if value == 1 else plural or f"{singular}s"
+    return f"{value} {unit}"
+
+
 def _humanize_idle(seconds: float) -> str:
-    """Format an idle duration as ``1h 5m``, ``2m 14s``, or ``12s``."""
+    """Format an idle duration with full unit names."""
     seconds = max(0.0, float(seconds))
     if seconds < 60:
-        return f"{int(seconds)}s"
+        return _counted_unit(int(seconds), "second")
     if seconds < 3600:
         m, s = divmod(int(seconds), 60)
-        return f"{m}m {s}s"
+        if s:
+            return f"{_counted_unit(m, 'minute')} {_counted_unit(s, 'second')}"
+        return _counted_unit(m, "minute")
     h, rem = divmod(int(seconds), 3600)
     m = rem // 60
-    return f"{h}h {m}m"
+    if m:
+        return f"{_counted_unit(h, 'hour')} {_counted_unit(m, 'minute')}"
+    return _counted_unit(h, "hour")
 
 
 def _humanize_duration(seconds: int) -> str:
     """Format a configuration duration for user-facing output."""
     seconds = max(0, int(seconds))
     if seconds < 60:
-        return f"{seconds}s"
+        return _counted_unit(seconds, "second")
     if seconds < 3600:
         minutes, remainder = divmod(seconds, 60)
         if remainder:
-            return f"{minutes}m {remainder}s"
-        return f"{minutes}m"
+            return (
+                f"{_counted_unit(minutes, 'minute')} "
+                f"{_counted_unit(remainder, 'second')}"
+            )
+        return _counted_unit(minutes, "minute")
     hours, remainder = divmod(seconds, 3600)
     minutes = remainder // 60
     if minutes:
-        return f"{hours}h {minutes}m"
-    return f"{hours}h"
+        return f"{_counted_unit(hours, 'hour')} {_counted_unit(minutes, 'minute')}"
+    return _counted_unit(hours, "hour")
 
 
 def _truncate_root(root: str, width: int = 60) -> str:
