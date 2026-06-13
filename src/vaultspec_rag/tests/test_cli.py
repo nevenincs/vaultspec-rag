@@ -940,23 +940,20 @@ class TestServerCommands:
         assert "watcher" not in result.output.lower()
         assert "mcp" not in result.output.lower()
 
-    def test_mcp_help(self):
-        result = runner.invoke(app, ["server", "mcp", "--help"])
-        assert result.exit_code == 0
-        assert "start" in result.output
-        assert "stop" in result.output
-        assert "status" in result.output
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["server", "mcp", "--help"],
+            ["server", "mcp", "start", "--help"],
+            ["server", "mcp", "stop"],
+            ["server", "mcp", "status"],
+        ],
+    )
+    def test_server_mcp_is_not_a_user_facing_command(self, argv: list[str]):
+        result = runner.invoke(app, argv)
 
-    def test_mcp_stop(self):
-        result = runner.invoke(app, ["server", "mcp", "stop"])
-        assert result.exit_code == 0
-        assert "stdio" in result.output.lower()
-
-    def test_mcp_status(self):
-        result = runner.invoke(app, ["server", "mcp", "status"])
-        assert result.exit_code == 0
-        assert "VaultSpec Search" in result.output
-        assert "stdio" in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
     def test_service_stop_no_status_file(self, tmp_path: Path):
         # Isolate the status dir to a guaranteed-empty tmp location: the
@@ -1019,8 +1016,7 @@ class TestServerRoutingFlattened:
     """Verify the flattened `server` command surface (W03.P05.S12 #169).
 
     The `service` nesting level is removed; lifecycle commands and
-    operator sub-groups now live directly under `server`.  `server mcp`
-    remains callable as a hidden compatibility surface.
+    operator sub-groups now live directly under `server`.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
@@ -1114,10 +1110,6 @@ class TestServerRoutingFlattened:
         assert result.exit_code == 0, result.output
         assert "Emit JSON for scripts" in result.output
         assert "JSON envelope" not in result.output
-
-    def test_server_mcp_start_help(self):
-        result = runner.invoke(app, ["server", "mcp", "start", "--help"])
-        assert result.exit_code == 0, result.output
 
     def test_server_service_not_a_command(self):
         """The `service` nesting level must no longer exist."""
@@ -2544,11 +2536,10 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         assert "docs/indexing.md" in result.output
 
-    def test_mcp_start_help_clean(self):
+    def test_mcp_start_help_removed(self):
         result = runner.invoke(app, ["server", "mcp", "start", "--help"])
-        assert result.exit_code == 0, result.output
-        self._assert_clean(result)
-        assert "stdio" in result.output.lower() or "MCP" in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
     def test_benchmark_help_clean(self):
         result = runner.invoke(app, ["benchmark", "--help"])
