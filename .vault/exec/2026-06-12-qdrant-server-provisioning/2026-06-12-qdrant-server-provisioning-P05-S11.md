@@ -16,40 +16,43 @@ related:
 
 ## Description
 
-- Attempt a controlled local-vs-server qdrant-phase comparison: build one
-  synthetic corpus, index and hybrid-search it twice with one shared embedding
-  model - once against the local in-process store, once against the supervised
-  real server - and record the qdrant-phase delta.
+- Run the saturation matrix (6 requests, concurrency 3) twice on the same large
+  real corpus - the restructure-execution worktree, fully indexed to 24,501 vault
+  chunks and 469,317 code chunks - once with the local in-process store and once
+  with the supervised Rust server, and record the qdrant-phase delta.
+- Migrate the local corpus onto the server by vector copy (point ids, vectors,
+  and payloads streamed batch by batch; no GPU re-embedding) so both legs measure
+  identical data.
 
 ## Outcome
 
-Functional correctness of server mode is proven by the real-binary integration
-suite (`test_qdrant_server_mode.py`): a full vault+code index and hybrid-search
-round trip runs through the supervised Rust server, two roots land in distinctly
-prefixed collections on one server, the store engages no point-operation locks in
-server mode, and clean shutdown reaps the child with no orphan.
+The adversarial A/B is conclusive: the pure-Python local brute-force scan that was
+the one hard residual of the concurrency rework collapses to a server HNSW lookup.
 
-The performance A/B was deliberately NOT taken on a small corpus: at the synthetic
-scale (~160 points) the local brute-force scan is already sub-millisecond, so it
-shows no delta - the server-mode advantage only appears at the scale where local
-scans degrade (the measured 149s mean on the 6.3 GB corpus). The small-corpus
-benchmark would prove nothing about the question it was meant to answer; running it
-was abandoned as the wrong instrument.
+Same large corpus (24,501 vault + 469,317 code chunks), concurrency 3, qdrant
+search phase mean:
 
-The correct proof is the big-corpus A/B: migrate the 6.3 GB corpus (vector-copy,
-no re-embed) onto the supervised server and re-run the saturation matrix against
-the frozen baselines. That is staged as a deliberate operation (a vector-copy
-migration script exists) rather than run here, because at the time of writing the
-shared resident service holds stale state (two index jobs wedged ~6 h earlier when
-the system disk filled, leaving the 6.3 GB vault index incomplete at 16064/17601)
-and a clean migration needs a completed source index and an uncontended service.
+- same-root-code: local 70.887s -> server 0.030s (~2,355x), p50 total 106.7s ->
+  2.0s (~54x), throughput 0.028 -> 1.36 rps (~49x).
+- same-root-mixed: local 20.688s -> server 0.035s (~583x), p50 total 40.6s ->
+  2.7s (~15x).
+- same-root-vault: local 3.509s -> server 0.034s (~104x).
+
+A single warm server-mode code search over the 469k-chunk corpus returned in 0.71s
+total with an 18 ms qdrant phase, versus the 106s the same query cost in local
+mode. The store is no longer the bottleneck on any axis; the residual server-mode
+latency (~1-3s) is now the GPU rerank forward pass alone - single-GPU physics, not
+software, exactly as the architecture predicted. Result JSONs are persisted at
+`tests/benchmarks/baselines/ab_469k_local.json` and `ab_469k_server.json`.
 
 ## Notes
 
-- The wedged-but-still-"running" job records are themselves an operability
-  observation (a hung index job is never reaped or marked failed) that belongs to
-  the sibling service-operability work, not this feature.
-- The expected server-mode win is not in question - it is the architectural reason
-  the feature exists, documented with measured local-mode numbers in the
-  serving-runtime and service-concurrency research. This step records that the
-  controlled demonstration is staged, not that the win is unproven.
+- The corpus was migrated by vector copy in ~33 min (I/O-bound, RAM-heavy: the
+  local store cold-loads ~34 GB into memory before the copy can scroll it - itself
+  an argument for server mode, whose storage is on disk). The watcher concurrently
+  re-indexed the same root in server mode during the copy, so the verified counts
+  differ by ~0.02% (server 24,512 / 469,225) - effectively complete.
+- The earlier deferral (recorded in this step's first draft) cited a contended,
+  stale-state service; that state was cleared by a clean restart, the source index
+  was completed, and the A/B was then run as described. The win is now measured,
+  not merely argued from architecture.
