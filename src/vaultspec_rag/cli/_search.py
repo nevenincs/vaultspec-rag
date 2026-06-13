@@ -450,11 +450,7 @@ def _render_in_process_results(
         return
 
     if not results:
-        _cli.console.print(
-            f"No {search_type} results found for: {query}",
-            markup=False,
-            highlight=False,
-        )
+        _render_empty_in_process_results(query, search_type, target)
         return
 
     from dataclasses import asdict
@@ -466,6 +462,42 @@ def _render_in_process_results(
         no_truncate=no_truncate,
         show_scores=show_scores,
         root=target,
+    )
+
+
+def _render_empty_in_process_results(
+    query: str,
+    search_type: str,
+    target: pathlib.Path,
+) -> None:
+    result_label = _search_type_result_label(search_type)
+    count_label = _search_type_count_label(search_type)
+    _cli.console.print(
+        f"No {result_label} results found for: {query}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Why: No matching {count_label} were found in the local index.",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Project: {target}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _cli.console.print(
+        f"  - vaultspec-rag index --type {search_type}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        "  - vaultspec-rag status",
+        markup=False,
+        highlight=False,
     )
 
 
@@ -717,36 +749,41 @@ def handle_search(
             )
             raise typer.Exit(code=1)
 
-    results = _try_in_process_search(
-        target,
-        query,
-        search_type,
-        max_results,
-        language,
-        path,
-        structure,
-        function_name,
-        class_name,
-        include_paths,
-        exclude_paths,
-        dedup_locales,
-        prefer,
-        doc_type,
-        feature,
-        date,
-        tag,
-        json_mode,
-    )
+    try:
+        results = _try_in_process_search(
+            target,
+            query,
+            search_type,
+            max_results,
+            language,
+            path,
+            structure,
+            function_name,
+            class_name,
+            include_paths,
+            exclude_paths,
+            dedup_locales,
+            prefer,
+            doc_type,
+            feature,
+            date,
+            tag,
+            json_mode,
+        )
 
-    _render_in_process_results(
-        results,
-        query,
-        search_type,
-        json_mode,
-        False,
-        show_scores,
-        target,
-    )
+        _render_in_process_results(
+            results,
+            query,
+            search_type,
+            json_mode,
+            False,
+            show_scores,
+            target,
+        )
+    finally:
+        from ..registry import get_registry
+
+        get_registry().close_project(target)
 
 
 def _validate_search_extra_args(ctx: typer.Context) -> None:

@@ -2031,6 +2031,40 @@ class TestSearchSafetyContract:
         assert "index is for" not in result.output
         assert not any("=" in line for line in lines)
 
+    def test_empty_local_fallback_search_is_actionable(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "missing local symbol",
+                "--type",
+                "vault",
+                "--limit",
+                "1",
+                "--port",
+                "1",
+                "--allow-fallback",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert lines[0].endswith("missing local symbol")
+        labels = _label_values(result.output)
+        assert labels["Why"].startswith("No matching vault documents")
+        assert "local index" in labels["Why"]
+        assert labels["Project"] == str(tmp_path)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            "- vaultspec-rag index --type vault",
+            "- vaultspec-rag status",
+        ]
+        assert "No vault results found" not in result.output
+        _assert_no_table_borders(result.output)
+
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
         from ..cli import _suppress_hf_progress
