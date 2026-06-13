@@ -1,10 +1,9 @@
 """Typer application objects, sub-app nesting, state, and root callback.
 
 This submodule MUST be imported first by the package ``__init__`` so
-the ``app`` / ``server_root_app`` / ``server_app`` / ``mcp_app`` /
-``server_projects_app`` / ``server_watcher_app`` objects exist and
-are nested before any command submodule's ``@*.command()`` decorator
-runs.
+the ``app`` / ``server_root_app`` / ``server_app`` /
+``server_projects_app`` / ``server_watcher_app`` objects exist and are nested
+before any command submodule's ``@*.command()`` decorator runs.
 """
 
 from __future__ import annotations
@@ -26,42 +25,90 @@ __all__ = [
     "_global_target",
     "app",
     "main",
-    "mcp_app",
     "preprocess_app",
     "server_app",
     "server_projects_app",
+    "server_qdrant_app",
     "server_watcher_app",
     "version_callback",
 ]
 
 app = typer.Typer(
-    help="VaultSpec RAG: Unified search over documentation and code.",
-    rich_markup_mode="rich",
+    help="VaultSpec RAG: search project documentation and source code.",
+    rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
 
 # Command Groups
 server_root_app = typer.Typer(
-    help="Manage the HTTP RAG service and the MCP protocol adapter.",
+    help="Manage the background search service.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
 )
 # Alias kept for backward-compatible decorator references in command modules.
 server_app = server_root_app
-mcp_app = typer.Typer(help="Control the Model Context Protocol (MCP) server.")
 server_projects_app = typer.Typer(
-    help="Inspect and evict project slots on a running RAG service.",
+    help="Inspect and unload projects held by the running search service.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
 )
 server_watcher_app = typer.Typer(
-    help="Inspect and control the filesystem auto-reindex watcher.",
+    help="Inspect and control automatic index updates.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
+)
+server_qdrant_app = typer.Typer(
+    help="Install and inspect the managed Qdrant server.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
 )
 preprocess_app = typer.Typer(
-    help="Inspect and validate document-preprocessing rules (#185).",
+    help="Inspect and validate document preprocessing rules.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
 )
 
 app.add_typer(server_root_app, name="server")
-server_root_app.add_typer(mcp_app, name="mcp")
 server_root_app.add_typer(server_projects_app, name="projects")
-server_root_app.add_typer(server_watcher_app, name="watcher")
+server_root_app.add_typer(server_watcher_app, name="updates")
+server_root_app.add_typer(server_qdrant_app, name="qdrant")
 app.add_typer(preprocess_app, name="preprocess")
+
+
+def _show_group_help_if_no_command(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
+
+
+@server_root_app.callback(invoke_without_command=True)
+def server_main(ctx: typer.Context) -> None:
+    """Show server command help when no server subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_projects_app.callback(invoke_without_command=True)
+def server_projects_main(ctx: typer.Context) -> None:
+    """Show project command help when no project subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_watcher_app.callback(invoke_without_command=True)
+def server_updates_main(ctx: typer.Context) -> None:
+    """Show update command help when no update subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_qdrant_app.callback(invoke_without_command=True)
+def server_qdrant_main(ctx: typer.Context) -> None:
+    """Show Qdrant command help when no Qdrant subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@preprocess_app.callback(invoke_without_command=True)
+def preprocess_main(ctx: typer.Context) -> None:
+    """Show preprocess command help when no preprocess subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
 
 
 class CLIState:
@@ -130,42 +177,28 @@ def main(
         str | None,
         typer.Option(
             "--data-dir",
-            help="RAG data root (default: .vault/data/search-data)",
+            help="Index data directory (default: .vault/data/search-data)",
         ),
     ] = None,
-    qdrant_dir: Annotated[
+    storage_dir: Annotated[
         str | None,
         typer.Option(
-            "--qdrant-dir",
-            help="Qdrant storage directory relative to data-dir",
-        ),
-    ] = None,
-    index_meta: Annotated[
-        str | None,
-        typer.Option(
-            "--index-meta",
-            help="Vault index metadata filename",
-        ),
-    ] = None,
-    code_index_meta: Annotated[
-        str | None,
-        typer.Option(
-            "--code-index-meta",
-            help="Code index metadata filename",
+            "--storage-dir",
+            help="Index data subdirectory relative to --data-dir",
         ),
     ] = None,
     status_dir: Annotated[
         str | None,
         typer.Option(
             "--status-dir",
-            help="Service status directory (default: ~/.vaultspec-rag)",
+            help="Directory for service runtime files (default: ~/.vaultspec-rag)",
         ),
     ] = None,
     log_file: Annotated[
         str | None,
         typer.Option(
             "--log-file",
-            help="Service log filename relative to status-dir",
+            help="Service log filename inside --status-dir",
         ),
     ] = None,
     _version: Annotated[
@@ -188,12 +221,8 @@ def main(
     cli_overrides: dict[str, Any] = {}
     if data_dir is not None:
         cli_overrides["data_dir"] = data_dir
-    if qdrant_dir is not None:
-        cli_overrides["qdrant_dir"] = qdrant_dir
-    if index_meta is not None:
-        cli_overrides["index_metadata_file"] = index_meta
-    if code_index_meta is not None:
-        cli_overrides["code_index_metadata_file"] = code_index_meta
+    if storage_dir is not None:
+        cli_overrides["qdrant_dir"] = storage_dir
     if status_dir is not None:
         cli_overrides["status_dir"] = status_dir
     if log_file is not None:
@@ -228,7 +257,7 @@ def main(
         layout = resolve_workspace(target_override=target)
         ctx.obj = CLIState(layout)
     except WorkspaceError as e:
-        _cli.console.print(f"[bold red]Error:[/] {e}")
+        _cli.console.print(f"Error: {e}", markup=False, highlight=False)
         raise typer.Exit(code=1) from None
 
 

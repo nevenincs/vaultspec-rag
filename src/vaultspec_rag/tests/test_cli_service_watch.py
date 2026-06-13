@@ -77,3 +77,38 @@ def test_rag_root_is_stripped_from_child_env() -> None:
         assert EnvVar.RAG_ROOT.value not in env
     finally:
         _restore_env(EnvVar.RAG_ROOT, prev)
+
+
+def test_unset_local_only_adds_no_local_only_env() -> None:
+    env = _service_child_env()
+    assert EnvVar.LOCAL_ONLY.value not in env
+
+
+def test_local_only_true_sets_enabled_one() -> None:
+    env = _service_child_env(local_only=True)
+    assert env[EnvVar.LOCAL_ONLY.value] == "1"
+
+
+def test_local_only_false_sets_enabled_zero() -> None:
+    env = _service_child_env(local_only=False)
+    assert env[EnvVar.LOCAL_ONLY.value] == "0"
+
+
+def test_unset_local_only_flag_preserves_operator_env() -> None:
+    # An operator who exported VAULTSPEC_RAG_LOCAL_ONLY=1 must keep it
+    # when no --local-only flag selects a value (None).
+    prev = _set_env(EnvVar.LOCAL_ONLY, "1")
+    try:
+        env = _service_child_env(local_only=None)
+        assert env[EnvVar.LOCAL_ONLY.value] == "1"
+    finally:
+        _restore_env(EnvVar.LOCAL_ONLY, prev)
+
+
+def test_set_local_only_flag_overrides_operator_env() -> None:
+    prev = _set_env(EnvVar.LOCAL_ONLY, "1")
+    try:
+        env = _service_child_env(local_only=False)
+        assert env[EnvVar.LOCAL_ONLY.value] == "0"
+    finally:
+        _restore_env(EnvVar.LOCAL_ONLY, prev)

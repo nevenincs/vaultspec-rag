@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
+modified: '2026-03-08'
 ---
 
 # Audit: search.py Round 27 — Correctness Deep Dive

@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#codebase-hygiene-sweep'
 date: '2026-05-31'
+modified: '2026-05-31'
 related:
   - '[[2026-05-31-codebase-hygiene-sweep-research]]'
 ---

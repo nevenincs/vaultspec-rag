@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#cli-backend-parity'
 date: '2026-05-28'
+modified: '2026-05-28'
 related:
   - '[[2026-05-28-cli-backend-parity-research]]'
   - '[[2026-05-28-cli-search-filters-adr]]'

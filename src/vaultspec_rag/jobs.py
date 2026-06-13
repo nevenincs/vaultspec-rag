@@ -7,7 +7,10 @@ along with async task execution helpers for background reindexing.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import logging
+import os
+import sys
 import threading
 import time
 import uuid
@@ -16,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
+from .concurrency import get_index_limiter
+from .logging_config import log_event
 from .registry import get_registry
 
 if TYPE_CHECKING:
@@ -32,6 +37,7 @@ __all__ = [
     "record_start",
     "register_on_job_complete",
     "reset",
+    "resource_snapshot",
     "snapshot",
     "start_reindex_codebase",
     "start_reindex_vault",
@@ -56,6 +62,30 @@ _background_tasks: set[asyncio.Task[Any]] = set()
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 
 
+def _runtime_context() -> dict[str, object]:
+    return {
+        "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "user": getpass.getuser(),
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "virtual_env": os.environ.get("VIRTUAL_ENV"),
+    }
+
+
+def resource_snapshot() -> dict[str, object]:
+    """Return a best-effort current resource snapshot for the service process."""
+    from .memory_probe import current_cuda_mb, current_rss_mb
+
+    cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+    return {
+        "rss_mb": round(current_rss_mb(), 1),
+        "cuda_allocated_mb": round(cuda_allocated_mb, 1),
+        "cuda_reserved_mb": round(cuda_reserved_mb, 1),
+    }
+
+
 def register_on_job_complete(callback: Callable[[float], None]) -> None:
     """Register a callback to be run when a background job completes.
 
@@ -64,13 +94,23 @@ def register_on_job_complete(callback: Callable[[float], None]) -> None:
     _on_job_complete_callbacks.append(callback)
 
 
-def record_start(source: Source, trigger: Trigger) -> str:
+def record_start(
+    source: Source,
+    trigger: Trigger,
+    *,
+    project_root: Path | None = None,
+    command: str | None = None,
+    initiator_kind: str | None = None,
+) -> str:
     """Append a new ``running`` activity record and return its stable id.
 
     Args:
         source: ``"vault"`` or ``"code"`` - the corpus being (re)indexed.
         trigger: ``"tool"`` (a reindex MCP tool call) or ``"watcher"``
             (the filesystem watcher reindex loop).
+        project_root: Optional workspace root the job acts on.
+        command: Optional service-domain command name.
+        initiator_kind: Optional caller identity, e.g. CLI, MCP, or watcher.
 
     Returns:
         The record's stable ``id`` (a uuid4 hex string) to pass to
@@ -86,9 +126,31 @@ def record_start(source: Source, trigger: Trigger) -> str:
         "finished_at": None,
         "result": None,
         "progress": None,
+        "initiator": {
+            "kind": initiator_kind or trigger,
+            "command": command or f"{trigger}_{source}_index",
+            "project_root": str(project_root) if project_root is not None else None,
+        },
+        "runtime": _runtime_context(),
+        "resources": {
+            "started": resource_snapshot(),
+            "finished": None,
+        },
     }
     with _lock:
         _records.append(record)
+    log_event(
+        logger,
+        "service.job",
+        "started",
+        job_id=record_id,
+        source=source,
+        trigger=trigger,
+        phase="running",
+        initiator_kind=initiator_kind or trigger,
+        command=command or f"{trigger}_{source}_index",
+        project_root=str(project_root) if project_root is not None else None,
+    )
     return record_id
 
 
@@ -106,16 +168,34 @@ def record_progress(
         completed: Count of items processed so far in this step.
         total: Total number of items to process, if known.
     """
+    log_fields: dict[str, object] | None = None
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
+                progress = record.get("progress")
+                progress_step = None
+                if isinstance(progress, dict):
+                    progress_data = cast("dict[str, object]", progress)
+                    progress_step = progress_data.get("step")
                 record["progress"] = {
                     "step": step,
                     "completed": completed,
                     "total": total,
                     "last_updated": time.time(),
                 }
-                return
+                if progress_step != step:
+                    log_fields = {
+                        "job_id": record_id,
+                        "source": record.get("source"),
+                        "trigger": record.get("trigger"),
+                        "phase": record.get("phase"),
+                        "step": step,
+                        "completed": completed,
+                        "total": total,
+                    }
+                break
+    if log_fields is not None:
+        log_event(logger, "service.job", "progress", fields=log_fields)
 
 
 def record_finish(
@@ -145,13 +225,45 @@ def record_finish(
     else:
         target_phase = "error" if error is not None else "done"
     summary = error if error is not None else result
+    log_fields: dict[str, object] | None = None
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
+                if record["finished_at"] is not None:
+                    # Idempotent: cancellation paths can race their
+                    # cleanup (the canceller finishes the record, then
+                    # the owner's cleanup tries again); the first
+                    # terminal state wins and stays.
+                    logger.debug(
+                        "record_finish: job %s already finished; "
+                        "keeping its original terminal state",
+                        record_id,
+                    )
+                    return
                 record["phase"] = target_phase
                 record["finished_at"] = finished_at
                 record["result"] = summary
-                return
+                resources = record.get("resources")
+                if isinstance(resources, dict):
+                    resources = cast("dict[str, object]", resources)
+                    resources["finished"] = resource_snapshot()
+                log_fields = {
+                    "job_id": record_id,
+                    "source": record.get("source"),
+                    "trigger": record.get("trigger"),
+                    "phase": target_phase,
+                    "result": summary,
+                }
+                break
+    if log_fields is not None:
+        level = logging.ERROR if target_phase == "error" else logging.INFO
+        log_event(
+            logger,
+            "service.job",
+            "finished",
+            severity=level,
+            fields=log_fields,
+        )
 
 
 def snapshot() -> list[dict[str, object]]:
@@ -170,6 +282,21 @@ def snapshot() -> list[dict[str, object]]:
             prog = record.get("progress")
             if isinstance(prog, dict):
                 item["progress"] = dict(cast("dict[str, object]", prog))
+            initiator = record.get("initiator")
+            if isinstance(initiator, dict):
+                item["initiator"] = dict(cast("dict[str, object]", initiator))
+            runtime = record.get("runtime")
+            if isinstance(runtime, dict):
+                item["runtime"] = dict(cast("dict[str, object]", runtime))
+            resources = record.get("resources")
+            if isinstance(resources, dict):
+                resource_data = cast("dict[str, object]", resources)
+                item["resources"] = {
+                    str(key): dict(cast("dict[str, object]", value))
+                    if isinstance(value, dict)
+                    else value
+                    for key, value in resource_data.items()
+                }
             copied.append(item)
         return copied
 
@@ -212,9 +339,17 @@ class JobProgressReporter:
         pass
 
 
-def start_reindex_vault(root: Path, clean: bool) -> str:
+def start_reindex_vault(
+    root: Path, clean: bool, *, initiator_kind: str = "service"
+) -> str:
     """Start a background vault reindexing task and return the job_id."""
-    job_id = record_start("vault", "tool")
+    job_id = record_start(
+        "vault",
+        "tool",
+        project_root=root,
+        command="reindex_vault",
+        initiator_kind=initiator_kind,
+    )
     record_progress(job_id, "queued")
 
     async def run_indexing_bg() -> None:
@@ -246,7 +381,7 @@ def start_reindex_vault(root: Path, clean: bool) -> str:
                     record_finish(job_id, error=str(exc))
                     logger.exception("Background vault re-indexing failed")
 
-            await _run_in_thread(_bg_run)
+            await _run_in_thread(_bg_run, limiter=get_index_limiter())
             duration = time.perf_counter() - started
             for cb in _on_job_complete_callbacks:
                 try:
@@ -262,9 +397,20 @@ def start_reindex_vault(root: Path, clean: bool) -> str:
     return job_id
 
 
-def start_reindex_codebase(root: Path, clean: bool) -> str:
+def start_reindex_codebase(
+    root: Path,
+    clean: bool,
+    *,
+    initiator_kind: str = "service",
+) -> str:
     """Start a background codebase reindexing task and return the job_id."""
-    job_id = record_start("code", "tool")
+    job_id = record_start(
+        "code",
+        "tool",
+        project_root=root,
+        command="reindex_codebase",
+        initiator_kind=initiator_kind,
+    )
     record_progress(job_id, "queued")
 
     async def run_indexing_bg() -> None:
@@ -301,7 +447,7 @@ def start_reindex_codebase(root: Path, clean: bool) -> str:
                     record_finish(job_id, error=str(exc))
                     logger.exception("Background codebase re-indexing failed")
 
-            await _run_in_thread(_bg_run)
+            await _run_in_thread(_bg_run, limiter=get_index_limiter())
             duration = time.perf_counter() - started
             for cb in _on_job_complete_callbacks:
                 try:

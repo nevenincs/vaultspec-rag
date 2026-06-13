@@ -16,8 +16,14 @@ Three layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
-from typing import TYPE_CHECKING, Any, cast
+import re
+import threading
+import time
+import urllib.parse
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -36,7 +42,7 @@ from ...server import _jobs
 from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 runner = CliRunner()
@@ -44,6 +50,144 @@ runner = CliRunner()
 # A port with nothing listening: _try_mcp_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59235"
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_JOB_ROW_RE = re.compile(
+    r"^(?P<marker>[*!~ -]) (?P<time>\d\d:\d\d:\d\d|time not reported) "
+    r"(?P<state>\S+) (?P<operation>.+?) \(job (?P<id>[^)]+)\) - "
+    r"(?P<detail>.*)$"
+)
+
+
+def _plain_lines(output: str) -> list[str]:
+    clean = _ANSI_RE.sub("", output)
+    return [line.strip() for line in clean.splitlines() if line.strip()]
+
+
+def _jobs_feed_rows(output: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for raw_line in _ANSI_RE.sub("", output).splitlines():
+        match = _JOB_ROW_RE.fullmatch(raw_line)
+        if match is not None:
+            rows.append(match.groupdict())
+    return rows
+
+
+def _label_values(output: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in _plain_lines(output):
+        if ": " in line:
+            label, value = line.split(": ", 1)
+            values[label] = value
+    return values
+
+
+class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
+    payloads: ClassVar[list[dict[str, object]]] = []
+    paths: ClassVar[list[str]] = []
+    request_count = 0
+
+    def do_GET(self) -> None:
+        type(self).paths.append(self.path)
+        payload_index = min(self.request_count, len(self.payloads) - 1)
+        payload = self.payloads[payload_index]
+        type(self).request_count += 1
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def log_message(self, format: str, *args: object) -> None:
+        _ = format, args
+
+
+@contextlib.contextmanager
+def _jobs_http_server(
+    payloads: list[dict[str, object]],
+) -> Generator[tuple[http.server.HTTPServer, int]]:
+    _JobsHTTPHandler.payloads = payloads
+    _JobsHTTPHandler.paths = []
+    _JobsHTTPHandler.request_count = 0
+    server = http.server.HTTPServer(("127.0.0.1", 0), _JobsHTTPHandler)
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, port
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _cli_jobs_payload(now: float) -> dict[str, object]:
+    return {
+        "jobs": [
+            {
+                "id": "runjob12",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": now - 10,
+                "finished_at": None,
+                "result": None,
+                "progress": {"step": "embed", "completed": 2, "total": 5},
+                "runtime_seconds": 10.0,
+                "last_progress_age_seconds": 1.0,
+                "initiator": {
+                    "kind": "watcher",
+                    "command": "watcher_code_index",
+                    "project_root": "proj-a",
+                },
+                "runtime": {"pid": 123, "user": "operator"},
+                "resources": {"current": {"rss_mb": 10.0}},
+            },
+            {
+                "id": "failjob1",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "error",
+                "started_at": now - 120,
+                "finished_at": now - 100,
+                "result": "boom",
+                "progress": None,
+                "runtime_seconds": 20.0,
+                "last_progress_age_seconds": 100.0,
+                "initiator": {
+                    "kind": "cli",
+                    "command": "reindex_vault",
+                    "project_root": "proj-b",
+                },
+                "runtime": {"pid": 124, "user": "operator"},
+                "resources": {"finished": {"rss_mb": 11.0}},
+            },
+            {
+                "id": "donejob1",
+                "source": "code",
+                "trigger": "tool",
+                "phase": "done",
+                "started_at": now - 320,
+                "finished_at": now - 300,
+                "result": "+3 /1 -0 (22231ms)",
+                "progress": None,
+                "runtime_seconds": 20.0,
+                "last_progress_age_seconds": 300.0,
+                "initiator": {
+                    "kind": "cli",
+                    "command": "reindex_codebase",
+                    "project_root": "proj-c",
+                },
+                "runtime": {"pid": 125, "user": "operator"},
+                "resources": {"finished": {"rss_mb": 12.0}},
+            },
+        ],
+        "total": 3,
+        "returned": 3,
+        "summary": {
+            "running": 1,
+            "phases": {"running": 1, "error": 1, "done": 1},
+        },
+        "filters": {"limit": 5},
+    }
 
 
 @pytest.fixture
@@ -62,7 +206,7 @@ def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
 
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_returns_snapshot_shape(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     # Trigger a real job so the daemon has one in its registry.
@@ -85,12 +229,12 @@ async def test_get_jobs_returns_snapshot_shape(
             break
         await asyncio.sleep(0.1)
 
-    assert set(result) == {"jobs"}
+    assert set(result) == {"jobs", "total", "returned", "summary", "filters"}
     jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
     assert len(jobs) >= 1
     entry: dict[str, Any] = jobs[0]
-    assert set(entry) == {
+    assert {
         "id",
         "source",
         "trigger",
@@ -99,15 +243,25 @@ async def test_get_jobs_returns_snapshot_shape(
         "finished_at",
         "result",
         "progress",
-    }
+        "initiator",
+        "runtime",
+        "resources",
+        "runtime_seconds",
+        "last_progress_age_seconds",
+    } <= set(entry)
     assert entry["source"] == "vault"
     assert entry["trigger"] == "tool"
     assert entry["phase"] in ("done", "error", "failed")
+    assert entry["initiator"]["project_root"] == str(tmp_path)
+    assert entry["initiator"]["kind"] == "mcp"
+    assert isinstance(entry["runtime"]["pid"], int)
+    assert isinstance(entry["runtime"]["user"], str)
+    assert isinstance(entry["resources"]["started"]["rss_mb"], float)
 
 
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_is_newest_first(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
@@ -123,7 +277,7 @@ async def test_get_jobs_is_newest_first(
 
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_honours_limit(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
@@ -136,8 +290,23 @@ async def test_get_jobs_honours_limit(
 
 
 @pytest.mark.subprocess_gpu
+async def test_get_jobs_filters_by_source(
+    live_service: tuple[int, Path],  # noqa: ARG001
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
+    await tools.reindex_codebase(clean=True, project_root=str(tmp_path))
+
+    jobs = (await admin.get_jobs(source="code"))["jobs"]
+
+    assert jobs
+    assert all(entry["source"] == "code" for entry in jobs)
+
+
+@pytest.mark.subprocess_gpu
 async def test_get_jobs_non_positive_limit_is_empty(
-    _live_service: object,
+    live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
@@ -165,12 +334,1142 @@ def test_jobs_not_running_json() -> None:
 def test_jobs_not_running_prose() -> None:
     result = runner.invoke(app, ["server", "jobs", "--port", _DEAD_PORT])
     assert result.exit_code == 3
+    assert f"Address: http://127.0.0.1:{_DEAD_PORT}" in result.stdout
     assert "not running" in result.stdout.lower()
 
 
 def test_jobs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
+    expected_flags = (
+        "--state",
+        "--index",
+        "--query",
+        "--failed",
+        "--job-id",
+        "--started-by",
+        "--since",
+        "--watch",
+        "--interval",
+        "--refresh-count",
+    )
+    missing = [flag for flag in expected_flags if flag not in result.stdout]
+    assert not missing, f"missing flags in help: {missing}"
+    assert "--phase" not in result.stdout
+    assert "--source" not in result.stdout
+    assert "--trigger" not in result.stdout
+    assert "--running" not in result.stdout
+
+
+def test_jobs_help_uses_operator_language() -> None:
+    result = runner.invoke(app, ["server", "jobs", "--help"])
+    assert result.exit_code == 0
+    normalized = " ".join(result.stdout.split())
+    expected_phrases = (
+        "Filter by job state",
+        "job id, outcome, or progress",
+        "automatic updates",
+        "manual requests",
+        "index update activity",
+        "Show only failed jobs",
+        "Continuously refresh the human jobs view",
+        "Stop --watch after this many refreshes",
+        "active, waiting, finished, failed, or cancelled",
+    )
+    missing = [phrase for phrase in expected_phrases if phrase not in normalized]
+    assert not missing, f"missing operator phrasing: {missing}"
+    forbidden_phrases = (
+        "job id, result, or progress",
+        "--source",
+        "--trigger",
+        "'watcher'",
+        "index/reindex",
+        "failed/error",
+        "running, done, or failed",
+    )
+    leaked = [phrase for phrase in forbidden_phrases if phrase in normalized]
+    assert not leaked, f"internal phrasing leaked into help: {leaked}"
+
+
+def test_jobs_filter_summary_uses_operator_language() -> None:
+    from ...cli._service_jobs import _filters_label
+
+    rendered = _filters_label(
+        {
+            "filters": {
+                "phase": "running",
+                "trigger": "watcher",
+                "source": "code",
+                "failed": True,
+            }
+        }
+    )
+
+    assert rendered == (
+        " Filtered by state active or waiting; index code; "
+        "started by automatic updates; failed only."
+    )
+    assert "phase=" not in rendered
+    assert "state=" not in rendered
+    assert "trigger=" not in rendered
+    assert "started by=" not in rendered
+    assert "watcher" not in rendered
+
+
+def test_jobs_filter_summary_humanizes_finished_state() -> None:
+    from ...cli._service_jobs import _filters_label
+
+    rendered = _filters_label({"filters": {"phase": "done", "limit": 5}})
+
+    assert rendered == " Filtered by state finished."
+    assert "state=done" not in rendered
+    assert "state=" not in rendered
+
+
+def test_jobs_index_filter_is_operator_facing_cli_alias() -> None:
+    with _jobs_http_server(
+        [
+            {
+                "jobs": [],
+                "filters": {"limit": 20, "source": "code"},
+                "total": 0,
+                "returned": 0,
+            }
+        ]
+    ) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--index",
+                "code",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert request.path == "/jobs"
+    assert query["source"] == ["code"]
+    assert "No matching jobs." in result.output
+    assert "--source" not in result.output
+
+
+def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
+    with _jobs_http_server(
+        [
+            {
+                "jobs": [],
+                "filters": {"limit": 20, "trigger": "watcher"},
+                "total": 0,
+                "returned": 0,
+            }
+        ]
+    ) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--started-by",
+                "automatic",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert request.path == "/jobs"
+    assert query["trigger"] == ["watcher"]
+    assert "No matching jobs." in result.output
+    assert "--trigger" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("state", "phase", "filter_line", "empty_message"),
+    [
+        (
+            "active",
+            "running",
+            "Filter: state active",
+            "There are no active jobs.",
+        ),
+        (
+            "waiting",
+            "running",
+            "Filter: state waiting",
+            "There are no waiting jobs.",
+        ),
+        (
+            "finished",
+            "done",
+            "Filter: state finished",
+            "No jobs matched these filters.",
+        ),
+    ],
+)
+def test_jobs_state_filter_sends_service_phase(
+    state: str,
+    phase: str,
+    filter_line: str,
+    empty_message: str,
+) -> None:
+    with _jobs_http_server([{"jobs": [], "filters": {"phase": phase}, "total": 0}]) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--port", str(port), "--state", state],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["phase"] == [phase]
+    assert filter_line in result.stdout
+    assert empty_message in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (
+            ["server", "jobs", "--state", "bananas"],
+            'Invalid --state "bananas". Use active, waiting, finished, failed, '
+            "or cancelled.",
+        ),
+        (
+            ["server", "jobs", "--index", "database"],
+            'Invalid --index "database". Use vault or code.',
+        ),
+        (
+            ["server", "jobs", "--started-by", "robot"],
+            'Invalid --started-by "robot". Use manual or automatic.',
+        ),
+    ],
+)
+def test_jobs_rejects_invalid_filter_values(argv: list[str], message: str) -> None:
+    result = runner.invoke(
+        app,
+        [*argv, "--port", _DEAD_PORT],
+    )
+
+    assert result.exit_code == 2
+    assert message in result.stdout
+    assert "not running" not in result.stdout.lower()
+
+
+def test_jobs_rejects_invalid_filter_values_as_json() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "server",
+            "jobs",
+            "--state",
+            "bananas",
+            "--port",
+            _DEAD_PORT,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == "service.jobs"
+    assert payload["error"] == "invalid_filter"
+    assert 'Invalid --state "bananas"' in payload["message"]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["server", "jobs", "--phase", "finished"],
+        ["server", "jobs", "--source", "code"],
+        ["server", "jobs", "--trigger", "automatic"],
+    ],
+)
+def test_jobs_removed_legacy_filter_flags_are_not_supported(
+    argv: list[str],
+) -> None:
+    result = runner.invoke(app, [*argv, "--port", _DEAD_PORT])
+
+    assert result.exit_code != 0
+    assert "not running" not in result.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_message", "expected_filter"),
+    [
+        (
+            {"jobs": [], "filters": {"limit": 5, "phase": "running"}},
+            "There are no active or waiting jobs.",
+            "Filter: state active or waiting",
+        ),
+        (
+            {"jobs": [], "filters": {"limit": 5, "failed": True}},
+            "There are no failed jobs.",
+            "Filter: failed only",
+        ),
+        (
+            {"jobs": [], "filters": {"limit": 5, "source": "code"}},
+            "No jobs matched these filters.",
+            "Filter: index code",
+        ),
+        (
+            {"jobs": [], "filters": {"limit": 5}},
+            "No jobs have been reported by this service yet.",
+            None,
+        ),
+    ],
+)
+def test_empty_jobs_output_is_actionable(
+    result: dict[str, object],
+    expected_message: str,
+    expected_filter: str | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    _render_jobs_result(result, job_id=None, port=8766)
+
+    output = capsys.readouterr().out
+    lines = _plain_lines(output)
+    expected_present = [
+        "Jobs",
+        "Address: http://127.0.0.1:8766",
+        "Displayed: 0 matching jobs" if expected_filter else "Displayed: 0 jobs",
+        "Displayed jobs: 0 active, 0 waiting, 0 finished, 0 failed",
+        "Order: latest job appears last",
+        expected_message,
+        "Next actions:",
+        "vaultspec-rag server status --port 8766",
+        "vaultspec-rag server logs --limit 20 --port 8766",
+    ]
+    if expected_filter is not None:
+        expected_present.append(expected_filter)
+    missing = [line for line in expected_present if line not in lines]
+    assert not missing, f"missing actionable empty-jobs lines: {missing}"
+    assert "No running jobs." not in output
+    assert "No recent jobs." not in output
+
+
+def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
+    now = time.time()
+    with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    assert lines[:6] == [
+        "Jobs",
+        f"Address: http://127.0.0.1:{port}",
+        "Displayed: 3 jobs",
+        "Total: 3 jobs",
+        "Displayed jobs: 1 active, 0 waiting, 1 finished, 1 failed",
+        "Showing: active, waiting, failed, then latest finished",
+    ]
+    assert lines[6] == "Order: latest job appears last"
+    assert lines[7] == "Legend: * active, ~ waiting, ! failed, - finished"
+    rows = _jobs_feed_rows(output)
+    assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
+    assert rows[0]["marker"] == "-"
+    assert rows[0]["state"] == "finished"
+    assert rows[0]["operation"] == "code index refresh for proj-c"
+    assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22 seconds"
+    assert rows[1]["marker"] == "!"
+    assert rows[1]["state"] == "failed"
+    assert rows[1]["operation"] == "vault index refresh for proj-b"
+    assert rows[2]["marker"] == "*"
+    assert rows[2]["state"] == "active"
+    assert rows[2]["operation"] == "code index update for proj-a"
+    assert rows[2]["detail"] == (
+        "embedding source code sections 2 of 5; running for 10 seconds"
+    )
+    forbidden_fragments = (
+        "3/3 shown:",
+        "Displayed: 3 of 3",
+        "Latest shown last.",
+        "Filtered by",
+        "Jobs on service port",
+        "Recent jobs on service",
+        "States:",
+        "FAILED",
+        "project=",
+        " project proj-",
+        " id runjob12",
+        " done code index refresh",
+        "watcher",
+        "─",
+        "│",
+        "┌",
+        "┐",
+        "└",
+        "┘",
+    )
+    leaked = [text for text in forbidden_fragments if text in output]
+    assert not leaked, f"internal or table fragments leaked: {leaked}"
+
+
+def test_jobs_sparse_service_payload_uses_reported_absence_language() -> None:
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "source": "code",
+                "trigger": "tool",
+                "phase": "running",
+                "progress": {"step": "embed", "completed": 1, "total": 2},
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 1, "phases": {"running": 1}},
+        "filters": {"limit": 1},
+    }
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "1", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    rows = _jobs_feed_rows(result.output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["time"] == "time not reported"
+    assert row["id"] == "not reported"
+    assert row["operation"] == "code index operation"
+    assert row["detail"] == (
+        "embedding source code sections 1 of 2; runtime not reported"
+    )
+    assert "?" not in result.output
+    assert "unknown" not in result.output.lower()
+
+
+def test_jobs_humanizes_disk_space_failures() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    failed_job = jobs[1]
+    failed_job["result"] = "[Errno 28] No space left on device"
+    filters = cast("dict[str, object]", payload["filters"])
+    filters["failed"] = True
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--failed", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Displayed: 3 matching jobs" in result.output
+    assert "Total: 3 jobs" in result.output
+    assert "Filter: failed only" in result.output
+    assert "Filtered by failed only" not in result.output
+    assert "not enough disk space; free disk space and retry" in result.output
+    assert "[Errno 28]" not in result.output
+    assert "No space left on device" not in result.output
+
+
+def test_jobs_humanizes_subsecond_finish_duration() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "fastjob1",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "done",
+                "started_at": now - 1,
+                "finished_at": now,
+                "runtime_seconds": 0.1,
+                "result": "+0/1-0 (50ms)",
+                "initiator": {"kind": "tool", "project_root": r"fast"},
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 0, "phases": {"done": 1}},
+        "filters": {"limit": 5},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    rows = _jobs_feed_rows(result.output)
+    assert len(rows) == 1
+    assert rows[0]["detail"] == (
+        "added 0, updated 1, removed 0, finished in less than 1 second"
+    )
+    assert "finished in 0 seconds" not in result.output
+
+
+def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "failcuda",
+                "source": "code",
+                "trigger": "tool",
+                "phase": "failed",
+                "started_at": now - 2,
+                "finished_at": now - 1,
+                "runtime_seconds": 1.0,
+                "result": (
+                    "CUDA error: an illegal memory access was encountered\n"
+                    "Search for cudaErrorIllegalAddress in the CUDA docs.\n"
+                    "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
+                ),
+                "initiator": {"kind": "tool", "project_root": r"proj-cuda"},
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 0, "phases": {"failed": 1}},
+        "filters": {"limit": 5},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    rows = _jobs_feed_rows(result.output)
+    assert [row["id"] for row in rows] == ["failcuda"]
+    assert rows[0]["detail"] == (
+        "error: CUDA error: an illegal memory access was encountered "
+        "Search for cudaErrorIllegalAddress in the CUDA docs. "
+        "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
+    )
+    lines = _plain_lines(result.output)
+    assert "Showing: active, waiting, failed, then latest finished" in lines
+    assert "Legend: * active, ~ waiting, ! failed, - finished" in lines
+    assert lines[-1].endswith(rows[0]["detail"])
+
+
+def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    now = time.time()
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "id": "waiting-job",
+                    "source": "code",
+                    "trigger": "watcher",
+                    "phase": "running",
+                    "started_at": now - 20,
+                    "finished_at": None,
+                    "result": None,
+                    "progress": {"step": "queued", "completed": 0},
+                    "runtime_seconds": 20.0,
+                    "initiator": {
+                        "kind": "watcher",
+                        "project_root": r"proj-waiting",
+                    },
+                }
+            ],
+            "total": 1,
+            "returned": 1,
+            "summary": {"running": 1, "phases": {"running": 1}},
+            "filters": {"limit": 5},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    lines = _plain_lines(output)
+    assert lines[:6] == [
+        "Jobs",
+        "Address: http://127.0.0.1:8766",
+        "Displayed: 1 job",
+        "Total: 1 job",
+        "Displayed jobs: 0 active, 1 waiting, 0 finished, 0 failed",
+        "Showing: active, waiting, failed, then latest finished",
+    ]
+    assert lines[6] == "Order: latest job appears last"
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["marker"] == "~"
+    assert row["state"] == "waiting"
+    assert row["operation"] == "code index update for proj-waiting"
+    assert row["detail"] == "waiting to write the index for 20 seconds"
+
+
+def test_jobs_filtered_header_separates_matches_from_service_total(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    now = time.time()
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "id": "running-a",
+                    "source": "code",
+                    "trigger": "watcher",
+                    "phase": "running",
+                    "started_at": now - 40,
+                    "progress": {"step": "embed", "completed": 1, "total": 4},
+                    "initiator": {"project_root": r"proj-a"},
+                },
+                {
+                    "id": "running-b",
+                    "source": "vault",
+                    "trigger": "watcher",
+                    "phase": "running",
+                    "started_at": now - 20,
+                    "progress": {"step": "embed + upsert documents"},
+                    "initiator": {"project_root": r"proj-b"},
+                },
+            ],
+            "total": 58,
+            "returned": 2,
+            "summary": {"running": 2, "phases": {"running": 2, "done": 56}},
+            "filters": {"limit": 20, "phase": "running"},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    lines = _plain_lines(output)
+    assert lines[:8] == [
+        "Jobs",
+        "Address: http://127.0.0.1:8766",
+        "Displayed: 2 matching jobs",
+        "Total: 58 jobs",
+        "Displayed jobs: 2 active, 0 waiting, 0 finished, 0 failed",
+        "Order: latest job appears last",
+        "Legend: * active, ~ waiting, ! failed, - finished",
+        "Filter: state active or waiting",
+    ]
+    assert "Showing:" not in output
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 2
+    assert {row["id"] for row in rows} == {"running-a", "running-b"}
+    assert all(row["marker"] == "*" and row["state"] == "active" for row in rows)
+
+
+def test_jobs_state_active_only_shows_processing_jobs() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "waiting-job",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": now - 30,
+                "progress": {"step": "queued", "completed": 0},
+                "runtime_seconds": 30.0,
+                "initiator": {"project_root": r"waiting-project"},
+            },
+            {
+                "id": "active-job",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "running",
+                "started_at": now - 10,
+                "progress": {"step": "embed", "completed": 2, "total": 4},
+                "runtime_seconds": 10.0,
+                "initiator": {"project_root": r"active-project"},
+            },
+        ],
+        "total": 7,
+        "returned": 2,
+        "summary": {"running": 2, "phases": {"running": 2, "done": 5}},
+        "filters": {"limit": 5, "phase": "running"},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--state",
+                "active",
+                "--limit",
+                "5",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["phase"] == ["running"]
+    lines = _plain_lines(result.output)
+    assert "Displayed: 1 matching job" in lines
+    assert "Total: 7 jobs" in lines
+    assert "Displayed jobs: 1 active, 0 waiting, 0 finished, 0 failed" in lines
+    assert "Filter: state active" in lines
+    rows = _jobs_feed_rows(result.output)
+    assert [row["id"] for row in rows] == ["active-j"]
+    assert rows[0]["marker"] == "*"
+    assert rows[0]["state"] == "active"
+    assert "waiting-job" not in result.output
+    assert "active or waiting" not in result.output
+
+
+def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "active-job",
+                "source": "vault",
+                "trigger": "tool",
+                "phase": "running",
+                "started_at": now - 10,
+                "progress": {"step": "embed", "completed": 2, "total": 4},
+                "runtime_seconds": 10.0,
+                "initiator": {"project_root": r"active-project"},
+            },
+            {
+                "id": "waiting-job",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": now - 30,
+                "progress": {"step": "queued", "completed": 0},
+                "runtime_seconds": 30.0,
+                "initiator": {"project_root": r"waiting-project"},
+            },
+        ],
+        "total": 7,
+        "returned": 2,
+        "summary": {"running": 2, "phases": {"running": 2, "done": 5}},
+        "filters": {"limit": 5, "phase": "running"},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--state",
+                "waiting",
+                "--limit",
+                "5",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["phase"] == ["running"]
+    lines = _plain_lines(result.output)
+    assert "Displayed: 1 matching job" in lines
+    assert "Total: 7 jobs" in lines
+    assert "Displayed jobs: 0 active, 1 waiting, 0 finished, 0 failed" in lines
+    assert "Filter: state waiting" in lines
+    rows = _jobs_feed_rows(result.output)
+    assert [row["id"] for row in rows] == ["waiting-"]
+    assert rows[0]["marker"] == "~"
+    assert rows[0]["state"] == "waiting"
+    assert "active-job" not in result.output
+    assert "active or waiting" not in result.output
+
+
+def test_jobs_waiting_progress_uses_user_language() -> None:
+    from ...cli._service_jobs import _human_progress
+
+    waiting = _human_progress(
+        {"phase": "running", "progress": {"step": "queued", "completed": 0}}
+    )
+    compound = _human_progress(
+        {
+            "phase": "running",
+            "progress": {
+                "step": "embed + upsert chunks",
+                "completed": 64,
+                "total": 196,
+            },
+        }
+    )
+
+    assert waiting == "waiting to write the index"
+    assert "writer lock" not in waiting
+    assert waiting != "waiting to write the index 0"
+    assert compound == "embedding and writing sections 64 of 196"
+    assert "upsert" not in compound
+
+
+def test_jobs_missing_context_uses_reported_absence_language(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "source": "code",
+                    "trigger": "tool",
+                    "phase": "running",
+                    "runtime_seconds": 4.0,
+                    "progress": {"step": "embed", "completed": 1, "total": 2},
+                }
+            ],
+            "total": 1,
+            "returned": 1,
+            "summary": {"running": 1, "phases": {"running": 1}},
+            "filters": {"limit": 1},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["time"] == "time not reported"
+    assert row["id"] == "not reported"
+    assert row["operation"] == "code index operation"
+    assert "project unknown" not in output
+    assert "unknown" not in output
+
+
+def test_jobs_humanizes_cancelled_automatic_update(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_jobs_result
+
+    now = time.time()
+    _render_jobs_result(
+        {
+            "jobs": [
+                {
+                    "id": "cancelled-job",
+                    "phase": "cancelled",
+                    "source": "vault",
+                    "trigger": "watcher",
+                    "started_at": now - 10,
+                    "finished_at": now,
+                    "result": "watcher task cancelled",
+                    "initiator": {
+                        "kind": "watcher",
+                        "project_root": r"example",
+                    },
+                }
+            ],
+            "total": 1,
+            "returned": 1,
+            "summary": {"running": 0, "phases": {"cancelled": 1}},
+            "filters": {"limit": 1},
+        },
+        job_id=None,
+        port=8766,
+    )
+
+    output = capsys.readouterr().out
+    rows = _jobs_feed_rows(output)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["state"] == "cancelled"
+    assert row["operation"] == "vault index update for example"
+    assert row["detail"] == "automatic update cancelled"
+    assert "watcher" not in output
+
+
+def test_job_detail_uses_plain_runtime_and_resource_language(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_job_detail
+
+    _render_job_detail(
+        {
+            "id": "runjob12",
+            "source": "code",
+            "trigger": "watcher",
+            "phase": "running",
+            "runtime_seconds": 12.0,
+            "last_progress_age_seconds": 2.0,
+            "progress": {"step": "embed", "completed": 2, "total": 5},
+            "initiator": {
+                "kind": "watcher",
+                "command": "watcher_code_index",
+                "project_root": r"proj-a",
+            },
+            "runtime": {
+                "pid": 123,
+                "user": "operator",
+                "executable": r".venv\Scripts\python.exe",
+                "virtual_env": r".venv",
+            },
+            "resources": {
+                "current": {
+                    "rss_mb": 10.0,
+                    "cuda_allocated_mb": 20.0,
+                    "cuda_reserved_mb": 30.0,
+                }
+            },
+        }
+    )
+
+    output = capsys.readouterr().out
+    values = _label_values(output)
+    assert values["Status"] == "active"
+    assert values["Started by"] == "automatic updates"
+    assert values["Request"] == "automatic code index update"
+    assert values["Job process id"] == "123"
+    assert values["User"] == "operator"
+    assert values["Python"] == ".venv/Scripts/python.exe"
+    assert values["Python environment"] == ".venv"
+    assert values["Memory"] == "process 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB"
+    assert r".venv\Scripts\python.exe" not in output
+    for forbidden in (
+        "Initiator:",
+        "Command:",
+        "Process:",
+        "watcher_code_index",
+        "PID:",
+        "OS user:",
+        "Executable:",
+        "Virtual env:",
+    ):
+        assert forbidden not in output
+    assert "rss " not in output
+    assert "cuda alloc" not in output
+    assert "cuda reserved" not in output
+    assert "Memory: memory " not in output
+    assert "State:" not in output
+
+
+def test_jobs_job_id_detail_uses_precise_process_label() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    payload["jobs"] = [jobs[0]]
+    payload["total"] = 1
+    payload["returned"] = 1
+    payload["filters"] = {"limit": 20, "job_id": "runjob12"}
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--job-id", "runjob12", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
+    query = urllib.parse.parse_qs(request.query)
+    assert query["job_id"] == ["runjob12"]
+    values = _label_values(result.output)
+    assert values["Address"] == f"http://127.0.0.1:{port}"
+    assert values["Status"] == "active"
+    assert values["Project"] == "proj-a"
+    assert values["Path"] == r"proj-a"
+    assert values["Job process id"] == "123"
+    assert values["User"] == "operator"
+    assert values["Started by"] == "automatic updates"
+    assert values["Request"] == "automatic code index update"
+    assert "Project root:" not in result.output
+    assert "State:" not in result.output
+    assert "Process: 123" not in result.output
+    assert "PID:" not in result.output
+
+
+def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "cleanupjob",
+                "source": "code",
+                "trigger": "watcher",
+                "phase": "error",
+                "started_at": now - 12,
+                "finished_at": now - 3,
+                "result": "timed out",
+                "progress": {"step": "delete removed", "completed": 0, "total": 1},
+                "runtime_seconds": 9.0,
+                "initiator": {
+                    "kind": "watcher",
+                    "command": "watcher_code_index",
+                    "project_root": r"proj-a",
+                },
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 0, "phases": {"error": 1}},
+        "filters": {"limit": 20, "job_id": "cleanupjob"},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--job-id", "cleanupjob", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    values = _label_values(result.output)
+    assert values["Status"] == "failed"
+    assert values["Progress"] == "removing stale source files 0 of 1"
+    assert values["Error"] == "timed out"
+    assert "State:" not in result.output
+    assert "delete removed" not in result.output
+
+
+def test_job_detail_only_reports_progress_freshness_while_running(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ...cli._service_jobs import _render_job_detail
+
+    base_job = {
+        "id": "job1",
+        "source": "code",
+        "trigger": "watcher",
+        "runtime_seconds": 2.0,
+        "last_progress_age_seconds": 600.0,
+        "progress": {
+            "step": "embed + upsert chunks",
+            "completed": 0,
+            "total": 180,
+        },
+        "initiator": {
+            "kind": "watcher",
+            "command": "watcher_code_index",
+            "project_root": r"proj-a",
+        },
+    }
+
+    _render_job_detail({**base_job, "phase": "running"})
+    running_output = capsys.readouterr().out
+
+    _render_job_detail(
+        {
+            **base_job,
+            "id": "failed1",
+            "phase": "error",
+            "result": "[Errno 28] No space left on device",
+        }
+    )
+    failed_output = capsys.readouterr().out
+
+    assert "10 minutes" in running_output
+    assert "10 minutes" not in failed_output
+
+
+def test_jobs_json_preserves_raw_service_payload() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port), "--json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.output)
+    assert envelope["ok"] is True
+    jobs = envelope["data"]["jobs"]
+    assert jobs[0]["trigger"] == "watcher"
+    assert jobs[2]["result"] == "+3 /1 -0 (22231ms)"
+
+
+def test_jobs_watch_refreshes_managed_terminal_view() -> None:
+    now = time.time()
+    payload = _cli_jobs_payload(now)
+    with _jobs_http_server([payload, payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--limit",
+                "5",
+                "--port",
+                str(port),
+                "--watch",
+                "--interval",
+                "0.01",
+                "--refresh-count",
+                "2",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Watch: refresh 2 of 2." in result.output
+    assert "press Ctrl+C" not in result.output
+    assert result.output.count("\nJobs\n") == 1
+    assert result.output.startswith("Jobs\n")
+    assert "Jobs on service port" not in result.output
+
+
+def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
+    payload: dict[str, object] = {
+        "jobs": [],
+        "total": 0,
+        "returned": 0,
+        "summary": {"running": 0, "phases": {}},
+        "filters": {"limit": 5, "phase": "running"},
+    }
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--state",
+                "active",
+                "--port",
+                str(port),
+                "--watch",
+                "--refresh-count",
+                "1",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Watch: refresh 1 of 1." in result.output
+    assert "press Ctrl+C" not in result.output
+    assert "There are no active or waiting jobs." in result.output
+
+
+def test_jobs_watch_is_human_only() -> None:
+    result = runner.invoke(
+        app,
+        ["server", "jobs", "--port", _DEAD_PORT, "--watch", "--json"],
+    )
+    assert result.exit_code == 2
+    envelope = json.loads(result.output)
+    assert envelope["error"] == "invalid_watch"
 
 
 def test_jobs_cli_mcp_parity() -> None:
@@ -242,10 +1541,13 @@ def test_jobs_route_200_with_bearer_token(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     payload: dict[str, Any] = response.json()
-    assert set(payload) == {"jobs"}
+    assert set(payload) == {"jobs", "total", "returned", "summary", "filters"}
     assert len(payload["jobs"]) == 1
     assert payload["jobs"][0]["source"] == "vault"
     assert payload["jobs"][0]["phase"] == "done"
+    assert payload["summary"]["running"] == 0
+    assert payload["summary"]["initiators"]["tool"] == 1
+    assert payload["summary"]["users"]
 
 
 def test_jobs_route_200_with_query_token(
@@ -269,3 +1571,175 @@ def test_jobs_route_respects_limit_param(
     )
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1
+
+
+def test_jobs_route_prioritises_running_before_limit(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start("code", "watcher")
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    )
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["jobs"][0]["id"] == running_id
+    assert payload["jobs"][0]["phase"] == "running"
+    assert "current" in payload["jobs"][0]["resources"]
+
+
+def test_jobs_route_prioritises_failed_before_completed_limit(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    _jobs.record_finish(_jobs.record_start("code", "tool"), result="newer done")
+    failed_id = _jobs.record_start("code", "tool")
+    _jobs.record_finish(failed_id, error="boom")
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["jobs"][0]["id"] == failed_id
+    assert payload["jobs"][0]["phase"] == "error"
+
+
+def test_jobs_route_filters_phase_source_trigger_and_query(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    _jobs.record_start("code", "watcher")
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/jobs",
+            params={
+                "token": token,
+                "phase": "running",
+                "source": "code",
+                "trigger": "watcher",
+                "query": "code",
+            },
+        ),
+    )
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["returned"] == 1
+    assert payload["jobs"][0]["source"] == "code"
+    assert payload["jobs"][0]["trigger"] == "watcher"
+    assert payload["jobs"][0]["phase"] == "running"
+
+
+def test_jobs_route_accepts_codebase_source_alias(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start("code", "watcher")
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "source": "codebase"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    )
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    ids = [job["id"] for job in payload["jobs"]]
+    assert running_id in ids
+    assert payload["filters"]["source"] == "code"
+
+
+def test_jobs_route_filters_failed_job_id_and_since(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    failed_id = _jobs.record_start("code", "tool")
+    _jobs.record_finish(failed_id, error="boom")
+    _jobs.record_finish(_jobs.record_start("vault", "watcher"), result="old")
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/jobs",
+            params={
+                "token": token,
+                "failed": "true",
+                "job_id": failed_id[:8],
+                "since": "60",
+            },
+        ),
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["returned"] == 1
+    job = payload["jobs"][0]
+    assert job["id"] == failed_id
+    assert job["phase"] == "error"
+    assert isinstance(job["runtime_seconds"], float)
+    assert payload["filters"]["failed"] is True
+    assert payload["filters"]["job_id"] == failed_id[:8]
+    assert payload["filters"]["since"] == 60.0
+
+
+def test_jobs_route_query_matches_runtime_and_initiator(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start(
+        "code",
+        "tool",
+        command="reindex_codebase",
+        initiator_kind="cli",
+    )
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "query": "cli"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    ids = [job["id"] for job in payload["jobs"]]
+    assert running_id in ids
+
+
+def test_jobs_route_since_uses_progress_update_time(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    running_id = _jobs.record_start("code", "tool")
+    time.sleep(0.2)
+    _jobs.record_progress(running_id, "embed", completed=1, total=10)
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "since": "0.1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    ids = [job["id"] for job in payload["jobs"]]
+    assert running_id in ids
+
+
+def test_jobs_route_job_id_prefix_can_return_multiple_matches(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    ids_by_prefix: dict[str, list[str]] = {}
+    for _ in range(17):
+        job_id = _jobs.record_start("vault", "tool")
+        ids_by_prefix.setdefault(job_id[:1], []).append(job_id)
+    prefix = next(prefix for prefix, ids in ids_by_prefix.items() if len(ids) > 1)
+    client, token = _routes_app
+
+    response = cast(
+        "httpx.Response",
+        client.get("/jobs", params={"token": token, "job_id": prefix}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    )
+
+    assert response.status_code == 200
+    payload: dict[str, Any] = response.json()
+    assert payload["returned"] >= 2
+    assert all(str(job["id"]).startswith(prefix) for job in payload["jobs"])

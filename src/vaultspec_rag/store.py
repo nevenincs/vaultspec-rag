@@ -10,13 +10,14 @@ import hashlib
 import logging
 import threading
 import warnings
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Generator, Sequence
+    from collections.abc import Callable, Generator, Sequence
+    from contextlib import AbstractContextManager
     from uuid import UUID
 
     from qdrant_client import QdrantClient
@@ -31,7 +32,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CodeChunk", "VaultDocument", "VaultStore", "VaultStoreLockedError"]
+__all__ = [
+    "CodeChunk",
+    "VaultDocument",
+    "VaultStore",
+    "VaultStoreLockedError",
+    "root_collection_prefix",
+]
 
 
 class VaultStoreLockedError(RuntimeError):
@@ -117,6 +124,30 @@ class FileLock:
 
 
 EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
+
+
+def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
+    """Return the stable per-root collection prefix for server mode.
+
+    One shared qdrant server hosts every root's data, so each root's
+    collections are namespaced by a short hash of the resolved root
+    path. The hash input is case-normalised (Windows paths are
+    case-insensitive) and resolved (``./project`` and ``project``
+    collide deliberately) so the same root always lands in the same
+    collections across processes and sessions.
+
+    Args:
+        root_dir: Workspace root directory.
+
+    Returns:
+        A prefix of the form ``r{12-hex}_``.
+    """
+    import os
+    import pathlib as _pathlib
+
+    resolved = os.path.normcase(str(_pathlib.Path(root_dir).resolve()))
+    digest = hashlib.blake2b(resolved.encode("utf-8"), digest_size=6).hexdigest()
+    return f"r{digest}_"
 
 
 @contextmanager
@@ -220,6 +251,57 @@ class VaultDocument:
 
 
 @dataclass
+class VaultChunk:
+    """One heading-aware chunk of a vault document.
+
+    Each chunk becomes one Qdrant point in ``vault_docs``. The parent
+    document's metadata is flattened onto every chunk so filters work
+    unchanged; ``doc_id`` groups chunks back into documents at search
+    time. The ordinal-0 chunk additionally carries ``doc_content``
+    (the full document body) so ``get_by_id`` can return the exact
+    original text without reassembling chunks.
+
+    Attributes:
+        doc_id: Parent document stem (the pre-chunking point identity).
+        ordinal: Zero-based chunk position within the document.
+        chunk_count: Total chunks the parent document produced.
+        text: This chunk's markdown text (stored as point ``content``).
+        path: Parent document's relative path.
+        doc_type: Parent document type string.
+        feature: Parent feature tag without the leading ``#``.
+        date: Parent ISO date string.
+        tags: Parent frontmatter tags.
+        related: Parent related wiki-link strings.
+        title: Parent document title.
+        doc_content: Full parent body; populated only on ordinal 0.
+        vector: Dense embedding vector.
+        sparse_indices: Sparse vector indices (SPLADE).
+        sparse_values: Sparse vector values (SPLADE).
+    """
+
+    doc_id: str
+    ordinal: int
+    chunk_count: int
+    text: str
+    path: str
+    doc_type: str
+    feature: str
+    date: str
+    tags: list[str]
+    related: list[str]
+    title: str
+    doc_content: str | None = None
+    vector: list[float] = field(default_factory=list)
+    sparse_indices: list[int] = field(default_factory=list)
+    sparse_values: list[float] = field(default_factory=list)
+
+    @property
+    def point_key(self) -> str:
+        """Stable string identity for this chunk's Qdrant point."""
+        return f"{self.doc_id}#c{self.ordinal}"
+
+
+@dataclass
 class CodeChunk:
     """Schema for a source code chunk in the vector store.
 
@@ -278,6 +360,12 @@ class VaultStore:
     ``.vault/data/search-data/qdrant/``).  The collection ``vault_docs``
     holds one point per indexed document, and ``codebase_docs`` holds
     points per source code chunk.
+
+    In server mode (``cfg.qdrant_url`` set) one shared qdrant server
+    hosts every root, so the instance-level collection names gain a
+    stable per-root prefix (see :func:`root_collection_prefix`); the
+    class attributes below remain the bare local-mode names and the
+    suffix of the namespaced names.
     """
 
     TABLE_NAME = "vault_docs"
@@ -312,7 +400,32 @@ class VaultStore:
         cfg = get_config()
 
         self.root_dir = _pathlib.Path(root_dir)
-        self._client_lock = threading.RLock()
+        self._server_mode = bool(cfg.qdrant_url)
+        # One shared qdrant server hosts every root's data, so server
+        # mode namespaces this root's collections with a stable
+        # per-root prefix; the bare names stay the suffix. Local mode
+        # keeps the bare names (one store per project data dir).
+        _prefix = root_collection_prefix(self.root_dir) if self._server_mode else ""
+        # Per-instance namespaced names intentionally shadow the bare class
+        # constants; basedpyright's uppercase-is-constant rule does not model
+        # the class-constant / instance-override split this class relies on.
+        self.TABLE_NAME: str = _prefix + VaultStore.TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
+        self.CODE_TABLE_NAME: str = _prefix + VaultStore.CODE_TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
+        # Locking is backend-aware and split per concern. The lifecycle
+        # lock guards client open/close, collection create/drop, and the
+        # ensure flags. Point operations take their collection's own
+        # lock: QdrantLocal is not thread-safe within a collection, but
+        # each collection owns independent state (its own in-memory
+        # structures and sqlite connection), so vault and code traffic
+        # never serialize against each other. A remote Qdrant server
+        # handles its own concurrency, so server-mode point operations
+        # take no lock at all. The lock dict is keyed by the resolved
+        # (possibly prefixed) collection names assigned above.
+        self._lifecycle_lock = threading.RLock()
+        self._collection_locks: dict[str, threading.RLock] = {
+            self.TABLE_NAME: threading.RLock(),
+            self.CODE_TABLE_NAME: threading.RLock(),
+        }
         self._client: QdrantClient | None = None
 
         if cfg.qdrant_url:
@@ -361,9 +474,58 @@ class VaultStore:
             raise RuntimeError(msg)
         return self._client
 
+    def _id_scan_page_limit(self, collection: str) -> int:
+        """Return the scroll page size for payload-light full-collection scans.
+
+        QdrantLocal's ``scroll`` re-sorts every point id and linearly
+        skips to the offset on *each* page, so paging a large local
+        collection costs O(N^2) of GIL-holding CPU - measured at 10+
+        minutes on a few hundred thousand points while starving every
+        other thread in the process. Local mode therefore fetches the
+        whole id set as a single page (one sort, one pass); server mode
+        keeps bounded pages since large HTTP responses are the cost
+        there.
+        """
+        if self._server_mode:
+            return 1000
+        try:
+            with self._point_lock(collection):
+                total = int(self.client.count(collection_name=collection).count)
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not size the id scan for %s; falling back to paging",
+                collection,
+                exc_info=True,
+            )
+            return 1000
+        return max(1, total)
+
+    def _point_lock(self, collection: str) -> AbstractContextManager[object]:
+        """Return the point-operation guard for *collection*.
+
+        Local mode returns the collection's own reentrant lock; server
+        mode returns a no-op context because the remote Qdrant server
+        is concurrency-safe and client-side locking would only cap
+        throughput. Reentrancy is load-bearing: scan helpers size their
+        page limit (which takes this lock) while callers already hold
+        it - switching to a non-reentrant lock would deadlock there.
+        """
+        if self._server_mode:
+            return nullcontext()
+        return self._collection_locks[collection]
+
     def close(self) -> None:
-        """Release the Qdrant client and set it to ``None``."""
-        with self._client_lock:
+        """Release the Qdrant client and set it to ``None``.
+
+        Takes the lifecycle lock and then every collection lock in a
+        fixed order so no point operation is in flight when the client
+        goes away.
+        """
+        with (
+            self._lifecycle_lock,
+            self._collection_locks[self.TABLE_NAME],
+            self._collection_locks[self.CODE_TABLE_NAME],
+        ):
             if self._client is not None:
                 self._client.close()
                 self._client = None
@@ -429,7 +591,7 @@ class VaultStore:
                     )
                 )
 
-        with self._client_lock:
+        with self._lifecycle_lock:
             if self.client.collection_exists(name):
                 return
 
@@ -454,7 +616,7 @@ class VaultStore:
 
     def drop_table(self) -> None:
         """Drop the vault_docs collection if it exists."""
-        with self._client_lock:
+        with self._lifecycle_lock, self._point_lock(self.TABLE_NAME):
             if self.client.collection_exists(self.TABLE_NAME):
                 with _suppress_local_qdrant_warnings():
                     self.client.delete_collection(self.TABLE_NAME)
@@ -463,7 +625,7 @@ class VaultStore:
 
     def drop_code_table(self) -> None:
         """Drop the codebase_docs collection if it exists."""
-        with self._client_lock:
+        with self._lifecycle_lock, self._point_lock(self.CODE_TABLE_NAME):
             if self.client.collection_exists(self.CODE_TABLE_NAME):
                 with _suppress_local_qdrant_warnings():
                     self.client.delete_collection(self.CODE_TABLE_NAME)
@@ -474,7 +636,7 @@ class VaultStore:
         """Create the vault_docs collection if it doesn't exist."""
         from qdrant_client import models
 
-        with self._client_lock:
+        with self._lifecycle_lock:
             if self._vault_ensured:
                 return
 
@@ -484,20 +646,28 @@ class VaultStore:
 
             self._ensure_collection(self.TABLE_NAME)
 
-            for fname in ("doc_type", "feature", "date", "tags"):
+            # ``doc_id`` backs delete-by-document and chunk grouping;
+            # ``chunk_ordinal`` backs the doc-level listing filter.
+            for fname in ("doc_type", "feature", "date", "tags", "doc_id"):
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
                         collection_name=self.TABLE_NAME,
                         field_name=fname,
                         field_schema=models.PayloadSchemaType.KEYWORD,
                     )
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.TABLE_NAME,
+                    field_name="chunk_ordinal",
+                    field_schema=models.PayloadSchemaType.INTEGER,
+                )
             self._vault_ensured = True
 
     def ensure_code_table(self) -> None:
         """Create the codebase_docs collection if it doesn't exist."""
         from qdrant_client import models
 
-        with self._client_lock:
+        with self._lifecycle_lock:
             if self._code_ensured:
                 return
 
@@ -580,13 +750,69 @@ class VaultStore:
                 ),
             )
 
-        with self._client_lock:
-            self.ensure_table()
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
             self.client.upsert(
                 collection_name=self.TABLE_NAME,
                 points=points,
             )
         logger.info("Upserted %d document(s)", len(docs))
+
+    def upsert_document_chunks(self, chunks: list[VaultChunk]) -> None:
+        """Insert or update vault chunks keyed by ``doc_id#c{ordinal}``.
+
+        The full document body travels only on the ordinal-0 chunk
+        (``doc_content``) so retrieval-by-id stays exact while the
+        per-chunk payload carries just its own text.
+
+        Args:
+            chunks: Vault chunks to insert or replace.
+        """
+        if not chunks:
+            return
+
+        from qdrant_client import models
+
+        points: list[Any] = []
+        for chunk in chunks:
+            vector: dict[str, Any] = {
+                "dense": chunk.vector,
+            }
+            if chunk.sparse_indices:
+                vector["sparse"] = models.SparseVector(
+                    indices=chunk.sparse_indices,
+                    values=chunk.sparse_values,
+                )
+            payload: dict[str, Any] = {
+                "doc_id": chunk.doc_id,
+                "chunk_ordinal": chunk.ordinal,
+                "chunk_count": chunk.chunk_count,
+                "path": chunk.path,
+                "doc_type": chunk.doc_type,
+                "feature": chunk.feature,
+                "date": chunk.date,
+                "tags": chunk.tags,
+                "related": chunk.related,
+                "title": chunk.title,
+                "content": chunk.text,
+            }
+            if chunk.ordinal == 0 and chunk.doc_content is not None:
+                payload["doc_content"] = chunk.doc_content
+            points.append(
+                models.PointStruct(
+                    id=self._stable_id(chunk.point_key),
+                    vector=vector,
+                    payload=payload,
+                ),
+            )
+
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
+            self.client.upsert(
+                collection_name=self.TABLE_NAME,
+                points=points,
+            )
+        logger.info("Upserted %d vault chunk(s)", len(chunks))
 
     def upsert_code_chunks(self, chunks: list[CodeChunk]) -> None:
         """Insert or update codebase chunks by ``id``.
@@ -635,8 +861,8 @@ class VaultStore:
                 ),
             )
 
-        with self._client_lock:
-            self.ensure_code_table()
+        self.ensure_code_table()
+        with self._point_lock(self.CODE_TABLE_NAME):
             self.client.upsert(
                 collection_name=self.CODE_TABLE_NAME,
                 points=points,
@@ -644,7 +870,11 @@ class VaultStore:
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
 
     def delete_documents(self, ids: list[str]) -> None:
-        """Remove documents by their ``id`` values.
+        """Remove documents (every chunk) by their ``doc_id`` values.
+
+        Deletes by payload filter rather than point id so all chunks of
+        a document go together, and points written before chunking
+        (whose payload also carries ``doc_id``) are removed too.
 
         Args:
             ids: List of document stem IDs to delete.
@@ -653,12 +883,20 @@ class VaultStore:
             return
         from qdrant_client import models
 
-        with self._client_lock:
-            self.ensure_table()
-            point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
             self.client.delete(
                 collection_name=self.TABLE_NAME,
-                points_selector=models.PointIdsList(points=point_ids),
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="doc_id",
+                                match=models.MatchAny(any=list(ids)),
+                            ),
+                        ],
+                    ),
+                ),
             )
         logger.info("Deleted %d document(s)", len(ids))
 
@@ -672,8 +910,8 @@ class VaultStore:
             return
         from qdrant_client import models
 
-        with self._client_lock:
-            self.ensure_code_table()
+        self.ensure_code_table()
+        with self._point_lock(self.CODE_TABLE_NAME):
             point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
             self.client.delete(
                 collection_name=self.CODE_TABLE_NAME,
@@ -687,9 +925,103 @@ class VaultStore:
         Returns:
             Set of document stem IDs from the vault_docs collection.
         """
-        with self._client_lock:
-            self.ensure_table()
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
             return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
+
+    def get_chunk_counts(
+        self,
+        doc_ids: set[str] | None = None,
+    ) -> dict[str, int]:
+        """Return the stored chunk count per vault document.
+
+        Points written before chunking carry no ordinal and count as a
+        single chunk. Used to detect documents that shrank between
+        index runs so their stale tail chunks can be purged.
+
+        Args:
+            doc_ids: When given, restrict the scan to these documents.
+
+        Returns:
+            Mapping of document stem ID to its stored chunk count.
+        """
+        from qdrant_client import models
+
+        scroll_filter: Filter | None = None
+        if doc_ids is not None:
+            if not doc_ids:
+                return {}
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="doc_id",
+                        match=models.MatchAny(any=sorted(doc_ids)),
+                    ),
+                ],
+            )
+
+        counts: dict[str, int] = {}
+        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        self.ensure_table()
+        page_limit = self._id_scan_page_limit(self.TABLE_NAME)
+        while True:
+            with self._point_lock(self.TABLE_NAME):
+                records, next_offset = self.client.scroll(
+                    collection_name=self.TABLE_NAME,
+                    scroll_filter=scroll_filter,
+                    limit=page_limit,
+                    offset=offset,
+                    with_payload=["doc_id", "chunk_ordinal"],
+                    with_vectors=False,
+                )
+            point: Record
+            for point in records:
+                payload = point.payload or {}
+                doc_id = payload.get("doc_id")
+                if doc_id is None:
+                    continue
+                ordinal = payload.get("chunk_ordinal")
+                chunk_no = (ordinal + 1) if isinstance(ordinal, int) else 1
+                key = str(doc_id)
+                counts[key] = max(counts.get(key, 0), chunk_no)
+            if next_offset is None:
+                break
+            offset = next_offset
+        return counts
+
+    def delete_document_chunk_tail(self, doc_id: str, from_ordinal: int) -> None:
+        """Delete a document's chunks at or beyond *from_ordinal*.
+
+        Called after re-indexing a document that shrank: the upsert
+        overwrote ordinals below the new count, and this removes the
+        now-orphaned tail.
+
+        Args:
+            doc_id: Document stem whose tail chunks to remove.
+            from_ordinal: First ordinal to delete (the new chunk count).
+        """
+        from qdrant_client import models
+
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
+            self.client.delete(
+                collection_name=self.TABLE_NAME,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="doc_id",
+                                match=models.MatchValue(value=doc_id),
+                            ),
+                            models.FieldCondition(
+                                key="chunk_ordinal",
+                                range=models.Range(gte=from_ordinal),
+                            ),
+                        ],
+                    ),
+                ),
+            )
+        logger.info("Deleted chunk tail of %s from ordinal %d", doc_id, from_ordinal)
 
     def get_all_code_ids(self) -> set[str]:
         """Return the set of all code chunk ``id`` values in the store.
@@ -697,8 +1029,8 @@ class VaultStore:
         Returns:
             Set of chunk IDs from the codebase_docs collection.
         """
-        with self._client_lock:
-            self.ensure_code_table()
+        self.ensure_code_table()
+        with self._point_lock(self.CODE_TABLE_NAME):
             return self._scroll_all_ids(self.CODE_TABLE_NAME, "chunk_id")
 
     def _scroll_all_ids(self, collection: str, id_field: str) -> set[str]:
@@ -713,11 +1045,12 @@ class VaultStore:
         """
         ids: set[str] = set()
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        page_limit = self._id_scan_page_limit(collection)
         while True:
-            with self._client_lock:
+            with self._point_lock(collection):
                 records, next_offset = self.client.scroll(
                     collection_name=collection,
-                    limit=1000,
+                    limit=page_limit,
                     offset=offset,
                     with_payload=[id_field],
                     with_vectors=False,
@@ -748,8 +1081,7 @@ class VaultStore:
         if not rel_paths:
             return []
 
-        with self._client_lock:
-            self.ensure_code_table()
+        self.ensure_code_table()
 
         scroll_filter = models.Filter(
             must=[
@@ -762,12 +1094,13 @@ class VaultStore:
 
         ids: list[str] = []
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        page_limit = self._id_scan_page_limit(self.CODE_TABLE_NAME)
         while True:
-            with self._client_lock:
+            with self._point_lock(self.CODE_TABLE_NAME):
                 records, next_offset = self.client.scroll(
                     collection_name=self.CODE_TABLE_NAME,
                     scroll_filter=scroll_filter,
-                    limit=1000,
+                    limit=page_limit,
                     offset=offset,
                     with_payload=["chunk_id"],
                     with_vectors=False,
@@ -787,8 +1120,8 @@ class VaultStore:
         Returns:
             Point count in the vault_docs collection.
         """
-        with self._client_lock:
-            self.ensure_table()
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
             return self.client.count(collection_name=self.TABLE_NAME).count
 
     def count_code(self) -> int:
@@ -797,8 +1130,8 @@ class VaultStore:
         Returns:
             Point count in the codebase_docs collection.
         """
-        with self._client_lock:
-            self.ensure_code_table()
+        self.ensure_code_table()
+        with self._point_lock(self.CODE_TABLE_NAME):
             return self.client.count(collection_name=self.CODE_TABLE_NAME).count
 
     def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
@@ -811,12 +1144,18 @@ class VaultStore:
             Document payload dict (vectors stripped), or ``None``
             if no matching point exists.
         """
-        with self._client_lock:
-            self.ensure_table()
-            point_id = self._stable_id(doc_id)
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
+            # The head chunk (ordinal 0) carries the full body as
+            # ``doc_content``; fall back to the pre-chunking point id
+            # so stores written before chunking still resolve.
+            point_ids: list[int | str | UUID] = [
+                self._stable_id(f"{doc_id}#c0"),
+                self._stable_id(doc_id),
+            ]
             records: list[Record] = self.client.retrieve(
                 collection_name=self.TABLE_NAME,
-                ids=[point_id],
+                ids=point_ids,
                 with_payload=True,
                 with_vectors=False,
             )
@@ -825,6 +1164,11 @@ class VaultStore:
             raw = records[0].payload
             payload: dict[str, Any] = dict(raw) if raw else {}
             payload["id"] = payload.pop("doc_id", doc_id)
+            doc_content = payload.pop("doc_content", None)
+            if isinstance(doc_content, str):
+                payload["content"] = doc_content
+            payload.pop("chunk_ordinal", None)
+            payload.pop("chunk_count", None)
             return payload
 
     def list_all_documents(
@@ -841,24 +1185,35 @@ class VaultStore:
         """
         from qdrant_client import models
 
-        with self._client_lock:
-            self.ensure_table()
+        self.ensure_table()
 
-        scroll_filter: Filter | None = None
+        # One row per document: match only head chunks (ordinal 0) or
+        # points written before chunking (no ordinal field at all).
+        head_or_legacy = models.Filter(
+            should=[
+                models.FieldCondition(
+                    key="chunk_ordinal",
+                    match=models.MatchValue(value=0),
+                ),
+                models.IsEmptyCondition(
+                    is_empty=models.PayloadField(key="chunk_ordinal"),
+                ),
+            ],
+        )
+        conditions: list[Condition] = [head_or_legacy]
         if doc_type:
-            scroll_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="doc_type",
-                        match=models.MatchValue(value=doc_type),
-                    ),
-                ],
+            conditions.append(
+                models.FieldCondition(
+                    key="doc_type",
+                    match=models.MatchValue(value=doc_type),
+                ),
             )
+        scroll_filter = models.Filter(must=conditions)
 
         docs: list[dict[str, Any]] = []
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         while True:
-            with self._client_lock:
+            with self._point_lock(self.TABLE_NAME):
                 records, next_offset = self.client.scroll(
                     collection_name=self.TABLE_NAME,
                     scroll_filter=scroll_filter,
@@ -871,6 +1226,11 @@ class VaultStore:
             for point in records:
                 payload: dict[str, Any] = dict(point.payload) if point.payload else {}
                 payload["id"] = payload.pop("doc_id", str(point.id))
+                doc_content = payload.pop("doc_content", None)
+                if isinstance(doc_content, str):
+                    payload["content"] = doc_content
+                payload.pop("chunk_ordinal", None)
+                payload.pop("chunk_count", None)
                 docs.append(payload)
             if next_offset is None:
                 break
@@ -913,7 +1273,12 @@ class VaultStore:
         """
         query_filter = self._build_filter(filters)
         dense_vec: list[float] = query_vector
-        dense_query: Any = self._build_dense_query(dense_vec, like_ids, unlike_ids)
+        dense_query: Any = self._build_dense_query(
+            dense_vec,
+            like_ids,
+            unlike_ids,
+            id_resolver=self._resolve_vault_feedback_id,
+        )
         prefetch: list[Any] = self._build_prefetch(
             dense_query, sparse_vector, query_filter, limit
         )
@@ -974,24 +1339,59 @@ class VaultStore:
 
         return self._points_to_dicts(scored_points, "chunk_id")
 
+    def _resolve_vault_feedback_id(self, doc_id: str) -> int:
+        """Map a vault document id to an existing feedback point id.
+
+        Vault documents are stored one point per chunk, so the natural
+        feedback anchor is the head chunk. Stores written before
+        chunking keep their point under the bare document id; probe
+        both and use whichever exists so feedback works across layouts.
+
+        Args:
+            doc_id: Document stem from a prior search result.
+
+        Returns:
+            The integer point id to feed into the recommend query.
+        """
+        head_id = self._stable_id(f"{doc_id}#c0")
+        bare_id = self._stable_id(doc_id)
+        try:
+            self.ensure_table()
+            with self._point_lock(self.TABLE_NAME):
+                records = self.client.retrieve(
+                    collection_name=self.TABLE_NAME,
+                    ids=[head_id, bare_id],
+                    with_payload=False,
+                    with_vectors=False,
+                )
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not resolve feedback id for %s; assuming the chunked head point",
+                doc_id,
+                exc_info=True,
+            )
+            return head_id
+        existing = {record.id for record in records}
+        return head_id if head_id in existing or bare_id not in existing else bare_id
+
     def _build_dense_query(
         self,
         dense_vec: list[float],
         like_ids: list[str | int] | None,
         unlike_ids: list[str | int] | None,
+        id_resolver: Callable[[str], int] | None = None,
     ) -> Any:
         if not like_ids and not unlike_ids:
             return dense_vec
 
         from qdrant_client import models
 
+        resolve = id_resolver or self._stable_id
         pos: list[Any] = [dense_vec]
         if like_ids:
-            pos.extend(
-                self._stable_id(i) if isinstance(i, str) else i for i in like_ids
-            )
+            pos.extend(resolve(i) if isinstance(i, str) else i for i in like_ids)
         neg: list[Any] = (
-            [self._stable_id(i) if isinstance(i, str) else i for i in unlike_ids]
+            [resolve(i) if isinstance(i, str) else i for i in unlike_ids]
             if unlike_ids
             else []
         )
@@ -1049,12 +1449,12 @@ class VaultStore:
             UnexpectedResponse,
         )
 
-        with self._client_lock:
-            if is_codebase:
-                self.ensure_code_table()
-            else:
-                self.ensure_table()
+        if is_codebase:
+            self.ensure_code_table()
+        else:
+            self.ensure_table()
 
+        with self._point_lock(collection_name):
             if len(prefetch) < 2:
                 results = self.client.query_points(
                     collection_name=collection_name,

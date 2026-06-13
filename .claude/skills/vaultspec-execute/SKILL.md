@@ -5,74 +5,65 @@ description: Skill to execute implementation plans. Loads specialized agent pers
   for complex multi-agent execution. Use when you have a plan document to execute.
 ---
 
-# Implementation Plan: Code Writing Skill
+# Plan execution skill (vaultspec-execute)
 
 Use this skill:
 
-- To begin the execution of an implementation `plan`.
+- To begin the execution of an implementation plan.
 - To ensure code is written by the appropriate agent.
 
-## Required Steps
+**Announce at start:** "I'm using the `vaultspec-execute` skill to execute the
+implementation plan."
 
-- This skill MUST be invoked to execute an implementation `.vault/plan` located at
+## Required steps
+
+- This skill MUST be invoked to execute an implementation plan located at
   `.vault/plan/yyyy-mm-dd-{feature}-plan.md`.
 
-- Read and parse the Plan to understand the scope, complexity, and specific Steps
+- Read and parse the Plan to understand the scope, complexity, and specific Steps.
 
 - Read and parse all linked documents to understand the coding challenge.
 
-## Executor Delegation
+## Executor delegation
 
 Assume the persona of a delegator.
 
-- Use parallel sub-agents, or autonomous agent team to execute complex plans.
+- Use parallel sub-agents, or an autonomous agent team, to execute complex plans.
 
-- Use appropriate executor agent persona. When the work needs multiple specialists,
+- Use the appropriate executor agent persona. When the work needs multiple specialists,
   coordinate them.
 
 - Always instruct the coders to execute the current plan, and to read grounding
   research, ADRs, and the `[[...-plan.md]]`.
 
-- Always instruct to "Start with Phase `P##`." (or the canonical display path, e.g.,
-  `W01.P01`, at L3 / L4).
+- Always name the tier-conditional entry point: instruct "Start with Step `S##`." at L1
+  (Steps only), "Start with Phase `P##`." at L2, or the canonical display path (e.g.,
+  `W01.P01`) at L3 / L4.
 
-### Step Execution & Logging
+### Step execution and logging
 
-- Execute the plan one Step at a time. Per the convention ADR's Step row contract, each
-  Step is exactly one prompt-run plus one commit; the executor closes the row (`- [ ]`
-  to `- [x]`) on completion.
+- Execute the plan one Step at a time. Per the Step row contract embedded in the plan
+  template, each Step is exactly one prompt-run plus one commit; the executor closes the
+  row (`- [ ]` to `- [x]`) on completion.
 
 - **One Step Record per completed Step.** The executor writes a Step Record to
-  `.vault/exec/yyyy-mm-dd-{feature}/...md` for every completed Step (not per Phase). Use
-  the tier-conditional filename from the plan's canonical display path:
-  `yyyy-mm-dd-{feature}-{step}.md` at L1, `yyyy-mm-dd-{feature}-{phase}-{step}.md` at
-  L2, and `yyyy-mm-dd-{feature}-{wave}-{phase}-{step}.md` at L3/L4. The originating
-  Step's canonical identifier (`S##`) is recorded in the Step Record's `step_id:`
-  frontmatter field.
+  `.vault/exec/yyyy-mm-dd-{feature}/...md` for every completed Step (not per Phase).
+  Scaffold the record with
+  `vaultspec-core vault add exec --feature <tag> --step <S##> --related <plan-stem>`,
+  then author the body prose. The verb machine-fills the tier-conditional filename from
+  the plan's canonical display path (`yyyy-mm-dd-{feature}-{step}.md` at L1,
+  `yyyy-mm-dd-{feature}-{phase}-{step}.md` at L2, and
+  `yyyy-mm-dd-{feature}-{wave}-{phase}-{step}.md` at L3/L4) and the `step_id:`
+  frontmatter field carrying the originating Step's canonical identifier (`S##`).
 
 - **Coder or supervisor must read and use the template** at
   `.vaultspec/rules/templates/exec-step.md`.
 
-### Frontmatter & Tagging Mandate (Artifacts)
+- **Frontmatter:** the scaffold owns the filename and frontmatter of every artifact
+  (Step Record, Summary, Review); the full schema is defined in the `vaultspec` rule.
+  Verify with `vaultspec-core vault check all` rather than hand-editing.
 
-Every artifact (Step Record, Summary, Review) MUST strictly adhere to the following
-schema:
-
-- **`tags`**: MUST contain the required tag pair in a YAML list.
-
-  - **Directory Tag**: Exactly `#exec`.
-  - *Feature Tag:* Exactly one kebab-case `#{feature}` tag.
-  - *Syntax:* `tags: ['#exec', '#feature']` (Must be quoted strings in a list).
-
-- **`related`**: MUST be a YAML list of quoted `'[[wiki-links]]'`.
-
-  - *Constraint:* No relative paths (`../`), no bare strings, no `@ref`.
-
-- **`date`**: MUST use `yyyy-mm-dd` format.
-
-- **No `feature` key**: Use `tags:` exclusively for feature identification.
-
-### Mandatory Code Review
+### Mandatory code review
 
 - After an executor completes a step (or the full plan), you MUST invoke the
   `vaultspec-code-review` skill or a relevant code-review skill.
@@ -83,7 +74,7 @@ schema:
 - If the reviewer identifies **CRITICAL** or **HIGH** issues, you MUST resolve them by
   loading an executor again before proceeding.
 
-### Finalization & Summary
+### Finalization and summary
 
 - Once all implementation and review steps are complete (and the review passes), write
   the consolidated Phase Summary at `.vault/exec/yyyy-mm-dd-{feature}/...-summary.md`
@@ -115,4 +106,4 @@ schema:
   `vaultspec-core vault plan step toggle` rather than hand-editing the checkbox glyph.
   The CLI guarantees idempotent state transitions and consistent display-path
   recomputation; hand edits bypass these guarantees and are flagged by
-  `vaultspec-core vault plan check`. See the CLI ADR (`2026-05-06-plan-hardening-adr`).
+  `vaultspec-core vault plan check`.

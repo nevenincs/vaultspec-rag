@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
+modified: '2026-03-08'
 ---
 
 # Round 26 Audit: embeddings.py Deep Dive

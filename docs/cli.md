@@ -1,640 +1,658 @@
 # CLI reference
 
-Complete reference for the `vaultspec-rag` command line; for setup see [installation.md](installation.md), for guided usage see [getting-started.md](getting-started.md) and the how-to pages.
+Complete reference for the `vaultspec-rag` command line. For setup workflows see the [getting-started tutorial](getting-started.md); for search and indexing how-tos see the [search and index guide](search-and-index.md); for running the background service see the [background service guide](service-mode.md); for the storage backends see the [storage backends guide](backends.md).
 
 ## Related documents
 
-- [configuration.md](configuration.md) for environment variable defaults and overrides referenced by flags below.
-- [automation.md](automation.md) for the full JSON envelope contract and error codes returned when `--json` is set.
-- [mcp.md](mcp.md) for stdio versus HTTP transport setup behind the MCP tools section.
-- [architecture.md](architecture.md) for the concepts named in individual flag descriptions, including `project_root`, semantic search, and service mode.
-
-Unfamiliar terms in flag descriptions are defined in the [glossary](glossary.md).
+- The [configuration reference](configuration.md) covers the environment variables and defaults referenced by the flags here.
+- The [scripting and automation guide](automation.md) covers the JSON envelope contract and error codes returned when `--json` is set.
+- The [architecture overview](architecture.md) explains the concepts named in flag descriptions, including project roots, semantic search, and server mode.
 
 ## Contents
 
 - [Conventions](#conventions)
 - [Global options](#global-options)
+- [Exit codes](#exit-codes)
 - [index](#index)
-- [search](#search)
 - [clean](#clean)
+- [search](#search)
 - [status](#status)
-- [server mcp start](#server-mcp-start)
-- [server service start](#server-service-start)
-- [server service stop](#server-service-stop)
-- [server service status](#server-service-status)
-- [server service warmup](#server-service-warmup)
-- [server service projects list](#server-service-projects-list)
-- [server service projects evict](#server-service-projects-evict)
-- [server service watcher status](#server-service-watcher-status)
-- [server service watcher start](#server-service-watcher-start)
-- [server service watcher stop](#server-service-watcher-stop)
-- [server service watcher reconfigure](#server-service-watcher-reconfigure)
-- [server service info](#server-service-info)
-- [server service logs](#server-service-logs)
-- [server service jobs](#server-service-jobs)
 - [install](#install)
 - [uninstall](#uninstall)
-- [benchmark](#benchmark)
-- [quality](#quality)
 - [test](#test)
-- [MCP tools](#mcp-tools)
-- [Need help?](#need-help)
+- [quality](#quality)
+- [benchmark](#benchmark)
+- [server start](#server-start)
+- [server stop](#server-stop)
+- [server status](#server-status)
+- [server doctor](#server-doctor)
+- [server warmup](#server-warmup)
+- [server jobs](#server-jobs)
+- [server logs](#server-logs)
+- [server projects list](#server-projects-list)
+- [server projects unload](#server-projects-unload)
+- [server updates status](#server-updates-status)
+- [server updates start](#server-updates-start)
+- [server updates stop](#server-updates-stop)
+- [server updates timing](#server-updates-timing)
+- [server qdrant install](#server-qdrant-install)
+- [server qdrant status](#server-qdrant-status)
+- [server qdrant clean](#server-qdrant-clean)
+- [preprocess list](#preprocess-list)
+- [preprocess check](#preprocess-check)
+- [preprocess run-one](#preprocess-run-one)
+- [Get help](#get-help)
 
 ## Conventions
 
-When `--json` is passed, every command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`. On success the payload appears under `data`; on failure under `error` and `message`. The full contract lives in [automation.md](automation.md).
+Run the CLI as `vaultspec-rag <command>` when the package is on your `PATH`. In uv-managed projects, run `uv run vaultspec-rag <command>`. The same binary also runs as `python -m vaultspec_rag`.
 
-Standard exit codes used across commands: `0` success; `1` runtime failure (GPU error, locked index, empty vault, install or uninstall failure, port unreachable without fallback); `2` invalid input or torch-config gating failure; `3` service stopped; `4` service in a `divergent` or `crashed-*` state.
+Most commands accept `--json` for scripting. `test`, `quality`, `benchmark`, `server stop`, and `server warmup` produce human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`: the payload appears under `data` on success and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
+
+RAG behavior is also configurable through `VAULTSPEC_RAG_*` environment variables. See the [configuration reference](configuration.md) for the complete inventory and defaults.
 
 ## Global options
 
-Options accepted before the subcommand on every invocation.
+Pass these before the subcommand. They apply to every invocation.
 
-| Flag                   | Default                   | Description                                        |
-| ---------------------- | ------------------------- | -------------------------------------------------- |
-| `--target`, `-t`       | current working directory | Directory containing `.vault` and `.vaultspec`.    |
-| `--verbose`, `-v`      | off                       | Enable INFO logging.                               |
-| `--debug`, `-d`        | off                       | Enable DEBUG logging.                              |
-| `--data-dir`           | `.vault/data/search-data` | RAG data root.                                     |
-| `--qdrant-dir`         | unset                     | Qdrant storage directory relative to `--data-dir`. |
-| `--index-meta`         | unset                     | Vault index metadata filename.                     |
-| `--code-index-meta`    | unset                     | Code index metadata filename.                      |
-| `--status-dir`         | `~/.vaultspec-rag`        | Service status directory.                          |
-| `--log-file`           | unset                     | Service log filename relative to `--status-dir`.   |
-| `--version`, `-V`      | off                       | Show version and exit.                             |
-| `--install-completion` | off                       | Install completion for the current shell.          |
-| `--show-completion`    | off                       | Show completion for the current shell.             |
-| `--help`               | off                       | Show the help message and exit.                    |
+| Flag              | Type | Default                   | Description                                                                        |
+| ----------------- | ---- | ------------------------- | ---------------------------------------------------------------------------------- |
+| `--target`, `-t`  | path | current working directory | Directory containing `.vault` and `.vaultspec`.                                    |
+| `--verbose`, `-v` | flag | off                       | Enable INFO logging.                                                               |
+| `--debug`, `-d`   | flag | off                       | Enable DEBUG logging.                                                              |
+| `--data-dir`      | text | `.vault/data/search-data` | Index data directory.                                                              |
+| `--storage-dir`   | text | `qdrant`                  | Index data subdirectory relative to `--data-dir` (the local on-disk store subdir). |
+| `--status-dir`    | text | `~/.vaultspec-rag`        | Service runtime directory.                                                         |
+| `--log-file`      | text | `service.log`             | Service log filename inside `--status-dir`.                                        |
+| `--version`, `-V` | flag | off                       | Print the version and exit.                                                        |
+
+The `test`, `quality`, `server`, `install`, and `uninstall` commands skip workspace resolution; every other command resolves a workspace from `--target`.
+
+## Exit codes
+
+These codes are consistent across commands.
+
+| Code | Meaning                                                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success.                                                                                                                                                                      |
+| `1`  | Generic failure: GPU or torch error, a busy local index, an unreachable `--port` without `--allow-fallback`, a service-reported error, or a failed install or provision step. |
+| `2`  | Usage error: an invalid argument, filter, or flag combination.                                                                                                                |
+| `3`  | Service stopped: no `service.json` was found for the targeted service.                                                                                                        |
+| `4`  | Service crashed or divergent: `service.json` is present but a signal contradicts it (dead PID, reused PID, silent port, or stale heartbeat).                                  |
+
+Per-command exit lines below note the codes each command can return.
 
 ## index
 
-Index vault documents and/or codebase chunks. When `--port` is given, delegates to a running MCP server; on dead or unreachable port, hard-fails with remediation unless `--allow-fallback` is set.
+`vaultspec-rag index`
 
-| Flag               | Default | Description                                                                                           |
-| ------------------ | ------- | ----------------------------------------------------------------------------------------------------- |
-| `--type`           | `all`   | What to index: `vault`, `code`, or `all`.                                                             |
-| `--model`          | unset   | Override the embedding model name.                                                                    |
-| `--rebuild`        | off     | Drop the selected index collections before re-indexing.                                               |
-| `--port`           | unset   | Port of a running MCP server for fast-path delegation.                                                |
-| `--dry-run`        | off     | List files that would be indexed without indexing.                                                    |
-| `--exclude`        | unset   | Ad-hoc exclusion pattern, gitignore syntax, repeatable.                                               |
-| `--allow-fallback` | off     | When `--port` is given but unreachable, silently fall back to in-process indexing instead of failing. |
-| `--verbose`        | off     | Re-enable HuggingFace tqdm progress bars.                                                             |
-| `--json`           | off     | Emit one JSON envelope to stdout instead of a Rich table.                                             |
-| `--help`           | off     | Show the help message and exit.                                                                       |
+Build or update the vault and code index.
 
-Exit codes: `0` success; `1` GPU error, locked index files, MCP-reported reindex error, or unreachable `--port` without `--allow-fallback`; `2` GPU initialization aborted by remediation path.
+Arguments: none.
 
-## search
+Options:
 
-Search for relevant context in documentation or code. When `--port` is given, delegates to a running MCP server; on dead or unreachable port, hard-fails with remediation unless `--allow-fallback` is set.
+| Flag               | Type               | Default | Description                                                                                                                        |
+| ------------------ | ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `--type`           | `vault\|code\|all` | `all`   | What to index. `--rebuild` scopes to this type.                                                                                    |
+| `--rebuild`        | flag               | off     | Delete the selected index data before rebuilding. Requires an explicit `--type`; a bare `index --rebuild` is rejected.             |
+| `--dry-run`        | flag               | off     | List the source-code files that would be indexed without indexing them. Valid only with `--type code` or the default `--type all`. |
+| `--dry-run-limit`  | integer            | `50`    | Maximum file paths shown in human dry-run output. JSON output always lists all paths. Negative values are rejected.                |
+| `--model`          | text               | unset   | Override the embedding model name.                                                                                                 |
+| `--exclude`        | text               | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                  |
+| `--port`           | integer            | unset   | Delegate to a running service on this port.                                                                                        |
+| `--allow-fallback` | flag               | off     | Index in-process when the targeted service is unreachable instead of failing.                                                      |
+| `--verbose`        | flag               | off     | Show model-loading and progress output for in-process indexing.                                                                    |
+| `--json`           | flag               | off     | Emit one JSON envelope to stdout.                                                                                                  |
 
-Positional argument: `QUERY` (required) - the search query text.
+With `--port` unset, the command auto-detects a running service and delegates with fallback. Service delegation queues an async reindex job and prints `Check progress with: vaultspec-rag server jobs`. In-process indexing is incremental unless `--rebuild` is set.
 
-| Flag               | Default | Description                                                                                                         |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| `--type`           | `vault` | Search source: `vault` (docs) or `code` (source).                                                                   |
-| `--max-results`    | `10`    | Maximum number of results to return.                                                                                |
-| `--language`       | unset   | Code-search filter: programming language.                                                                           |
-| `--path`           | unset   | Code-search filter: exact project-relative file path (KEYWORD match).                                               |
-| `--include-path`   | unset   | Code-search filter: repeatable fnmatch glob; keep results whose project-relative path matches at least one pattern. |
-| `--exclude-path`   | unset   | Code-search filter: repeatable fnmatch glob; drop results whose project-relative path matches any pattern.          |
-| `--dedup-locales`  | off     | Code-search post-process: collapse near-tie locale variants into one canonical result.                              |
-| `--prefer`         | unset   | Code-search post-process: nudge results matching `prod`, `tests`, or `docs` up after rerank.                        |
-| `--node-type`      | unset   | Code-search filter: parse-tree node type (for example `function_definition`).                                       |
-| `--function-name`  | unset   | Code-search filter: function or method name.                                                                        |
-| `--class-name`     | unset   | Code-search filter: class or struct name.                                                                           |
-| `--doc-type`       | unset   | Vault-search filter: vault doc type (for example `adr`, `plan`).                                                    |
-| `--feature`        | unset   | Vault-search filter: feature tag in kebab-case.                                                                     |
-| `--date`           | unset   | Vault-search filter: exact ISO date (`yyyy-mm-dd`).                                                                 |
-| `--tag`            | unset   | Vault-search filter: free-form tag without `#`.                                                                     |
-| `--no-truncate`    | off     | Disable the 120-character snippet truncation in the results table.                                                  |
-| `--port`           | unset   | Port of a running MCP server for fast-path delegation.                                                              |
-| `--allow-fallback` | off     | When `--port` is given but unreachable, silently fall back to in-process search instead of failing.                 |
-| `--verbose`        | off     | Re-enable HuggingFace tqdm progress bars during in-process model load and encode.                                   |
-| `--json`           | off     | Emit one JSON envelope to stdout instead of a Rich table.                                                           |
-| `--help`           | off     | Show the help message and exit.                                                                                     |
-
-Exit codes: `0` success; `1` GPU initialization error, MCP-reported search error, or unreachable `--port` without `--allow-fallback`; `2` filter or search-type mismatch.
+Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable `--port` without `--allow-fallback`; `2` for `rebuild_requires_explicit_type`, `dry_run_requires_code`, or `invalid_dry_run_limit`. With `--json`, the result is one envelope on stdout.
 
 ## clean
 
-Drop selected index collections without re-indexing. Does not load embedding models, walk the vault, scan the codebase, or touch GPUs. Drops and re-creates the selected Qdrant collections and clears the matching metadata sidecar files.
+`vaultspec-rag clean <vault|code|all>`
 
-Positional argument: `CLEAN_TYPE` (required) - `vault`, `code`, or `all`. No default.
+Delete index data without rebuilding it. Does not load models or touch the GPU; it drops and re-creates the selected collections and removes their metadata sidecars.
 
-| Flag          | Default | Description                                                                 |
-| ------------- | ------- | --------------------------------------------------------------------------- |
-| `--yes`, `-y` | off     | Confirm the destructive wipe without prompting.                             |
-| `--json`      | off     | Emit one JSON envelope to stdout instead of a Rich table. Requires `--yes`. |
-| `--help`      | off     | Show the help message and exit.                                             |
+Arguments:
 
-Exit codes: `0` success; `1` user declined the interactive confirmation.
+| Name         | Required | Description                                   |
+| ------------ | -------- | --------------------------------------------- |
+| `clean_type` | yes      | One of `vault`, `code`, or `all`. No default. |
+
+Options:
+
+| Flag          | Type | Default | Description                                         |
+| ------------- | ---- | ------- | --------------------------------------------------- |
+| `--yes`, `-y` | flag | off     | Confirm the deletion without prompting.             |
+| `--json`      | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`. |
+
+Exit/JSON: `0` on success; `1` on a clean failure or a busy index; `2` when `--json` is set without `--yes` (`json_requires_yes`). With `--json`, the result is one envelope on stdout.
+
+## search
+
+`vaultspec-rag search <query>`
+
+Run a hybrid search over vault documents or source code.
+
+Arguments:
+
+| Name    | Required | Description            |
+| ------- | -------- | ---------------------- |
+| `query` | yes      | The search query text. |
+
+Options:
+
+| Flag                       | Type                               | Default | Description                                                                     |
+| -------------------------- | ---------------------------------- | ------- | ------------------------------------------------------------------------------- |
+| `--type`                   | `vault\|code\|docs`                | `vault` | Search source. `docs` is an alias for `vault`.                                  |
+| `--max-results`, `--limit` | integer                            | `10`    | Maximum number of results to return.                                            |
+| `--scores`                 | flag                               | off     | Show numeric relevance scores on each result.                                   |
+| `--language`               | text                               | unset   | Code filter: programming language.                                              |
+| `--path`                   | text                               | unset   | Code filter: exact project-relative file path.                                  |
+| `--include-path`           | text                               | unset   | Code filter: glob to keep matching results. Repeatable.                         |
+| `--exclude-path`           | text                               | unset   | Code filter: glob to drop matching results. Repeatable.                         |
+| `--structure`              | text                               | unset   | Code filter: parse-tree node type, for example `function_definition`.           |
+| `--function-name`          | text                               | unset   | Code filter: function or method name.                                           |
+| `--class-name`             | text                               | unset   | Code filter: class or struct name.                                              |
+| `--dedup-locales`          | flag                               | off     | Code post-process: collapse near-tie locale variants into one canonical result. |
+| `--prefer`                 | `production\|tests\|documentation` | unset   | Code post-process: nudge matching results up after reranking.                   |
+| `--doc-type`               | text                               | unset   | Vault filter: document type, for example `adr` or `plan`.                       |
+| `--feature`                | text                               | unset   | Vault filter: feature tag in kebab-case.                                        |
+| `--date`                   | text                               | unset   | Vault filter: exact ISO date (`yyyy-mm-dd`).                                    |
+| `--tag`                    | text                               | unset   | Vault filter: tag without the leading `#`.                                      |
+| `--port`                   | integer                            | unset   | Search through the service on this port.                                        |
+| `--allow-fallback`         | flag                               | off     | Search in-process when the targeted service is unreachable instead of failing.  |
+| `--timeout`                | float                              | `300`   | Connection and read budget for service-handled searches, in seconds.            |
+| `--verbose`                | flag                               | off     | Show model-loading and progress output for in-process search.                   |
+| `--json`                   | flag                               | off     | Emit one JSON envelope to stdout.                                               |
+
+Output is a list of readable records, each showing a rank, a location, and the matched text. Scores appear only with `--scores`. With `--port` unset, the command auto-detects a running service and routes to it with fallback; each result carries a `via` label of `service` or `in-process`.
+
+Exit/JSON: `0` on success; `1` on GPU error, a service-reported search error, or an unreachable `--port` without `--allow-fallback`; `2` for an invalid `--type`, `--prefer`, or filter (`invalid_search_type`, `invalid_prefer_value`, `invalid_filter_for_search_type`). With `--json`, the result is one envelope on stdout.
 
 ## status
 
-Show RAG engine status, storage metrics, and GPU info.
+`vaultspec-rag status`
 
-| Flag     | Default | Description                                                                                            |
-| -------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| `--json` | off     | Emit one JSON envelope to stdout instead of a Rich table. Mirrors the MCP `get_index_status` response. |
-| `--help` | off     | Show the help message and exit.                                                                        |
+Show the project's index counts, data location, and compute device.
 
-Table output columns: `Vault documents`, `Code chunks`, `Storage path`, `Target directory`, `VRAM (GB)`, plus backend capability rows.
+Arguments: none.
 
-Exit codes: `0` success; `1` missing GPU dependencies.
+Options:
 
-## server mcp start
+| Flag     | Type | Default | Description                       |
+| -------- | ---- | ------- | --------------------------------- |
+| `--json` | flag | off     | Emit one JSON envelope to stdout. |
 
-Start the MCP server in the foreground over stdio. Used by MCP clients that spawn the server as a subprocess.
-
-| Flag     | Default | Description                     |
-| -------- | ------- | ------------------------------- |
-| `--help` | off     | Show the help message and exit. |
-
-Exit codes: `0` clean shutdown; `1` startup failure.
-
-## server service start
-
-Start the background RAG service as a detached process. Spawns the MCP server on the given port, polls `/health` with exponential backoff until ready, and writes a status file to `~/.vaultspec-rag/service.json`.
-
-| Flag                  | Default                          | Description                                                                              |
-| --------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| `--port`              | `8766` (or `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                           |
-| `--watch/--no-watch`  | unset                            | Enable/disable the auto-reindex watcher. Unset leaves `VAULTSPEC_RAG_WATCH_ENABLED` env. |
-| `--watch-debounce-ms` | unset (`2000`)                   | Watcher debounce window in milliseconds.                                                 |
-| `--watch-cooldown-s`  | unset (`30`)                     | Per-source re-index cooldown in seconds.                                                 |
-| `--help`              | off                              | Show the help message and exit.                                                          |
-
-The daemon inherits configuration only through the environment, so each set
-watcher flag is translated to its `VAULTSPEC_RAG_WATCH*` variable on the child
-process before spawn. See [automation.md](automation.md#automatic-re-indexing-the-filesystem-watcher).
-
-Exit codes: `0` service ready; `1` failure to start or health-check timeout.
-
-## server service stop
-
-Stop the background RAG service. Reads the status file, verifies the PID is alive and belongs to a vaultspec-rag process, sends `SIGTERM` on Unix or `CTRL_BREAK_EVENT` on Windows, waits briefly, and force-kills if graceful shutdown fails.
-
-| Flag     | Default | Description                     |
-| -------- | ------- | ------------------------------- |
-| `--help` | off     | Show the help message and exit. |
-
-Exit codes: `0` stopped or already absent; `1` failure to stop.
-
-## server service status
-
-Display the current status of the background RAG service. Gathers four signals (`service.json` present, PID alive, port listening, heartbeat fresh) and surfaces each row plus a derived `State` row.
-
-| Flag     | Default | Description                                                                     |
-| -------- | ------- | ------------------------------------------------------------------------------- |
-| `--json` | off     | Emit one JSON envelope to stdout instead of a Rich table. Preserves exit codes. |
-| `--help` | off     | Show the help message and exit.                                                 |
-
-Table output rows: `Service JSON`, `PID`, `Port`, `Started`, `PID Alive`, `PID Matches Service`, `Service Token Match`, `Port Listening`, `Heartbeat`, `State`, and (when reachable) `Health`, `CUDA`, `Models loaded`, `Projects`, `Uptime`, plus backend capability rows.
-
-Exit codes: `0` `running` (all signals green); `3` `stopped` (no `service.json`); `4` `divergent` or `crashed-*` (file present but signals contradict).
-
-## server service warmup
-
-Pre-download GPU model files to the HuggingFace cache. Checks CUDA availability, then downloads each of the three model repositories (dense, sparse, reranker) if not already cached. Reports per-model status.
-
-| Flag     | Default | Description                     |
-| -------- | ------- | ------------------------------- |
-| `--help` | off     | Show the help message and exit. |
-
-Exit codes: `0` success; `1` CUDA unavailable or `huggingface_hub` not installed.
-
-## server service projects list
-
-List active project slots on a running RAG service.
-
-| Flag     | Default              | Description                                               |
-| -------- | -------------------- | --------------------------------------------------------- |
-| `--port` | running service port | MCP port.                                                 |
-| `--json` | off                  | Emit one JSON envelope to stdout instead of a Rich table. |
-| `--help` | off                  | Show the help message and exit.                           |
-
-Table output columns: `Root` (project path), `Last access` (ISO timestamp), `Idle for` (seconds since last use), `Refs` (active reference count). Top-level extras shown above the table: `max_projects` and `idle_ttl_seconds`.
-
-Exit codes: `0` success; `1` service unreachable or query failure.
-
-## server service projects evict
-
-Evict a project slot on a running RAG service.
-
-Positional argument: `ROOT` (required) - project root to evict.
-
-| Flag     | Default              | Description                                        |
-| -------- | -------------------- | -------------------------------------------------- |
-| `--port` | running service port | MCP port.                                          |
-| `--json` | off                  | Emit one JSON envelope to stdout instead of prose. |
-| `--help` | off                  | Show the help message and exit.                    |
-
-Exit codes: `0` evicted or no-op; `1` service unreachable or eviction failure.
-
-## server service watcher status
-
-Show the auto-reindex watcher's configuration and the roots it is currently watching.
-
-| Flag     | Default              | Description                                               |
-| -------- | -------------------- | --------------------------------------------------------- |
-| `--port` | running service port | MCP port.                                                 |
-| `--json` | off                  | Emit one JSON envelope to stdout instead of a Rich table. |
-| `--help` | off                  | Show the help message and exit.                           |
-
-Reports `watch_enabled`, `debounce_ms`, `cooldown_s`, and the watched roots. Exit codes: `0` success; `3` service not running.
-
-## server service watcher start
-
-Eagerly start the watcher for a project root. No-op (reports `started=false`) when auto-reindex is disabled.
-
-Positional argument: `ROOT` (required) - project root to watch.
-
-| Flag     | Default              | Description                                        |
-| -------- | -------------------- | -------------------------------------------------- |
-| `--port` | running service port | MCP port.                                          |
-| `--json` | off                  | Emit one JSON envelope to stdout instead of prose. |
-| `--help` | off                  | Show the help message and exit.                    |
-
-Exit codes: `0` request handled; `3` service not running.
-
-## server service watcher stop
-
-Stop the watcher for a project root, leaving it pull-only.
-
-Positional argument: `ROOT` (required) - project root to stop watching.
-
-| Flag     | Default              | Description                                        |
-| -------- | -------------------- | -------------------------------------------------- |
-| `--port` | running service port | MCP port.                                          |
-| `--json` | off                  | Emit one JSON envelope to stdout instead of prose. |
-| `--help` | off                  | Show the help message and exit.                    |
-
-Exit codes: `0` request handled; `3` service not running.
-
-## server service watcher reconfigure
-
-Restart a root's watcher with new tuning values (debounce is fixed at watch construction, so reconfiguration is a stop-then-restart).
-
-Positional argument: `ROOT` (required) - project root to reconfigure.
-
-| Flag            | Default              | Description                                        |
-| --------------- | -------------------- | -------------------------------------------------- |
-| `--debounce-ms` | config default       | New debounce window in milliseconds.               |
-| `--cooldown-s`  | config default       | New per-source cooldown in seconds.                |
-| `--port`        | running service port | MCP port.                                          |
-| `--json`        | off                  | Emit one JSON envelope to stdout instead of prose. |
-| `--help`        | off                  | Show the help message and exit.                    |
-
-Exit codes: `0` request handled; `3` service not running.
-
-## server service info
-
-Consolidated read-only state of the running service: per-source index counts, GPU/device, active project slots, and a watcher rollup (parity with the `get_service_state` MCP tool).
-
-| Flag     | Default              | Description                                               |
-| -------- | -------------------- | --------------------------------------------------------- |
-| `--port` | running service port | MCP port.                                                 |
-| `--json` | off                  | Emit one JSON envelope to stdout instead of a Rich table. |
-| `--help` | off                  | Show the help message and exit.                           |
-
-Exit codes: `0` success; `3` service not running.
-
-## server service logs
-
-Tail the service log. The reader spans the rotated set (`service.log`, `service.log.1`, …) and is tolerant of mid-rollover races. Parity with the `get_logs` MCP tool and the read-only `GET /logs` HTTP route.
-
-| Flag      | Default              | Description                                        |
-| --------- | -------------------- | -------------------------------------------------- |
-| `--lines` | `200`                | Number of trailing lines to return.                |
-| `--port`  | running service port | MCP port.                                          |
-| `--json`  | off                  | Emit one JSON envelope to stdout instead of prose. |
-| `--help`  | off                  | Show the help message and exit.                    |
-
-Exit codes: `0` success; `3` service not running.
-
-## server service jobs
-
-Show recent and in-flight index/reindex activity from the service's in-flight registry (source, trigger, phase, timestamps). Parity with the `get_jobs` MCP tool and the read-only `GET /jobs` HTTP route.
-
-| Flag      | Default              | Description                                          |
-| --------- | -------------------- | ---------------------------------------------------- |
-| `--limit` | all                  | Cap the number of (newest-first) records returned.   |
-| `--port`  | running service port | MCP port.                                            |
-| `--json`  | off                  | Emit one JSON envelope to stdout instead of a table. |
-| `--help`  | off                  | Show the help message and exit.                      |
-
-Exit codes: `0` success; `3` service not running.
-
-## HTTP monitoring routes
-
-The running service exposes read-only HTTP routes on its loopback port. `GET /health` is ungated. `GET /logs?lines=N` (text), `GET /jobs` (JSON), and `GET /metrics` (Prometheus text) require the `service_token` as a bearer (`Authorization: Bearer <token>`); the token is in `service.json` and `/health`. These are monitoring surfaces, not an authentication boundary — keep the service loopback-bound.
+Exit/JSON: `0` on success; `1` on missing GPU dependencies. With `--json`, the result is one envelope on stdout.
 
 ## install
 
-Install vaultspec-rag enrollment into a workspace. Seeds rag's bundled rule and MCP source files into `.vaultspec/rules/` and invokes vaultspec-core's sync to propagate them to `.mcp.json` and provider directories.
+`vaultspec-rag install`
 
-| Flag                                   | Default                   | Description                                                                                                                                  |
-| -------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--target`, `-t`                       | current working directory | Workspace path.                                                                                                                              |
-| `--upgrade`                            | off                       | Re-seed bundled rule and MCP files even if present.                                                                                          |
-| `--dry-run`                            | off                       | Preview changes without writing.                                                                                                             |
-| `--force`                              | off                       | Override existing files. Also bypasses the torch-config confirmation prompt (implies `--yes` for that step). `--no-torch-config` still wins. |
-| `--skip`                               | unset                     | Skip a component, repeatable.                                                                                                                |
-| `--torch-config` / `--no-torch-config` | `--torch-config`          | Patch `pyproject.toml` with the cu130 torch index. `--no-torch-config` takes precedence over `--force` and `--yes`.                          |
-| `--yes`, `-y`                          | off                       | Skip the torch-config confirmation prompt (required on non-TTY runs).                                                                        |
-| `--sync`                               | off                       | Run `uv sync --reinstall-package torch` after the patch lands. No-ops when the patch step did not apply.                                     |
-| `--json`                               | off                       | Output result as JSON.                                                                                                                       |
-| `--help`                               | off                       | Show the help message and exit.                                                                                                              |
+Enroll a workspace and provision its external dependencies. Enrollment seeds the bundled rules and MCP integration and runs the vaultspec-core sync. By default, install then provisions the cu130 PyTorch source, the dense, sparse, and reranker model snapshots, and the pinned Qdrant server binary.
 
-Exit codes: `0` success, including torch-config terminal states `declined`, `conflict`, `absent`, and `disabled`; `1` install failure; `2` torch-config terminated in `error`, `skipped-eof`, or `skipped-non-tty`.
+Arguments: none.
+
+Options:
+
+| Flag                                   | Type | Default                   | Description                                                                                                                     |
+| -------------------------------------- | ---- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--target`, `-t`                       | path | current working directory | Workspace path.                                                                                                                 |
+| `--upgrade`                            | flag | off                       | Refresh the bundled rules and integration files even if they are present.                                                       |
+| `--dry-run`                            | flag | off                       | Preview changes without writing.                                                                                                |
+| `--force`                              | flag | off                       | Override existing files. Also bypasses the torch-config prompt (implies `--yes` for that step); `--no-torch-config` still wins. |
+| `--skip`                               | text | unset                     | Skip an enrollment component by token. Repeatable.                                                                              |
+| `--torch-config` / `--no-torch-config` | flag | `--torch-config`          | Configure the cu130 PyTorch source in `pyproject.toml`. `--no-torch-config` takes precedence over `--force` and `--yes`.        |
+| `--yes`, `-y`                          | flag | off                       | Skip the PyTorch config prompt. Required for non-interactive installs unless `--no-torch-config` is set.                        |
+| `--sync`                               | flag | off                       | Run `uv sync --reinstall-package torch` after the torch source is configured.                                                   |
+| `--provision` / `--no-provision`       | flag | `--provision`             | Provision external dependencies after enrollment. `--no-provision` sets up the workspace only.                                  |
+| `--local-only`                         | flag | off                       | Use the on-disk store: skips the Qdrant binary download and persists the local backend so a later `server start` honors it.     |
+| `--skip-torch`                         | flag | off                       | Skip the PyTorch provisioning step.                                                                                             |
+| `--skip-models`                        | flag | off                       | Skip the model provisioning step.                                                                                               |
+| `--skip-qdrant`                        | flag | off                       | Skip the Qdrant binary provisioning step.                                                                                       |
+| `--json`                               | flag | off                       | Emit a JSON report instead of human text.                                                                                       |
+
+Torch provisioning is two-phase: install configures the source in `pyproject.toml` and reports it as `configured, sync pending`; the GPU build lands only after a follow-up `uv sync` or `--sync`. Provisioning reports through the shared sync vocabulary: `created`, `updated`, `unchanged`, `skipped`, and `failed`.
+
+Exit/JSON: `0` on success, including the torch-config terminal states `declined`, `conflict`, `absent`, and `disabled`; `1` on install failure; `2` when torch config was requested and ended in `error`, `skipped-eof`, or `skipped-non-tty`. With `--json`, the result is one report on stdout.
 
 ## uninstall
 
-Remove vaultspec-rag enrollment from a workspace. Symmetric mirror of `install`: removes rag's bundled rule and MCP source files from `.vaultspec/rules/` and invokes vaultspec-core's sync. `.vault/` documents are always preserved. Without `--force`, returns a dry-run preview only.
+`vaultspec-rag uninstall`
 
-| Flag             | Default                   | Description                                                     |
-| ---------------- | ------------------------- | --------------------------------------------------------------- |
-| `--target`, `-t` | current working directory | Workspace path.                                                 |
-| `--remove-data`  | off                       | Also remove `.vault/data/` (rag's index, preserved by default). |
-| `--dry-run`      | off                       | Preview changes without removing.                               |
-| `--force`        | off                       | Required to execute. Uninstall is destructive.                  |
-| `--skip`         | unset                     | Skip a component, repeatable.                                   |
-| `--yes`, `-y`    | off                       | Skip confirmation prompts.                                      |
-| `--json`         | off                       | Output result as JSON.                                          |
-| `--help`         | off                       | Show the help message and exit.                                 |
+Remove vaultspec-rag enrollment from a workspace. This mirrors `install`: it removes the bundled rule and MCP source files and runs the vaultspec-core sync. Vault documents and index data are preserved unless `--remove-data` is passed.
 
-Exit codes: `0` success; `1` uninstall failure.
+Arguments: none.
 
-## benchmark
+Options:
 
-Run search latency benchmarks against the indexed vault. Reports p50, p95, p99 latency, store counts, and GPU VRAM usage. Requires an indexed vault.
+| Flag             | Type | Default                   | Description                                                 |
+| ---------------- | ---- | ------------------------- | ----------------------------------------------------------- |
+| `--target`, `-t` | path | current working directory | Workspace path.                                             |
+| `--remove-data`  | flag | off                       | Also remove index data under `.vault/data/`.                |
+| `--dry-run`      | flag | off                       | Preview the removal without writing.                        |
+| `--force`        | flag | off                       | Execute the removal. Without it, the command previews only. |
+| `--skip`         | text | unset                     | Skip a component by token. Repeatable.                      |
+| `--yes`, `-y`    | flag | off                       | Skip the confirmation prompt.                               |
+| `--json`         | flag | off                       | Emit one JSON envelope to stdout.                           |
 
-| Flag          | Default | Description                       |
-| ------------- | ------- | --------------------------------- |
-| `--n-queries` | `20`    | Number of search queries to time. |
-| `--help`      | off     | Show the help message and exit.   |
-
-Exit codes: `0` success; `1` vault empty or GPU error.
-
-## quality
-
-Run quality-scoring probes against a synthetic test corpus. Fails when precision falls below the configured threshold.
-
-| Flag     | Default | Description                     |
-| -------- | ------- | ------------------------------- |
-| `--help` | off     | Show the help message and exit. |
-
-Exit codes: `0` precision at or above threshold; `1` precision below threshold or GPU error.
+Exit/JSON: `0` on success; `1` on uninstall failure. With `--json`, the result is one envelope on stdout.
 
 ## test
 
-Run the test suite via pytest.
+`vaultspec-rag test [PYTEST_ARGS...]`
 
-| Flag     | Default | Description                     |
-| -------- | ------- | ------------------------------- |
-| `--help` | off     | Show the help message and exit. |
+Run pytest over the test tree.
 
-Additional positional arguments are forwarded to pytest unchanged.
+Arguments:
 
-Exit codes: pytest's own exit code is propagated.
+| Name          | Required | Description                                         |
+| ------------- | -------- | --------------------------------------------------- |
+| `pytest_args` | no       | Additional arguments forwarded to pytest unchanged. |
 
-## MCP tools
+Options: run `vaultspec-rag test --help` for the full list. Most arguments pass straight through to pytest.
 
-The fifteen tools below are exposed by both the stdio and HTTP MCP transports. Parameters match the corresponding CLI flags where the surfaces overlap. `project_root` is required in HTTP service mode and optional in stdio mode (where it defaults to `VAULTSPEC_RAG_ROOT` or the current working directory). See [mcp.md](mcp.md) for client setup.
+Exit/JSON: pytest's own exit code is propagated.
 
-### search_vault
+## quality
 
-Semantic search over indexed vault documents with optional metadata filters.
+`vaultspec-rag quality`
 
-| Name           | Type    | Default  | Description                            |
-| -------------- | ------- | -------- | -------------------------------------- |
-| `query`        | string  | required | Search query text.                     |
-| `top_k`        | integer | `5`      | Maximum results to return.             |
-| `doc_type`     | string  | `null`   | Vault doc type filter.                 |
-| `feature`      | string  | `null`   | Feature tag filter (kebab-case).       |
-| `date`         | string  | `null`   | Exact ISO date filter.                 |
-| `tag`          | string  | `null`   | Free-form tag filter.                  |
-| `project_root` | string  | `null`   | Workspace root; required in HTTP mode. |
+Run needle-precision probes against a synthetic vault corpus. Output is plain text.
 
-Returns:
+Arguments: none.
 
-- `results`: list of ranked result items, descending by score.
-- `summary`: human-readable summary string.
-- `backend_capabilities`: backend concurrency capability object.
+Options: none.
 
-### search_codebase
+Exit: `0` when precision meets the threshold; `1` when precision falls below it or on a GPU error.
 
-Semantic search over indexed source code with optional structural and path filters.
+## benchmark
 
-| Name            | Type           | Default  | Description                                                      |
-| --------------- | -------------- | -------- | ---------------------------------------------------------------- |
-| `query`         | string         | required | Search query text.                                               |
-| `top_k`         | integer        | `5`      | Maximum results to return.                                       |
-| `language`      | string         | `null`   | Programming language filter.                                     |
-| `path`          | string         | `null`   | Exact project-relative file path.                                |
-| `node_type`     | string         | `null`   | parse-tree node type (for example `function_definition`) filter. |
-| `function_name` | string         | `null`   | Function or method name filter.                                  |
-| `class_name`    | string         | `null`   | Class or struct name filter.                                     |
-| `include_paths` | list of string | `null`   | Repeatable fnmatch globs to keep.                                |
-| `exclude_paths` | list of string | `null`   | Repeatable fnmatch globs to drop.                                |
-| `dedup_locales` | boolean        | `false`  | Collapse near-tie locale variants.                               |
-| `prefer`        | string         | `null`   | One of `prod`, `tests`, `docs`.                                  |
-| `project_root`  | string         | `null`   | Workspace root; required in HTTP mode.                           |
+`vaultspec-rag benchmark`
 
-Returns:
+Measure local search-latency percentiles against the indexed vault. Output is plain text.
 
-- `results`: list of ranked code result items, descending by score.
-- `summary`: human-readable summary string.
-- `backend_capabilities`: backend concurrency capability object.
+Arguments: none.
 
-### reindex_vault
+Options:
 
-Re-index vault documentation. Incremental by default. Invalidates the vault graph cache after indexing.
+| Flag                       | Type    | Default | Description                                       |
+| -------------------------- | ------- | ------- | ------------------------------------------------- |
+| `--queries`, `--n-queries` | integer | `20`    | Number of queries to run. Must be `1` or greater. |
 
-| Name           | Type    | Default | Description                            |
-| -------------- | ------- | ------- | -------------------------------------- |
-| `clean`        | boolean | `false` | Drop and rebuild the vault collection. |
-| `project_root` | string  | `null`  | Workspace root; required in HTTP mode. |
+Exit: `0` on success; `1` on an empty vault or a GPU error; `2` when `--queries` is less than `1`.
 
-Returns:
+## server start
 
-- `total`: total items in index after the operation.
-- `added`: newly indexed items.
-- `updated`: re-indexed items.
-- `removed`: removed items.
-- `duration_ms`: wall-clock time in milliseconds.
-- `files`: number of source files processed.
+`vaultspec-rag server start`
 
-### reindex_codebase
+Start the background search service as a detached process. The service spawns the daemon on the given port, polls `/health` until it reports `ready`, and records how the CLI can reach it. Server mode is the default: the daemon supervises the managed Qdrant child. If the Qdrant binary is missing, `start` prints the install command.
 
-Re-index the source codebase. Incremental by default.
+Arguments: none.
 
-| Name           | Type    | Default | Description                            |
-| -------------- | ------- | ------- | -------------------------------------- |
-| `clean`        | boolean | `false` | Drop and rebuild the code collection.  |
-| `project_root` | string  | `null`  | Workspace root; required in HTTP mode. |
+Options:
 
-Returns:
+| Flag                         | Type    | Default                           | Description                                                                                                                                                    |
+| ---------------------------- | ------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--port`                     | integer | `8766` (env `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                                                                                                 |
+| `--updates` / `--no-updates` | flag    | unset                             | Enable or disable automatic index updates when files change. Unset leaves the current setting unchanged.                                                       |
+| `--update-delay-ms`          | integer | unset (`2000`)                    | Debounce before indexing a burst of file changes, in milliseconds.                                                                                             |
+| `--repeat-update-delay-s`    | float   | unset (`30`)                      | Minimum wait before automatically updating a project again, in seconds.                                                                                        |
+| `--local-only`               | flag    | off                               | Use the on-disk store and skip the Qdrant child.                                                                                                               |
+| `--qdrant` / `--no-qdrant`   | flag    | unset                             | Opt in to or out of the managed Qdrant server. Server mode is the default, so `--qdrant` on its own has no effect. Unset leaves the current setting unchanged. |
+| `--qdrant-auto-provision`    | flag    | off                               | Download the managed Qdrant server if it is missing instead of printing the install command.                                                                   |
 
-- `total`: total items in index after the operation.
-- `added`: newly indexed items.
-- `updated`: re-indexed items.
-- `removed`: removed items.
-- `duration_ms`: wall-clock time in milliseconds.
-- `files`: number of source files processed.
+The daemon inherits configuration only through the environment, so each set flag is translated to its `VAULTSPEC_RAG_*` variable on the child process before spawn.
 
-### get_index_status
+Exit/JSON: `0` once the service is ready; `1` on a failure to start or a health-check timeout. A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`.
 
-Return the current status of the RAG index and GPU hardware.
+## server stop
 
-| Name           | Type   | Default | Description                            |
-| -------------- | ------ | ------- | -------------------------------------- |
-| `project_root` | string | `null`  | Workspace root; required in HTTP mode. |
+`vaultspec-rag server stop`
 
-Returns:
+Stop the running background search service. The command reads the status file, verifies the PID is alive and belongs to a vaultspec-rag process, signals it, waits briefly, and force-kills it if graceful shutdown fails.
 
-- `vault_count`: number of indexed vault documents.
-- `code_count`: number of indexed codebase chunks.
-- `storage_path`: absolute path to the Qdrant local database directory.
-- `target_dir`: workspace root directory.
-- `vram_gb`: total GPU VRAM in gigabytes.
-- `backend_capabilities`: backend concurrency capability object.
+Arguments: none.
 
-### get_code_file
+Options: none.
 
-Retrieve the full content of a source file by project-relative path.
+Exit: `0` when stopped or already absent; `1` on a failure to stop.
 
-| Name           | Type   | Default  | Description                            |
-| -------------- | ------ | -------- | -------------------------------------- |
-| `path`         | string | required | Path relative to codebase root.        |
-| `project_root` | string | `null`   | Workspace root; required in HTTP mode. |
+## server status
 
-Returns:
+`vaultspec-rag server status`
 
-- File content as a string.
+Show an operator status summary for the background service. The command gathers four signals - `service.json` present, PID alive, port listening, and heartbeat fresh - and derives a single state. The daemon writes its heartbeat every 15 seconds; a heartbeat older than 60 seconds is stale.
 
-### list_projects
+Arguments: none.
 
-Return a snapshot of every active project slot on the running service. Registry-wide; `project_root` is accepted for signature parity and ignored.
+Options:
 
-| Name           | Type   | Default | Description                             |
-| -------------- | ------ | ------- | --------------------------------------- |
-| `project_root` | string | `null`  | Accepted for signature parity; ignored. |
+| Flag        | Type    | Default              | Description                                                       |
+| ----------- | ------- | -------------------- | ----------------------------------------------------------------- |
+| `--port`    | integer | running service port | Target a specific service port.                                   |
+| `--verbose` | flag    | off                  | Add process, heartbeat, identity, model, and compute detail rows. |
+| `--json`    | flag    | off                  | Emit one JSON envelope to stdout. Preserves exit codes.           |
 
-Returns:
+When no `service.json` exists and no `--port` is given, the command returns exit `3` without probing the default port.
 
-- `projects`: list of project slot snapshots.
-- Per-slot fields: `root` (project path), `last_access_iso` (ISO timestamp), `idle_seconds` (seconds since last use), `ref_count` (active references).
-- Top-level fields: `max_projects` (the soft cap from `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`), `idle_ttl_seconds` (the eviction threshold).
+Exit/JSON: `0` when `running` (all signals green); `3` when `stopped` (no `service.json`); `4` when crashed or divergent (`crashed_pid_dead`, `crashed_pid_reused`, `crashed_port_silent`, or `crashed_heartbeat_stale`). With `--json`, the result is one envelope on stdout.
 
-### evict_project
+## server doctor
 
-Force-evict the project slot for the given root.
+`vaultspec-rag server doctor`
 
-| Name   | Type   | Default  | Description                                    |
-| ------ | ------ | -------- | ---------------------------------------------- |
-| `root` | string | required | Workspace root directory; resolved internally. |
+Report a read-only readiness snapshot for every external dependency the server-first backend needs. The command provisions nothing; it reports the backend in use plus torch CUDA availability, model-snapshot presence, and the Qdrant binary's resolution source and the supervised server's liveness. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
 
-Returns:
+Arguments: none.
 
-- `evicted` (boolean): true when the slot was dropped.
-- `reason` (string): one of `forced`, `busy` (slot still has active refs), or `not_found` (no slot for that root).
+Options:
 
-### get_watcher_state
+| Flag     | Type | Default | Description                                     |
+| -------- | ---- | ------- | ----------------------------------------------- |
+| `--json` | flag | off     | Emit the readiness snapshot as a JSON envelope. |
 
-Report the filesystem-watcher configuration (`watch_enabled`, `debounce_ms`, `cooldown_s`) and which roots currently have a live watcher. Mirrors `server service watcher` on the CLI.
+Exit/JSON: `0` when ready for requests; the report's `ready` field carries the overall verdict and each dependency carries its own status. With `--json`, the result is one envelope whose `data` holds `{ready, server_mode, dependencies}`.
 
-| Name           | Type   | Default | Description                            |
-| -------------- | ------ | ------- | -------------------------------------- |
-| `project_root` | string | `null`  | Workspace root; required in HTTP mode. |
+## server warmup
 
-Returns:
+`vaultspec-rag server warmup`
 
-- `watch_enabled`: whether auto-reindex is enabled.
-- `debounce_ms`: debounce window in milliseconds.
-- `cooldown_s`: per-source cooldown in seconds.
-- `roots`: list of roots with a live watcher.
+Pre-download the GPU model files to the HuggingFace cache without serving requests. The command checks CUDA availability, then downloads the dense, sparse, and reranker repositories if they are not already cached.
 
-### start_watcher
+Arguments: none.
 
-Eagerly start the filesystem watcher for a root. No-op (reports `started=false`) when auto-reindex is disabled. Mirrors `server service watcher start` on the CLI.
+Options: none.
 
-| Name   | Type   | Default  | Description                                    |
-| ------ | ------ | -------- | ---------------------------------------------- |
-| `root` | string | required | Workspace root directory; resolved internally. |
+Exit: `0` on success; `1` when CUDA is unavailable or `huggingface_hub` is not installed.
 
-Returns:
+## server jobs
 
-- `started` (boolean): true when the watcher was started; false when auto-reindex is disabled.
+`vaultspec-rag server jobs`
 
-### stop_watcher
+List recent and in-flight index and reindex activity from the service's in-flight registry. Output is bounded and filterable so running, failed, or related work surfaces above stale history.
 
-Stop the filesystem watcher for a root, leaving that root pull-only. Mirrors `server service watcher stop` on the CLI.
+Arguments: none.
 
-| Name   | Type   | Default  | Description                                    |
-| ------ | ------ | -------- | ---------------------------------------------- |
-| `root` | string | required | Workspace root directory; resolved internally. |
+Options:
 
-Returns:
+| Flag              | Type    | Default              | Description                                                                        |
+| ----------------- | ------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `--limit`         | integer | `20`                 | Maximum number of jobs to return.                                                  |
+| `--state`         | text    | unset                | Filter by state: one of `active`, `waiting`, `finished`, `failed`, or `cancelled`. |
+| `--index`         | text    | unset                | Filter by index source: `vault` or `code`.                                         |
+| `--started-by`    | text    | unset                | Filter by trigger: `manual` or `automatic`.                                        |
+| `--query`, `-q`   | text    | unset                | Match against job id, outcome, or progress.                                        |
+| `--failed`        | flag    | off                  | Show only failed jobs.                                                             |
+| `--job-id`        | text    | unset                | Filter to one job id.                                                              |
+| `--since`         | float   | unset                | Show jobs updated within the last N seconds.                                       |
+| `--port`          | integer | running service port | Target a specific service port.                                                    |
+| `--json`          | flag    | off                  | Emit one JSON envelope to stdout.                                                  |
+| `--watch`         | flag    | off                  | Refresh the table on an interval. Cannot combine with `--json`.                    |
+| `--interval`      | float   | `2.0`                | Refresh interval for `--watch`, in seconds.                                        |
+| `--refresh-count` | integer | unset                | Stop `--watch` after this many refreshes.                                          |
 
-- `stopped` (boolean): true when the watcher was stopped.
+Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
 
-### reconfigure_watcher
+## server logs
 
-Restart a root's filesystem watcher with new tuning (stop, then restart). Mirrors `server service watcher reconfigure` on the CLI.
+`vaultspec-rag server logs`
 
-| Name          | Type    | Default  | Description                                    |
-| ------------- | ------- | -------- | ---------------------------------------------- |
-| `root`        | string  | required | Workspace root directory; resolved internally. |
-| `debounce_ms` | integer | `null`   | New debounce window in milliseconds.           |
-| `cooldown_s`  | number  | `null`   | New per-source cooldown in seconds.            |
+Show a recent service activity feed. The reader spans the rotated log set (`service.log`, `service.log.1`, and so on) and tolerates mid-rollover races.
 
-Returns:
+Arguments: none.
 
-- `restarted` (boolean): true when the watcher was restarted with the new tuning.
+Options:
 
-### get_service_state
+| Flag         | Type    | Default              | Description                                             |
+| ------------ | ------- | -------------------- | ------------------------------------------------------- |
+| `--limit`    | integer | `200`                | Number of log lines to show.                            |
+| `--job-id`   | text    | unset                | Filter to lines for one job id.                         |
+| `--contains` | text    | unset                | Filter to lines containing this substring.              |
+| `--raw`      | flag    | off                  | Show the original log lines instead of the parsed feed. |
+| `--port`     | integer | running service port | Target a specific service port.                         |
+| `--json`     | flag    | off                  | Emit one JSON envelope to stdout.                       |
 
-Consolidated read of the running service: per-source index counts, GPU/device info, project slots, and a watcher rollup. Mirrors `server service info` on the CLI.
+Exit/JSON: `0` on success; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
 
-| Name           | Type   | Default | Description                            |
-| -------------- | ------ | ------- | -------------------------------------- |
-| `project_root` | string | `null`  | Workspace root; required in HTTP mode. |
+## server projects list
 
-Returns:
+`vaultspec-rag server projects list`
 
-- `index`: per-source index counts (vault and codebase).
-- `device`: GPU/device information.
-- `projects`: active project slot snapshots.
-- `watcher`: watcher configuration and live-root rollup.
+List the project slots loaded on a running service.
 
-### get_logs
+Arguments: none.
 
-Return the tail of the service log across the rotated log set. Mirrors `server service logs` on the CLI.
+Options:
 
-| Name    | Type    | Default | Description                             |
-| ------- | ------- | ------- | --------------------------------------- |
-| `lines` | integer | `200`   | Number of trailing log lines to return. |
+| Flag     | Type    | Default              | Description                       |
+| -------- | ------- | -------------------- | --------------------------------- |
+| `--port` | integer | running service port | Target a specific service port.   |
+| `--json` | flag    | off                  | Emit one JSON envelope to stdout. |
 
-Returns:
+Output lists each slot's root, last access time, idle duration, and active reference count, plus the `max_projects` cap and the idle eviction threshold.
 
-- `lines`: list of trailing log lines across the rotated set.
+Exit/JSON: `0` on success; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
 
-### get_jobs
+## server projects unload
 
-Return recent and in-flight index/reindex activity from the service's in-flight registry. Mirrors `server service jobs` on the CLI.
+`vaultspec-rag server projects unload <project>`
 
-| Name    | Type    | Default | Description                       |
-| ------- | ------- | ------- | --------------------------------- |
-| `limit` | integer | `null`  | Maximum number of jobs to return. |
+Unload a project slot on a running service. This is the renamed `evict` verb. The matching MCP tool keeps the name `evict_project`.
 
-Returns:
+Arguments:
 
-- `jobs`: list of recent and in-flight index/reindex job records.
+| Name      | Required | Description             |
+| --------- | -------- | ----------------------- |
+| `project` | yes      | Project root to unload. |
 
-## Need help?
+Options:
+
+| Flag     | Type    | Default              | Description                       |
+| -------- | ------- | -------------------- | --------------------------------- |
+| `--port` | integer | running service port | Target a specific service port.   |
+| `--json` | flag    | off                  | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` when unloaded or a no-op; `1` when the slot is busy; `2` when no slot matches the root (`not_found`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+
+## server updates status
+
+`vaultspec-rag server updates status`
+
+Show the automatic index-update settings and the projects under watch. This is the renamed `watcher status` verb.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type    | Default              | Description                       |
+| -------- | ------- | -------------------- | --------------------------------- |
+| `--port` | integer | running service port | Target a specific service port.   |
+| `--json` | flag    | off                  | Emit one JSON envelope to stdout. |
+
+Output reports whether automatic updates are enabled, the timing knobs, and the watched projects.
+
+Exit/JSON: `0` on success; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+
+## server updates start
+
+`vaultspec-rag server updates start <project>`
+
+Start automatic index updates for a project. This is the renamed `watcher start` verb. It is a no-op when automatic updates are disabled.
+
+Arguments:
+
+| Name      | Required | Description            |
+| --------- | -------- | ---------------------- |
+| `project` | yes      | Project root to watch. |
+
+Options:
+
+| Flag     | Type    | Default              | Description                       |
+| -------- | ------- | -------------------- | --------------------------------- |
+| `--port` | integer | running service port | Target a specific service port.   |
+| `--json` | flag    | off                  | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` when the request is handled; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+
+## server updates stop
+
+`vaultspec-rag server updates stop <project>`
+
+Stop automatic index updates for a project, leaving it pull-only. This is the renamed `watcher stop` verb.
+
+Arguments:
+
+| Name      | Required | Description                    |
+| --------- | -------- | ------------------------------ |
+| `project` | yes      | Project root to stop watching. |
+
+Options:
+
+| Flag     | Type    | Default              | Description                       |
+| -------- | ------- | -------------------- | --------------------------------- |
+| `--port` | integer | running service port | Target a specific service port.   |
+| `--json` | flag    | off                  | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` when the request is handled; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+
+## server updates timing
+
+`vaultspec-rag server updates timing <project>`
+
+Change the automatic-update timing for a project. This is the renamed `watcher reconfigure` verb; it restarts the project's watcher with new debounce and cooldown values. The matching MCP tool keeps the name `reconfigure_watcher`.
+
+Arguments:
+
+| Name      | Required | Description             |
+| --------- | -------- | ----------------------- |
+| `project` | yes      | Project root to retune. |
+
+Options:
+
+| Flag                      | Type    | Default              | Description                                                                                               |
+| ------------------------- | ------- | -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--update-delay-ms`       | integer | config default       | New debounce window before indexing a change burst, in milliseconds.                                      |
+| `--repeat-update-delay-s` | float   | config default       | New minimum wait before re-updating the project, in seconds. A value of `0` means no delay, not disabled. |
+| `--port`                  | integer | running service port | Target a specific service port.                                                                           |
+| `--json`                  | flag    | off                  | Emit one JSON envelope to stdout.                                                                         |
+
+Exit/JSON: `0` when the request is handled; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+
+## server qdrant install
+
+`vaultspec-rag server qdrant install`
+
+Download and verify the managed Qdrant server binary. The download is HTTPS host-pinned, the SHA256 is verified against a committed digest before extraction, and the binary is re-hashed against its manifest immediately before it runs.
+
+Arguments: none.
+
+Options:
+
+| Flag        | Type | Default | Description                                                                                                                                                             |
+| ----------- | ---- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--upgrade` | flag | off     | Refresh the install to the pinned version even if a binary is present.                                                                                                  |
+| `--dry-run` | flag | off     | Preview the action without downloading.                                                                                                                                 |
+| `--binary`  | path | unset   | Register an operator-supplied executable instead of downloading. The checksum pin does not apply; the binary is recorded as `source: operator` and logged as a warning. |
+| `--json`    | flag | off     | Emit one JSON envelope to stdout.                                                                                                                                       |
+
+The human report shows the action, version, release package, download, install location, SHA256, and detail.
+
+Exit/JSON: `0` on success; `1` when provisioning fails (`failed`). With `--json`, the result is one envelope on stdout.
+
+## server qdrant status
+
+`vaultspec-rag server qdrant status`
+
+Report the managed Qdrant version, executable, address, connection, and process.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type              | Default | Description                       |
+| -------- | ----------------- | ------- | --------------------------------- |
+| `--port` | integer (1-65535) | unset   | Probe this port for readiness.    |
+| `--json` | flag              | off     | Emit one JSON envelope to stdout. |
+
+The payload reports the pinned version, the server-mode default, the probed port and readiness, the active binary and its source, the available installs, and the recorded supervised child.
+
+Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
+
+## server qdrant clean
+
+`vaultspec-rag server qdrant clean`
+
+Delete managed Qdrant installs. Index data is never touched.
+
+Arguments: none.
+
+Options:
+
+| Flag             | Type | Default | Description                                                                   |
+| ---------------- | ---- | ------- | ----------------------------------------------------------------------------- |
+| `--keep-current` | flag | off     | Preserve the pinned version and remove the rest.                              |
+| `--yes`          | flag | off     | Confirm deletion. Required to delete; otherwise the command prints a preview. |
+| `--dry-run`      | flag | off     | Preview the deletion without removing anything.                               |
+| `--json`         | flag | off     | Emit one JSON envelope to stdout.                                             |
+
+Exit/JSON: `0` on success or an empty preview; `1` when a preview lists targets but `--yes` was not given. With `--json`, the result is one envelope on stdout.
+
+## preprocess list
+
+`vaultspec-rag preprocess list`
+
+Show the resolved preprocess rules from `.vaultragpreprocess.toml`.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type | Default | Description                       |
+| -------- | ---- | ------- | --------------------------------- |
+| `--json` | flag | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
+
+## preprocess check
+
+`vaultspec-rag preprocess check`
+
+Validate `.vaultragpreprocess.toml`. This is the only `preprocess` verb that fails on a bad config.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type | Default | Description                       |
+| -------- | ---- | ------- | --------------------------------- |
+| `--json` | flag | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` when the config is valid; non-zero with `invalid-config` when it is not. With `--json`, the result is one envelope on stdout.
+
+## preprocess run-one
+
+`vaultspec-rag preprocess run-one <path>`
+
+Trial-run the matching preprocess rule on one file and show the emitted units.
+
+Arguments:
+
+| Name   | Required | Description                                      |
+| ------ | -------- | ------------------------------------------------ |
+| `path` | yes      | The file to trial-run the matching rule against. |
+
+Options:
+
+| Flag     | Type | Default | Description                       |
+| -------- | ---- | ------- | --------------------------------- |
+| `--json` | flag | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
+
+## Get help
 
 See the [Support](../README.md#support-and-help) section of the repo README.

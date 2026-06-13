@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
+modified: '2026-03-08'
 ---
 
 # Round 25 Correctness Audit: store.py & api.py

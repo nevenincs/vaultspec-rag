@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
+modified: '2026-06-05'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-research]]"
 ---

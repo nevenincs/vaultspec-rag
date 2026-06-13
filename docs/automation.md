@@ -1,53 +1,28 @@
 # Scripting and automation
 
+vaultspec-rag is GPU-accelerated semantic search over your vault documents and
+source code. New here? Start with the [getting-started guide](getting-started.md).
+
 Every vaultspec-rag command supports `--json`. The flag suppresses Rich console
 formatting and emits exactly one JSON document on stdout, newline-terminated.
 Use it when shell scripts, CI jobs, or agent loops need to read results
-programmatically instead of parsing tables. The flag exists so an automation
-pipeline never has to scrape a human-formatted table and can detect every error
-category by code rather than substring-match on prose.
+programmatically instead of parsing tables. Logs still go to stderr, so an
+automation pipeline detects every error category by code rather than
+substring-matching on prose. The continuous integration (CI) examples in this
+guide rely on that contract.
 
-This page assumes you have vaultspec-rag installed. See
-[installation.md](installation.md) for setup.
+## Before you start
 
-## The envelope shape
+You need vaultspec-rag installed and a project indexed. See
+[installation.md](installation.md) for setup and [getting-started.md](getting-started.md)
+for indexing your first project.
 
-Every `--json` response is a single JSON object with four mandatory fields:
-`ok`, `command`, and either `data` (on success) or `error` plus `message`
-(on failure). Extras like `remediation` arrays, `port` numbers, or state codes
-appear only on error envelopes that surface them.
-
-Success:
-
-```json
-{
-  "ok": true,
-  "command": "search",
-  "data": {
-    "results": [
-      {"id": "adr/overview", "path": "adr/overview.md", "title": "Overview",
-       "score": 0.81, "snippet": "...", "source": "vault"}
-    ]
-  }
-}
-```
-
-Error:
-
-```json
-{
-  "ok": false,
-  "command": "search",
-  "error": "port_unreachable",
-  "message": "MCP service on port 8766 is unreachable. The CLI will not silently fall back to in-process search; start the service or re-run with --allow-fallback (single-agent use only).",
-  "port": 8766,
-  "remediation": [
-    "vaultspec-rag server service status",
-    "vaultspec-rag server service start",
-    "rerun with --allow-fallback (single-agent only)"
-  ]
-}
-```
+Some commands delegate to the running HTTP service. Search and `index` auto-detect
+a running service when you leave `--port` unset; pass `--port N` to target a
+specific service. If the service is unreachable, the command returns the retryable
+`port_unreachable` error (see [detecting errors](#detect-success-vs-error)).
+Start the service with `vaultspec-rag server start`. For the full walkthrough, see
+[service-mode.md](service-mode.md).
 
 ## Parse a search with jq
 
@@ -73,25 +48,28 @@ if ! echo "$out" | jq -e '.ok' >/dev/null; then
 fi
 ```
 
-Branch on the error code:
+Branch on the error code. Treat `port_unreachable` as transient and retry, or
+re-run with `--allow-fallback` to run in-process against the local store:
 
 ```bash
 case $(echo "$out" | jq -r '.error // empty') in
-  port_unreachable)   echo "service down, retrying"; ;;
+  port_unreachable)   echo "service down, retry or use --allow-fallback";;
   local_store_locked) echo "another process holds the lock, aborting"; exit 1;;
-  stopped)            echo "service stopped, start it first"; exit 3;;
+  stopped)            echo "service not running, start it first"; exit 3;;
   "")                 echo "ok";;
 esac
 ```
 
-Exit codes map one-to-one with error categories: `0` success, `1` generic
-failure, `2` usage error, `3` service stopped, `4` service divergent or
-crashed.
+Exit codes map to error categories: `0` success, `1` generic failure, `2` usage
+error, `3` service stopped, `4` service crashed or divergent. The
+[error-code reference](#error-code-reference) lists which code each error string
+returns; [cli.md](cli.md) is the authoritative per-command exit-code and error
+list.
 
 ## Worked example: gate CI on index health
 
-Run the indexer in CI and fail the build if the code index is empty
-(typically a sign that the file scan was misconfigured).
+Run the indexer in CI and fail the build if the code index is empty (usually a
+misconfigured file scan).
 
 ```bash
 #!/usr/bin/env bash
@@ -105,7 +83,7 @@ if ! echo "$out" | jq -e '.ok' >/dev/null; then
 fi
 
 code_total=$(echo "$out" \
-  | jq '[.data.sources[] | select(.source=="code") | .total] | add // 0')
+  | jq '[.data.sources[] | select(.source=="codebase") | .total] | add // 0')
 
 if [ "$code_total" -eq 0 ]; then
   echo "code index is empty; check ignore globs and source roots" >&2
@@ -115,85 +93,108 @@ fi
 
 Wire this into your CI's pre-merge or nightly job.
 
-## Caveats
+## The envelope shape
 
-- Rich-formatted output is fully suppressed in `--json` mode; stdout contains
-  the JSON document and one trailing newline only.
-- `--json` affects stdout only; log lines at INFO, WARNING, and ERROR still
-  go to stderr or the service log. Redirect with `2>/dev/null` if you do not
-  want them in your captured output.
-- When `--port N` cannot reach the service (the background daemon described
-  in [service-mode.md](service-mode.md)), the envelope is
-  `{"ok": false, "error": "port_unreachable", "port": N, "remediation": [...]}`
-  with exit `1`. Treat `port_unreachable` as transient and retry, or pass
-  `--allow-fallback` to run the command in-process against the local store
-  (the on-disk search index in your `.vault/data/` directory) instead. See
-  [configuration.md](configuration.md) for the relevant settings.
+Every `--json` response is a single JSON object. The mandatory fields are `ok`,
+`command`, and either `data` (on success) or `error` plus `message` (on failure).
+Error envelopes may carry extras such as a `port` number or a `remediation`
+array.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "command": "search",
+  "data": {
+    "results": [
+      {"id": "adr/overview", "path": "adr/overview.md", "title": "Overview",
+       "score": 0.81, "snippet": "...", "source": "vault"}
+    ]
+  }
+}
+```
+
+Error:
+
+```json
+{
+  "ok": false,
+  "command": "search",
+  "error": "port_unreachable",
+  "message": "MCP service on port 8766 is unreachable. Start the service or re-run with --allow-fallback (single-agent use only).",
+  "port": 8766,
+  "remediation": [
+    "vaultspec-rag server status",
+    "vaultspec-rag server start",
+    "rerun with --allow-fallback (single-agent only)"
+  ]
+}
+```
+
+## Exit codes
+
+| Code | Meaning                                                                         |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | Success.                                                                        |
+| `1`  | Generic failure (GPU error, locked index, unreachable port, etc.).              |
+| `2`  | Usage error (invalid argument, missing required flag).                          |
+| `3`  | Service stopped - no service is running.                                        |
+| `4`  | Service crashed or divergent - the status file disagrees with the live process. |
+
+Divergent and crashed states (status file present, signals disagree) surface as
+exit `4`. The detail appears in the status output rows rather than as `error`
+strings in the JSON envelope.
 
 ## Error code reference
 
-| Code                             | When it appears                                                     | Exit |
-| -------------------------------- | ------------------------------------------------------------------- | ---- |
-| `invalid_filter_for_search_type` | Filter flag does not apply to the chosen search type.               | 2    |
-| `dry_run_requires_code`          | `index --dry-run` invoked without `--type code` or `--type all`.    | 2    |
-| `rebuild_requires_explicit_type` | `index --rebuild` invoked without an explicit `--type`.             | 2    |
-| `json_requires_yes`              | `clean --json` invoked without `--yes`.                             | 2    |
-| `port_unreachable`               | `--port N` cannot reach the service.                                | 1    |
-| `mcp_call_failed`                | MCP round-trip raised before completing.                            | 1    |
-| `local_store_locked`             | Another process holds the local store lock.                         | 1    |
-| `rebuild_locked`                 | The rebuild lock could not be acquired (another rebuild in flight). | 1    |
-| `stopped`                        | `server service status` queried while no service is running.        | 3    |
+The `error` field carries a stable string code. The common ones:
 
-Service-status divergent/crashed states (file present, signals disagree) surface as exit 4 with detail in the status output rows rather than as `error` strings in the JSON envelope.
+| Code                              | When it appears                                                   | Exit |
+| --------------------------------- | ----------------------------------------------------------------- | ---- |
+| `port_unreachable`                | `--port N` cannot reach the service. Retry or `--allow-fallback`. | 1    |
+| `local_store_locked`              | Another process holds the local store lock.                       | 1    |
+| `index_locked`                    | An index operation is already in flight.                          | 1    |
+| `rebuild_locked`                  | The rebuild lock could not be acquired.                           | 1    |
+| `clean_locked`                    | The clean lock could not be acquired.                             | 1    |
+| `rebuild_requires_explicit_type`  | `index --rebuild` invoked without an explicit `--type`.           | 2    |
+| `dry_run_requires_code`           | `index --dry-run` invoked without `--type code` or `--type all`.  | 2    |
+| `json_requires_yes`               | `clean --json` invoked without `--yes`.                           | 2    |
+| `invalid_filter_for_search_type`  | A filter flag does not apply to the chosen search type.           | 2    |
+| `service_not_running` / `stopped` | A `server` subcommand queried while no service is running.        | 3    |
 
-See [cli.md](cli.md) for per-command exit-code lists.
+This is a representative set, not the complete list. See [cli.md](cli.md) for the
+authoritative per-command error and exit-code reference.
 
-## Automatic re-indexing (the filesystem watcher)
+## Caveats
 
-The background service (see [service-mode.md](service-mode.md)) runs a
-filesystem watcher that **re-indexes incrementally on file change**, so a
-long-lived service keeps its index fresh without a cron job or manual reindex.
-It is enabled by default.
+- Rich-formatted output is fully suppressed in `--json` mode. Stdout contains the
+  JSON document and one trailing newline only.
+- `--json` affects stdout only. Log lines at INFO, WARNING, and ERROR still go to
+  stderr or the service log. Redirect with `2>/dev/null` to keep them out of your
+  captured output.
+- `port_unreachable` is retryable. When `--port N` cannot reach the service, the
+  envelope carries `error: "port_unreachable"`, the `port`, and a `remediation`
+  array, and exits `1`. Retry, or pass `--allow-fallback` to run in-process
+  against the on-disk store in your `.vault/data/` directory. See
+  [configuration.md](configuration.md) for the relevant settings.
 
-What it watches: `.vault/` documents and tracked source files under the project
-root. Changes are coalesced over a debounce window, and each source (vault vs
-code) has an independent cooldown so a burst of edits triggers at most one
-reindex per cooldown.
+## Automatic re-indexing
 
-Configure it at `service start`, or via environment for headless/containerised
-deployments:
+The running service keeps the index fresh through its automatic-update watcher,
+which re-indexes incrementally on file change. It is on by default, so a
+long-lived service needs no cron job or manual reindex. For headless or
+containerized deployments, set `VAULTSPEC_RAG_WATCH_ENABLED=0` to run pull-only.
+Inspect and tune it with the `vaultspec-rag server updates ...` verbs. See
+[service-mode.md](service-mode.md) for the full watcher story and
+[configuration.md](configuration.md) for the environment variables.
 
-```bash
-# Pull-only service: no watcher, index only when you ask.
-vaultspec-rag server service start --no-watch
-# or: VAULTSPEC_RAG_WATCH_ENABLED=0 vaultspec-rag server service start
+## Where to go next, and help
 
-# Tune responsiveness (defaults: debounce 2000 ms, cooldown 30 s).
-vaultspec-rag server service start --watch-debounce-ms 500 --watch-cooldown-s 10
-```
+- [getting-started.md](getting-started.md) - index a project and run your first search.
+- [service-mode.md](service-mode.md) - run the background service and its watcher.
+- [cli.md](cli.md) - the authoritative per-command flag, exit-code, and error reference.
+- [configuration.md](configuration.md) - environment variables and tuning knobs.
 
-`--no-watch` (or `VAULTSPEC_RAG_WATCH_ENABLED=0`) is the only off switch;
-`--watch-debounce-ms`/`--watch-cooldown-s` tune but never disable. `0` for
-debounce or cooldown means "no delay", **not** "disabled". Flags left unset do
-not clobber an operator-set
-`VAULTSPEC_RAG_WATCH*` env var. See [configuration.md](configuration.md) for
-the full env list.
-
-Inspect and control the watcher on a running service (both reachable from the
-CLI and the matching MCP tools):
-
-```bash
-vaultspec-rag server service watcher status            # config + watched roots
-vaultspec-rag server service watcher start  <root>     # eager start one root
-vaultspec-rag server service watcher stop   <root>     # pull-only for one root
-vaultspec-rag server service watcher reconfigure <root> \
-    --debounce-ms 1000 --cooldown-s 15                 # restart with new tuning
-```
-
-Each supports `--json` and follows the standard envelope and exit codes (`3`
-when the service is not running). Prefer `watcher status` over guessing whether
-the index is current.
-
-## Need help?
-
-See the [Support](../README.md#support-and-help) section of the repo README.
+For anything else, see the [Support](../README.md#support-and-help) section of the
+repo README.

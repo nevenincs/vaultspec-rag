@@ -16,16 +16,51 @@ from typing import TYPE_CHECKING
 
 __all__ = [
     "_ensure_watcher",
+    "_ensure_watcher_soon",
     "_stop_all_watchers",
     "_stop_watcher",
 ]
 
 import vaultspec_rag.server as _m
 
+from ..logging_config import log_event
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+#: Strong references to in-flight deferred watcher starts so the event
+#: loop cannot garbage-collect them mid-flight.
+_deferred_watcher_tasks: set[asyncio.Task[None]] = set()
+
+
+def _ensure_watcher_soon(root: Path) -> None:
+    """Ensure a watcher for *root* without blocking the event loop.
+
+    Per-request callers (the search and reindex routes) must not pay
+    the cold project-slot open (50-200ms of store I/O) on the loop
+    thread. When the watcher already exists this is a dict probe; when
+    it does not, the slot is warmed on a worker thread and the watcher
+    registered afterwards.
+    """
+    root = root.resolve()
+    if root in _m._watcher_tasks:
+        return
+
+    async def _warm_and_start() -> None:
+        import anyio.to_thread
+
+        try:
+            await anyio.to_thread.run_sync(lambda: _m._registry.peek_project(root))
+        except Exception:
+            logger.exception("Deferred watcher start failed for %s", root)
+            return
+        _m._ensure_watcher(root)
+
+    task = asyncio.create_task(_warm_and_start())
+    _deferred_watcher_tasks.add(task)
+    task.add_done_callback(_deferred_watcher_tasks.discard)
 
 
 def _ensure_watcher(
@@ -108,7 +143,7 @@ def _ensure_watcher(
         )
         _m._watcher_tasks[root] = task
         _m._watcher_stops[root] = stop_event
-        logger.info("Filesystem watcher started for %s", root)
+        log_event(logger, "service.watcher", "task_started", root=root)
     return True
 
 
@@ -127,7 +162,7 @@ def _stop_watcher(root: Path) -> None:
     if task is not None and not task.done():
         task.cancel()
     if task is not None:
-        logger.info("Filesystem watcher stopped for %s", root)
+        log_event(logger, "service.watcher", "task_stopped", root=root)
 
 
 def _stop_all_watchers() -> None:

@@ -229,4 +229,17 @@ def render_prometheus() -> str:
         lines.append("# TYPE vaultspec_rag_gpu_memory_reserved_bytes gauge")
         lines.append(f"vaultspec_rag_gpu_memory_reserved_bytes {reserved}")
 
+    # Worker-pool partition depth: borrowed tokens and queued waiters
+    # per limiter, so saturation is observable before it times out.
+    from ..concurrency import limiter_stats
+
+    for pool, stats in limiter_stats().items():
+        total = stats.get("total_tokens")
+        if total is None:
+            continue
+        for stat_name in ("total_tokens", "borrowed_tokens", "waiting"):
+            metric = f"vaultspec_rag_{pool}_pool_{stat_name}"
+            lines.append(f"# TYPE {metric} gauge")
+            lines.append(f"{metric} {stats[stat_name]}")
+
     return "\n".join(lines) + "\n"

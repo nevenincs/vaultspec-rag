@@ -1,160 +1,177 @@
-# Searching and indexing
+# Search and index your project
 
-Indexing builds the search index over your project once. Searching queries that
-index. Day to day, you re-index when files change and search whenever you have
-a question. This page covers both, plus the flags that narrow what comes back.
+vaultspec-rag searches your vault documents and source code by meaning, surfacing related content even when the exact words don't match. This guide covers two everyday tasks: running searches and keeping the index current.
 
-Before you start, this page assumes you installed vaultspec-rag and ran
-`vaultspec-rag install` successfully. See [installation](installation.md) for
-setup and [architecture](architecture.md) for the conceptual model of what the
-search index is.
-
-## Build the index
-
-```bash
-uv run vaultspec-rag index
-```
-
-This reads `.md` files in your vault and source files in the project, splits
-each into chunks, and stores them in a local search index. The first run does
-the full pass. Subsequent runs are incremental: only changed files get
-re-processed, so they finish faster than the first run.
-
-## Re-index after big changes
-
-To scope the index to one side, pass `--type`:
-
-```bash
-uv run vaultspec-rag index --type vault
-```
-
-```bash
-uv run vaultspec-rag index --type code
-```
-
-Use `--type vault` after edits limited to `.vault/`, and `--type code` after
-edits limited to source files. For most edits, plain `index` is enough.
-
-After a big restructure (large rename, schema change, removed directories),
-drop and rebuild a single collection from scratch:
-
-```bash
-uv run vaultspec-rag index --rebuild --type vault
-```
+This guide assumes the workspace is installed and provisioned. If it isn't, see the [installation guide](installation.md) first. For how search and indexing fit together, see the [architecture overview](architecture.md). To run searches against a background daemon instead of in-process, see [service mode](service-mode.md).
 
 ## Run a search
 
-Vault search is the default:
+Search defaults to your vault documents:
 
-```bash
-uv run vaultspec-rag search "how authentication works"
+```
+uv run vaultspec-rag search "how does the watcher debounce changes"
 ```
 
-To query source code instead, pass `--type code`:
+To search source code instead, add `--type code`:
 
-```bash
-uv run vaultspec-rag search "how authentication works" --type code
+```
+uv run vaultspec-rag search "gpu lock around the forward pass" --type code
 ```
 
-The default returns the top 10 results in a Rich table with Score, Location,
-and Snippet columns. Change the count with `--max-results`:
+Results come back as records - a rank, a file location, and the matching text.
 
-```bash
-uv run vaultspec-rag search "how authentication works" --max-results 25
+Search returns 10 results by default. Change the count with `--max-results` (or its alias `--limit`):
+
+```
+uv run vaultspec-rag search "rerank inputs" --max-results 25
 ```
 
-## Narrow by file path
+To see numeric relevance scores beside each record, add `--scores`:
 
-Code search supports repeatable fnmatch globs. Use `--include-path` to keep
-only matching results, and `--exclude-path` to drop matching results:
-
-```bash
-uv run vaultspec-rag search "token verify" --type code \
-  --include-path "src/auth/*" --include-path "src/middleware/*"
+```
+uv run vaultspec-rag search "rerank inputs" --scores
 ```
 
-```bash
-uv run vaultspec-rag search "token verify" --type code \
-  --exclude-path "*/tests/*" --exclude-path "*/__tests__/*"
+If nothing comes back, the index may be empty or still building. Build it first - see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight; wait for it to finish, then search again.
+
+## Narrow code results by path
+
+Use `--include-path` to keep only files matching a glob, and `--exclude-path` to drop matching files. Both flags are repeatable and accept standard globs:
+
+```
+uv run vaultspec-rag search "lock ordering" --type code \
+  --include-path "src/**" --exclude-path "**/tests/**"
 ```
 
-Both flags apply to `--type code` only. Passing them with `--type vault`
-produces a usage error.
+These two flags apply to code only. Passing them with a vault search is a usage error.
 
-## Narrow by language or vault metadata
+## Narrow by language, structure, or symbol
 
-Code search exposes these filters: `--language` (for example `python`),
-`--node-type` (parse-tree node type, for example `function_definition`),
-`--function-name`, `--class-name`, and `--path` (exact project-relative file
-path). Vault search exposes `--doc-type` (for example `adr`), `--feature`
-(kebab-case tag), `--date` (exact ISO date), and `--tag` (free-form tag).
+For code searches, filter by language, parse-tree node type, or symbol name.
 
-Combine `--type code` with a language filter:
+Filter by language:
 
-```bash
-uv run vaultspec-rag search "retry policy" --type code --language python
+```
+uv run vaultspec-rag search "store lifecycle" --type code --language python
 ```
 
-Combine `--type vault` with a doc type filter:
+Filter by parse-tree node type with `--structure`:
 
-```bash
-uv run vaultspec-rag search "rollout plan" --type vault --doc-type adr
+```
+uv run vaultspec-rag search "encode" --type code --structure function_definition
 ```
 
-See [the CLI reference](cli.md) for the complete flag list.
+Filter by function or class name:
+
+```
+uv run vaultspec-rag search "encode" --type code --function-name encode_query
+uv run vaultspec-rag search "store" --type code --class-name VaultStore
+```
+
+Target one exact project-relative path with `--path`:
+
+```
+uv run vaultspec-rag search "lock" --type code --path src/vaultspec_rag/store.py
+```
+
+## Narrow vault results
+
+For vault searches, filter by document type, feature, date, or tag.
+
+```
+uv run vaultspec-rag search "concurrency" --doc-type adr
+uv run vaultspec-rag search "concurrency" --feature server-supervision
+uv run vaultspec-rag search "concurrency" --date 2026-06-12
+uv run vaultspec-rag search "concurrency" --tag adr
+```
+
+Pass `--date` as `yyyy-mm-dd`, and pass `--tag` without the leading `#`.
 
 ## Collapse locale duplicates
 
-When source results are dominated by translated strings, pass `--dedup-locales`
-to collapse near-tie locale variants of the same content into one canonical
-result. Two results within a score window of 0.10 whose paths look like
-translations of the same file (for example `locales/en.yml`, `locales/es.yml`,
-and `locales/ca.yml`) collapse to a single entry.
+When a code search returns near-identical results that differ only by locale, add `--dedup-locales` to keep one representative per group:
 
-```bash
-uv run vaultspec-rag search "welcome email subject" --type code --dedup-locales
+```
+uv run vaultspec-rag search "greeting" --type code --dedup-locales
 ```
 
-The detector recognises path shapes like `locales/<lang>.<ext>`,
-`i18n/<lang>/...`, `<lang>.json` siblings, and similar conventional layouts.
+## Prefer production, tests, or documentation
 
-## Prefer production code over tests or docs
+To bias a code search toward one kind of file, use `--prefer` with `production`, `tests`, or `documentation`:
 
-Pass `--prefer prod`, `--prefer tests`, or `--prefer docs` to apply a small
-score nudge of +/- 0.05 to the matching category after re-ranking:
-
-```bash
-uv run vaultspec-rag search "session expiry" --type code --prefer prod
 ```
-
-The classifier counts paths containing `tests`, `spec`, or `__tests__` as
-tests, paths containing `docs`, `doc`, or files ending in `.md` or `.rst` as
-docs, and everything else as prod.
+uv run vaultspec-rag search "encode batch" --type code --prefer production
+```
 
 ## Filter flag summary
 
-| Flag              | Applies to | What it does                                                       |
-| ----------------- | ---------- | ------------------------------------------------------------------ |
-| `--type`          | both       | Select source: `vault` or `code` (default `vault`).                |
-| `--max-results`   | both       | Cap the number of returned results (default 10).                   |
-| `--language`      | code       | Restrict to a programming language, for example `python`.          |
-| `--path`          | code       | Restrict to an exact project-relative file path.                   |
-| `--include-path`  | code       | Repeatable fnmatch glob; keep matching paths only.                 |
-| `--exclude-path`  | code       | Repeatable fnmatch glob; drop matching paths.                      |
-| `--node-type`     | code       | Restrict to a parse-tree node type.                                |
-| `--function-name` | code       | Restrict to a function or method name.                             |
-| `--class-name`    | code       | Restrict to a class or struct name.                                |
-| `--dedup-locales` | code       | Collapse near-tie locale variants (score window 0.10).             |
-| `--prefer`        | code       | Nudge `prod`, `tests`, or `docs` results by +/- 0.05 after rerank. |
-| `--doc-type`      | vault      | Restrict to a vault doc type, for example `adr`.                   |
-| `--feature`       | vault      | Restrict to a feature tag (kebab-case).                            |
-| `--date`          | vault      | Restrict to an exact ISO date (`yyyy-mm-dd`).                      |
-| `--tag`           | vault      | Restrict to a free-form tag, without the leading `#`.              |
-| `--no-truncate`   | both       | Disable the 120-character snippet truncation in the results table. |
+| Flag                                        | Applies to | What it does                                                        |
+| ------------------------------------------- | ---------- | ------------------------------------------------------------------- |
+| `--type docs\|vault\|code`                  | both       | Chooses the corpus; defaults to vault. `docs` is an alias for vault |
+| `--max-results` / `--limit`                 | both       | Sets how many results return; defaults to 10                        |
+| `--scores`                                  | both       | Shows numeric relevance scores beside each record                   |
+| `--include-path`                            | code       | Keeps only files matching a glob; repeatable                        |
+| `--exclude-path`                            | code       | Drops files matching a glob; repeatable                             |
+| `--language`                                | code       | Keeps results in one programming language                           |
+| `--structure`                               | code       | Keeps results matching one parse-tree node type                     |
+| `--function-name`                           | code       | Keeps results in a function of this name                            |
+| `--class-name`                              | code       | Keeps results in a class of this name                               |
+| `--path`                                    | code       | Keeps results from one exact project-relative path                  |
+| `--dedup-locales`                           | code       | Collapses locale-duplicate results to one each                      |
+| `--prefer production\|tests\|documentation` | code       | Biases results toward one kind of file                              |
+| `--doc-type`                                | vault      | Keeps documents of one type                                         |
+| `--feature`                                 | vault      | Keeps documents tagged with one feature                             |
+| `--date`                                    | vault      | Keeps documents from one `yyyy-mm-dd` date                          |
+| `--tag`                                     | vault      | Keeps documents carrying one tag (no leading `#`)                   |
 
-See [the CLI reference](cli.md) for full exit codes and the index flag list.
+## Build and refresh the index
 
-## Need help?
+Indexing keeps search results current with your files. By default, `index` covers both documents and code and runs incrementally - it processes only what's changed:
 
-For questions or problems, see the
-[Support](../README.md#support-and-help) section of the repo README.
+```
+uv run vaultspec-rag index
+```
+
+If a service is running, the command hands the job to it. The work runs in the background; check progress with:
+
+```
+uv run vaultspec-rag server jobs
+```
+
+If no service is running, the command indexes in the current process and returns when it's done.
+
+To scope the run to one corpus, pass `--type vault` or `--type code`:
+
+```
+uv run vaultspec-rag index --type code
+```
+
+## Rebuild from scratch
+
+To drop one index and recreate it - for example, after changing the embedding model or recovering from a corrupted index - use `--rebuild` with an explicit `--type`:
+
+```
+uv run vaultspec-rag index --rebuild --type vault
+uv run vaultspec-rag index --rebuild --type code
+```
+
+`--rebuild` requires an explicit `--type`. A bare `index --rebuild` errors out, so it can't rebuild everything by accident.
+
+## Clean index data
+
+To delete index data without rebuilding it, use `clean` with a required target of `vault`, `code`, or `all`, and confirm with `--yes`:
+
+```
+uv run vaultspec-rag clean vault --yes
+uv run vaultspec-rag clean all --yes
+```
+
+The target is required, so nothing is deleted by accident. `clean` doesn't load models or touch the GPU.
+
+## Where to go next
+
+- Run searches and indexing through a background daemon: [service mode](service-mode.md).
+- Every command, flag, and exit code: [CLI reference](cli.md).
+- Tune defaults like result counts, batch sizes, and the data directory: [configuration](configuration.md).
+
+Need help? See [support and help](../README.md#support-and-help).

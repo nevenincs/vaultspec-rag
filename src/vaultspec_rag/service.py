@@ -38,6 +38,7 @@ class ServiceHealth(TypedDict):
     """Diagnostic status returned by :meth:`ServiceRegistry.health`."""
 
     model_loaded: bool
+    reranker_loaded: bool
     project_count: int
     projects: list[str]
 
@@ -203,6 +204,7 @@ class ServiceRegistry:
                 cfg.reranker_model,
                 device="cuda",
                 activation_fn=torch.nn.Sigmoid(),
+                max_length=int(cfg.reranker_max_length),
             )
             logger.info(
                 "Shared CrossEncoder loaded on %s: %s",
@@ -262,6 +264,38 @@ class ServiceRegistry:
                     raise RuntimeError(msg)
                 self._projects[root] = slot
         return slot
+
+    def _store_count(self, root: Path, *, code: bool) -> int:
+        """Count points in one collection without loading the GPU model.
+
+        Counting only touches the vector store, so it never loads the
+        embedding model. A warm slot's store is reused; otherwise a
+        transient store is opened and closed (no slot is cached, and only
+        the requested collection is touched). Used to short-circuit a
+        search of an empty or unbuilt index to an actionable empty result
+        without paying the model-load cost - and, on a CPU-only host,
+        without requiring a GPU at all.
+        """
+        root = root.resolve()
+        with self._lock:
+            slot = self._projects.get(root)
+        if slot is not None:
+            return slot.store.count_code() if code else slot.store.count()
+        from .store import VaultStore
+
+        store = VaultStore(root)
+        try:
+            return store.count_code() if code else store.count()
+        finally:
+            store.close()
+
+    def vault_doc_count(self, root: Path) -> int:
+        """Indexed vault-doc count for *root*, model-free (see _store_count)."""
+        return self._store_count(root, code=False)
+
+    def code_chunk_count(self, root: Path) -> int:
+        """Indexed code-chunk count for *root*, model-free (see _store_count)."""
+        return self._store_count(root, code=True)
 
     # -- lease API ---------------------------------------------------------
 
@@ -672,6 +706,7 @@ class ServiceRegistry:
             count = len(self._projects)
         return {
             "model_loaded": self._model is not None,
+            "reranker_loaded": self._reranker is not None,
             "project_count": count,
             "projects": project_list,
         }

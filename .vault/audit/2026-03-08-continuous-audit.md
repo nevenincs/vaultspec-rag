@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
+modified: '2026-03-08'
 ---
 
 # Continuous Audit Log — 2026-03-08

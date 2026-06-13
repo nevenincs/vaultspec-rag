@@ -1,7 +1,7 @@
-"""Output rendering: JSON envelopes, backend-contract rows, result tables.
+"""Output rendering: JSON envelopes, backend-contract rows, and human output.
 
-Holds the shared ``--json`` envelope helpers plus the Rich renderers
-for search results and install/uninstall reports. Renderers read
+Holds the shared ``--json`` envelope helpers plus the renderers for
+search results and install/uninstall reports. Renderers read
 ``console`` from the package namespace at call time so tests that
 swap ``vaultspec_rag.cli.console`` observe the substitution.
 """
@@ -9,58 +9,29 @@ swap ``vaultspec_rag.cli.console`` observe the substitution.
 from __future__ import annotations
 
 import json
+import re
 import sys
-from typing import Any, Literal, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
-from ..capabilities import backend_capabilities_dict
+if TYPE_CHECKING:
+    from ..commands import ProvisionOutcome
 
 __all__ = [
-    "_add_backend_contract_rows",
     "_display_port_unreachable_error",
     "_display_search_results",
     "_display_service_error",
+    "_display_service_not_running",
     "_emit_json",
     "_emit_json_error_and_exit",
+    "_format_local_index_busy_message",
     "_render_install_report",
     "_render_uninstall_report",
 ]
-
-
-def _capability_value(caps: dict[str, object], key: str) -> str:
-    """Return a capability value as display text."""
-    value = caps.get(key, "unknown")
-    return str(value)
-
-
-def _add_backend_contract_rows(
-    table: Table,
-    caps: dict[str, object] | None = None,
-) -> None:
-    """Add backend concurrency contract rows to a Rich table."""
-    data = caps if caps is not None else backend_capabilities_dict()
-    table.add_row(
-        "Search Concurrency",
-        (
-            "supported; same-project local backend access "
-            f"{_capability_value(data, 'same_project_search_strategy')}"
-        ),
-    )
-    table.add_row(
-        "Cross-project Search",
-        _capability_value(data, "cross_project_search_strategy"),
-    )
-    table.add_row(
-        "Storage Process Model",
-        (
-            f"{_capability_value(data, 'local_storage_process_model')} "
-            "local Qdrant process"
-        ),
-    )
 
 
 def _emit_json(
@@ -116,6 +87,33 @@ def _emit_json_error_and_exit(
     raise typer.Exit(code=code)
 
 
+def _display_service_not_running(port: int | None = None) -> None:
+    if port is not None:
+        _cli.console.print(
+            f"Address: http://127.0.0.1:{port}",
+            markup=False,
+            highlight=False,
+        )
+    _cli.console.print(
+        "Service is not running. Start it with `vaultspec-rag server start`.",
+        markup=False,
+        highlight=False,
+    )
+
+
+def _format_local_index_busy_message(action: str) -> str:
+    """Return operator-facing text for local index lock failures."""
+    return (
+        f"Error: Cannot {action} because the local index is busy.\n\n"
+        "Another vaultspec-rag command, the background service, or an automatic "
+        "index update is using this workspace.\n\n"
+        "Next actions:\n"
+        "  1. Check current work: vaultspec-rag server status\n"
+        "  2. If a service is running, send concurrent work through it with --port.\n"
+        "  3. Retry after the current index operation finishes."
+    )
+
+
 def _display_service_error(
     payload: dict[str, object],
     *,
@@ -123,7 +121,7 @@ def _display_service_error(
     command: str = "service",
     exit_code: int = 1,
 ) -> None:
-    """Render a structured error returned by the RAG service fast path.
+    """Render a structured error returned by the search service fast path.
 
     When ``json_mode`` is True the helper emits the envelope and
     raises ``typer.Exit(exit_code)`` so callers don't have to thread
@@ -131,15 +129,20 @@ def _display_service_error(
     (no exit; caller decides).
     """
     error = str(payload.get("error", "service_error"))
-    message = str(payload.get("message", "RAG service returned an error."))
+    message = str(payload.get("message", "Search service returned an error."))
     if json_mode:
         extra: dict[str, object] = {}
-        db_path = payload.get("db_path")
-        if db_path is not None:
-            extra["db_path"] = db_path
-        caps = payload.get("backend_capabilities")
-        if isinstance(caps, dict):
-            extra["backend_capabilities"] = caps
+        for key in (
+            "db_path",
+            "backend_capabilities",
+            "diagnostics",
+            "port",
+            "timeout_seconds",
+            "remediation",
+        ):
+            value = payload.get(key)
+            if value is not None:
+                extra[key] = value
         _emit_json_error_and_exit(
             command,
             error,
@@ -148,18 +151,89 @@ def _display_service_error(
             **extra,
         )
         return
-    _cli.console.print(f"[bold red]Error:[/] {message}")
-    _cli.console.print(f"[dim]code={error}[/]")
+    _cli.console.print(
+        f"Error: {_human_service_error_message(message)}",
+        markup=False,
+        highlight=False,
+    )
+    if error != "http_search_timeout":
+        _cli.console.print(f"Code: {error}", markup=False, highlight=False)
     db_path = payload.get("db_path")
     if db_path:
-        _cli.console.print(f"[dim]db_path={db_path}[/]")
-    caps = payload.get("backend_capabilities")
-    if isinstance(caps, dict):
-        table = Table(title="Backend Contract", show_header=False, padding=(0, 2))
-        table.add_column("Key", style="bold")
-        table.add_column("Value")
-        _add_backend_contract_rows(table, cast("dict[str, object]", caps))
-        _cli.console.print(table)
+        _cli.console.print(f"Index data: {db_path}", markup=False, highlight=False)
+    _display_service_diagnostic_summary(payload.get("diagnostics"))
+    remediation = payload.get("remediation")
+    if isinstance(remediation, list) and remediation:
+        _cli.console.print("Next actions:")
+        for item in cast("list[object]", remediation):
+            _cli.console.print(f"  - {item}")
+
+
+def _human_service_error_message(message: str) -> str:
+    """Remove raw backend diagnostics from default human error prose."""
+    return re.sub(
+        r"\s+Service status=.*?same_project_search_strategy=[^.\s]+\.?",
+        "",
+        message,
+    ).strip()
+
+
+def _display_service_diagnostic_summary(diagnostics: object) -> None:
+    """Render timeout/error diagnostics without backend contract internals."""
+    if not isinstance(diagnostics, dict):
+        return
+    diagnostics_map = cast("dict[str, object]", diagnostics)
+    health = diagnostics_map.get("health")
+    jobs = diagnostics_map.get("jobs")
+    if isinstance(health, dict):
+        _cli.console.print(
+            f"Service: {_health_diagnostic_text(cast('dict[str, object]', health))}"
+        )
+    if isinstance(jobs, dict):
+        _cli.console.print(
+            f"Work: {_jobs_diagnostic_text(cast('dict[str, object]', jobs))}"
+        )
+
+
+def _health_diagnostic_text(health: dict[str, object]) -> str:
+    if health.get("available") is False:
+        return _unavailable_diagnostic_text(health, "request check")
+    raw_status = health.get("status")
+    if not isinstance(raw_status, str) or not raw_status or raw_status == "unknown":
+        ready_text = "request status not reported by service"
+    else:
+        ready_text = (
+            "requests ready" if raw_status == "ready" else raw_status.replace("_", " ")
+        )
+    project_count = health.get("project_count")
+    if project_count is None:
+        return f"reachable; {ready_text}"
+    if isinstance(project_count, int):
+        project_word = "project" if project_count == 1 else "projects"
+        return f"reachable; {ready_text}; {project_count} {project_word} loaded"
+    return f"reachable; {ready_text}; projects loaded: {project_count}"
+
+
+def _jobs_diagnostic_text(jobs: dict[str, object]) -> str:
+    if jobs.get("available") is False:
+        return _unavailable_diagnostic_text(jobs, "jobs check")
+    running = jobs.get("running_count")
+    if isinstance(running, int):
+        if running == 0:
+            return "no active index jobs"
+        word = "job" if running == 1 else "jobs"
+        return f"{running} active index {word}"
+    return "active job count not reported by service"
+
+
+def _unavailable_diagnostic_text(data: dict[str, object], label: str) -> str:
+    error = str(data.get("error", "")).strip()
+    message = str(data.get("message", "")).strip()
+    if error == "TimeoutError" or "timed out" in message.lower():
+        return f"{label} timed out"
+    if message:
+        return f"{label} not reported by service ({message})"
+    return f"{label} not reported by service"
 
 
 def _display_search_results(
@@ -167,45 +241,143 @@ def _display_search_results(
     search_type: str,
     via: Literal["service", "in-process"] = "service",
     *,
-    no_truncate: bool = False,
+    show_scores: bool = False,
+    root: Path | None = None,
 ) -> None:
-    """Display search results as a Rich table.
+    """Display search results as stable, readable records.
 
     Args:
         results: List of result dicts with ``score``, ``path``,
             ``snippet``, and optional ``line_start`` keys.
-        search_type: Label for the table title (e.g.
-            ``vault``, ``code``, ``all``).
-        via: Transport path indicator (e.g. ``service``, ``in-process``).
-        no_truncate: Bypass the 120-character snippet truncation
-            so sibling files with long paths stay distinguishable.
+        search_type: Search source label retained for API compatibility
+            (e.g. ``vault``, ``code``).
+        via: Transport path indicator retained for API compatibility
+            (e.g. ``service``, ``in-process``).
+        show_scores: Include numeric relevance scores after the rank.
+        root: Workspace root used to read full source lines when a
+            result includes a local relative path and line range.
 
     """
-    table = Table(title=f"Search Results: {search_type} (via {via})", box=None)
-    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Location", style="green")
-    table.add_column("Snippet", style="white")
+    _ = search_type, via
+    for rank, result in enumerate(results, start=1):
+        location = _search_result_location(result)
+        line = f"{rank}. {location}"
+        if show_scores:
+            line += f" (score {_search_result_score(result):.4f})"
+        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        for text_line in _search_result_text_lines(result, root=root):
+            _cli.console.print(
+                f"   {text_line}",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
 
-    for r in results:
-        snippet_raw = str(r.get("snippet", "")).replace("\n", " ")
-        snippet = snippet_raw if no_truncate else snippet_raw[:120]
-        location = str(r.get("path", ""))
-        # Preprocess-hook results carry a deep-link anchor / locator (#185);
-        # prefer them over the line number so hits point into the source.
-        anchor = r.get("anchor")
-        locator = r.get("locator")
-        line_start = r.get("line_start")
-        if anchor:
-            location = str(anchor)
-        elif locator:
-            location += f" ({locator})"
-        elif line_start:
-            location += f":{line_start}"
-        raw_score = r.get("score", 0.0)
-        score = float(raw_score) if isinstance(raw_score, (int, float, str)) else 0.0
-        table.add_row(f"{score:.2f}", location, snippet)
 
-    _cli.console.print(table)
+def _display_text_lines(value: object) -> list[str]:
+    return [line.rstrip() for line in str(value).splitlines()]
+
+
+def _search_result_text_lines(
+    result: dict[str, object], *, root: Path | None
+) -> list[str]:
+    full_text = _non_empty_result_string(result, "rerank_text")
+    if full_text is not None:
+        return _display_text_lines(full_text)
+    source_lines = _source_line_text_lines(result, root=root)
+    if source_lines:
+        return source_lines
+    return _display_text_lines(result.get("snippet", ""))
+
+
+def _source_line_text_lines(
+    result: dict[str, object], *, root: Path | None
+) -> list[str]:
+    path_text = _non_empty_result_string(result, "source_path") or (
+        _non_empty_result_string(result, "path")
+    )
+    line_start = result.get("line_start")
+    if path_text is None or not isinstance(line_start, int):
+        return []
+    line_end = result.get("line_end")
+    end = (
+        line_end if isinstance(line_end, int) and line_end >= line_start else line_start
+    )
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = (root or Path.cwd()) / path
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return lines[line_start - 1 : end]
+
+
+def _search_result_score(result: dict[str, object]) -> float:
+    raw_score = result.get("score", 0.0)
+    if isinstance(raw_score, (int, float, str)):
+        try:
+            return float(raw_score)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _search_result_location(result: dict[str, object]) -> str:
+    """Return the best stable locator already present on a result."""
+    anchor = _non_empty_result_string(result, "anchor")
+    if anchor is not None:
+        return anchor
+
+    path = (
+        _non_empty_result_string(result, "path")
+        or _non_empty_result_string(result, "source_path")
+        or _non_empty_result_string(result, "doc_id")
+        or _non_empty_result_string(result, "id")
+        or "location-not-reported"
+    )
+    line_start = _result_int(result, "line_start")
+    if line_start is not None:
+        column = (
+            _result_int(result, "column_start")
+            or _result_int(result, "col_start")
+            or _result_int(result, "column")
+        )
+        suffix = f":{line_start}"
+        if column is not None:
+            suffix += f":{column}"
+        return f"{path}{suffix}"
+
+    locator = _non_empty_result_string(result, "locator")
+    if locator is not None:
+        return f"{path} ({locator})"
+    return path
+
+
+def _non_empty_result_string(
+    result: dict[str, object],
+    key: str,
+) -> str | None:
+    value = result.get(key)
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
+def _result_int(result: dict[str, object], key: str) -> int | None:
+    value = result.get(key)
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
 
 
 def _display_port_unreachable_error(
@@ -230,156 +402,261 @@ def _display_port_unreachable_error(
             "port_unreachable",
             (
                 f"Service on port {port} is unreachable. "
-                f"The CLI will not silently fall back to in-process "
-                f"{command}; start the service or re-run with "
-                f"--allow-fallback (single-agent use only)."
+                f"The CLI will not silently run {command} locally; "
+                f"start the service or re-run with "
+                f"--allow-fallback (one local user only)."
             ),
             1,
             port=port,
             remediation=[
                 "vaultspec-rag server status",
                 "vaultspec-rag server start",
-                "rerun with --allow-fallback (single-agent only)",
+                "rerun with --allow-fallback (one user only)",
             ],
         )
         return
     _cli.console.print(
-        f"[bold red]Service on port {port} is unreachable.[/]\n"
-        f"[white]The CLI will not silently fall back to in-process "
-        f"{command} because that would acquire the Qdrant lock and "
-        f"strand any other agent waiting on the resident service.[/]\n"
-        f"[bold]Remediation:[/]\n"
+        f"Service on port {port} is unreachable.\n"
+        f"The CLI will not silently run {command} locally because that would "
+        f"open the local search index directly "
+        f"and block other users waiting on the service.\n"
+        f"Next actions:\n"
         f"  1. Check status:  vaultspec-rag server status\n"
         f"  2. Start service: vaultspec-rag server start\n"
-        f"  3. Or opt in to in-process fallback: re-run with "
-        f"--allow-fallback (single-agent use only).",
+        f"  3. Or run locally anyway: re-run with "
+        f"--allow-fallback (one user only).",
+        markup=False,
+        highlight=False,
     )
 
 
+def _action_label(action: object) -> str:
+    labels = {
+        "applied": "applied",
+        "already": "already configured",
+        "conflict": "needs review",
+        "absent": "not found",
+        "removed": "removed",
+        "disabled": "disabled",
+        "dry_run": "preview only",
+        "declined": "declined",
+        "skipped": "not changed",
+        "skipped-non-tty": "needs confirmation",
+        "skipped-eof": "needs confirmation",
+        "error": "error",
+    }
+    text = str(action)
+    return labels.get(text, text.replace("_", " ").replace("-", " "))
+
+
+def _render_sync_summary(added: int, updated: int, removed: int) -> None:
+    parts: list[str] = []
+    if added:
+        parts.append(f"added {added}")
+    if updated:
+        parts.append(f"updated {updated}")
+    if removed:
+        parts.append(f"removed {removed}")
+    if parts:
+        _cli.console.print(
+            f"tool integrations: {', '.join(parts)}",
+            markup=False,
+            highlight=False,
+        )
+
+
+def _counted(count: int, singular: str, plural: str | None = None) -> str:
+    return f"{count} {singular if count == 1 else plural or singular + 's'}"
+
+
+def _warning_text(warning: str) -> str:
+    if warning == (
+        "dry-run: core sync_provider not invoked (would propagate "
+        "seeded files to .mcp.json and provider dirs)"
+    ):
+        return "dry-run preview: would update tool integration files"
+    if warning == (
+        "dry-run: core sync_provider not invoked (would propagate "
+        "removal to .mcp.json and provider dirs)"
+    ):
+        return "dry-run preview: would remove tool integration files"
+    if warning.startswith("core sync failed:"):
+        return warning.replace("core sync", "tool integration sync", 1)
+    return warning
+
+
+def _print_warning_or_note(warning: object) -> None:
+    text = _warning_text(str(warning))
+    prefix = "Note" if text.startswith("dry-run preview:") else "Warning"
+    _cli.console.print(f"{prefix}: {text}", markup=False, highlight=False)
+
+
 def _render_install_report(report: Any) -> None:
-    """Render an install report to the Rich console."""
+    """Render an install report as plain CLI lines."""
     title = {
-        "install": "[bold green]vaultspec-rag installed[/]",
-        "upgrade": "[bold green]vaultspec-rag upgraded[/]",
-        "dry_run": "[bold yellow]vaultspec-rag install (dry-run)[/]",
-    }.get(report.action, "[bold]vaultspec-rag install[/]")
-    _cli.console.print(title)
-    _cli.console.print(f"target: [cyan]{report.target}[/]")
+        "install": "vaultspec-rag installed",
+        "upgrade": "vaultspec-rag upgraded",
+        "dry_run": "vaultspec-rag install (dry-run)",
+    }.get(report.action, "vaultspec-rag install")
+    dry_run = report.action == "dry_run"
+    _cli.console.print(title, markup=False, highlight=False)
+    _cli.console.print(f"Target: {report.target}", markup=False, highlight=False)
     if report.created_dirs:
-        _cli.console.print(f"created [bold]{len(report.created_dirs)}[/] directories")
+        verb = "would create" if dry_run else "created"
+        _cli.console.print(
+            f"{verb} {_counted(len(report.created_dirs), 'directory', 'directories')}"
+        )
     if report.seeded:
-        _cli.console.print(f"seeded [bold]{len(report.seeded)}[/] bundled files:")
+        verb = "would seed" if dry_run else "seeded"
+        _cli.console.print(f"{verb} {_counted(len(report.seeded), 'bundled file')}:")
         for rel in report.seeded:
-            _cli.console.print(f"  [green]+[/] {rel}")
+            _cli.console.print(f"  + {rel}", markup=False, highlight=False)
     sync_added = sum(getattr(r, "added", 0) for r in report.sync_results)
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
-    if sync_added or sync_updated or sync_pruned:
-        _cli.console.print(
-            f"core sync: [green]+{sync_added}[/] "
-            f"[yellow]~{sync_updated}[/] [red]-{sync_pruned}[/]"
-        )
+    _render_sync_summary(sync_added, sync_updated, sync_pruned)
     tc_action = getattr(report, "torch_config_action", "skipped")
-    tc_colour = {
-        "applied": "green",
-        "already": "cyan",
-        "dry_run": "yellow",
-        "disabled": "dim",
-        "declined": "yellow",
-        "conflict": "red",
-        "absent": "yellow",
-        "error": "red",
-        "skipped-non-tty": "yellow",
-        "skipped-eof": "yellow",
-    }.get(tc_action, "white")
-    _cli.console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    _cli.console.print(
+        f"PyTorch configuration: {_action_label(tc_action)}",
+        markup=False,
+        highlight=False,
+    )
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
-        td_colour = {
-            "applied": "green",
-            "already": "cyan",
-            "dry_run": "yellow",
-            "conflict": "red",
-            "absent": "yellow",
-        }.get(td_action, "white")
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
         _cli.console.print(
-            f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}"
+            f"PyTorch dependency: {_action_label(td_action)}{suffix}",
+            markup=False,
+            highlight=False,
         )
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Assemble the prefix and body as a single ``Text`` so Rich's
-        # word-wrapper can honour the leading two-space indent across
-        # wrapped continuation lines. Also keeps literal ``[…]``
-        # tokens in ``conflict`` verbatim - ``Text.assemble`` does not
-        # parse markup. CLI-05.
-        from rich.text import Text
-
-        _cli.console.print(Text.assemble("  ", ("conflict: ", "red"), conflict))
+        _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
     tsync = getattr(report, "torch_sync_action", "skipped")
     if tsync not in ("skipped",):
-        t_colour = {"succeeded": "green", "failed": "red"}.get(tsync, "yellow")
-        _cli.console.print(f"uv sync --reinstall-package torch: [{t_colour}]{tsync}[/]")
+        _cli.console.print(
+            f"uv sync --reinstall-package torch: {tsync}",
+            markup=False,
+            highlight=False,
+        )
+    _render_provisioning_outcome(getattr(report, "provision_outcome", None))
     for warning in report.warnings:
-        # Warnings carry user-pyproject-derived strings (literal TOML
-        # keys like ``[tool.uv.sources]``, raw exception messages,
-        # tails of uv stderr) - Rich would parse those as markup tags
-        # and silently drop the bracketed tokens. Render the prefix
-        # with markup, then the body verbatim.
-        _cli.console.print("[yellow]warning:[/] ", end="")
-        _cli.console.print(warning, markup=False, highlight=False)
+        _print_warning_or_note(warning)
+
+
+# Human labels for the heterogeneous provisioning steps. The torch step
+# is the only two-phase one: a ``created``/``updated`` torch result with
+# ``sync_pending`` reads as "configured, sync pending", distinct from a
+# fetched binary that is terminally "downloaded"/"unchanged". Driven by a
+# flat table so the renderer stays a single bounded loop.
+_PROVISION_STEP_LABELS = {
+    "torch": "PyTorch",
+    "models": "Models",
+    "qdrant": "Qdrant binary",
+}
+_PROVISION_ACTION_LABELS = {
+    "created": "downloaded",
+    "updated": "updated",
+    "unchanged": "already present",
+    "skipped": "skipped",
+    "failed": "failed",
+    "dry_run": "preview only",
+}
+
+
+def _provision_step_label(step: object) -> str:
+    text = str(step)
+    return _PROVISION_STEP_LABELS.get(text, text)
+
+
+def _provision_action_phrase(step: dict[str, object]) -> str:
+    """Phrase one provisioning step honestly, surfacing torch's two phases.
+
+    A ``created``/``updated`` torch step carries ``sync_pending=True`` and
+    must read as "configured, sync pending" - the half-done state the ADR
+    requires the front door to communicate - rather than a binary's
+    terminal "downloaded".
+    """
+    action = str(step.get("action", ""))
+    if step.get("sync_pending") and action in ("created", "updated"):
+        return "configured, sync pending"
+    return _PROVISION_ACTION_LABELS.get(action, action.replace("_", " "))
+
+
+def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
+    """Render the heterogeneous per-dependency provisioning outcome.
+
+    Bounded and honest: one line per considered dependency through the
+    shared sync vocabulary, the torch two-phase "configured, sync
+    pending" wording kept distinct from a binary's "downloaded", and the
+    detail appended so a ``skipped`` step always carries its reason.
+    Reads the JSON-serialisable ``to_dict`` view so the human and JSON
+    reports describe exactly the same outcome.
+    """
+    if outcome is None:
+        return
+    data = outcome.to_dict()
+    steps = data.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return
+    _cli.console.print(
+        f"Provisioning: {data.get('status', 'unchanged')}",
+        markup=False,
+        highlight=False,
+    )
+    for step in cast("list[object]", steps):
+        if not isinstance(step, dict):
+            continue
+        step_map = cast("dict[str, object]", step)
+        label = _provision_step_label(step_map.get("step", ""))
+        phrase = _provision_action_phrase(step_map)
+        detail = str(step_map.get("detail", "")).strip()
+        suffix = f" ({detail})" if detail else ""
+        _cli.console.print(
+            f"  {label}: {phrase}{suffix}",
+            markup=False,
+            highlight=False,
+        )
 
 
 def _render_uninstall_report(report: Any) -> None:
-    """Render an uninstall report to the Rich console."""
+    """Render an uninstall report as plain CLI lines."""
     title = {
-        "uninstall": "[bold green]vaultspec-rag uninstalled[/]",
-        "dry_run": "[bold yellow]vaultspec-rag uninstall (dry-run; "
-        "use --force to apply)[/]",
-    }.get(report.action, "[bold]vaultspec-rag uninstall[/]")
-    _cli.console.print(title)
-    _cli.console.print(f"target: [cyan]{report.target}[/]")
+        "uninstall": "vaultspec-rag uninstalled",
+        "dry_run": "vaultspec-rag uninstall (dry-run; use --force to apply)",
+    }.get(report.action, "vaultspec-rag uninstall")
+    dry_run = report.action == "dry_run"
+    _cli.console.print(title, markup=False, highlight=False)
+    _cli.console.print(f"Target: {report.target}", markup=False, highlight=False)
     if report.removed:
+        verb = "would remove" if dry_run else "removed"
         _cli.console.print(
-            f"removed [bold]{len(report.removed)}[/] bundled source files:"
+            f"{verb} {_counted(len(report.removed), 'bundled source file')}:"
         )
         for rel in report.removed:
-            _cli.console.print(f"  [red]-[/] {rel}")
+            _cli.console.print(f"  - {rel}", markup=False, highlight=False)
     if report.data_removed:
-        _cli.console.print("[red]-[/] .vault/data/ (rag index purged)")
+        verb = "would remove" if dry_run else "removed"
+        _cli.console.print(f"{verb} .vault/data/ index data")
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
-        _cli.console.print(f"core sync pruned: [red]-{sync_pruned}[/]")
+        _render_sync_summary(0, 0, sync_pruned)
     tc_action = getattr(report, "torch_config_action", "skipped")
-    tc_colour = {
-        "removed": "green",
-        "absent": "dim",
-        "dry_run": "yellow",
-        "skipped": "yellow",
-        "error": "red",
-    }.get(tc_action, "white")
-    _cli.console.print(f"torch-config: [{tc_colour}]{tc_action}[/]")
+    _cli.console.print(
+        f"PyTorch configuration: {_action_label(tc_action)}",
+        markup=False,
+        highlight=False,
+    )
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
-        td_colour = {
-            "removed": "green",
-            "dry_run": "yellow",
-            "conflict": "red",
-            "absent": "dim",
-        }.get(td_action, "white")
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
         _cli.console.print(
-            f"torch direct dependency: [{td_colour}]{td_action}[/]{suffix}"
+            f"PyTorch dependency: {_action_label(td_action)}{suffix}",
+            markup=False,
+            highlight=False,
         )
     for conflict in getattr(report, "torch_config_conflicts", []):
-        # Same Text.assemble treatment as the install side - see
-        # CLI-05 in _render_install_report for the rationale.
-        from rich.text import Text
-
-        _cli.console.print(Text.assemble("  ", ("conflict: ", "yellow"), conflict))
+        _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
     for warning in report.warnings:
-        # Same markup-leak guard as _render_install_report; see comment
-        # there for the rationale.
-        _cli.console.print("[yellow]warning:[/] ", end="")
-        _cli.console.print(warning, markup=False, highlight=False)
+        _print_warning_or_note(warning)

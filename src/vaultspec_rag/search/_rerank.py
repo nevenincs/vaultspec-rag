@@ -22,6 +22,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Additive nudge magnitudes. The reranker emits calibrated [0, 1]
+# scores; structural graph signals must only break ties and near-ties,
+# never override semantic relevance. The in-link nudge tops out at one
+# typical rank-gap (matching PREFER_SCORE_NUDGE's scale) and the
+# feature-neighbor nudge is roughly half of one.
+_IN_LINK_NUDGE_STEP = 0.005
+_IN_LINK_NUDGE_CAP = 10
+_FEATURE_NEIGHBOR_NUDGE = 0.03
+
+
 def _boost_vault_result(
     result: SearchResult, graph: VaultGraph, feature_filter: str | None
 ) -> None:
@@ -30,7 +40,7 @@ def _boost_vault_result(
         return
 
     in_link_count = len(node.in_links)
-    result.score *= 1 + 0.1 * min(in_link_count, 10)
+    result.score += _IN_LINK_NUDGE_STEP * min(in_link_count, _IN_LINK_NUDGE_CAP)
 
     if feature_filter:
         feature_tag = f"#{feature_filter}"
@@ -41,7 +51,7 @@ def _boost_vault_result(
                 neighbor_has_feature = True
                 break
         if neighbor_has_feature:
-            result.score *= 1.15
+            result.score += _FEATURE_NEIGHBOR_NUDGE
 
 
 def rerank_with_graph(
@@ -50,12 +60,12 @@ def rerank_with_graph(
     query: ParsedQuery,
     graph: VaultGraph | None = None,
 ) -> list[SearchResult]:
-    """Apply graph-aware score boosts to vault search results.
+    """Apply bounded graph-aware score nudges to vault search results.
 
-    Boosts vault results based on in-link count (up to +100%)
-    and neighbor feature-tag matches (+15%).  Codebase results
-    pass through unmodified.  The combined list is re-sorted by
-    score descending.
+    Adds a small tie-breaking nudge for in-link count (capped at one
+    typical rank-gap) and for neighbor feature-tag matches. Codebase
+    results pass through unmodified. The combined list is re-sorted
+    by score descending.
 
     Args:
         results: Mixed vault/codebase results to rerank.

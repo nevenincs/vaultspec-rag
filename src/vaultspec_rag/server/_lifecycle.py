@@ -22,6 +22,7 @@ __all__ = [
     "_heartbeat_tick_sync",
     "_install_daemon_shutdown_hooks",
     "_lifecycle_log",
+    "_qdrant_liveness_tick",
     "_record_shutdown",
     "_resolve_log_path",
     "_status_file_path",
@@ -30,6 +31,7 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from ..logging_config import log_event
 from ._state import _HEARTBEAT_INTERVAL_SECONDS
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -63,20 +65,14 @@ def _status_file_path() -> Path:
 
 
 def _lifecycle_log(event: str, **kv: object) -> None:
-    """Emit a structured lifecycle entry at WARNING level.
-
-    WARNING (not INFO) because ``VAULTSPEC_RAG_LOG_LEVEL`` defaults to
-    WARNING, so INFO lines are silent by default. Operators see the
-    lifecycle without opt-in.
+    """Emit a structured lifecycle entry at activity level.
 
     Args:
         event: Short identifier (``startup`` / ``shutdown``).
         **kv: Extra key=value fields rendered space-separated for
             greppability.
     """
-    parts = [f"event={event}"]
-    parts.extend(f"{k}={v}" for k, v in kv.items())
-    logger.warning("service.lifecycle %s", " ".join(parts))
+    log_event(logger, "service.lifecycle", event, fields=kv)
 
 
 def _unlink_status_file_silently() -> None:
@@ -93,10 +89,13 @@ def _unlink_status_file_silently() -> None:
         # Already-removed is the expected idempotent case.
         logger.debug("service.json already gone at %s: %s", path, exc)
     except OSError as exc:
-        logger.warning(
-            "service.lifecycle event=cleanup_failed path=%s error=%s",
-            path,
-            exc,
+        log_event(
+            logger,
+            "service.lifecycle",
+            "cleanup_failed",
+            severity=logging.WARNING,
+            path=path,
+            error=exc,
         )
 
 
@@ -136,6 +135,17 @@ def _heartbeat_tick_sync() -> None:
         )
         return
     data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+    data["pid"] = os.getpid()
+    data["parent_pid"] = os.getppid()
+    # Record the supervised qdrant child (if any) so operators and the
+    # CLI status surface can see the pair without probing the daemon.
+    from .. import qdrant_runtime as _qr
+
+    supervisor = _qr.active_supervisor()
+    if supervisor is not None:
+        data["qdrant_pid"] = supervisor.pid
+        data["qdrant_alive"] = supervisor.is_alive()
+        data["qdrant_port"] = supervisor.http_port
     # Per-process identity token. Empty during the narrow window
     # between module import and service_lifespan startup; the guard
     # prevents an in-flight zero-value overwrite of a token written
@@ -148,22 +158,67 @@ def _heartbeat_tick_sync() -> None:
     os.replace(str(tmp), str(path))
 
 
+def _qdrant_liveness_tick() -> None:
+    """Check the supervised qdrant child; one bounded auto-restart.
+
+    Runs synchronously inside the heartbeat's worker thread. A dead
+    child gets exactly one restart attempt for the daemon's lifetime;
+    after that the dead state surfaces as ``degraded`` through the
+    health payload and the runtime-state block until an operator
+    intervenes. There is deliberately no background sweeper - this
+    rides the existing heartbeat cadence.
+    """
+    from .. import qdrant_runtime as _qr
+
+    supervisor = _qr.active_supervisor()
+    if supervisor is None or supervisor.is_alive():
+        return
+    if supervisor.restart_count >= 1:
+        log_event(
+            logger,
+            "service.lifecycle",
+            "qdrant_dead",
+            severity=logging.WARNING,
+            restarts=supervisor.restart_count,
+        )
+        return
+    log_event(
+        logger,
+        "service.lifecycle",
+        "qdrant_restart",
+        severity=logging.WARNING,
+        pid=supervisor.pid,
+    )
+    if not supervisor.restart():
+        log_event(
+            logger,
+            "service.lifecycle",
+            "qdrant_restart_failed",
+            severity=logging.ERROR,
+        )
+
+
 async def _heartbeat_loop() -> None:
     """Periodic heartbeat task; cancelled in the lifespan finally.
 
     Sleeps ``_HEARTBEAT_INTERVAL_SECONDS`` between ticks. Tolerates
     transient write failures so an I/O blip never crashes the
-    service; the next tick retries.
+    service; the next tick retries. Each tick also checks the
+    supervised qdrant child's liveness (bounded single auto-restart).
     """
     while True:
         try:
             await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
             await asyncio.to_thread(_m._heartbeat_tick_sync)
+            await asyncio.to_thread(_qdrant_liveness_tick)
         except asyncio.CancelledError:
             return
         except Exception:  # heartbeat must never crash the service
-            logger.warning(
-                "service.lifecycle event=heartbeat_failed",
+            log_event(
+                logger,
+                "service.lifecycle",
+                "heartbeat_failed",
+                severity=logging.WARNING,
                 exc_info=True,
             )
 

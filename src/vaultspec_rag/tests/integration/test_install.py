@@ -15,19 +15,31 @@ vaultspec-core 0.1.10+'s reconciling ``mcp_sync``.
 
 from __future__ import annotations
 
+import io
 import json
+import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from ...commands import install_run, uninstall_run
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 pytestmark = [pytest.mark.integration]
 
 
 _RAG_RULE_REL = Path(".vaultspec") / "rules" / "rules" / "vaultspec-rag.builtin.md"
 _RAG_MCP_REL = Path(".vaultspec") / "rules" / "mcps" / "vaultspec-rag.builtin.json"
+
+_CONSUMER_PYPROJECT = (
+    "[project]\n"
+    'name = "demo-consumer"\n'
+    'version = "0.1.0"\n'
+    'dependencies = ["vaultspec-rag"]\n'
+)
 
 
 def _read_mcp_json(target: Path) -> dict[str, Any]:
@@ -624,3 +636,144 @@ class TestSafetyGuards:
             # (provided the bundled source resolves).
         finally:
             _builtins._BUNDLED_FILES = original
+
+
+@pytest.fixture()
+def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
+    """Point the managed service / qdrant bin dir at tmp and reset config.
+
+    Keeps the provisioning front door's qdrant resolution off any ambient
+    ``~/.vaultspec-rag/`` state, per the service-tests-isolate-STATUS_DIR
+    discipline, so the test cannot disturb the live service.
+    """
+    from ...config import EnvVar, reset_config
+
+    key = EnvVar.STATUS_DIR.value
+    prev = os.environ.get(key)
+    os.environ[key] = str(tmp_path / "status")
+    reset_config()
+    try:
+        yield tmp_path
+    finally:
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
+        reset_config()
+
+
+class TestProvisioningReport:
+    """The default install provisioning path reports heterogeneous outcomes.
+
+    Network-free by construction: ``local_only=True`` skips the qdrant
+    binary download and ``provision_skip={"models"}`` skips the model
+    fetch, so the only step that does real work is the torch configurator,
+    which patches the temp workspace's own ``pyproject.toml``. The result
+    is three honest, *different* per-dependency outcomes - torch
+    sync-pending, models skipped, qdrant skipped - which is exactly the
+    heterogeneity the report must surface. No mocks, no large downloads,
+    and the live service is untouched.
+    """
+
+    @pytest.fixture()
+    def provisioned_report(
+        self, fresh_workspace: Path, isolated_status_dir: Path
+    ) -> Any:
+        _ = isolated_status_dir
+        (fresh_workspace / "pyproject.toml").write_text(
+            _CONSUMER_PYPROJECT, encoding="utf-8", newline=""
+        )
+        return install_run(
+            path=fresh_workspace,
+            provision=True,
+            local_only=True,
+            provision_skip={"models"},
+            assume_yes=True,
+        )
+
+    def test_report_carries_a_provisioning_outcome(
+        self, provisioned_report: Any
+    ) -> None:
+        assert provisioned_report.provision_outcome is not None
+        steps = {r.step for r in provisioned_report.provision_outcome.steps}
+        # The enrollment torch step runs separately; the front door is told
+        # to skip torch so it does not double-report. So the front-door
+        # outcome carries the two fetch-and-go dependencies.
+        assert "models" in {str(s) for s in steps}
+        assert "qdrant" in {str(s) for s in steps}
+
+    def test_json_provisioning_key_is_heterogeneous_and_serialisable(
+        self, provisioned_report: Any
+    ) -> None:
+        data = provisioned_report.to_dict()
+        json.dumps(data)  # must not raise
+        provisioning = data["provisioning"]
+        assert provisioning is not None
+        actions = {step["action"] for step in provisioning["steps"]}
+        # models and qdrant are both opted out here, so both are skipped,
+        # each carrying its own distinct reason (heterogeneous detail).
+        details = {step["step"]: step["detail"] for step in provisioning["steps"]}
+        assert "local-only" in details["qdrant"]
+        assert details["models"] != details["qdrant"]
+        assert "skipped" in actions
+
+    def test_torch_enrollment_step_reports_configured_sync_pending(
+        self, provisioned_report: Any
+    ) -> None:
+        from ...torch_config import TorchConfigAction
+
+        # The enrollment torch step actually patched the consumer
+        # pyproject; its honest two-phase state is the headline the
+        # renderer must surface as "configured, sync pending".
+        assert provisioned_report.torch_config_action == TorchConfigAction.APPLIED
+        assert provisioned_report.torch_sync_action == "skipped"
+
+    def test_rendered_report_surfaces_heterogeneous_provisioning_wording(
+        self, provisioned_report: Any
+    ) -> None:
+        from rich.console import Console
+
+        from ...cli import _render
+        from ...cli._render import _render_install_report
+
+        buffer = io.StringIO()
+        captured = Console(
+            file=buffer, force_terminal=False, legacy_windows=False, width=200
+        )
+        original = _render._cli.console
+        _render._cli.console = captured  # not a mock: swap restored in finally
+        try:
+            _render_install_report(provisioned_report)
+        finally:
+            _render._cli.console = original
+
+        output = buffer.getvalue()
+        # The qdrant binary skip and the models skip both render honestly...
+        assert "Qdrant binary: skipped" in output
+        assert "local-only" in output
+        # ...and the provisioning summary line is present and bounded.
+        assert "Provisioning:" in output
+
+    def test_dry_run_provisioning_previews_without_writing(
+        self, fresh_workspace: Path, isolated_status_dir: Path
+    ) -> None:
+        from ...commands import ProvisionAction, ProvisionStep
+
+        (fresh_workspace / "pyproject.toml").write_text(
+            _CONSUMER_PYPROJECT, encoding="utf-8", newline=""
+        )
+        report = install_run(
+            path=fresh_workspace,
+            provision=True,
+            dry_run=True,
+            provision_skip={"models"},
+            assume_yes=True,
+        )
+        assert report.provision_outcome is not None
+        assert report.provision_outcome.dry_run is True
+        # A dry-run preview must not have provisioned a qdrant binary into
+        # the isolated managed dir nor disturbed the live service.
+        qdrant = report.provision_outcome.result_for(ProvisionStep.QDRANT)
+        assert qdrant is not None
+        assert qdrant.action in {ProvisionAction.DRY_RUN, ProvisionAction.SKIPPED}
+        assert not (isolated_status_dir / "status" / "bin").exists()

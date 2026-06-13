@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#cli-path-glob'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-05-30-cli-path-glob-adr]]'
   - '[[2026-05-30-cli-path-glob-plan]]'

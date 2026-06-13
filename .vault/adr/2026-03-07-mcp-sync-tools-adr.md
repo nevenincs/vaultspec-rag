@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
+modified: '2026-03-07'
 related:
   - '[[2026-03-07-threading-lock-for-singleton-adr]]'
   - '[[2026-03-07-continuous-research]]'

@@ -26,6 +26,7 @@ __all__ = [
     "_read_service_status",
     "_status_dir",
     "_status_file",
+    "_update_service_metadata",
     "_update_service_token",
     "_write_service_status",
 ]
@@ -156,6 +157,33 @@ def _update_service_token(token: str) -> None:
         os.replace(str(tmp), str(sf))
     except OSError as exc:
         logger.debug("_update_service_token: write failed: %s", exc, exc_info=True)
+
+
+def _update_service_metadata(fields: dict[str, object]) -> None:
+    """Merge daemon-reported metadata into ``service.json`` atomically."""
+    sf = _status_file()
+    if not sf.exists():
+        logger.debug("_update_service_metadata: service.json absent, skipping")
+        return
+    try:
+        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("_update_service_metadata: read failed: %s", exc, exc_info=True)
+        return
+    changed = False
+    for key, value in fields.items():
+        if value is None or data.get(key) == value:
+            continue
+        data[key] = value
+        changed = True
+    if not changed:
+        return
+    tmp = sf.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(str(tmp), str(sf))
+    except OSError as exc:
+        logger.debug("_update_service_metadata: write failed: %s", exc, exc_info=True)
 
 
 def _read_service_status() -> dict[str, Any] | None:

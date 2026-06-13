@@ -193,3 +193,122 @@ def test_watch_enabled_env_truthy(raw: str) -> None:
     finally:
         _restore_env(EnvVar.WATCH_ENABLED, prev)
         reset_config()
+
+
+def _clear_server_mode_env() -> dict[EnvVar, str | None]:
+    """Snapshot and clear the two effective-server-mode env knobs.
+
+    The test host may carry an ambient ``VAULTSPEC_RAG_QDRANT_SERVER``
+    or ``VAULTSPEC_RAG_LOCAL_ONLY`` (the lifespan publishes server-mode
+    state into the environment for the daemon's lifetime), so the
+    default-resolution assertions must run from a known-clean slate.
+    """
+    saved: dict[EnvVar, str | None] = {}
+    for var in (EnvVar.QDRANT_SERVER, EnvVar.LOCAL_ONLY):
+        saved[var] = os.environ.pop(var.value, None)
+    return saved
+
+
+def _restore_server_mode_env(saved: dict[EnvVar, str | None]) -> None:
+    for var, prev in saved.items():
+        _restore_env(var, prev)
+
+
+def test_qdrant_server_default_is_true() -> None:
+    saved = _clear_server_mode_env()
+    try:
+        reset_config()
+        cfg = get_config()
+        value = cfg.qdrant_server
+        assert value is True
+        assert isinstance(value, bool)
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()
+
+
+def test_local_only_default_is_false() -> None:
+    saved = _clear_server_mode_env()
+    try:
+        reset_config()
+        cfg = get_config()
+        value = cfg.local_only
+        assert value is False
+        assert isinstance(value, bool)
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()
+
+
+def test_effective_server_mode_default_is_true() -> None:
+    saved = _clear_server_mode_env()
+    try:
+        reset_config()
+        cfg = get_config()
+        assert cfg.effective_server_mode() is True
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes"])
+def test_local_only_env_flips_effective_mode_off(raw: str) -> None:
+    saved = _clear_server_mode_env()
+    os.environ[EnvVar.LOCAL_ONLY.value] = raw
+    try:
+        reset_config()
+        cfg = get_config()
+        # local-only deterministically wins over the server default:
+        # qdrant_server stays its default-true while effective mode is
+        # forced off.
+        assert cfg.qdrant_server is True
+        assert cfg.local_only is True
+        assert cfg.effective_server_mode() is False
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "no", ""])
+def test_local_only_env_falsey_keeps_server_mode(raw: str) -> None:
+    saved = _clear_server_mode_env()
+    os.environ[EnvVar.LOCAL_ONLY.value] = raw
+    try:
+        reset_config()
+        cfg = get_config()
+        assert cfg.local_only is False
+        assert cfg.effective_server_mode() is True
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()
+
+
+def test_qdrant_server_env_off_disables_effective_mode() -> None:
+    saved = _clear_server_mode_env()
+    os.environ[EnvVar.QDRANT_SERVER.value] = "0"
+    try:
+        reset_config()
+        cfg = get_config()
+        # The redundant server-mode env knob set off also disables
+        # effective mode, independently of local_only.
+        assert cfg.qdrant_server is False
+        assert cfg.local_only is False
+        assert cfg.effective_server_mode() is False
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()
+
+
+def test_local_only_wins_even_when_server_env_on() -> None:
+    saved = _clear_server_mode_env()
+    os.environ[EnvVar.QDRANT_SERVER.value] = "1"
+    os.environ[EnvVar.LOCAL_ONLY.value] = "1"
+    try:
+        reset_config()
+        cfg = get_config()
+        assert cfg.qdrant_server is True
+        assert cfg.local_only is True
+        assert cfg.effective_server_mode() is False
+    finally:
+        _restore_server_mode_env(saved)
+        reset_config()

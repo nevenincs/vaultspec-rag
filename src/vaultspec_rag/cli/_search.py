@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import os
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -51,9 +50,20 @@ def _handle_service_results(
     query: str,
     search_type: str,
     json_mode: bool,
-    no_truncate: bool,
+    show_scores: bool,
+    target: pathlib.Path | None = None,
 ) -> None:
     if isinstance(service_results, dict):
+        if "results" in service_results:
+            _handle_service_success(
+                service_results,
+                query,
+                search_type,
+                json_mode,
+                show_scores,
+                target,
+            )
+            return
         _display_service_error(
             service_results,
             json_mode=json_mode,
@@ -74,14 +84,135 @@ def _handle_service_results(
         return
     if not service_results:
         _cli.console.print(
-            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
+            f"No {search_type} results found for: {query}",
+            markup=False,
+            highlight=False,
         )
         return
     _display_search_results(
         service_results,
         search_type,
         via="service",
-        no_truncate=no_truncate,
+        show_scores=show_scores,
+        root=target,
+    )
+
+
+def _handle_service_success(
+    payload: dict[str, object],
+    query: str,
+    search_type: str,
+    json_mode: bool,
+    show_scores: bool,
+    target: pathlib.Path | None = None,
+) -> None:
+    raw_results = payload.get("results")
+    results = (
+        list(cast("list[dict[str, object]]", raw_results))
+        if isinstance(raw_results, list)
+        else []
+    )
+    if json_mode:
+        data = dict(payload)
+        data["query"] = query
+        data["search_type"] = search_type
+        data["via"] = "service"
+        _emit_json(True, "search", data=data)
+        return
+    if not results:
+        _render_empty_service_results(payload, query, search_type)
+        return
+    _display_search_results(
+        results,
+        search_type,
+        via="service",
+        show_scores=show_scores,
+        root=target,
+    )
+
+
+def _render_empty_service_results(
+    payload: dict[str, object],
+    query: str,
+    search_type: str,
+) -> None:
+    _cli.console.print(
+        f"No {_search_type_result_label(search_type)} results found for: {query}",
+        markup=False,
+        highlight=False,
+    )
+    remediation: object = None
+    empty = payload.get("empty")
+    if isinstance(empty, dict):
+        empty_map = cast("dict[str, object]", empty)
+        message = str(empty_map.get("message", "No matching indexed items found."))
+        _cli.console.print(f"Why: {message}", markup=False)
+        remediation = empty_map.get("remediation")
+    index_state = payload.get("index_state")
+    if isinstance(index_state, dict):
+        _render_empty_index_state(cast("dict[str, object]", index_state), search_type)
+    if isinstance(remediation, list) and remediation:
+        remediation_items = cast("list[object]", remediation)
+        _cli.console.print("Next actions:")
+        for item in remediation_items:
+            _cli.console.print(f"  - {item}")
+
+
+def _search_type_result_label(search_type: str) -> str:
+    if search_type in ("code", "codebase"):
+        return "source code"
+    if search_type == "vault":
+        return "vault document"
+    return search_type.replace("_", " ")
+
+
+def _search_type_count_label(search_type: str) -> str:
+    if search_type in ("code", "codebase"):
+        return "source code sections"
+    if search_type == "vault":
+        return "vault documents"
+    return f"{search_type.replace('_', ' ')} items"
+
+
+def _render_empty_index_state(
+    index_state: dict[str, object],
+    search_type: str,
+) -> None:
+    source = str(index_state.get("source") or search_type)
+    indexed = index_state.get("indexed_count", "?")
+    _cli.console.print(
+        f"Indexed {_search_type_count_label(source)}: {indexed}.",
+        markup=False,
+        highlight=False,
+    )
+    requested = str(index_state.get("requested_target_root", "")).strip()
+    indexed_target = str(index_state.get("indexed_target_root", "")).strip()
+    if not requested or not indexed_target:
+        return
+    if index_state.get("target_matches") is False and requested != indexed_target:
+        _cli.console.print(
+            "Project mismatch: requested project differs from indexed project.",
+            markup=False,
+            highlight=False,
+        )
+        _cli.console.print(
+            f"Requested project: {requested}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        _cli.console.print(
+            f"Indexed project: {indexed_target}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        return
+    _cli.console.print(
+        f"Project: {requested}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
     )
 
 
@@ -93,42 +224,44 @@ def _handle_vaultstore_locked_error(
             "search",
             "local_store_locked",
             (
-                f"The vault index at {exc.db_path} is currently in "
-                "use by another process. Current routing mode: "
-                "direct local-store search. Stop the resident "
-                "service / RAG service, or route through one running "
-                "vaultspec-rag service for concurrent access "
-                "(e.g., using --port 8766)."
+                f"The local search index at {exc.db_path} is busy. "
+                "This command tried to search the index directly, but another "
+                "vaultspec-rag command, the background service, or an automatic "
+                "index update is using this workspace. Send the search through "
+                "the running service instead, for example with --port 8766."
             ),
             1,
             db_path=str(exc.db_path),
-            routing_mode="local",
+            routing_mode="direct_local_search",
             remediation=[
-                "Wait for the other process to finish.",
+                "Wait for the other command or update to finish.",
                 "vaultspec-rag search ... --port 8766",
+                "vaultspec-rag server status",
                 "vaultspec-rag server stop",
-                "vaultspec-rag server mcp stop",
+                "Stop any orphaned Python process that is still using this workspace.",
             ],
         )
     _cli.console.print(
-        f"[bold red]Error:[/] The vault index at [cyan]{exc.db_path}[/] "
-        "is currently in use by another process "
-        "(routing mode: direct local-store search).\n\n"
-        "  Another [cyan]vaultspec-rag[/] command, RAG service, or file watcher "
-        "or file watcher is likely running against this workspace.\n\n"
-        "  Local-file-backed RAG storage cannot be opened by multiple "
-        "processes at once. For concurrent agent searches, route every "
-        "request through one running [cyan]vaultspec-rag[/] service.\n\n"
-        "  To resolve, do one of the following:\n"
-        "    1. Wait for the other process to finish.\n"
-        "    2. Route your search request through a running "
+        f"Error: The local search index at {exc.db_path} is busy.\n\n"
+        "  This command tried to search the index directly, but another "
+        "vaultspec-rag command, the background service, or an automatic index "
+        "update is using this workspace.\n\n"
+        "  Only one local command can use this index directly at a time. "
+        "For concurrent searches, send requests through one running "
+        "vaultspec-rag service.\n\n"
+        "  Next actions:\n"
+        "    1. Wait for the other command or update to finish.\n"
+        "    2. Send this search through a running "
         "service on a port, e.g.:\n"
-        "         [cyan]vaultspec-rag search ... --port 8766[/]\n"
-        "    3. Stop the running server:\n"
-        "         [cyan]vaultspec-rag server mcp stop[/]\n"
-        "         [cyan]vaultspec-rag server stop[/]\n"
-        "    4. If no vaultspec-rag process is alive, look for an "
-        "orphaned Python process holding the lock and stop it manually."
+        "         vaultspec-rag search ... --port 8766\n"
+        "    3. Check the service:\n"
+        "         vaultspec-rag server status\n"
+        "    4. Stop the running service:\n"
+        "         vaultspec-rag server stop\n"
+        "    5. If no vaultspec-rag process is alive, look for an "
+        "orphaned Python process using the index and stop it manually.",
+        markup=False,
+        highlight=False,
     )
     raise typer.Exit(code=1) from exc
 
@@ -155,11 +288,22 @@ def _try_in_process_search(
 ) -> list[SearchResult]:
     import vaultspec_rag
 
+    from ..registry import get_registry
+
+    # An empty or unbuilt index has nothing to search, so skip the
+    # "Searching..." status spinner: the search returns an empty, actionable
+    # result either way, and the spinner's control codes otherwise leak into
+    # non-interactive (captured / piped) output as a spurious first line.
+    has_index = (
+        get_registry().code_chunk_count(target) > 0
+        if search_type == "code"
+        else get_registry().vault_doc_count(target) > 0
+    )
     try:
         status_ctx = (
-            contextlib.nullcontext()
-            if json_mode
-            else _cli.console.status(f"[bold green]Searching {search_type}...")
+            _cli.console.status(f"Searching {search_type}...")
+            if has_index and not json_mode
+            else contextlib.nullcontext()
         )
         with status_ctx:
             if search_type == "code":
@@ -197,7 +341,7 @@ def _try_in_process_search(
 
 
 def _validate_and_handle_filters(
-    search_type: Literal["vault", "code"],
+    search_type: Literal["vault", "docs", "code"],
     language: str | None,
     path: str | None,
     node_type: str | None,
@@ -246,7 +390,7 @@ def _validate_and_handle_filters(
                 2,
                 value=exc.prefer_value,
             )
-        _cli.console.print(f"[red]{msg}[/]")
+        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
         raise typer.Exit(code=2) from None
     except InvalidFilterForSearchTypeError as exc:
         msg = str(exc)
@@ -259,8 +403,59 @@ def _validate_and_handle_filters(
                 filter_kind=exc.filter_kind,
                 offending=exc.offending_filters,
             )
-        _cli.console.print(f"[red]{msg}[/]")
+        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
         raise typer.Exit(code=2) from None
+
+
+def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str | None:
+    if prefer is None:
+        return None
+    values = {
+        "production": "prod",
+        "tests": "tests",
+        "documentation": "docs",
+    }
+    normalized = prefer.strip().lower()
+    if normalized in values:
+        return values[normalized]
+    msg = (
+        f"--prefer must be one of production, tests, or documentation; got {prefer!r}."
+    )
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "invalid_prefer_value",
+            msg,
+            2,
+            value=prefer,
+        )
+    _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+    raise typer.Exit(code=2)
+
+
+def _validate_search_type(
+    search_type: str, *, json_mode: bool
+) -> Literal["vault", "docs", "code"]:
+    normalized = search_type.strip().lower()
+    if normalized in {"vault", "docs", "code"}:
+        return cast("Literal['vault', 'docs', 'code']", normalized)
+    msg = f"--type must be docs, vault, or code; got {search_type!r}."
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "invalid_search_type",
+            msg,
+            2,
+            value=search_type,
+        )
+    _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+    raise typer.Exit(code=2)
+
+
+def _canonical_search_type(
+    search_type: Literal["vault", "docs", "code"],
+) -> Literal["vault", "code"]:
+    return "vault" if search_type == "docs" else search_type
 
 
 def _render_in_process_results(
@@ -268,7 +463,8 @@ def _render_in_process_results(
     query: str,
     search_type: str,
     json_mode: bool,
-    no_truncate: bool,
+    show_scores: bool,
+    target: pathlib.Path,
 ) -> None:
     if json_mode:
         from dataclasses import asdict
@@ -286,53 +482,75 @@ def _render_in_process_results(
         return
 
     if not results:
-        _cli.console.print(
-            f"[yellow]No {search_type} results found for:[/] [italic]{query}[/]",
-        )
+        _render_empty_in_process_results(query, search_type, target)
         return
 
-    table = Table(
-        title=f"Search Results: {search_type}",
-        box=None,
+    from dataclasses import asdict
+
+    _display_search_results(
+        [asdict(r) for r in results],
+        search_type,
+        via="in-process",
+        show_scores=show_scores,
+        root=target,
     )
-    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Location", style="green")
-    table.add_column("Snippet", style="white")
 
-    for r in results:
-        snippet_raw = r.snippet.replace("\n", " ")
-        snippet = snippet_raw if no_truncate else snippet_raw[:120]
-        # Preprocess-hook results carry a deep-link anchor / locator (#185);
-        # prefer them over the line number so hits point into the source.
-        if r.anchor:
-            location = r.anchor
-        elif r.locator:
-            location = f"{r.path} ({r.locator})"
-        elif r.line_start:
-            location = f"{r.path}:{r.line_start}"
-        else:
-            location = r.path
-        table.add_row(f"{r.score:.2f}", location, snippet)
 
-    _cli.console.print(table)
+def _render_empty_in_process_results(
+    query: str,
+    search_type: str,
+    target: pathlib.Path,
+) -> None:
+    result_label = _search_type_result_label(search_type)
+    count_label = _search_type_count_label(search_type)
+    _cli.console.print(
+        f"No {result_label} results found for: {query}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Why: No matching {count_label} were found in the local index.",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Project: {target}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _cli.console.print(
+        f"  - vaultspec-rag index --type {search_type}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        "  - vaultspec-rag status",
+        markup=False,
+        highlight=False,
+    )
 
 
 @app.command(
     "search",
     help=(
-        "Search vault documents or source code using hybrid dense+sparse embeddings. "
-        "Delegates to a running service when one is detected; falls back to "
-        "in-process GPU search otherwise."
+        "Search project documents or source code. Uses the running service "
+        "when available; otherwise runs the search locally."
     ),
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def handle_search(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
     search_type: Annotated[
-        Literal["vault", "code"],
+        str,
         typer.Option(
             "--type",
-            help="Search source: 'vault' (docs) or 'code' (source).",
+            metavar="docs|vault|code",
+            help=(
+                "Search area: 'docs' or 'vault' for documents; 'code' for source files."
+            ),
             show_default=True,
         ),
     ] = "vault",
@@ -340,9 +558,10 @@ def handle_search(
         int,
         typer.Option(
             "--max-results",
+            "--limit",
             help=(
-                "Maximum number of results to return. Default 10 "
-                "to mitigate top-k crowding by near-duplicate chunks."
+                "Maximum number of results to show. Default 10 keeps the "
+                "output focused."
             ),
         ),
     ] = 10,
@@ -350,18 +569,14 @@ def handle_search(
         str | None,
         typer.Option(
             "--language",
-            help="Code-search filter: programming language (e.g. 'python').",
-            rich_help_panel="Code filters",
+            help="Only show code results in this programming language.",
         ),
     ] = None,
     path: Annotated[
         str | None,
         typer.Option(
             "--path",
-            help=(
-                "Code-search filter: exact project-relative file path (KEYWORD match)."
-            ),
-            rich_help_panel="Code filters",
+            help="Only show code results from this exact project-relative path.",
         ),
     ] = None,
     include_paths: Annotated[
@@ -369,11 +584,9 @@ def handle_search(
         typer.Option(
             "--include-path",
             help=(
-                "Code-search filter: repeatable fnmatch glob; "
-                "keep results whose project-relative path matches "
-                "at least one pattern. Use with --type code."
+                "Only show code results whose project-relative path matches "
+                "this glob. Repeat for multiple globs."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
     exclude_paths: Annotated[
@@ -381,23 +594,16 @@ def handle_search(
         typer.Option(
             "--exclude-path",
             help=(
-                "Code-search filter: repeatable fnmatch glob; "
-                "drop results whose project-relative path matches "
-                "any pattern. Use with --type code."
+                "Hide code results whose project-relative path matches this "
+                "glob. Repeat for multiple globs."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
     dedup_locales: Annotated[
         bool,
         typer.Option(
             "--dedup-locales",
-            help=(
-                "Code-search post-process: collapse near-tie locale "
-                "variants (e.g. locales/{en,es}.yml) into one canonical "
-                "result. Use with --type code."
-            ),
-            rich_help_panel="Code filters",
+            help=("Collapse matching locale files into one representative result."),
         ),
     ] = False,
     prefer: Annotated[
@@ -405,94 +611,77 @@ def handle_search(
         typer.Option(
             "--prefer",
             help=(
-                "Code-search post-process: nudge results matching the "
-                "given category up (and others down) after rerank. One "
-                "of 'prod', 'tests', 'docs'. Use with --type code."
+                "Prefer one kind of code result: production, tests, or documentation."
             ),
-            rich_help_panel="Code filters",
         ),
     ] = None,
-    node_type: Annotated[
+    structure: Annotated[
         str | None,
         typer.Option(
-            "--node-type",
-            help="Code-search filter: AST node type.",
-            rich_help_panel="Code filters",
+            "--structure",
+            help="Only show code results for this source-code structure.",
         ),
     ] = None,
     function_name: Annotated[
         str | None,
         typer.Option(
             "--function-name",
-            help="Code-search filter: function/method name.",
-            rich_help_panel="Code filters",
+            help="Only show code results from this function or method.",
         ),
     ] = None,
     class_name: Annotated[
         str | None,
         typer.Option(
             "--class-name",
-            help="Code-search filter: class/struct name.",
-            rich_help_panel="Code filters",
+            help="Only show code results from this class or struct.",
         ),
     ] = None,
     doc_type: Annotated[
         str | None,
         typer.Option(
             "--doc-type",
-            help="Vault-search filter: vault doc type (e.g. 'adr', 'plan').",
-            rich_help_panel="Vault filters",
+            help="Only show document results with this type, such as 'adr' or 'plan'.",
         ),
     ] = None,
     feature: Annotated[
         str | None,
         typer.Option(
             "--feature",
-            help="Vault-search filter: feature tag (kebab-case).",
-            rich_help_panel="Vault filters",
+            help="Only show document results for this feature tag.",
         ),
     ] = None,
     date: Annotated[
         str | None,
         typer.Option(
             "--date",
-            help="Vault-search filter: exact ISO date (yyyy-mm-dd).",
-            rich_help_panel="Vault filters",
+            help="Only show document results from this date (yyyy-mm-dd).",
         ),
     ] = None,
     tag: Annotated[
         str | None,
         typer.Option(
             "--tag",
-            help="Vault-search filter: free-form tag (without #).",
-            rich_help_panel="Vault filters",
+            help="Only show document results with this tag, without '#'.",
         ),
     ] = None,
-    no_truncate: Annotated[
+    show_scores: Annotated[
         bool,
         typer.Option(
-            "--no-truncate",
-            help=(
-                "Disable the 120-character snippet truncation in the "
-                "results table so sibling files with long paths stay "
-                "distinguishable."
-            ),
+            "--scores",
+            help="Show numeric relevance scores in human search output.",
         ),
     ] = False,
     port: Annotated[
         int | None,
-        typer.Option("--port", help="Port of running RAG service (fast path)."),
+        typer.Option("--port", help="Use the service running on this port."),
     ] = None,
     allow_fallback: Annotated[
         bool,
         typer.Option(
             "--allow-fallback",
             help=(
-                "When --port is given but the service is unreachable, "
-                "silently fall back to in-process search. Defaults off: "
-                "the CLI hard-fails with remediation instead, to avoid "
-                "re-entering the Qdrant lock that the resident service "
-                "is meant to own."
+                "If the selected service is not reachable, run the search "
+                "locally instead of stopping with an error."
             ),
         ),
     ] = False,
@@ -500,25 +689,14 @@ def handle_search(
         bool,
         typer.Option(
             "--verbose",
-            help=(
-                "Re-enable HuggingFace tqdm progress bars during "
-                "in-process model load and encode. Off by default to "
-                "keep search output script-friendly."
-            ),
+            help=("Show model loading and progress messages during local search."),
         ),
     ] = False,
     json_mode: Annotated[
         bool,
         typer.Option(
             "--json",
-            help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Wraps results in "
-                '{"ok": true, "command": "search", "data": '
-                '{"results": [...]}}; errors use the matching '
-                '{"ok": false, "error", "message"} shape. Use this '
-                "for agent / CI consumption."
-            ),
+            help=("Emit JSON for scripts and automation instead of human text."),
         ),
     ] = False,
     timeout: Annotated[
@@ -527,22 +705,26 @@ def handle_search(
             "--timeout",
             help=(
                 "Connection and read timeout budget in seconds "
-                "for service-delegated searches."
+                "for searches handled by the service (default 300 seconds; "
+                "override with VAULTSPEC_RAG_SEARCH_TIMEOUT)."
             ),
         ),
     ] = None,
 ) -> None:
     """Search vault documents or source code."""
+    _validate_search_extra_args(ctx)
     if not verbose:
         _cli._suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
+    prefer = _search_prefer_filter(prefer, json_mode=json_mode)
+    search_type = _validate_search_type(search_type, json_mode=json_mode)
 
     _validate_and_handle_filters(
         search_type=search_type,
         language=language,
         path=path,
-        node_type=node_type,
+        node_type=structure,
         function_name=function_name,
         class_name=class_name,
         doc_type=doc_type,
@@ -555,6 +737,7 @@ def handle_search(
         prefer=prefer,
         json_mode=json_mode,
     )
+    search_type = _canonical_search_type(search_type)
 
     if port is None:
         port = _default_service_port()
@@ -571,7 +754,7 @@ def handle_search(
             timeout=timeout,
             language=language,
             path=path,
-            node_type=node_type,
+            node_type=structure,
             function_name=function_name,
             class_name=class_name,
             doc_type=doc_type,
@@ -585,7 +768,12 @@ def handle_search(
         )
         if service_results is not None:
             _handle_service_results(
-                service_results, query, search_type, json_mode, no_truncate
+                service_results,
+                query,
+                search_type,
+                json_mode,
+                show_scores,
+                target,
             )
             return
         if not allow_fallback:
@@ -596,25 +784,48 @@ def handle_search(
             )
             raise typer.Exit(code=1)
 
-    results = _try_in_process_search(
-        target,
-        query,
-        search_type,
-        max_results,
-        language,
-        path,
-        node_type,
-        function_name,
-        class_name,
-        include_paths,
-        exclude_paths,
-        dedup_locales,
-        prefer,
-        doc_type,
-        feature,
-        date,
-        tag,
-        json_mode,
-    )
+    try:
+        results = _try_in_process_search(
+            target,
+            query,
+            search_type,
+            max_results,
+            language,
+            path,
+            structure,
+            function_name,
+            class_name,
+            include_paths,
+            exclude_paths,
+            dedup_locales,
+            prefer,
+            doc_type,
+            feature,
+            date,
+            tag,
+            json_mode,
+        )
 
-    _render_in_process_results(results, query, search_type, json_mode, no_truncate)
+        _render_in_process_results(
+            results,
+            query,
+            search_type,
+            json_mode,
+            show_scores,
+            target,
+        )
+    finally:
+        from ..registry import get_registry
+
+        get_registry().close_project(target)
+
+
+def _validate_search_extra_args(ctx: typer.Context) -> None:
+    extras = list(ctx.args)
+    if not extras:
+        return
+    unexpected = " ".join(extras)
+    _cli.console.print(
+        f"Unexpected search options: {unexpected}", markup=False, highlight=False
+    )
+    raise typer.Exit(code=2)

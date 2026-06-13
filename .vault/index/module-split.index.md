@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#module-split'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-06-01-module-split-adr]]'
   - '[[2026-06-01-module-split-audit]]'

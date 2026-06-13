@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#ecosystem-integration'
 date: 2026-04-06
+modified: '2026-04-06'
 related:
   - '[[2026-04-06-ecosystem-integration-research]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'

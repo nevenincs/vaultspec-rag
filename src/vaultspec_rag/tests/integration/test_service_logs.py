@@ -15,8 +15,11 @@ Three layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
-from typing import TYPE_CHECKING, cast
+import threading
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -34,7 +37,7 @@ from ...logging_config import read_service_log
 from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 runner = CliRunner()
@@ -42,6 +45,133 @@ runner = CliRunner()
 # A port with nothing listening: _try_mcp_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59234"
+
+
+class _LogsHTTPHandler(http.server.BaseHTTPRequestHandler):
+    payloads: ClassVar[list[dict[str, object]]] = []
+    request_paths: ClassVar[list[str]] = []
+    request_count = 0
+
+    def do_GET(self) -> None:
+        payload_index = min(self.request_count, len(self.payloads) - 1)
+        payload = self.payloads[payload_index]
+        type(self).request_count += 1
+        type(self).request_paths.append(self.path)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def log_message(self, format: str, *args: object) -> None:
+        _ = format, args
+
+
+@contextlib.contextmanager
+def _logs_http_server(
+    payloads: list[dict[str, object]],
+) -> Generator[tuple[http.server.HTTPServer, int]]:
+    _LogsHTTPHandler.payloads = payloads
+    _LogsHTTPHandler.request_paths = []
+    _LogsHTTPHandler.request_count = 0
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsHTTPHandler)
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, port
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _activity_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 08:46:27,900 INFO     uvicorn.access: "
+                '127.0.0.1:60001 - "POST /search HTTP/1.1" 200'
+            ),
+            (
+                "2026-06-12 08:46:28,123 WARNING  vaultspec_rag.server: "
+                "service.lifecycle event=search "
+                "request_id=6793374dabcdef001122334455667788 "
+                "search_type=vault "
+                "root=chore-476-restructure-execution "
+                "results=10 total_seconds=1.383"
+            ),
+            (
+                "2026-06-12 08:46:29,000 WARNING  vaultspec_rag.server: "
+                "service.lifecycle event=startup pid=4242"
+            ),
+        ],
+        "total": 3,
+        "filters": {},
+    }
+
+
+def _store_update_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 13:12:09,845 INFO     vaultspec_rag.store: "
+                "Upserted 64 codebase chunk(s)"
+            ),
+            (
+                "2026-06-12 13:12:10,845 INFO     vaultspec_rag.store: "
+                "Deleted 2 document(s)"
+            ),
+        ],
+        "total": 2,
+        "filters": {},
+    }
+
+
+def _vault_section_update_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 13:12:11,845 INFO     vaultspec_rag.store: "
+                "Upserted 1 vault chunk(s)"
+            ),
+            (
+                "2026-06-12 13:12:12,845 INFO     vaultspec_rag.store: "
+                "Deleted 3 vault chunk(s)"
+            ),
+        ],
+        "total": 2,
+        "filters": {},
+    }
+
+
+def _file_change_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            "INFO     1 change detected",
+            "2026-06-13 13:04:39,762 INFO     watchfiles.main: 1 change detected",
+            "INFO     2 changes detected",
+            "2026-06-13 13:04:40,471 INFO     watchfiles.main: 2 changes detected",
+        ],
+        "total": 4,
+        "filters": {},
+    }
+
+
+def _unstructured_warning_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 13:14:09,845 WARNING  vaultspec_rag.server: "
+                "unexpected service-side warning"
+            ),
+        ],
+        "total": 1,
+        "filters": {},
+    }
+
+
+def _plain_lines(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 # --------------------------------------------------------------------------- #
@@ -111,7 +241,13 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
 
     from ...config import EnvVar, reset_config
 
-    (tmp_path / "service.log").write_text("line-a\nline-b\n", encoding="utf-8")
+    (tmp_path / "service.log").write_text(
+        "line-a\n"
+        "job_id=abc123 phase=running message=started\n"
+        "job_id=def456 phase=done message=finished\n"
+        "line-b\n",
+        encoding="utf-8",
+    )
 
     prev_token = _m._SERVICE_TOKEN
     prev_env = os.environ.get(EnvVar.STATUS_DIR.value)
@@ -164,7 +300,12 @@ def test_logs_route_200_with_bearer_token(
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.text == "line-a\nline-b"
+    assert response.text == (
+        "line-a\n"
+        "job_id=abc123 phase=running message=started\n"
+        "job_id=def456 phase=done message=finished\n"
+        "line-b"
+    )
 
 
 def test_logs_route_200_with_query_token(
@@ -173,7 +314,12 @@ def test_logs_route_200_with_query_token(
     client, token = _routes_app
     response = cast("httpx.Response", client.get("/logs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
     assert response.status_code == 200
-    assert response.text == "line-a\nline-b"
+    assert response.text == (
+        "line-a\n"
+        "job_id=abc123 phase=running message=started\n"
+        "job_id=def456 phase=done message=finished\n"
+        "line-b"
+    )
 
 
 def test_logs_route_respects_lines_param(
@@ -189,6 +335,54 @@ def test_logs_route_respects_lines_param(
     )
     assert response.status_code == 200
     assert response.text == "line-b"
+
+
+def test_logs_route_filters_by_job_id(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/logs",
+            params={"token": token, "lines": "10", "job_id": "abc123"},
+        ),
+    )
+    assert response.status_code == 200
+    assert response.text == "job_id=abc123 phase=running message=started"
+
+
+def test_logs_route_filter_searches_before_tail_limit(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/logs",
+            params={"token": token, "lines": "1", "job_id": "abc123"},
+        ),
+    )
+    assert response.status_code == 200
+    assert response.text == "job_id=abc123 phase=running message=started"
+
+
+def test_logs_json_route_filters_by_contains(
+    _routes_app: tuple[TestClient, str],
+) -> None:
+    client, token = _routes_app
+    response = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/logs/json",
+            params={"token": token, "lines": "10", "contains": "finished"},
+        ),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["lines"] == ["job_id=def456 phase=done message=finished"]
+    assert payload["total"] == 1
+    assert payload["filters"] == {"contains": "finished"}
 
 
 # --------------------------------------------------------------------------- #
@@ -225,12 +419,315 @@ def test_logs_not_running_json() -> None:
 def test_logs_not_running_prose() -> None:
     result = runner.invoke(app, ["server", "logs", "--port", _DEAD_PORT])
     assert result.exit_code == 3
+    assert f"Address: http://127.0.0.1:{_DEAD_PORT}" in result.stdout
     assert "not running" in result.stdout.lower()
 
 
 def test_logs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "logs", "--help"])
     assert result.exit_code == 0
+    assert "--limit" in result.stdout
+    assert "--lines" not in result.stdout
+    assert "--raw" in result.stdout
+    assert "Emit JSON for scripts" in result.stdout
+    assert "Number of recent service log lines to inspect" in result.stdout
+    assert "Only inspect log lines for this job ID" in result.stdout
+    assert "Only inspect log lines containing this text" in result.stdout
+    assert "Show original log lines" in result.stdout
+    assert "activity entries" not in result.stdout
+    assert "Number of trailing log lines" not in result.stdout
+    assert "Only show lines containing" not in result.stdout
+    assert "diagnostic log lines" not in result.stdout
+    assert "JSON envelope" not in result.stdout
+    assert "raw implementation" not in result.stdout
+
+
+def test_logs_lines_alias_is_not_supported() -> None:
+    result = runner.invoke(app, ["server", "logs", "--lines", "8", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
+
+
+def test_logs_human_output_is_activity_feed() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+    ]
+    assert (
+        "08:46:28 search vault 10 results 1.38 seconds "
+        "chore-476-restructure-execution request 6793374d"
+    ) in output
+    assert "08:46:29 service started process 4242" in output
+    assert "request=" not in output
+    assert "pid=" not in output
+    assert "service.lifecycle" not in output
+    assert "POST /search" not in output
+    assert "uvicorn.access" not in output
+    for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+        assert forbidden not in output
+
+
+def test_logs_duration_uses_words() -> None:
+    from ...cli._service_logs import _format_duration
+
+    assert _format_duration("0.050") == "less than 1 second"
+    assert _format_duration("1") == "1 second"
+    assert _format_duration("1.500") == "1.5 seconds"
+    assert _format_duration("12.04") == "12 seconds"
+    assert _format_duration("120.6") == "121 seconds"
+
+
+def test_logs_human_output_shows_index_updates() -> None:
+    with _logs_http_server([_store_update_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+    ]
+    assert "13:12:09 index updated 64 source code sections" in output
+    assert "13:12:10 index removed 2 vault documents" in output
+    assert "2 docs" not in output
+    assert "No activity entries" not in output
+    assert "vaultspec_rag.store" not in output
+
+
+def test_logs_human_output_uses_document_section_language() -> None:
+    with _logs_http_server([_vault_section_update_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "13:12:11 index updated 1 vault document section" in output
+    assert "13:12:12 index removed 3 vault document sections" in output
+    assert "vault chunk" not in output
+
+
+def test_logs_human_output_shows_file_change_index_updates() -> None:
+    with _logs_http_server([_file_change_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+    ]
+    assert "13:04:39 index update detected 1 file change" in output
+    assert "13:04:40 index update detected 2 file changes" in output
+    assert "No service activity found" not in output
+    assert "watchfiles" not in output
+    assert "watcher" not in output.lower()
+
+
+def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
+    with _logs_http_server([_unstructured_warning_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 1 entry",
+        "Source: last 8 log lines",
+    ]
+    assert len(lines) == 5
+    head, hint = lines[4].split("; ", 1)
+    clock, level, source = head.split()
+    assert clock == "13:14:09"
+    assert level == "warning"
+    assert source == "server"
+    assert hint == "run with --raw for original log line"
+    assert "unexpected service-side warning" not in output
+    assert "vaultspec_rag.server" not in output
+    assert "details=use --raw" not in output
+    assert "details available" not in output
+
+
+def test_logs_empty_output_routes_operator_to_next_commands() -> None:
+    with _logs_http_server([{"lines": [], "total": 0, "filters": {}}]) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+    assert lines[0] == f"Address: http://127.0.0.1:{port}"
+    assert lines[1] == "No service activity found in the last 8 log lines."
+    assert "Next actions:" in lines
+    assert "Try:" not in lines
+    commands = [line for line in lines if line.startswith("vaultspec-rag ")]
+    assert {
+        f"vaultspec-rag server logs --limit 200 --port {port}",
+        f"vaultspec-rag server jobs --state active --port {port}",
+        f"vaultspec-rag server jobs --state waiting --port {port}",
+        f"vaultspec-rag server status --port {port}",
+        f"vaultspec-rag server logs --raw --limit 8 --port {port}",
+    } == set(commands)
+    assert "No recent activity found" not in result.output
+    assert "Activity: none found" not in result.output
+    assert "entries were returned" not in result.output
+
+
+def test_logs_empty_output_preserves_filters_in_raw_followup() -> None:
+    with _logs_http_server([{"lines": [], "total": 0, "filters": {}}]) as (
+        _server,
+        port,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "logs",
+                "--limit",
+                "12",
+                "--job-id",
+                "abc123456789",
+                "--contains",
+                "disk space",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        'No service activity found matching job abc12345 and text "disk space" '
+        "in the last 12 log lines."
+    ) in result.output
+    assert (
+        "vaultspec-rag server logs --raw --limit 12 "
+        f'--port {port} --job-id abc123456789 --contains "disk space"'
+    ) in result.output
+
+
+def test_logs_activity_header_reports_filters() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "logs",
+                "--limit",
+                "8",
+                "--contains",
+                "6793374d",
+                "--job-id",
+                "job-abcdef123",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    lines = _plain_lines(result.output)
+    assert lines[:5] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+        'Filter: job job-abcd and text "6793374d"',
+    ]
+    request_path = _LogsHTTPHandler.request_paths[-1]
+    assert request_path.startswith("/logs/json?")
+    assert "lines=8" in request_path
+    assert "contains=6793374d" in request_path
+    assert "job_id=job-abcdef123" in request_path
+
+
+def test_logs_raw_mode_preserves_log_lines() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port), "--raw"],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "service.lifecycle event=search" in output
+    assert "POST /search HTTP/1.1" in output
+    assert "request_id=6793374dabcdef001122334455667788" in output
+
+
+def test_logs_json_preserves_raw_service_payload() -> None:
+    payload = _activity_payload()
+    with _logs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port), "--json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.output)
+    assert envelope["ok"] is True
+    assert envelope["command"] == "service.logs"
+    assert envelope["data"]["lines"] == payload["lines"]
+    assert "service.lifecycle event=search" in envelope["data"]["lines"][1]
+
+
+def test_logs_cli_filters_are_passed_to_service() -> None:
+    with _logs_http_server([_activity_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "logs",
+                "--limit",
+                "8",
+                "--contains",
+                "6793374d",
+                "--job-id",
+                "job-abc",
+                "--port",
+                str(port),
+                "--raw",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    request_path = _LogsHTTPHandler.request_paths[-1]
+    assert request_path.startswith("/logs/json?")
+    assert "lines=8" in request_path
+    assert "contains=6793374d" in request_path
+    assert "job_id=job-abc" in request_path
 
 
 def test_logs_cli_mcp_parity() -> None:

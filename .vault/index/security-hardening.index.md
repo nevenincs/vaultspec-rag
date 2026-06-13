@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#security-hardening'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-04-04-security-hardening-adr]]'
   - '[[2026-04-04-security-hardening-plan]]'

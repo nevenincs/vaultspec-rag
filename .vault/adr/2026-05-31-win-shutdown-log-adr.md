@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#win-shutdown-log'
 date: '2026-05-31'
+modified: '2026-05-31'
 related:
   - '[[2026-05-31-win-shutdown-log-research]]'
 ---

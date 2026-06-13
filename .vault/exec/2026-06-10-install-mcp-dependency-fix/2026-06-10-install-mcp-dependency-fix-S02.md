@@ -3,6 +3,7 @@ tags:
   - '#exec'
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
+modified: '2026-06-10'
 step_id: 'S02'
 related:
   - "[[2026-06-10-install-mcp-dependency-fix-plan]]"

@@ -10,12 +10,14 @@ here is the env-var override (``VAULTSPEC_RAG_LOG_LEVEL``) and RAG's
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
+import re
 import shutil
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import override
+from typing import TYPE_CHECKING, Any, override
 
 from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     configure_logging as _core_configure_logging,
@@ -30,11 +32,85 @@ __all__ = [
     "configure_logging",
     "get_console",
     "install_daemon_log_rotation",
+    "log_event",
     "read_service_log",
     "reset_logging",
 ]
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+_EVENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+_FIELD_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BARE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@\\-]+$")
+
+
+def _format_event_value(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, Path):
+        value = str(value)
+
+    rendered = str(value)
+    if _BARE_VALUE_RE.fullmatch(rendered):
+        return rendered
+    return json.dumps(rendered, ensure_ascii=True)
+
+
+def log_event(
+    target_logger: logging.Logger,
+    namespace: str,
+    event: str,
+    *,
+    severity: int = logging.INFO,
+    exc_info: Any = None,
+    fields: Mapping[str, object] | None = None,
+    **extra_fields: object,
+) -> None:
+    """Emit a parseable service event through the configured logger.
+
+    Events use a stable ``namespace event=name key=value`` message shape
+    so CLI log filtering, MCP adapters, and external collectors can
+    consume the same stream without depending on human-facing formatting.
+    Values containing whitespace or shell-significant punctuation are
+    JSON-quoted; common identifiers and paths remain bare for greppability.
+    """
+    if not _EVENT_TOKEN_RE.fullmatch(namespace):
+        msg = f"invalid log event namespace: {namespace!r}"
+        raise ValueError(msg)
+    if not _EVENT_TOKEN_RE.fullmatch(event):
+        msg = f"invalid log event name: {event!r}"
+        raise ValueError(msg)
+
+    combined_fields: dict[str, object] = {}
+    if fields is not None:
+        combined_fields.update(fields)
+    combined_fields.update(extra_fields)
+
+    parts = [namespace, f"event={event}"]
+    for key, value in combined_fields.items():
+        if not _FIELD_TOKEN_RE.fullmatch(key):
+            msg = f"invalid log event field: {key!r}"
+            raise ValueError(msg)
+        parts.append(f"{key}={_format_event_value(value)}")
+
+    target_logger.log(
+        severity,
+        "%s",
+        " ".join(parts),
+        exc_info=exc_info,
+        extra={
+            "vaultspec_event_namespace": namespace,
+            "vaultspec_event": event,
+            "vaultspec_event_fields": dict(combined_fields),
+        },
+    )
 
 
 def _resolve_status_dir(status_dir: Path | None) -> Path:

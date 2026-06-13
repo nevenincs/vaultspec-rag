@@ -12,7 +12,7 @@ import fnmatch
 import logging
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, cast
 
 from ._models import ParsedQuery, SearchResult
@@ -71,6 +71,59 @@ def _locator_component(
     if isinstance(value_str, str) and value_str:
         return value_str
     return None
+
+
+def _join_doc_path(docs_prefix: str, stored_path: str) -> str:
+    """Return a vault doc's path relative to the project root.
+
+    Vault chunks store their path relative to the docs directory
+    (e.g. ``research/foo.md``); prepending the docs prefix
+    (``.vault``) yields a path that resolves from the project root the
+    same way code-result paths do. Idempotent if the prefix is already
+    present.
+    """
+    if not docs_prefix:
+        return stored_path
+    normalised = stored_path.replace("\\", "/")
+    prefix = docs_prefix.replace("\\", "/").rstrip("/")
+    if normalised == prefix or normalised.startswith(prefix + "/"):
+        return normalised
+    return f"{prefix}/{normalised}"
+
+
+def _group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
+    """Collapse chunk-level vault hits to one result per document.
+
+    The vault collection stores one point per document chunk, so a
+    single document can occupy several candidate slots. The
+    best-scoring chunk represents its document (its snippet is the
+    matched passage); duplicates drop. Order follows the surviving
+    scores, descending.
+    """
+    best: dict[str, SearchResult] = {}
+    for result in results:
+        current = best.get(result.id)
+        if current is None or result.score > current.score:
+            best[result.id] = result
+    return sorted(best.values(), key=lambda r: r.score, reverse=True)
+
+
+def _record_seconds(
+    timings: dict[str, float] | None,
+    key: str,
+    started: float,
+) -> None:
+    if timings is not None:
+        timings[key] = time.perf_counter() - started
+
+
+def _add_seconds(
+    timings: dict[str, float] | None,
+    key: str,
+    seconds: float,
+) -> None:
+    if timings is not None:
+        timings[key] = timings.get(key, 0.0) + seconds
 
 
 class VaultGraphError(RuntimeError):
@@ -145,6 +198,28 @@ class VaultSearcher:
         self._reranker = reranker
         self._reranker_lock = threading.Lock()
 
+    def _vault_docs_prefix(self) -> str:
+        """The docs directory (e.g. ``.vault``) vault paths are stored under."""
+        from ..config import get_config
+
+        return str(get_config().docs_dir)
+
+    @contextmanager
+    def _gpu_section(self, timings: dict[str, float] | None = None):
+        if self._gpu_lock is None:
+            with nullcontext():
+                yield
+            return
+        started = time.perf_counter()
+        self._gpu_lock.acquire()
+        wait_seconds = time.perf_counter() - started
+        _add_seconds(timings, "gpu_queue_wait_seconds", wait_seconds)
+        _add_seconds(timings, "queue_wait_seconds", wait_seconds)
+        try:
+            yield
+        finally:
+            self._gpu_lock.release()
+
     def _get_reranker(self) -> CrossEncoder:
         """Lazily load the CrossEncoder reranker model onto GPU.
 
@@ -166,6 +241,8 @@ class VaultSearcher:
             import torch
             from sentence_transformers import CrossEncoder
 
+            from ..config import get_config
+
             if not torch.cuda.is_available():
                 msg = (
                     "CUDA GPU required for CrossEncoder reranker. No CUDA device found."
@@ -175,6 +252,7 @@ class VaultSearcher:
                 self._reranker_model_name,
                 device="cuda",
                 activation_fn=torch.nn.Sigmoid(),
+                max_length=int(get_config().reranker_max_length),
             )
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
@@ -188,6 +266,8 @@ class VaultSearcher:
         query: str,
         results: list[SearchResult],
         top_k: int,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Rerank results using CrossEncoder if enabled.
 
@@ -214,11 +294,19 @@ class VaultSearcher:
 
         from ..config import get_config
 
+        cfg = get_config()
         reranker = self._get_reranker()
-        pairs = [(query, r.snippet) for r in results]
-        batch_size = get_config().reranker_batch_size
-        scores: list[float] = []
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
+        # Score the real candidate content, not the 200-char display
+        # snippet. The character cap only bounds tokenizer work on
+        # oversized rows (~6 chars per BPE token is a safe ceiling);
+        # the model's own max_length does the exact token truncation.
+        char_cap = max(1, int(cfg.reranker_max_length)) * 6
+        pairs = [(query, (r.rerank_text or r.snippet)[:char_cap]) for r in results]
+        batch_size = cfg.reranker_batch_size
+        raw_scores = None
+        # The GPU lock wraps only the model forward call; the
+        # score-to-float conversion below runs after release.
+        with self._gpu_section(timings):
             while True:
                 try:
                     raw_scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete
@@ -226,7 +314,6 @@ class VaultSearcher:
                         batch_size=batch_size,
                         show_progress_bar=False,
                     )
-                    scores = [float(s) for s in raw_scores]
                     break
                 except torch.cuda.OutOfMemoryError:
                     torch.cuda.empty_cache()
@@ -237,6 +324,7 @@ class VaultSearcher:
                         "CUDA OOM during reranking, retrying with batch_size=%d",
                         batch_size,
                     )
+        scores = [float(s) for s in raw_scores]
         for result, score in zip(results, scores, strict=True):
             result.score = score
         results.sort(key=lambda r: r.score, reverse=True)
@@ -291,6 +379,7 @@ class VaultSearcher:
         tag: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Search vault using pre-encoded dense and sparse vectors.
 
@@ -331,6 +420,7 @@ class VaultSearcher:
 
         # Fetch extra candidates when reranker will narrow them down
         fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        phase_started = time.perf_counter()
         raw_results: list[dict[str, object]] = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search(
@@ -343,28 +433,51 @@ class VaultSearcher:
                 unlike_ids=unlike_ids,
             ),
         )
+        _record_seconds(timings, "qdrant_seconds", phase_started)
 
+        phase_started = time.perf_counter()
+        docs_prefix = self._vault_docs_prefix()
         results: list[SearchResult] = []
         for r in raw_results:
             raw_score = r.get("_relevance_score", 0.0)
             score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+            content = str(r.get("content", ""))
             results.append(
                 SearchResult(
                     id=str(r["id"]),
-                    path=str(r["path"]),
+                    path=_join_doc_path(docs_prefix, str(r["path"])),
                     title=str(r.get("title", "")),
                     score=score,
-                    snippet=str(r.get("content", ""))[:200].strip(),
+                    snippet=content[:200].strip(),
                     source="vault",
                     doc_type=str(r.get("doc_type", "")),
                     feature=str(r.get("feature", "")),
                     date=str(r.get("date", "")),
+                    rerank_text=content or None,
                 ),
             )
+        _record_seconds(timings, "result_mapping_seconds", phase_started)
 
-        results = self._rerank(query_text, results, top_k)
+        # Rerank the FULL fetched candidate set: grouping below can
+        # collapse several chunks of one document into a single row, so
+        # truncating before grouping could under-fill the final page
+        # whenever one document's chunks dominate the rerank window.
+        phase_started = time.perf_counter()
+        results = self._rerank(query_text, results, len(results), timings=timings)
+        _record_seconds(timings, "rerank_seconds", phase_started)
+
+        phase_started = time.perf_counter()
+        results = _group_chunks_by_document(results)
         graph = self._get_graph()
-        return rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+        results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+        _record_seconds(timings, "graph_rerank_seconds", phase_started)
+        if timings is not None:
+            timings["postprocess_seconds"] = (
+                timings.get("result_mapping_seconds", 0.0)
+                + timings.get("rerank_seconds", 0.0)
+                + timings.get("graph_rerank_seconds", 0.0)
+            )
+        return results[:top_k]
 
     def _build_codebase_store_filters(
         self,
@@ -422,7 +535,8 @@ class VaultSearcher:
             score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
             r_id = str(r["id"])
             r_path = str(r["path"])
-            snippet = str(r.get("content", ""))[:200].strip()
+            content = str(r.get("content", ""))
+            snippet = content[:200].strip()
             language = str(r.get("language", ""))
             line_start = r.get("line_start")
             line_end = r.get("line_end")
@@ -454,6 +568,7 @@ class VaultSearcher:
                     ),
                     anchor=str(anchor) if anchor is not None else None,
                     locator=_format_locator(r),
+                    rerank_text=content or None,
                 ),
             )
         return results
@@ -490,6 +605,7 @@ class VaultSearcher:
         prefer: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Search codebase using pre-encoded dense and sparse vectors.
 
@@ -549,6 +665,7 @@ class VaultSearcher:
             fetch_limit = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
         else:
             fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        phase_started = time.perf_counter()
         raw_results: list[dict[str, object]] = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search_codebase(
@@ -561,35 +678,58 @@ class VaultSearcher:
                 unlike_ids=unlike_ids,
             ),
         )
+        _record_seconds(timings, "qdrant_seconds", phase_started)
 
         # Post-query glob filter. Runs before SearchResult / rerank
         # so the CrossEncoder cost is proportional to the survivors,
         # not the over-fetched raw set.
+        phase_started = time.perf_counter()
         raw_results = self._filter_raw_codebase_results(
             raw_results, include_norm, exclude_norm
         )
+        _record_seconds(timings, "glob_filter_seconds", phase_started)
 
+        phase_started = time.perf_counter()
         results = self._map_codebase_results(raw_results)
-        results = self._rerank(query_text, results, top_k)
+        _record_seconds(timings, "result_mapping_seconds", phase_started)
+
+        phase_started = time.perf_counter()
+        results = self._rerank(query_text, results, top_k, timings=timings)
+        _record_seconds(timings, "rerank_seconds", phase_started)
 
         # --prefer post-rerank score nudge. Apply ±PREFER_SCORE_NUDGE
         # based on path-derived category, then re-sort. The
         # CrossEncoder's query-relevance scoring runs first; user
         # preference re-orders ties and near-ties only.
+        phase_started = time.perf_counter()
         self._apply_prefer_nudge(results, prefer)
+        _record_seconds(timings, "prefer_seconds", phase_started)
 
         # --dedup-locales collapse pass. Group results by locale
         # stem; within each group, near-tie scores (within
         # _LOCALE_DEDUP_SCORE_WINDOW) collapse to the highest-scoring
         # entry. Non-locale paths and singletons pass through.
+        phase_started = time.perf_counter()
         if dedup_locales:
             results = _collapse_locale_variants(results)
+        _record_seconds(timings, "dedup_seconds", phase_started)
+        if timings is not None:
+            timings["postprocess_seconds"] = (
+                timings.get("glob_filter_seconds", 0.0)
+                + timings.get("result_mapping_seconds", 0.0)
+                + timings.get("rerank_seconds", 0.0)
+                + timings.get("prefer_seconds", 0.0)
+                + timings.get("dedup_seconds", 0.0)
+            )
 
         return results
 
     def _encode_query(
         self,
         raw_query: str,
+        *,
+        surface: str | None = None,
+        timings: dict[str, float] | None = None,
     ) -> tuple[ParsedQuery, str, list[float], SparseResult | None]:
         """Parse and encode a query, returning shared components.
 
@@ -599,6 +739,8 @@ class VaultSearcher:
         Args:
             raw_query: Raw query string, possibly with filter
                 tokens.
+            surface: Target corpus kind (``"vault"`` or ``"code"``)
+                selecting the dense encoder's task instruction.
 
         Returns:
             Four-element tuple of (parsed_query, cleaned_text,
@@ -606,14 +748,31 @@ class VaultSearcher:
         """
         parsed = parse_query(raw_query)
         query_text = parsed.text or raw_query
-        with self._gpu_lock if self._gpu_lock is not None else nullcontext():
-            query_vector = self.model.encode_query(query_text).tolist()
-            sparse_vector = (
+
+        # A cache hit skips both forward passes and - more importantly
+        # under load - the GPU lock acquisition entirely. Entries that
+        # were computed without a sparse vector are recomputed when
+        # sparse encoding is enabled.
+        cache_key = (surface or "", query_text)
+        cached = self.model.query_cache.get(cache_key)
+        if cached is not None and (not self._sparse_enabled or cached[1] is not None):
+            dense, sparse = cached
+            return (
+                parsed,
+                query_text,
+                dense.tolist(),
+                sparse if self._sparse_enabled else None,
+            )
+
+        with self._gpu_section(timings):
+            dense = self.model.encode_query(query_text, surface=surface)
+            sparse = (
                 self.model.encode_query_sparse(query_text)
                 if self._sparse_enabled
                 else None
             )
-        return parsed, query_text, query_vector, sparse_vector
+        self.model.query_cache.put(cache_key, (dense, sparse))
+        return parsed, query_text, dense.tolist(), sparse
 
     def search_vault(
         self,
@@ -646,8 +805,40 @@ class VaultSearcher:
         Returns:
             Ranked list of vault SearchResult instances.
         """
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
-        return self._search_vault_encoded(
+        results, _timings = self.search_vault_timed(
+            raw_query,
+            top_k=top_k,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+        return results
+
+    def search_vault_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        doc_type: str | None = None,
+        feature: str | None = None,
+        date: str | None = None,
+        tag: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
+    ) -> tuple[list[SearchResult], dict[str, float]]:
+        """Search vault and return phase timings for service diagnostics."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            surface="vault",
+            timings=timings,
+        )
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        results = self._search_vault_encoded(
             query_vector,
             sparse_vector,
             parsed,
@@ -659,7 +850,9 @@ class VaultSearcher:
             tag=tag,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            timings=timings,
         )
+        return results, timings
 
     def search_codebase(
         self,
@@ -707,8 +900,50 @@ class VaultSearcher:
         Returns:
             Ranked list of codebase SearchResult instances.
         """
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(raw_query)
-        return self._search_codebase_encoded(
+        results, _timings = self.search_codebase_timed(
+            raw_query,
+            top_k=top_k,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+        return results
+
+    def search_codebase_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        language: str | None = None,
+        path: str | None = None,
+        node_type: str | None = None,
+        function_name: str | None = None,
+        class_name: str | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        dedup_locales: bool = False,
+        prefer: str | None = None,
+        like_ids: list[str | int] | None = None,
+        unlike_ids: list[str | int] | None = None,
+    ) -> tuple[list[SearchResult], dict[str, float]]:
+        """Search codebase and return phase timings for service diagnostics."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            surface="code",
+            timings=timings,
+        )
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        results = self._search_codebase_encoded(
             query_vector,
             sparse_vector,
             parsed,
@@ -725,4 +960,6 @@ class VaultSearcher:
             prefer=prefer,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            timings=timings,
         )
+        return results, timings

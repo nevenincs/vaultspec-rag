@@ -26,6 +26,7 @@ except PackageNotFoundError:
 from .api import (
     GraphCache,
     clean,
+    get_readiness,
     get_related,
     get_service_state,
     get_status,
@@ -36,7 +37,9 @@ from .api import (
     run_quality_probe,
     scan_codebase_files,
     search_codebase,
+    search_codebase_timed,
     search_vault,
+    search_vault_timed,
 )
 from .embeddings import EmbeddingModel, SparseResult
 from .indexer import (
@@ -69,6 +72,7 @@ __all__ = [
     "VaultStore",
     "__version__",
     "clean",
+    "get_readiness",
     "get_related",
     "get_service_state",
     "get_status",
@@ -82,5 +86,7 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase_files",
     "search_codebase",
+    "search_codebase_timed",
     "search_vault",
+    "search_vault_timed",
 ]

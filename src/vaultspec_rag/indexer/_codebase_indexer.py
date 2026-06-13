@@ -26,6 +26,7 @@ from concurrent.futures import (
 from concurrent.futures.process import BrokenProcessPool
 from typing import TYPE_CHECKING
 
+from ..logging_config import log_event
 from . import _chunk_worker
 from ._chunking import (
     _MAX_FILE_SIZE,
@@ -65,6 +66,17 @@ logger = logging.getLogger(__name__)
 # escalates to a raised error instead of hanging the producer and holding the
 # indexer's writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
+
+#: Version of the embedding-input format for code chunks. ``2`` embeds
+#: a one-line locational header (path, class, function) ahead of the
+#: chunk text; ``1`` (or an absent marker over a non-empty collection)
+#: embedded the bare chunk text. A mismatch triggers a one-time clean
+#: rebuild so the two regimes never mix in one collection.
+_CODE_EMBED_SCHEMA = "2"
+
+#: Reserved key carrying the format version inside the hash-metadata
+#: sidecar. Never collides with relative file paths.
+_EMBED_SCHEMA_KEY = "__code_embed_schema__"
 
 
 class CodebaseIndexer:
@@ -974,7 +986,48 @@ class CodebaseIndexer:
         F6.6).
         """
         with self._writer_lock:
-            return self._full_index_locked(clean=clean, reporter=reporter)
+            log_event(
+                logger,
+                "service.index",
+                "started",
+                source="code",
+                mode="full",
+                clean=clean,
+                root=self.root_dir,
+            )
+            try:
+                result = self._full_index_locked(clean=clean, reporter=reporter)
+            except Exception as exc:
+                log_event(
+                    logger,
+                    "service.index",
+                    "failed",
+                    severity=logging.ERROR,
+                    exc_info=True,
+                    source="code",
+                    mode="full",
+                    clean=clean,
+                    root=self.root_dir,
+                    error=exc,
+                )
+                raise
+            log_event(
+                logger,
+                "service.index",
+                "completed",
+                source="code",
+                mode="full",
+                clean=clean,
+                root=self.root_dir,
+                total=result.total,
+                added=result.added,
+                updated=result.updated,
+                removed=result.removed,
+                duration_ms=result.duration_ms,
+                files=result.files,
+                preprocess_skipped=result.preprocess_skipped,
+            )
+            return result
 
     def _full_index_locked(
         self,
@@ -1027,17 +1080,23 @@ class CodebaseIndexer:
             if clean:
                 self.store.drop_code_table()
                 self._clear_preprocess_cache()
-            self.store.ensure_code_table()
-            try:
-                existing_ids_before: set[str] = set(self.store.get_all_code_ids())
-            except (OSError, RuntimeError):
-                logger.warning(
-                    "Could not snapshot existing code-chunk IDs "
-                    "before rebuild; stale-chunk purge will be "
-                    "skipped",
-                    exc_info=True,
-                )
-                existing_ids_before = set()
+                self.store.ensure_code_table()
+                # The collection was just dropped: the snapshot is
+                # empty by construction, and a full id scan of a large
+                # local collection costs minutes of GIL-holding CPU.
+                existing_ids_before: set[str] = set()
+            else:
+                self.store.ensure_code_table()
+                try:
+                    existing_ids_before = set(self.store.get_all_code_ids())
+                except (OSError, RuntimeError):
+                    logger.warning(
+                        "Could not snapshot existing code-chunk IDs "
+                        "before rebuild; stale-chunk purge will be "
+                        "skipped",
+                        exc_info=True,
+                    )
+                    existing_ids_before = set()
             reporter.advance(1)
         finally:
             reporter.phase_end()
@@ -1114,10 +1173,52 @@ class CodebaseIndexer:
                 When ``None`` the full ``.gitignore``-aware scan runs.
         """
         with self._writer_lock:
-            return self._incremental_index_locked(
-                reporter=reporter,
-                changed_paths=changed_paths,
+            mode = "scoped_incremental" if changed_paths is not None else "incremental"
+            log_event(
+                logger,
+                "service.index",
+                "started",
+                source="code",
+                mode=mode,
+                clean=False,
+                root=self.root_dir,
             )
+            try:
+                result = self._incremental_index_locked(
+                    reporter=reporter,
+                    changed_paths=changed_paths,
+                )
+            except Exception as exc:
+                log_event(
+                    logger,
+                    "service.index",
+                    "failed",
+                    severity=logging.ERROR,
+                    exc_info=True,
+                    source="code",
+                    mode=mode,
+                    clean=False,
+                    root=self.root_dir,
+                    error=exc,
+                )
+                raise
+            log_event(
+                logger,
+                "service.index",
+                "completed",
+                source="code",
+                mode=mode,
+                clean=False,
+                root=self.root_dir,
+                total=result.total,
+                added=result.added,
+                updated=result.updated,
+                removed=result.removed,
+                duration_ms=result.duration_ms,
+                files=result.files,
+                preprocess_skipped=result.preprocess_skipped,
+            )
+            return result
 
     def _incremental_index_locked(
         self,
@@ -1143,6 +1244,13 @@ class CodebaseIndexer:
         Raises:
             OSError: If source files cannot be read or hashed.
         """
+        if self._needs_embed_rebuild():
+            logger.info(
+                "Codebase embedding input format changed; running a "
+                "one-time clean rebuild of the code collection",
+            )
+            return self._full_index_locked(clean=True, reporter=reporter)
+
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
@@ -1432,11 +1540,36 @@ class CodebaseIndexer:
         """
         return self.store.get_code_ids_by_paths(rel_paths)
 
+    def _needs_embed_rebuild(self) -> bool:
+        """Return True when stored vectors predate the embed-input format.
+
+        Chunk vectors embed a locational header alongside the chunk
+        text; older stores embedded the bare chunk text. Mixing the two
+        regimes (and querying them with the current instruction prompt)
+        silently degrades retrieval, so a marker mismatch triggers a
+        one-time clean rebuild. A missing sidecar over a non-empty
+        collection is treated the same way.
+        """
+        raw = self._read_meta_raw()
+        if raw:
+            return raw.get(_EMBED_SCHEMA_KEY) != _CODE_EMBED_SCHEMA
+        try:
+            return self.store.count_code() > 0
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not probe the code collection for an embed "
+                "rebuild decision; assuming no rebuild is needed",
+                exc_info=True,
+            )
+            return False
+
     def _write_meta(self, meta: dict[str, str]) -> None:
         """Atomically write content-hash metadata to the sidecar JSON file.
 
         Uses write-to-temp + ``os.replace`` so a crash mid-write never
-        corrupts the metadata file.
+        corrupts the metadata file. The current embedding-input format
+        version is stamped under a reserved key so later runs can
+        detect format changes.
 
         Args:
             meta: Mapping of relative file path to blake2b hex digest.
@@ -1447,17 +1580,12 @@ class CodebaseIndexer:
         """
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        stamped = {**meta, _EMBED_SCHEMA_KEY: _CODE_EMBED_SCHEMA}
+        tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
-    def _load_meta(self) -> dict[str, str]:
-        """Load codebase index metadata from the sidecar JSON file.
-
-        Returns:
-            Mapping of relative file path to blake2b hex digest, or
-            an empty dict if the file does not exist or cannot be
-            parsed.
-        """
+    def _read_meta_raw(self) -> dict[str, str]:
+        """Load the sidecar JSON verbatim, reserved keys included."""
         if not self._meta_path.exists():
             return {}
         try:
@@ -1470,3 +1598,22 @@ class CodebaseIndexer:
                 exc_info=True,
             )
             return {}
+
+    def _load_meta(self) -> dict[str, str]:
+        """Load codebase index metadata from the sidecar JSON file.
+
+        Reserved dunder keys (the embed-format marker) are stripped so
+        they can never participate in file-path set arithmetic - the
+        marker would otherwise be counted as a deleted file on every
+        incremental run.
+
+        Returns:
+            Mapping of relative file path to blake2b hex digest, or
+            an empty dict if the file does not exist or cannot be
+            parsed.
+        """
+        return {
+            key: value
+            for key, value in self._read_meta_raw().items()
+            if not key.startswith("__")
+        }

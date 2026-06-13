@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import typing
 from pathlib import Path
 
@@ -14,7 +16,6 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from ..cli import (
-    _add_backend_contract_rows,
     _display_search_results,
     _display_service_error,
     _health_probe,
@@ -25,6 +26,7 @@ from ..cli import (
     _write_service_status,
     app,
 )
+from ..cli._http_search import DEFAULT_SEARCH_TIMEOUT_SECONDS, _get_search_timeout
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..torch_config import TorchConfigAction
@@ -32,6 +34,604 @@ from ..torch_config import TorchConfigAction
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
+_SEARCH_RECORD_RE = re.compile(
+    r"^(?P<number>\d+)\. "
+    r"(?P<location>\S+)"
+    r"(?: \(score (?P<score>\d+\.\d{4})\))?$"
+)
+
+
+def _plain_lines(output: str) -> list[str]:
+    clean = _ANSI_RE.sub("", output)
+    return [line.strip() for line in clean.splitlines() if line.strip()]
+
+
+def _label_values(output: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in _plain_lines(output):
+        if ": " in line:
+            label, value = line.split(": ", 1)
+            values[label] = value
+    return values
+
+
+def _section_label_values(output: str, section: str) -> dict[str, str]:
+    lines = _plain_lines(output)
+    try:
+        start = lines.index(f"{section}:") + 1
+    except ValueError as exc:
+        raise AssertionError(f"Missing section {section!r}") from exc
+
+    values: dict[str, str] = {}
+    for line in lines[start:]:
+        if not line.startswith(("Operation:", "Project:", "Runtime:", "Progress:")):
+            break
+        label, value = line.split(": ", 1)
+        values[label] = value
+    return values
+
+
+def _assert_default_status_summary(output: str, port: int) -> None:
+    labels = _label_values(output)
+    assert labels["Server"] == "running"
+    assert labels["Requests"] == "ready for requests"
+    assert "Health" not in labels
+    assert labels["Busy"] == "processing 1 job"
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["Uptime"] == "5 minutes 12 seconds"
+    assert labels["Queue"] == "nothing waiting; 1 active job"
+    assert labels["Processed jobs"] == "2 finished, 1 active, 0 waiting, 0 failed"
+    job = _section_label_values(output, "Current job")
+    assert job["Operation"] == "code index refresh"
+    assert job["Project"] == "feature-server-supervision"
+    assert re.fullmatch(r"\d+ seconds?", job["Runtime"])
+    assert job["Progress"] == "embedding source code sections 7 of 20"
+    lines = _plain_lines(output)
+    next_action_index = lines.index("Next action:")
+    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --state active"
+    _assert_no_table_borders(output)
+    assert max(len(line) for line in output.splitlines()) <= 100
+
+
+def _assert_verbose_status_summary(output: str, port: int) -> None:
+    lines = _plain_lines(output)
+    assert lines[0] == "Service status"
+    labels = _label_values(output)
+    expected_labels = {
+        "Local record": "found",
+        "Process ID": str(os.getpid()),
+        "Address": f"http://127.0.0.1:{port}",
+        "Process": "running",
+        "Process check": "verified",
+        "Identity check": "not verified by this status check",
+        "Network": "accepting connections",
+        "Server": "running",
+        "Requests": "ready for requests",
+        "Compute": "GPU available",
+        "Search models": "ready",
+        "Reranking": "ready",
+    }
+    for label, value in expected_labels.items():
+        assert labels[label] == value
+    for absent in ("State", "Health"):
+        assert absent not in labels
+    assert re.search(r"\d+ local time", labels["Started"])
+    job = _section_label_values(output, "Current job")
+    expected_job = {
+        "Operation": "code index refresh",
+        "Project": "feature-server-supervision",
+        "Progress": "embedding source code sections 7 of 20",
+    }
+    for label, value in expected_job.items():
+        assert job[label] == value
+    assert re.fullmatch(r"\d+ seconds?", job["Runtime"])
+    next_action_index = lines.index("Next action:")
+    assert lines[next_action_index + 1] == "vaultspec-rag server jobs --state active"
+    _assert_no_table_borders(output)
+
+
+def _search_records(output: str) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    text_lines: list[str] = []
+    for line in _plain_lines(output):
+        match = _SEARCH_RECORD_RE.fullmatch(line)
+        if match is not None:
+            if current is not None:
+                current["text"] = "\n".join(text_lines)
+                records.append(current)
+            current = {
+                "number": int(match.group("number")),
+                "location": match.group("location"),
+                "score": match.group("score"),
+                "text": "",
+            }
+            text_lines = []
+            continue
+        assert current is not None, f"Expected search record header, got {line!r}"
+        text_lines.append(line)
+    if current is not None:
+        current["text"] = "\n".join(text_lines)
+        records.append(current)
+    return records
+
+
+def _assert_no_table_borders(output: str) -> None:
+    assert not any(glyph in output for glyph in ("─", "│", "┌", "┐", "└", "┘"))
+
+
+def _help_option_descriptions(output: str) -> dict[str, str]:
+    descriptions: dict[str, str] = {}
+    active_options: list[str] = []
+    for raw_line in _ANSI_RE.sub("", output).splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            active_options = []
+            continue
+
+        if stripped.startswith("--"):
+            parts = re.split(r"\s{2,}", stripped, maxsplit=1)
+            active_options = re.findall(r"--[a-z0-9-]+", parts[0])
+            description = parts[1] if len(parts) == 2 else ""
+            for option in active_options:
+                descriptions[option] = description
+            continue
+
+        if active_options:
+            for option in active_options:
+                descriptions[option] = f"{descriptions[option]} {stripped}".strip()
+
+    return descriptions
+
+
+def _invoke_search_contract(
+    tmp_path: Path,
+    port: int,
+    *extra: str,
+) -> Result:
+    return runner.invoke(
+        app,
+        [
+            "--target",
+            str(tmp_path),
+            "search",
+            "service status",
+            "--type",
+            "code",
+            "--limit",
+            "2",
+            "--port",
+            str(port),
+            *extra,
+        ],
+    )
+
+
+def _expected_code_search_request(tmp_path: Path, query: str) -> dict[str, object]:
+    return {
+        "query": query,
+        "top_k": 2,
+        "project_root": str(tmp_path),
+        "type": "codebase",
+    }
+
+
+def _assert_record(
+    record: dict[str, object],
+    *,
+    number: int,
+    location: str,
+    text: str,
+    score: str | None = None,
+) -> None:
+    assert record == {
+        "number": number,
+        "location": location,
+        "score": score,
+        "text": text,
+    }
+
+
+def _latency_values(lines: list[str]) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for line in lines:
+        match = re.fullmatch(r"(?P<label>.+): (?P<value>\d+\.\d)ms.*", line)
+        if match is not None:
+            values[match.group("label")] = float(match.group("value"))
+    return values
+
+
+def _quality_probe_line(line: str) -> tuple[str, str, str]:
+    match = re.fullmatch(r"1\. (passed|failed): (.+) - (.+)", line)
+    assert match is not None
+    return (match.group(1), match.group(2), match.group(3))
+
+
+def _hold_local_index_lock(root: Path):
+    from ..config import get_config
+    from ..store import FileLock
+
+    cfg = get_config()
+    index_dir = root / cfg.data_dir / cfg.qdrant_dir
+    index_dir.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(index_dir / "exclusive.lock")
+    assert lock.acquire()
+    return lock
+
+
+def _status_contract_server(
+    last_progress_age_seconds: float = 2.0,
+    *,
+    extra_running_job: bool = False,
+    failed_jobs: int = 0,
+    omit_project: bool = False,
+    omit_job_started_at: bool = False,
+) -> tuple[typing.Any, typing.Any]:
+    """Start a local HTTP service exposing /health and /jobs for status tests."""
+    import http.server
+    import threading
+    import time
+
+    running_job_started_at = time.time() - 42
+
+    class _StatusContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = (
+                _status_contract_jobs_payload(
+                    running_job_started_at,
+                    last_progress_age_seconds=last_progress_age_seconds,
+                    extra_running_job=extra_running_job,
+                    failed_jobs=failed_jobs,
+                    omit_project=omit_project,
+                    omit_job_started_at=omit_job_started_at,
+                )
+                if self.path.startswith("/jobs")
+                else _status_contract_health_payload()
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _StatusContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _status_contract_jobs_payload(
+    started_at: float,
+    *,
+    last_progress_age_seconds: float,
+    extra_running_job: bool,
+    failed_jobs: int,
+    omit_project: bool,
+    omit_job_started_at: bool,
+) -> dict[str, object]:
+    running_job: dict[str, object] = {
+        "id": "running-job",
+        "source": "code",
+        "trigger": "tool",
+        "phase": "running",
+        "finished_at": None,
+        "result": None,
+        "progress": {
+            "step": "embed",
+            "completed": 7,
+            "total": 20,
+        },
+        "last_progress_age_seconds": last_progress_age_seconds,
+    }
+    if not omit_job_started_at:
+        running_job["started_at"] = started_at
+    if not omit_project:
+        running_job["initiator"] = {
+            "command": "reindex_codebase",
+            "project_root": (
+                r"vaultspec-rag"
+                r"\feature-server-supervision"
+            ),
+        }
+    jobs: list[dict[str, object]] = [running_job]
+    if extra_running_job:
+        jobs.append(
+            {
+                "id": "vault-running-job",
+                "source": "vault",
+                "trigger": "watcher",
+                "phase": "running",
+                "started_at": started_at - 60,
+                "finished_at": None,
+                "result": None,
+                "progress": {
+                    "step": "index_documents",
+                    "completed": 5,
+                    "total": 9,
+                },
+                "last_progress_age_seconds": 3.0,
+                "initiator": {
+                    "command": "watcher_vault_index",
+                    "project_root": r"other-project",
+                },
+            }
+        )
+    jobs.extend([{"id": "done-1", "phase": "done"}, {"id": "done-2", "phase": "done"}])
+    jobs.extend(
+        {"id": f"failed-{index}", "phase": "error"} for index in range(failed_jobs)
+    )
+    running_count = 2 if extra_running_job else 1
+    phases = {"running": running_count, "done": 2}
+    if failed_jobs:
+        phases["error"] = failed_jobs
+    return {
+        "ok": True,
+        "jobs": jobs,
+        "total": len(jobs),
+        "returned": len(jobs),
+        "summary": {
+            "running": running_count,
+            "phases": phases,
+        },
+    }
+
+
+def _status_contract_health_payload() -> dict[str, object]:
+    return {
+        "status": "ready",
+        "cuda": True,
+        "models_loaded": True,
+        "reranker_loaded": True,
+        "project_count": 3,
+        "uptime_s": 312.0,
+        "backend_capabilities": {
+            "same_project_search_strategy": "serialized",
+            "cross_project_search_strategy": "parallel",
+            "local_storage_process_model": "exclusive",
+        },
+    }
+
+
+def _slow_search_contract_server(
+    *,
+    health_payload: dict[str, object] | None = None,
+    jobs_payload: dict[str, object] | None = None,
+    jobs_status_code: int = 200,
+) -> tuple[typing.Any, typing.Any]:
+    """Start a local service that lets /search time out while probes work."""
+    import http.server
+    import threading
+    import time
+
+    class _SlowSearchHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            time.sleep(0.05)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            with contextlib.suppress(OSError):
+                self.wfile.write(json.dumps({"ok": True, "results": []}).encode())
+
+        def do_GET(self):
+            payload: dict[str, object]
+            if self.path == "/health":
+                payload = (
+                    health_payload
+                    if health_payload is not None
+                    else _status_contract_health_payload()
+                )
+            elif self.path.startswith("/jobs"):
+                payload = (
+                    jobs_payload
+                    if jobs_payload is not None
+                    else {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                )
+                self.send_response(jobs_status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+                return
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowSearchHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
+    """Start a local service returning deterministic search results."""
+    import http.server
+    import threading
+
+    requests: list[object] = []
+
+    class _SearchOutputHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            requests.append(body)
+            payload = {
+                "ok": True,
+                "results": [
+                    {
+                        "path": "src/search_ui.py",
+                        "line_start": 12,
+                        "score": 0.875,
+                        "snippet": "def render_search",
+                        "rerank_text": (
+                            "def render_search_results():\n"
+                            "    return 'full service text'"
+                        ),
+                    },
+                    {
+                        "anchor": "docs/ops.md#service-status",
+                        "path": "docs/ops.md",
+                        "score": 0.5,
+                        "snippet": "Use server status",
+                        "rerank_text": (
+                            "Use server status for service readiness and current work."
+                        ),
+                    },
+                ],
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _SearchOutputHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _sparse_search_output_contract_server() -> tuple[
+    typing.Any, typing.Any, list[object]
+]:
+    """Start a local service returning a result without locator fields."""
+    import http.server
+    import threading
+
+    requests: list[object] = []
+
+    class _SparseSearchOutputHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            requests.append(body)
+            payload = {
+                "ok": True,
+                "results": [
+                    {
+                        "score": 0.25,
+                        "snippet": "result text without a source location",
+                    }
+                ],
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _SparseSearchOutputHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
+    """Start a local service returning empty-search diagnostics."""
+    import http.server
+    import threading
+
+    requests: list[object] = []
+
+    class _EmptySearchHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            requests.append(body)
+            payload: dict[str, object] = {
+                "ok": True,
+                "results": [],
+                "empty": {
+                    "reason": "index_missing",
+                    "message": "No indexed code items are available.",
+                    "remediation": [
+                        "vaultspec-rag index --type code --port 8766",
+                        "vaultspec-rag server status",
+                    ],
+                },
+                "index_state": {
+                    "source": "code",
+                    "indexed_count": 0,
+                    "requested_target_root": "current project",
+                    "indexed_target_root": "other project",
+                    "target_matches": False,
+                },
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _EmptySearchHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+class TestSearchTimeoutDefaults:
+    """Tests for service-delegated search timeout defaults."""
+
+    def test_default_search_timeout_is_production_budget(self) -> None:
+        previous = os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
+        try:
+            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        finally:
+            if previous is not None:
+                os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
+
+    def test_invalid_env_timeout_uses_production_budget(self) -> None:
+        previous = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+        os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = "not-a-number"
+        try:
+            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        finally:
+            if previous is None:
+                os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
+            else:
+                os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
+
+    def test_explicit_timeout_still_wins(self) -> None:
+        assert _get_search_timeout(0.25) == 0.25
 
 
 class TestMainHelp:
@@ -57,6 +657,31 @@ class TestMainHelp:
         # but some versions exit with 2; accept both
         assert "Usage" in result.output
 
+    @pytest.mark.parametrize(
+        ("args", "expected_commands"),
+        [
+            (["server"], ("status", "jobs", "logs")),
+            (["server", "projects"], ("list", "unload")),
+            (["server", "updates"], ("status", "start", "stop", "timing")),
+            (["server", "qdrant"], ("install", "status", "clean")),
+            (["preprocess"], ("list", "check", "run-one")),
+        ],
+    )
+    def test_nested_groups_without_command_show_help(
+        self,
+        args: list[str],
+        expected_commands: tuple[str, ...],
+    ) -> None:
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        assert "Usage:" in result.output
+        assert "Missing command" not in result.output
+        missing = [
+            command for command in expected_commands if command not in result.output
+        ]
+        assert not missing, f"missing commands from help: {missing}"
+
     def test_version_flag(self):
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
@@ -70,6 +695,9 @@ class TestTestCommand:
         result = runner.invoke(app, ["test", "--help"])
         assert result.exit_code == 0
         assert "pytest" in result.output.lower()
+        assert "Extra arguments are passed to pytest" in result.output
+        for forbidden in ("Args:", "Raises:", "Examples::", "ctx:"):
+            assert forbidden not in result.output
 
     def test_accepts_marker_flag(self):
         """Verify the command accepts -m without erroring on arg parsing."""
@@ -127,6 +755,30 @@ class TestCleanCommand:
         assert result.exit_code == 0
         assert "wipe" in result.output.lower()
 
+    def test_clean_confirm_prompt_uses_search_index_language(self, tmp_path: Path):
+        root = self._workspace(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--target", str(root), "clean", "all"],
+            input="n\n",
+        )
+
+        assert result.exit_code == 1
+        assert "Delete all search index data for" in result.output
+        assert "Clean cancelled." in result.output
+        assert "RAG index data" not in result.output
+
+    def test_clean_noninteractive_abort_uses_operator_language(self, tmp_path: Path):
+        root = self._workspace(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--target", str(root), "clean", "vault"],
+        )
+
+        assert result.exit_code == 1
+        assert "Clean cancelled." in result.output
+        assert "Aborted!" not in result.output
+
     def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
         from ..config import get_config
         from ..store import VaultStore
@@ -150,7 +802,13 @@ class TestCleanCommand:
 
         result = runner.invoke(app, ["--target", str(root), "clean", "all", "--yes"])
         assert result.exit_code == 0, result.output
-        assert "Clean Summary" in result.output
+        assert "Clean summary" in result.output
+        assert "Vault index: empty." in result.output
+        assert "Source code index: empty." in result.output
+        assert "Vault: empty" not in result.output
+        assert "Code: empty" not in result.output
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in result.output
 
         store = VaultStore(root)
         try:
@@ -160,6 +818,218 @@ class TestCleanCommand:
             store.close()
         assert not (data_dir / cfg.index_metadata_file).exists()
         assert not (data_dir / cfg.code_index_metadata_file).exists()
+
+    def test_clean_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
+        root = self._workspace(tmp_path)
+        lock = _hold_local_index_lock(root)
+        try:
+            result = runner.invoke(
+                app,
+                ["--target", str(root), "clean", "all", "--yes"],
+            )
+        finally:
+            lock.release()
+
+        assert result.exit_code == 1, result.output
+        assert "Cannot clean the index because the local index is busy" in result.output
+        assert "vaultspec-rag server status" in result.output
+        for leaked in (
+            "Qdrant",
+            "Local-file-backed",
+            "parallel-safe",
+            "exclusive.lock",
+            "another process holds the lock",
+        ):
+            assert leaked not in result.output
+
+
+class TestStatusCommand:
+    """Tests for the project index status command."""
+
+    @staticmethod
+    def _workspace(tmp_path: Path) -> Path:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        return tmp_path
+
+    def test_status_human_output_uses_operator_labels(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "gpu_name": "",
+                "vram_mb": 0,
+                "storage_path": tmp_path / ".vault" / "data" / "search-data",
+                "vault_documents": 12,
+                "codebase_chunks": 34,
+            },
+            target=tmp_path,
+            service_port=8766,
+        )
+
+        output = capsys.readouterr().out
+        lines = _plain_lines(output)
+        labels = _label_values(output)
+        assert lines[0] == "Project index"
+        assert labels["Project"] == str(tmp_path)
+        assert labels["Index data"] == str(tmp_path / ".vault" / "data" / "search-data")
+        assert labels["Compute"] == "CPU only (no supported GPU detected)"
+        assert labels["Vault documents"] == "12"
+        assert labels["Source code sections"] == "34"
+        assert labels["Server"] == "running"
+        assert labels["Address"] == "http://127.0.0.1:8766"
+        assert lines[lines.index("Server details:") + 1] == (
+            "vaultspec-rag server status --port 8766"
+        )
+        assert "Next action:" not in output
+
+    def test_status_empty_index_output_is_actionable(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "gpu_name": "",
+                "vram_mb": 0,
+                "storage_path": tmp_path / ".vault" / "data" / "search-data",
+                "vault_documents": 0,
+                "codebase_chunks": 0,
+            },
+            target=tmp_path,
+            service_port=8766,
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        next_action_index = lines.index("Next action:")
+        assert lines[next_action_index + 1] == "vaultspec-rag index --type all"
+        assert all("Health:" not in line for line in lines)
+
+    def test_status_partial_index_output_names_missing_index(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "gpu_name": "",
+                "vram_mb": 0,
+                "storage_path": tmp_path / ".vault" / "data" / "search-data",
+                "vault_documents": 3,
+                "codebase_chunks": 0,
+            },
+            target=tmp_path,
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        next_action_index = lines.index("Next action:")
+        assert lines[next_action_index + 1] == "vaultspec-rag index --type code"
+
+    def test_status_prefers_running_service_index_state(self, tmp_path: Path) -> None:
+        import http.server
+        import threading
+        import urllib.parse
+
+        root = self._workspace(tmp_path)
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        requests: list[str] = []
+
+        class ServiceStateHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                requests.append(self.path)
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
+                assert parsed.path == "/service-state"
+                assert query["project_root"] == [str(root)]
+                response = {
+                    "ok": True,
+                    "index": {
+                        "cuda": False,
+                        "gpu_name": "",
+                        "vram_mb": 0,
+                        "storage_path": "http://127.0.0.1:8765",
+                        "vault_documents": 7,
+                        "codebase_chunks": 9,
+                        "target_dir": str(root),
+                    },
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), ServiceStateHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
+        try:
+            _write_service_status(pid=os.getpid(), port=server.server_port)
+            result = runner.invoke(app, ["--target", str(root), "status"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
+
+        assert result.exit_code == 0, result.output
+        assert requests == [
+            "/service-state?project_root=" + urllib.parse.quote(str(root))
+        ]
+        labels = _label_values(result.output)
+        lines = _plain_lines(result.output)
+        assert lines[0] == "Project index"
+        assert labels["Project"] == str(root)
+        assert labels["Index data"] == "running service storage"
+        assert labels["Vault documents"] == "7"
+        assert labels["Source code sections"] == "9"
+        assert labels["Server"] == "running"
+        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert lines[lines.index("Server details:") + 1] == (
+            f"vaultspec-rag server status --port {server.server_port}"
+        )
+
+    def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
+        root = self._workspace(tmp_path)
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
+        lock = _hold_local_index_lock(root)
+        try:
+            result = runner.invoke(app, ["--target", str(root), "status"])
+        finally:
+            lock.release()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
+
+        assert result.exit_code == 1, result.output
+        assert "Cannot read index status because the local index is busy" in (
+            result.output
+        )
+        assert "vaultspec-rag server status" in result.output
+        for leaked in (
+            "Qdrant",
+            "Local-file-backed",
+            "parallel-safe",
+            "exclusive.lock",
+            "another process holds the lock",
+        ):
+            assert leaked not in result.output
 
 
 class TestIndexRebuild:
@@ -183,6 +1053,143 @@ class TestIndexRebuild:
         )
         assert result.exit_code == 0, result.output
         assert "files would be indexed" in result.output
+
+    def test_index_dry_run_rejects_document_indexing_in_user_language(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--type", "vault", "--dry-run"],
+        )
+
+        assert result.exit_code == 2
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Dry run is available for source-code indexing only.",
+            "Run:",
+            "vaultspec-rag index --type code --dry-run",
+        ]
+        assert "--dry-run only applies" not in result.output
+        assert "codebase" not in result.output
+
+    def test_index_dry_run_document_indexing_json_has_next_action(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "vault",
+                "--dry-run",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 2
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "index"
+        assert envelope["error"] == "dry_run_requires_code"
+        assert (
+            envelope["message"] == "Dry run is available for source-code indexing only."
+        )
+        assert envelope["remediation"] == ["vaultspec-rag index --type code --dry-run"]
+
+    def test_index_dry_run_human_output_is_bounded(self, tmp_path: Path) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        for name in ("alpha.py", "beta.py", "gamma.py"):
+            (tmp_path / name).write_text("print('indexed')\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--dry-run",
+                "--dry-run-limit",
+                "2",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Dry run: 3 source-code files would be indexed.",
+            "Files shown:",
+            "- alpha.py",
+            "- beta.py",
+            (
+                "1 more file not shown. Use --dry-run-limit 3 "
+                "or --json for the full list."
+            ),
+        ]
+        assert "gamma.py" not in result.output
+
+    def test_index_dry_run_json_keeps_full_file_list(self, tmp_path: Path) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+        for name in ("alpha.py", "beta.py", "gamma.py"):
+            (tmp_path / name).write_text("print('indexed')\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--dry-run",
+                "--dry-run-limit",
+                "1",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is True
+        files = set(envelope["data"]["files"])
+        assert files == {"alpha.py", "beta.py", "gamma.py"}
+
+    def test_index_dry_run_rejects_negative_limit(self, tmp_path: Path) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--dry-run",
+                "--dry-run-limit",
+                "-1",
+            ],
+        )
+
+        assert result.exit_code == 2
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Dry-run file limit must be zero or greater.",
+            "Run:",
+            "vaultspec-rag index --type code --dry-run --dry-run-limit 50",
+        ]
 
     def test_index_rebuild_without_explicit_type_exits_2(self, tmp_path: Path):
         """--rebuild without --type is rejected.
@@ -251,25 +1258,24 @@ class TestServerCommands:
         result = runner.invoke(app, ["server", "--help"])
         assert result.exit_code == 0
         assert "start" in result.output
-        assert "mcp" in result.output
+        assert "updates" in result.output
+        assert "watcher" not in result.output.lower()
+        assert "mcp" not in result.output.lower()
 
-    def test_mcp_help(self):
-        result = runner.invoke(app, ["server", "mcp", "--help"])
-        assert result.exit_code == 0
-        assert "start" in result.output
-        assert "stop" in result.output
-        assert "status" in result.output
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["server", "mcp", "--help"],
+            ["server", "mcp", "start", "--help"],
+            ["server", "mcp", "stop"],
+            ["server", "mcp", "status"],
+        ],
+    )
+    def test_server_mcp_is_not_a_user_facing_command(self, argv: list[str]):
+        result = runner.invoke(app, argv)
 
-    def test_mcp_stop(self):
-        result = runner.invoke(app, ["server", "mcp", "stop"])
-        assert result.exit_code == 0
-        assert "stdio" in result.output.lower()
-
-    def test_mcp_status(self):
-        result = runner.invoke(app, ["server", "mcp", "status"])
-        assert result.exit_code == 0
-        assert "VaultSpec Search" in result.output
-        assert "stdio" in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
     def test_service_stop_no_status_file(self, tmp_path: Path):
         # Isolate the status dir to a guaranteed-empty tmp location: the
@@ -307,13 +1313,32 @@ class TestServerCommands:
             reset_base_config()
             reset_rag_config()
 
+    def test_server_health_is_not_a_user_facing_command(self):
+        """server status is the single user-facing readiness entry point."""
+        help_result = runner.invoke(app, ["server", "--help"])
+        assert help_result.exit_code == 0, help_result.output
+        assert "health" not in help_result.output.lower()
+
+        result = runner.invoke(app, ["server", "health", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+    def test_server_watcher_alias_is_not_a_user_facing_command(self):
+        """server updates is the single user-facing automatic update surface."""
+        updates_help = runner.invoke(app, ["server", "updates", "--help"])
+        assert updates_help.exit_code == 0, updates_help.output
+        assert "automatic index updates" in updates_help.output
+
+        result = runner.invoke(app, ["server", "watcher", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
 
 class TestServerRoutingFlattened:
     """Verify the flattened `server` command surface (W03.P05.S12 #169).
 
     The `service` nesting level is removed; lifecycle commands and
-    sub-groups now live directly under `server`.  `server mcp` is
-    unchanged.
+    operator sub-groups now live directly under `server`.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
@@ -325,23 +1350,125 @@ class TestServerRoutingFlattened:
     def test_server_status_help(self):
         result = runner.invoke(app, ["server", "status", "--help"])
         assert result.exit_code == 0, result.output
+        assert "operator summary" in result.output
+        assert "server readiness" in result.output
+        assert "server health" not in result.output.lower()
+        assert "service identity" in result.output
+        assert "token" not in result.output.lower()
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
+        assert "full-fidelity" not in result.output
 
-    def test_server_watcher_status_help(self):
-        result = runner.invoke(app, ["server", "watcher", "status", "--help"])
+    def test_server_health_not_a_command(self):
+        result = runner.invoke(app, ["server", "health", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+    def test_server_updates_status_help(self):
+        result = runner.invoke(app, ["server", "updates", "status", "--help"])
         assert result.exit_code == 0, result.output
+        assert "automatic index update" in result.output.lower()
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
+
+    def test_server_updates_status_explains_missing_timing(self, tmp_path: Path):
+        import http.server
+        import threading
+
+        project = tmp_path / "project-alpha"
+        project.mkdir()
+        paths: list[str] = []
+
+        class WatcherStateHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                paths.append(self.path)
+                response = {
+                    "watch_enabled": True,
+                    "watching": [str(project)],
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), WatcherStateHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "updates",
+                    "status",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert paths == ["/watcher"]
+
+        output = _ANSI_RE.sub("", result.output)
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        assert lines[0] == f"Address: http://127.0.0.1:{server.server_port}"
+        assert lines[1] == "Automatic index updates: enabled"
+        assert lines[2] == "File changes: not reported by service."
+        assert lines[3] == "Repeat updates: not reported by service."
+        assert lines[4] == "Projects updating automatically: 1"
+        assert lines[5] == "- Project: project-alpha"
+        assert lines[6] == f"Path: {project}"
+        assert "unknown" not in output.lower()
+        assert "wait not reported" not in output.lower()
 
     def test_server_projects_list_help(self):
         result = runner.invoke(app, ["server", "projects", "list", "--help"])
         assert result.exit_code == 0, result.output
-
-    def test_server_mcp_start_help(self):
-        result = runner.invoke(app, ["server", "mcp", "start", "--help"])
-        assert result.exit_code == 0, result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
 
     def test_server_service_not_a_command(self):
         """The `service` nesting level must no longer exist."""
         result = runner.invoke(app, ["server", "service", "--help"])
         assert result.exit_code != 0
+
+    def test_qdrant_status_splits_service_managed_process_details(self, tmp_path: Path):
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        reset_base_config()
+        reset_rag_config()
+        try:
+            _write_service_status(pid=os.getpid(), port=8766)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            data.update(
+                {
+                    "qdrant_pid": 43210,
+                    "qdrant_alive": True,
+                    "qdrant_port": 6334,
+                }
+            )
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "qdrant", "status"])
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Address"] == "http://127.0.0.1:6334"
+            assert labels["Connection"] == "not accepting requests"
+            assert labels["Process"] == "running, started by vaultspec-rag"
+            assert labels["Process ID"] == "43210"
+            assert labels["Process port"] == "6334"
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
 
 
 class TestServiceLifecycleHelpers:
@@ -455,6 +1582,22 @@ class TestServiceLifecycleHelpers:
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
+    def test_service_status_next_action_starts_stopped_service(self, tmp_path: Path):
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", "1", "--json"],
+            )
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+        assert result.exit_code == 3
+        payload = json.loads(result.output)
+        next_action = payload["data"]["operational"]["next_action"]
+        assert next_action == "vaultspec-rag server start --port 1"
+        assert "logs" not in next_action
+
 
 class TestMcpFastPath:
     """Tests for MCP fast-path functions (_try_http_search, _display_search_results)."""
@@ -558,6 +1701,27 @@ class TestMcpFastPath:
         )
         assert result.exit_code == 2
         assert "require --type vault" in result.output
+
+    def test_search_cmd_rejects_unknown_option_with_plain_language(self):
+        result = runner.invoke(app, ["search", "anything", "--bogus-option"])
+
+        assert result.exit_code == 2
+        assert "Unexpected search options: --bogus-option" in result.output
+        assert "option(s)" not in result.output
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["search", "anything", "--type", "code", "--node-type", "function"],
+            ["search", "anything", "--type", "code", "--no-truncate"],
+        ],
+    )
+    def test_search_removed_legacy_flags_are_not_supported(self, argv: list[str]):
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 2
+        assert "Unexpected search options:" in result.output
+        assert "Searching code" not in result.output
 
     def test_path_filter_with_vault_returns_usage_error(self):
         """--path is a code filter; pairing it with vault must error."""
@@ -742,14 +1906,14 @@ class TestMcpFastPath:
                 "--type",
                 "vault",
                 "--prefer",
-                "prod",
+                "production",
             ],
         )
         assert result.exit_code == 2
         assert "require --type code" in result.output
 
     def test_search_cmd_rejects_invalid_prefer_value(self):
-        """CLI: --prefer must be prod|tests|docs."""
+        """CLI: --prefer reports user-facing supported values."""
         result = runner.invoke(
             app,
             [
@@ -762,7 +1926,26 @@ class TestMcpFastPath:
             ],
         )
         assert result.exit_code == 2
-        assert "must be one of" in result.output
+        assert "production, tests, or documentation" in result.output
+        assert "prod|tests|docs" not in result.output
+
+    @pytest.mark.parametrize("prefer", ["prod", "docs"])
+    def test_search_cmd_rejects_internal_prefer_values(self, prefer: str):
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--prefer",
+                prefer,
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "production, tests, or documentation" in result.output
+        assert prefer in result.output
 
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
@@ -867,13 +2050,22 @@ class TestSearchSafetyContract:
                 str(tmp_path),
                 "search",
                 "anything",
+                "--limit",
+                "3",
                 "--port",
                 "1",
             ],
         )
         assert result.exit_code != 0
-        assert "unreachable" in result.output.lower()
-        assert "allow-fallback" in result.output.lower()
+        normalized = " ".join(result.output.split())
+        assert "unreachable" in normalized.lower()
+        assert "allow-fallback" in normalized.lower()
+        assert "local search index" in normalized
+        assert "one user only" in normalized
+        assert "agents waiting" not in normalized
+        assert "single-agent" not in normalized
+        assert "Qdrant lock" not in normalized
+        assert "in-process" not in normalized
 
     def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path: Path):
         """--allow-fallback does NOT emit the legacy fallthrough warning."""
@@ -893,47 +2085,237 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "falling back to in-process" not in normalized
 
-    def test_search_results_via_service_indicator(self):
-        """via='service' renders '(via service)' in the table title."""
-        from io import StringIO
-
-        from rich.console import Console
-
-        out = StringIO()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "vaultspec_rag.cli.console",
-                Console(file=out, force_terminal=False, width=400),
-            )
-            _display_search_results(
-                [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
+    def test_index_exclude_warning_uses_running_service_language(self, tmp_path: Path):
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
                 "code",
-                via="service",
-            )
-        rendered = " ".join(out.getvalue().split())
-        assert "Search Results: code" in rendered
-        assert "(via service)" in rendered
+                "--port",
+                "1",
+                "--exclude",
+                "temp.py",
+            ],
+        )
 
-    def test_search_results_via_in_process_indicator(self):
-        """via='in-process' renders '(via in-process)' in the title."""
-        from io import StringIO
+        assert result.exit_code != 0
+        normalized = " ".join(result.output.split())
+        assert "--exclude is ignored when using the running service." in normalized
+        assert "RAG service" not in normalized
 
-        from rich.console import Console
+    def test_search_command_renders_numbered_results_from_http_response(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
 
-        out = StringIO()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "vaultspec_rag.cli.console",
-                Console(file=out, force_terminal=False, width=400),
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        records = _search_records(result.output)
+        assert [record["number"] for record in records] == [1, 2]
+        _assert_record(
+            records[0],
+            number=1,
+            location="src/search_ui.py:12",
+            text="def render_search_results():\nreturn 'full service text'",
+        )
+        _assert_record(
+            records[1],
+            number=2,
+            location="docs/ops.md#service-status",
+            text="Use server status for service readiness and current work.",
+        )
+        lines = _plain_lines(result.output)
+        assert lines[0] == "1. src/search_ui.py:12"
+        assert lines[1] == "def render_search_results():"
+        assert lines[2] == "return 'full service text'"
+        assert " - " not in lines[0]
+        _assert_no_table_borders(result.output)
+
+    def test_search_structure_filter_sends_service_node_type(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(
+                tmp_path,
+                server.server_port,
+                "--structure",
+                "function",
             )
-            _display_search_results(
-                [{"path": "foo.py", "score": 0.9, "snippet": "x"}],
-                "code",
-                via="in-process",
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["node_type"] = "function"
+        assert requests == [expected]
+        assert "--node-type" not in result.output
+
+    def test_search_prefer_accepts_user_facing_value_alias(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(
+                tmp_path,
+                server.server_port,
+                "--prefer",
+                "production",
             )
-        rendered = " ".join(out.getvalue().split())
-        assert "Search Results: code" in rendered
-        assert "(via in-process)" in rendered
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["prefer"] = "prod"
+        assert requests == [expected]
+
+    def test_search_command_humanizes_missing_result_location(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _sparse_search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        records = _search_records(result.output)
+        _assert_record(
+            records[0],
+            number=1,
+            location="location-not-reported",
+            text="result text without a source location",
+        )
+        assert "<unknown>" not in result.output
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_command_scores_flag_uses_plain_score_label(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, _requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port, "--scores")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        records = _search_records(result.output)
+        _assert_record(
+            records[0],
+            number=1,
+            location="src/search_ui.py:12",
+            text="def render_search_results():\nreturn 'full service text'",
+            score="0.8750",
+        )
+        _assert_no_table_borders(result.output)
+
+    def test_empty_search_command_humanizes_service_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _empty_search_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "missing symbol",
+                    "--type",
+                    "code",
+                    "--limit",
+                    "2",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "missing symbol")]
+        lines = _plain_lines(result.output)
+        assert lines[0].endswith("missing symbol")
+        assert lines[1].startswith("Why:")
+        assert "No indexed code items are available" in lines[1]
+        count_match = re.fullmatch(r"Indexed source code sections: (\d+)\.", lines[2])
+        assert count_match is not None
+        assert int(count_match.group(1)) == 0
+        assert "Project mismatch: requested project differs from indexed project." in (
+            lines
+        )
+        assert "Requested project: current project" in lines
+        assert "Indexed project: other project" in lines
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            "- vaultspec-rag index --type code --port 8766",
+            "- vaultspec-rag server status",
+        ]
+        assert "index is for" not in result.output
+        assert not any("=" in line for line in lines)
+
+    def test_empty_local_fallback_search_is_actionable(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "missing local symbol",
+                "--type",
+                "vault",
+                "--limit",
+                "1",
+                "--port",
+                "1",
+                "--allow-fallback",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert lines[0].endswith("missing local symbol")
+        labels = _label_values(result.output)
+        assert labels["Why"].startswith("No matching vault documents")
+        assert "local index" in labels["Why"]
+        assert labels["Project"] == str(tmp_path)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            "- vaultspec-rag index --type vault",
+            "- vaultspec-rag status",
+        ]
+        assert "No vault results found" not in result.output
+        _assert_no_table_borders(result.output)
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
@@ -972,7 +2354,17 @@ class TestSearchSafetyContract:
         )
         assert result.exit_code != 0
         normalized = " ".join(result.output.split())
-        assert "routing mode: direct local-store search" in normalized
+        assert "local search index" in normalized
+        assert "background service" in normalized
+        assert "automatic index update" in normalized
+        assert "vaultspec-rag server status" in normalized
+        assert "vaultspec-rag server stop" in normalized
+        assert "orphaned Python process" in normalized
+        assert "server mcp" not in normalized
+        assert "MCP" not in normalized
+        assert "direct local-store search" not in normalized
+        assert "RAG service" not in normalized
+        assert "file watcher" not in normalized
 
     def test_search_locked_store_json_mode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1006,7 +2398,16 @@ class TestSearchSafetyContract:
         data = json.loads(result.output.strip())
         assert data["ok"] is False
         assert data["error"] == "local_store_locked"
-        assert "direct local-store search" in data["message"]
+        assert "local search index" in data["message"]
+        assert "background service" in data["message"]
+        assert "automatic index update" in data["message"]
+        remediation = data["remediation"]
+        assert "vaultspec-rag server status" in remediation
+        assert "vaultspec-rag server stop" in remediation
+        assert not any("server mcp" in item.lower() for item in remediation)
+        assert "direct local-store search" not in data["message"]
+        assert "RAG service" not in data["message"]
+        assert "file watcher" not in data["message"]
 
     def test_search_mcp_timeout_diagnostics(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1035,6 +2436,209 @@ class TestSearchSafetyContract:
         msg = res["message"]
         assert isinstance(msg, str)
         assert "timed out after" in msg
+        assert "same_project_search_strategy" not in msg
+
+    def test_search_timeout_human_output_is_plain_diagnostic(
+        self, tmp_path: Path
+    ) -> None:
+        """Default search timeout output is natural text, not a backend table."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server()
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        folded = " ".join(_plain_lines(result.output))
+        assert re.match(
+            rf"Error: The search request to the service on port {port} "
+            r"timed out after 0\.001 seconds",
+            folded,
+        )
+        assert "active index jobs before retrying." in folded
+        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
+        assert labels["Work"] == "no active index jobs"
+        lines = _plain_lines(result.output)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            f"- vaultspec-rag server status --port {port}",
+            f"- vaultspec-rag server jobs --state active --port {port}",
+            "- Rerun the same search with --timeout 300",
+        ]
+        assert "running jobs before retrying" not in result.output
+        assert "running index jobs" not in result.output
+        assert "health check" not in result.output
+        for forbidden in (
+            "same_project_search_strategy",
+            "Backend Contract",
+            "Search Concurrency",
+            "Cross-project Search",
+            "Storage Process Model",
+            "http_search_timeout",
+            "┌",
+            "│",
+            "└",
+        ):
+            assert forbidden not in result.output
+
+    def test_search_timeout_missing_health_status_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server(
+            health_payload={
+                "project_count": 1,
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                },
+            }
+        )
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        assert (
+            labels["Service"]
+            == "reachable; request status not reported by service; 1 project loaded"
+        )
+        assert labels["Work"] == "no active index jobs"
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_timeout_jobs_error_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server(
+            jobs_payload={
+                "ok": False,
+                "error": "jobs_unavailable",
+                "message": "Job summary is not available.",
+            },
+            jobs_status_code=503,
+        )
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
+        assert (
+            labels["Work"]
+            == "jobs check not reported by service (Job summary is not available.)"
+        )
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_timeout_json_preserves_backend_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        """JSON timeout output keeps full diagnostic fields for agents."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server()
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                    "--json",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "search"
+        assert envelope["error"] == "http_search_timeout"
+        assert envelope["backend_capabilities"]["same_project_search_strategy"] == (
+            "serialized"
+        )
+        diagnostics = envelope["diagnostics"]
+        assert diagnostics["backpressure"]["same_project_search_strategy"] == (
+            "serialized"
+        )
+        assert diagnostics["health"]["status"] == "ready"
+        assert diagnostics["jobs"]["running_count"] == 0
 
 
 _FORBIDDEN_DOCSTRING_TOKENS = ("Args:", "Raises:", "CLIState", " ctx ")
@@ -1064,7 +2668,14 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["index", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
+        normalized = " ".join(result.output.split())
         assert "Build or update" in result.output
+        assert "Uses the running service" in normalized
+        assert "selected service is not reachable" in normalized
+        assert "--dry-run-limit" in result.output
+        assert "selected service is unavailable" not in normalized
+        for forbidden in ("Qdrant", "tqdm", "agent / CI", "fast path"):
+            assert forbidden not in normalized
 
     def test_index_help_cross_ref(self):
         """index --help must reference docs/indexing.md."""
@@ -1076,7 +2687,12 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["clean", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "Drop selected" in result.output
+        normalized = " ".join(result.output.split())
+        assert "Delete selected index data" in normalized
+        assert "search index data" not in normalized
+        assert "Required so nothing is deleted by accident" in normalized
+        for forbidden in ("Qdrant", "metadata sidecars", "collections", "footgun"):
+            assert forbidden not in normalized
 
     def test_clean_help_cross_ref(self):
         """clean --help must reference docs/indexing.md."""
@@ -1088,20 +2704,98 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["search", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
+        normalized = " ".join(result.output.split())
+        assert "selected service is not reachable" in normalized
+        assert "selected service is unavailable" not in normalized
+        assert "production, tests, or documentation" in normalized
+        assert "'prod', 'tests', or 'docs'" not in normalized
+        assert "default 300 seconds" in normalized
         assert "hybrid" in result.output.lower() or "Search" in result.output
 
-    def test_search_help_panels(self):
-        """search --help must show Code filters and Vault filters panels."""
+    def test_search_help_filter_options_are_plain(self):
+        """search --help must list filters without Rich box panels."""
         result = runner.invoke(app, ["search", "--help"])
         assert result.exit_code == 0, result.output
-        assert "Code filters" in result.output
-        assert "Vault filters" in result.output
+        descriptions = _help_option_descriptions(result.output)
+        assert {"--language", "--structure", "--doc-type"} <= descriptions.keys()
+        assert "--node-type" not in descriptions
+        structure_help = descriptions["--structure"].lower()
+        assert "code results" in structure_help
+        assert any(word in structure_help for word in ("structure", "construct"))
+        for jargon in ("syntax", "ast", "tree-sitter"):
+            assert jargon not in structure_help
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in result.output
+
+    def test_root_help_uses_user_facing_language(self):
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "search project documentation and source code" in result.output
+        assert "Manage the background search service" in result.output
+        assert "Inspect and validate document preprocessing rules" in result.output
+        assert "Index data directory" in result.output
+        assert "Index data subdirectory" in result.output
+        assert "service runtime files" in result.output
+        assert "Service log filename inside --status-dir" in result.output
+        assert "--storage-dir" in result.output
+        for forbidden in (
+            "Qdrant",
+            "Search data directory",
+            "Search storage directory",
+            "Index storage directory",
+            "service status files",
+            "relative to --status-dir",
+            "--qdrant-dir",
+            "--index-meta",
+            "--code-index-meta",
+            "MCP protocol adapter",
+            "#185",
+            "metadata filename",
+        ):
+            assert forbidden not in result.output
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--qdrant-dir", "legacy-storage", "--help"],
+            ["--index-meta", "index.json", "--help"],
+            ["--code-index-meta", "code-index.json", "--help"],
+        ],
+    )
+    def test_removed_root_config_aliases_are_not_supported(self, argv: list[str]):
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+
+    def test_server_help_uses_user_facing_language(self):
+        result = runner.invoke(app, ["server", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Manage the background search service" in result.output
+        assert "Manage the HTTP RAG service" not in result.output
+        assert "Model Context Protocol" not in result.output
+        assert "MCP" not in result.output
+        assert "mcp" not in result.output.lower()
+        assert "MCP protocol adapter" not in result.output
 
     def test_status_help_clean(self):
         result = runner.invoke(app, ["status", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "index" in result.output.lower() or "GPU" in result.output.lower()
+        assert "index counts" in result.output
+        assert "index data location" in result.output
+        assert "storage location" not in result.output
+        assert "search data location" not in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "MCP" not in result.output
+        assert "get_index_status" not in result.output
+
+    def test_search_help_includes_limit_alias(self):
+        result = runner.invoke(app, ["search", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--max-results" in result.output
+        assert "--limit" in result.output
+        assert "Maximum number of results" in result.output
 
     def test_status_help_cross_ref(self):
         """status --help must reference docs/indexing.md."""
@@ -1115,6 +2809,93 @@ class TestHelpCleanup:
         self._assert_clean(result)
         out = result.output.lower()
         assert "detached" in out or "background" in out
+        assert "--updates" in result.output
+        assert "--no-updates" in result.output
+        assert "--update-delay-ms" in result.output
+        assert "--repeat-update-delay-s" in result.output
+        assert "--same-project-delay-s" not in result.output
+        assert "--same-source-delay-s" not in result.output
+        assert "--watch" not in result.output
+        assert "--no-watch" not in result.output
+        assert "--watch-debounce-ms" not in result.output
+        assert "--watch-cooldown-s" not in result.output
+        assert "/health" not in result.output
+        assert "auto-reindex" not in out
+        assert "watcher" not in out
+        assert "VAULTSPEC_RAG_WATCH_ENABLED" not in result.output
+
+    def test_server_start_port_in_use_gives_next_actions(self):
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = int(sock.getsockname()[1])
+        try:
+            result = runner.invoke(app, ["server", "start", "--port", str(port)])
+        finally:
+            sock.close()
+
+        assert result.exit_code == 1, result.output
+        assert f"Port {port} is already in use." in result.output
+        assert "Another process is already using this service address." in result.output
+        assert "Next actions:" in result.output
+        assert f"vaultspec-rag server status --port {port}" in result.output
+        assert (
+            f"vaultspec-rag server jobs --state active --port {port}" in result.output
+        )
+        assert "vaultspec-rag server start --port <free-port>" in result.output
+        assert "Traceback" not in result.output
+
+    def test_server_start_update_options_parse_before_port_guard(self):
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = int(sock.getsockname()[1])
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "start",
+                    "--port",
+                    str(port),
+                    "--updates",
+                    "--update-delay-ms",
+                    "250",
+                    "--repeat-update-delay-s",
+                    "1.5",
+                ],
+            )
+        finally:
+            sock.close()
+
+        assert result.exit_code == 1, result.output
+        assert f"Port {port} is already in use." in result.output
+        assert "No such option" not in result.output
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["server", "start", "--watch"],
+            ["server", "start", "--no-watch"],
+            ["server", "start", "--watch-debounce-ms", "250"],
+            ["server", "start", "--same-project-delay-s", "1.5"],
+            ["server", "start", "--same-source-delay-s", "1.5"],
+            ["server", "start", "--watch-cooldown-s", "1.5"],
+        ],
+    )
+    def test_server_start_removed_legacy_update_flags_are_not_supported(
+        self,
+        argv: list[str],
+    ):
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+        assert "Starting service" not in result.output
 
     def test_server_warmup_help_clean(self):
         result = runner.invoke(app, ["server", "warmup", "--help"])
@@ -1128,11 +2909,66 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         assert "docs/indexing.md" in result.output
 
-    def test_mcp_start_help_clean(self):
+    def test_mcp_start_help_removed(self):
         result = runner.invoke(app, ["server", "mcp", "start", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+    def test_benchmark_help_clean(self):
+        result = runner.invoke(app, ["benchmark", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "stdio" in result.output.lower() or "MCP" in result.output
+        normalized = " ".join(result.output.split())
+        assert "Measure local search speed" in result.output
+        assert "can take several minutes" in normalized
+        for forbidden in ("Args:", "Raises:", "CLIState", "VRAM usage"):
+            assert forbidden not in result.output
+
+    def test_quality_help_clean(self):
+        result = runner.invoke(app, ["quality", "--help"])
+        assert result.exit_code == 0, result.output
+        self._assert_clean(result)
+        normalized = " ".join(result.output.split())
+        assert "built-in search quality checks" in result.output
+        assert "can take several minutes" in normalized
+        assert "not a report on your current project" in result.output
+        for forbidden in ("Args:", "Raises:", "synthetic test corpus"):
+            assert forbidden not in result.output
+
+    def test_install_help_clean(self):
+        result = runner.invoke(app, ["install", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Set up vaultspec-rag in a workspace" in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "use --yes or --no-torch-config" in result.output
+        for forbidden in (
+            "Torch-config gating",
+            "MCP source files",
+            "provider concept",
+            "torch_config_action",
+            "rag's bundled",
+            "Output result as JSON",
+            "``--yes``",
+            "``--no-torch-config``",
+        ):
+            assert forbidden not in result.output
+
+    def test_uninstall_help_clean(self):
+        result = runner.invoke(app, ["uninstall", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "Remove vaultspec-rag setup" in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "index data under .vault/data/" in result.output
+        assert "search data" not in result.output
+        assert "``--force``" not in result.output
+        for forbidden in (
+            "MCP source files",
+            "rag's index",
+            "forward compat",
+            "vaultspec-core",
+            "Output result as JSON",
+        ):
+            assert forbidden not in result.output
 
 
 class TestCleanRequiredTarget:
@@ -1151,12 +2987,17 @@ class TestCleanRequiredTarget:
         assert result.exit_code != 0
 
 
-class TestNoTruncateFlag:
-    """--no-truncate bypasses snippet truncation."""
+class TestSearchResultRendering:
+    """Human search results are line-oriented and never silently truncated."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _render(self, snippet: str, no_truncate: bool) -> str:
+    def _render(
+        self,
+        result: dict[str, object],
+        *,
+        show_scores: bool = False,
+    ) -> str:
         from io import StringIO
 
         from rich.console import Console
@@ -1168,24 +3009,35 @@ class TestNoTruncateFlag:
                 Console(file=out, force_terminal=False, width=400),
             )
             _display_search_results(
-                [{"path": "foo.py", "score": 0.9, "snippet": snippet}],
+                [result],
                 "code",
                 via="service",
-                no_truncate=no_truncate,
+                show_scores=show_scores,
             )
-        # Strip Rich wrapping whitespace before substring matching.
-        return "".join(out.getvalue().split())
+        return out.getvalue()
 
-    def test_no_truncate_keeps_full_snippet(self):
-        """no_truncate=True renders the snippet untruncated."""
-        rendered = self._render("a" * 300, no_truncate=True)
-        assert "a" * 250 in rendered
+    def test_default_keeps_full_snippet(self):
+        """Default output renders the full snippet."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
+        [record] = _search_records(rendered)
+        assert record["text"] == "a" * 300
 
-    def test_default_truncates_at_120(self):
-        """Default behaviour caps the snippet at 120 chars."""
-        rendered = self._render("a" * 300, no_truncate=False)
-        # 300 chars truncated to 120 - a 200-a run cannot appear.
-        assert "a" * 200 not in rendered
+    def test_scores_are_hidden_by_default(self):
+        """Default output shows numbering, not numeric relevance score."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
+        [record] = _search_records(rendered)
+        assert record["number"] == 1
+        assert record["location"] == "foo.py"
+        assert record["score"] is None
+
+    def test_scores_flag_renders_numeric_score(self):
+        """--scores detail mode includes the relevance score."""
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "test"},
+            show_scores=True,
+        )
+        [record] = _search_records(rendered)
+        assert record["score"] == "0.9000"
 
     def test_display_empty_results(self):
         """Empty results list renders without raising."""
@@ -1197,50 +3049,36 @@ class TestNoTruncateFlag:
 
     def test_display_with_line_start(self):
         """Result with line_start appends :N to location."""
-        _display_search_results(
-            [{"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42}],
-            "vault",
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
         )
+        [record] = _search_records(rendered)
+        assert record["location"] == "foo.py:42"
 
     def test_display_without_line_start(self):
         """Result without line_start renders location as bare path."""
-        _display_search_results(
-            [{"path": "foo.py", "score": 0.9, "snippet": "test"}],
-            "vault",
-        )
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
+        [record] = _search_records(rendered)
+        assert record["location"] == "foo.py"
 
-    def test_backend_contract_rows_render(self):
-        """Backend contract rows render stable concurrency wording."""
-        from rich.table import Table
-
-        table = Table(show_header=False)
-        table.add_column("Key")
-        table.add_column("Value")
-
-        _add_backend_contract_rows(
-            table,
+    def test_display_with_anchor_prefers_deep_link(self):
+        """Anchor locators stay mechanically grabbable."""
+        rendered = self._render(
             {
-                "same_project_search_strategy": "serialized",
-                "cross_project_search_strategy": "parallel",
-                "local_storage_process_model": "exclusive",
-            },
+                "path": "report.pdf",
+                "anchor": "report.pdf#page=4",
+                "line_start": 12,
+                "score": 0.9,
+                "snippet": "test",
+            }
         )
+        [record] = _search_records(rendered)
+        assert record["location"] == "report.pdf#page=4"
 
-        from io import StringIO
-
-        from rich.console import Console
-
-        out = StringIO()
-        Console(file=out, force_terminal=False, width=120).print(table)
-        rendered = out.getvalue()
-        assert "Search Concurrency" in rendered
-        assert "supported; same-project local backend access serialized" in rendered
-        assert "Storage Process Model" in rendered
-
-    def test_display_service_lock_error_renders_contract(
+    def test_display_service_lock_error_hides_backend_contract(
         self, capsys: pytest.CaptureFixture[str]
     ):
-        """Structured local-store errors show remediation and backend contract."""
+        """Default service errors do not render backend contract tables."""
         _display_service_error(
             {
                 "ok": False,
@@ -1258,8 +3096,97 @@ class TestNoTruncateFlag:
         out = capsys.readouterr().out
         assert "Route concurrent searches through one service." in out
         assert "local_store_locked" in out
-        assert "same-project local backend access" in out
-        assert "serialized" in out
+        assert "Index data: /tmp/qdrant" in out
+        assert "DB path:" not in out
+        assert "same-project local backend access" not in out
+        assert "same_project_search_strategy" not in out
+        assert "serialized" not in out
+        for forbidden in ("┌", "└", "│"):
+            assert forbidden not in out
+
+    def test_display_service_error_fallback_uses_plain_service_name(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        _display_service_error({"ok": False, "error": "service_error"})
+
+        out = capsys.readouterr().out
+        assert "Search service returned an error." in out
+        assert "RAG service" not in out
+
+    def test_display_search_timeout_error_humanizes_diagnostics(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        """Search timeout errors answer readiness/work status without raw keys."""
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": (
+                    "HTTP search on port 8766 timed out after 180.0s. "
+                    "The service may still be processing the request. "
+                    "Service status=unknown; running_jobs=unknown; "
+                    "same_project_search_strategy=serialized."
+                ),
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                    "cross_project_search_strategy": "parallel",
+                    "local_storage_process_model": "exclusive",
+                },
+                "diagnostics": {
+                    "health": {
+                        "available": False,
+                        "error": "TimeoutError",
+                        "message": "timed out",
+                    },
+                    "jobs": {
+                        "available": True,
+                        "running_count": 2,
+                    },
+                },
+                "remediation": [
+                    "vaultspec-rag search ... --port 8766 --timeout 360",
+                    "vaultspec-rag server status",
+                    "vaultspec-rag server jobs --state active --port 8766",
+                ],
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "HTTP search on port 8766 timed out after 180.0s." in out
+        assert "Service: request check timed out" in out
+        assert "Work: 2 active index jobs" in out
+        assert "vaultspec-rag server jobs --state active --port 8766" in out
+        assert "same_project_search_strategy" not in out
+        assert "serialized" not in out
+        for forbidden in ("┌", "└", "│"):
+            assert forbidden not in out
+
+    def test_display_search_timeout_missing_job_count_uses_absence_language(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": "HTTP search on port 8766 timed out after 180.0s.",
+                "diagnostics": {
+                    "health": {
+                        "available": True,
+                        "status": "ready",
+                    },
+                    "jobs": {
+                        "available": True,
+                    },
+                },
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "Service: reachable; requests ready" in out
+        assert "Work: active job count not reported by service" in out
+        assert "running work status unknown" not in out
+        assert "unknown" not in out
+        assert "health check" not in out
 
 
 class TestWinShutdownLog:
@@ -1370,6 +3297,8 @@ class TestWinShutdownLog:
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
+            assert f"Process ID: {os.getpid()}" in result.output
+            assert "PID:" not in result.output
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
             )
@@ -1413,6 +3342,8 @@ class TestWinShutdownLog:
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
+            assert f"Process ID: {os.getpid()}" in result.output
+            assert "PID:" not in result.output
 
             # No CLI-emitted line on POSIX.
             assert not log_path.exists(), (
@@ -1641,6 +3572,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 0
             out = result.output.lower()
             assert "no longer running" in out or "cleaned" in out
+            assert "recorded process 99999999 is no longer running" in out
+            assert "pid:" not in out
             assert not sf.exists()
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
@@ -1662,6 +3595,27 @@ class TestServiceDaemonHelpers:
             lower = result.output.lower()
             assert "crashed" in lower or "stale" in lower
             assert not sf.exists()
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+    def test_service_status_stale_pid_verbose_uses_condition_language(
+        self, tmp_path: Path
+    ):
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=99999999, port=8766)
+
+            result = runner.invoke(app, ["server", "status", "--verbose"])
+
+            assert result.exit_code == 4
+            assert "Process: not running" in result.output
+            assert (
+                "Process check: not verified because the process is not running"
+                in result.output
+            )
+            assert "Network: not accepting connections" in result.output
+            assert "Service process:" not in result.output
+            assert "not checked" not in result.output
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
@@ -1695,46 +3649,12 @@ class TestServiceDaemonHelpers:
             server.server_close()
             t.join(timeout=5)
 
-    def test_service_status_renders_health_contract(self, tmp_path: Path):
-        """service status renders project_count and backend capabilities."""
-        import http.server
+    def test_service_status_default_human_output_is_plain_summary(self, tmp_path: Path):
+        """service status renders the W06.P01 plain operator summary by default."""
         import json
-        import threading
 
-        class _HealthHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(
-                        {
-                            "status": "ready",
-                            "cuda": True,
-                            "models_loaded": True,
-                            "project_count": 3,
-                            "uptime_s": 12.0,
-                            "backend_capabilities": {
-                                "same_project_search_strategy": "serialized",
-                                "cross_project_search_strategy": "parallel",
-                                "local_storage_process_model": "exclusive",
-                            },
-                        },
-                    ).encode("utf-8"),
-                )
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _HealthHandler)
+        server, thread = _status_contract_server()
         port = server.server_address[1]
-        # service_status calls _port_is_listening first (one TCP
-        # connect that the HTTPServer accepts but cannot satisfy
-        # with HTTP). Use serve_forever so multiple incoming
-        # connections are handled - the listening probe plus
-        # the /health probe.
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         try:
             # A healthy running service writes last_heartbeat to
@@ -1752,15 +3672,571 @@ class TestServiceDaemonHelpers:
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0
-            assert "Projects" in result.output
-            assert "3" in result.output
-            assert "Search Concurrency" in result.output
-            assert "Cross-project Search" in result.output
+            _assert_default_status_summary(result.output, port)
+
+            verbose = runner.invoke(app, ["server", "status", "--verbose"])
+            assert verbose.exit_code == 0
+            _assert_verbose_status_summary(verbose.output, port)
+            assert "Service record:" not in verbose.output
+            assert "Service process:" not in verbose.output
+            assert "Service identity:" not in verbose.output
+            assert "Identity check: not checked" not in verbose.output
+            assert "Started: 2026-" not in verbose.output
         finally:
             server.shutdown()
             server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_lists_multiple_active_jobs(self, tmp_path: Path):
+        import json
+
+        server, thread = _status_contract_server(extra_running_job=True)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            assert "Busy: processing 2 jobs" in result.output
+            assert "Queue: nothing waiting; 2 active jobs" in result.output
+            assert "Active jobs:" in result.output
+            active_rows = [
+                line for line in result.output.splitlines() if line.startswith("  * ")
+            ]
+            assert len(active_rows) == 2
+            assert active_rows[0].startswith("  * vault index update for other-project")
+            assert "index documents 5 of 9" in active_rows[0]
+            assert active_rows[1].startswith(
+                "  * code index refresh for feature-server-supervision"
+            )
+            assert "embedding source code sections 7 of 20" in active_rows[1]
+            assert all(row.count("no progress for") <= 1 for row in active_rows)
+            assert "Current job:" not in result.output
+        finally:
+            server.shutdown()
             server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_summary_reports_failed_jobs(self, tmp_path: Path):
+        import json
+
+        server, thread = _status_contract_server(failed_jobs=2)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert (
+                labels["Processed jobs"] == "2 finished, 1 active, 0 waiting, 2 failed"
+            )
+            assert "recent jobs" not in result.output
+            assert "Jobs:" not in result.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_omits_missing_current_job_project(self, tmp_path: Path):
+        import json
+
+        server, thread = _status_contract_server(omit_project=True)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            lines = _plain_lines(result.output)
+            assert "Current job:" in lines
+            assert "Operation: code index operation" in lines
+            assert not any(line.startswith("Project:") for line in lines)
+            assert "project not reported" not in result.output
+            assert "project unknown" not in result.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_missing_start_times_use_reported_absence_language(
+        self, tmp_path: Path
+    ):
+        import json
+
+        server, thread = _status_contract_server(omit_job_started_at=True)
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            data.pop("started_at", None)
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status", "--verbose"])
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Started"] == "not reported by local record"
+            assert labels["Runtime"] == "not reported by service"
+            assert "unknown" not in result.output.lower()
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def _service_status_current_job_output(
+        self,
+        tmp_path: Path,
+        *,
+        last_progress_age_seconds: float,
+    ) -> str:
+        import json
+
+        server, thread = _status_contract_server(
+            last_progress_age_seconds=last_progress_age_seconds,
+        )
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            sf = tmp_path / "service.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            from datetime import UTC, datetime
+
+            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            sf.write_text(json.dumps(data), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            return " ".join(result.output.split())
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_current_job_flags_no_recent_progress(
+        self,
+        tmp_path: Path,
+    ):
+        fresh_status = self._service_status_current_job_output(
+            tmp_path / "fresh",
+            last_progress_age_seconds=2.0,
+        )
+        stalled_status = self._service_status_current_job_output(
+            tmp_path / "stalled",
+            last_progress_age_seconds=600.0,
+        )
+
+        assert "Current job:" in fresh_status
+        assert "Current job:" in stalled_status
+        assert "Progress: embedding source code sections 7 of 20" in stalled_status
+        assert "no progress for" not in fresh_status
+        assert "Warning: no progress for 10 minutes" in stalled_status
+        assert stalled_status != fresh_status
+
+    def test_service_status_distinguishes_waiting_from_processing(self):
+        from ..cli._service_lifecycle import (
+            _status_busy_label,
+            _status_jobs_label,
+            _status_queue_label,
+        )
+
+        jobs: dict[str, object] = {"available": True, "running": 1, "queued": 1}
+
+        assert _status_busy_label(jobs) == "1 job waiting to write"
+        assert _status_queue_label(jobs) == "1 waiting job; 0 active jobs"
+        assert (
+            _status_jobs_label({**jobs, "total": 3, "phases": {"done": 2}})
+            == "2 finished, 0 active, 1 waiting, 0 failed"
+        )
+
+    def test_service_status_port_only_json(self, tmp_path: Path):
+        """server status --port can inspect a reachable service without service.json."""
+        import http.server
+        import json
+        import threading
+
+        class _StatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload: dict[str, object]
+                if self.path == "/health":
+                    payload = {
+                        "status": "ready",
+                        "cuda": True,
+                        "models_loaded": True,
+                        "project_count": 1,
+                        "backend_capabilities": {
+                            "same_project_search_strategy": "serialized",
+                            "cross_project_search_strategy": "parallel",
+                            "local_storage_process_model": "exclusive",
+                        },
+                    }
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _StatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port), "--json"],
+            )
+
+            assert result.exit_code == 0
+            envelope = json.loads(result.stdout)
+            data = envelope["data"]
+            assert data["service_json_present"] is False
+            assert data["port"] == port
+            assert data["state"] == "running"
+            operational = data["operational"]
+            assert f"--port {port}" in operational["next_action"]
+            assert "server info" not in operational["next_action"]
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_sparse_health_uses_reported_absence_language(
+        self, tmp_path: Path
+    ):
+        import http.server
+        import threading
+
+        class _SparseHealthHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload: dict[str, object]
+                if self.path == "/health":
+                    payload = {"status": "ready"}
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _SparseHealthHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port), "--verbose"],
+            )
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Requests"] == "ready for requests"
+            assert "Health" not in labels
+            assert labels["Compute"] == "not reported by service"
+            assert labels["Search models"] == "not reported by service"
+            assert labels["Reranking"] == "not reported by service"
+            assert labels["Loaded projects"] == "not reported by service"
+            assert labels["Uptime"] == "not reported by service"
+            assert "unknown" not in result.output.lower()
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_missing_health_status_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        class _MissingHealthStatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload: dict[str, object]
+                if self.path == "/health":
+                    payload = {"uptime_s": 12}
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _MissingHealthStatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port)],
+            )
+
+            assert result.exit_code == 4, result.output
+            labels = _label_values(result.output)
+            assert labels["Server"] == "unreachable"
+            assert labels["Requests"] == "not reported by service"
+            assert "Health" not in labels
+            assert labels["Uptime"] == "12 seconds"
+            assert "unknown" not in result.output.lower()
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_jobs_error_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        class _JobsErrorStatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/health":
+                    payload = {"status": "ready", "uptime_s": 60}
+                    status_code = 200
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": False,
+                        "error": "jobs_unavailable",
+                        "message": "Job summary is not available.",
+                    }
+                    status_code = 503
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _JobsErrorStatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port)],
+            )
+
+            assert result.exit_code == 0, result.output
+            labels = _label_values(result.output)
+            assert labels["Server"] == "running"
+            assert labels["Requests"] == "ready for requests"
+            assert "Health" not in labels
+            assert labels["Busy"] == "not reported by service"
+            assert labels["Queue"] == "not reported by service"
+            assert labels["Processed jobs"] == "not reported by service"
+            assert labels["Current job"] == "not reported by service"
+            assert "unknown" not in result.output.lower()
+            assert "unavailable" not in result.output.lower()
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_service_status_port_only_verbose_uses_network_language(
+        self, tmp_path: Path
+    ) -> None:
+        """Port-only verbose output should not expose raw yes/no socket labels."""
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            port = _find_free_port()
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port), "--verbose"],
+            )
+
+            assert result.exit_code == 3
+            assert "Local record: not found" in result.output
+            assert "Process: not reported" in result.output
+            assert f"Address: http://127.0.0.1:{port}" in result.output
+            assert "Network: not accepting connections" in result.output
+            labels = _label_values(result.output)
+            assert labels["Server"] == "stopped"
+            assert "State" not in labels
+            assert "Process ID:" not in result.output
+            assert "not checked" not in result.output
+            assert "not recorded" not in result.output
+            assert "PID:" not in result.output
+            assert "Port:" not in result.output
+            assert "Port listening" not in result.output
+            assert "Port listening: yes" not in result.output
+            assert "Port listening: no" not in result.output
+            assert "Service file:" not in result.output
+            assert "Service record:" not in result.output
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+    def test_service_status_port_ignores_stale_service_json(self, tmp_path: Path):
+        """server status --port ignores stale service.json."""
+        import http.server
+        import json
+        import threading
+
+        class _StatusHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload: dict[str, object]
+                if self.path == "/health":
+                    payload = {
+                        "status": "ready",
+                        "cuda": True,
+                        "models_loaded": True,
+                        "project_count": 1,
+                        "backend_capabilities": {
+                            "same_project_search_strategy": "serialized",
+                            "cross_project_search_strategy": "parallel",
+                            "local_storage_process_model": "exclusive",
+                        },
+                    }
+                elif self.path.startswith("/jobs"):
+                    payload = {
+                        "ok": True,
+                        "jobs": [],
+                        "total": 0,
+                        "returned": 0,
+                        "summary": {"running": 0, "phases": {}},
+                    }
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _StatusHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=99999999, port=1)
+            result = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port), "--json"],
+            )
+
+            assert result.exit_code == 0
+            envelope = json.loads(result.stdout)
+            data = envelope["data"]
+            assert data["service_json_present"] is True
+            assert data["pid_alive"] is False
+            assert data["port"] == port
+            assert data["state"] == "running"
+            assert data["operational"]["status_file_port"] == 1
+
+            human = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port)],
+            )
+
+            assert human.exit_code == 0, human.output
+            lines = _plain_lines(human.output)
+            assert (
+                lines[0] == "Local record points to http://127.0.0.1:1; "
+                f"checking http://127.0.0.1:{port}."
+            )
+            assert f"Address: http://127.0.0.1:{port}" in human.output
+            assert "probing" not in human.output
+            assert "Status file port" not in human.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
 
 
@@ -1780,8 +4256,413 @@ def _find_free_port() -> int:
     return port
 
 
+def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _ProjectsHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "projects": [
+                            {
+                                "root": r"busy",
+                                "idle_seconds": 65,
+                                "ref_count": 2,
+                                "last_access_iso": "2026-06-12T14:05:06Z",
+                            },
+                            {
+                                "root": r"ready",
+                                "idle_seconds": 4,
+                                "ref_count": 0,
+                                "last_access_iso": "",
+                            },
+                        ],
+                        "max_projects": 8,
+                        "idle_ttl_seconds": 600,
+                    }
+                ).encode("utf-8")
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _ProjectsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
+    tuple[typing.Any, typing.Any, list[str]]
+):
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _LogsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "lines": [
+                            "2026-06-13 10:05:06 INFO vaultspec_rag.service: "
+                            "service.lifecycle event=search search_type=code "
+                            "results=3 total_seconds=0.42 "
+                            r"root=feature-server-supervision "
+                            "request_id=abcdef123456"
+                        ]
+                    }
+                ).encode("utf-8")
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _LogsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"lines": []}).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+    import urllib.parse
+
+    requests: list[str] = []
+
+    class _JobsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            payload: dict[str, object] = {
+                "jobs": [],
+                "total": 0,
+                "returned": 0,
+                "filters": {
+                    "limit": int(query.get("limit", ["20"])[0]),
+                    "phase": query.get("phase", [None])[0],
+                    "source": query.get("source", [None])[0],
+                    "trigger": query.get("trigger", [None])[0],
+                    "query": query.get("query", [None])[0],
+                    "failed": query.get("failed", [False])[0],
+                },
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _JobsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _JobsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            payload = {
+                "jobs": [
+                    {
+                        "id": "finished-job-123",
+                        "source": "code",
+                        "phase": "done",
+                        "started_at": 1000.0,
+                        "finished_at": 1001.0,
+                        "result": "+1 /0 -0 (1000ms)",
+                        "initiator": {
+                            "command": "reindex_codebase",
+                            "project_root": r"finished-project",
+                        },
+                    },
+                    {
+                        "id": "running-job-456",
+                        "source": "vault",
+                        "trigger": "watcher",
+                        "phase": "running",
+                        "started_at": 1002.0,
+                        "progress": {
+                            "step": "embed",
+                            "completed": 2,
+                            "total": 5,
+                        },
+                        "runtime_seconds": 7,
+                        "initiator": {
+                            "command": "watcher_vault_index",
+                            "project_root": r"running-project",
+                        },
+                    },
+                ],
+                "total": 2,
+                "returned": 2,
+                "filters": {"limit": 2},
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _JobsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def _projects_unload_contract_server(
+    response: dict[str, object] | None = None,
+) -> tuple[typing.Any, typing.Any, list[dict[str, object]]]:
+    import http.server
+    import threading
+
+    requests: list[dict[str, object]] = []
+    payload = response or {"unexpected": {"raw": True}}
+
+    class _ProjectsEvictHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            requests.append(json.loads(self.rfile.read(length).decode("utf-8")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _ProjectsEvictHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+class TestServiceLogsCli:
+    """In-process CLI coverage for `server logs`."""
+
+    def test_logs_lines_alias_is_not_supported(self) -> None:
+        result = runner.invoke(app, ["server", "logs", "--lines", "7"])
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+
+    def test_empty_logs_offer_wider_bounded_search(self) -> None:
+        server, thread, requests = _empty_logs_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "logs",
+                    "--limit",
+                    "5",
+                    "--contains",
+                    "service.lifecycle",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/logs/json?lines=5&contains=service.lifecycle"]
+        lines = _plain_lines(result.output)
+        expected_present = [
+            f"Address: http://127.0.0.1:{server.server_port}",
+            (
+                'No service activity found matching text "service.lifecycle" '
+                "in the last 5 log lines."
+            ),
+            "Next actions:",
+            (
+                "vaultspec-rag server logs --limit 200 "
+                f"--port {server.server_port} --contains service.lifecycle"
+            ),
+            f"vaultspec-rag server jobs --state active --port {server.server_port}",
+            f"vaultspec-rag server jobs --state waiting --port {server.server_port}",
+            f"vaultspec-rag server status --port {server.server_port}",
+            (
+                "vaultspec-rag server logs --raw --limit 5 "
+                f"--port {server.server_port} --contains service.lifecycle"
+            ),
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing empty-log guidance lines: {missing}"
+        assert "Activity: none found" not in result.output
+        _assert_no_table_borders(result.output)
+
+
+class TestServiceJobsCli:
+    """In-process CLI coverage for `server jobs`."""
+
+    def test_jobs_empty_filtered_result_stays_actionable(self) -> None:
+        server, thread, requests = _jobs_empty_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "jobs",
+                    "--state",
+                    "active",
+                    "--limit",
+                    "5",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/jobs?limit=5&phase=running"]
+        lines = _plain_lines(result.output)
+        expected_present = [
+            "Jobs",
+            f"Address: http://127.0.0.1:{server.server_port}",
+            "Displayed: 0 matching jobs",
+            "Total: 0 jobs",
+            "Displayed jobs: 0 active, 0 waiting, 0 finished, 0 failed",
+            "Order: latest job appears last",
+            "Filter: state active",
+            "There are no active jobs.",
+            "Next actions:",
+            f"vaultspec-rag server status --port {server.server_port}",
+            f"vaultspec-rag server logs --limit 20 --port {server.server_port}",
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing operator lines: {missing}"
+        _assert_no_table_borders(result.output)
+        assert "Jobs on service port" not in result.output
+        assert "Recent jobs on service" not in result.output
+        assert "States:" not in result.output
+        assert "watcher" not in result.output.lower()
+
+    def test_jobs_populated_feed_uses_visible_prefixes(self) -> None:
+        server, thread, requests = _jobs_populated_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "jobs", "--limit", "2", "--port", str(server.server_port)],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/jobs?limit=2"]
+        lines = _plain_lines(result.output)
+        assert "Legend: * active, ~ waiting, ! failed, - finished" in lines
+        finished = [
+            line
+            for line in lines
+            if "finished code index refresh for finished-project" in line
+        ]
+        active = [
+            line
+            for line in lines
+            if "active vault index update for running-project" in line
+        ]
+        assert len(finished) == 1
+        assert len(active) == 1
+        assert finished[0].startswith("- ")
+        assert active[0].startswith("* ")
+        assert lines.index(finished[0]) < lines.index(active[0])
+        _assert_no_table_borders(result.output)
+
+
+def _assert_project_summary_language(out: str) -> None:
+    expected = {
+        "Capacity: 1 of 16 projects loaded",
+        "Automatic unload: after 30 minutes idle",
+        "- Project: example",
+        r"  Path: example",
+        "  Active requests: 1",
+        "  Last activity: 2 minutes 5 seconds ago",
+        "  Last request: 14:05:06",
+    }
+    missing = [line for line in expected if line not in out]
+    assert not missing, f"missing project summary lines: {missing}"
+    forbidden = (
+        "Handling 1 active request; idle for 2 minutes 5 seconds",
+        "Active uses:",
+        "Requests:",
+        "Last used:",
+        "Auto-unload",
+        "Loaded projects:",
+        "In use:",
+    )
+    leaked = [text for text in forbidden if text in out]
+    assert not leaked, f"internal project summary language leaked: {leaked}"
+    lower = out.lower()
+    forbidden_lower = (
+        "no timestamp from service",
+        "project slots",
+        "project handle",
+        "idle ttl",
+        "references",
+    )
+    lower_leaks = [text for text in forbidden_lower if text in lower]
+    assert not lower_leaks, f"internal project summary language leaked: {lower_leaks}"
+    assert {"yes", "no"}.isdisjoint({line.strip() for line in _plain_lines(out)})
+
+
 class TestServiceProjectsCli:
-    """In-process CLI coverage for `server projects list|evict`."""
+    """In-process CLI coverage for `server projects list|unload`."""
 
     def test_projects_list_help_renders(self) -> None:
         result = runner.invoke(
@@ -1789,15 +4670,56 @@ class TestServiceProjectsCli:
             ["server", "projects", "list", "--help"],
         )
         assert result.exit_code == 0
-        assert "project slots" in result.output.lower()
+        assert "projects currently loaded" in result.output.lower()
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
+        assert "project slots" not in result.output.lower()
+        projects_help = runner.invoke(app, ["server", "projects", "--help"])
+        assert projects_help.exit_code == 0
+        assert "unload" in projects_help.output.lower()
+        assert "evict" not in projects_help.output.lower()
 
-    def test_projects_evict_help_renders(self) -> None:
+    def test_projects_unload_help_renders(self) -> None:
+        result = runner.invoke(
+            app,
+            ["server", "projects", "unload", "--help"],
+        )
+        assert result.exit_code == 0
+        assert "Unload" in result.output or "unload" in result.output
+        assert "PROJECT" in result.output
+        assert " ROOT" not in result.output
+        assert "Project root" not in result.output
+        assert "Emit JSON for scripts" in result.output
+        assert "JSON envelope" not in result.output
+
+    def test_projects_evict_alias_is_not_supported(self) -> None:
         result = runner.invoke(
             app,
             ["server", "projects", "evict", "--help"],
         )
-        assert result.exit_code == 0
-        assert "Evict" in result.output or "evict" in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+    def test_projects_list_summary_uses_operator_language(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_projects import _print_projects_summary
+
+        _print_projects_summary(
+            [
+                {
+                    "root": r"example",
+                    "idle_seconds": 125,
+                    "ref_count": 1,
+                    "last_access_iso": "2026-06-12T14:05:06Z",
+                }
+            ],
+            max_projects=16,
+            idle_ttl=1800,
+        )
+
+        out = capsys.readouterr().out
+        _assert_project_summary_language(out)
 
     def test_projects_list_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
@@ -1806,35 +4728,416 @@ class TestServiceProjectsCli:
             ["server", "projects", "list", "--port", str(port)],
         )
         assert result.exit_code == 3
+        assert f"Address: http://127.0.0.1:{port}" in result.output
 
-    def test_projects_evict_service_down_returns_exit_3(self) -> None:
+    def test_projects_unload_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
         result = runner.invoke(
             app,
             [
                 "server",
                 "projects",
-                "evict",
+                "unload",
                 "/some/root",
                 "--port",
                 str(port),
             ],
         )
         assert result.exit_code == 3
+        assert f"Address: http://127.0.0.1:{port}" in result.output
+
+    def test_projects_list_command_humanizes_service_payload(self) -> None:
+        server, thread, requests = _projects_list_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                ["server", "projects", "list", "--port", str(server.server_port)],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/projects"]
+        lines = _plain_lines(result.output)
+        expected_present = [
+            f"Address: http://127.0.0.1:{server.server_port}",
+            "Capacity: 2 of 8 projects loaded",
+            "Automatic unload: after 10 minutes idle",
+            "- Project: busy",
+            r"Path: busy",
+            "Active requests: 2",
+            "Last activity: 1 minute 5 seconds ago",
+            "Last request: 14:05:06",
+            "- Project: ready",
+            r"Path: ready",
+            "Active requests: none",
+            "Last activity: 4 seconds ago",
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing operator lines: {missing}"
+        ready_index = lines.index("- Project: ready")
+        ready_block = lines[ready_index : ready_index + 4]
+        assert ready_block == [
+            "- Project: ready",
+            r"Path: ready",
+            "Active requests: none",
+            "Last activity: 4 seconds ago",
+        ]
+        joined = "\n".join(lines).lower()
+        forbidden_substrings = [
+            "handling 2 active requests",
+            "available for new requests",
+            "last used: not recorded",
+            "last used:",
+            "no timestamp from service",
+            "project handle",
+            "references",
+            "loaded projects:",
+            "in use:",
+            "active uses:",
+            "not currently in use",
+        ]
+        leaked = [text for text in forbidden_substrings if text in joined]
+        assert not leaked, f"internal phrasing leaked: {leaked}"
+        leaked_prefixes = [
+            line
+            for line in lines
+            if line.startswith("Requests:") or line in {"yes", "no"}
+        ]
+        assert not leaked_prefixes, f"internal fields leaked: {leaked_prefixes}"
+        _assert_no_table_borders(result.output)
+
+    def test_projects_unload_unexpected_response_stays_actionable(self) -> None:
+        server, thread, requests = _projects_unload_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "projects",
+                    "unload",
+                    r"example",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 1, result.output
+        assert requests == [{"root": r"example"}]
+        labels = _label_values(result.output)
+        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert labels["Project"] == "example"
+        assert labels["Path"] == r"example"
+        assert labels["Unload"] == "service could not confirm unload"
+        assert (
+            labels["Next action"]
+            == f"vaultspec-rag server status --port {server.server_port}"
+        )
+        assert "unexpected" not in result.output
+        assert "{" not in result.output
+
+    def test_projects_unload_not_found_uses_project_block(self) -> None:
+        server, thread, requests = _projects_unload_contract_server(
+            {"evicted": False, "reason": "not_found"}
+        )
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "projects",
+                    "unload",
+                    r"not-loaded",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 2, result.output
+        assert requests == [{"root": r"not-loaded"}]
+        labels = _label_values(result.output)
+        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
+        assert labels["Project"] == "not-loaded"
+        assert labels["Path"] == r"not-loaded"
+        assert labels["Unload"] == "project is not loaded"
+        assert "Project is not loaded:" not in result.output
+        _assert_no_table_borders(result.output)
+
+    def test_projects_unload_json_message_stays_user_facing(self) -> None:
+        server, thread, requests = _projects_unload_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "projects",
+                    "unload",
+                    r"example",
+                    "--port",
+                    str(server.server_port),
+                    "--json",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 1, result.output
+        assert requests == [{"root": r"example"}]
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "service.projects.unload"
+        assert envelope["error"] == "unexpected_response"
+        assert r"example" in envelope["message"]
+        assert "vaultspec-rag server status" in envelope["message"]
+        assert "Eviction failed" not in envelope["message"]
+        assert "reason=" not in envelope["message"]
+
+
+class TestIndexSummaryCLI:
+    """Human index summaries are covered through the CLI command surface."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_index_all_renders_service_summary_from_http_response(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        (tmp_path / ".vaultspec").mkdir()
+        requests: list[dict[str, object]] = []
+
+        class _IndexServiceHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                requests.append(body)
+
+                response_by_type = {
+                    "vault": {
+                        "ok": True,
+                        "added": 1,
+                        "updated": 2,
+                        "removed": 3,
+                        "total": 6,
+                        "duration_ms": 1234,
+                    },
+                    "codebase": {
+                        "ok": True,
+                        "added": "4",
+                        "updated": "5",
+                        "removed": "6",
+                        "total": "15",
+                        "duration_ms": "50",
+                    },
+                }
+                response = response_by_type.get(
+                    body.get("type"),
+                    {"ok": False, "error": "unexpected_type"},
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _IndexServiceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "index",
+                    "--type",
+                    "all",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert [req["type"] for req in requests] == ["vault", "codebase"]
+        assert {req["project_root"] for req in requests} == {str(tmp_path)}
+        assert {req["initiator_kind"] for req in requests} == {"cli"}
+        assert {req["clean"] for req in requests} == {False}
+
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines == [
+            "Indexing summary: ran in running service.",
+            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2 seconds",
+            (
+                "Source code: added 4; updated 5; removed 6; total 15; "
+                "finished in 50 milliseconds"
+            ),
+        ]
+
+    def test_index_all_handles_sparse_service_summary_without_unknown_text(
+        self, tmp_path: Path
+    ) -> None:
+        import http.server
+        import threading
+
+        (tmp_path / ".vaultspec").mkdir()
+        requests: list[dict[str, object]] = []
+
+        class SparseIndexServiceHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                requests.append(body)
+
+                response_by_type: dict[str, dict[str, object]] = {
+                    "vault": {
+                        "ok": True,
+                        "added": "not-a-number",
+                        "updated": "2",
+                        "removed": None,
+                        "total": [],
+                        "duration_ms": "not-a-duration",
+                    },
+                    "codebase": {
+                        "ok": True,
+                        "added": "4",
+                        "updated": "5",
+                        "removed": "6",
+                        "total": "15",
+                        "duration_ms": "50",
+                    },
+                }
+                response = response_by_type.get(
+                    body.get("type"),
+                    {"ok": False, "error": "unexpected_type"},
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode("utf-8"))
+
+            def log_message(self, format: str, *args: object) -> None:
+                _ = format, args
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), SparseIndexServiceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "index",
+                    "--type",
+                    "all",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert [req["type"] for req in requests] == ["vault", "codebase"]
+
+        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+        assert lines == [
+            "Indexing summary: ran in running service.",
+            "Vault: added 0; updated 2; removed 0; total 0; duration not reported",
+            (
+                "Source code: added 4; updated 5; removed 6; total 15; "
+                "finished in 50 milliseconds"
+            ),
+        ]
+        assert "unknown" not in result.output.lower()
+        assert "finished in not reported" not in result.output.lower()
+
+    def test_index_summary_spells_out_reported_durations(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._index import _print_index_summary
+
+        _print_index_summary(
+            [
+                {
+                    "source": "vault",
+                    "added": 1,
+                    "updated": 0,
+                    "removed": 0,
+                    "total": 1,
+                    "duration_ms": 1000,
+                },
+                {
+                    "source": "codebase",
+                    "added": 0,
+                    "updated": 1,
+                    "removed": 0,
+                    "total": 1,
+                    "duration_ms": 1500,
+                },
+                {
+                    "source": "vault",
+                    "added": 0,
+                    "updated": 0,
+                    "removed": 1,
+                    "total": 0,
+                    "duration_ms": 10_000,
+                },
+            ],
+            via="service",
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        assert lines[1].endswith("finished in 1 second")
+        assert lines[2].endswith("finished in 1.5 seconds")
+        assert lines[3].endswith("finished in 10 seconds")
+        assert not any("ms" in line for line in lines)
+
+    def test_index_summary_humanizes_missing_source_label(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._index import _print_index_summary
+
+        _print_index_summary(
+            [{"added": 1, "updated": 2, "removed": 0, "total": 3}],
+            via="service",
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        assert lines[0] == "Indexing summary: ran in running service."
+        joined = " ".join(lines[1:])
+        assert "Index source not reported:" in joined
+        assert "added 1; updated 2; removed 0; total 3" in joined
+        assert "duration not reported" in joined
+        assert "not_reported" not in joined
 
 
 class TestCpuOnlyMessageRendering:
-    """Regression guard for Rich-markup escaping in the CPU_ONLY copy.
+    """Regression guard for literal TOML keys in the CPU_ONLY copy.
 
-    The CPU_ONLY remediation message uses ``markup=True`` to colourise
-    hints and embeds literal TOML keys (``[[tool.uv.index]]``,
-    ``[tool.uv.sources]``, ``[project].dependencies``,
-    ``[dependency-groups].dev``). Each opening ``[`` must be
-    backslash-escaped so Rich does not parse the TOML keys as markup
-    tags. This test renders the actual message via Rich and asserts the
-    user-visible bytes - without it, a future copy edit can silently
-    break the snippet shown to a user already looking at the wrong
-    wheel.
+    The CLI prints this message with Rich markup disabled so TOML keys,
+    dependency groups, and command lines stay literal in user output.
     """
 
     @staticmethod
@@ -1847,7 +5150,7 @@ class TestCpuOnlyMessageRendering:
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
-            _cpu_only_message(), markup=True
+            _cpu_only_message(), markup=False, highlight=False
         )
         return buf.getvalue()
 
@@ -1942,14 +5245,12 @@ class TestNoTorchMessageRendering:
 
 class TestRenderInstallReport:
     """CLI-01 regression: the install/uninstall warning loop must NOT
-    parse warning bodies as Rich markup. The transitive-dep warning
+    parse warning bodies as markup. The transitive-dep warning
     embeds literal ``[tool.uv.sources]``, ``[project].dependencies``,
     and ``[dependency-groups].dev``; uv stderr tails embed raw
     ``[…]`` tokens; raw exception messages embed ``[tool]`` strings
-    from the historic OutOfOrderTableProxy bug. Rendering any of these
-    via ``markup=True`` silently drops the bracketed substrings - a
-    direct repeat of the bug Gemini caught for the CPU_ONLY copy, in
-    a different channel.
+    from the historic OutOfOrderTableProxy bug. The report renderer
+    must preserve those bytes verbatim in captured CLI output.
     """
 
     @staticmethod
@@ -2048,8 +5349,34 @@ class TestRenderInstallReport:
             torch_config_action=TorchConfigAction.SKIPPED_EOF,
         )
         out = self._render(report)
-        # Action token survives.
-        assert "skipped-eof" in out
+        assert "PyTorch configuration: needs confirmation" in out
+
+    def test_dry_run_uses_operator_language(self) -> None:
+        from ..commands import InstallReport
+
+        report = InstallReport(
+            action="dry_run",
+            target=Path("."),
+            torch_config_action=TorchConfigAction.DRY_RUN,
+            warnings=[
+                "dry-run: core sync_provider not invoked (would propagate "
+                "seeded files to .mcp.json and provider dirs)"
+            ],
+        )
+        out = self._render(report)
+        assert "PyTorch configuration: preview only" in out
+        assert "Target: ." in out
+        assert "Note: dry-run preview: would update tool integration files" in out
+        assert "target:" not in out
+        assert "note:" not in out
+        assert "warning: dry-run preview" not in out
+        for forbidden in (
+            "torch-config:",
+            "sync_provider",
+            "provider dirs",
+            "core sync",
+        ):
+            assert forbidden not in out
 
 
 class TestRenderUninstallReport:
@@ -2100,7 +5427,40 @@ class TestRenderUninstallReport:
             torch_config_action=TorchConfigAction.ERROR,
         )
         out = self._render(report)
-        assert "error" in out
+        assert "PyTorch configuration: error" in out
+
+    def test_dry_run_uses_operator_language(self) -> None:
+        from ..commands import UninstallReport
+
+        report = UninstallReport(
+            action="dry_run",
+            target=Path("."),
+            removed=[".vaultspec/rules/rules/vaultspec-rag.builtin.md"],
+            torch_config_action=TorchConfigAction.DRY_RUN,
+            torch_direct_dep_action="dry_run",
+            warnings=[
+                "dry-run: core sync_provider not invoked (would propagate "
+                "removal to .mcp.json and provider dirs)"
+            ],
+        )
+        out = self._render(report)
+        assert "would remove 1 bundled source file" in out
+        assert "removed 1 bundled source file" not in out
+        assert "PyTorch configuration: preview only" in out
+        assert "PyTorch dependency: preview only" in out
+        assert "Target: ." in out
+        assert "Note: dry-run preview: would remove tool integration files" in out
+        assert "target:" not in out
+        assert "note:" not in out
+        assert "warning: dry-run preview" not in out
+        for forbidden in (
+            "torch-config:",
+            "torch direct dependency:",
+            "sync_provider",
+            "provider dirs",
+            "core sync",
+        ):
+            assert forbidden not in out
 
 
 class TestInstallExitCodes:
@@ -2278,6 +5638,10 @@ class TestJsonOutputMode:
         assert env["error"] == "port_unreachable"
         assert env["port"] == 1
         assert "remediation" in env
+        assert "one local user only" in env["message"]
+        assert "single-agent" not in env["message"]
+        assert "Qdrant lock" not in env["message"]
+        assert "in-process" not in env["message"]
 
     def test_service_status_json_stopped_envelope(self, tmp_path: Path):
         """No service.json: exit 3 + ok=false envelope with error=stopped."""
@@ -2329,6 +5693,12 @@ class TestJsonOutputMode:
         env = self._parse_envelope(result.output)
         assert env["ok"] is False
         assert env["error"] == "json_requires_yes"
+        message = str(env["message"])
+        assert "--yes" in message
+        assert "one JSON result" in message
+        assert "interactive confirmation prompt" in message
+        assert "stdin" not in message
+        assert "corrupt" not in message
 
     def test_envelope_is_pure_stdout_no_rich_bytes(self, tmp_path: Path) -> None:
         """Output is a single parseable JSON document, no Rich box chars."""
@@ -2630,16 +6000,38 @@ class TestBenchmarkAndQualityCommands:
                 "--target",
                 str(tmp_path),
                 "benchmark",
-                "--n-queries",
+                "--queries",
                 "10",
             ],
         )
         assert result.exit_code == 0
         assert len(called) == 1
         assert called[0][1] == 10
-        assert "GeForce RTX 4090" in result.output
-        assert "512.0 MB" in result.output
-        assert "42" in result.output
+        lines = _plain_lines(result.output)
+        assert lines[0] == "Benchmark: running 10 local search queries."
+        assert re.fullmatch(r"Search latency: 10 queries", lines[1])
+        assert _latency_values(lines) == {
+            "Median": 1.2,
+            "95th percentile": 3.4,
+            "99th percentile": 5.6,
+            "Average": 2.3,
+            "Variation": 0.5,
+        }
+        index_line = next(line for line in lines if line.startswith("Index:"))
+        index_match = re.fullmatch(
+            r"Index: (?P<vault_count>\d+) vault documents; "
+            r"(?P<code_count>\d+) source code sections",
+            index_line,
+        )
+        assert index_match is not None
+        assert index_match.groupdict() == {
+            "vault_count": "42",
+            "code_count": "100",
+        }
+        gpu_line = next(line for line in lines if line.startswith("GPU:"))
+        assert "GeForce RTX 4090" in gpu_line
+        assert "512.0 MB" in gpu_line
+        _assert_no_table_borders(result.output)
 
     def test_benchmark_empty_vault(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2662,15 +6054,45 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 1
         assert "No vault documents indexed" in result.output
+        assert "Benchmark: running 20 local search queries." in result.output
+
+    def test_benchmark_rejects_non_positive_query_count(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "benchmark",
+                "--queries",
+                "0",
+            ],
+        )
+
+        assert result.exit_code == 2
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Benchmark query count must be one or greater.",
+            "Run:",
+            "vaultspec-rag benchmark --queries 10",
+        ]
+        assert "Loading weights" not in result.output
 
     def test_quality_command_delegation_pass(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / ".vaultspec").mkdir()
+        monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_NO_ADVISORY_WARNINGS", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
 
         called: list[bool] = []
 
         def mock_run_quality_probe() -> dict[str, object]:
+            assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
+            assert os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] == "1"
+            assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
             called.append(True)
             return {
                 "passed": 8,
@@ -2697,11 +6119,17 @@ class TestBenchmarkAndQualityCommands:
         )
         assert result.exit_code == 0
         assert len(called) == 1
-        assert "PASS" in result.output
-        import re
-
-        output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
-        assert "100%" in output
+        lines = _plain_lines(result.output)
+        assert lines[0] == "Running built-in search quality checks..."
+        assert _quality_probe_line(lines[2]) == ("passed", "L1", "q1")
+        summary_match = re.fullmatch(
+            r"Result: (\d+) of (\d+) probes passed \((\d+)%\)\.",
+            lines[3],
+        )
+        assert summary_match is not None
+        assert tuple(map(int, summary_match.groups())) == (8, 8, 100)
+        assert lines[-1] == "Passed."
+        _assert_no_table_borders(result.output)
 
     def test_quality_command_delegation_fail(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2733,8 +6161,12 @@ class TestBenchmarkAndQualityCommands:
             ],
         )
         assert result.exit_code == 1
-        assert "FAILED" in result.output
-        import re
-
-        output = re.sub(r"\x1b\[[0-9;]*[mK]", "", result.output)
-        assert "50%" in output
+        lines = _plain_lines(result.output)
+        assert lines[0] == "Running built-in search quality checks..."
+        assert _quality_probe_line(lines[2]) == ("failed", "L1", "q1")
+        failure_match = re.fullmatch(
+            r"Failed: (\d+)% passed; required (\d+)%.",
+            lines[-1],
+        )
+        assert failure_match is not None
+        assert tuple(map(int, failure_match.groups())) == (50, 75)

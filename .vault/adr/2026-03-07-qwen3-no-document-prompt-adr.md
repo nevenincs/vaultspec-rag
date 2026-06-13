@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
+modified: '2026-03-07'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-03-09-qwen3-task-prefix-verification-research]]'

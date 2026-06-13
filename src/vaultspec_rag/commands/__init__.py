@@ -31,13 +31,27 @@ from __future__ import annotations
 
 from ._install import install_run
 from ._models import InstallReport, UninstallReport
+from ._provision import (
+    ProvisionAction,
+    ProvisionOutcome,
+    ProvisionStep,
+    ProvisionStepResult,
+    provision_dependencies,
+    provision_models,
+)
 from ._uninstall import uninstall_run
 from ._uv_sync import _classify_uv_sync_result
 
 __all__ = [
     "InstallReport",
+    "ProvisionAction",
+    "ProvisionOutcome",
+    "ProvisionStep",
+    "ProvisionStepResult",
     "UninstallReport",
     "_classify_uv_sync_result",
     "install_run",
+    "provision_dependencies",
+    "provision_models",
     "uninstall_run",
 ]

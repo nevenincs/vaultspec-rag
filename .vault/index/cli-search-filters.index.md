@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#cli-search-filters'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-05-28-cli-search-filters-adr]]'
   - '[[2026-05-28-cli-search-filters-plan]]'

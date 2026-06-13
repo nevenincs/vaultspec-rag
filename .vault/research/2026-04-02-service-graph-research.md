@@ -3,6 +3,7 @@ tags:
   - '#research'
   - '#service-graph'
 date: 2026-04-02
+modified: '2026-04-02'
 related:
   - '[[2026-04-02-release-readiness-audit]]'
   - '[[2026-03-09-graph-embedding-round36-audit]]'

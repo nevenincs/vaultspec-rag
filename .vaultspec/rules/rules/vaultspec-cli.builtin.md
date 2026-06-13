@@ -11,15 +11,26 @@ for workflow concepts.
 
 ## Mandate
 
-Use `vaultspec-core` to create, read, audit, and repair `.vault/` documents. Do not edit
-`.vault/` documents directly. `vaultspec-core` enforces templates, tag taxonomy,
+Use `vaultspec-core` to create, read, audit, and repair `.vault/` documents. Never
+hand-write frontmatter, filenames, plan structure, or new `.vault/` documents; editing
+the body prose of a document scaffolded by `vaultspec-core vault add` is permitted (see
+"Allowed manual edits" below). `vaultspec-core` enforces templates, tag taxonomy,
 wiki-link resolution, schema dependencies, and provider sync; bypassing it produces
 drift that `vaultspec-core vault check` and `vaultspec-core spec doctor` will flag.
+
+## Orientation
+
+Before starting work in a vaultspec-managed project you have no session context for, run
+`vaultspec-core vault status` and read the in-flight plans it names. The targeted form
+`vaultspec-core vault status <plan-or-feature>` traces a plan to its steps, execution
+records, and grounding documents. Orientation is descriptive and read-only: it is the
+zeroth move, not a pipeline phase, and produces no artifact.
 
 ## Commands
 
 | Task                                                  | Run                                                                       |
 | ----------------------------------------------------- | ------------------------------------------------------------------------- |
+| Orient in an unknown or resumed project               | `vaultspec-core vault status [TARGET]`                                    |
 | Create a `.vault/` document                           | `vaultspec-core vault add <type> --feature <tag>`                         |
 | List or filter vault documents                        | `vaultspec-core vault list [DOC_TYPE] [--feature <tag>]`                  |
 | Show statistics, invalid, or orphan documents         | `vaultspec-core vault stats [--invalid] [--orphaned]`                     |
@@ -28,6 +39,7 @@ drift that `vaultspec-core vault check` and `vaultspec-core spec doctor` will fl
 | Strip generated template annotations                  | `vaultspec-core vault sanitize annotations [--feature <tag>] [--dry-run]` |
 | Confirm required documents exist for a feature        | `vaultspec-core vault check features --feature <tag>`                     |
 | Archive a completed feature                           | `vaultspec-core vault feature archive <tag>`                              |
+| Promote an audit finding to a project rule            | `vaultspec-core vault rule promote --from <audit-stem> --as <rule-name>`  |
 | List registered rules, skills, agents, hooks, or MCPs | `vaultspec-core spec <resource> list`                                     |
 | Verify MCP config health                              | `vaultspec-core spec mcps status --json`                                  |
 | Inspect the assembled system prompt                   | `vaultspec-core spec system show`                                         |
@@ -71,6 +83,22 @@ Forbidden:
 - Hand-writing frontmatter, filenames, or new `.vault/` documents.
 - Editing files inside generated provider directories; `vaultspec-core sync` regenerates
   them.
+
+## Maintaining the bundled CLI reference
+
+The machine-facing reference at `reference/cli.md` is part hand-written prose and part
+generator-owned. The derivable zones (today, the command-inventory signature block) sit
+between `vaultspec:generated:begin` / `vaultspec:generated:end` HTML-comment markers and
+are owned by the generator: never hand-edit between the markers, because the next
+generate overwrites those edits. The prose outside the markers (the entry-point table,
+global-options narrative, per-command option tables, and the rest) stays hand-authored.
+
+Run `vaultspec-core spec reference generate` to rewrite the managed regions from the
+live Typer command surface; this is the canonical way to update the bundled reference
+after a command, flag, or argument changes. The `--check` variant renders in memory,
+diffs against the committed file, and exits non-zero on mismatch without writing - it is
+wired into pre-commit and gates CI, so a drifted reference fails the build until the
+generator is re-run.
 
 ## References
 

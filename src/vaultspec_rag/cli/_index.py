@@ -1,4 +1,4 @@
-"""``index`` and ``clean`` commands: build or drop index collections."""
+"""``index`` and ``clean`` commands: build or delete index data."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     import pathlib
 
 import typer
-from rich.table import Table
 
 import vaultspec_rag.cli as _cli
 
@@ -22,26 +21,131 @@ from ._render import (
     _display_service_error,
     _emit_json,
     _emit_json_error_and_exit,
+    _format_local_index_busy_message,
 )
 from ._service_status import _default_service_port
 
 
+def _index_route_label(via: str) -> str:
+    if via == "service":
+        return "running service"
+    if via == "in-process":
+        return "this command"
+    return via.replace("-", " ")
+
+
+def _index_source_label(source: str) -> str:
+    if source == "codebase":
+        return "Source code"
+    if source == "vault":
+        return "Vault"
+    if source == "not_reported":
+        return "Index source not reported"
+    return source.replace("_", " ").capitalize()
+
+
+def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
+    unit = singular if value == 1 else plural or f"{singular}s"
+    return f"{value} {unit}"
+
+
+def _format_index_duration(raw: object) -> str:
+    if isinstance(raw, int | float):
+        raw_milliseconds = float(raw)
+    elif isinstance(raw, str):
+        try:
+            raw_milliseconds = float(raw)
+        except ValueError:
+            return "not reported"
+    else:
+        return "not reported"
+    try:
+        milliseconds = max(0, int(raw_milliseconds))
+    except (OverflowError, ValueError):
+        return "not reported"
+    if milliseconds < 1000:
+        return _counted_unit(milliseconds, "millisecond")
+    seconds = milliseconds / 1000.0
+    if seconds < 10:
+        if seconds.is_integer():
+            return _counted_unit(int(seconds), "second")
+        return f"{seconds:.1f} seconds"
+    return _counted_unit(round(seconds), "second")
+
+
+def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
+    _cli.console.print(
+        f"Indexing summary: ran in {_index_route_label(via)}.",
+        markup=False,
+        highlight=False,
+    )
+    if not sources:
+        _cli.console.print("No sources indexed.")
+        return
+    for row in sources:
+        source = str(row.get("source") or "not_reported")
+        label = _index_source_label(source)
+        duration = _format_index_duration(row.get("duration_ms"))
+        duration_text = (
+            f"finished in {duration}"
+            if duration != "not reported"
+            else "duration not reported"
+        )
+        _cli.console.print(
+            f"{label}: added {row.get('added', 0)}; "
+            f"updated {row.get('updated', 0)}; "
+            f"removed {row.get('removed', 0)}; "
+            f"total {row.get('total', 0)}; "
+            f"{duration_text}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
+
 def _handle_dry_run(
-    index_type: str, json_mode: bool, target: pathlib.Path, exclude: list[str] | None
+    index_type: str,
+    json_mode: bool,
+    target: pathlib.Path,
+    exclude: list[str] | None,
+    dry_run_limit: int,
 ) -> None:
     if index_type not in ("code", "all"):
+        message = "Dry run is available for source-code indexing only."
+        remediation = ["vaultspec-rag index --type code --dry-run"]
         if json_mode:
             _emit_json_error_and_exit(
                 "index",
                 "dry_run_requires_code",
-                "--dry-run only applies to codebase indexing.",
+                message,
                 2,
+                remediation=remediation,
             )
-        _cli.console.print("[yellow]--dry-run only applies to codebase indexing.[/]")
+        _cli.console.print(message, markup=False, highlight=False)
+        _cli.console.print("Run:", markup=False, highlight=False)
+        _cli.console.print(f"  {remediation[0]}", markup=False, highlight=False)
         raise typer.Exit(code=2)
     import vaultspec_rag
 
     files = vaultspec_rag.scan_codebase_files(target, extra_excludes=exclude)
+    if dry_run_limit < 0:
+        message = "Dry-run file limit must be zero or greater."
+        if json_mode:
+            _emit_json_error_and_exit(
+                "index",
+                "invalid_dry_run_limit",
+                message,
+                2,
+                remediation=["Use --dry-run-limit 0 or a positive number."],
+            )
+        _cli.console.print(message, markup=False, highlight=False)
+        _cli.console.print("Run:", markup=False, highlight=False)
+        _cli.console.print(
+            "  vaultspec-rag index --type code --dry-run --dry-run-limit 50",
+            markup=False,
+            highlight=False,
+        )
+        raise typer.Exit(code=2)
     if json_mode:
         _emit_json(
             True,
@@ -53,9 +157,31 @@ def _handle_dry_run(
             },
         )
         return
-    _cli.console.print(f"[bold]{len(files)}[/] files would be indexed:")
-    for f in sorted(files):
-        _cli.console.print(f"  {f.relative_to(target)}")
+    sorted_files = sorted(files)
+    shown_files = sorted_files[:dry_run_limit]
+    total = len(sorted_files)
+    noun = "file" if total == 1 else "files"
+    _cli.console.print(
+        f"Dry run: {total} source-code {noun} would be indexed.",
+        markup=False,
+        highlight=False,
+    )
+    if shown_files:
+        _cli.console.print("Files shown:", markup=False, highlight=False)
+        for f in shown_files:
+            _cli.console.print(f"  - {f.relative_to(target)}")
+    elif total:
+        _cli.console.print("Files shown: none.", markup=False, highlight=False)
+    hidden = total - len(shown_files)
+    if hidden > 0:
+        hidden_noun = "file" if hidden == 1 else "files"
+        _cli.console.print(
+            f"{hidden} more {hidden_noun} not shown. Use --dry-run-limit {total} "
+            "or --json for the full list.",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
 
 def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
@@ -85,9 +211,9 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
                 2,
                 remediation=remediation,
             )
-        _cli.console.print(f"[red]{msg}[/]")
+        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
         for line in remediation:
-            _cli.console.print(f"  [cyan]{line}[/]")
+            _cli.console.print(f"  {line}", markup=False, highlight=False)
         raise typer.Exit(code=2)
 
 
@@ -102,7 +228,7 @@ def _try_service_delegation(
 ) -> bool:
     if exclude and not json_mode:
         _cli.console.print(
-            "[yellow]--exclude is ignored when delegating to the RAG service.[/]",
+            "--exclude is ignored when using the running service.",
         )
     do_vault = index_type in ("vault", "all")
     do_code = index_type in ("code", "all")
@@ -128,8 +254,10 @@ def _try_service_delegation(
         if isinstance(data, dict) and data.get("ok") is False:
             if not json_mode:
                 _cli.console.print(
-                    f"[red]Reindex {label} reported an error; "
-                    f"refusing to silently fall back.[/]",
+                    f"Reindex {label} reported an error; "
+                    "refusing to silently fall back.",
+                    markup=False,
+                    highlight=False,
                 )
             _display_service_error(data, json_mode=json_mode, command="index")
             raise typer.Exit(code=1)
@@ -165,13 +293,17 @@ def _print_service_async_results(
         return True
     if v_data:
         _cli.console.print(
-            f"Vault re-index job queued on service: [cyan]{v_data.get('job_id')}[/]"
+            f"Vault re-index job queued on service: {v_data.get('job_id')}",
+            markup=False,
+            highlight=False,
         )
     if c_data:
         _cli.console.print(
-            f"Codebase re-index job queued on service: [cyan]{c_data.get('job_id')}[/]"
+            f"Codebase re-index job queued on service: {c_data.get('job_id')}",
+            markup=False,
+            highlight=False,
         )
-    _cli.console.print("Check progress with: [bold]vaultspec-rag server jobs[/]")
+    _cli.console.print("Check progress with: vaultspec-rag server jobs")
     return True
 
 
@@ -189,7 +321,12 @@ def _print_service_results(
     def _row(label: str, data: dict[str, object]) -> dict[str, object]:
         def _i(key: str) -> int:
             raw = data.get(key, 0)
-            return int(raw) if isinstance(raw, int | float | str) else 0
+            if not isinstance(raw, int | float | str):
+                return 0
+            try:
+                return int(raw)
+            except (OverflowError, ValueError):
+                return 0
 
         return {
             "source": label,
@@ -197,7 +334,7 @@ def _print_service_results(
             "updated": _i("updated"),
             "removed": _i("removed"),
             "total": _i("total"),
-            "duration_ms": _i("duration_ms"),
+            "duration_ms": data.get("duration_ms"),
         }
 
     sources: list[dict[str, object]] = []
@@ -213,34 +350,15 @@ def _print_service_results(
         )
         return True
 
-    table = Table(title="Indexing Summary", show_header=True)
-    table.add_column("Source", style="bold")
-    table.add_column("Added", style="green", justify="right")
-    table.add_column("Updated", style="yellow", justify="right")
-    table.add_column("Removed", style="red", justify="right")
-    table.add_column("Total", style="cyan", justify="right")
-    table.add_column("Time", justify="right")
-    for row in sources:
-        src_value = row["source"]
-        label = src_value.capitalize() if isinstance(src_value, str) else ""
-        table.add_row(
-            label,
-            str(row["added"]),
-            str(row["updated"]),
-            str(row["removed"]),
-            str(row["total"]),
-            f"{row['duration_ms']}ms",
-        )
-    _cli.console.print(table)
+    _print_index_summary(sources, via="service")
     return True
 
 
 @app.command(
     "index",
     help=(
-        "Build or update the vault and/or codebase search index. "
-        "Delegates to a running service when one is detected; falls back to "
-        "in-process GPU indexing otherwise. "
+        "Build or update the project documentation and source-code search index. "
+        "Uses the running service when available; otherwise runs locally. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -250,7 +368,10 @@ def handle_index(
         Literal["vault", "code", "all"],
         typer.Option(
             "--type",
-            help="What to index: 'vault' (docs), 'code' (source), or 'all'.",
+            help=(
+                "What to index: 'vault' for documents, 'code' for source files, "
+                "or 'all'."
+            ),
             show_default=True,
         ),
     ] = "all",
@@ -262,23 +383,37 @@ def handle_index(
         bool,
         typer.Option(
             "--rebuild",
-            help="Drop the selected index collections before re-indexing.",
+            help="Delete the selected index data before rebuilding it.",
         ),
     ] = False,
     port: Annotated[
         int | None,
         typer.Option(
             "--port",
-            help="Port of running RAG service (fast path).",
+            help="Use the service running on this port.",
         ),
     ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
             "--dry-run",
-            help="List files that would be indexed without indexing.",
+            help=(
+                "List source-code files that would be indexed without indexing. "
+                "Use with --type code or the default --type all."
+            ),
         ),
     ] = False,
+    dry_run_limit: Annotated[
+        int,
+        typer.Option(
+            "--dry-run-limit",
+            help=(
+                "Maximum source-code file paths to show in human dry-run output. "
+                "JSON output still includes every path."
+            ),
+            show_default=True,
+        ),
+    ] = 50,
     exclude: Annotated[
         list[str] | None,
         typer.Option(
@@ -291,11 +426,8 @@ def handle_index(
         typer.Option(
             "--allow-fallback",
             help=(
-                "When --port is given but the service is unreachable, "
-                "silently fall back to in-process indexing. Defaults "
-                "off; the CLI hard-fails with remediation instead, to "
-                "avoid re-entering the Qdrant lock that the resident "
-                "service is meant to own."
+                "If the selected service is not reachable, build the index "
+                "locally instead of stopping with an error."
             ),
         ),
     ] = False,
@@ -303,20 +435,14 @@ def handle_index(
         bool,
         typer.Option(
             "--verbose",
-            help="Re-enable HuggingFace tqdm progress bars.",
+            help="Show model loading and indexing progress messages.",
         ),
     ] = False,
     json_mode: Annotated[
         bool,
         typer.Option(
             "--json",
-            help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Wraps per-source summaries in "
-                '{"ok": true, "command": "index", "data": '
-                '{"sources": [...]}}. Use this for agent / CI '
-                "consumption."
-            ),
+            help="Emit JSON for scripts instead of human text.",
         ),
     ] = False,
 ) -> None:
@@ -327,7 +453,7 @@ def handle_index(
     target = state.target
 
     if dry_run:
-        _handle_dry_run(index_type, json_mode, target, exclude)
+        _handle_dry_run(index_type, json_mode, target, exclude, dry_run_limit)
         return
 
     if rebuild:
@@ -391,16 +517,20 @@ def _try_in_process_indexing(
                 _emit_json_error_and_exit(
                     "index",
                     "rebuild_locked" if rebuild else "index_locked",
-                    (
-                        f"Cannot access the {index_type} collection - "
-                        f"another process holds the lock: {exc}"
-                    ),
+                    "Cannot update the index because the local index is busy.",
                     1,
+                    db_path=str(exc.db_path),
+                    index_type=index_type,
+                    remediation=[
+                        "vaultspec-rag server status",
+                        "Use --port with a running service for concurrent work.",
+                        "Retry after the current index operation finishes.",
+                    ],
                 )
             _cli.console.print(
-                f"[bold red]Error:[/] Cannot access the {index_type} "
-                f"collection - another process holds the lock.\n{exc}\n"
-                "Close any other processes using the index and retry.",
+                _format_local_index_busy_message("update the index"),
+                markup=False,
+                highlight=False,
             )
             raise typer.Exit(code=1) from None
         except (ImportError, RuntimeError) as e:
@@ -442,34 +572,14 @@ def _try_in_process_indexing(
         )
         return
 
-    # Summary table
-    table = Table(title="Indexing Summary", show_header=True)
-    table.add_column("Source", style="bold")
-    table.add_column("Added", style="green", justify="right")
-    table.add_column("Updated", style="yellow", justify="right")
-    table.add_column("Removed", style="red", justify="right")
-    table.add_column("Total", style="cyan", justify="right")
-    table.add_column("Time", justify="right")
-    for row in in_process_sources:
-        src_value = row["source"]
-        label = src_value.capitalize() if isinstance(src_value, str) else ""
-        table.add_row(
-            label,
-            str(row["added"]),
-            str(row["updated"]),
-            str(row["removed"]),
-            str(row["total"]),
-            f"{row['duration_ms']}ms",
-        )
-    _cli.console.print(table)
+    _print_index_summary(in_process_sources, via="in-process")
 
 
 @app.command(
     "clean",
     help=(
-        "Drop selected index collections without re-indexing. "
-        "Does not load models or touch the GPU — only clears Qdrant collections "
-        "and metadata sidecars. "
+        "Delete selected index data without rebuilding it. "
+        "Does not load models or use the GPU. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
 )
@@ -479,9 +589,8 @@ def handle_clean(
         Literal["vault", "code", "all"],
         typer.Argument(
             help=(
-                "What to wipe (REQUIRED): 'vault' (docs), 'code' "
-                "(source), or 'all'. No default - a destructive "
-                "'all' default would be a footgun."
+                "What to delete: 'vault' for documents, 'code' for source files, "
+                "or 'all'. Required so nothing is deleted by accident."
             ),
         ),
     ],
@@ -498,31 +607,34 @@ def handle_clean(
         typer.Option(
             "--json",
             help=(
-                "Emit one JSON envelope to stdout instead of a Rich "
-                "table. Requires --yes (no interactive confirm) so "
-                "the JSON stream stays uncorrupted."
+                "Emit JSON for scripts instead of human text. Requires --yes "
+                "so no prompt interrupts the JSON output."
             ),
         ),
     ] = False,
 ) -> None:
-    """Drop selected index collections without re-indexing."""
+    """Delete selected index data without rebuilding it."""
     state: CLIState = ctx.obj
     target = state.target
     if json_mode and not yes:
         _emit_json_error_and_exit(
             "clean",
             "json_requires_yes",
-            "--json requires --yes; the interactive confirm would "
-            "corrupt the JSON stream on stdin.",
+            "--json requires --yes so the command can write one JSON result "
+            "without an interactive confirmation prompt.",
             2,
         )
     if not yes:
-        confirmed = typer.confirm(
-            f"Delete {clean_type} RAG index data for {target}?",
-            default=False,
-        )
+        try:
+            confirmed = typer.confirm(
+                f"Delete {clean_type} search index data for {target}?",
+                default=False,
+            )
+        except typer.Abort:
+            _cli.console.print("Clean cancelled.")
+            raise typer.Exit(code=1) from None
         if not confirmed:
-            _cli.console.print("[yellow]Clean cancelled.[/]")
+            _cli.console.print("Clean cancelled.")
             raise typer.Exit(code=1)
 
     import vaultspec_rag
@@ -534,17 +646,24 @@ def handle_clean(
             _emit_json_error_and_exit(
                 "clean",
                 "clean_locked",
-                f"Cannot clean the index - another process holds the lock: {exc}",
+                "Cannot clean the index because the local index is busy.",
                 1,
+                db_path=str(exc.db_path),
+                clean_type=clean_type,
+                remediation=[
+                    "vaultspec-rag server status",
+                    "Stop the service if you need exclusive cleanup.",
+                    "Retry after the current index operation finishes.",
+                ],
             )
         _cli.console.print(
-            "[bold red]Error:[/] Cannot clean the index - "
-            "another process holds the lock.\n"
-            f"{exc}\nClose any other processes using the index and retry."
+            _format_local_index_busy_message("clean the index"),
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(code=1) from None
 
-    cleared = [s.capitalize() for s in cleared_raw]
+    cleared = [s.lower() for s in cleared_raw]
 
     if json_mode:
         _emit_json(
@@ -552,14 +671,12 @@ def handle_clean(
             "clean",
             data={
                 "clean_type": clean_type,
-                "cleared": [s.lower() for s in cleared],
+                "cleared": cleared,
             },
         )
         return
 
-    table = Table(title="Clean Summary", show_header=True)
-    table.add_column("Source", style="bold")
-    table.add_column("Status", style="green")
+    _cli.console.print("Clean summary")
     for source in cleared:
-        table.add_row(source, "empty")
-    _cli.console.print(table)
+        label = _index_source_label("codebase" if source == "code" else source)
+        _cli.console.print(f"{label} index: empty.", markup=False, highlight=False)

@@ -39,9 +39,9 @@ from ._app import (
     _global_target,
     app,
     main,
-    mcp_app,
     server_app,
     server_projects_app,
+    server_qdrant_app,
     server_watcher_app,
     version_callback,
 )
@@ -70,7 +70,6 @@ from ._http_search import (
 #     ``@*_app.command()`` decorators against the apps nested in step 2.
 from ._index import handle_clean, handle_index
 from ._install import handle_install, handle_uninstall
-from ._mcp_admin import mcp_start, mcp_status, mcp_stop
 from ._preprocess import (
     handle_preprocess_check,
     handle_preprocess_list,
@@ -89,7 +88,6 @@ from ._process import (
 )
 from ._quality import handle_quality
 from ._render import (
-    _add_backend_contract_rows,
     _display_port_unreachable_error,
     _display_search_results,
     _display_service_error,
@@ -102,7 +100,7 @@ from ._search import (
     _suppress_hf_progress,  # pyright: ignore[reportPrivateUsage]  # _search lacks __all__; re-exported intentionally
     handle_search,
 )
-from ._service_info import service_info
+from ._service_doctor import service_doctor
 from ._service_jobs import service_jobs
 from ._service_lifecycle import (
     service_start,
@@ -112,8 +110,13 @@ from ._service_lifecycle import (
 )
 from ._service_logs import service_logs
 from ._service_projects import (
-    service_projects_evict,
     service_projects_list,
+    service_projects_unload,
+)
+from ._service_qdrant import (
+    qdrant_clean,
+    qdrant_install,
+    qdrant_status,
 )
 from ._service_status import (
     _append_lifecycle_shutdown_log,
@@ -122,14 +125,15 @@ from ._service_status import (
     _read_service_status,
     _status_dir,
     _status_file,
+    _update_service_metadata,
     _update_service_token,
     _write_service_status,
 )
 from ._service_watcher import (
-    service_watcher_reconfigure,
     service_watcher_start,
     service_watcher_status,
     service_watcher_stop,
+    service_watcher_timing,
 )
 from ._status import handle_status
 from ._store import _open_vault_store
@@ -137,7 +141,6 @@ from ._test import handle_test
 
 __all__ = [
     "CLIState",
-    "_add_backend_contract_rows",
     "_append_lifecycle_shutdown_log",
     "_cpu_only_message",
     "_default_service_port",
@@ -171,6 +174,7 @@ __all__ = [
     "_try_http_admin",
     "_try_http_reindex",
     "_try_http_search",
+    "_update_service_metadata",
     "_update_service_token",
     "_write_service_status",
     "app",
@@ -189,26 +193,26 @@ __all__ = [
     "handle_uninstall",
     "logger",
     "main",
-    "mcp_app",
-    "mcp_start",
-    "mcp_status",
-    "mcp_stop",
+    "qdrant_clean",
+    "qdrant_install",
+    "qdrant_status",
     "server_app",
     "server_projects_app",
+    "server_qdrant_app",
     "server_watcher_app",
-    "service_info",
+    "service_doctor",
     "service_jobs",
     "service_logs",
-    "service_projects_evict",
     "service_projects_list",
+    "service_projects_unload",
     "service_start",
     "service_status",
     "service_stop",
     "service_warmup",
-    "service_watcher_reconfigure",
     "service_watcher_start",
     "service_watcher_status",
     "service_watcher_stop",
+    "service_watcher_timing",
     "sys",
     "version_callback",
 ]

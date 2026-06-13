@@ -227,9 +227,11 @@ class TestPydanticModels:
             language="python",
             line_start=1,
             line_end=10,
+            rerank_text="def main():\n    return 0",
         )
         assert item.language == "python"
         assert item.line_start == 1
+        assert item.model_dump()["rerank_text"] == "def main():\n    return 0"
 
     def test_search_response(self):
         resp = SearchResponse(
@@ -996,13 +998,13 @@ class TestMcpPathRewrite:
 class TestDaemonLifecycleHelpers:
     """_lifecycle_log + _heartbeat_tick_sync + cleanup helpers."""
 
-    def test_lifecycle_log_emits_warning_with_structured_format(
+    def test_lifecycle_log_emits_info_with_structured_format(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         from ..server import _lifecycle_log
 
-        with caplog.at_level("WARNING", logger="vaultspec_rag.server"):
+        with caplog.at_level("INFO", logger="vaultspec_rag.server"):
             _lifecycle_log("startup", pid=42, port=8766)
 
         records: list[logging.LogRecord] = [
@@ -1010,9 +1012,9 @@ class TestDaemonLifecycleHelpers:
         ]
         assert records, "lifecycle log did not surface on the expected logger"
         rec: logging.LogRecord = records[-1]
-        assert rec.levelname == "WARNING"
+        assert rec.levelname == "INFO"
         rendered: str = rec.getMessage()
-        assert "service.lifecycle" in rendered
+        assert rendered.startswith("service.lifecycle ")
         assert "event=startup" in rendered
         assert "pid=42" in rendered
         assert "port=8766" in rendered
@@ -1052,7 +1054,8 @@ class TestDaemonLifecycleHelpers:
         server._heartbeat_tick_sync()
 
         data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
-        assert data["pid"] == 1
+        assert data["pid"] == os.getpid()
+        assert data["parent_pid"] == os.getppid()
         assert data["port"] == 2
         assert data["started_at"] == "x"
         assert "last_heartbeat" in data
@@ -1150,7 +1153,7 @@ class TestDaemonLifecycleHelpers:
         # Reset the module-level guard so this test is isolated.
         monkeypatch.setattr(server, "_shutdown_recorded", False)
 
-        with caplog.at_level("WARNING", logger="vaultspec_rag.server"):
+        with caplog.at_level("INFO", logger="vaultspec_rag.server"):
             server._record_shutdown("test-first")
             assert not sf.exists()
             server._record_shutdown("test-second")

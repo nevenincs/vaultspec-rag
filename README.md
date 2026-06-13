@@ -4,7 +4,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/vaultspec-rag.svg)](https://pypi.org/project/vaultspec-rag/) [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-vaultspec-rag is the semantic search companion to [vaultspec-core](https://github.com/wgergely/vaultspec-core), and the RAG in the name stands for retrieval-augmented generation - the pattern of pulling relevant snippets out of your own files so an agent can answer with grounded context. It indexes the markdown documents in your vault and the source code that sits beside them, then lets you search them by meaning rather than by exact keyword match. A query for "how do we handle file locks during indexing" finds a decision record that discusses concurrent writes and per-root locks, even though it never uses the word "indexing."
+vaultspec-rag is the semantic search companion to [vaultspec-core](https://github.com/wgergely/vaultspec-core). The RAG in the name stands for retrieval-augmented generation. That's the pattern of pulling relevant snippets out of your own files so an agent can answer with grounded context. It indexes the markdown documents in your vault and the source code that sits beside them, then lets you search them by meaning rather than by exact keyword match. Search by meaning closes the vocabulary gap. A query for "how do we handle file locks during indexing" finds a decision record about concurrent writes and per-root locks, even though it never uses the word "indexing."
 
 ## Requirements
 
@@ -21,11 +21,14 @@ macOS, AMD GPUs, and Apple Silicon are not supported. For the reasoning behind t
 ```bash
 uv add vaultspec-rag
 uv run vaultspec-rag install
+uv sync
 uv run vaultspec-rag index
 uv run vaultspec-rag search "your question here"
 ```
 
-The `install` step prepares the GPU build inside your project, `index` reads your vault and code into a local search index, and `search` returns ranked results for the query you pass. The first run is slower than later runs because of one-time model downloads. For a guided walkthrough against a real query, follow the [getting started guide](docs/getting-started.md).
+`install` configures the GPU PyTorch build and provisions the search models and the managed Qdrant server. `uv sync` then fetches the GPU PyTorch build. The first run is slower because of one-time model downloads.
+
+For repeat use, start the server-backed service first - see the [getting started guide](docs/getting-started.md) for the full walkthrough.
 
 ## What's a vault?
 
@@ -40,25 +43,27 @@ Both packages live side by side in the same project. You can use vaultspec-core 
 ### Getting started
 
 - [Getting started](docs/getting-started.md) - install, index, and run your first query end to end.
-- [Installation](docs/installation.md) - GPU build details, supported platforms, and recovery steps.
+- [Installation](docs/installation.md) - the GPU build, dependency provisioning, and recovery steps.
 
 ### Daily use
 
-- [Search and index](docs/search-and-index.md) - run searches, refresh the index, and scope queries.
+- [Search and index](docs/search-and-index.md) - run searches and refresh the index.
 - [Service mode](docs/service-mode.md) - keep models warm in a background service for faster queries.
-- [MCP integration](docs/mcp.md) - expose search to Claude Code and other MCP clients.
-- [Automation](docs/automation.md) - reindex on file changes and wire searches into scripts.
-- [Preprocessing hooks](docs/preprocessing-hooks.md) - index PDFs, spreadsheets, and other formats by registering your own extractor.
+- [Backends](docs/backends.md) - the managed Qdrant server versus local-only mode.
+- [MCP integration](docs/mcp.md) - wire search into Claude Code and other MCP clients.
+- [Automation](docs/automation.md) - JSON output and scripting.
+- [Preprocessing hooks](docs/preprocessing-hooks.md) - index PDFs, spreadsheets, and other formats.
 
 ### Reference
 
-- [CLI reference](docs/cli.md) - every command, subcommand, and flag.
+- [CLI reference](docs/cli.md) - every command and flag.
 - [Configuration](docs/configuration.md) - settings, environment variables, and defaults.
-- [Glossary](docs/glossary.md) - terms used across the docs and the codebase.
+- [Glossary](docs/glossary.md) - terms used across the docs.
 
 ### Concepts
 
-- [Architecture](docs/architecture.md) - how the index is built, why the GPU is required, and how the pieces fit together.
+- [Architecture](docs/architecture.md) - how it works, why a GPU is required, and why the service is server-first.
+- [Indexing](docs/indexing.md) - indexing and retrieval internals.
 
 ## Support and help
 

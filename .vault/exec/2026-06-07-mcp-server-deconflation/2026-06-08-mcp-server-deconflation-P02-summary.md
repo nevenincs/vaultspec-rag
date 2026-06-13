@@ -3,6 +3,7 @@ tags:
   - "#exec"
   - "#mcp-server-deconflation"
 date: 2026-06-08
+modified: '2026-06-08'
 related:
   - "[[2026-06-07-mcp-server-deconflation-plan]]"
 ---

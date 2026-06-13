@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#cli-tree-overhaul'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S36]]'
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S37]]'

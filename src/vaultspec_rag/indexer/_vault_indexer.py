@@ -21,6 +21,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     scan_vault,
 )
 
+from ..logging_config import log_event
 from ._streaming import _stream_encode_and_upsert_vault
 from ._vault_prep import IndexResult, prepare_document
 
@@ -34,6 +35,17 @@ if TYPE_CHECKING:
     from ..store import VaultDocument, VaultStore
 
 logger = logging.getLogger(__name__)
+
+#: Version of the vault point layout. ``2`` stores one point per
+#: heading-aware chunk (``doc_id#c{ordinal}``); ``1`` (or an absent
+#: marker over a non-empty collection) stored one point per document.
+#: A mismatch triggers a one-time clean rebuild so old-layout points
+#: never coexist with chunked ones.
+_VAULT_POINT_SCHEMA = "2"
+
+#: Reserved key carrying the layout version inside the hash-metadata
+#: sidecar. Never collides with document ids (which are relative paths).
+_SCHEMA_KEY = "__vault_point_schema__"
 
 
 class VaultIndexer:
@@ -101,7 +113,46 @@ class VaultIndexer:
         rolling audit (F6.6).
         """
         with self._writer_lock:
-            return self._full_index_locked(clean=clean, reporter=reporter)
+            log_event(
+                logger,
+                "service.index",
+                "started",
+                source="vault",
+                mode="full",
+                clean=clean,
+                root=self.root_dir,
+            )
+            try:
+                result = self._full_index_locked(clean=clean, reporter=reporter)
+            except Exception as exc:
+                log_event(
+                    logger,
+                    "service.index",
+                    "failed",
+                    severity=logging.ERROR,
+                    exc_info=True,
+                    source="vault",
+                    mode="full",
+                    clean=clean,
+                    root=self.root_dir,
+                    error=exc,
+                )
+                raise
+            log_event(
+                logger,
+                "service.index",
+                "completed",
+                source="vault",
+                mode="full",
+                clean=clean,
+                root=self.root_dir,
+                total=result.total,
+                added=result.added,
+                updated=result.updated,
+                removed=result.removed,
+                duration_ms=result.duration_ms,
+            )
+            return result
 
     def _full_index_locked(
         self,
@@ -193,30 +244,10 @@ class VaultIndexer:
         # drop and the streaming upsert - but only on the explicit
         # opt-in path. ``clean=False`` (the default + watcher path)
         # remains failure-safe.
-        reporter.phase_start("prepare collection", 1)
-        try:
-            if clean:
-                self.store.drop_table()
-            self.store.ensure_table()
-            try:
-                existing_ids_before: set[str] = set(self.store.get_all_ids())
-            except (OSError, RuntimeError):
-                # OSError covers I/O failures; RuntimeError covers
-                # Qdrant client errors and lock contention
-                # (VaultStoreLockedError). Either way the safest
-                # response is to skip the stale-document purge so
-                # the rebuild can still complete (#68 audit F9.4).
-                logger.warning(
-                    "Could not snapshot existing vault IDs before "
-                    "rebuild; stale-document purge will be skipped",
-                    exc_info=True,
-                )
-                existing_ids_before = set()
-            reporter.advance(1)
-        finally:
-            reporter.phase_end()
+        existing_counts = self._prepare_collection(clean=clean, reporter=reporter)
+        existing_ids_before: set[str] = set(existing_counts)
 
-        _stream_encode_and_upsert_vault(
+        new_counts = _stream_encode_and_upsert_vault(
             docs=docs,
             slice_size=slice_size,
             model=self.model,
@@ -224,6 +255,7 @@ class VaultIndexer:
             gpu_lock=self._gpu_lock,
             reporter=reporter,
         )
+        self._purge_shrunk_chunk_tails(existing_counts, new_counts)
 
         # Streaming completed successfully - now it is safe to delete
         # the rows that were in the collection before but are absent
@@ -296,10 +328,50 @@ class VaultIndexer:
                 are unchanged.
         """
         with self._writer_lock:
-            return self._incremental_index_locked(
-                reporter=reporter,
-                changed_paths=changed_paths,
+            mode = "scoped_incremental" if changed_paths is not None else "incremental"
+            log_event(
+                logger,
+                "service.index",
+                "started",
+                source="vault",
+                mode=mode,
+                clean=False,
+                root=self.root_dir,
             )
+            try:
+                result = self._incremental_index_locked(
+                    reporter=reporter,
+                    changed_paths=changed_paths,
+                )
+            except Exception as exc:
+                log_event(
+                    logger,
+                    "service.index",
+                    "failed",
+                    severity=logging.ERROR,
+                    exc_info=True,
+                    source="vault",
+                    mode=mode,
+                    clean=False,
+                    root=self.root_dir,
+                    error=exc,
+                )
+                raise
+            log_event(
+                logger,
+                "service.index",
+                "completed",
+                source="vault",
+                mode=mode,
+                clean=False,
+                root=self.root_dir,
+                total=result.total,
+                added=result.added,
+                updated=result.updated,
+                removed=result.removed,
+                duration_ms=result.duration_ms,
+            )
+            return result
 
     def _incremental_index_locked(
         self,
@@ -325,6 +397,13 @@ class VaultIndexer:
         Raises:
             OSError: If vault files cannot be read or hashed.
         """
+        if self._needs_layout_rebuild():
+            logger.info(
+                "Vault point layout changed; running a one-time clean "
+                "rebuild of the vault collection",
+            )
+            return self._full_index_locked(clean=True, reporter=reporter)
+
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
@@ -343,7 +422,8 @@ class VaultIndexer:
         current_docs: dict[str, pathlib.Path] = self._scan_vault_for_docs(docs_dir)
         reporter.phase_end()
 
-        stored_ids = self.store.get_all_ids()
+        stored_counts = self.store.get_chunk_counts()
+        stored_ids = set(stored_counts)
         current_ids = set(current_docs.keys())
         new_ids = current_ids - stored_ids
         deleted_ids = stored_ids - current_ids
@@ -364,7 +444,7 @@ class VaultIndexer:
         docs_to_index = self._parse_documents(to_index_ids, current_docs, reporter)
 
         if docs_to_index:
-            _stream_encode_and_upsert_vault(
+            new_counts = _stream_encode_and_upsert_vault(
                 docs=docs_to_index,
                 slice_size=slice_size,
                 model=self.model,
@@ -372,6 +452,7 @@ class VaultIndexer:
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
             )
+            self._purge_shrunk_chunk_tails(stored_counts, new_counts)
         else:
             reporter.phase_start("embed + upsert documents", 0)
             reporter.phase_end()
@@ -532,7 +613,18 @@ class VaultIndexer:
         docs_to_index = self._parse_documents(to_index_ids, to_hash, reporter)
 
         if docs_to_index:
-            _stream_encode_and_upsert_vault(
+            try:
+                existing_counts = self.store.get_chunk_counts(
+                    doc_ids=to_index_ids,
+                )
+            except (OSError, RuntimeError):
+                logger.warning(
+                    "Could not snapshot chunk counts for the scoped "
+                    "reindex; shrunk-tail purge will be skipped",
+                    exc_info=True,
+                )
+                existing_counts = {}
+            new_counts = _stream_encode_and_upsert_vault(
                 docs=docs_to_index,
                 slice_size=slice_size,
                 model=self.model,
@@ -540,6 +632,7 @@ class VaultIndexer:
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
             )
+            self._purge_shrunk_chunk_tails(existing_counts, new_counts)
         else:
             reporter.phase_start("embed + upsert documents", 0)
             reporter.phase_end()
@@ -620,11 +713,101 @@ class VaultIndexer:
                 ).hexdigest()
         self._write_meta(meta)
 
+    def _prepare_collection(
+        self,
+        *,
+        clean: bool,
+        reporter: ProgressReporter,
+    ) -> dict[str, int]:
+        """Drop/ensure the collection and snapshot stored chunk counts.
+
+        The snapshot drives both the stale-document purge and the
+        shrunk-tail purge after streaming. A failed snapshot degrades
+        to skipping those purges rather than failing the rebuild.
+        """
+        reporter.phase_start("prepare collection", 1)
+        try:
+            if clean:
+                self.store.drop_table()
+                self.store.ensure_table()
+                # The collection was just dropped: the snapshot is empty
+                # by construction, and scanning would only burn CPU.
+                reporter.advance(1)
+                return {}
+            self.store.ensure_table()
+            try:
+                existing_counts: dict[str, int] = self.store.get_chunk_counts()
+            except (OSError, RuntimeError):
+                # OSError covers I/O failures; RuntimeError covers
+                # Qdrant client errors and lock contention
+                # (VaultStoreLockedError). Either way the safest
+                # response is to skip the stale-document purge so
+                # the rebuild can still complete (#68 audit F9.4).
+                logger.warning(
+                    "Could not snapshot existing vault IDs before "
+                    "rebuild; stale-document purge will be skipped",
+                    exc_info=True,
+                )
+                existing_counts = {}
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
+        return existing_counts
+
+    def _purge_shrunk_chunk_tails(
+        self,
+        existing_counts: dict[str, int],
+        new_counts: dict[str, int],
+    ) -> None:
+        """Delete orphaned tail chunks of documents that shrank.
+
+        Upserts overwrite ordinals below the new chunk count; when a
+        document now produces fewer chunks than the store holds, the
+        ordinals at or beyond the new count are stale and must go.
+        """
+        for doc_id, new_count in new_counts.items():
+            if existing_counts.get(doc_id, 0) > new_count:
+                try:
+                    self.store.delete_document_chunk_tail(doc_id, new_count)
+                except (OSError, RuntimeError):
+                    logger.warning(
+                        "Could not purge stale tail chunks of %s; the "
+                        "document's fresh chunks are intact but ordinals "
+                        ">= %d are stale until the next successful run",
+                        doc_id,
+                        new_count,
+                        exc_info=True,
+                    )
+
+    def _needs_layout_rebuild(self) -> bool:
+        """Return True when the stored point layout predates chunking.
+
+        Detection is two-pronged: a metadata sidecar whose layout marker
+        differs from the current version, or a non-empty collection with
+        no sidecar at all (an install whose metadata was deleted). Either
+        way the stored points may use the one-point-per-document layout
+        and must be rebuilt rather than incrementally patched.
+        """
+        raw = self._read_meta_raw()
+        if raw:
+            return raw.get(_SCHEMA_KEY) != _VAULT_POINT_SCHEMA
+        try:
+            return self.store.count() > 0
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not probe the vault collection for a layout "
+                "rebuild decision; assuming no rebuild is needed",
+                exc_info=True,
+            )
+            return False
+
     def _write_meta(self, meta: dict[str, str]) -> None:
         """Write content-hash metadata to the sidecar JSON file.
 
         Uses an atomic write (write-to-temp + os.replace) so a crash mid-write
-        never leaves the metadata file in a corrupt state.
+        never leaves the metadata file in a corrupt state. The current
+        point-layout version is stamped into the file under a reserved
+        key so later runs can detect layout changes.
 
         Args:
             meta: Mapping of document stem to blake2b hex digest.
@@ -635,16 +818,12 @@ class VaultIndexer:
         """
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        stamped = {**meta, _SCHEMA_KEY: _VAULT_POINT_SCHEMA}
+        tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
-    def _load_meta(self) -> dict[str, str]:
-        """Load index metadata from the sidecar JSON file.
-
-        Returns:
-            Mapping of document stem to blake2b hex digest, or an empty
-            dict if the file does not exist or cannot be parsed.
-        """
+    def _read_meta_raw(self) -> dict[str, str]:
+        """Load the sidecar JSON verbatim, reserved keys included."""
         if not self._meta_path.exists():
             return {}
         try:
@@ -657,3 +836,19 @@ class VaultIndexer:
                 exc_info=True,
             )
             return {}
+
+    def _load_meta(self) -> dict[str, str]:
+        """Load index metadata from the sidecar JSON file.
+
+        Reserved dunder keys (the layout marker) are stripped so they
+        can never participate in document-id set arithmetic.
+
+        Returns:
+            Mapping of document stem to blake2b hex digest, or an empty
+            dict if the file does not exist or cannot be parsed.
+        """
+        return {
+            key: value
+            for key, value in self._read_meta_raw().items()
+            if not key.startswith("__")
+        }

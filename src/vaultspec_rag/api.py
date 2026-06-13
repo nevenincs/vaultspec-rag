@@ -9,6 +9,7 @@ direct API consumers as well as MCP tool handlers.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .graph_cache import GraphCache
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "GraphCache",
     "clean",
+    "get_readiness",
     "get_related",
     "get_service_state",
     "get_status",
@@ -37,7 +39,9 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase_files",
     "search_codebase",
+    "search_codebase_timed",
     "search_vault",
+    "search_vault_timed",
 ]
 
 
@@ -165,6 +169,11 @@ def search_vault(
     )
     root = _resolve(root_dir)
     registry = get_registry()
+    # An empty or unbuilt vault index needs no query encoding: short-circuit
+    # to an empty result without loading the GPU model (so an empty search is
+    # cheap and works on a CPU-only host).
+    if registry.vault_doc_count(root) == 0:
+        return []
     registry.load_model()
     with registry.lease(root) as slot:
         return slot.searcher.search_vault(
@@ -177,6 +186,54 @@ def search_vault(
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
+
+
+def search_vault_timed(
+    root_dir: pathlib.Path,
+    query: str,
+    *,
+    top_k: int = 5,
+    doc_type: str | None = None,
+    feature: str | None = None,
+    date: str | None = None,
+    tag: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Search the vault and return phase timings for service diagnostics."""
+    from .search import validate_search_filters
+
+    validate_search_filters(
+        "vault",
+        doc_type=doc_type,
+        feature=feature,
+        date=date,
+        tag=tag,
+    )
+    root = _resolve(root_dir)
+    registry = get_registry()
+    # Empty/unbuilt index: return an empty result without loading the model.
+    if registry.vault_doc_count(root) == 0:
+        return [], {"model_load_seconds": 0.0, "project_lease_seconds": 0.0}
+    phase_started = time.perf_counter()
+    registry.load_model()
+    model_load_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
+    with registry.lease(root) as slot:
+        project_lease_seconds = time.perf_counter() - phase_started
+        results, timings = slot.searcher.search_vault_timed(
+            query,
+            top_k=top_k,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+    timings["model_load_seconds"] = model_load_seconds
+    timings["project_lease_seconds"] = project_lease_seconds
+    return results, timings
 
 
 def search_codebase(
@@ -241,6 +298,9 @@ def search_codebase(
     )
     root = _resolve(root_dir)
     registry = get_registry()
+    # Empty/unbuilt code index: return an empty result without loading the model.
+    if registry.code_chunk_count(root) == 0:
+        return []
     registry.load_model()
     with registry.lease(root) as slot:
         return slot.searcher.search_codebase(
@@ -258,6 +318,69 @@ def search_codebase(
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
+
+
+def search_codebase_timed(
+    root_dir: pathlib.Path,
+    query: str,
+    *,
+    top_k: int = 5,
+    language: str | None = None,
+    path: str | None = None,
+    node_type: str | None = None,
+    function_name: str | None = None,
+    class_name: str | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+    dedup_locales: bool = False,
+    prefer: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Search codebase and return phase timings for service diagnostics."""
+    from .search import validate_search_filters
+
+    validate_search_filters(
+        "code",
+        language=language,
+        path=path,
+        node_type=node_type,
+        function_name=function_name,
+        class_name=class_name,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        dedup_locales=dedup_locales,
+        prefer=prefer,
+    )
+    root = _resolve(root_dir)
+    registry = get_registry()
+    # Empty/unbuilt code index: return an empty result without loading the model.
+    if registry.code_chunk_count(root) == 0:
+        return [], {"model_load_seconds": 0.0, "project_lease_seconds": 0.0}
+    phase_started = time.perf_counter()
+    registry.load_model()
+    model_load_seconds = time.perf_counter() - phase_started
+    phase_started = time.perf_counter()
+    with registry.lease(root) as slot:
+        project_lease_seconds = time.perf_counter() - phase_started
+        results, timings = slot.searcher.search_codebase_timed(
+            query,
+            top_k=top_k,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+    timings["model_load_seconds"] = model_load_seconds
+    timings["project_lease_seconds"] = project_lease_seconds
+    return results, timings
 
 
 def list_documents(
@@ -617,6 +740,32 @@ def run_quality_probe(
         }
 
 
+def get_readiness() -> dict[str, Any]:
+    """Return a bounded, read-only dependency-readiness snapshot.
+
+    Reports, per external dependency, whether it is provisioned and
+    usable - torch CUDA availability, model presence in the Hugging
+    Face cache, and the qdrant binary resolution source plus supervised
+    server liveness. It is the read-only mirror of the provisioning
+    front door: it loads no model, touches no GPU, downloads nothing,
+    and mutates nothing, so it is safe to call before the runtime is up.
+
+    Readiness is a process-wide, project-independent concern (the three
+    dependencies live outside any one workspace), so this facade takes
+    no ``root_dir`` and acquires no project lease.
+
+    Returns:
+        The JSON-serialisable :meth:`ReadinessReport.to_dict` view: a
+        top-level ``ready`` boolean, ``server_mode``, and a
+        ``dependencies`` list with one ``{name, status, detail, info}``
+        node per dependency. Designed to serve both a human render and
+        a JSON envelope.
+    """
+    from ._readiness import compute_readiness
+
+    return compute_readiness().to_dict()
+
+
 def get_service_state(
     root_dir: pathlib.Path,
     *,
@@ -693,8 +842,11 @@ def get_service_state(
         "running": str(root) in watching,
     }
 
+    from .qdrant_runtime import runtime_state
+
     return {
         "index": index_data,
         "projects": projects_data,
         "watcher": watcher_data,
+        "qdrant": runtime_state().to_dict(),
     }

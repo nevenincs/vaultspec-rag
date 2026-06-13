@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#service-lifecycle'
 date: '2026-05-30'
+modified: '2026-05-30'
 related:
   - '[[2026-05-30-service-lifecycle-research]]'
 ---

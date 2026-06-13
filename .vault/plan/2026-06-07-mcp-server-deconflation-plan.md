@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#mcp-server-deconflation'
 date: '2026-06-07'
+modified: '2026-06-07'
 tier: L2
 related:
   - '[[2026-06-07-mcp-server-deconflation-adr]]'

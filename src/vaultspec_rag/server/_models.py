@@ -72,6 +72,7 @@ class SearchResultItem(BaseModel):
     preprocessor_id: str | None = None
     anchor: str | None = None
     locator: str | None = None
+    rerank_text: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -169,8 +170,15 @@ class HealthResponse(BaseModel):
     Attributes:
         status: Service state - ``"ready"``, ``"degraded"``,
             or ``"error"``.
+        pid: OS process id serving requests.
+        parent_pid: OS parent process id, when available.
+        executable: Python executable reported by the serving process.
+        prefix: Python environment prefix.
+        base_prefix: Base interpreter prefix.
+        virtual_env: Active virtualenv path from ``VIRTUAL_ENV``.
         cuda: Whether a CUDA GPU is available.
         models_loaded: Whether GPU models have been loaded.
+        reranker_loaded: Whether the shared reranker has been loaded.
         project_count: Number of connected projects.
         uptime_s: Seconds since service startup.
         backend_capabilities: Search concurrency and local storage
@@ -182,8 +190,18 @@ class HealthResponse(BaseModel):
     """
 
     status: str = Field(description="Service state")
+    pid: int | None = Field(default=None, description="Serving process id")
+    parent_pid: int | None = Field(default=None, description="Parent process id")
+    executable: str | None = Field(default=None, description="Serving Python path")
+    prefix: str | None = Field(default=None, description="Python environment prefix")
+    base_prefix: str | None = Field(default=None, description="Base Python prefix")
+    virtual_env: str | None = Field(default=None, description="Virtualenv path")
     cuda: bool = Field(description="CUDA GPU available")
     models_loaded: bool = Field(description="GPU models loaded")
+    reranker_loaded: bool = Field(
+        default=False,
+        description="Shared reranker loaded",
+    )
     project_count: int = Field(
         default=0,
         description="Number of connected projects",

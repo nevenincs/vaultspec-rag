@@ -1,41 +1,57 @@
 # Architecture and concepts
 
-This page answers four questions: what RAG means and what this tool does, how indexing and searching actually work, why you would reach for semantic search instead of grep, and why a GPU is required. Read top to bottom for the full picture, or jump to the heading that matches your question.
+This page explains what vaultspec-rag is and how it works, so you can decide whether it fits your project before you install it. It answers a handful of questions. Jump to the heading that matches yours:
 
-## What RAG means and what this tool does
+- What does retrieval-augmented generation mean, and what does this tool actually do?
+- How do indexing and searching work at a high level?
+- Why does semantic search beat keyword search for some queries?
+- Why is a GPU required?
+- Why does a database server run by default?
 
-RAG stands for retrieval-augmented generation. It is an approach where an AI assistant looks things up in your files before answering, instead of relying only on what it was trained on. The "retrieval" half finds the relevant passages; the "generation" half is the assistant that reads them and writes a reply.
+For real depth on the models and data structures, the [indexing internals](indexing.md) page goes deeper. This page stays conceptual.
 
-vaultspec-rag is the retrieval half. It indexes your vault and your source code, accepts a query, and returns a ranked list of file locations with snippets. A separate program does the generation half by reading those locations and turning them into prose. That program is typically a large language model running inside a client that speaks the Model Context Protocol, a JSON-RPC interface that AI clients use to call external tools. See [mcp.md](mcp.md) for how to wire vaultspec-rag into Claude Desktop, Claude Code, and similar clients.
+## What RAG means and what this tool is
 
-This is why the `search` command returns a table of file paths and snippets rather than a written answer. Do not expect a chatbot; expect a very good librarian. For commands and usage, see [search-and-index.md](search-and-index.md).
+Retrieval-augmented generation (RAG) is a two-part pattern. The retrieval half finds the most relevant material for a question. The generation half - an AI assistant, usually a large language model - reads that material and writes an answer grounded in it.
+
+vaultspec-rag is only the retrieval half. It's the semantic-search companion to vaultspec-core, which manages a `.vault/` directory of markdown documents. vaultspec-rag indexes that vault and your project's source code, so you can search both by meaning.
+
+A search returns a ranked list of file locations with snippets, not prose. Think of it as a good librarian, not a chatbot: it points you to the right shelf, it doesn't read the book to you. The generation half is a separate AI assistant that reads those locations, typically through a client that speaks the Model Context Protocol (MCP). For how that connection works, see the [MCP integration guide](mcp.md).
 
 ## How indexing and searching work
 
-The mental model worth holding in your head is a card catalogue. Indexing fills the catalogue once. Searching looks things up in it. Everything else is detail.
+The mental model is a card catalogue. Before you can look anything up, the tool reads through your vault and source code and writes a card for each piece.
 
-Indexing reads each markdown file in your vault and each source file in your project, splits them into chunks (paragraphs for prose, functions and classes for code), and stores a numeric representation of each chunk in a local vector database. The numeric representation captures meaning rather than exact spelling, which is what makes the next step possible.
+Indexing splits every document and source file into **chunks** - small, self-contained passages. For each chunk, the tool computes a meaning-capturing numeric form and stores it in a local search database. Searching computes the same numeric form for your query, then asks the database for the chunks that sit closest to it. That closeness becomes the relevance score.
 
-Searching computes the same kind of numeric representation for your query, then asks the database for the closest stored chunks. Closeness is what produces the score column you see in the results. Closer chunks rank higher; less close chunks rank lower or fall off the list.
+Three models run on the GPU to make this work. Two capture meaning from different angles; combining them improves precision. The third re-orders the top candidates so the best matches rise to the top. The [indexing internals](indexing.md) page names the specific models and explains the data flow. Because loading these models takes time, a [background service](service-mode.md) keeps them warm between searches.
 
-Three models run on the GPU to make this work. Two of them compute the numeric representations from different angles, and combining their views improves precision. A third re-ranks the top candidates after the initial lookup, which cleans up the ordering when the first two disagree. The names of those models are an implementation detail and do not affect how you use the tool. For the commands that drive indexing and searching, see [search-and-index.md](search-and-index.md); for the daemon that keeps the models warm between calls, see [service-mode.md](service-mode.md).
+## Why semantic search instead of keyword search
 
-## Why semantic search instead of grep
+Keyword search matches the exact string you type. That fails on the **vocabulary-mismatch** problem: a question about "rate limiting" won't find a file titled "request throttling," even though they're the same idea. Semantic search closes that gap by matching meaning rather than letters.
 
-Grep is not going anywhere. Ripgrep and its cousins are excellent at what they do, and if you know the exact string you are looking for, keyword search is faster, more precise, and more exhaustive than anything vaultspec-rag will give you. This page is not an argument against grep.
+The trade-offs are honest ones. Indexing has an upfront cost. Results are ranked rather than exhaustive, so a match always comes back even when nothing is relevant. And an exact string you know is present can be ranked below a fuzzier conceptual hit.
 
-The problem semantic search solves is the one keyword search cannot. A question about "rate limiting" will never surface a file titled "request throttling". A question about "feature flag" will never reach an ADR that talks about "rollout gates". The vocabulary mismatch between the question and the file is invisible to grep, because grep only sees characters. Semantic search sees meaning, and so it finds the file anyway.
-
-The trade-offs are real. Semantic search has an upfront cost (indexing time, GPU memory, model downloads on first use), it can miss exact-string matches that grep would find without thinking, and its results are ranked rather than exhaustive. The honest recommendation is to use both. Reach for grep when you know the string. Reach for vaultspec-rag when you know the concept but not the words the author used.
+So this isn't an argument against grep. Use both: keyword search such as grep or ripgrep when you know the exact string, and vaultspec-rag when you know the concept but not the words.
 
 ## Why a GPU is required
 
-The GPU does two jobs. It turns text into numeric representations during both indexing and searching, and it runs the re-ranker that orders the final results. These are matrix-heavy workloads that GPUs are built for and CPUs are not.
+Turning text into its numeric form and re-ordering results are matrix-heavy workloads. GPUs are built for that kind of math; general-purpose CPUs are not, and they run it slowly enough to be impractical.
 
-The hardware floor is about 3 GB of GPU memory on an NVIDIA card with CUDA support. No AMD, no Apple Silicon. The project ships and tests against the CUDA build of PyTorch only. Supporting other backends would mean a second toolchain, a second test matrix, and a second class of bugs to triage, and the maintainers have chosen to keep the surface area small rather than spread it thin.
+By design, the tool has no CPU fallback. Rather than start and crawl, it refuses to run when no GPU is present and tells you why. You're never left wondering whether it's broken or slow. The hardware floor is modest: an NVIDIA card with CUDA support and roughly 3 GB of free GPU memory. For specifics, see the [installation guide](installation.md) and the [configuration reference](configuration.md).
 
-There is no CPU fallback. A CPU path would technically run, but it would be far slower than the GPU path; slow enough that the tool would not feel responsive in interactive use, though the maintainers have not formally benchmarked CPU latency. Rather than ship a fallback that lets users discover its unsuitability for themselves, vaultspec-rag refuses to start with a clear error when no GPU is available. For install and verification steps, see [installation.md](installation.md); for batch-size knobs on smaller cards, see [configuration.md](configuration.md).
+## Why a database server runs by default
 
-## Need help?
+The local search database can run two ways. The default is server-first: vaultspec-rag runs a managed, supervised local search-database server.
 
-If something on this page raises more questions than it answers, the [Support](../README.md#support-and-help) section of the repo README is the right place to start.
+The older mode embedded the database as files inside the tool's own process, which serialized work through a single process and became a bottleneck under concurrent load. The supervised server removes that limit and is measurably faster under load. "Managed and supervised" means the tool downloads a verified, pinned binary, then runs and monitors it for you - you don't install or maintain a separate service.
+
+A single-flag **local-only** mode stays available as the minimal alternative, suited to constrained environments such as CI runs or air-gapped machines, where you don't want to run a server. For how to choose between the two and operate each, see the [storage backends](backends.md) page.
+
+## Where to go next
+
+- [Getting started](getting-started.md) - a hands-on tutorial that takes you from install to first search.
+- [Installation guide](installation.md) - prerequisites, the hardware floor, and setup.
+- [Storage backends](backends.md) - choosing and operating the server or local-only mode.
+- [Indexing internals](indexing.md) - the models and data structures behind the concepts on this page.
+- Need help? See the [Support section of the README](../README.md#support-and-help) for the issue tracker.

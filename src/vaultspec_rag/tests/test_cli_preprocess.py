@@ -77,6 +77,35 @@ def _json(output: str) -> dict[str, Any]:
     raise AssertionError(msg)
 
 
+def _human_fields(output: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        label, sep, value = line.partition(": ")
+        assert sep, f"expected labeled CLI line, got {line!r}"
+        fields[label] = value
+    return fields
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["preprocess", "list", "--help"],
+        ["preprocess", "check", "--help"],
+        ["preprocess", "run-one", "--help"],
+    ],
+)
+def test_preprocess_json_help_uses_script_language(argv: list[str]) -> None:
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0, result.output
+    assert "Emit JSON for scripts" in result.output
+    assert "JSON envelope" not in result.output
+    assert "non-zero" not in result.output.lower()
+    if argv[:2] == ["preprocess", "check"]:
+        assert "report configuration problems" in result.output
+
+
 def test_list_empty(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list", "--json"])
@@ -95,6 +124,21 @@ def test_list_shows_rule(tmp_path: Path) -> None:
     assert rules[0]["on_error"] == "skip"
 
 
+def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    _config_with_rule(root)
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "list"])
+    assert result.exit_code == 0
+    assert "Preprocess rules: 1" in result.output
+    assert "Files: *.pdf" in result.output
+    assert "Failure handling: skip file on failure" in result.output
+    assert "Timeout: no timeout" in result.output
+    assert "Command:" in result.output
+    assert "pattern=" not in result.output
+    assert "on_error" not in result.output
+    assert "timeout_s" not in result.output
+
+
 def test_check_valid(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     _config_with_rule(root)
@@ -105,6 +149,28 @@ def test_check_valid(tmp_path: Path) -> None:
     data = _json(result.output)["data"]
     assert data["valid"] is True
     assert data["rule_count"] == 1
+
+
+def test_check_valid_human_output_is_user_facing(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    _config_with_rule(root)
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "check"])
+    assert result.exit_code == 0
+    assert "Preprocess config is valid: 1 rule." in result.output
+    assert "OK -" not in result.output
+    assert "rule(s)" not in result.output
+
+
+def test_check_valid_zero_rules_uses_plain_absence_language(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "check"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Preprocess config is valid. No preprocess rules configured." in result.output
+    )
+    assert "0 rules" not in result.output
+    assert "rule(s)" not in result.output
 
 
 def test_check_invalid_exits_nonzero(tmp_path: Path) -> None:
@@ -153,3 +219,20 @@ def test_run_one_matches_and_runs(tmp_path: Path) -> None:
     assert data["status"] == "ok"
     assert data["unit_count"] == 1
     assert data["output"]["preprocessor_id"] == "fake"
+
+
+def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    _config_with_rule(root)
+    (root / "report.pdf").write_bytes(b"\x00\x01binary")
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
+    )
+    assert result.exit_code == 0
+    fields = _human_fields(result.output)
+    assert fields == {
+        "Matched rule": "*.pdf",
+        "Outcome": "preprocessed",
+        "Preprocessor": "fake 1.0",
+        "Output": "1 extracted text section",
+    }

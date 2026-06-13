@@ -53,45 +53,56 @@ def _stream_encode_and_upsert_vault(
     store: VaultStore,
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
-) -> None:
+) -> dict[str, int]:
     """Encode dense + sparse vectors and upsert per-slice.
 
     Streaming the pipeline slice-by-slice keeps peak memory bounded to
     one batch's worth of embedding tensors and attention activations.
     The caching allocator is flushed at each slice boundary.
 
-    Docs are processed in length-sorted order (longest first) so each
-    slice contains length-uniform documents. Combined with
+    Chunks are processed in length-sorted order (longest first) so each
+    slice contains length-uniform texts. Combined with
     SentenceTransformer's per-call length sort and the smaller
     ``embedding_encode_batch_size`` sub-batching, this eliminates the
     padding-waste pathology described in #68 where a single 8000-char
     research doc would force a 64-doc slice's attention matrix to be
     padded for everyone. The Qdrant upsert is order-independent
-    (idempotent by doc_id) so the input order is purely a perf
+    (idempotent by chunk point key) so the input order is purely a perf
     optimisation. Wall-clock work, #68.
+
+    Returns:
+        Mapping of document id to the number of chunks written for it,
+        so callers can purge stale tail chunks of documents that
+        shrank since the previous run.
     """
     from ..config import get_config
     from ..memory_probe import MemoryProbe
+    from ._vault_prep import split_document
 
     cfg = get_config()
     sparse_enabled = cfg.sparse_enabled
+    chunk_chars = int(cfg.vault_chunk_chars)
 
-    # Sort docs by combined title+content length, longest first.
-    # SentenceTransformer.encode internally sorts again per call, but
-    # our slice-level sort makes each slice's longest document close
-    # in length to its shortest, so the slice's worst-case padding
-    # cost is bounded.
-    sorted_docs = sorted(
-        docs,
-        key=lambda d: -(len(d.title) + len(d.content)),
+    # Expand documents into heading-aware chunks (one point each), then
+    # sort by embed-text length, longest first. SentenceTransformer
+    # sorts again per call, but the slice-level sort makes each slice's
+    # longest text close in length to its shortest, bounding the
+    # slice's worst-case padding cost.
+    chunks = [c for d in docs for c in split_document(d, chunk_chars)]
+    chunk_counts = {c.doc_id: c.chunk_count for c in chunks}
+    sorted_chunks = sorted(
+        chunks,
+        key=lambda c: -(len(c.title) + len(c.text)),
     )
 
     with MemoryProbe(name="vault-full-index") as probe:
-        reporter.phase_start("embed + upsert documents", len(sorted_docs))
+        reporter.phase_start("embed + upsert documents", len(sorted_chunks))
         try:
-            for i in range(0, len(sorted_docs), slice_size):
-                slice_docs = sorted_docs[i : i + slice_size]
-                slice_texts = [f"{d.title}\n\n{d.content}" for d in slice_docs]
+            for i in range(0, len(sorted_chunks), slice_size):
+                slice_chunks = sorted_chunks[i : i + slice_size]
+                # The title header keeps every chunk anchored to its
+                # parent document for the embedding model.
+                slice_texts = [f"{c.title}\n\n{c.text}" for c in slice_chunks]
                 # Pre-bind dense/sparse to None so the finally clause
                 # can ``del`` them unconditionally even when the encode
                 # call raises before binding them.
@@ -114,15 +125,17 @@ def _stream_encode_and_upsert_vault(
                         else:
                             sparse = [None] * len(slice_texts)
                     probe.checkpoint(f"slice-{i}-after-encode")
-                    for doc, vec, svec in zip(slice_docs, dense, sparse, strict=True):
-                        doc.vector = vec.tolist()
+                    for chunk, vec, svec in zip(
+                        slice_chunks, dense, sparse, strict=True
+                    ):
+                        chunk.vector = vec.tolist()
                         if svec is not None:
-                            doc.sparse_indices = list(svec.indices)
-                            doc.sparse_values = list(svec.values)
+                            chunk.sparse_indices = list(svec.indices)
+                            chunk.sparse_values = list(svec.values)
                         else:
-                            doc.sparse_indices = []
-                            doc.sparse_values = []
-                    store.upsert_documents(slice_docs)
+                            chunk.sparse_indices = []
+                            chunk.sparse_values = []
+                    store.upsert_document_chunks(slice_chunks)
                 finally:
                     # Drop references to per-slice tensors before
                     # releasing the CUDA caching pool so freed blocks
@@ -135,7 +148,7 @@ def _stream_encode_and_upsert_vault(
                     del slice_texts
                     _release_cuda_cache()
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
-                reporter.advance(len(slice_docs))
+                reporter.advance(len(slice_chunks))
         finally:
             # Always close the phase so progress reporters never see
             # an unbalanced phase_start/phase_end pair, even when the
@@ -144,6 +157,24 @@ def _stream_encode_and_upsert_vault(
 
     if probe.samples:
         logger.info("%s", probe.report())
+    return chunk_counts
+
+
+def _code_embed_text(chunk: CodeChunk) -> str:
+    """Build the embedding input for a code chunk.
+
+    Prepends a one-line locational header (project-relative path plus
+    enclosing class/function when known) so queries can match a chunk
+    through its location and naming context, not just its body. The
+    stored payload keeps the raw chunk content; only the embedding
+    input carries the header.
+    """
+    parts = [chunk.path]
+    if chunk.class_name:
+        parts.append(chunk.class_name)
+    if chunk.function_name:
+        parts.append(chunk.function_name)
+    return " :: ".join(parts) + "\n" + chunk.content
 
 
 def encode_and_upsert_code_slice(
@@ -181,7 +212,7 @@ def encode_and_upsert_code_slice(
 
     if not slice_chunks:
         return
-    slice_texts = [c.content for c in slice_chunks]
+    slice_texts = [_code_embed_text(c) for c in slice_chunks]
     dense = None
     sparse = None
     try:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,11 +20,15 @@ from typing import Any, Literal, cast
 from ._core import logger
 
 __all__ = [
+    "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "_is_connection_refused",
     "_try_http_admin",
     "_try_http_reindex",
     "_try_http_search",
 ]
+
+DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
+DEFAULT_ADMIN_TIMEOUT_SECONDS = 10.0
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
@@ -37,6 +42,34 @@ def _is_connection_refused(exc: BaseException) -> bool:
         ):
             return True
     return bool(isinstance(exc, ConnectionRefusedError))
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError | socket.timeout):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        return isinstance(reason, TimeoutError | socket.timeout)
+    return False
+
+
+def _get_admin_timeout(timeout: float | None = None) -> float:
+    if timeout is not None:
+        return timeout
+    env_timeout = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
+    if env_timeout:
+        try:
+            parsed = float(env_timeout)
+        except ValueError:
+            return DEFAULT_ADMIN_TIMEOUT_SECONDS
+        return parsed if parsed > 0 else DEFAULT_ADMIN_TIMEOUT_SECONDS
+    return DEFAULT_ADMIN_TIMEOUT_SECONDS
+
+
+def _format_timeout_seconds(timeout: float) -> str:
+    value = f"{timeout:g}"
+    noun = "second" if timeout == 1 else "seconds"
+    return f"{value} {noun}"
 
 
 def _do_http_call(
@@ -85,6 +118,7 @@ def _try_http_reindex(
             "type": search_type,
             "clean": clean,
             "project_root": project_root,
+            "initiator_kind": "cli",
         }
         res = _do_http_call(port, "/reindex", payload)
         if res is not None:
@@ -111,15 +145,20 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
 
 
 def _logs_route_path(args: dict[str, Any]) -> str:
-    """Build the JSON logs route path (``?lines=N`` when provided).
+    """Build the JSON logs route path with optional bounded filters.
 
     The daemon's ``/logs/json`` route returns ``{"lines": [...]}`` which the
     JSON-parsing ``_do_http_call`` can decode; the plaintext ``/logs`` route
     would fail JSON decoding and silently yield no lines.
     """
     path = "/logs/json"
-    if "lines" in args:
-        path += f"?lines={args['lines']}"
+    params = {
+        key: value
+        for key, value in args.items()
+        if key in {"lines", "job_id", "contains"} and value is not None
+    }
+    if params:
+        path += "?" + urllib.parse.urlencode(params)
     return path
 
 
@@ -129,36 +168,62 @@ def _route_admin_tool(
     port: int,
 ) -> dict[str, Any] | None:
     """Map an admin tool name to an HTTP call and return the raw result."""
+    raw_timeout = args.get("_timeout")
+    timeout = float(raw_timeout) if isinstance(raw_timeout, int | float) else None
+    args = {key: value for key, value in args.items() if key != "_timeout"}
     if tool_name == "get_logs":
-        return _do_http_call(port, _logs_route_path(args), None)
+        return _do_http_call(port, _logs_route_path(args), None, timeout=timeout)
 
     if tool_name == "get_jobs":
         url_path = "/jobs"
-        if "limit" in args:
-            url_path += f"?limit={args['limit']}"
-        return _do_http_call(port, url_path, None)
+        allowed = {
+            "limit",
+            "phase",
+            "source",
+            "trigger",
+            "query",
+            "failed",
+            "job_id",
+            "since",
+        }
+        params = {
+            key: value
+            for key, value in args.items()
+            if key in allowed and value is not None
+        }
+        if params:
+            url_path += "?" + urllib.parse.urlencode(params)
+        return _do_http_call(port, url_path, None, timeout=timeout)
 
     if tool_name == "get_index_status":
-        return _do_http_call(port, _admin_url_with_root("/status", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/status", args), None, timeout=timeout
+        )
 
     if tool_name == "get_code_file":
-        return _do_http_call(port, "/code-file", args)
+        return _do_http_call(port, "/code-file", args, timeout=timeout)
 
     if tool_name == "list_projects":
-        return _do_http_call(port, _admin_url_with_root("/projects", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/projects", args), None, timeout=timeout
+        )
 
     if tool_name == "evict_project":
-        return _do_http_call(port, "/projects/evict", args)
+        return _do_http_call(port, "/projects/evict", args, timeout=timeout)
 
     if tool_name == "get_watcher_state":
-        return _do_http_call(port, _admin_url_with_root("/watcher", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/watcher", args), None, timeout=timeout
+        )
 
     if tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
         verb = tool_name.split("_")[0]
-        return _do_http_call(port, f"/watcher/{verb}", args)
+        return _do_http_call(port, f"/watcher/{verb}", args, timeout=timeout)
 
     if tool_name == "get_service_state":
-        return _do_http_call(port, _admin_url_with_root("/service-state", args), None)
+        return _do_http_call(
+            port, _admin_url_with_root("/service-state", args), None, timeout=timeout
+        )
 
     return {
         "ok": False,
@@ -171,11 +236,13 @@ def _try_http_admin(
     tool_name: str,
     args: dict[str, Any],
     port: int | None,
+    timeout: float | None = None,
 ) -> dict[str, Any] | None:
     if port is None:
         return None
+    resolved_timeout = _get_admin_timeout(timeout)
     try:
-        res = _route_admin_tool(tool_name, args, port)
+        res = _route_admin_tool(tool_name, {**args, "_timeout": resolved_timeout}, port)
         return res if res is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
@@ -183,6 +250,20 @@ def _try_http_admin(
                 "HTTP admin call on port %s: connection refused (%s)", port, exc
             )
             return None
+        if _is_timeout(exc):
+            logger.debug(
+                "HTTP admin call on port %s timed out after %ss",
+                port,
+                resolved_timeout,
+            )
+            return {
+                "ok": False,
+                "error": "admin_timeout",
+                "message": (
+                    f"The service on port {port} did not answer within "
+                    f"{_format_timeout_seconds(resolved_timeout)}."
+                ),
+            }
         logger.debug(
             "HTTP admin call on port %s raised non-refused exception",
             port,
@@ -198,9 +279,116 @@ def _get_search_timeout(timeout: float | None) -> float:
             try:
                 return float(env_timeout)
             except ValueError:
-                return 10.0
-        return 10.0
+                return DEFAULT_SEARCH_TIMEOUT_SECONDS
+        return DEFAULT_SEARCH_TIMEOUT_SECONDS
     return timeout
+
+
+def _probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
+    logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
+    return {
+        "available": False,
+        "error": exc.__class__.__name__,
+        "message": str(exc),
+    }
+
+
+def _running_jobs_summary(port: int) -> dict[str, object]:
+    try:
+        jobs = _do_http_call(port, "/jobs?limit=5&phase=running", None, timeout=1.0)
+    except Exception as exc:
+        return _probe_unavailable("jobs", exc)
+    if not isinstance(jobs, dict):
+        return {"available": False}
+    if jobs.get("ok") is False:
+        return {
+            "available": False,
+            "error": jobs.get("error", "service_error"),
+            "message": jobs.get("message", "Jobs probe returned an error."),
+        }
+    raw_jobs = jobs.get("jobs")
+    summary = jobs.get("summary")
+    running_count: object = jobs.get("returned", 0)
+    if isinstance(summary, dict):
+        running_count = cast("dict[str, object]", summary).get("running", running_count)
+    return {
+        "available": True,
+        "running_count": running_count,
+        "jobs": raw_jobs if isinstance(raw_jobs, list) else [],
+    }
+
+
+def _health_summary(port: int) -> dict[str, object]:
+    try:
+        health = _do_http_call(port, "/health", None, timeout=1.0)
+    except Exception as exc:
+        return _probe_unavailable("health", exc)
+    if not isinstance(health, dict):
+        return {"available": False}
+    if health.get("ok") is False:
+        return {
+            "available": False,
+            "error": health.get("error", "service_error"),
+            "message": health.get("message", "Readiness check returned an error."),
+        }
+    return {
+        "available": True,
+        "status": health.get("status", "unknown"),
+        "project_count": health.get("project_count", 0),
+        "backend_capabilities": health.get("backend_capabilities", {}),
+    }
+
+
+def _active_indexing_conflict(running_count: object) -> bool | None:
+    if isinstance(running_count, bool):
+        return None
+    if isinstance(running_count, int):
+        return running_count > 0
+    if isinstance(running_count, str):
+        try:
+            return int(running_count) > 0
+        except ValueError:
+            return None
+    return None
+
+
+def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
+    health = _health_summary(port)
+    jobs = _running_jobs_summary(port)
+    raw_caps = health.get("backend_capabilities")
+    caps: dict[str, object] = (
+        cast("dict[str, object]", raw_caps) if isinstance(raw_caps, dict) else {}
+    )
+    running_count = jobs.get("running_count", "unknown")
+    strategy = caps.get("same_project_search_strategy", "unknown")
+    retry_timeout = max(DEFAULT_SEARCH_TIMEOUT_SECONDS, timeout * 2)
+    return {
+        "ok": False,
+        "error": "http_search_timeout",
+        "message": (
+            f"The search request to the service on port {port} timed out "
+            f"after {timeout:g} seconds. The service may still be working "
+            "on that request; check service status and active index jobs "
+            "before retrying."
+        ),
+        "port": port,
+        "timeout_seconds": timeout,
+        "backend_capabilities": caps,
+        "diagnostics": {
+            "health": health,
+            "jobs": jobs,
+            "backpressure": {
+                "same_project_search_strategy": strategy,
+                "active_indexing_conflict": _active_indexing_conflict(running_count),
+                "observation": "jobs endpoint snapshot",
+            },
+        },
+        "remediation": [
+            f"vaultspec-rag server status --port {port}",
+            f"vaultspec-rag server jobs --state active --port {port}",
+            f"Rerun the same search with --timeout {retry_timeout:g}",
+        ],
+    }
 
 
 def _build_http_search_payload(
@@ -341,25 +529,17 @@ def _try_http_search(
         if res and res.get("ok") is False:
             return res
         if res and "results" in res:
-            return cast("list[dict[str, object]]", res["results"])
+            return res
         return []
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)
-        return {
-            "ok": False,
-            "error": "http_search_timeout",
-            "message": f"HTTP search on port {port} timed out after {timeout}s.",
-        }
+        return _timeout_diagnostics(port, timeout)
     except Exception as exc:
         if isinstance(exc, TimeoutError) or (
             isinstance(exc, urllib.error.URLError)
             and isinstance(exc.reason, TimeoutError)
         ):
-            return {
-                "ok": False,
-                "error": "http_search_timeout",
-                "message": f"HTTP search on port {port} timed out after {timeout}s.",
-            }
+            return _timeout_diagnostics(port, timeout)
         if _is_connection_refused(exc):
             logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
             return None

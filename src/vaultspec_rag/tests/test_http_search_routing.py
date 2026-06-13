@@ -19,3 +19,12 @@ class TestLogsRoutePath:
         path = _logs_route_path({"lines": 50})
         assert path == "/logs/json?lines=50"
         assert path != "/logs" and not path.startswith("/logs?")
+
+    def test_appends_filter_query(self) -> None:
+        path = _logs_route_path(
+            {"lines": 50, "job_id": "abc123", "contains": "Qdrant ready"}
+        )
+        assert path.startswith("/logs/json?")
+        assert "lines=50" in path
+        assert "job_id=abc123" in path
+        assert "contains=Qdrant+ready" in path

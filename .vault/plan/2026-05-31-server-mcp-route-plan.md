@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#server-mcp-route'
 date: '2026-05-31'
+modified: '2026-05-31'
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
   - '[[2026-05-31-server-mcp-route-research]]'

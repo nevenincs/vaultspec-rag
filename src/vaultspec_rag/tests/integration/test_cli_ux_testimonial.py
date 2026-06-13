@@ -53,6 +53,84 @@ class _Observation:
 # ---------------------------------------------------------------------------
 
 
+def _observe_first_time_indexer(tmp_path: Path) -> list[_Observation]:
+    from ._helpers import _service_env
+
+    (tmp_path / ".vault").mkdir()
+    (tmp_path / ".vaultspec").mkdir()
+
+    observations: list[_Observation] = []
+    for command in (["--help"], ["index", "--help"]):
+        result = runner.invoke(app, command)
+        observations.append(
+            _Observation(
+                command=command,
+                exit_code=result.exit_code,
+                output=result.output,
+                friction="" if result.exit_code == 0 else "unexpected non-zero exit",
+            )
+        )
+
+    status_command = ["--target", str(tmp_path), "status"]
+    with _service_env(tmp_path):
+        result = runner.invoke(app, status_command)
+    observations.append(
+        _Observation(
+            command=status_command,
+            exit_code=result.exit_code,
+            output=result.output,
+            friction="" if result.exit_code == 0 else "unexpected non-zero exit",
+        )
+    )
+    return observations
+
+
+def _assert_observations_succeeded(observations: list[_Observation]) -> None:
+    for obs in observations:
+        assert obs.exit_code == 0, (
+            f"Command {obs.command!r} exited {obs.exit_code}.\n"
+            f"friction: {obs.friction!r}\n"
+            f"output:\n{obs.output}"
+        )
+
+
+def _assert_help_observations_clean(observations: list[_Observation]) -> None:
+    help_obs = [obs for obs in observations if "--help" in obs.command]
+    for obs in help_obs:
+        for token in _FORBIDDEN_HELP_TOKENS:
+            assert token not in obs.output, (
+                f"Forbidden token {token!r} leaked into {obs.command!r} help:\n"
+                f"{obs.output}"
+            )
+
+
+def _assert_first_time_help_output(observations: list[_Observation]) -> None:
+    top_help = observations[0].output
+    for expected_cmd in ("index", "search", "status", "server"):
+        assert expected_cmd in top_help, (
+            f"Expected command {expected_cmd!r} missing from --help:\n{top_help}"
+        )
+    index_help = observations[1].output
+    assert "docs/indexing.md" in index_help, (
+        f"Cross-reference to docs/indexing.md missing from index --help:\n{index_help}"
+    )
+
+
+def _assert_status_output_is_plain(observations: list[_Observation]) -> None:
+    status_out = observations[2].output
+    assert "Compute:" in status_out
+    assert "Index data:" in status_out
+    assert "Source code chunks:" in status_out
+    assert "GPU:" not in status_out
+    assert "Search data:" not in status_out
+    assert "Index storage:" not in status_out
+    assert "Device:" not in status_out
+    assert "Storage:" not in status_out
+    assert "Search Concurrency" not in status_out
+    for forbidden in ("┌", "└", "│"):
+        assert forbidden not in status_out
+
+
 class TestFirstTimeIndexer:
     """An operator who has just installed the tool and is learning the CLI.
 
@@ -67,78 +145,12 @@ class TestFirstTimeIndexer:
 
     pytestmark: typing.ClassVar = [pytest.mark.integration]
 
-    def test_persona(self) -> None:
-        observations: list[_Observation] = []
-
-        # Step 1: discover top-level commands.
-        r = runner.invoke(app, ["--help"])
-        observations.append(
-            _Observation(
-                command=["--help"],
-                exit_code=r.exit_code,
-                output=r.output,
-                friction="" if r.exit_code == 0 else "unexpected non-zero exit",
-            )
-        )
-
-        # Step 2: read the index sub-command help.
-        r = runner.invoke(app, ["index", "--help"])
-        observations.append(
-            _Observation(
-                command=["index", "--help"],
-                exit_code=r.exit_code,
-                output=r.output,
-                friction="" if r.exit_code == 0 else "unexpected non-zero exit",
-            )
-        )
-
-        # Step 3: run status (no GPU required; no Qdrant lock opened).
-        r = runner.invoke(app, ["status"])
-        observations.append(
-            _Observation(
-                command=["status"],
-                exit_code=r.exit_code,
-                output=r.output,
-                friction="" if r.exit_code == 0 else "unexpected non-zero exit",
-            )
-        )
-
-        # --- assertions ---
-        for obs in observations:
-            assert obs.exit_code == 0, (
-                f"Command {obs.command!r} exited {obs.exit_code}.\n"
-                f"friction: {obs.friction!r}\n"
-                f"output:\n{obs.output}"
-            )
-
-        # Help output must contain no leaked developer internals.
-        help_obs = [o for o in observations if "--help" in o.command]
-        for obs in help_obs:
-            for token in _FORBIDDEN_HELP_TOKENS:
-                assert token not in obs.output, (
-                    f"Forbidden token {token!r} leaked into {obs.command!r} help:\n"
-                    f"{obs.output}"
-                )
-
-        # Top-level help must list the key operator commands.
-        top_help = observations[0].output
-        for expected_cmd in ("index", "search", "status", "server"):
-            assert expected_cmd in top_help, (
-                f"Expected command {expected_cmd!r} missing from --help:\n{top_help}"
-            )
-
-        # index --help must contain the indexing-architecture cross-reference.
-        index_help = observations[1].output
-        assert "docs/indexing.md" in index_help, (
-            f"Cross-reference to docs/indexing.md missing from index --help:\n"
-            f"{index_help}"
-        )
-
-        # status must report GPU device information.
-        status_out = observations[2].output
-        assert "cuda" in status_out.lower() or "GPU" in status_out.lower(), (
-            f"Expected GPU/CUDA info in status output:\n{status_out}"
-        )
+    def test_persona(self, tmp_path: Path) -> None:
+        observations = _observe_first_time_indexer(tmp_path)
+        _assert_observations_succeeded(observations)
+        _assert_help_observations_clean(observations)
+        _assert_first_time_help_output(observations)
+        _assert_status_output_is_plain(observations)
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +173,7 @@ class TestSearchPowerUser:
     pytestmark: typing.ClassVar = [pytest.mark.integration]
 
     def test_search_help(self) -> None:
-        """``search --help`` groups filters and contains no leaked tokens."""
+        """``search --help`` lists filters plainly and contains no leaked tokens."""
         r = runner.invoke(app, ["search", "--help"])
         obs = _Observation(
             command=["search", "--help"],
@@ -176,12 +188,14 @@ class TestSearchPowerUser:
             assert token not in obs.output, (
                 f"Forbidden token {token!r} leaked into search --help:\n{obs.output}"
             )
-        assert "Code filters" in obs.output, (
-            f"'Code filters' panel missing from search --help:\n{obs.output}"
-        )
-        assert "Vault filters" in obs.output, (
-            f"'Vault filters' panel missing from search --help:\n{obs.output}"
-        )
+        for option in ("--language", "--path", "--doc-type", "--feature"):
+            assert option in obs.output, (
+                f"Expected filter option {option!r} in search --help:\n{obs.output}"
+            )
+        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
+            assert forbidden not in obs.output, (
+                f"Box drawing {forbidden!r} leaked into search --help:\n{obs.output}"
+            )
 
     @pytest.mark.subprocess_gpu
     def test_live_code_search(self, tmp_path_factory: TempPathFactory) -> None:
@@ -207,52 +221,54 @@ class TestSearchPowerUser:
             encoding="utf-8",
         )
 
-        # Index codebase in-process (subprocess to avoid VRAM clash with
-        # any session-scoped embedding_model fixture).
-        index_result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "vaultspec_rag",
-                "--target",
-                str(root),
-                "index",
-                "--type",
-                "code",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(root),
-            encoding="utf-8",
-            errors="replace",
-        )
-        assert index_result.returncode == 0, (
-            f"index --type code failed:\nstdout: {index_result.stdout}\n"
-            f"stderr: {index_result.stderr}"
-        )
+        from ._helpers import _service_env
 
-        search_result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "vaultspec_rag",
-                "--target",
-                str(root),
-                "search",
-                "embedding model",
-                "--type",
-                "code",
-                "--language",
-                "python",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=str(root),
-            encoding="utf-8",
-            errors="replace",
-        )
+        # Index/search in the same isolated service-state environment
+        # so an unrelated resident service cannot claim this workspace.
+        with _service_env(root):
+            index_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "vaultspec_rag",
+                    "--target",
+                    str(root),
+                    "index",
+                    "--type",
+                    "code",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=str(root),
+                encoding="utf-8",
+                errors="replace",
+            )
+            assert index_result.returncode == 0, (
+                f"index --type code failed:\nstdout: {index_result.stdout}\n"
+                f"stderr: {index_result.stderr}"
+            )
+            search_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "vaultspec_rag",
+                    "--target",
+                    str(root),
+                    "search",
+                    "embedding model",
+                    "--type",
+                    "code",
+                    "--language",
+                    "python",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=str(root),
+                encoding="utf-8",
+                errors="replace",
+            )
         obs = _Observation(
             command=[
                 "search",
@@ -271,13 +287,12 @@ class TestSearchPowerUser:
             f"search command exited {obs.exit_code}.\n"
             f"stdout:\n{obs.output}\nstderr:\n{obs.friction}"
         )
-        # Results table must contain at least one scored result.
+        # Human search output is a numbered result list, not a score table.
         output_lower = obs.output.lower()
-        assert (
-            "score" in output_lower
-            or "0." in obs.output
-            or "load_embedding_model" in obs.output
-        ), f"Expected ranked code-search result in output:\n{obs.output}"
+        assert "1." in output_lower or "load_embedding_model" in obs.output, (
+            f"Expected ranked code-search result in output:\n{obs.output}"
+        )
+        assert "rank=" not in output_lower
 
 
 # ---------------------------------------------------------------------------
@@ -371,18 +386,18 @@ class TestServiceOperator:
         )
         assert obs.output.strip(), "Expected non-empty output (remediation hint)"
 
-    def test_server_watcher_status_no_service(self, tmp_path: Path) -> None:
-        """``server watcher status`` exits 3 when no daemon is running."""
+    def test_server_updates_status_no_service(self, tmp_path: Path) -> None:
+        """``server updates status`` exits 3 when no daemon is running."""
         from ._helpers import _service_env
 
         with _service_env(tmp_path):
             r = runner.invoke(
                 app,
-                ["server", "watcher", "status"],
+                ["server", "updates", "status"],
                 env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
             )
         obs = _Observation(
-            command=["server", "watcher", "status"],
+            command=["server", "updates", "status"],
             exit_code=r.exit_code,
             output=r.output,
         )
@@ -422,7 +437,7 @@ class TestServiceOperator:
             server status   → exit 0, 'running'
             server logs     → exit 0, non-empty output
             server jobs     → exit 0, non-empty output
-            server watcher status → exit 0, non-empty output
+            server updates status → exit 0, non-empty output
             server projects list  → exit 0, non-empty output
         """
         port, status_dir = live_service
@@ -434,7 +449,7 @@ class TestServiceOperator:
             ["server", "status"],
             ["server", "logs"],
             ["server", "jobs"],
-            ["server", "watcher", "status"],
+            ["server", "updates", "status"],
             ["server", "projects", "list"],
         ]:
             r = runner.invoke(app, cmd, env=env)

@@ -6,9 +6,11 @@ VaultSpecConfig is missing RAG-specific attributes.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, ClassVar
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
@@ -62,11 +64,26 @@ class EnvVar(StrEnum):
     # Document-preprocessing hook knobs (#185).
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
+    # Vault document chunking knob.
+    VAULT_CHUNK_CHARS = "VAULTSPEC_RAG_VAULT_CHUNK_CHARS"
+    # Reranker input token bound.
+    RERANKER_MAX_LENGTH = "VAULTSPEC_RAG_RERANKER_MAX_LENGTH"
+    # Worker-thread pool partitioning.
+    SEARCH_CONCURRENCY = "VAULTSPEC_RAG_SEARCH_CONCURRENCY"
+    INDEX_JOB_CONCURRENCY = "VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY"
 
     QDRANT_URL = "VAULTSPEC_RAG_QDRANT_URL"
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
     QDRANT_QUANTIZATION = "VAULTSPEC_RAG_QDRANT_QUANTIZATION"
     SPARSE_ENABLED = "VAULTSPEC_RAG_SPARSE_ENABLED"
+    # Supervised qdrant server-mode knobs.
+    QDRANT_SERVER = "VAULTSPEC_RAG_QDRANT_SERVER"
+    QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
+    QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
+    QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    # First-class local-backend opt-out. When set truthy it selects the
+    # on-disk store regardless of the server-mode default.
+    LOCAL_ONLY = "VAULTSPEC_RAG_LOCAL_ONLY"
 
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
@@ -109,11 +126,115 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # Document-preprocessing hook knobs (#185).
     "preprocess_max_emitted_bytes": EnvVar.PREPROCESS_MAX_EMITTED_BYTES,
     "html_strip": EnvVar.HTML_STRIP,
+    # Vault chunking + reranker input knobs.
+    "vault_chunk_chars": EnvVar.VAULT_CHUNK_CHARS,
+    "reranker_max_length": EnvVar.RERANKER_MAX_LENGTH,
+    # Worker-thread pool partitioning.
+    "search_concurrency": EnvVar.SEARCH_CONCURRENCY,
+    "index_job_concurrency": EnvVar.INDEX_JOB_CONCURRENCY,
     "qdrant_url": EnvVar.QDRANT_URL,
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
     "sparse_enabled": EnvVar.SPARSE_ENABLED,
+    # Supervised qdrant server-mode knobs.
+    "qdrant_server": EnvVar.QDRANT_SERVER,
+    "qdrant_port": EnvVar.QDRANT_PORT,
+    "qdrant_binary": EnvVar.QDRANT_BINARY,
+    "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
+    # First-class local-backend opt-out knob.
+    "local_only": EnvVar.LOCAL_ONLY,
 }
+
+
+# Name of the persisted local-only marker inside the managed service
+# (``status_dir``) directory. ``install --local-only`` writes this so the
+# resident service honours the local backend on a later ``server start``
+# without the operator re-passing the flag. It lives under ``status_dir``
+# (``~/.vaultspec-rag`` by default, overridable via
+# ``VAULTSPEC_RAG_STATUS_DIR``) because that is the per-host, gitignored,
+# test-isolatable home for runtime selections - never the project tree, so
+# the pure-Python wheel and the repository stay untouched.
+_LOCAL_ONLY_MARKER_FILENAME = "local-only.json"
+
+# Default managed service directory. Kept in lock-step with the
+# ``status_dir`` entry in ``_RAG_DEFAULTS`` below (asserted at import) so
+# the persistence helpers resolve the same directory the config does
+# without importing the class they feed.
+_STATUS_DIR_DEFAULT = "~/.vaultspec-rag"
+
+
+def _status_dir_path() -> Path:
+    """Resolve the managed service directory, honouring the env override.
+
+    Read straight from the resolution chain (env override -> default) so
+    the persisted local-only marker lands in the same directory the
+    daemon and CLI already use for ``service.json`` and the log. Reading
+    the env directly (rather than via the cached config) keeps the
+    persistence layer free of the config singleton it feeds.
+    """
+    raw = os.environ.get(EnvVar.STATUS_DIR.value) or _STATUS_DIR_DEFAULT
+    return Path(raw).expanduser()
+
+
+def _local_only_marker_path() -> Path:
+    """Return the path of the persisted local-only marker file."""
+    return _status_dir_path() / _LOCAL_ONLY_MARKER_FILENAME
+
+
+def persist_local_only(value: bool) -> Path:
+    """Persist the local-only backend selection to the managed service dir.
+
+    ``install --local-only`` calls this so a later ``server start`` (in a
+    fresh process, with no flag and no env) still selects the on-disk
+    store. The marker is a small JSON document (``{"local_only": bool}``)
+    written atomically through a ``.tmp`` sibling and ``os.replace`` so a
+    concurrent reader never observes a half-written file. Writing
+    ``False`` records an explicit server-mode selection, overwriting any
+    prior local-only marker rather than deleting it, so the persisted
+    choice is always unambiguous.
+
+    Args:
+        value: ``True`` to persist the local backend selection, ``False``
+            to persist an explicit server-mode selection.
+
+    Returns:
+        The path the marker was written to.
+    """
+    path = _local_only_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"local_only": bool(value)}), encoding="utf-8")
+    os.replace(tmp, path)
+    logger.debug("persisted local_only=%s to %s", value, path)
+    return path
+
+
+def read_persisted_local_only() -> bool | None:
+    """Read the persisted local-only selection, if any.
+
+    Returns ``None`` when no marker has been written (the common case on a
+    fresh host), so the resolver falls through to the module default. A
+    malformed or unreadable marker is treated as absent and logged at
+    debug rather than raised, because a corrupt runtime hint must never
+    crash startup - the default backend remains the safe fallback.
+
+    Returns:
+        The persisted boolean, or ``None`` when no usable marker exists.
+    """
+    path = _local_only_marker_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.debug("local-only marker unreadable at %s: %s", path, exc)
+        return None
+    try:
+        value = json.loads(raw).get("local_only")
+    except (ValueError, AttributeError) as exc:
+        logger.debug("local-only marker malformed at %s: %s", path, exc)
+        return None
+    return bool(value) if isinstance(value, bool) else None
 
 
 class VaultSpecConfigWrapper:
@@ -139,6 +260,32 @@ class VaultSpecConfigWrapper:
         "qdrant_url": None,
         "qdrant_api_key": None,
         "qdrant_quantization": None,
+        # Supervised qdrant server mode. ``qdrant_server`` opts the
+        # resident service into spawning the pinned Rust qdrant binary
+        # as a loopback child and routing stores at it. Server mode is
+        # the assumed backend: an adversarial A/B on a 469k-chunk corpus
+        # measured a ~54x end-to-end win, so the default points at the
+        # mode that scales. Local mode stays a first-class explicit
+        # opt-out via ``local_only``; ``qdrant_server`` itself remains
+        # the redundant server-mode env knob. The server's HTTP port
+        # defaults to one below the service port (8766); its gRPC
+        # listener binds one below that. ``qdrant_binary`` overrides
+        # binary resolution entirely (air-gapped escape hatch).
+        # Server storage is shared and multi-root (per-root data is
+        # namespaced collections inside it), so it lives under the
+        # managed service directory, never a project data dir.
+        "qdrant_server": True,
+        # First-class local-backend opt-out. When true, the resident
+        # service uses the per-project on-disk store regardless of the
+        # server-mode default; it is the deliberate, trivially
+        # selectable escape hatch for CI, offline, and small-project
+        # hosts. Effective server mode is ``qdrant_server and not
+        # local_only`` (see ``effective_server_mode``), so local-only
+        # always wins over the server default.
+        "local_only": False,
+        "qdrant_port": 8765,
+        "qdrant_binary": None,
+        "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",
@@ -150,12 +297,14 @@ class VaultSpecConfigWrapper:
         # Inner sub-batch size passed to SentenceTransformer.encode().
         # SentenceTransformer sorts each call's input by sequence
         # length, then processes ``encode_batch_size``-item sub-batches
-        # of the sorted list. Smaller values produce tighter
-        # length-uniform sub-batches and dramatically reduce padding
-        # waste on variable-length corpora (e.g. vault docs ranging
-        # from 200 to 8000 chars). 8 is the empirical sweet spot for
-        # Qwen3-Embedding-0.6B on a 16 GB GPU. #68 wall-clock work.
-        "embedding_encode_batch_size": 8,
+        # of the sorted list. Vault inputs are heading-aware chunks
+        # capped at ``vault_chunk_chars`` (~750 BPE tokens) and
+        # length-sorted per slice, so padding waste is bounded and a
+        # larger sub-batch keeps the tensor cores fed. The OOM backoff
+        # in ``encode_documents`` halves this under memory pressure.
+        # (The former value of 8 dated from whole-document inputs that
+        # ranged from 200 to 8000 chars; #68 wall-clock work.)
+        "embedding_encode_batch_size": 32,
         "max_embed_chars": 8000,
         # Hard cap on the sequence length the model is allowed to
         # process. ``max_embed_chars=8000`` truncates text to ~2000
@@ -209,6 +358,21 @@ class VaultSpecConfigWrapper:
         "reranker_enabled": True,
         "reranker_model": "BAAI/bge-reranker-v2-m3",
         "reranker_batch_size": 32,
+        # Token bound for CrossEncoder inputs. The reranker scores
+        # token-bounded full candidate content; its tokenizer truncates
+        # each (query, content) pair to this length. 1024 covers a
+        # 3000-char vault chunk or a 1500-char code chunk plus query.
+        "reranker_max_length": 1024,
+        # Heading-aware vault chunk budget in characters. One Qdrant
+        # point per chunk; ~3000 chars is ~750 BPE tokens, well inside
+        # the 2048-token encoder cap with the title header prepended.
+        "vault_chunk_chars": 3000,
+        # Worker-thread pool partitioning: interactive searches and
+        # long-running index jobs draw from separate capacity limiters
+        # so reindex runs can never exhaust the threads that serve
+        # searches. Saturation beyond a limiter queues callers.
+        "search_concurrency": 16,
+        "index_job_concurrency": 4,
         "mcp_port": 8766,
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,
@@ -275,8 +439,37 @@ class VaultSpecConfigWrapper:
                     return float(env_val)
                 return env_val
 
+        # 2.5. Persisted runtime selection (local_only only). When
+        # ``install --local-only`` wrote the marker, a later
+        # ``server start`` with no flag and no env honours it. Precedence
+        # is explicit env/flag (above) > persisted config (here) >
+        # module default (below), so an operator who re-passes the flag or
+        # sets the env always overrides the persisted choice.
+        if name == "local_only":
+            persisted = read_persisted_local_only()
+            if persisted is not None:
+                return persisted
+
         # 3. Default
         return self._RAG_DEFAULTS[name]
+
+    def effective_server_mode(self) -> bool:
+        """Return whether the supervised server backend is in effect.
+
+        The supervised Qdrant server is the assumed backend
+        (``qdrant_server`` defaults true), and ``local_only`` is the
+        first-class opt-out that always wins: effective server mode is
+        ``qdrant_server and not local_only``. Callers selecting the
+        store backend MUST consult this rather than reading
+        ``qdrant_server`` directly, so the local-only escape hatch is
+        honoured at every selection point.
+
+        Returns:
+            ``True`` when the resident service should supervise the
+            Qdrant child and route stores at it; ``False`` when the
+            per-project on-disk store should be used.
+        """
+        return bool(self.qdrant_server) and not bool(self.local_only)
 
     def __getattr__(self, name: str) -> Any:
         """Return a config attribute, checking env overrides then defaults.
@@ -361,3 +554,18 @@ def reset_config() -> None:
     """
     global _cached_config
     _cached_config = None
+
+
+# Keep the persistence-layer default in lock-step with the class default so the
+# local-only marker lands in the same managed directory the config resolves. An
+# explicit raise (not assert) so the invariant holds under python -O, where a
+# silent drift would write the marker to a directory the resolver never reads.
+# Same-module invariant check: the class-private defaults table is read here to
+# fail fast at import if the persistence-layer default drifts from the config default.
+_rag_status_dir_default: object = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyright: ignore[reportPrivateUsage]
+    "status_dir"
+]
+if _rag_status_dir_default != _STATUS_DIR_DEFAULT:
+    raise RuntimeError(
+        "status_dir default drifted between persistence layer and config defaults"
+    )

@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#service-operability'
 date: '2026-06-08'
+modified: '2026-06-08'
 related:
   - '[[2026-06-01-service-operability-adr]]'
   - '[[2026-06-01-service-operability-plan]]'

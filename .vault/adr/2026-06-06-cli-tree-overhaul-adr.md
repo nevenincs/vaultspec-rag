@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#cli-tree-overhaul'
 date: '2026-06-06'
+modified: '2026-06-06'
 related:
   - '[[2026-06-06-cli-tree-overhaul-research]]'
 ---

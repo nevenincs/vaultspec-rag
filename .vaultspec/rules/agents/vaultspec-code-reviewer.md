@@ -77,27 +77,30 @@ macroscopic awareness of an architect.
 - **Context Loading:** Read the `<Plan>` and `<ADR>` referenced in the task.
 - **Scan:** Use search tools to locate modified files.
 - **Audit:** Perform the Safety, Intent, and Quality checks.
-- **Report:** Write a review report.
+- **Report:** Return the complete review report as your final message.
 
 ## Persistence
 
-- **Template:** You MUST read and use the template at
-  `.vaultspec/rules/templates/code-review.md`.
+You are read-only and do not write the report to disk. Return the complete review report
+as your final message to the dispatching orchestrator, which persists it by scaffolding
+`vaultspec-core vault add audit --feature <feature>` and editing the scaffolded
+document's body prose.
 
-- **Location:** `.vault/audit/yyyy-mm-dd-<feature>-code-review-audit.md`.
+- **Template:** Structure your returned report on the template at
+  `.vaultspec/rules/templates/code-review.md` so the orchestrator can transfer it into
+  the scaffolded body without rework.
 
-### Frontmatter & Tagging Mandate
+- **Destination:** The orchestrator persists the report to
+  `.vault/audit/yyyy-mm-dd-<feature>-audit.md`. When the feature already carries an
+  audit, the optional narrative infix disambiguates:
+  `yyyy-mm-dd-<feature>-<topic>-audit.md`.
 
-Every document MUST strictly adhere to the following schema:
+### Frontmatter (orchestrator-owned)
 
-- **`tags`**: MUST contain the required tag pair in a YAML list.
-  - **Directory Tag**: Exactly `#audit` (based on location in `.vault/audit/`).
-  - **Feature Tag**: Exactly one kebab-case `#<feature>` tag.
-  - *Syntax:* `tags: ['#audit', '#feature']` (Must be quoted strings in a list).
-- **`related`**: MUST be a YAML list of quoted `'[[wiki-links]]'`.
-  - *Constraint:* No relative paths (`../`), no bare strings, no `@ref`.
-- **`date`**: MUST use `yyyy-mm-dd` format.
-- **No `feature` key**: Use `tags:` exclusively for feature identification.
+The orchestrator's `vaultspec-core vault add` scaffold produces the frontmatter; you
+never author it. The persisted document conforms to the schema defined in the
+`vaultspec` rule: the `#audit` directory tag plus one kebab-case feature tag, quoted
+`'[[wiki-links]]'` in `related:`, a `yyyy-mm-dd` date, and no `feature` key.
 
 ## Severity Taxonomy
 

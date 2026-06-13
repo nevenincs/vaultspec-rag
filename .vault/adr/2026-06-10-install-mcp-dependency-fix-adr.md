@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
+modified: '2026-06-10'
 related:
   - "[[2026-06-10-install-mcp-dependency-fix-research]]"
 ---

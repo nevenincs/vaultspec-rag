@@ -94,6 +94,9 @@ def install_run(
     assume_yes: bool = False,
     sync_after: bool = False,
     confirm: ConfirmFn | None = None,
+    provision: bool = False,
+    local_only: bool = False,
+    provision_skip: set[str] | None = None,
 ) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
@@ -127,9 +130,27 @@ def install_run(
             programmatic callers can pass their own. When ``None`` the
             step is non-interactive and falls through to the
             ``assume_yes`` gate.
+        provision: When True, run the unified provisioning front door
+            (models, qdrant binary) after enrollment and thread its
+            heterogeneous per-dependency outcome onto the report. The
+            operator-facing opt-out polarity lives at the CLI edge, which
+            passes ``provision=True`` by default to match the server-first
+            default; this orchestrator defaults it ``False`` so existing
+            programmatic callers (and their network-free unit tests) keep
+            the enrollment-only behaviour unless they ask to provision.
+        local_only: When True, the headline escape hatch: the front door
+            skips the qdrant binary step and the install persists the
+            local backend selection (via ``persist_local_only``) so a
+            later ``server start`` honours it without re-passing the flag.
+        provision_skip: Finer per-dependency opt-out tokens
+            (``"torch"`` / ``"models"`` / ``"qdrant"``) forwarded to the
+            front door's ``skip`` set, for callers wanting some but not
+            all steps.
 
     Returns:
-        :class:`InstallReport` with the structured result.
+        :class:`InstallReport` with the structured result, including the
+        provisioning outcome on ``report.provision_outcome`` when
+        provisioning ran.
     """
     target = _resolve_target(path, bootstrap=not dry_run)
     skip = skip or set()
@@ -178,7 +199,101 @@ def install_run(
             f"the reported torch configuration issue."
         )
 
+    if provision:
+        _run_provisioning(
+            target=target,
+            report=report,
+            dry_run=dry_run,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+        )
+
+        # Persist the local-only runtime selection so the resident service
+        # honours the chosen backend on a later ``server start`` without
+        # the operator re-passing ``--local-only``. Gated on ``provision``
+        # (the setup path) so a plain enrollment-only call never writes
+        # runtime state, and on ``not dry_run`` because a preview must not
+        # touch disk. The explicit choice is persisted either way
+        # (``False`` records a deliberate server-mode selection) so the
+        # marker is unambiguous; env / flag still override it at
+        # resolution time.
+        if not dry_run:
+            _persist_runtime_selection(report, local_only)
+
     return report
+
+
+def _persist_runtime_selection(report: InstallReport, local_only: bool) -> None:
+    """Write the local-only runtime marker, degrading to a warning on error.
+
+    A persisted runtime hint must never crash setup, so an OSError on the
+    write is logged and surfaced as a recoverable warning naming the
+    runtime escape hatches, rather than raised.
+    """
+    from ..config import persist_local_only
+
+    try:
+        persist_local_only(local_only)
+    except OSError as exc:
+        logger.error("failed to persist local-only selection: %s", exc)
+        report.warnings.append(
+            f"could not persist the local-only selection: {exc}; "
+            f"pass --local-only on `server start` or set "
+            f"VAULTSPEC_RAG_LOCAL_ONLY to select the local backend."
+        )
+
+
+def _run_provisioning(
+    *,
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    local_only: bool,
+    provision_skip: set[str] | None,
+    assume_yes: bool,
+    sync_after: bool,
+    confirm: ConfirmFn | None,
+) -> None:
+    """Run the provisioning front door and attach its outcome to the report.
+
+    Torch is already configured by the enrollment torch step above (its
+    honest two-phase state lives on ``report.torch_config_action`` and the
+    renderer surfaces it), so the front door is told to skip torch here -
+    re-running it would double-prompt and double-report. The front door
+    therefore drives the two fetch-and-go dependencies, models and the
+    qdrant binary, and its heterogeneous outcome is carried on
+    ``report.provision_outcome`` for the renderer. A failed step is
+    surfaced as a warning rather than raised, because enrollment already
+    succeeded and provisioning is the recoverable, re-runnable phase.
+    """
+    from ._provision import provision_dependencies
+
+    # The enrollment torch step already ran (and is reported on its own
+    # report fields); fold "torch" into the front door's skip set so its
+    # torch result is an honest opted-out, never a misleading re-run.
+    skip = set(provision_skip or set())
+    skip.add("torch")
+
+    outcome = provision_dependencies(
+        target,
+        local_only=local_only,
+        skip=skip,
+        dry_run=dry_run,
+        configure_torch=False,
+        assume_yes=assume_yes,
+        sync_after=sync_after,
+        confirm=confirm,
+    )
+    report.provision_outcome = outcome
+    if not outcome.ok:
+        failed = [r for r in outcome.steps if r.action == "failed"]
+        for result in failed:
+            report.warnings.append(
+                f"provisioning step {result.step} failed: {result.detail}"
+            )
 
 
 def _maybe_warn_hf_auth(report: InstallReport) -> None:

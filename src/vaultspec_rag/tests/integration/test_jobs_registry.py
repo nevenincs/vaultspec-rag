@@ -57,6 +57,27 @@ def _make_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _assert_runtime_context(raw: object) -> dict[str, object]:
+    assert isinstance(raw, dict)
+    runtime = cast("dict[str, object]", raw)
+    assert isinstance(runtime["pid"], int)
+    assert isinstance(runtime["parent_pid"], int)
+    assert isinstance(runtime["user"], str)
+    assert isinstance(runtime["executable"], str)
+    assert isinstance(runtime["prefix"], str)
+    assert isinstance(runtime["base_prefix"], str)
+    return runtime
+
+
+def _assert_resource_snapshot(raw: object) -> dict[str, object]:
+    assert isinstance(raw, dict)
+    resources = cast("dict[str, object]", raw)
+    assert isinstance(resources["rss_mb"], float)
+    assert isinstance(resources["cuda_allocated_mb"], float)
+    assert isinstance(resources["cuda_reserved_mb"], float)
+    return resources
+
+
 # --------------------------------------------------------------------------- #
 # Unit-style: schema, bounding, concurrency                                   #
 # --------------------------------------------------------------------------- #
@@ -75,6 +96,12 @@ def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> N
     assert isinstance(entry["started_at"], float)
     assert entry["finished_at"] is None
     assert entry["result"] is None
+    _assert_runtime_context(entry["runtime"])
+    resources = entry["resources"]
+    assert isinstance(resources, dict)
+    resources = cast("dict[str, object]", resources)
+    _assert_resource_snapshot(resources["started"])
+    assert resources["finished"] is None
 
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
@@ -89,6 +116,10 @@ def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> N
     assert isinstance(started_at, float)
     assert finished_at >= started_at
     assert done["result"] == "+1 /0 -0 (5ms)"
+    done_resources = done["resources"]
+    assert isinstance(done_resources, dict)
+    done_resources = cast("dict[str, object]", done_resources)
+    assert isinstance(done_resources["finished"], dict)
 
 
 def test_record_finish_with_error_sets_error_phase(_clean_jobs: None) -> None:
@@ -123,11 +154,33 @@ def test_snapshot_is_newest_first(_clean_jobs: None) -> None:
 
 
 def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
-    _jobs.record_start("vault", "tool")
+    _jobs.record_start("vault", "tool", command="reindex_vault")
     snap = _jobs.snapshot()
     snap[0]["phase"] = "tampered"
+    initiator = snap[0]["initiator"]
+    assert isinstance(initiator, dict)
+    initiator = cast("dict[str, object]", initiator)
+    initiator["command"] = "tampered"
+    resources = snap[0]["resources"]
+    assert isinstance(resources, dict)
+    resources = cast("dict[str, object]", resources)
+    started_resources = resources["started"]
+    assert isinstance(started_resources, dict)
+    started_resources = cast("dict[str, object]", started_resources)
+    started_resources["rss_mb"] = -1.0
 
     assert _jobs.snapshot()[0]["phase"] == "running"
+    next_initiator = _jobs.snapshot()[0]["initiator"]
+    assert isinstance(next_initiator, dict)
+    next_initiator = cast("dict[str, object]", next_initiator)
+    assert next_initiator["command"] == "reindex_vault"
+    next_resources = _jobs.snapshot()[0]["resources"]
+    assert isinstance(next_resources, dict)
+    next_resources = cast("dict[str, object]", next_resources)
+    next_started_resources = next_resources["started"]
+    assert isinstance(next_started_resources, dict)
+    next_started_resources = cast("dict[str, object]", next_started_resources)
+    assert next_started_resources["rss_mb"] != -1.0
 
 
 def test_registry_is_bounded(_clean_jobs: None) -> None:
@@ -173,7 +226,7 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
     # unique ids, and a consistent phase/result pairing.
     seen_ids: set[str] = set()
     for entry in snap:
-        assert set(entry) == {
+        assert {
             "id",
             "source",
             "trigger",
@@ -182,7 +235,10 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
             "finished_at",
             "result",
             "progress",
-        }
+            "initiator",
+            "runtime",
+            "resources",
+        } <= set(entry)
         entry_id = entry["id"]
         assert isinstance(entry_id, str)
         assert entry_id not in seen_ids

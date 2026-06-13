@@ -1,149 +1,154 @@
 # Installation
 
-This page covers hardware requirements, the package install, the `install` command, verification, and what to do when each step fails. If you'd rather follow a guided walkthrough, see the [getting-started tutorial](getting-started.md).
+vaultspec-rag is GPU-accelerated semantic search over your vault and source code. This guide covers how to install the package, provision its dependencies, verify the install, recover from setup failures, and uninstall. For a guided first run afterward, see the [getting started guide](getting-started.md).
 
-## Hardware requirements
+## Before you begin
 
-vaultspec-rag runs on the GPU. There is no CPU fallback.
+You need:
 
-- NVIDIA GPU with CUDA support
-- About 3 GB of free GPU memory
-- Linux or Windows
-- No CPU fallback
+- Python 3.13 or newer. The runtime is locked to CPython 3.13.x; 3.14 and later are rejected at import.
+- [uv](https://docs.astral.sh/uv/) for dependency and tool management.
+- An NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM).
+- Linux or Windows.
 
-CUDA is NVIDIA's GPU compute platform; the driver is what lets PyTorch and other tools talk to the card. To confirm CUDA is installed, run:
+Confirm the GPU is visible before you start:
 
 ```bash
 nvidia-smi
 ```
 
-If the output lists your GPU and a driver version, CUDA is ready. If the command is missing or errors, install NVIDIA's driver first, then come back.
-
-macOS, AMD GPUs, and Apple Silicon are not supported. For the reasoning behind the GPU requirement, see [architecture](architecture.md).
+If that command lists your card and a driver version, the driver is loaded. macOS, AMD GPUs, and Apple Silicon are unsupported - the stack is CUDA-only and raises at startup without it. For the reasoning behind a GPU-only design, see the [architecture overview](architecture.md).
 
 ## Install the package
 
-You can install vaultspec-rag as a project dependency or as a standalone tool.
-
-As a project dependency, from the workspace root:
+To add vaultspec-rag as a dependency of an existing project, run:
 
 ```bash
 uv add vaultspec-rag
 ```
 
-As a standalone tool:
+To install it as a standalone tool instead, run:
 
 ```bash
 uv tool install vaultspec-rag
 ```
 
-The rest of this page assumes the project dependency form. For the standalone tool form, drop the `uv run` prefix from every command.
+The commands in this guide use the `uv run` prefix, which runs the command-line interface (CLI) inside the project's environment. If you installed the standalone tool, drop the prefix and call `vaultspec-rag` directly.
 
-## Run the install command
+## Provision dependencies with the install command
 
-Run the install command from the workspace root:
+The `install` command enrolls the workspace and provisions three external dependencies:
 
 ```bash
 uv run vaultspec-rag install
 ```
 
-This patches `pyproject.toml` so uv resolves the GPU build of PyTorch instead of the CPU build. The patch adds the `cu130` index, which is PyTorch's package name for the CUDA 13.0 build and is what NVIDIA's CUDA toolkit looks like to PyTorch. The command prompts for confirmation before editing `pyproject.toml`.
+By default it does three things:
 
-To skip the prompt:
+- Configures the GPU (cu130) PyTorch build as a package source in `pyproject.toml`. This reports `configured, sync pending` - it edits the project config but does not download PyTorch.
+- Ensures the dense, sparse, and reranker model files are present in the Hugging Face cache.
+- Downloads and verifies the pinned Qdrant server binary.
 
-```bash
-uv run vaultspec-rag install --yes
-```
+The PyTorch step prompts before it edits `pyproject.toml`. For non-interactive installs, pass `--yes` to skip the prompt - unless you also pass `--no-torch-config`.
 
-To skip the patch entirely, if you manage PyTorch yourself:
+Read the per-dependency outcome report using the shared sync vocabulary: `created` (downloaded), `updated`, `unchanged` (already present), `skipped`, and `failed`. The run is idempotent, so re-running a satisfied dependency reports `unchanged` with no network call.
 
-```bash
-uv run vaultspec-rag install --no-torch-config
-```
+## Pull the GPU build
 
-After install, pull the GPU PyTorch build:
+The `install` command *configures* the GPU PyTorch build but doesn't *fetch* it. After install configures the PyTorch source, run a sync to fetch the GPU build:
 
 ```bash
 uv sync
 ```
 
+This step is required. Until you run it, the configured cu130 source is recorded in `pyproject.toml` but PyTorch is not yet installed. To fold the sync into setup, pass `--sync`, which runs `uv sync --reinstall-package torch` after configuring the source.
+
+## Choose a lighter setup
+
+The defaults provision the supervised Qdrant server for higher throughput under concurrent load. To trim or opt out of the provisioning steps, use these conditional flags.
+
+- If you want a lighter, server-free install, pass `--local-only`. It selects the embedded on-disk store, skips the Qdrant binary download, and persists the local backend so a later `server start` honors it. Throughput is lower under concurrent load. See the [backends guide](backends.md) for the trade-offs.
+- To skip an individual dependency, pass `--skip-torch`, `--skip-models`, or `--skip-qdrant`. Each maps onto the `install` command's skip set; `--skip-qdrant` is redundant under `--local-only`, which already drops the Qdrant step.
+- If you manage the GPU build yourself, pass `--no-torch-config` to leave `pyproject.toml` untouched.
+- To preview the full provisioning report without writing anything, pass `--dry-run`. The dry run reports `preview only` for each step and never prompts, so it's independent of the confirmation prompt.
+
 ## Verify the install
 
-Confirm the binary works:
+Check the installed version:
 
 ```bash
 uv run vaultspec-rag --version
 ```
 
-You should see a version line.
+This branch reports `0.2.20`.
 
-Confirm the GPU is visible:
+Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qdrant binary and server:
+
+```bash
+uv run vaultspec-rag server doctor
+```
+
+A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode, the `qdrant` line is ready once a binary resolves and no supervised child is dead; in local-only mode, an absent binary is reported ready because no server is needed. Add `--json` for a machine-readable envelope.
+
+Check the project's index location and compute device:
 
 ```bash
 uv run vaultspec-rag status
 ```
 
-The status output should list a real GPU name. If you see `N/A` or an error in the GPU row, jump to troubleshooting.
-
-## Configuration
-
-vaultspec-rag reads optional configuration from environment variables. See [configuration](configuration.md) for the complete list and defaults.
+A healthy result names your GPU as the compute device and shows the index data location, even before you've indexed anything.
 
 ## Troubleshooting
 
-### No GPU available
+If `server doctor` reports the `torch` line as not ready and CPU-only, run `uv sync` (or `uv run vaultspec-rag install --sync`). Install configures the GPU build, but the sync fetches it; a CPU-only build means the sync hasn't run yet.
 
-If `vaultspec-rag status` reports no GPU, first confirm `nvidia-smi` works. If it does, PyTorch is likely the CPU build. Run `uv run vaultspec-rag install` to apply the cu130 patch, then `uv sync` to pull the GPU build.
+If `nvidia-smi` shows no GPU, the driver isn't loaded. Fix the driver before installing - the stack raises at startup without CUDA and has no CPU fallback.
 
-### PyTorch is not installed
+If install refuses to edit your project config and exits non-zero, it ran the PyTorch step without consent. Re-run with `--yes` to approve the edit, or with `--no-torch-config` to skip it and manage the GPU build yourself.
 
-If `vaultspec-rag` errors with a missing PyTorch import, you ran it before `uv sync`. Run `uv sync` and retry.
-
-### Install refuses to edit pyproject.toml
-
-If the install command exits without applying the patch, either you declined the prompt or a conflicting PyTorch index is already configured. Use `--dry-run` to preview the change, or `--no-torch-config` to skip the patch and manage PyTorch yourself.
-
-### Out-of-memory errors during search or index
-
-If you see CUDA out-of-memory errors, your card has less memory than the defaults assume. Lower the batch sizes:
+If `server start` fails because the Qdrant server binary is missing, provision it:
 
 ```bash
-export VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE=32
-export VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE=4
+uv run vaultspec-rag server qdrant install
 ```
 
-The defaults are 64 and 8. See [configuration](configuration.md) for the full list of tuning variables.
-
-### First indexing run is much slower than subsequent runs
-
-The first run downloads model files to the HuggingFace cache. Subsequent runs reuse the cached files. This is expected.
-
-### Models keep re-downloading
-
-If models download every run, the `HF_HOME` variable points to a path that does not persist between runs. This is common in containers without a mounted volume. Point `HF_HOME` at a persistent directory:
+Or run the service without the server:
 
 ```bash
-export HF_HOME=/path/to/persistent/dir
+uv run vaultspec-rag server start --local-only
 ```
 
-The default is `~/.cache/huggingface`. See [configuration](configuration.md) for the full HuggingFace cache variables.
+If the Qdrant download fails with a checksum mismatch, the archive didn't match the committed digest and the partial file is deleted. Retry the download. On an air-gapped host, register your own executable with `server qdrant install --binary PATH`.
+
+## First run notes
+
+The first index or search downloads the dense, sparse, and reranker model files once, so it runs slower than later searches. If a smaller card runs out of memory, tune the embedding batch sizes. If models appear to re-download every run, point the Hugging Face cache (`HF_HOME`) at a persistent location. See the [configuration guide](configuration.md) for the relevant variables.
 
 ## Uninstall
 
-To remove the package:
+Remove the package:
 
 ```bash
 uv remove vaultspec-rag
 ```
 
-To revert the `pyproject.toml` patch:
+Revert the project-config change that install made to `pyproject.toml`:
 
 ```bash
 uv run vaultspec-rag uninstall
 ```
 
-For the full uninstall flag list, see the [CLI reference](cli.md).
+Delete the managed Qdrant installs (index data is never touched):
 
-## Need help?
+```bash
+uv run vaultspec-rag server qdrant clean --yes
+```
 
-If you're stuck, see the [Support](../README.md#support-and-help) section of the repository README. In a bug report, include the vaultspec-rag version, your OS, the GPU model, the exact command you ran, and the full stderr output.
+The `--yes` flag is required to delete; without it the command prints a preview only. Pass `--keep-current` to preserve the pinned version. For the full flag set, see the [CLI reference](cli.md).
+
+## Where to go next and where to get help
+
+- [Getting started](getting-started.md) walks through your first index and search.
+- [Search and index](search-and-index.md) covers query syntax, filters, and indexing.
+- [Backends](backends.md) compares the supervised server and the embedded store.
+- For support channels, see [support and help](../README.md#support-and-help).

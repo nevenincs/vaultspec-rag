@@ -35,7 +35,7 @@ def _format_flags(names: list[str]) -> list[str]:
 
 
 def validate_search_filters(
-    search_type: Literal["vault", "code"],
+    search_type: Literal["vault", "docs", "code"],
     *,
     language: str | None = None,
     path: str | None = None,
@@ -60,7 +60,10 @@ def validate_search_filters(
     """
     if prefer is not None and prefer not in {"prod", "tests", "docs"}:
         raise InvalidPreferValueError(
-            f"--prefer must be one of 'prod', 'tests', 'docs'; got {prefer!r}.",
+            (
+                "--prefer must be one of production, tests, or documentation; "
+                f"got {prefer!r}."
+            ),
             prefer_value=prefer,
         )
 
@@ -111,7 +114,7 @@ def validate_search_filters(
                 offending_filters=offending_flags,
             )
 
-    if search_type != "vault" and vault_filters_supplied:
+    if search_type not in {"vault", "docs"} and vault_filters_supplied:
         offending_flags = _format_flags(vault_filters_supplied)
         raise InvalidFilterForSearchTypeError(
             (

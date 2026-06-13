@@ -3,6 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-07
+modified: '2026-03-07'
 ---
 
 # Round 23 Audit -- indexer.py (deep dive)
