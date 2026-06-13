@@ -3959,6 +3959,21 @@ class TestServiceDaemonHelpers:
             assert data["port"] == port
             assert data["state"] == "running"
             assert data["operational"]["status_file_port"] == 1
+
+            human = runner.invoke(
+                app,
+                ["server", "status", "--port", str(port)],
+            )
+
+            assert human.exit_code == 0, human.output
+            lines = _plain_lines(human.output)
+            assert (
+                lines[0] == "Local record points to http://127.0.0.1:1; "
+                f"checking http://127.0.0.1:{port}."
+            )
+            assert f"Address: http://127.0.0.1:{port}" in human.output
+            assert "probing" not in human.output
+            assert "Status file port" not in human.output
         finally:
             server.shutdown()
             server.server_close()

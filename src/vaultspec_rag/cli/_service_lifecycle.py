@@ -1174,7 +1174,9 @@ def _render_explicit_port_status(
 
     if target_port != status_file_port:
         _cli.console.print(
-            f"Status file port is {status_file_port}; probing {target_port}.",
+            "Local record points to "
+            f"http://127.0.0.1:{status_file_port}; "
+            f"checking http://127.0.0.1:{target_port}.",
             markup=False,
             highlight=False,
         )
