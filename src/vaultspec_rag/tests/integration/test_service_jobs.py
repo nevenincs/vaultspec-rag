@@ -1195,10 +1195,40 @@ def test_jobs_watch_refreshes_managed_terminal_view() -> None:
         )
 
     assert result.exit_code == 0, result.output
-    assert "Watching; press Ctrl+C to stop." in result.output
+    assert "Watch: refresh 2 of 2." in result.output
+    assert "press Ctrl+C" not in result.output
     assert result.output.count("\nJobs\n") == 1
     assert result.output.startswith("Jobs\n")
     assert "Jobs on service port" not in result.output
+
+
+def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
+    payload: dict[str, object] = {
+        "jobs": [],
+        "total": 0,
+        "returned": 0,
+        "summary": {"running": 0, "phases": {}},
+        "filters": {"limit": 5, "phase": "running"},
+    }
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--running",
+                "--port",
+                str(port),
+                "--watch",
+                "--refresh-count",
+                "1",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Watch: refresh 1 of 1." in result.output
+    assert "press Ctrl+C" not in result.output
+    assert "There are no active or waiting jobs." in result.output
 
 
 def test_jobs_watch_is_human_only() -> None:

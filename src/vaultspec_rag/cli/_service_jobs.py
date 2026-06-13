@@ -440,6 +440,7 @@ def _render_jobs_feed(
     *,
     port: int,
     monitoring: bool = False,
+    watch_text: str | None = None,
 ) -> None:
     total = result.get("total", len(jobs))
     returned = result.get("returned", len(jobs))
@@ -487,8 +488,7 @@ def _render_jobs_feed(
             markup=False,
             highlight=False,
         )
-    if monitoring:
-        _cli.console.print("Watching; press Ctrl+C to stop.")
+        _cli.console.print(watch_text or "Watch: press Ctrl+C to stop.")
     job_id_labels = _job_id_labels(sorted_jobs)
     for index, job in enumerate(sorted_jobs):
         job_id = job_id_labels[index]
@@ -506,6 +506,7 @@ def _render_empty_jobs_result(
     job_id: str | None,
     port: int,
     monitoring: bool,
+    watch_text: str | None = None,
 ) -> None:
     total = result.get("total", 0)
     returned = result.get("returned", 0)
@@ -541,7 +542,7 @@ def _render_empty_jobs_result(
             markup=False,
             highlight=False,
         )
-        _cli.console.print("Watching; press Ctrl+C to stop.")
+        _cli.console.print(watch_text or "Watch: press Ctrl+C to stop.")
     _cli.console.print(_empty_jobs_message(result, job_id))
     _cli.console.print("Next actions:", markup=False, highlight=False)
     _cli.console.print(
@@ -840,6 +841,7 @@ def _render_jobs_result(
     job_id: str | None,
     port: int,
     monitoring: bool = False,
+    watch_text: str | None = None,
 ) -> None:
     jobs = _jobs_from_result(result)
     if not jobs:
@@ -848,6 +850,7 @@ def _render_jobs_result(
             job_id=job_id,
             port=port,
             monitoring=monitoring,
+            watch_text=watch_text,
         )
         return
     if job_id:
@@ -866,7 +869,9 @@ def _render_jobs_result(
             port=port,
         )
         return
-    _render_jobs_feed(result, jobs, port=port, monitoring=monitoring)
+    _render_jobs_feed(
+        result, jobs, port=port, monitoring=monitoring, watch_text=watch_text
+    )
 
 
 def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
@@ -907,6 +912,12 @@ def _fetch_jobs_result(
     )
 
 
+def _watch_status_text(refresh_number: int, refresh_count: int | None) -> str:
+    if refresh_count is None:
+        return "Watch: press Ctrl+C to stop."
+    return f"Watch: refresh {refresh_number} of {refresh_count}."
+
+
 def _watch_jobs(
     *,
     limit: int,
@@ -937,11 +948,13 @@ def _watch_jobs(
         if result is None:
             _exit_jobs_not_running(False, port)
         _cli.console.clear()
+        refresh_number = refreshes + 1
         _render_jobs_result(
             result,
             job_id=job_id,
             port=port,
             monitoring=True,
+            watch_text=_watch_status_text(refresh_number, refresh_count),
         )
         refreshes += 1
         if refresh_count is not None and refreshes >= refresh_count:
