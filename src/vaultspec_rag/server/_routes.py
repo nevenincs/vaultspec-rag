@@ -479,7 +479,7 @@ def _empty_search_diagnostics(
         "remediation": [
             f"vaultspec-rag index --type {source}{port_suffix}",
             "vaultspec-rag server status",
-            "vaultspec-rag server jobs --running",
+            f"vaultspec-rag server jobs --state active{port_suffix}",
         ],
     }
 
