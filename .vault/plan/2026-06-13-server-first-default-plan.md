@@ -9,16 +9,6 @@ related:
   - '[[2026-06-13-provisioning-setup-adr]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `server-first-default` plan
 
 Flip the RAG default to the supervised Qdrant server backend, consolidate dependency provisioning behind one opt-out setup front door, add a bounded readiness verb, and reframe the docs so server-first is standard and local-only is the explicit minimal alternative.

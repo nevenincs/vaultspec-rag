@@ -31,8 +31,7 @@ documentation worker on the shared branch.
   supervised child fails.
 - `src/vaultspec_rag/qdrant_runtime/_supervise.py` - entry-point failure remediation,
   verify-before-execute intact.
-- `src/vaultspec_rag/cli/_service_lifecycle.py`, `cli/_process.py` - `server start
-  --local-only` flag, `VAULTSPEC_RAG_LOCAL_ONLY` env translation, default-on
+- `src/vaultspec_rag/cli/_service_lifecycle.py`, `cli/_process.py` - `server start --local-only` flag, `VAULTSPEC_RAG_LOCAL_ONLY` env translation, default-on
   qdrant-binary guard skipped under local-only, server-first help text.
 - `src/vaultspec_rag/commands/_provision.py`, `commands/_install.py`,
   `commands/_models.py`, `cli/_install.py`, `cli/_render.py` - the opt-out
