@@ -97,14 +97,19 @@ def _handle_dry_run(
     index_type: str, json_mode: bool, target: pathlib.Path, exclude: list[str] | None
 ) -> None:
     if index_type not in ("code", "all"):
+        message = "Dry run is available for source-code indexing only."
+        remediation = ["vaultspec-rag index --type code --dry-run"]
         if json_mode:
             _emit_json_error_and_exit(
                 "index",
                 "dry_run_requires_code",
-                "--dry-run only applies when indexing source code.",
+                message,
                 2,
+                remediation=remediation,
             )
-        _cli.console.print("--dry-run only applies when indexing source code.")
+        _cli.console.print(message, markup=False, highlight=False)
+        _cli.console.print("Run:", markup=False, highlight=False)
+        _cli.console.print(f"  {remediation[0]}", markup=False, highlight=False)
         raise typer.Exit(code=2)
     import vaultspec_rag
 
@@ -338,7 +343,10 @@ def handle_index(
         bool,
         typer.Option(
             "--dry-run",
-            help="List files that would be indexed without indexing.",
+            help=(
+                "List source-code files that would be indexed without indexing. "
+                "Use with --type code or the default --type all."
+            ),
         ),
     ] = False,
     exclude: Annotated[

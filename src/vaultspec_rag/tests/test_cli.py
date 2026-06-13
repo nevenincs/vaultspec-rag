@@ -988,9 +988,43 @@ class TestIndexRebuild:
         )
 
         assert result.exit_code == 2
-        assert "--dry-run" in result.output
-        assert "source code" in result.output
+        lines = _plain_lines(result.output)
+        assert lines == [
+            "Dry run is available for source-code indexing only.",
+            "Run:",
+            "vaultspec-rag index --type code --dry-run",
+        ]
+        assert "--dry-run only applies" not in result.output
         assert "codebase" not in result.output
+
+    def test_index_dry_run_document_indexing_json_has_next_action(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vault").mkdir()
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "vault",
+                "--dry-run",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 2
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "index"
+        assert envelope["error"] == "dry_run_requires_code"
+        assert (
+            envelope["message"] == "Dry run is available for source-code indexing only."
+        )
+        assert envelope["remediation"] == ["vaultspec-rag index --type code --dry-run"]
 
     def test_index_rebuild_without_explicit_type_exits_2(self, tmp_path: Path):
         """--rebuild without --type is rejected.
