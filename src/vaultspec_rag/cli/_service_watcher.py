@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, cast
 
 import typer
@@ -48,6 +49,10 @@ def _project_name(root: object) -> str:
     value = str(root)
     parts = value.replace("\\", "/").rstrip("/").split("/")
     return parts[-1] if parts and parts[-1] else value
+
+
+def _resolve_project_argument(project: str) -> str:
+    return str(Path(project).expanduser().resolve())
 
 
 def _print_update_address(port: int) -> None:
@@ -206,7 +211,12 @@ def service_watcher_start(
     if resolved_port is None:
         _watcher_service_unreachable(_UPDATES_START_COMMAND, json_mode, root=project)
         return
-    result = _try_http_admin("start_watcher", {"root": project}, resolved_port)
+    resolved_project = _resolve_project_argument(project)
+    result = _try_http_admin(
+        "start_watcher",
+        {"root": resolved_project},
+        resolved_port,
+    )
     if result is None:
         _watcher_service_unreachable(_UPDATES_START_COMMAND, json_mode, root=project)
         return
@@ -216,12 +226,12 @@ def service_watcher_start(
         _emit_json(True, _UPDATES_START_COMMAND, data=result)
         return
     if started:
-        _print_update_result(resolved_port, "started", project)
+        _print_update_result(resolved_port, "started", resolved_project)
     elif not enabled:
         _print_update_result(
             resolved_port,
             "disabled; this project will update when requested",
-            project,
+            resolved_project,
         )
         _cli.console.print(
             "Next action: vaultspec-rag server start --updates",
@@ -229,7 +239,7 @@ def service_watcher_start(
             highlight=False,
         )
     else:
-        _print_update_result(resolved_port, "could not start", project)
+        _print_update_result(resolved_port, "could not start", resolved_project)
     raise typer.Exit(0)
 
 
@@ -253,7 +263,12 @@ def service_watcher_stop(
     if resolved_port is None:
         _watcher_service_unreachable(_UPDATES_STOP_COMMAND, json_mode, root=project)
         return
-    result = _try_http_admin("stop_watcher", {"root": project}, resolved_port)
+    resolved_project = _resolve_project_argument(project)
+    result = _try_http_admin(
+        "stop_watcher",
+        {"root": resolved_project},
+        resolved_port,
+    )
     if result is None:
         _watcher_service_unreachable(_UPDATES_STOP_COMMAND, json_mode, root=project)
         return
@@ -262,12 +277,12 @@ def service_watcher_stop(
         _emit_json(True, _UPDATES_STOP_COMMAND, data=result)
         return
     if stopped:
-        _print_update_result(resolved_port, "stopped", project)
+        _print_update_result(resolved_port, "stopped", resolved_project)
     else:
         _print_update_result(
             resolved_port,
             "not running for this project",
-            project,
+            resolved_project,
         )
     raise typer.Exit(0)
 
@@ -307,7 +322,8 @@ def service_watcher_timing(
             root=project,
         )
         return
-    args: dict[str, object] = {"root": project}
+    resolved_project = _resolve_project_argument(project)
+    args: dict[str, object] = {"root": resolved_project}
     if update_delay_ms is not None:
         args["debounce_ms"] = update_delay_ms
     if same_project_delay_s is not None:
@@ -325,12 +341,12 @@ def service_watcher_timing(
         _emit_json(True, _UPDATES_TIMING_COMMAND, data=result)
         return
     if restarted:
-        _print_update_result(resolved_port, "timing updated", project)
+        _print_update_result(resolved_port, "timing updated", resolved_project)
         _print_update_timing(result)
     else:
         _print_update_result(
             resolved_port,
             "disabled; this project will update when requested",
-            project,
+            resolved_project,
         )
     raise typer.Exit(0)

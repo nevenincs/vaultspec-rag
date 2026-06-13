@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import http.server
 import json
+import os
 import threading
 from typing import TYPE_CHECKING, ClassVar
 
@@ -22,6 +23,7 @@ from ..cli import app
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 runner = CliRunner()
 
@@ -263,6 +265,71 @@ def test_updates_start_output_uses_project_block() -> None:
     assert labels["Project"] == "feature-server-supervision"
     assert labels["Path"] == project
     assert "started for:" not in result.output.lower()
+
+
+@pytest.mark.parametrize(
+    ("argv", "payload", "expected_status", "request_path", "request_extra"),
+    [
+        (
+            ["server", "updates", "start", "."],
+            {"started": True, "watch_enabled": True},
+            "started",
+            "/watcher/start",
+            {},
+        ),
+        (
+            ["server", "updates", "stop", "."],
+            {"stopped": True},
+            "stopped",
+            "/watcher/stop",
+            {},
+        ),
+        (
+            [
+                "server",
+                "updates",
+                "timing",
+                ".",
+                "--update-delay-ms",
+                "500",
+                "--same-project-delay-s",
+                "2",
+            ],
+            {"restarted": True, "debounce_ms": 500, "cooldown_s": 2.0},
+            "timing updated",
+            "/watcher/reconfigure",
+            {"debounce_ms": 500, "cooldown_s": 2.0},
+        ),
+    ],
+)
+def test_updates_project_commands_resolve_relative_project(
+    tmp_path: Path,
+    argv: list[str],
+    payload: dict[str, object],
+    expected_status: str,
+    request_path: str,
+    request_extra: dict[str, object],
+) -> None:
+    project = str(tmp_path.resolve())
+    previous_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        with _updates_http_server(payload) as (_server, port):
+            result = runner.invoke(app, [*argv, "--port", str(port)])
+    finally:
+        os.chdir(previous_cwd)
+
+    assert result.exit_code == 0, result.output
+    body = {"root": project, **request_extra}
+    assert _UpdatesHTTPHandler.requests == [
+        {"method": "POST", "path": request_path, "body": body}
+    ]
+    labels = _label_values(result.output)
+    assert labels["Automatic index updates"] == expected_status
+    assert labels["Project"] == tmp_path.name
+    assert labels["Path"] == project
+    assert "Project: ." not in result.output
+    assert "Path: ." not in result.output
 
 
 def test_updates_timing_help_uses_user_facing_timing_flags() -> None:
