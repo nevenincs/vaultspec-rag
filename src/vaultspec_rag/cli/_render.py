@@ -243,7 +243,7 @@ def _display_search_results(
     show_scores: bool = False,
     root: Path | None = None,
 ) -> None:
-    """Display search results as stable line-oriented records.
+    """Display search results as stable, readable records.
 
     Args:
         results: List of result dicts with ``score``, ``path``,
@@ -262,37 +262,44 @@ def _display_search_results(
     _ = search_type, via, no_truncate
     for rank, result in enumerate(results, start=1):
         location = _search_result_location(result)
-        snippet = _search_result_text(result, root=root)
         line = f"{rank}. {location}"
         if show_scores:
             line += f" (score {_search_result_score(result):.4f})"
-        if snippet:
-            line += f" - {snippet}"
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        for text_line in _search_result_text_lines(result, root=root):
+            _cli.console.print(
+                f"   {text_line}",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
 
 
-def _single_line_text(value: object) -> str:
-    """Collapse multiline display text into one copyable result line."""
-    return " ".join(str(value).splitlines())
+def _display_text_lines(value: object) -> list[str]:
+    return [line.rstrip() for line in str(value).splitlines()]
 
 
-def _search_result_text(result: dict[str, object], *, root: Path | None) -> str:
+def _search_result_text_lines(
+    result: dict[str, object], *, root: Path | None
+) -> list[str]:
     full_text = _non_empty_result_string(result, "rerank_text")
     if full_text is not None:
-        return _single_line_text(full_text)
-    source_text = _source_line_text(result, root=root)
-    if source_text:
-        return source_text
-    return _single_line_text(result.get("snippet", ""))
+        return _display_text_lines(full_text)
+    source_lines = _source_line_text_lines(result, root=root)
+    if source_lines:
+        return source_lines
+    return _display_text_lines(result.get("snippet", ""))
 
 
-def _source_line_text(result: dict[str, object], *, root: Path | None) -> str:
+def _source_line_text_lines(
+    result: dict[str, object], *, root: Path | None
+) -> list[str]:
     path_text = _non_empty_result_string(result, "source_path") or (
         _non_empty_result_string(result, "path")
     )
     line_start = result.get("line_start")
     if path_text is None or not isinstance(line_start, int):
-        return ""
+        return []
     line_end = result.get("line_end")
     end = (
         line_end if isinstance(line_end, int) and line_end >= line_start else line_start
@@ -303,9 +310,8 @@ def _source_line_text(result: dict[str, object], *, root: Path | None) -> str:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return ""
-    selected = lines[line_start - 1 : end]
-    return _single_line_text("\n".join(selected))
+        return []
+    return lines[line_start - 1 : end]
 
 
 def _search_result_score(result: dict[str, object]) -> float:

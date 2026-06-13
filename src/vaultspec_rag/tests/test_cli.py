@@ -39,8 +39,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
 _SEARCH_RECORD_RE = re.compile(
     r"^(?P<number>\d+)\. "
     r"(?P<location>\S+)"
-    r"(?: \(score (?P<score>\d+\.\d{4})\))? - "
-    r"(?P<text>.*)$"
+    r"(?: \(score (?P<score>\d+\.\d{4})\))?$"
 )
 
 
@@ -136,17 +135,27 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
 
 def _search_records(output: str) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    text_lines: list[str] = []
     for line in _plain_lines(output):
         match = _SEARCH_RECORD_RE.fullmatch(line)
-        assert match is not None, f"Expected search record line, got {line!r}"
-        records.append(
-            {
+        if match is not None:
+            if current is not None:
+                current["text"] = "\n".join(text_lines)
+                records.append(current)
+            current = {
                 "number": int(match.group("number")),
                 "location": match.group("location"),
                 "score": match.group("score"),
-                "text": match.group("text"),
+                "text": "",
             }
-        )
+            text_lines = []
+            continue
+        assert current is not None, f"Expected search record header, got {line!r}"
+        text_lines.append(line)
+    if current is not None:
+        current["text"] = "\n".join(text_lines)
+        records.append(current)
     return records
 
 
@@ -480,7 +489,8 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
                         "score": 0.875,
                         "snippet": "def render_search",
                         "rerank_text": (
-                            "def render_search_results(): return 'full service text'"
+                            "def render_search_results():\n"
+                            "    return 'full service text'"
                         ),
                     },
                     {
@@ -2118,7 +2128,7 @@ class TestSearchSafetyContract:
             records[0],
             number=1,
             location="src/search_ui.py:12",
-            text="def render_search_results(): return 'full service text'",
+            text="def render_search_results():\nreturn 'full service text'",
         )
         _assert_record(
             records[1],
@@ -2126,7 +2136,11 @@ class TestSearchSafetyContract:
             location="docs/ops.md#service-status",
             text="Use server status for service readiness and current work.",
         )
-        assert "\n" not in str(records[0]["text"])
+        lines = _plain_lines(result.output)
+        assert lines[0] == "1. src/search_ui.py:12"
+        assert lines[1] == "def render_search_results():"
+        assert lines[2] == "return 'full service text'"
+        assert " - " not in lines[0]
         _assert_no_table_borders(result.output)
 
     def test_search_structure_filter_sends_service_node_type(
@@ -2217,7 +2231,7 @@ class TestSearchSafetyContract:
             records[0],
             number=1,
             location="src/search_ui.py:12",
-            text="def render_search_results(): return 'full service text'",
+            text="def render_search_results():\nreturn 'full service text'",
             score="0.8750",
         )
         _assert_no_table_borders(result.output)
