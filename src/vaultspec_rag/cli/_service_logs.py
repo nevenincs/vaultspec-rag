@@ -39,6 +39,7 @@ _STORE_UPDATE_RE = re.compile(
     r"(?P<count>\d+)\s+"
     r"(?P<kind>document|vault chunk|codebase chunk|code chunk)\(s\)$"
 )
+_FILE_CHANGE_RE = re.compile(r"^(?P<count>\d+)\s+change(?:s)?\s+detected$")
 
 
 def _log_parts(raw: str) -> dict[str, str]:
@@ -224,6 +225,8 @@ def _activity_from_store_update(parts: dict[str, str]) -> str | None:
     kind = match.group("kind")
     if kind in ("codebase chunk", "code chunk"):
         noun = "source code section" if count == "1" else "source code sections"
+    elif kind == "vault chunk":
+        noun = "vault document section" if count == "1" else "vault document sections"
     elif kind == "document":
         noun = "vault document" if count == "1" else "vault documents"
     else:
@@ -231,10 +234,24 @@ def _activity_from_store_update(parts: dict[str, str]) -> str | None:
     return f"{parts['clock']} index {verb} {count} {noun}"
 
 
+def _activity_from_file_change(parts: dict[str, str]) -> str | None:
+    if parts["logger"] != "watchfiles.main":
+        return None
+    match = _FILE_CHANGE_RE.match(parts["message"])
+    if match is None:
+        return None
+    count = match.group("count")
+    noun = "file change" if count == "1" else "file changes"
+    return f"{parts['clock']} index update detected {count} {noun}"
+
+
 def _activity_from_unstructured(parts: dict[str, str]) -> str | None:
     store_update = _activity_from_store_update(parts)
     if store_update is not None:
         return store_update
+    file_change = _activity_from_file_change(parts)
+    if file_change is not None:
+        return file_change
     level = parts["level"].lower()
     if level not in ("warning", "error", "critical"):
         return None

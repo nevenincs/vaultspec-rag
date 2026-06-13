@@ -127,6 +127,36 @@ def _store_update_payload() -> dict[str, object]:
     }
 
 
+def _vault_section_update_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            (
+                "2026-06-12 13:12:11,845 INFO     vaultspec_rag.store: "
+                "Upserted 1 vault chunk(s)"
+            ),
+            (
+                "2026-06-12 13:12:12,845 INFO     vaultspec_rag.store: "
+                "Deleted 3 vault chunk(s)"
+            ),
+        ],
+        "total": 2,
+        "filters": {},
+    }
+
+
+def _file_change_payload() -> dict[str, object]:
+    return {
+        "lines": [
+            "INFO     1 change detected",
+            "2026-06-13 13:04:39,762 INFO     watchfiles.main: 1 change detected",
+            "INFO     2 changes detected",
+            "2026-06-13 13:04:40,471 INFO     watchfiles.main: 2 changes detected",
+        ],
+        "total": 4,
+        "filters": {},
+    }
+
+
 def _unstructured_warning_payload() -> dict[str, object]:
     return {
         "lines": [
@@ -480,6 +510,43 @@ def test_logs_human_output_shows_index_updates() -> None:
     assert "2 docs" not in output
     assert "No activity entries" not in output
     assert "vaultspec_rag.store" not in output
+
+
+def test_logs_human_output_uses_document_section_language() -> None:
+    with _logs_http_server([_vault_section_update_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "13:12:11 index updated 1 vault document section" in output
+    assert "13:12:12 index removed 3 vault document sections" in output
+    assert "vault chunk" not in output
+
+
+def test_logs_human_output_shows_file_change_index_updates() -> None:
+    with _logs_http_server([_file_change_payload()]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "logs", "--limit", "8", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    assert lines[:4] == [
+        "Activity",
+        f"Address: http://127.0.0.1:{port}",
+        "Shown: 2 entries",
+        "Source: last 8 log lines",
+    ]
+    assert "13:04:39 index update detected 1 file change" in output
+    assert "13:04:40 index update detected 2 file changes" in output
+    assert "No service activity found" not in output
+    assert "watchfiles" not in output
+    assert "watcher" not in output.lower()
 
 
 def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
