@@ -2240,7 +2240,7 @@ class TestSearchSafetyContract:
             folded,
         )
         assert "running index jobs before retrying." in folded
-        assert labels["Service"] == "reachable; status check passed; 3 projects loaded"
+        assert labels["Service"] == "reachable; health check passed; 3 projects loaded"
         assert labels["Work"] == "no index jobs running"
         lines = _plain_lines(result.output)
         next_actions = lines[lines.index("Next actions:") + 1 :]
@@ -2347,7 +2347,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
-        assert labels["Service"] == "reachable; status check passed; 3 projects loaded"
+        assert labels["Service"] == "reachable; health check passed; 3 projects loaded"
         assert (
             labels["Work"]
             == "jobs check not reported by service (Job summary is not available.)"
@@ -2944,7 +2944,7 @@ class TestSearchResultRendering:
         )
 
         out = capsys.readouterr().out
-        assert "Service: reachable; status check passed" in out
+        assert "Service: reachable; health check passed" in out
         assert "Work: running job count not reported by service" in out
         assert "running work status unknown" not in out
         assert "unknown" not in out

@@ -199,7 +199,7 @@ def _health_diagnostic_text(health: dict[str, object]) -> str:
         ready_text = "health not reported by service"
     else:
         ready_text = (
-            "status check passed"
+            "health check passed"
             if raw_status == "ready"
             else raw_status.replace("_", " ")
         )
