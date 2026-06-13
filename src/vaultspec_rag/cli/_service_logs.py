@@ -387,6 +387,12 @@ def _render_no_activity_hint(
         soft_wrap=True,
     )
     _cli.console.print(
+        f"  vaultspec-rag server jobs --state waiting --port {port}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    _cli.console.print(
         f"  vaultspec-rag server status --port {port}",
         markup=False,
         highlight=False,

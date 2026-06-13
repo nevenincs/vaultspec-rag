@@ -4549,6 +4549,7 @@ class TestServiceLogsCli:
                 f"--port {server.server_port} --contains service.lifecycle"
             ),
             f"vaultspec-rag server jobs --state active --port {server.server_port}",
+            f"vaultspec-rag server jobs --state waiting --port {server.server_port}",
             f"vaultspec-rag server status --port {server.server_port}",
             (
                 "vaultspec-rag server logs --raw --limit 5 "

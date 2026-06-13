@@ -611,24 +611,59 @@ def test_jobs_removed_legacy_filter_flags_are_not_supported(
 
 
 @pytest.mark.parametrize(
-    ("result", "expected"),
+    ("result", "expected_message", "expected_filter"),
     [
-        ({"jobs": [], "filters": {"limit": 5, "phase": "running"}}, "No running jobs."),
-        ({"jobs": [], "filters": {"limit": 5, "failed": True}}, "No failed jobs."),
-        ({"jobs": [], "filters": {"limit": 5, "source": "code"}}, "No matching jobs."),
-        ({"jobs": [], "filters": {"limit": 5}}, "No recent jobs."),
+        (
+            {"jobs": [], "filters": {"limit": 5, "phase": "running"}},
+            "There are no active or waiting jobs.",
+            "Filter: state active or waiting",
+        ),
+        (
+            {"jobs": [], "filters": {"limit": 5, "failed": True}},
+            "There are no failed jobs.",
+            "Filter: failed only",
+        ),
+        (
+            {"jobs": [], "filters": {"limit": 5, "source": "code"}},
+            "No jobs matched these filters.",
+            "Filter: index code",
+        ),
+        (
+            {"jobs": [], "filters": {"limit": 5}},
+            "No jobs have been reported by this service yet.",
+            None,
+        ),
     ],
 )
-def test_empty_jobs_output_matches_active_filter(
+def test_empty_jobs_output_is_actionable(
     result: dict[str, object],
-    expected: str,
+    expected_message: str,
+    expected_filter: str | None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from ...cli._service_jobs import _render_jobs_result
 
     _render_jobs_result(result, job_id=None, port=8766)
 
-    assert capsys.readouterr().out.strip() == expected
+    output = capsys.readouterr().out
+    lines = _plain_lines(output)
+    expected_present = [
+        "Jobs",
+        "Address: http://127.0.0.1:8766",
+        "Shown: 0 matching jobs" if expected_filter else "Shown: 0 jobs",
+        "Shown summary: 0 active, 0 waiting, 0 finished, 0 failed",
+        "Order: latest shown last",
+        expected_message,
+        "Next actions:",
+        "vaultspec-rag server status --port 8766",
+        "vaultspec-rag server logs --limit 20 --port 8766",
+    ]
+    if expected_filter is not None:
+        expected_present.append(expected_filter)
+    missing = [line for line in expected_present if line not in lines]
+    assert not missing, f"missing actionable empty-jobs lines: {missing}"
+    assert "No running jobs." not in output
+    assert "No recent jobs." not in output
 
 
 def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
