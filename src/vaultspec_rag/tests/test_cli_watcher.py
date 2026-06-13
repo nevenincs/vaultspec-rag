@@ -32,8 +32,20 @@ _DEAD_PORT = "59231"
 
 class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
     payloads: ClassVar[list[dict[str, object]]] = []
+    requests: ClassVar[list[dict[str, object]]] = []
 
     def do_GET(self) -> None:
+        self.requests.append({"method": "GET", "path": self.path})
+        self._send_payload()
+
+    def do_POST(self) -> None:
+        body_length = int(self.headers.get("Content-Length", "0"))
+        raw_body = self.rfile.read(body_length).decode("utf-8")
+        body = json.loads(raw_body) if raw_body else {}
+        self.requests.append({"method": "POST", "path": self.path, "body": body})
+        self._send_payload()
+
+    def _send_payload(self) -> None:
         payload = self.payloads[0]
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -49,6 +61,7 @@ def _updates_http_server(
     payload: dict[str, object],
 ) -> Iterator[tuple[http.server.HTTPServer, int]]:
     _UpdatesHTTPHandler.payloads = [payload]
+    _UpdatesHTTPHandler.requests = []
     server = http.server.HTTPServer(("127.0.0.1", 0), _UpdatesHTTPHandler)
     port = int(server.server_address[1])
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -228,6 +241,30 @@ def test_updates_status_lists_projects_as_blocks() -> None:
     )
 
 
+def test_updates_start_output_uses_project_block() -> None:
+    project = r"vaultspec-rag\feature-server-supervision"
+    payload: dict[str, object] = {
+        "started": True,
+        "watch_enabled": True,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "start", project, "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert _UpdatesHTTPHandler.requests == [
+        {"method": "POST", "path": "/watcher/start", "body": {"root": project}}
+    ]
+    labels = _label_values(result.output)
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["Automatic index updates"] == "started"
+    assert labels["Project"] == "feature-server-supervision"
+    assert labels["Path"] == project
+    assert "started for:" not in result.output.lower()
+
+
 def test_updates_timing_help_uses_user_facing_timing_flags() -> None:
     result = runner.invoke(app, ["server", "updates", "timing", "--help"])
     assert result.exit_code == 0
@@ -259,6 +296,48 @@ def test_updates_timing_flags_parse(argv: list[str]) -> None:
     payload = json.loads(result.stdout)
     assert payload["command"] == "service.updates.timing"
     assert payload["error"] == "service_not_running"
+
+
+def test_updates_timing_output_uses_project_block() -> None:
+    project = r"vaultspec-rag\feature-server-supervision"
+    payload: dict[str, object] = {
+        "restarted": True,
+        "debounce_ms": 500,
+        "cooldown_s": 2.0,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "updates",
+                "timing",
+                project,
+                "--update-delay-ms",
+                "500",
+                "--same-project-delay-s",
+                "2",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert _UpdatesHTTPHandler.requests == [
+        {
+            "method": "POST",
+            "path": "/watcher/reconfigure",
+            "body": {"root": project, "debounce_ms": 500, "cooldown_s": 2.0},
+        }
+    ]
+    labels = _label_values(result.output)
+    assert labels["Address"] == f"http://127.0.0.1:{port}"
+    assert labels["Automatic index updates"] == "timing updated"
+    assert labels["Project"] == "feature-server-supervision"
+    assert labels["Path"] == project
+    assert labels["File changes"] == "wait 500ms before updating."
+    assert labels["Same project"] == "wait 2s before updating again."
+    assert "reconfigured for:" not in result.output.lower()
 
 
 @pytest.mark.parametrize(

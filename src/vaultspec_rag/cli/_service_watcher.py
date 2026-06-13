@@ -50,6 +50,38 @@ def _project_name(root: object) -> str:
     return parts[-1] if parts and parts[-1] else value
 
 
+def _print_update_address(port: int) -> None:
+    _cli.console.print(
+        f"Address: http://127.0.0.1:{port}",
+        markup=False,
+        highlight=False,
+    )
+
+
+def _print_update_project(project: str) -> None:
+    _cli.console.print(
+        f"Project: {_project_name(project)}",
+        markup=False,
+        highlight=False,
+    )
+    _cli.console.print(
+        f"Path: {project}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+
+
+def _print_update_result(port: int, status: str, project: str) -> None:
+    _print_update_address(port)
+    _cli.console.print(
+        f"Automatic index updates: {status}",
+        markup=False,
+        highlight=False,
+    )
+    _print_update_project(project)
+
+
 def _print_update_timing(result: dict[str, object]) -> None:
     update_delay = _format_milliseconds(result.get("debounce_ms"))
     same_project_delay = _format_seconds(result.get("cooldown_s"))
@@ -120,6 +152,9 @@ def service_watcher_status(
 ) -> None:
     """Show automatic index update settings and projects."""
     resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        _watcher_service_unreachable(_UPDATES_STATUS_COMMAND, json_mode)
+        return
     result = _try_http_admin("get_watcher_state", {}, resolved_port)
     if result is None:
         _watcher_service_unreachable(_UPDATES_STATUS_COMMAND, json_mode)
@@ -133,11 +168,7 @@ def service_watcher_status(
         _emit_json(True, _UPDATES_STATUS_COMMAND, data=result)
         return
     mode = "enabled" if enabled else "disabled; indexes update when requested"
-    _cli.console.print(
-        f"Address: http://127.0.0.1:{resolved_port}",
-        markup=False,
-        highlight=False,
-    )
+    _print_update_address(resolved_port)
     _cli.console.print(f"Automatic index updates: {mode}", markup=False)
     _print_update_timing(result)
     if not watching:
@@ -172,6 +203,9 @@ def service_watcher_start(
 ) -> None:
     """Start automatic index updates for a project."""
     resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        _watcher_service_unreachable(_UPDATES_START_COMMAND, json_mode, root=project)
+        return
     result = _try_http_admin("start_watcher", {"root": project}, resolved_port)
     if result is None:
         _watcher_service_unreachable(_UPDATES_START_COMMAND, json_mode, root=project)
@@ -182,21 +216,20 @@ def service_watcher_start(
         _emit_json(True, _UPDATES_START_COMMAND, data=result)
         return
     if started:
-        _cli.console.print(
-            f"Automatic index updates started for: {project}", markup=False
-        )
+        _print_update_result(resolved_port, "started", project)
     elif not enabled:
+        _print_update_result(
+            resolved_port,
+            "disabled; this project will update when requested",
+            project,
+        )
         _cli.console.print(
-            f"Automatic index updates are disabled; {project} will update on demand. "
-            "Start the service with --updates to enable.",
+            "Next action: vaultspec-rag server start --updates",
             markup=False,
             highlight=False,
         )
     else:
-        _cli.console.print(
-            f"Could not start automatic index updates for: {project}",
-            markup=False,
-        )
+        _print_update_result(resolved_port, "could not start", project)
     raise typer.Exit(0)
 
 
@@ -217,6 +250,9 @@ def service_watcher_stop(
 ) -> None:
     """Stop automatic index updates for a project."""
     resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        _watcher_service_unreachable(_UPDATES_STOP_COMMAND, json_mode, root=project)
+        return
     result = _try_http_admin("stop_watcher", {"root": project}, resolved_port)
     if result is None:
         _watcher_service_unreachable(_UPDATES_STOP_COMMAND, json_mode, root=project)
@@ -226,11 +262,13 @@ def service_watcher_stop(
         _emit_json(True, _UPDATES_STOP_COMMAND, data=result)
         return
     if stopped:
-        _cli.console.print(
-            f"Automatic index updates stopped for: {project}", markup=False
-        )
+        _print_update_result(resolved_port, "stopped", project)
     else:
-        _cli.console.print(f"No automatic index updates were running for: {project}")
+        _print_update_result(
+            resolved_port,
+            "not running for this project",
+            project,
+        )
     raise typer.Exit(0)
 
 
@@ -262,6 +300,13 @@ def service_watcher_timing(
 ) -> None:
     """Change automatic index update timing."""
     resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        _watcher_service_unreachable(
+            _UPDATES_TIMING_COMMAND,
+            json_mode,
+            root=project,
+        )
+        return
     args: dict[str, object] = {"root": project}
     if update_delay_ms is not None:
         args["debounce_ms"] = update_delay_ms
@@ -280,12 +325,12 @@ def service_watcher_timing(
         _emit_json(True, _UPDATES_TIMING_COMMAND, data=result)
         return
     if restarted:
-        _cli.console.print(f"Automatic index updates reconfigured for: {project}")
+        _print_update_result(resolved_port, "timing updated", project)
         _print_update_timing(result)
     else:
-        _cli.console.print(
-            f"Automatic index updates are disabled; {project} will update on demand.",
-            markup=False,
-            highlight=False,
+        _print_update_result(
+            resolved_port,
+            "disabled; this project will update when requested",
+            project,
         )
     raise typer.Exit(0)
