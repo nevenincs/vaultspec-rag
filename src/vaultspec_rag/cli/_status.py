@@ -41,6 +41,16 @@ def _human_index_data_location(
     return raw
 
 
+def _status_next_action(vault_count: int, code_count: int) -> str | None:
+    if vault_count > 0 and code_count > 0:
+        return None
+    if vault_count <= 0 and code_count <= 0:
+        return "vaultspec-rag index --type all"
+    if vault_count <= 0:
+        return "vaultspec-rag index --type vault"
+    return "vaultspec-rag index --type code"
+
+
 def _render_status_text(
     status: dict[str, object],
     *,
@@ -72,6 +82,7 @@ def _render_status_text(
         lines.append(
             f"Service status: vaultspec-rag server status --port {service_port}"
         )
+    next_action = _status_next_action(vault_count, code_count)
     for line in lines:
         _cli.console.print(
             line,
@@ -79,6 +90,9 @@ def _render_status_text(
             highlight=False,
             soft_wrap=line.startswith(("Index data:", "Project:", "Address:")),
         )
+    if next_action:
+        _cli.console.print("Next action:", markup=False, highlight=False)
+        _cli.console.print(f"  {next_action}", markup=False, highlight=False)
 
 
 def _emit_status_json(

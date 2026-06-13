@@ -852,7 +852,8 @@ class TestStatusCommand:
             service_port=8766,
         )
 
-        labels = _label_values(capsys.readouterr().out)
+        output = capsys.readouterr().out
+        labels = _label_values(output)
         assert labels["Compute"] == "CPU only (no supported GPU detected)"
         assert labels["Vault documents"] == "12"
         assert labels["Source code sections"] == "34"
@@ -860,6 +861,51 @@ class TestStatusCommand:
         assert labels["Service status"] == "vaultspec-rag server status --port 8766"
         assert "Read from" not in labels
         assert "Source code chunks" not in labels
+        assert "Next action:" not in output
+
+    def test_status_empty_index_output_is_actionable(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "gpu_name": "",
+                "vram_mb": 0,
+                "storage_path": tmp_path / ".vault" / "data" / "search-data",
+                "vault_documents": 0,
+                "codebase_chunks": 0,
+            },
+            target=tmp_path,
+            service_port=8766,
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        next_action_index = lines.index("Next action:")
+        assert lines[next_action_index + 1] == "vaultspec-rag index --type all"
+        assert all("Health:" not in line for line in lines)
+
+    def test_status_partial_index_output_names_missing_index(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "gpu_name": "",
+                "vram_mb": 0,
+                "storage_path": tmp_path / ".vault" / "data" / "search-data",
+                "vault_documents": 3,
+                "codebase_chunks": 0,
+            },
+            target=tmp_path,
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        next_action_index = lines.index("Next action:")
+        assert lines[next_action_index + 1] == "vaultspec-rag index --type code"
 
     def test_status_prefers_running_service_index_state(self, tmp_path: Path) -> None:
         import http.server
