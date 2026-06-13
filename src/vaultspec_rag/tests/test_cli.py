@@ -1112,6 +1112,8 @@ class TestServerRoutingFlattened:
         result = runner.invoke(app, ["server", "status", "--help"])
         assert result.exit_code == 0, result.output
         assert "operator summary" in result.output
+        assert "server health" in result.output
+        assert "readiness" not in result.output.lower()
         assert "service identity" in result.output
         assert "token" not in result.output.lower()
         assert "Emit JSON for scripts" in result.output
@@ -2298,7 +2300,7 @@ class TestSearchSafetyContract:
         labels = _label_values(result.output)
         assert (
             labels["Service"]
-            == "reachable; readiness not reported by service; 1 project loaded"
+            == "reachable; health not reported by service; 1 project loaded"
         )
         assert labels["Work"] == "no index jobs running"
         assert "unknown" not in result.output.lower()

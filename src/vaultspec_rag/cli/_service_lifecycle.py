@@ -1209,10 +1209,7 @@ def _render_explicit_port_status(
 
 @server_app.command(
     "status",
-    help=(
-        "Show the human operator summary for service state, readiness, work, "
-        "and next checks."
-    ),
+    help=("Show the human operator summary for server health, work, and next checks."),
 )
 def service_status(
     requested_port: Annotated[

@@ -196,7 +196,7 @@ def _health_diagnostic_text(health: dict[str, object]) -> str:
         return _unavailable_diagnostic_text(health, "status check")
     raw_status = health.get("status")
     if not isinstance(raw_status, str) or not raw_status or raw_status == "unknown":
-        ready_text = "readiness not reported by service"
+        ready_text = "health not reported by service"
     else:
         ready_text = (
             "status check passed"
