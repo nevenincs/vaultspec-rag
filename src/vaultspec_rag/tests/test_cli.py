@@ -4946,7 +4946,10 @@ class TestRenderInstallReport:
         )
         out = self._render(report)
         assert "PyTorch configuration: preview only" in out
-        assert "note: dry-run preview: would update tool integration files" in out
+        assert "Target: ." in out
+        assert "Note: dry-run preview: would update tool integration files" in out
+        assert "target:" not in out
+        assert "note:" not in out
         assert "warning: dry-run preview" not in out
         for forbidden in (
             "torch-config:",
@@ -5026,7 +5029,10 @@ class TestRenderUninstallReport:
         assert "removed 1 bundled source file" not in out
         assert "PyTorch configuration: preview only" in out
         assert "PyTorch dependency: preview only" in out
-        assert "note: dry-run preview: would remove tool integration files" in out
+        assert "Target: ." in out
+        assert "Note: dry-run preview: would remove tool integration files" in out
+        assert "target:" not in out
+        assert "note:" not in out
         assert "warning: dry-run preview" not in out
         for forbidden in (
             "torch-config:",

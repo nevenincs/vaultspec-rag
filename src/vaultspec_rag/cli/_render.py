@@ -482,7 +482,7 @@ def _warning_text(warning: str) -> str:
 
 def _print_warning_or_note(warning: object) -> None:
     text = _warning_text(str(warning))
-    prefix = "note" if text.startswith("dry-run preview:") else "warning"
+    prefix = "Note" if text.startswith("dry-run preview:") else "Warning"
     _cli.console.print(f"{prefix}: {text}", markup=False, highlight=False)
 
 
@@ -495,7 +495,7 @@ def _render_install_report(report: Any) -> None:
     }.get(report.action, "vaultspec-rag install")
     dry_run = report.action == "dry_run"
     _cli.console.print(title, markup=False, highlight=False)
-    _cli.console.print(f"target: {report.target}", markup=False, highlight=False)
+    _cli.console.print(f"Target: {report.target}", markup=False, highlight=False)
     if report.created_dirs:
         verb = "would create" if dry_run else "created"
         _cli.console.print(
@@ -546,7 +546,7 @@ def _render_uninstall_report(report: Any) -> None:
     }.get(report.action, "vaultspec-rag uninstall")
     dry_run = report.action == "dry_run"
     _cli.console.print(title, markup=False, highlight=False)
-    _cli.console.print(f"target: {report.target}", markup=False, highlight=False)
+    _cli.console.print(f"Target: {report.target}", markup=False, highlight=False)
     if report.removed:
         verb = "would remove" if dry_run else "removed"
         _cli.console.print(
