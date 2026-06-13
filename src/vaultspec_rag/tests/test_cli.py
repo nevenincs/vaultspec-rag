@@ -2476,9 +2476,7 @@ class TestSearchSafetyContract:
             folded,
         )
         assert "active index jobs before retrying." in folded
-        assert (
-            labels["Service"] == "reachable; readiness check passed; 3 projects loaded"
-        )
+        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
         assert labels["Work"] == "no active index jobs"
         lines = _plain_lines(result.output)
         next_actions = lines[lines.index("Next actions:") + 1 :]
@@ -2543,7 +2541,7 @@ class TestSearchSafetyContract:
         labels = _label_values(result.output)
         assert (
             labels["Service"]
-            == "reachable; readiness not reported by service; 1 project loaded"
+            == "reachable; request status not reported by service; 1 project loaded"
         )
         assert labels["Work"] == "no active index jobs"
         assert "unknown" not in result.output.lower()
@@ -2587,9 +2585,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
-        assert (
-            labels["Service"] == "reachable; readiness check passed; 3 projects loaded"
-        )
+        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
         assert (
             labels["Work"]
             == "jobs check not reported by service (Job summary is not available.)"
@@ -3155,7 +3151,7 @@ class TestSearchResultRendering:
 
         out = capsys.readouterr().out
         assert "HTTP search on port 8766 timed out after 180.0s." in out
-        assert "Service: readiness check timed out" in out
+        assert "Service: request check timed out" in out
         assert "Work: 2 active index jobs" in out
         assert "vaultspec-rag server jobs --state active --port 8766" in out
         assert "same_project_search_strategy" not in out
@@ -3184,7 +3180,7 @@ class TestSearchResultRendering:
         )
 
         out = capsys.readouterr().out
-        assert "Service: reachable; readiness check passed" in out
+        assert "Service: reachable; requests ready" in out
         assert "Work: active job count not reported by service" in out
         assert "running work status unknown" not in out
         assert "unknown" not in out
