@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.21](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.20...vaultspec-rag-v0.2.21) (2026-06-13)
+
+
+### Features
+
+* server-first default backend with unified provisioning and readiness ([97b6f64](https://github.com/wgergely/vaultspec-rag/commit/97b6f64544c3f632d7856f04c9ce81730ada4cc5))
+
 ## [0.2.20](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.19...vaultspec-rag-v0.2.20) (2026-06-11)
 
 
