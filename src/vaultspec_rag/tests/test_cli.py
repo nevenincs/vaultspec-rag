@@ -4145,11 +4145,11 @@ class TestServiceJobsCli:
         assert requests == ["/jobs?limit=5&phase=running"]
         lines = _plain_lines(result.output)
         expected_present = [
-            f"Jobs on service port {server.server_port}",
+            "Jobs",
             f"Address: http://127.0.0.1:{server.server_port}",
             "Shown: 0 matching jobs",
-            "Recent jobs on service: 0 jobs",
-            "States: 0 active, 0 waiting, 0 finished, 0 failed",
+            "Total: 0 jobs",
+            "Summary: 0 active, 0 waiting, 0 finished, 0 failed",
             "Order: latest shown last",
             "Filter: state active or waiting",
             "There are no active or waiting jobs.",
@@ -4160,6 +4160,9 @@ class TestServiceJobsCli:
         missing = [text for text in expected_present if text not in lines]
         assert not missing, f"missing operator lines: {missing}"
         _assert_no_table_borders(result.output)
+        assert "Jobs on service port" not in result.output
+        assert "Recent jobs on service" not in result.output
+        assert "States:" not in result.output
         assert "watcher" not in result.output.lower()
 
     def test_jobs_populated_feed_uses_visible_prefixes(self) -> None:

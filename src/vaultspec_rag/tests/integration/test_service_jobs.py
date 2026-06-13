@@ -52,7 +52,7 @@ runner = CliRunner()
 _DEAD_PORT = "59235"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _JOB_ROW_RE = re.compile(
-    r"^(?P<marker>[*!~ ]) (?P<time>\d\d:\d\d:\d\d|time not reported) "
+    r"^(?P<marker>[*!~ -]) (?P<time>\d\d:\d\d:\d\d|time not reported) "
     r"(?P<state>\S+) (?P<operation>.+?) \(job (?P<id>[^)]+)\) - "
     r"(?P<detail>.*)$"
 )
@@ -614,16 +614,17 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     assert result.exit_code == 0, result.output
     output = result.output
     lines = _plain_lines(output)
-    assert lines[:5] == [
-        f"Jobs on service port {port}",
+    assert lines[:6] == [
+        "Jobs",
+        f"Address: http://127.0.0.1:{port}",
         "Shown: 3 jobs",
-        "Recent jobs on service: 3 jobs",
-        "States: 1 active, 0 waiting, 1 finished, 1 failed",
+        "Total: 3 jobs",
+        "Summary: 1 active, 0 waiting, 1 finished, 1 failed",
         "Order: latest shown last",
     ]
     rows = _jobs_feed_rows(output)
     assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
-    assert rows[0]["marker"] == " "
+    assert rows[0]["marker"] == "-"
     assert rows[0]["state"] == "finished"
     assert rows[0]["operation"] == "code index refresh for proj-c"
     assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22s"
@@ -641,6 +642,9 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         "Shown: 3 of 3",
         "Latest shown last.",
         "Filtered by",
+        "Jobs on service port",
+        "Recent jobs on service",
+        "States:",
         "project=",
         " project proj-",
         " id runjob12",
@@ -709,7 +713,7 @@ def test_jobs_humanizes_disk_space_failures() -> None:
 
     assert result.exit_code == 0, result.output
     assert "Shown: 3 matching jobs" in result.output
-    assert "Recent jobs on service: 3 jobs" in result.output
+    assert "Total: 3 jobs" in result.output
     assert "Filter: failed only" in result.output
     assert "Filtered by failed only" not in result.output
     assert "not enough disk space; free disk space and retry" in result.output
@@ -796,11 +800,12 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
 
     output = capsys.readouterr().out
     lines = _plain_lines(output)
-    assert lines[:5] == [
-        "Jobs on service port 8766",
+    assert lines[:6] == [
+        "Jobs",
+        "Address: http://127.0.0.1:8766",
         "Shown: 1 job",
-        "Recent jobs on service: 1 job",
-        "States: 0 active, 1 waiting, 0 finished, 0 failed",
+        "Total: 1 job",
+        "Summary: 0 active, 1 waiting, 0 finished, 0 failed",
         "Order: latest shown last",
     ]
     rows = _jobs_feed_rows(output)
@@ -851,12 +856,14 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
 
     output = capsys.readouterr().out
     lines = _plain_lines(output)
-    assert lines[:6] == [
-        "Jobs on service port 8766",
+    assert lines[:8] == [
+        "Jobs",
+        "Address: http://127.0.0.1:8766",
         "Shown: 2 matching jobs",
-        "Recent jobs on service: 58 jobs",
-        "States: 2 active, 0 waiting, 0 finished, 0 failed",
+        "Total: 58 jobs",
+        "Summary: 2 active, 0 waiting, 0 finished, 0 failed",
         "Order: latest shown last",
+        "Legend: * active, ~ waiting, ! failed, - finished",
         "Filter: state active or waiting",
     ]
     rows = _jobs_feed_rows(output)
@@ -1140,7 +1147,9 @@ def test_jobs_watch_refreshes_managed_terminal_view() -> None:
 
     assert result.exit_code == 0, result.output
     assert "Watching; press Ctrl+C to stop." in result.output
-    assert result.output.count("Jobs on service port") == 2
+    assert result.output.count("\nJobs\n") == 1
+    assert result.output.startswith("Jobs\n")
+    assert "Jobs on service port" not in result.output
 
 
 def test_jobs_watch_is_human_only() -> None:

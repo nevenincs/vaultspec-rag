@@ -434,7 +434,7 @@ def _render_jobs_feed(
     returned = result.get("returned", len(jobs))
     sorted_jobs = _human_sorted_jobs(jobs)
     active, waiting, finished, failed = _shown_job_counts(sorted_jobs)
-    _cli.console.print(f"Jobs on service port {port}", markup=False, highlight=False)
+    _cli.console.print("Jobs", markup=False, highlight=False)
     _cli.console.print(
         f"Address: http://127.0.0.1:{port}",
         markup=False,
@@ -452,12 +452,12 @@ def _render_jobs_feed(
         highlight=False,
     )
     _cli.console.print(
-        f"Recent jobs on service: {_job_count_text(total)}",
+        f"Total: {_job_count_text(total)}",
         markup=False,
         highlight=False,
     )
     _cli.console.print(
-        f"States: {active} active, {waiting} waiting, "
+        f"Summary: {active} active, {waiting} waiting, "
         f"{finished} finished, {failed} failed",
         markup=False,
         highlight=False,
@@ -504,7 +504,7 @@ def _render_empty_jobs_result(
         if filter_text or job_id
         else _job_count_text(returned)
     )
-    _cli.console.print(f"Jobs on service port {port}", markup=False, highlight=False)
+    _cli.console.print("Jobs", markup=False, highlight=False)
     _cli.console.print(
         f"Address: http://127.0.0.1:{port}",
         markup=False,
@@ -512,12 +512,12 @@ def _render_empty_jobs_result(
     )
     _cli.console.print(f"Shown: {shown_count}", markup=False, highlight=False)
     _cli.console.print(
-        f"Recent jobs on service: {_job_count_text(total)}",
+        f"Total: {_job_count_text(total)}",
         markup=False,
         highlight=False,
     )
     _cli.console.print(
-        "States: 0 active, 0 waiting, 0 finished, 0 failed",
+        "Summary: 0 active, 0 waiting, 0 finished, 0 failed",
         markup=False,
         highlight=False,
     )
