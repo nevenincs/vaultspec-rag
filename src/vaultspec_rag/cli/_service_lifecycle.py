@@ -193,13 +193,26 @@ def service_start(
             help="Minimum wait before indexing the same project again, in seconds.",
         ),
     ] = None,
+    local_only: Annotated[
+        bool,
+        typer.Option(
+            "--local-only",
+            help=(
+                "Use the on-disk local store instead of the default managed "
+                "Qdrant server. This is the first-class opt-out for CI, "
+                "offline, and small-project hosts."
+            ),
+        ),
+    ] = False,
     qdrant: Annotated[
         bool | None,
         typer.Option(
             "--qdrant/--no-qdrant",
             help=(
-                "Use a managed Qdrant server for index storage. "
-                "Unset leaves the current Qdrant setting unchanged."
+                "Explicitly opt in to (or out of) the managed Qdrant server. "
+                "Server mode is already the default, so --qdrant is redundant; "
+                "use --local-only to select the on-disk store. Unset leaves "
+                "the current Qdrant setting unchanged."
             ),
         ),
     ] = None,
@@ -244,6 +257,7 @@ def service_start(
         watch_debounce_ms=update_delay_ms,
         watch_cooldown_s=same_project_delay_s,
         qdrant=qdrant,
+        local_only=local_only,
     )
     _write_service_status(pid, port)
 
