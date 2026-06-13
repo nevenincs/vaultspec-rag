@@ -100,15 +100,16 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     refs = int(refs_raw) if isinstance(refs_raw, int | float) else 0
     iso = str(entry.get("last_access_iso", ""))
     hms = iso.split("T", 1)[1][:8] if "T" in iso else iso
-    last_request = hms or "not reported by service"
     use_text = "none" if refs <= 0 else str(refs)
-    return [
+    lines = [
         f"- Project: {_project_name(root_str)}",
         f"  Path: {root_str}",
         f"  Active requests: {use_text}",
         f"  Last activity: {_humanize_idle(idle_s)} ago",
-        f"  Last request: {last_request}",
     ]
+    if hms:
+        lines.append(f"  Last request: {hms}")
+    return lines
 
 
 def _print_projects_summary(

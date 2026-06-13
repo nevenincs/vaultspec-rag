@@ -4766,10 +4766,17 @@ class TestServiceProjectsCli:
             r"Path: ready",
             "Active requests: none",
             "Last activity: 4 seconds ago",
-            "Last request: not reported by service",
         ]
         missing = [text for text in expected_present if text not in lines]
         assert not missing, f"missing operator lines: {missing}"
+        ready_index = lines.index("- Project: ready")
+        ready_block = lines[ready_index : ready_index + 4]
+        assert ready_block == [
+            "- Project: ready",
+            r"Path: ready",
+            "Active requests: none",
+            "Last activity: 4 seconds ago",
+        ]
         joined = "\n".join(lines).lower()
         forbidden_substrings = [
             "handling 2 active requests",
