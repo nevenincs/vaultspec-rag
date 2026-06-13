@@ -39,6 +39,8 @@ def _index_source_label(source: str) -> str:
         return "Source code"
     if source == "vault":
         return "Vault"
+    if source == "not_reported":
+        return "Index source not reported"
     return source.replace("_", " ").capitalize()
 
 

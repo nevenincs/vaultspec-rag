@@ -4922,6 +4922,24 @@ class TestIndexSummaryCLI:
         assert "unknown" not in result.output.lower()
         assert "finished in not reported" not in result.output.lower()
 
+    def test_index_summary_humanizes_missing_source_label(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._index import _print_index_summary
+
+        _print_index_summary(
+            [{"added": 1, "updated": 2, "removed": 0, "total": 3}],
+            via="service",
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        assert lines[0] == "Indexing summary: ran in running service."
+        joined = " ".join(lines[1:])
+        assert "Index source not reported:" in joined
+        assert "added 1; updated 2; removed 0; total 3" in joined
+        assert "duration not reported" in joined
+        assert "not_reported" not in joined
+
 
 class TestCpuOnlyMessageRendering:
     """Regression guard for literal TOML keys in the CPU_ONLY copy.
