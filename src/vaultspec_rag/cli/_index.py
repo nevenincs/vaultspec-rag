@@ -552,10 +552,14 @@ def handle_clean(
             2,
         )
     if not yes:
-        confirmed = typer.confirm(
-            f"Delete {clean_type} search index data for {target}?",
-            default=False,
-        )
+        try:
+            confirmed = typer.confirm(
+                f"Delete {clean_type} search index data for {target}?",
+                default=False,
+            )
+        except typer.Abort:
+            _cli.console.print("Clean cancelled.")
+            raise typer.Exit(code=1) from None
         if not confirmed:
             _cli.console.print("Clean cancelled.")
             raise typer.Exit(code=1)

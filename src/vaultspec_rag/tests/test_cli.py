@@ -722,6 +722,17 @@ class TestCleanCommand:
         assert "Clean cancelled." in result.output
         assert "RAG index data" not in result.output
 
+    def test_clean_noninteractive_abort_uses_operator_language(self, tmp_path: Path):
+        root = self._workspace(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--target", str(root), "clean", "vault"],
+        )
+
+        assert result.exit_code == 1
+        assert "Clean cancelled." in result.output
+        assert "Aborted!" not in result.output
+
     def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
         from ..config import get_config
         from ..store import VaultStore
