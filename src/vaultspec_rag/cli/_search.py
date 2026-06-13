@@ -50,7 +50,6 @@ def _handle_service_results(
     query: str,
     search_type: str,
     json_mode: bool,
-    no_truncate: bool,
     show_scores: bool,
     target: pathlib.Path | None = None,
 ) -> None:
@@ -61,7 +60,6 @@ def _handle_service_results(
                 query,
                 search_type,
                 json_mode,
-                no_truncate,
                 show_scores,
                 target,
             )
@@ -95,7 +93,6 @@ def _handle_service_results(
         service_results,
         search_type,
         via="service",
-        no_truncate=no_truncate,
         show_scores=show_scores,
         root=target,
     )
@@ -106,7 +103,6 @@ def _handle_service_success(
     query: str,
     search_type: str,
     json_mode: bool,
-    no_truncate: bool,
     show_scores: bool,
     target: pathlib.Path | None = None,
 ) -> None:
@@ -130,7 +126,6 @@ def _handle_service_success(
         results,
         search_type,
         via="service",
-        no_truncate=no_truncate,
         show_scores=show_scores,
         root=target,
     )
@@ -455,7 +450,6 @@ def _render_in_process_results(
     query: str,
     search_type: str,
     json_mode: bool,
-    no_truncate: bool,
     show_scores: bool,
     target: pathlib.Path,
 ) -> None:
@@ -484,7 +478,6 @@ def _render_in_process_results(
         [asdict(r) for r in results],
         search_type,
         via="in-process",
-        no_truncate=no_truncate,
         show_scores=show_scores,
         root=target,
     )
@@ -766,7 +759,6 @@ def handle_search(
                 query,
                 search_type,
                 json_mode,
-                False,
                 show_scores,
                 target,
             )
@@ -806,7 +798,6 @@ def handle_search(
             query,
             search_type,
             json_mode,
-            False,
             show_scores,
             target,
         )

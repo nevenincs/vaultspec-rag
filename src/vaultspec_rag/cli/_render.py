@@ -239,7 +239,6 @@ def _display_search_results(
     search_type: str,
     via: Literal["service", "in-process"] = "service",
     *,
-    no_truncate: bool = False,
     show_scores: bool = False,
     root: Path | None = None,
 ) -> None:
@@ -252,14 +251,12 @@ def _display_search_results(
             (e.g. ``vault``, ``code``).
         via: Transport path indicator retained for API compatibility
             (e.g. ``service``, ``in-process``).
-        no_truncate: Backwards-compatible no-op. Default human output
-            no longer truncates snippets.
         show_scores: Include numeric relevance scores after the rank.
         root: Workspace root used to read full source lines when a
             result includes a local relative path and line range.
 
     """
-    _ = search_type, via, no_truncate
+    _ = search_type, via
     for rank, result in enumerate(results, start=1):
         location = _search_result_location(result)
         line = f"{rank}. {location}"

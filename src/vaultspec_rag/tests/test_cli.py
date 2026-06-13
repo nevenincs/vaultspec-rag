@@ -2998,7 +2998,6 @@ class TestSearchResultRendering:
         self,
         result: dict[str, object],
         *,
-        no_truncate: bool = False,
         show_scores: bool = False,
     ) -> str:
         from io import StringIO
@@ -3015,7 +3014,6 @@ class TestSearchResultRendering:
                 [result],
                 "code",
                 via="service",
-                no_truncate=no_truncate,
                 show_scores=show_scores,
             )
         return out.getvalue()
@@ -3023,15 +3021,6 @@ class TestSearchResultRendering:
     def test_default_keeps_full_snippet(self):
         """Default output renders the full snippet."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
-        [record] = _search_records(rendered)
-        assert record["text"] == "a" * 300
-
-    def test_no_truncate_flag_keeps_full_snippet_for_compatibility(self):
-        """The legacy flag remains accepted but default output is already full."""
-        rendered = self._render(
-            {"path": "foo.py", "score": 0.9, "snippet": "a" * 300},
-            no_truncate=True,
-        )
         [record] = _search_records(rendered)
         assert record["text"] == "a" * 300
 
