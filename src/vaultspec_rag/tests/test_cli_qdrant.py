@@ -116,7 +116,8 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert labels["Version"]
     assert labels["Install"] == "not installed"
     assert labels["Address"].startswith("http://127.0.0.1:")
-    assert labels["Health"] == "not accepting requests"
+    assert labels["Readiness"] == "not accepting requests"
+    assert "Health" not in labels
     assert labels["Process"] == "not started by this service"
     assert labels["Installed versions"] == "none"
     assert "vaultspec-rag server qdrant install" in result.output
@@ -153,7 +154,8 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
     labels = _labels(result.output)
     assert labels["Install"] != "not installed"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
-    assert labels["Health"] == "not accepting requests"
+    assert labels["Readiness"] == "not accepting requests"
+    assert "Health" not in labels
     assert "Next action:" in result.output
     assert "vaultspec-rag server start --qdrant" in result.output
     assert "vaultspec-rag server qdrant install" not in result.output

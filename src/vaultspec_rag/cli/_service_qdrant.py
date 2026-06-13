@@ -185,9 +185,9 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     address = f"http://127.0.0.1:{payload['port']}"
     _print_line(f"Address: {address}")
     if payload["ready"]:
-        _print_line("Health: accepting requests")
+        _print_line("Readiness: accepting requests")
         return
-    _print_line("Health: not accepting requests")
+    _print_line("Readiness: not accepting requests")
     if isinstance(active, dict):
         _print_next_action("vaultspec-rag server start --qdrant")
 

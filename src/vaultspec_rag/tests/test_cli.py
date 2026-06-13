@@ -77,7 +77,8 @@ def _section_label_values(output: str, section: str) -> dict[str, str]:
 def _assert_default_status_summary(output: str, port: int) -> None:
     labels = _label_values(output)
     assert labels["Server"] == "running"
-    assert labels["Health"] == "ready for requests"
+    assert labels["Readiness"] == "ready for requests"
+    assert "Health" not in labels
     assert "Ready" not in labels
     assert labels["Busy"] == "processing 1 job"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
@@ -109,6 +110,8 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     assert labels["Network"] == "accepting connections"
     assert labels["Server"] == "running"
     assert "State" not in labels
+    assert labels["Readiness"] == "ready for requests"
+    assert "Health" not in labels
     assert labels["Compute"] == "GPU available"
     assert labels["Search models"] == "ready"
     assert labels["Reranking"] == "ready"
@@ -1278,8 +1281,8 @@ class TestServerRoutingFlattened:
         result = runner.invoke(app, ["server", "status", "--help"])
         assert result.exit_code == 0, result.output
         assert "operator summary" in result.output
-        assert "server health" in result.output
-        assert "readiness" not in result.output.lower()
+        assert "server readiness" in result.output
+        assert "server health" not in result.output.lower()
         assert "service identity" in result.output
         assert "token" not in result.output.lower()
         assert "Emit JSON for scripts" in result.output
@@ -1388,7 +1391,8 @@ class TestServerRoutingFlattened:
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
             assert labels["Address"] == "http://127.0.0.1:6334"
-            assert labels["Health"] == "not accepting requests"
+            assert labels["Readiness"] == "not accepting requests"
+            assert "Health" not in labels
             assert labels["Process"] == "running under this service"
             assert labels["Process id"] == "43210"
             assert labels["Port"] == "6334"
@@ -3928,7 +3932,8 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
-            assert labels["Health"] == "ready for requests"
+            assert labels["Readiness"] == "ready for requests"
+            assert "Health" not in labels
             assert "Ready" not in labels
             assert labels["Compute"] == "not reported by service"
             assert labels["Search models"] == "not reported by service"
@@ -3986,7 +3991,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 4, result.output
             labels = _label_values(result.output)
             assert labels["Server"] == "unreachable"
-            assert labels["Health"] == "not reported by service"
+            assert labels["Readiness"] == "not reported by service"
+            assert "Health" not in labels
             assert "Ready" not in labels
             assert labels["Uptime"] == "12s"
             assert "unknown" not in result.output.lower()
@@ -4040,7 +4046,8 @@ class TestServiceDaemonHelpers:
             assert result.exit_code == 0, result.output
             labels = _label_values(result.output)
             assert labels["Server"] == "running"
-            assert labels["Health"] == "ready for requests"
+            assert labels["Readiness"] == "ready for requests"
+            assert "Health" not in labels
             assert "Ready" not in labels
             assert labels["Busy"] == "not reported by service"
             assert labels["Queue"] == "not reported by service"
