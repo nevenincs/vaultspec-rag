@@ -9,9 +9,6 @@ related:
   - "[[2026-06-13-server-first-default-plan]]"
 ---
 
-
-
-
 # reframe the getting-started flow to install-then-setup with a server-backed RAG as the standard path and local-only as the minimal alternative
 
 ## Scope

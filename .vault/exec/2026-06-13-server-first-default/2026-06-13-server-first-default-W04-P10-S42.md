@@ -9,9 +9,6 @@ related:
   - "[[2026-06-13-server-first-default-plan]]"
 ---
 
-
-
-
 # update the human CLI documentation so the readiness verb and install opt-out flags match the live command surface
 
 ## Scope

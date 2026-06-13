@@ -9,9 +9,6 @@ related:
   - "[[2026-06-13-server-first-default-plan]]"
 ---
 
-
-
-
 # reframe the service-mode doc from local-first server-optional to server-first local-explicit and document the readiness verb
 
 ## Scope

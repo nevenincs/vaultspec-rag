@@ -9,9 +9,6 @@ related:
   - "[[2026-06-13-server-first-default-plan]]"
 ---
 
-
-
-
 # rewrite the installation doc to describe default provisioning of torch, models, and the qdrant binary plus the --local-only opt-out
 
 ## Scope
