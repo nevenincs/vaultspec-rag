@@ -110,14 +110,14 @@ Reframe getting-started, installation, service-mode docs, and CLI help to server
 - [ ] `W04.P09.S35` - reframe the getting-started flow to install-then-setup with a server-backed RAG as the standard path and local-only as the minimal alternative; `docs/getting-started.md`.
 - [ ] `W04.P09.S36` - rewrite the installation doc to describe default provisioning of torch, models, and the qdrant binary plus the --local-only opt-out; `docs/installation.md`.
 - [ ] `W04.P09.S37` - reframe the service-mode doc from local-first server-optional to server-first local-explicit and document the readiness verb; `docs/service-mode.md`.
-- [ ] `W04.P09.S38` - update the bundled RAG rule prose to describe server mode as the default backend and local-only as the explicit opt-out; `.vaultspec/rules/rules/vaultspec-rag.builtin.md`.
-- [ ] `W04.P09.S39` - update the start and install command help text to describe the server-first default and the local-only escape hatch; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `W04.P09.S38` - update the bundled RAG rule prose to describe server mode as the default backend and local-only as the explicit opt-out; `.vaultspec/rules/rules/vaultspec-rag.builtin.md`.
+- [x] `W04.P09.S39` - update the start and install command help text to describe the server-first default and the local-only escape hatch; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 
 ### Phase `W04.P10` - persona validation and codification
 
 Run a manual operator-persona validation across the real command surface in human and JSON modes and record the outcome, closing the CLI operability loop.
 
-- [ ] `W04.P10.S40` - run the operator-persona validation exercising default server start, --local-only start, setup provisioning, and the readiness verb in human and JSON modes and record observed confusion or acceptance; `.vault/audit/2026-06-13-server-first-default-audit.md`.
+- [x] `W04.P10.S40` - run the operator-persona validation exercising default server start, --local-only start, setup provisioning, and the readiness verb in human and JSON modes and record observed confusion or acceptance; `.vault/audit/2026-06-13-server-first-default-audit.md`.
 - [ ] `W04.P10.S41` - run the full unit and integration suite confirming the server-first default, provisioning, and readiness changes pass; `src/vaultspec_rag/tests/test_cli.py`.
 - [ ] `W04.P10.S42` - update the human CLI documentation so the readiness verb and install opt-out flags match the live command surface; `docs/cli.md`.
 

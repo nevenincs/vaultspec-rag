@@ -158,8 +158,9 @@ def _existing_service_running() -> bool:
 @server_app.command(
     "start",
     help=(
-        "Start the background search service. Waits until it is ready "
-        "and records how the CLI can reach it."
+        "Start the background search service. Defaults to the managed Qdrant "
+        "server backend (server mode); pass --local-only for the on-disk store. "
+        "Waits until it is ready and records how the CLI can reach it."
     ),
 )
 def service_start(

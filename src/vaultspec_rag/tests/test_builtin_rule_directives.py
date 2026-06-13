@@ -18,11 +18,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _RULE_PATH = _REPO_ROOT / ".vaultspec" / "rules" / "rules" / "vaultspec-rag.builtin.md"
 
 # Load-bearing directives the rule MUST carry. Keep this list in lockstep with
-# the rule's core mandates: semantic search is the primary use, the server-bound
-# Qdrant backend is the standard, and the watcher makes manual reindex redundant.
+# the rule's core mandates: semantic search is the primary use, server mode is the
+# default backend (local is the explicit opt-out), and the watcher makes manual
+# reindex redundant.
 _REQUIRED_DIRECTIVE_TOKENS = [
     "semantic search",
-    "--qdrant",
+    "default backend",
+    "--local-only",
     "DO NOT manually reindex",
 ]
 
