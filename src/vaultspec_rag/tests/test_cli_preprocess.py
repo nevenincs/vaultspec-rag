@@ -161,6 +161,18 @@ def test_check_valid_human_output_is_user_facing(tmp_path: Path) -> None:
     assert "rule(s)" not in result.output
 
 
+def test_check_valid_zero_rules_uses_plain_absence_language(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "check"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Preprocess config is valid. No preprocess rules configured." in result.output
+    )
+    assert "0 rules" not in result.output
+    assert "rule(s)" not in result.output
+
+
 def test_check_invalid_exits_nonzero(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     (root / ".vaultragpreprocess.toml").write_text(

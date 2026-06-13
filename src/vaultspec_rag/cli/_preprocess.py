@@ -139,6 +139,11 @@ def handle_preprocess_check(
     if json_mode:
         _emit_json(True, "preprocess check", data={"valid": True, "rule_count": count})
         return
+    if count == 0:
+        _cli.console.print(
+            "Preprocess config is valid. No preprocess rules configured."
+        )
+        return
     rule_word = "rule" if count == 1 else "rules"
     _cli.console.print(f"Preprocess config is valid: {count} {rule_word}.")
 
