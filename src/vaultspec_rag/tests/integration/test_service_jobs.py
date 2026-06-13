@@ -1048,10 +1048,14 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     query = urllib.parse.parse_qs(request.query)
     assert query["job_id"] == ["runjob12"]
     values = _label_values(result.output)
+    assert values["Address"] == f"http://127.0.0.1:{port}"
+    assert values["Project"] == "proj-a"
+    assert values["Path"] == r"proj-a"
     assert values["Job process id"] == "123"
     assert values["User"] == "operator"
     assert values["Started by"] == "automatic updates"
     assert values["Request"] == "automatic code index update"
+    assert "Project root:" not in result.output
     assert "Process: 123" not in result.output
     assert "PID:" not in result.output
 

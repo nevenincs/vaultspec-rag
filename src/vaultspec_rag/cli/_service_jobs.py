@@ -805,13 +805,19 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
     _cli.console.print(f"{label}: {_human_result(result)}")
 
 
-def _render_job_detail(job: dict[str, object]) -> None:
+def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
+    if port is not None:
+        _cli.console.print(
+            f"Address: http://127.0.0.1:{port}",
+            markup=False,
+            highlight=False,
+        )
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
     _cli.console.print(f"Project: {_project_label(job)}")
     root = _project_root(job)
     if root:
-        _cli.console.print(f"Project root: {root}")
+        _cli.console.print(f"Path: {root}", markup=False, highlight=False)
     _cli.console.print(f"State: {_phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
     _render_job_progress_detail(job)
@@ -849,7 +855,8 @@ def _render_jobs_result(
             raise typer.Exit(2)
         first = jobs[0]
         _render_job_detail(
-            cast("dict[str, object]", first) if isinstance(first, dict) else {}
+            cast("dict[str, object]", first) if isinstance(first, dict) else {},
+            port=port,
         )
         return
     _render_jobs_feed(result, jobs, port=port, monitoring=monitoring)
