@@ -4172,6 +4172,29 @@ def _logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     return server, thread, requests
 
 
+def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+    import http.server
+    import threading
+
+    requests: list[str] = []
+
+    class _LogsContractHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"lines": []}).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     import http.server
     import threading
@@ -4336,6 +4359,52 @@ class TestServiceLogsCli:
         assert not missing, f"missing activity lines: {missing}"
         _assert_no_table_borders(result.output)
         assert "--lines" not in result.output
+
+    def test_empty_logs_offer_wider_bounded_search(self) -> None:
+        server, thread, requests = _empty_logs_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "logs",
+                    "--limit",
+                    "5",
+                    "--contains",
+                    "service.lifecycle",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == ["/logs/json?lines=5&contains=service.lifecycle"]
+        lines = _plain_lines(result.output)
+        expected_present = [
+            f"Address: http://127.0.0.1:{server.server_port}",
+            (
+                'Activity: none found matching text "service.lifecycle" '
+                "in the last 5 log lines."
+            ),
+            "Next actions:",
+            (
+                "vaultspec-rag server logs --limit 200 "
+                f"--port {server.server_port} --contains service.lifecycle"
+            ),
+            f"vaultspec-rag server jobs --state active --port {server.server_port}",
+            f"vaultspec-rag server status --port {server.server_port}",
+            (
+                "vaultspec-rag server logs --raw --limit 5 "
+                f"--port {server.server_port} --contains service.lifecycle"
+            ),
+        ]
+        missing = [text for text in expected_present if text not in lines]
+        assert not missing, f"missing empty-log guidance lines: {missing}"
+        _assert_no_table_borders(result.output)
 
 
 class TestServiceJobsCli:

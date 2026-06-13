@@ -313,6 +313,30 @@ def _raw_logs_command(
     return " ".join(parts)
 
 
+def _wider_logs_command(
+    *,
+    port: int,
+    lines: int,
+    job_id: str | None,
+    contains: str | None,
+) -> str:
+    wider_lines = max(lines * 10, 200)
+    parts = [
+        "vaultspec-rag",
+        "server",
+        "logs",
+        "--limit",
+        str(wider_lines),
+        "--port",
+        str(port),
+    ]
+    if job_id:
+        parts.extend(["--job-id", _command_value(job_id)])
+    if contains:
+        parts.extend(["--contains", _command_value(contains)])
+    return " ".join(parts)
+
+
 def _activity_filter_text(job_id: str | None, contains: str | None) -> str | None:
     filters: list[str] = []
     if job_id:
@@ -344,6 +368,18 @@ def _render_no_activity_hint(
         soft_wrap=True,
     )
     _cli.console.print("Next actions:", markup=False, highlight=False, soft_wrap=True)
+    wider_command = _wider_logs_command(
+        port=port,
+        lines=lines,
+        job_id=job_id,
+        contains=contains,
+    )
+    _cli.console.print(
+        f"  {wider_command}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
     _cli.console.print(
         f"  vaultspec-rag server jobs --state active --port {port}",
         markup=False,
