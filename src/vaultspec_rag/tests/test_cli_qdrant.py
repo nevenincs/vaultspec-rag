@@ -93,6 +93,8 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     help_result = runner.invoke(app, ["server", "qdrant", "status", "--help"])
     assert help_result.exit_code == 0, help_result.output
     assert "Emit JSON for scripts instead of human text" in help_result.output
+    assert "--port" in help_result.output
+    assert "Qdrant HTTP port to check" in help_result.output
     assert "JSON envelope" not in help_result.output
 
     port = _closed_port()
@@ -114,7 +116,7 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert labels["Version"]
     assert labels["Install"] == "not installed"
     assert labels["Address"].startswith("http://127.0.0.1:")
-    assert labels["Ready"] == "not accepting requests"
+    assert labels["Health"] == "not accepting requests"
     assert labels["Process"] == "not started by this service"
     assert labels["Installed versions"] == "none"
     assert "vaultspec-rag server qdrant install" in result.output
@@ -122,6 +124,7 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
         "Pinned version",
         "Active binary",
         "Server ready",
+        "Ready:",
         "Service child",
         "Managed process",
         "none recorded",
@@ -139,10 +142,10 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
 
     result = runner.invoke(
         app,
-        ["server", "qdrant", "status"],
+        ["server", "qdrant", "status", "--port", str(port)],
         env={
             EnvVar.STATUS_DIR.value: str(tmp_path),
-            EnvVar.QDRANT_PORT.value: str(port),
+            EnvVar.QDRANT_PORT.value: str(_closed_port()),
         },
     )
 
@@ -150,7 +153,7 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
     labels = _labels(result.output)
     assert labels["Install"] != "not installed"
     assert labels["Address"] == f"http://127.0.0.1:{port}"
-    assert labels["Ready"] == "not accepting requests"
+    assert labels["Health"] == "not accepting requests"
     assert "Next action:" in result.output
     assert "vaultspec-rag server start --qdrant" in result.output
     assert "vaultspec-rag server qdrant install" not in result.output

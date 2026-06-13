@@ -143,15 +143,23 @@ def _service_qdrant_block() -> dict[str, Any]:
     return block
 
 
-def _qdrant_status_payload() -> dict[str, Any]:
+def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
     cfg = get_config()
     resolved = resolve_binary()
-    port = int(cfg.qdrant_port)
+    service = _service_qdrant_block()
+    service_port = service.get("qdrant_port") if isinstance(service, dict) else None
+    qdrant_port = int(
+        port
+        if port is not None
+        else service_port
+        if isinstance(service_port, int | float | str)
+        else cfg.qdrant_port
+    )
     return {
         "pinned_version": QDRANT_SERVER_VERSION,
         "server_mode_default": bool(cfg.qdrant_server),
-        "port": port,
-        "ready": _readyz_probe(port),
+        "port": qdrant_port,
+        "ready": _readyz_probe(qdrant_port),
         "active_binary": (
             {
                 "path": str(resolved.path),
@@ -162,7 +170,7 @@ def _qdrant_status_payload() -> dict[str, Any]:
             else None
         ),
         "provisioned": provisioned_versions(),
-        "service": _service_qdrant_block(),
+        "service": service,
     }
 
 
@@ -177,9 +185,9 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     address = f"http://127.0.0.1:{payload['port']}"
     _print_line(f"Address: {address}")
     if payload["ready"]:
-        _print_line("Ready: accepting requests")
+        _print_line("Health: accepting requests")
         return
-    _print_line("Ready: not accepting requests")
+    _print_line("Health: not accepting requests")
     if isinstance(active, dict):
         _print_next_action("vaultspec-rag server start --qdrant")
 
@@ -224,13 +232,22 @@ def _print_qdrant_versions(provisioned: object) -> None:
     help=("Show the managed Qdrant version, install path, address, and live state."),
 )
 def qdrant_status(
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            min=1,
+            max=65535,
+            help="Qdrant HTTP port to check.",
+        ),
+    ] = None,
     json_mode: Annotated[
         bool,
         typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
     """Show Qdrant runtime install and liveness state."""
-    payload = _qdrant_status_payload()
+    payload = _qdrant_status_payload(port)
 
     if json_mode:
         _emit_json(True, "server.qdrant.status", data=payload)
