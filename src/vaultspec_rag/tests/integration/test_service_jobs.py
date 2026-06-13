@@ -717,6 +717,51 @@ def test_jobs_humanizes_disk_space_failures() -> None:
     assert "No space left on device" not in result.output
 
 
+def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
+    now = time.time()
+    payload: dict[str, object] = {
+        "jobs": [
+            {
+                "id": "failcuda",
+                "source": "code",
+                "trigger": "tool",
+                "phase": "failed",
+                "started_at": now - 2,
+                "finished_at": now - 1,
+                "runtime_seconds": 1.0,
+                "result": (
+                    "CUDA error: an illegal memory access was encountered\n"
+                    "Search for cudaErrorIllegalAddress in the CUDA docs.\n"
+                    "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
+                ),
+                "initiator": {"kind": "tool", "project_root": r"proj-cuda"},
+            }
+        ],
+        "total": 1,
+        "returned": 1,
+        "summary": {"running": 0, "phases": {"failed": 1}},
+        "filters": {"limit": 5},
+    }
+
+    with _jobs_http_server([payload]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    rows = _jobs_feed_rows(result.output)
+    assert [row["id"] for row in rows] == ["failcuda"]
+    assert rows[0]["detail"] == (
+        "error: CUDA error: an illegal memory access was encountered "
+        "Search for cudaErrorIllegalAddress in the CUDA docs. "
+        "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
+    )
+    lines = _plain_lines(result.output)
+    assert len(lines) == 6
+    assert lines[-1].endswith(rows[0]["detail"])
+
+
 def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
     from ...cli._service_jobs import _render_jobs_result
 
