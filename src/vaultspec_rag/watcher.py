@@ -64,6 +64,17 @@ _CODE_EXTENSIONS = frozenset(
     }
 )
 
+# Idle re-entry interval for the watch loop, in milliseconds. The pending sets
+# carry forward any change suppressed by the per-source cooldown, but they are
+# only re-examined when the loop body runs, and the body runs only when awatch
+# yields. Without an idle yield, a change that lands during a cooldown window on
+# an otherwise quiet tree is never reconciled - the deletion-eviction failure
+# mode. Asking awatch to yield an empty change set on this interval re-enters the
+# loop so the cooldown is re-checked and the trailing batch is flushed. The Rust
+# watcher already wakes on this cadence to honour the stop event, so yielding the
+# timeout adds no extra wakeups.
+_WATCH_IDLE_TICK_MS = 1000
+
 
 def _is_vault_change(path: Path, vault_dir: Path) -> bool:
     """Return True if path is a .md file inside the vault directory.
@@ -196,12 +207,18 @@ async def watch_and_reindex(
         async for changes in awatch(
             root_dir,
             debounce=debounce,
+            rust_timeout=_WATCH_IDLE_TICK_MS,
+            yield_on_timeout=True,
             stop_event=stop_event,
             watch_filter=lambda _change, path: (
                 _is_vault_change(Path(path), vault_dir)
                 or _is_code_change(Path(path), root_dir, vault_dir, preprocess_config)
             ),
         ):
+            # ``changes`` is empty on an idle tick (yield_on_timeout): the loop
+            # body below still runs, re-checking the cooldown and flushing any
+            # carried-forward pending set, so a change suppressed during a
+            # cooldown window is reconciled even when no further change arrives.
             for change_type, path_str in changes:
                 path = Path(path_str)
                 if change_type in (Change.added, Change.modified, Change.deleted):

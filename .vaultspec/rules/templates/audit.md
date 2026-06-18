@@ -3,7 +3,6 @@ tags:
   - '#audit'
   - '#{feature}'
 date: '{yyyy-mm-dd}'
-modified: '{yyyy-mm-dd}'
 related:
   - '[[{yyyy-mm-dd-*}]]'
 ---
@@ -14,9 +13,6 @@ related:
      Additional tags may be appended below the required pair.
 
      Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
 
      DO NOT add fields beyond those scaffolded; metadata lives
      only in the frontmatter. -->
@@ -46,8 +42,9 @@ related:
 <!-- Findings that satisfy the three durability criteria
 (cross-session, constraint-shaped, project-bound) and should be
 promoted into project-shared rules under `.vaultspec/rules/rules/`
-via `vaultspec-core vault rule promote --from <this-audit-stem>
---as <rule-name>`.
+(the directory the CLI's `vaultspec-core spec rules add` writes to today; the
+planned `--scope project` flag will move authored rules under
+`.vaultspec/rules/rules/project/`).
 
 Each candidate names the finding it derives from, the proposed
 rule slug (kebab-case, naming the constraint's subject not the

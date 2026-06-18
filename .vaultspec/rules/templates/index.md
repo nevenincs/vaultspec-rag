@@ -4,7 +4,6 @@ tags:
   - '#index'
   - '#{feature}'
 date: '{yyyy-mm-dd}'
-modified: '{yyyy-mm-dd}'
 related:
   - '[[{yyyy-mm-dd-*}]]'
 ---
@@ -16,9 +15,7 @@ related:
      The `generated: true` frontmatter field marks the document as
      machine-generated: `vaultspec-core vault feature index` owns and
      rewrites it; never author or edit it by hand. The {document_list}
-     placeholder below is machine-filled by the same command.
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit. -->
+     placeholder below is machine-filled by the same command. -->
 
 # `{feature}` feature index
 

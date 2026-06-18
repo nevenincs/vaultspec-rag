@@ -3,12 +3,13 @@ tags:
   - '#plan'
   - '#watcher-targeted-reindex'
 date: '2026-06-02'
-modified: '2026-06-02'
 tier: L2
 related:
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'
   - '[[2026-06-02-watcher-targeted-reindex-research]]'
 ---
+
+<!-- RETIRED: P04 -->
 
 # `watcher-targeted-reindex` `watcher targeted reindex` plan
 
@@ -22,7 +23,7 @@ to the change set the watcher already holds. P01 adds an optional
 `changed_paths` entry point to both indexers (full-scan default preserved for
 first-run/explicit/clean). P02 wires the watcher to pass its classified change
 set and proves correctness with real-GPU tests, then gates on lint and the full
-suite. Composes with — does not pre-empt — the #143/#144 watcher-config /
+suite. Composes with - does not pre-empt - the #143/#144 watcher-config /
 auto-reindex contract, and reuses the inviolable `.gitignore` plus
 `.vaultragignore` ordering from `2026-04-04-vaultragignore-adr`.
 
@@ -46,11 +47,23 @@ correctness with real-GPU tests plus lint and the full suite.
 - [x] `P02.S04` - Add real-GPU tests proving a single-file edit re-embeds only that file, a deletion removes only its chunks, and an ignored-file edit is a no-op, with no mocks or skips; `src/vaultspec_rag/tests/integration/`.
 - [x] `P02.S05` - Run ruff and the full pytest suite and confirm zero violations and green before PR; `pyproject.toml`.
 
+### Phase `P03` - idle-tick flush for cooldown-suppressed reindex
+
+Restore the trailing-edge flush so a change suppressed by the per-source cooldown is reconciled on a quiet tree, evicting deleted files without a full rebuild (#192). Construct the watcher's awatch with an idle yield and re-drain the pending sets on every iteration, guarded by the unchanged cooldown.
+
+- [x] `P03.S06` - Construct the watcher's awatch with yield_on_timeout=True and an explicit one-second rust_timeout, and re-drain the pending vault and code sets on every loop iteration so an empty idle-tick batch reconciles cooldown-suppressed changes while the unchanged per-source cooldown guard still gates the actual reindex; `src/vaultspec_rag/watcher.py`.
+- [x] `P03.S07` - Add a real-backend watcher regression test that deletes a tracked file during the cooldown window then leaves the tree quiet and asserts the chunks are evicted, plus a guard that an idle tick during an open cooldown does not trigger a premature reindex, folding in the reproduction scenarios and exercising the real backend with no mocks or skips; `src/vaultspec_rag/tests/integration/`.
+- [x] `P03.S08` - Run ruff and the full pytest suite and confirm zero violations and green before PR; `pyproject.toml`.
+
 ## Parallelization
 
 P01.S01 (vault) and P01.S02 (code) are independent and may proceed in parallel.
 P02.S03 (watcher wiring) depends on both P01 steps. P02.S04 (tests) depends on
 P02.S03. P02.S05 (lint plus full suite) is the final gate after all other steps.
+
+P03 is a later, self-contained increment that builds on the shipped P01/P02 work.
+P03.S06 (the watcher idle-tick change) comes first; P03.S07 (regression test)
+depends on S06; P03.S08 (lint plus full suite) is the final gate after both.
 
 ## Verification
 
@@ -67,5 +80,12 @@ P02.S03. P02.S05 (lint plus full suite) is the final gate after all other steps.
   green.
 - Manual check: a watcher driven by a single-file edit no longer sustains a CPU
   core; per-edit reindex work is O(change), not O(tree).
+- A file deleted during the per-source cooldown window, with the tree then left
+  quiet, has its chunks evicted by the watcher without any further filesystem
+  event and without a full rebuild (asserted against the real backend).
+- An idle tick that fires while the cooldown window is still open does not
+  trigger a reindex before the window elapses (the cooldown guard still holds).
+- Watcher shutdown via the stop event stays responsive with the idle yield
+  enabled (no regression in stop latency).
 
-The plan is complete when every Step in both Phases is closed (`- [x]`).
+The plan is complete when every Step in every Phase is closed (`- [x]`).

@@ -7,32 +7,32 @@ description: >-
   execute.
 ---
 
-# Plan execution skill (vaultspec-execute)
+# Implementation Plan: Code Writing Skill
 
 Use this skill:
 
-- To begin the execution of an implementation plan.
+- To begin the execution of an implementation `plan`.
 - To ensure code is written by the appropriate agent.
 
-**Announce at start:** "I'm using the `vaultspec-execute` skill to execute the
-implementation plan."
+## Required Steps
 
-## Required steps
+- **Announce at start:** "I'm using the `vaultspec-execute` skill to execute the
+  implementation plan."
 
-- This skill MUST be invoked to execute an implementation plan located at
+- This skill MUST be invoked to execute an implementation `.vault/plan` located at
   `.vault/plan/yyyy-mm-dd-{feature}-plan.md`.
 
-- Read and parse the Plan to understand the scope, complexity, and specific Steps.
+- Read and parse the Plan to understand the scope, complexity, and specific Steps
 
 - Read and parse all linked documents to understand the coding challenge.
 
-## Executor delegation
+## Executor Delegation
 
 Assume the persona of a delegator.
 
-- Use parallel sub-agents, or an autonomous agent team, to execute complex plans.
+- Use parallel sub-agents, or autonomous agent team to execute complex plans.
 
-- Use the appropriate executor agent persona. When the work needs multiple specialists,
+- Use appropriate executor agent persona. When the work needs multiple specialists,
   coordinate them.
 
 - Always instruct the coders to execute the current plan, and to read grounding
@@ -42,11 +42,11 @@ Assume the persona of a delegator.
   (Steps only), "Start with Phase `P##`." at L2, or the canonical display path (e.g.,
   `W01.P01`) at L3 / L4.
 
-### Step execution and logging
+### Step Execution & Logging
 
-- Execute the plan one Step at a time. Per the Step row contract embedded in the plan
-  template, each Step is exactly one prompt-run plus one commit; the executor closes the
-  row (`- [ ]` to `- [x]`) on completion.
+- Execute the plan one Step at a time. Per the convention ADR's Step row contract, each
+  Step is exactly one prompt-run plus one commit; the executor closes the row (`- [ ]`
+  to `- [x]`) on completion.
 
 - **One Step Record per completed Step.** The executor writes a Step Record to
   `.vault/exec/yyyy-mm-dd-{feature}/...md` for every completed Step (not per Phase).
@@ -61,11 +61,26 @@ Assume the persona of a delegator.
 - **Coder or supervisor must read and use the template** at
   `.vaultspec/rules/templates/exec-step.md`.
 
-- **Frontmatter:** the scaffold owns the filename and frontmatter of every artifact
-  (Step Record, Summary, Review); the full schema is defined in the `vaultspec` rule.
-  Verify with `vaultspec-core vault check all` rather than hand-editing.
+### Frontmatter & Tagging Mandate (Artifacts)
 
-### Mandatory code review
+Every artifact (Step Record, Summary, Review) MUST strictly adhere to the following
+schema:
+
+- **`tags`**: MUST contain the required tag pair in a YAML list.
+
+  - **Directory Tag**: Exactly `#exec`.
+  - **Feature Tag**: Exactly one kebab-case `#{feature}` tag.
+  - *Syntax:* `tags: ['#exec', '#{feature}']` (Must be quoted strings in a list).
+
+- **`related`**: MUST be a YAML list of quoted `'[[wiki-links]]'`.
+
+  - *Constraint:* No relative paths (`../`), no bare strings, no `@ref`.
+
+- **`date`**: MUST use `yyyy-mm-dd` format.
+
+- **No `feature` key**: Use `tags:` exclusively for feature identification.
+
+### Mandatory Code Review
 
 - After an executor completes a step (or the full plan), you MUST invoke the
   `vaultspec-code-review` skill or a relevant code-review skill.
@@ -76,7 +91,7 @@ Assume the persona of a delegator.
 - If the reviewer identifies **CRITICAL** or **HIGH** issues, you MUST resolve them by
   loading an executor again before proceeding.
 
-### Finalization and summary
+### Finalization & Summary
 
 - Once all implementation and review steps are complete (and the review passes), write
   the consolidated Phase Summary at `.vault/exec/yyyy-mm-dd-{feature}/...-summary.md`
@@ -108,4 +123,4 @@ Assume the persona of a delegator.
   `vaultspec-core vault plan step toggle` rather than hand-editing the checkbox glyph.
   The CLI guarantees idempotent state transitions and consistent display-path
   recomputation; hand edits bypass these guarantees and are flagged by
-  `vaultspec-core vault plan check`.
+  `vaultspec-core vault plan check`. See the CLI ADR (`2026-05-06-plan-hardening-adr`).
