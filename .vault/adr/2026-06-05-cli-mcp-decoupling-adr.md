@@ -1,14 +1,15 @@
 ---
 tags:
-  - '#adr'
-  - '#cli-mcp-decoupling'
+  - "#adr"
+  - "#cli-mcp-decoupling"
 date: '2026-06-05'
-modified: '2026-06-05'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-research]]"
+superseded_by: '2026-06-18-mcp-service-client-adr'
+modified: '2026-06-05'
 ---
 
-# `cli-mcp-decoupling` adr: `decoupled interface layers and unified backend facade` | (**status:** `accepted`)
+# `cli-mcp-decoupling` adr: `decoupled interface layers and unified backend facade` | (**status:** `superseded`)
 
 ## Problem Statement
 

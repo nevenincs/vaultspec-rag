@@ -1,14 +1,15 @@
 ---
 tags:
-  - '#adr'
-  - '#server-mcp-route'
+  - "#adr"
+  - "#server-mcp-route"
 date: '2026-05-31'
-modified: '2026-05-31'
 related:
-  - '[[2026-05-31-server-mcp-route-research]]'
+  - "[[2026-05-31-server-mcp-route-research]]"
+superseded_by: '2026-06-18-mcp-service-client-adr'
+modified: '2026-05-31'
 ---
 
-# `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `accepted`)
+# `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `superseded`)
 
 ## Problem Statement
 

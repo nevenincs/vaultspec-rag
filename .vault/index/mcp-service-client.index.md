@@ -18,7 +18,7 @@ Auto-generated index of all documents tagged with `#mcp-service-client`.
 
 ### adr
 
-- `2026-06-18-mcp-service-client-adr` - `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `proposed`)
+- `2026-06-18-mcp-service-client-adr` - `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `accepted`)
 
 ### research
 

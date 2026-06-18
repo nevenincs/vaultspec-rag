@@ -1,14 +1,15 @@
 ---
 tags:
-  - '#adr'
-  - '#mcp-server-deconflation'
+  - "#adr"
+  - "#mcp-server-deconflation"
 date: '2026-06-07'
-modified: '2026-06-07'
 related:
   - "[[2026-06-07-mcp-server-deconflation-research]]"
+superseded_by: '2026-06-18-mcp-service-client-adr'
+modified: '2026-06-07'
 ---
 
-# `mcp-server-deconflation` adr: `MCP and Server Deconflation` | (**status:** `accepted`)
+# `mcp-server-deconflation` adr: `MCP and Server Deconflation` | (**status:** `superseded`)
 
 ## Problem Statement
 

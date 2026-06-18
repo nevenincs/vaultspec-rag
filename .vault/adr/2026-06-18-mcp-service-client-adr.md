@@ -1,14 +1,20 @@
 ---
 tags:
-  - '#adr'
-  - '#mcp-service-client'
+  - "#adr"
+  - "#mcp-service-client"
 date: '2026-06-18'
-modified: '2026-06-18'
 related:
   - "[[2026-06-18-mcp-service-client-research]]"
+supersedes:
+  - '2026-03-07-mcp-sync-tools-adr'
+  - '2026-05-31-server-mcp-route-adr'
+  - '2026-06-05-cli-mcp-decoupling-adr'
+  - '2026-06-07-mcp-server-deconflation-adr'
+  - '2026-06-10-install-mcp-dependency-fix-adr'
+modified: '2026-06-18'
 ---
 
-# `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `proposed`)
+# `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `accepted`)
 
 ## Problem Statement
 
