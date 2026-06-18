@@ -1,67 +1,76 @@
-"""Admin and watcher-control MCP tools.
+"""Admin and observability MCP tools.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. Importing this module runs the
-``@mcp.tool()`` decorators for the registry/watcher admin tools.
-Registry and watcher bookkeeping are read through the package alias so
-test rebinds / in-place mutations on ``vaultspec_rag.server`` are
-observed.
+Each tool is a thin delegation to the running RAG daemon through the shared
+:mod:`vaultspec_rag.serviceclient` admin client. The MCP carries no bespoke
+logic: it resolves the service port, offloads the synchronous wire call to a
+worker thread, and maps an unreachable service to the one clear service-down
+``RuntimeError`` defined in :mod:`._tools`. Importing this module runs the
+``@mcp.tool()`` decorators for the admin/observability tools.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
+from ..serviceclient import (
+    _try_http_admin,
+    _try_http_benchmark,
+    _try_http_quality,
+)
 from ._mcp import mcp
 from ._tools import (
-    _call_daemon_async,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module intentional import
+    _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+    _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
 )
+
+
+async def _admin(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the port and delegate *tool_name* through the admin client."""
+    port = _require_port()
+    return await _delegate(partial(_try_http_admin, tool_name, args, port))
 
 
 @mcp.tool()
 async def list_projects() -> dict[str, Any]:
-    """Return a snapshot of every active :class:`ProjectSlot`."""
-    return await _call_daemon_async("/projects")
+    """Return a snapshot of every active project slot."""
+    return await _admin("list_projects", {})
 
 
 @mcp.tool()
 async def evict_project(root: str) -> dict[str, Any]:
-    """Force-evict the :class:`ProjectSlot` for *root*."""
-    return await _call_daemon_async("/projects/evict", {"root": root})
+    """Force-evict the project slot for *root*."""
+    return await _admin("evict_project", {"root": root})
 
 
 @mcp.tool()
 async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
     """Report filesystem-watcher configuration and running state."""
-    path = "/watcher"
+    args: dict[str, Any] = {}
     if project_root:
-        import urllib.parse
-
-        path += "?project_root=" + urllib.parse.quote(project_root)
-    return await _call_daemon_async(path)
+        args["project_root"] = project_root
+    return await _admin("get_watcher_state", args)
 
 
 @mcp.tool()
 async def start_watcher(root: str) -> dict[str, Any]:
     """Eagerly start the filesystem watcher for *root*."""
-    return await _call_daemon_async("/watcher/start", {"root": root})
+    return await _admin("start_watcher", {"root": root})
 
 
 @mcp.tool()
 async def stop_watcher(root: str) -> dict[str, Any]:
     """Stop the filesystem watcher for *root* (pull-only for that root)."""
-    return await _call_daemon_async("/watcher/stop", {"root": root})
+    return await _admin("stop_watcher", {"root": root})
 
 
 @mcp.tool()
 async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state."""
-    path = "/service-state"
+    args: dict[str, Any] = {}
     if project_root:
-        import urllib.parse
-
-        path += "?project_root=" + urllib.parse.quote(project_root)
-    return await _call_daemon_async(path)
+        args["project_root"] = project_root
+    return await _admin("get_service_state", args)
 
 
 @mcp.tool()
@@ -71,14 +80,12 @@ async def get_logs(
     contains: str | None = None,
 ) -> dict[str, Any]:
     """Return the last *lines* of the rotated service log."""
-    import urllib.parse
-
-    params: dict[str, object] = {"lines": lines}
+    args: dict[str, Any] = {"lines": lines}
     if job_id:
-        params["job_id"] = job_id
+        args["job_id"] = job_id
     if contains:
-        params["contains"] = contains
-    return await _call_daemon_async("/logs/json?" + urllib.parse.urlencode(params))
+        args["contains"] = contains
+    return await _admin("get_logs", args)
 
 
 @mcp.tool()
@@ -93,29 +100,24 @@ async def get_jobs(
     since: float | None = None,
 ) -> dict[str, Any]:
     """Return recent index/reindex activity from the in-flight registry."""
-    import urllib.parse
-
-    path = "/jobs"
-    params: dict[str, object] = {}
+    args: dict[str, Any] = {}
     if limit is not None:
-        params["limit"] = limit
+        args["limit"] = limit
     if phase:
-        params["phase"] = phase
+        args["phase"] = phase
     if source:
-        params["source"] = source
+        args["source"] = source
     if trigger:
-        params["trigger"] = trigger
+        args["trigger"] = trigger
     if query:
-        params["query"] = query
+        args["query"] = query
     if failed:
-        params["failed"] = "true"
+        args["failed"] = "true"
     if job_id:
-        params["job_id"] = job_id
+        args["job_id"] = job_id
     if since is not None:
-        params["since"] = since
-    if params:
-        path += "?" + urllib.parse.urlencode(params)
-    return await _call_daemon_async(path)
+        args["since"] = since
+    return await _admin("get_jobs", args)
 
 
 @mcp.tool()
@@ -125,12 +127,12 @@ async def reconfigure_watcher(
     cooldown_s: float | None = None,
 ) -> dict[str, Any]:
     """Restart *root*'s watcher with new tuning values."""
-    payload: dict[str, Any] = {"root": root}
+    args: dict[str, Any] = {"root": root}
     if debounce_ms is not None:
-        payload["debounce_ms"] = debounce_ms
+        args["debounce_ms"] = debounce_ms
     if cooldown_s is not None:
-        payload["cooldown_s"] = cooldown_s
-    return await _call_daemon_async("/watcher/reconfigure", payload)
+        args["cooldown_s"] = cooldown_s
+    return await _admin("reconfigure_watcher", args)
 
 
 @mcp.tool()
@@ -139,13 +141,14 @@ async def benchmark(
     n_queries: int = 20,
 ) -> dict[str, Any]:
     """Run search latency benchmarks against the indexed vault."""
-    payload: dict[str, Any] = {"n_queries": n_queries}
-    if project_root:
-        payload["project_root"] = project_root
-    return await _call_daemon_async("/benchmark", payload)
+    port = _require_port()
+    return await _delegate(
+        partial(_try_http_benchmark, project_root or "", n_queries, port)
+    )
 
 
 @mcp.tool()
 async def quality() -> dict[str, Any]:
     """Run quality-scoring probes against a synthetic test corpus."""
-    return await _call_daemon_async("/quality", {})
+    port = _require_port()
+    return await _delegate(partial(_try_http_quality, port))

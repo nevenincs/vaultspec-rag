@@ -26,6 +26,7 @@ from ._transport import (
     _try_http_quality,
     _try_http_reindex,
     _try_http_search,
+    _try_http_vault_document,
 )
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "_try_http_quality",
     "_try_http_reindex",
     "_try_http_search",
+    "_try_http_vault_document",
 ]

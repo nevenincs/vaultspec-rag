@@ -613,11 +613,11 @@ class TestHttpModeResolveRoot:
             _resolve_root("   ")
 
     def test_vault_document_requires_running_daemon(self, tmp_path: Path) -> None:
-        """get_vault_document is a REST client; it errors when no daemon is up.
+        """get_vault_document is a REST client; it errors when no service is up.
 
-        Post-deconflation the resource delegates to the daemon's
-        ``/vault-document`` endpoint via ``_call_daemon``; with an empty
-        status dir (no ``service.json``) that raises a clear RuntimeError.
+        The resource delegates to the daemon's ``/vault-document`` endpoint
+        through the shared ``serviceclient``; with an empty status dir (no
+        ``service.json``) that raises a clear service-not-running RuntimeError.
         """
         import os
 
@@ -626,7 +626,7 @@ class TestHttpModeResolveRoot:
         prev = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
         os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
         try:
-            with pytest.raises(RuntimeError, match="daemon is not running"):
+            with pytest.raises(RuntimeError, match="is not running"):
                 _run(get_vault_document("adr/overview"))
         finally:
             if prev is None:

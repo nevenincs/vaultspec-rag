@@ -27,9 +27,9 @@ Extract the production-proven HTTP service-client into an import-light package s
 
 Repoint every MCP tool, admin tool, and resource at the shared service-client, delete the duplicate daemon-call seam, and surface one clear service-down error.
 
-- [ ] `P02.S08` - Rewrite the MCP search and index tools to delegate to the service-client, delete the duplicate daemon-call seam, route index-status to the service-state route, and map the unreachable return to one clear service-not-running error; `src/vaultspec_rag/mcp/_tools.py`.
-- [ ] `P02.S09` - Rewrite the MCP admin and observability tools to delegate to the service-client admin function; `src/vaultspec_rag/mcp/_admin_tools.py`.
-- [ ] `P02.S10` - Rewrite the MCP vault-document resource to delegate to the service-client; `src/vaultspec_rag/mcp/_resources.py`.
+- [x] `P02.S08` - Rewrite the MCP search and index tools to delegate to the service-client, delete the duplicate daemon-call seam, route index-status to the service-state route, and map the unreachable return to one clear service-not-running error; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `P02.S09` - Rewrite the MCP admin and observability tools to delegate to the service-client admin function; `src/vaultspec_rag/mcp/_admin_tools.py`.
+- [x] `P02.S10` - Rewrite the MCP vault-document resource to delegate to the service-client; `src/vaultspec_rag/mcp/_resources.py`.
 
 ### Phase `P03` - remove the daemon mount and in-process model load
 

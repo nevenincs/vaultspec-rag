@@ -1,14 +1,20 @@
-"""MCP resources and prompts — pure protocol adapter.
+"""MCP resources and prompts - pure protocol adapter.
 
-The ``vault://`` resource and ``analyze_feature`` prompt delegate to the
-REST daemon via ``_call_daemon``.  No server internals are imported.
+The ``vault://`` resource delegates to the running daemon's ``/vault-document``
+route through the shared :mod:`vaultspec_rag.serviceclient` client, sharing the
+port resolution, worker-thread offload, and one service-down error with the
+search/admin tools. The ``analyze_feature`` prompt is a pure string template.
 """
 
 from __future__ import annotations
 
+from functools import partial
+
+from ..serviceclient import _try_http_vault_document
 from ._mcp import mcp
 from ._tools import (
-    _call_daemon_async,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module intentional import
+    _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+    _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
 )
 
 
@@ -27,10 +33,11 @@ async def get_vault_document(doc_id: str) -> str:
 
     Raises:
         FileNotFoundError: If no document matches the given ID.
-        RuntimeError: If the daemon is not running or the REST call
+        RuntimeError: If the service is not running or the REST call
             fails.
     """
-    res = await _call_daemon_async("/vault-document", {"doc_id": doc_id})
+    port = _require_port()
+    res = await _delegate(partial(_try_http_vault_document, doc_id, "", port))
     if "content" in res:
         return str(res["content"])
     if res.get("error") == "not_found":

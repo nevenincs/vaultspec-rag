@@ -39,6 +39,7 @@ __all__ = [
     "_try_http_quality",
     "_try_http_reindex",
     "_try_http_search",
+    "_try_http_vault_document",
 ]
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
@@ -176,6 +177,64 @@ def _logs_route_path(args: dict[str, Any]) -> str:
     return path
 
 
+# GET admin tools that accept only an optional ``?project_root=`` query.
+_GET_ROOT_ROUTES: dict[str, str] = {
+    "get_index_status": "/status",
+    "list_projects": "/projects",
+    "get_watcher_state": "/watcher",
+    "get_service_state": "/service-state",
+}
+
+# POST admin tools whose full ``args`` dict is the JSON body.
+_POST_BODY_ROUTES: dict[str, str] = {
+    "get_code_file": "/code-file",
+    "get_vault_document": "/vault-document",
+    "evict_project": "/projects/evict",
+}
+
+_JOBS_PARAMS = {
+    "limit",
+    "phase",
+    "source",
+    "trigger",
+    "query",
+    "failed",
+    "job_id",
+    "since",
+}
+
+
+def _jobs_route_path(args: dict[str, Any]) -> str:
+    """Build the ``/jobs`` route path with its bounded query filters."""
+    url_path = "/jobs"
+    params = {
+        key: value
+        for key, value in args.items()
+        if key in _JOBS_PARAMS and value is not None
+    }
+    if params:
+        url_path += "?" + urllib.parse.urlencode(params)
+    return url_path
+
+
+def _resolve_admin_call(
+    tool_name: str, args: dict[str, Any]
+) -> tuple[str, dict[str, Any] | None] | None:
+    """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
+    if tool_name == "get_logs":
+        return _logs_route_path(args), None
+    if tool_name == "get_jobs":
+        return _jobs_route_path(args), None
+    if tool_name in _GET_ROOT_ROUTES:
+        return _admin_url_with_root(_GET_ROOT_ROUTES[tool_name], args), None
+    if tool_name in _POST_BODY_ROUTES:
+        return _POST_BODY_ROUTES[tool_name], args
+    if tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
+        verb = tool_name.split("_")[0]
+        return f"/watcher/{verb}", args
+    return None
+
+
 def _route_admin_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -185,65 +244,15 @@ def _route_admin_tool(
     raw_timeout = args.get("_timeout")
     timeout = float(raw_timeout) if isinstance(raw_timeout, int | float) else None
     args = {key: value for key, value in args.items() if key != "_timeout"}
-    if tool_name == "get_logs":
-        return _do_http_call(port, _logs_route_path(args), None, timeout=timeout)
-
-    if tool_name == "get_jobs":
-        url_path = "/jobs"
-        allowed = {
-            "limit",
-            "phase",
-            "source",
-            "trigger",
-            "query",
-            "failed",
-            "job_id",
-            "since",
+    resolved = _resolve_admin_call(tool_name, args)
+    if resolved is None:
+        return {
+            "ok": False,
+            "error": "unknown_admin_tool",
+            "message": f"Tool {tool_name} not mapped",
         }
-        params = {
-            key: value
-            for key, value in args.items()
-            if key in allowed and value is not None
-        }
-        if params:
-            url_path += "?" + urllib.parse.urlencode(params)
-        return _do_http_call(port, url_path, None, timeout=timeout)
-
-    if tool_name == "get_index_status":
-        return _do_http_call(
-            port, _admin_url_with_root("/status", args), None, timeout=timeout
-        )
-
-    if tool_name == "get_code_file":
-        return _do_http_call(port, "/code-file", args, timeout=timeout)
-
-    if tool_name == "list_projects":
-        return _do_http_call(
-            port, _admin_url_with_root("/projects", args), None, timeout=timeout
-        )
-
-    if tool_name == "evict_project":
-        return _do_http_call(port, "/projects/evict", args, timeout=timeout)
-
-    if tool_name == "get_watcher_state":
-        return _do_http_call(
-            port, _admin_url_with_root("/watcher", args), None, timeout=timeout
-        )
-
-    if tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
-        verb = tool_name.split("_")[0]
-        return _do_http_call(port, f"/watcher/{verb}", args, timeout=timeout)
-
-    if tool_name == "get_service_state":
-        return _do_http_call(
-            port, _admin_url_with_root("/service-state", args), None, timeout=timeout
-        )
-
-    return {
-        "ok": False,
-        "error": "unknown_admin_tool",
-        "message": f"Tool {tool_name} not mapped",
-    }
+    path, body = resolved
+    return _do_http_call(port, path, body, timeout=timeout)
 
 
 def _try_http_admin(
@@ -300,6 +309,29 @@ def _try_http_code_file(
     return _try_http_admin(
         "get_code_file",
         {"path": path, "project_root": project_root},
+        port,
+        timeout=timeout,
+    )
+
+
+def _try_http_vault_document(
+    doc_id: str,
+    project_root: str,
+    port: int | None,
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    """Fetch a vault document from the daemon's ``/vault-document`` route.
+
+    Thin forwarder over :func:`_do_http_call` with no business logic; mirrors
+    the admin-call discrimination (refused -> ``None``). Empty ``project_root``
+    is omitted so the daemon resolves its default root.
+    """
+    args: dict[str, Any] = {"doc_id": doc_id}
+    if project_root:
+        args["project_root"] = project_root
+    return _try_http_admin(
+        "get_vault_document",
+        args,
         port,
         timeout=timeout,
     )
@@ -498,12 +530,18 @@ def _build_http_search_payload(
     exclude_paths: list[str] | None,
     dedup_locales: bool,
     prefer: str | None,
+    like_ids: list[str | int] | None,
+    unlike_ids: list[str | int] | None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "query": query,
         "top_k": top_k,
         "project_root": project_root,
     }
+    if like_ids:
+        payload["like_ids"] = list(like_ids)
+    if unlike_ids:
+        payload["unlike_ids"] = list(unlike_ids)
     if search_type == "code":
         payload["type"] = "codebase"
         code_filters = {
@@ -559,6 +597,8 @@ def _try_http_search(
     exclude_paths: list[str] | None = None,
     dedup_locales: bool = False,
     prefer: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
 ) -> list[dict[str, object]] | dict[str, object] | None:
     # Import the lightweight validator from the leaf module rather than the
     # ``..search`` package, whose __init__ pulls the heavy VaultSearcher (and
@@ -615,6 +655,8 @@ def _try_http_search(
         exclude_paths,
         dedup_locales,
         prefer,
+        like_ids,
+        unlike_ids,
     )
 
     try:
