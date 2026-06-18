@@ -1,10 +1,12 @@
 """Read-only HTTP routes for the resident service (#142, plan P03).
 
 Per the ``service-observability`` ADR these routes are strictly
-read-only - all control stays on MCP. They are registered as Starlette
-:class:`~starlette.routing.Route` objects on the *inner* app assembled
-in :mod:`._main` (alongside ``Mount("/mcp")`` + ``Route("/health")``),
-never as additional ASGI wrappers.
+read-only - control happens through the same REST surface, not a
+separate protocol. They are registered as Starlette
+:class:`~starlette.routing.Route` objects on the app assembled in
+:mod:`._main` (alongside ``Route("/health")``), never as additional
+ASGI wrappers. The daemon serves native REST only; the MCP stdio
+client reaches these routes through ``vaultspec_rag.serviceclient``.
 
 Gating model (ADR Constraints). The HTTP service binds to loopback only
 (``127.0.0.1``), which is the real boundary; on top of that these

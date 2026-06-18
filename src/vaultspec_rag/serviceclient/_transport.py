@@ -179,7 +179,6 @@ def _logs_route_path(args: dict[str, Any]) -> str:
 
 # GET admin tools that accept only an optional ``?project_root=`` query.
 _GET_ROOT_ROUTES: dict[str, str] = {
-    "get_index_status": "/status",
     "list_projects": "/projects",
     "get_watcher_state": "/watcher",
     "get_service_state": "/service-state",

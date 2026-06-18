@@ -60,7 +60,7 @@ Add fresh-interpreter import-isolation and no-local-fallback regression tests an
 Run the full unit and GPU integration suite locally and conduct a formal code review before the work is considered done.
 
 - [ ] `P06.S20` - Run the full unit and GPU integration suite locally and confirm green; `src/vaultspec_rag/tests`.
-- [ ] `P06.S21` - Conduct a formal vaultspec code review and record the audit; `.vault/audit`.
+- [x] `P06.S21` - Conduct a formal vaultspec code review and record the audit; `.vault/audit`.
 
 ## Description
 
