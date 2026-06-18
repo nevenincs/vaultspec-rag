@@ -35,8 +35,8 @@ Repoint every MCP tool, admin tool, and resource at the shared service-client, d
 
 Make stdio the sole MCP transport by removing the daemon's in-process MCP mount, its redirect wrapper, and the stdio branch's GPU model load.
 
-- [ ] `P03.S11` - Remove the in-process MCP mount and the redirect ASGI wrapper from the server entry point; `src/vaultspec_rag/server/_main.py`.
-- [ ] `P03.S12` - Remove the in-process GPU model load from the stdio branch and make stdio the sole MCP transport in the entry point; `src/vaultspec_rag/server/_main.py`.
+- [x] `P03.S11` - Remove the in-process MCP mount and the redirect ASGI wrapper from the server entry point; `src/vaultspec_rag/server/_main.py`.
+- [x] `P03.S12` - Remove the in-process GPU model load from the stdio branch and make stdio the sole MCP transport in the entry point; `src/vaultspec_rag/server/_main.py`.
 
 ### Phase `P04` - remove dead and phantom MCP artifacts
 
