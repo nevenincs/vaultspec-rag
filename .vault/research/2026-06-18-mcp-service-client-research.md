@@ -223,3 +223,45 @@ invariants, both `@pytest.mark.unit`:
 - **Import factoring** — decide where the client functions live so the MCP can import
   them without `vaultspec_rag/__init__.py`'s `.api` pull (a dedicated client subpackage
   vs leaving them in `cli` and making `cli` import-light).
+
+### 8. Industry norm for MCP transport — addendum (resolves Q1)
+
+The transport question (section 7, "mount removal blast radius") is not ours to invent;
+it is settled by industry norms, and the evidence is decisive: **stdio is the standard
+transport for a local, single-machine, coding-agent-facing MCP server.**
+
+- The MCP specification (revision 2025-11-25) defines exactly two standard transports —
+  **stdio** and **Streamable HTTP** — and states plainly that clients "SHOULD support
+  stdio whenever possible." stdio is the recommended baseline.
+- Only the older **HTTP+SSE** transport was deprecated (revision 2025-03-26), replaced by
+  Streamable HTTP. **stdio was never deprecated** and remains first-class in the newest
+  revision. There is zero industry signal moving *local* servers off stdio.
+- Every major coding agent defaults to and recommends **stdio for local subprocess
+  servers**, reserving Streamable HTTP for **remote/hosted** servers: Claude Code
+  (`.mcp.json` `"type": "stdio"`, command+args; HTTP "for remote... cloud-based
+  services"), Cursor ("stdio for local... Streamable HTTP only when connecting to hosted
+  remote servers"), OpenAI Codex CLI (`command` = stdio default, `url` = HTTP opt-in), and
+  VS Code (stdio "the most common type for locally-run MCP servers"). A local RAG service
+  is, by every agent's framing, the stdio case.
+- The convergence axis is local-vs-remote, not stdio-being-phased-out: stdio = local/dev,
+  Streamable HTTP = remote/multi-tenant.
+
+For our architecture the fit is exact: a thin **stdio forwarder** to the shared daemon
+gives every agent its default local config path with zero special-casing, keeps the heavy
+resources singleton in the daemon, satisfies "thin client, dysfunctional if server down"
+(the shim fails fast when the daemon is unreachable), and sidesteps the localhost-HTTP
+security obligations the spec imposes on local HTTP servers (Origin validation,
+127.0.0.1 binding, auth). stdio spawns one shim process per agent, but each is a trivial
+forwarder, not a duplicate of the service — N cheap shims, one shared backend.
+
+**Resolution:** make stdio the primary, agent-facing transport. Removing the daemon's
+`/mcp` Streamable HTTP mount is norm-compliant and the simplest defensible choice — it
+also eliminates the loopback hazard and readiness-blindness identified in section 4.
+Retaining `/mcp` as an opt-in *secondary* surface is defensible only if a networked /
+non-stdio client requirement exists; absent that, stdio-only is recommended. The ADR
+makes the final call, but the default agent integration is stdio either way.
+
+Sources: MCP spec Transports (modelcontextprotocol.io/specification/2025-11-25), Claude
+Code MCP docs (code.claude.com/docs/en/mcp), Cursor MCP docs (cursor.com/docs/mcp), Codex
+MCP docs (developers.openai.com/codex/mcp), VS Code MCP docs
+(code.visualstudio.com/docs/agent-customization/mcp-servers).
