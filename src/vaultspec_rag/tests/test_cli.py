@@ -1975,7 +1975,9 @@ class TestMcpFastPath:
         def _boom(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("synthetic live-but-broken tool failure")
 
-        monkeypatch.setattr("vaultspec_rag.cli._http_search._do_http_call", _boom)
+        monkeypatch.setattr(
+            "vaultspec_rag.serviceclient._transport._do_http_call", _boom
+        )
 
         result = cli_mod._try_http_search(
             "q",
@@ -2000,7 +2002,7 @@ class TestMcpFastPath:
             raise TimeoutError("synthetic mcp timeout")
 
         monkeypatch.setattr(
-            "vaultspec_rag.cli._http_search._do_http_call", mock_timeout
+            "vaultspec_rag.serviceclient._transport._do_http_call", mock_timeout
         )
 
         result = cli_mod._try_http_reindex(
@@ -2023,7 +2025,9 @@ class TestMcpFastPath:
         def _refuse(*_args: object, **_kwargs: object) -> None:
             raise ConnectionRefusedError("port closed")
 
-        monkeypatch.setattr("vaultspec_rag.cli._http_search._do_http_call", _refuse)
+        monkeypatch.setattr(
+            "vaultspec_rag.serviceclient._transport._do_http_call", _refuse
+        )
 
         result = cli_mod._try_http_search(
             "q",
@@ -2419,7 +2423,7 @@ class TestSearchSafetyContract:
             raise TimeoutError("connection timed out")
 
         monkeypatch.setattr(
-            "vaultspec_rag.cli._http_search._do_http_call", mock_timeout
+            "vaultspec_rag.serviceclient._transport._do_http_call", mock_timeout
         )
 
         res = _try_http_search(
@@ -5877,9 +5881,11 @@ class TestAutoDelegation:
         ) -> bool:
             return True
 
-        # Mock _read_service_status to return active port and pid
+        # Stub _read_service_status to return active port and pid.
+        # _default_service_port reads through the serviceclient discovery
+        # module after the service-client factoring, so patch it there.
         monkeypatch.setattr(
-            "vaultspec_rag.cli._read_service_status",
+            "vaultspec_rag.serviceclient._discovery._read_service_status",
             _stub_read_status,
         )
         # Mock _is_our_service to return True
@@ -5927,7 +5933,7 @@ class TestAutoDelegation:
             return True
 
         monkeypatch.setattr(
-            "vaultspec_rag.cli._read_service_status",
+            "vaultspec_rag.serviceclient._discovery._read_service_status",
             _stub_read_status_idx,
         )
         monkeypatch.setattr(

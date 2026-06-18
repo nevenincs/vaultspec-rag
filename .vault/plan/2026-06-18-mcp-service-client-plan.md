@@ -3,7 +3,6 @@ tags:
   - '#plan'
   - '#mcp-service-client'
 date: '2026-06-18'
-modified: '2026-06-18'
 tier: L2
 related:
   - '[[2026-06-18-mcp-service-client-adr]]'
@@ -16,13 +15,13 @@ related:
 
 Extract the production-proven HTTP service-client into an import-light package so both the CLI and the MCP consume one surface without loading Torch, models, or the store.
 
-- [ ] `P01.S01` - Convert the top-level package init to lazy attribute loading so importing any submodule no longer eager-loads the heavy facade; `src/vaultspec_rag/__init__.py`.
-- [ ] `P01.S02` - Create the import-light service-client transport housing the HTTP call primitive and the search, reindex, and admin client functions; `src/vaultspec_rag/serviceclient/_transport.py`.
-- [ ] `P01.S03` - Create the import-light service-discovery module housing the status-file reader and default-port resolver; `src/vaultspec_rag/serviceclient/_discovery.py`.
-- [ ] `P01.S04` - Add thin client wrappers for benchmark, quality, and code-file so the MCP inherits them without bespoke logic; `src/vaultspec_rag/serviceclient/_transport.py`.
-- [ ] `P01.S05` - Export the service-client public surface from the package init; `src/vaultspec_rag/serviceclient/__init__.py`.
-- [ ] `P01.S06` - Repoint the CLI HTTP search module to re-export from the service-client package, preserving the CLI surface; `src/vaultspec_rag/cli/_http_search.py`.
-- [ ] `P01.S07` - Repoint the CLI service-status discovery helpers to re-export from the service-client package; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `P01.S01` - Convert the top-level package init to lazy attribute loading so importing any submodule no longer eager-loads the heavy facade; `src/vaultspec_rag/__init__.py`.
+- [x] `P01.S02` - Create the import-light service-client transport housing the HTTP call primitive and the search, reindex, and admin client functions; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [x] `P01.S03` - Create the import-light service-discovery module housing the status-file reader and default-port resolver; `src/vaultspec_rag/serviceclient/_discovery.py`.
+- [x] `P01.S04` - Add thin client wrappers for benchmark, quality, and code-file so the MCP inherits them without bespoke logic; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [x] `P01.S05` - Export the service-client public surface from the package init; `src/vaultspec_rag/serviceclient/__init__.py`.
+- [x] `P01.S06` - Repoint the CLI HTTP search module to re-export from the service-client package, preserving the CLI surface; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `P01.S07` - Repoint the CLI service-status discovery helpers to re-export from the service-client package; `src/vaultspec_rag/cli/_service_status.py`.
 
 ### Phase `P02` - rewrite the MCP tools as thin client delegations
 
