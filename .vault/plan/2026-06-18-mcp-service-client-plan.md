@@ -51,9 +51,9 @@ Delete references to commands and modules that do not exist and correct stale do
 
 Add fresh-interpreter import-isolation and no-local-fallback regression tests and broaden the static isolation guard to catch the transitive heavy pull.
 
-- [ ] `P05.S17` - Add the fresh-interpreter subprocess runtime check and broaden the static forbidden-import set to include cli and api; `src/vaultspec_rag/tests/test_mcp_import_isolation.py`.
-- [ ] `P05.S18` - Add the no-local-fallback test asserting each tool raises a clear service-not-running error against an isolated empty status dir; `src/vaultspec_rag/tests/test_mcp_no_local_fallback.py`.
-- [ ] `P05.S19` - Update the server tests that bind the removed HTTP mount and in-process model-load expectations; `src/vaultspec_rag/tests/test_server.py`.
+- [x] `P05.S17` - Add the fresh-interpreter subprocess runtime check and broaden the static forbidden-import set to include cli and api; `src/vaultspec_rag/tests/test_mcp_import_isolation.py`.
+- [x] `P05.S18` - Add the no-local-fallback test asserting each tool raises a clear service-not-running error against an isolated empty status dir; `src/vaultspec_rag/tests/test_mcp_no_local_fallback.py`.
+- [x] `P05.S19` - Update the server tests that bind the removed HTTP mount and in-process model-load expectations; `src/vaultspec_rag/tests/test_server.py`.
 
 ### Phase `P06` - verify and review
 

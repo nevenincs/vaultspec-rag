@@ -1,11 +1,18 @@
-"""Guard: mcp/ package must not import server/, store, service, or registry.
+"""Guard: mcp/ package must not import server, store, service, registry, cli, or api.
 
 The ``vaultspec_rag.mcp`` package is the pure MCP protocol adapter layer.  It
-delegates all work to the running daemon via REST calls and must never import
-server internals directly.  This test walks every ``.py`` file under ``mcp/``
-and inspects the AST for forbidden imports — no runtime import is performed.
+delegates all work to the running daemon via REST calls through the import-light
+``serviceclient`` layer, and must never import server internals or the heavy
+facade directly.  This module carries two complementary guards:
 
-Covered patterns:
+* a static AST walk over every ``.py`` file under ``mcp/`` for forbidden imports
+  (``cli`` and ``api`` are forbidden because importing either transitively drags
+  the GPU facade — ``store``, ``search``, ``embeddings``, ``indexer`` — into the
+  process, the exact heavy pull the thin client must avoid); and
+* a fresh-interpreter runtime check that ``import vaultspec_rag.mcp`` loads none
+  of the heavy ML libraries.
+
+Covered AST patterns:
   absolute:  ``import vaultspec_rag.server``
              ``from vaultspec_rag[.]server import X``
              ``from vaultspec_rag import store``
@@ -16,6 +23,8 @@ Covered patterns:
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,8 +36,28 @@ _MCP_DIR = _PKG_ROOT / "mcp"
 # The top-level absolute package name.
 _TOP_PKG = "vaultspec_rag"
 
-# Sub-modules that the mcp/ layer must not reach into directly.
-_FORBIDDEN_SUBMODULES = {"server", "store", "service", "registry"}
+# Sub-modules that the mcp/ layer must not reach into directly.  ``cli`` and
+# ``api`` are forbidden because either one transitively pulls the heavy GPU
+# facade (store, search, embeddings, indexer); the thin client reaches the
+# service through the import-light ``serviceclient`` layer instead.
+_FORBIDDEN_SUBMODULES = {
+    "server",
+    "store",
+    "service",
+    "registry",
+    "cli",
+    "api",
+}
+
+# Heavy ML libraries that ``import vaultspec_rag.mcp`` must never load at
+# runtime — the thin client holds no GPU model and touches no vector store.
+_HEAVY_LIBS = (
+    "torch",
+    "sentence_transformers",
+    "qdrant_client",
+    "transformers",
+    "onnxruntime",
+)
 
 
 def _absolute_name_is_forbidden(name: str) -> bool:
@@ -114,3 +143,37 @@ def test_mcp_file_does_not_import_server_internals(src_file: Path) -> None:
         f"{src_file.relative_to(_PKG_ROOT)} imports forbidden server internals:\n"
         + "\n".join(f"  {v}" for v in violations)
     )
+
+
+@pytest.mark.unit
+def test_mcp_import_loads_no_heavy_ml_libs() -> None:
+    """``import vaultspec_rag.mcp`` must load no Torch / model / vector-store libs.
+
+    The MCP is a thin stdio client: it delegates every tool to the running
+    daemon over HTTP through the import-light ``serviceclient`` layer and holds
+    no GPU model or vector store of its own.  This is checked in a *fresh*
+    interpreter subprocess so a torch-loading test elsewhere in the session
+    cannot leave the heavy libraries resident in ``sys.modules`` and mask a
+    regression.  The static AST guard above forbids the import edges; this guard
+    proves the runtime import chain stays light end to end.  See the
+    ``mcp-service-client`` ADR (D7).
+    """
+    forbidden = ", ".join(repr(name) for name in _HEAVY_LIBS)
+    code = (
+        "import sys\n"
+        "import vaultspec_rag.mcp\n"
+        f"forbidden = ({forbidden},)\n"
+        "heavy = sorted(\n"
+        "    m\n"
+        "    for m in sys.modules\n"
+        "    if any(m == f or m.startswith(f + '.') for f in forbidden)\n"
+        ")\n"
+        "assert not heavy, heavy\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
