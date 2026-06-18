@@ -108,8 +108,8 @@ class TestRulePropagatesToAllProviders:
     def test_rule_content_has_rag_header(self, workspace: Path) -> None:
         rule = workspace / ".claude" / "rules" / "vaultspec-rag.builtin.md"
         content = rule.read_text(encoding="utf-8")
-        assert "Vaultspec RAG" in content
-        assert "GPU-accelerated search" in content
+        assert "vaultspec-rag" in content
+        assert "semantic search" in content
 
     def test_rule_documents_mcp_tools(self, workspace: Path) -> None:
         rule = workspace / ".claude" / "rules" / "vaultspec-rag.builtin.md"
@@ -117,10 +117,6 @@ class TestRulePropagatesToAllProviders:
         for tool in (
             "search_vault",
             "search_codebase",
-            "get_index_status",
-            "get_code_file",
-            "reindex_vault",
-            "reindex_codebase",
         ):
             assert tool in content, f"MCP tool {tool} not documented in rule"
 
@@ -128,11 +124,10 @@ class TestRulePropagatesToAllProviders:
         rule = workspace / ".claude" / "rules" / "vaultspec-rag.builtin.md"
         content = rule.read_text(encoding="utf-8")
         for cmd in (
-            "index",
             "search",
-            "status",
-            "server mcp start",
+            "install",
             "server start",
+            "server doctor",
         ):
             assert cmd in content, f"CLI command '{cmd}' not documented in rule"
 

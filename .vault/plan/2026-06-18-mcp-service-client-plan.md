@@ -42,10 +42,10 @@ Make stdio the sole MCP transport by removing the daemon's in-process MCP mount,
 
 Delete references to commands and modules that do not exist and correct stale documentation so the shipped surface matches its description.
 
-- [ ] `P04.S13` - Correct the stale server-owns-mcp docstring in the server package init; `src/vaultspec_rag/server/__init__.py`.
-- [ ] `P04.S14` - Correct the stale server-owns-mcp docstring in the server state module; `src/vaultspec_rag/server/_state.py`.
-- [ ] `P04.S15` - Remove the phantom mcp-start and mcp-admin exemption from the conflation guard test; `src/vaultspec_rag/tests/test_no_mcp_server_conflation.py`.
-- [ ] `P04.S16` - Align the ecosystem test's documented MCP command surface with the commands that actually ship; `src/vaultspec_rag/tests/integration/test_ecosystem_integration.py`.
+- [x] `P04.S13` - Correct the stale server-owns-mcp docstring in the server package init; `src/vaultspec_rag/server/__init__.py`.
+- [x] `P04.S14` - Correct the stale server-owns-mcp docstring in the server state module; `src/vaultspec_rag/server/_state.py`.
+- [x] `P04.S15` - Remove the phantom mcp-start and mcp-admin exemption from the conflation guard test; `src/vaultspec_rag/tests/test_no_mcp_server_conflation.py`.
+- [x] `P04.S16` - Align the ecosystem test's documented MCP command surface with the commands that actually ship; `src/vaultspec_rag/tests/integration/test_ecosystem_integration.py`.
 
 ### Phase `P05` - lock the thin-client invariants with mock-free tests
 

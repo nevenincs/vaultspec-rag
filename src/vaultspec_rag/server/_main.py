@@ -15,10 +15,10 @@ surface:
   REST only (``/health`` plus the read-only ``ROUTES`` table) and
   eager-loads the GPU models via ``service_lifespan``. It does not mount
   any MCP app and does not import ``mcp``.
-- stdio mode (no ``--port``) is the agent-facing MCP server. It serves
-  MCP over stdio and loads no model: every tool delegates to the running
-  daemon over HTTP through ``serviceclient``, so a model in this process
-  would be dead weight. ``mcp`` is imported only on this path.
+- stdio mode (no ``--port``) is the agent-facing MCP stdio transport. It
+  serves MCP over stdio and loads no model: every tool delegates to the
+  running daemon over HTTP through ``serviceclient``, so a model in this
+  process would be dead weight. ``mcp`` is imported only on this path.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def main(port: int | None = None) -> None:
             from ..mcp import mcp
         except ImportError as exc:  # missing mcp, or a broken Windows pywin32 link
             raise RuntimeError(
-                "The RAG MCP server requires the 'mcp' package, which failed "
+                "The RAG MCP stdio transport requires the 'mcp' package, which failed "
                 f"to import ({exc}). On Windows under uv this is usually "
                 "pywin32's post-install step not having run (a known "
                 "mcp/pywin32 issue, upstream "

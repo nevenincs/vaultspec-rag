@@ -6,7 +6,7 @@ Three layers, no mocks/skips/monkeypatch:
   ``record_finish`` and assert the ``get_jobs`` tool returns the snapshot
   shape (and honours ``limit``); the registry is reset in teardown.
 - CLI: drive ``server jobs`` through the real Typer app against a
-  dead ``--port`` so ``_try_mcp_admin`` genuinely fails to connect, asserting
+  dead ``--port`` so ``_try_http_admin`` genuinely fails to connect, asserting
   the exit-3 + JSON envelope contract.
 - Starlette: exercise the real ``GET /jobs`` route through
   ``starlette.testclient.TestClient`` (the real ASGI client, NOT a mock) built
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-# A port with nothing listening: _try_mcp_admin gets connection-refused
+# A port with nothing listening: _try_http_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59235"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

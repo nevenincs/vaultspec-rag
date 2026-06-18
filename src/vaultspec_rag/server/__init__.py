@@ -1,34 +1,32 @@
 """RAG daemon HTTP service for VaultSpec RAG search and retrieval.
 
-Exposes tools for searching vault and codebase, resources for
-retrieving full contents, and prompts for common RAG tasks.
+Exposes REST endpoints for searching vault and codebase, reindexing,
+and observing daemon state. The daemon runs inside a Starlette
+application with a ``service_lifespan`` that eagerly loads GPU models
+before accepting connections, and serves a raw ``/health`` endpoint
+alongside the native REST routes.
 
-In HTTP mode the daemon runs inside a Starlette application with
-a ``service_lifespan`` that eagerly loads GPU models before
-accepting connections.  A raw ``/health`` endpoint is mounted
-alongside the MCP transport at ``/mcp``.
+The MCP protocol surface no longer lives here. After the thin-client
+rework, the ``mcp`` FastMCP instance is defined only in
+``vaultspec_rag.mcp._mcp`` and is served by the standalone stdio
+forwarder; the daemon exposes native REST only and no longer mounts an
+MCP app.
 
 This module was split into a package (``server/``) per the
 ``2026-06-01-module-split-adr``. The verbatim public surface - the
-``mcp`` FastMCP instance, every tool/resource/prompt, the response
-models, the shared globals, and the ``_``-prefixed helpers tests
-import or monkeypatch directly - is re-exported here unchanged through
-an explicit ``__all__``.
+response models, the shared globals, and the ``_``-prefixed helpers
+tests import or monkeypatch directly - is re-exported here unchanged
+through an explicit ``__all__``.
 
 Import order is load-bearing and mirrors the ``cli`` split:
 
-1. ``_state`` first - owns the singleton ``mcp`` instance and the
-   process-wide globals (``_registry``, ``_watcher_*``,
-   ``_SERVICE_TOKEN``, ``_http_mode``, ``_start_time``). These names
-   live in *this* package namespace because that is what tests rebind
-   (e.g. ``server._http_mode = True``).
+1. ``_state`` first - owns the process-wide globals (``_registry``,
+   ``_watcher_*``, ``_SERVICE_TOKEN``, ``_http_mode``, ``_start_time``).
+   These names live in *this* package namespace because that is what
+   tests rebind (e.g. ``server._http_mode = True``).
 2. Leaf helper submodules (``_models``, ``_utils``, ``_lifecycle``,
-   ``_lifespan``, ``_watcher``) - pure logic with no decorators.
-3. Tool / resource / prompt submodules (``_tools``, ``_admin_tools``,
-   ``_resources``) - importing them runs the ``@mcp.tool()`` /
-   ``@mcp.resource()`` / ``@mcp.prompt()`` decorators against the one
-   ``mcp`` instance defined in step 1.
-4. ``_main`` - the console-script ``main`` entry point.
+   ``_lifespan``, ``_watcher``) - pure logic.
+3. ``_main`` - the console-script ``main`` entry point.
 
 Reassigned globals (``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
 ``_registry``) are read by submodules at call time through
@@ -49,8 +47,6 @@ from ..capabilities import BackendCapabilities
 #     ``_jobs.record_*`` and tests reach it via ``server._jobs``.
 from . import _jobs
 
-# 3. Tool / resource / prompt submodules - their import side effect is
-#    the decorator registration against ``mcp``.
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
     _heartbeat_loop,
