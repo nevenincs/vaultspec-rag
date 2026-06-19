@@ -45,6 +45,11 @@ formal code review (PASS-WITH-FOLLOWUPS, both MEDIUM findings resolved).
   index build succeeded on this branch, confirming CUDA and the engine are healthy; only
   contention prevented the reranker stage from getting GPU time.
 - Freeing the GPU requires stopping another workstream's running daemon, which is the
-  operator's decision, not a step this execution should take unilaterally. The full GPU
-  integration run is therefore deferred to a free-GPU window; this step is left open
-  until that run confirms green.
+  operator's decision, not a step this execution should take unilaterally.
+- **Operator decision (2026-06-19): the GPU integration run is waived.** The unit gate
+  (1042 passed) plus the dedicated mock-free import-isolation and no-local-fallback
+  guards, `basedpyright` 0, `ruff` clean, and the code review (PASS-WITH-FOLLOWUPS) are
+  accepted as sufficient verification for this feature, whose surface does not touch the
+  GPU search/rerank engine the integration suite exercises. The step is closed on that
+  basis; the GPU integration suite was not run green and remains available to run on a
+  free-GPU window if desired.
