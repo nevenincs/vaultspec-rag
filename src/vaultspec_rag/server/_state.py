@@ -2,17 +2,19 @@
 
 Split out of the original ``server.py`` monolith per the
 ``2026-06-01-module-split-adr``. This module is the canonical home of
-the singleton :data:`mcp` FastMCP instance and the process-wide
-globals (registry, watcher bookkeeping, identity token, HTTP-mode
-flag). The package ``__init__`` re-imports these names so they live in
-the ``vaultspec_rag.server`` namespace, which is the target tests
-rebind (e.g. ``server._http_mode = True``).
+the daemon's process-wide globals (registry, watcher bookkeeping,
+identity token, HTTP-mode flag). The package ``__init__`` re-imports
+these names so they live in the ``vaultspec_rag.server`` namespace,
+which is the target tests rebind (e.g. ``server._http_mode = True``).
+The MCP ``FastMCP`` instance is not owned here - after the thin-client
+rework it lives only in ``vaultspec_rag.mcp._mcp`` and is served by the
+standalone stdio forwarder.
 
 Rebind discipline (mirrors the ``cli`` split's monkeypatch handling):
 
-- ``mcp``, ``_watcher_tasks``, ``_watcher_stops``, ``_watcher_lock``
-  are mutated *in place* (decorator registration, dict insert/pop,
-  lock acquire) and may be imported by reference.
+- ``_watcher_tasks``, ``_watcher_stops``, ``_watcher_lock`` are mutated
+  *in place* (dict insert/pop, lock acquire) and may be imported by
+  reference.
 - ``_registry``, ``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``
   are *reassigned* at runtime (``main`` sets ``_http_mode``;
   ``service_lifespan`` sets ``_start_time``/``_SERVICE_TOKEN``; tests

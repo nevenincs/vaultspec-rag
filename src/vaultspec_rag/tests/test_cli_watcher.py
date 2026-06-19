@@ -3,7 +3,7 @@
 Verifies the CLI plumbing for the automatic-index-update parity surface: the
 service-unreachable path (exit code 3 + JSON envelope) for every
 subcommand, and CLI<->MCP structural parity. No mocks: commands run
-through the real Typer app against a dead port so ``_try_mcp_admin``
+through the real Typer app against a dead port so ``_try_http_admin``
 genuinely fails to connect.
 """
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-# A port with nothing listening: _try_mcp_admin gets connection-refused
+# A port with nothing listening: _try_http_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59231"
 

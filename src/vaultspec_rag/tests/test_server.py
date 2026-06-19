@@ -613,11 +613,11 @@ class TestHttpModeResolveRoot:
             _resolve_root("   ")
 
     def test_vault_document_requires_running_daemon(self, tmp_path: Path) -> None:
-        """get_vault_document is a REST client; it errors when no daemon is up.
+        """get_vault_document is a REST client; it errors when no service is up.
 
-        Post-deconflation the resource delegates to the daemon's
-        ``/vault-document`` endpoint via ``_call_daemon``; with an empty
-        status dir (no ``service.json``) that raises a clear RuntimeError.
+        The resource delegates to the daemon's ``/vault-document`` endpoint
+        through the shared ``serviceclient``; with an empty status dir (no
+        ``service.json``) that raises a clear service-not-running RuntimeError.
         """
         import os
 
@@ -626,7 +626,7 @@ class TestHttpModeResolveRoot:
         prev = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
         os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
         try:
-            with pytest.raises(RuntimeError, match="daemon is not running"):
+            with pytest.raises(RuntimeError, match="is not running"):
                 _run(get_vault_document("adr/overview"))
         finally:
             if prev is None:
@@ -675,6 +675,23 @@ class TestMainTransportSetup:
             assert mod._registry._on_close_project is mod._stop_watcher
         finally:
             mod._registry._on_close_project = orig
+
+    def test_stdio_does_not_load_a_model(self):
+        """Stdio MCP is a thin client: main() must not call load_model().
+
+        Per the ``mcp-service-client`` ADR (D5) the in-process GPU model
+        load is removed from the stdio branch - every tool delegates to
+        the daemon over HTTP, so a model loaded here would be dead weight
+        and would violate the thin-client "load no Torch" contract.
+        """
+        import inspect
+
+        from .. import server
+
+        source = inspect.getsource(server.main)
+        assert "load_model" not in source, (
+            "stdio MCP must not load a model; it delegates to the daemon"
+        )
 
     def test_stop_all_watchers_clears_state(self):
         """_stop_all_watchers empties both dicts even when empty."""
@@ -919,80 +936,42 @@ class TestRegistryFullErrorShape:
         assert "_registry.get_project" not in source
 
 
-class TestMcpPathRewrite:
-    """Bare ``/mcp`` is rewritten to ``/mcp/`` in-process - no 307 hop."""
+class TestDaemonServesNativeRestOnly:
+    """The HTTP daemon serves native REST only - no MCP mount, no wrapper.
+
+    Per the ``mcp-service-client`` ADR (D2), stdio is the sole MCP
+    transport. The daemon's ``Mount("/mcp")`` and the ``_mcp_no_redirect``
+    ASGI path-rewrite wrapper were removed outright (no shim, no
+    feature-flagged path), so a tool call no longer loops back into the
+    daemon that serves it. The function-source check is cheap, stable,
+    and survives refactors that keep the no-mount intent.
+    """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_main_uses_path_rewriting_wrapper(self):
-        """Regression guard: main() must hand the wrapper to uvicorn.run.
-
-        Without the wrapper, Starlette's ``Mount("/mcp")`` issues a 307
-        redirect on the bare path, costing every MCP call a round-trip
-        and breaking the documented client URL. The function-source
-        check is cheap, stable, and survives refactors that keep the
-        wrapper-passing intent.
-        """
+    def test_main_has_no_mcp_mount_or_redirect_wrapper(self):
+        """Regression guard: main() must not mount the MCP app or wrap ASGI."""
         import inspect
 
         from .. import server
 
         source = inspect.getsource(server.main)
-        assert "_mcp_no_redirect" in source, (
-            "main() lost the path-rewriting wrapper; /mcp will 307-redirect"
+        assert "_mcp_no_redirect" not in source, (
+            "main() must not reintroduce the /mcp redirect wrapper"
         )
-        # The wrapper must actually be what's handed to uvicorn - not
-        # just defined and ignored.
-        assert "uvicorn.run(\n                _mcp_no_redirect" in source
-
-    def test_path_rewrite_logic(self) -> None:
-        """The ASGI rewrite promotes bare /mcp to /mcp/, leaves other paths."""
-        captured: dict[str, dict[str, Any]] = {}
-
-        async def _stub_app(scope: dict[str, Any], _receive: Any, _send: Any) -> None:
-            captured["scope"] = scope
-
-        async def _wrapper(scope: dict[str, Any], receive: Any, send: Any) -> None:
-            if scope["type"] == "http" and scope.get("path") == "/mcp":
-                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
-            await _stub_app(scope, receive, send)
-
-        def _noop_receive() -> None:
-            return None
-
-        def _noop_send(_m: Any) -> None:
-            return None
-
-        # Bare /mcp gets rewritten.
-        asyncio.run(
-            _wrapper(
-                {"type": "http", "path": "/mcp", "raw_path": b"/mcp"},
-                _noop_receive,
-                _noop_send,
-            ),
+        assert "/mcp" not in source, "main() must not reintroduce the daemon /mcp mount"
+        assert "streamable_http_app" not in source, (
+            "the daemon must not serve the streamable-HTTP MCP app"
         )
-        assert captured["scope"]["path"] == "/mcp/"
-        assert captured["scope"]["raw_path"] == b"/mcp/"
 
-        # /mcp/ passes through unchanged.
-        asyncio.run(
-            _wrapper(
-                {"type": "http", "path": "/mcp/", "raw_path": b"/mcp/"},
-                _noop_receive,
-                _noop_send,
-            ),
-        )
-        assert captured["scope"]["path"] == "/mcp/"
+    def test_main_hands_raw_app_to_uvicorn(self):
+        """The HTTP app is handed to uvicorn directly, with no ASGI wrapper."""
+        import inspect
 
-        # /health passes through unchanged.
-        asyncio.run(
-            _wrapper(
-                {"type": "http", "path": "/health", "raw_path": b"/health"},
-                _noop_receive,
-                _noop_send,
-            ),
-        )
-        assert captured["scope"]["path"] == "/health"
+        from .. import server
+
+        source = inspect.getsource(server.main)
+        assert "uvicorn.run(\n                app," in source
 
 
 class TestDaemonLifecycleHelpers:

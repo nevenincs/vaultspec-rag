@@ -5,6 +5,13 @@ status file (atomic write + tolerant read), the rotating log file, and
 the Windows-only lifecycle shutdown mirror line. The shutdown helper
 resolves ``_log_file`` through the package namespace so tests that
 swap ``vaultspec_rag.cli._log_file`` observe the substitution.
+
+The read-only discovery surface (``_status_dir``, ``_status_file``,
+``_read_service_status``, ``_default_service_port``) was factored into the
+import-light ``vaultspec_rag.serviceclient`` package so the CLI and the MCP
+share one client. Those names are re-exported here unchanged so the CLI's
+existing imports keep working; the status *writer* helpers below stay owned
+by this module.
 """
 
 from __future__ import annotations
@@ -12,12 +19,20 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any
 
 import vaultspec_rag.cli as _cli
 
+from ..serviceclient._discovery import (
+    _default_service_port,
+    _read_service_status,
+    _status_dir,
+    _status_file,
+)
 from ._core import logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = [
     "_append_lifecycle_shutdown_log",
@@ -30,33 +45,6 @@ __all__ = [
     "_update_service_token",
     "_write_service_status",
 ]
-
-
-def _status_dir() -> Path:
-    """Return the global service status directory, creating it if needed.
-
-    Resolved via ``cfg.status_dir`` (which checks CLI override, then
-    ``VAULTSPEC_RAG_STATUS_DIR`` env var, then default
-    ``~/.vaultspec-rag/``).
-
-    Returns:
-        Path to the service status directory.
-    """
-    from ..config import get_config
-
-    cfg = get_config()
-    d = Path(cfg.status_dir).expanduser()
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _status_file() -> Path:
-    """Return the path to the service status JSON file.
-
-    Returns:
-        Path to ``{status_dir}/service.json``.
-    """
-    return _status_dir() / "service.json"
 
 
 def _log_file() -> Path:
@@ -184,52 +172,3 @@ def _update_service_metadata(fields: dict[str, object]) -> None:
         os.replace(str(tmp), str(sf))
     except OSError as exc:
         logger.debug("_update_service_metadata: write failed: %s", exc, exc_info=True)
-
-
-def _read_service_status() -> dict[str, Any] | None:
-    """Read and parse the service status file.
-
-    Returns:
-        Parsed status dict, or None if the file is missing,
-        unreadable, or lacks ``pid``/``port`` keys.
-
-    """
-    sf = _status_file()
-    if not sf.exists():
-        return None
-    try:
-        raw: object = json.loads(sf.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or "pid" not in raw or "port" not in raw:
-            return None
-        return cast("dict[str, Any]", raw)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.debug("service status file %s unreadable: %s", sf, exc, exc_info=True)
-        return None
-
-
-def _default_service_port() -> int | None:
-    """Return the port of the currently running service, or ``None``.
-
-    Reads ``service.json`` in the status directory; if absent or
-    unparsable, returns ``None`` so callers emit the exit-3
-    "service down" code path.
-    """
-    try:
-        data = _cli._read_service_status()
-    except Exception as exc:
-        # Broad except: status-file reads must never block the
-        # command path; failures fall through to the exit-3
-        # "service down" envelope. Debug-log so the swallow stays
-        # observable.
-        logger.debug("status read raised: %s", exc, exc_info=True)
-        return None
-    if not data:
-        return None
-    port = data.get("port")
-    if isinstance(port, int):
-        return port
-    try:
-        return int(port) if port is not None else None
-    except (TypeError, ValueError) as exc:
-        logger.debug("status port %r not coercible: %s", port, exc)
-        return None

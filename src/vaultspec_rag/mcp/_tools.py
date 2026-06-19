@@ -1,94 +1,74 @@
 """Search and index MCP tools.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. Importing this module runs the
-``@mcp.tool()`` decorators, registering the search/index tools on the
-shared :data:`mcp` instance. The registry is read through the package
-alias so a test rebind of ``_registry`` is observed.
+Each tool is a thin delegation to the running RAG daemon through the shared
+import-light :mod:`vaultspec_rag.serviceclient` layer. The MCP defines no
+behavior of its own: it resolves the service port, offloads the synchronous
+wire call to a worker thread, and maps an unreachable service to one clear
+"service not running" error. There is no local fallback - when the daemon is
+down the MCP is intentionally dysfunctional.
+
+Importing this module runs the ``@mcp.tool()`` decorators, registering the
+search/index tools on the shared :data:`mcp` instance.
 """
 
 from __future__ import annotations
 
-import json
-import logging
-import os
-import urllib.error
-import urllib.request
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
-from ..cli import (
-    _read_service_status,  # pyright: ignore[reportPrivateUsage]  # intra-package: cli __all__ explicitly re-exports this symbol
+from ..serviceclient import (
+    _default_service_port,
+    _try_http_admin,
+    _try_http_code_file,
+    _try_http_reindex,
+    _try_http_search,
 )
 from ._mcp import mcp
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_SERVICE_DOWN_MESSAGE = (
+    "vaultspec-rag service is not running. Start it with `vaultspec-rag server start`."
+)
 
 
-def _daemon_timeout_seconds() -> float:
-    """Resolve the daemon round-trip timeout (env-tunable, default 300s)."""
-    raw = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
-    if raw:
-        try:
-            return float(raw)
-        except ValueError:
-            logger.debug("Invalid VAULTSPEC_RAG_SEARCH_TIMEOUT %r; using default", raw)
-    return 300.0
+def _require_port() -> int:
+    """Return the running service port or raise the one service-down error.
 
-
-def _call_daemon(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    status = _read_service_status()
-    if not status or "port" not in status:
-        raise RuntimeError(
-            "vaultspec-rag daemon is not running (service.json not found)."
-        )
-
-    port = status["port"]
-    token = status.get("service_token", status.get("token", ""))
-
-    url = f"http://127.0.0.1:{port}{path}"
-    headers: dict[str, str] = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    if payload is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    else:
-        req = urllib.request.Request(url, headers=headers, method="GET")
-
-    try:
-        with urllib.request.urlopen(req, timeout=_daemon_timeout_seconds()) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError:
-            raise RuntimeError(
-                f"REST API call to {url} failed with {e.code}: {body}"
-            ) from e
-    except Exception as e:
-        raise RuntimeError(f"REST API call to {url} failed: {e}") from e
-
-
-async def _call_daemon_async(
-    path: str,
-    payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Run the blocking daemon round trip on a worker thread.
-
-    Every MCP tool is an ``async def`` serving on an event loop - in
-    the stdio process and, crucially, on the daemon itself, which
-    mounts this same MCP app and would otherwise issue a blocking
-    loopback HTTP request from its own loop thread (a full-server
-    stall, or a deadlock once the loop is saturated).
+    The unreachable condition is mapped to a single ``RuntimeError`` here so
+    the no-local-fallback contract lives in exactly one place.
     """
-    from functools import partial
+    port = _default_service_port()
+    if port is None:
+        raise RuntimeError(_SERVICE_DOWN_MESSAGE)
+    return port
 
+
+def _unwrap[T](result: T | None) -> T:
+    """Return *result*, mapping the unreachable sentinel to the service-down error.
+
+    The ``serviceclient`` helpers return ``None`` when the service refuses the
+    connection (down between the port read and the call); that maps to the same
+    single ``RuntimeError`` as a missing ``service.json``.
+    """
+    if result is None:
+        raise RuntimeError(_SERVICE_DOWN_MESSAGE)
+    return result
+
+
+async def _delegate[T](call: Callable[[], T | None]) -> T:
+    """Offload a blocking ``serviceclient`` call and apply the service-down map.
+
+    The ``serviceclient`` helpers are synchronous (blocking ``urllib``); every
+    MCP tool is ``async def`` serving on an event loop, so the blocking call is
+    run on a worker thread via ``anyio.to_thread.run_sync``. This is transport
+    offload, not business logic.
+    """
     import anyio.to_thread
 
-    return await anyio.to_thread.run_sync(partial(_call_daemon, path, payload))
+    result = await anyio.to_thread.run_sync(call)
+    return _unwrap(result)
 
 
 @mcp.tool()
@@ -102,22 +82,24 @@ async def search_vault(
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Search the documentation vault for relevant ADRs, plans, and research."""
-    payload = {
-        "type": "vault",
-        "query": query,
-        "top_k": top_k,
-        "doc_type": doc_type,
-        "feature": feature,
-        "date": date,
-        "tag": tag,
-        "like_ids": like_ids,
-        "unlike_ids": unlike_ids,
-        "project_root": project_root,
-    }
-    return await _call_daemon_async(
-        "/search", {k: v for k, v in payload.items() if v is not None}
+    port = _require_port()
+    return await _delegate(
+        partial(
+            _try_http_search,
+            query,
+            "vault",
+            top_k,
+            port,
+            project_root or "",
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
     )
 
 
@@ -137,27 +119,29 @@ async def search_codebase(
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Search the source codebase for relevant functions, classes, or logic."""
-    payload = {
-        "type": "codebase",
-        "query": query,
-        "top_k": top_k,
-        "language": language,
-        "path": path,
-        "node_type": node_type,
-        "function_name": function_name,
-        "class_name": class_name,
-        "include_paths": include_paths,
-        "exclude_paths": exclude_paths,
-        "dedup_locales": dedup_locales,
-        "prefer": prefer,
-        "like_ids": like_ids,
-        "unlike_ids": unlike_ids,
-        "project_root": project_root,
-    }
-    return await _call_daemon_async(
-        "/search", {k: v for k, v in payload.items() if v is not None}
+    port = _require_port()
+    return await _delegate(
+        partial(
+            _try_http_search,
+            query,
+            "code",
+            top_k,
+            port,
+            project_root or "",
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
     )
 
 
@@ -165,13 +149,16 @@ async def search_codebase(
 async def get_index_status(
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Return the current status of the RAG index and GPU hardware."""
-    url_path = "/status"
-    if project_root:
-        import urllib.parse
+    """Return the current status of the RAG index and GPU hardware.
 
-        url_path += "?project_root=" + urllib.parse.quote(project_root)
-    return await _call_daemon_async(url_path)
+    The daemon has no ``/status`` route; the index status is read from the live
+    ``/service-state`` route through the admin client path.
+    """
+    port = _require_port()
+    args: dict[str, Any] = {}
+    if project_root:
+        args["project_root"] = project_root
+    return await _delegate(partial(_try_http_admin, "get_service_state", args, port))
 
 
 @mcp.tool()
@@ -180,10 +167,8 @@ async def get_code_file(
     project_root: str | None = None,
 ) -> str:
     """Retrieve the full content of a source file by path."""
-    payload = {"path": path, "project_root": project_root}
-    res = await _call_daemon_async(
-        "/code-file", {k: v for k, v in payload.items() if v is not None}
-    )
+    port = _require_port()
+    res = await _delegate(partial(_try_http_code_file, path, project_root or "", port))
     if "content" in res:
         return str(res["content"])
     if "error" in res:
@@ -197,14 +182,9 @@ async def reindex_vault(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index vault documentation (incremental by default)."""
-    payload = {
-        "type": "vault",
-        "clean": clean,
-        "project_root": project_root,
-        "initiator_kind": "mcp",
-    }
-    return await _call_daemon_async(
-        "/reindex", {k: v for k, v in payload.items() if v is not None}
+    port = _require_port()
+    return await _delegate(
+        partial(_try_http_reindex, "vault", clean, port, project_root or "")
     )
 
 
@@ -214,12 +194,7 @@ async def reindex_codebase(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index the source codebase (incremental by default)."""
-    payload = {
-        "type": "codebase",
-        "clean": clean,
-        "project_root": project_root,
-        "initiator_kind": "mcp",
-    }
-    return await _call_daemon_async(
-        "/reindex", {k: v for k, v in payload.items() if v is not None}
+    port = _require_port()
+    return await _delegate(
+        partial(_try_http_reindex, "codebase", clean, port, project_root or "")
     )

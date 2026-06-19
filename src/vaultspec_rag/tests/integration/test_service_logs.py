@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-# A port with nothing listening: _try_mcp_admin gets connection-refused
+# A port with nothing listening: _try_http_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59234"
 
