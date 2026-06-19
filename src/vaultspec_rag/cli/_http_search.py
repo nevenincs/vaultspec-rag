@@ -72,38 +72,118 @@ def _format_timeout_seconds(timeout: float) -> str:
     return f"{value} {noun}"
 
 
+def _status_file_token() -> str:
+    """Return the ``service_token`` recorded in the local status file, or ``""``."""
+    from ._service_status import _read_service_status
+
+    status = _read_service_status()
+    if not status:
+        return ""
+    token = status.get("service_token", status.get("token", ""))
+    return token if isinstance(token, str) else ""
+
+
+def _fetch_health_token(port: int, timeout: float | None = None) -> str:
+    """Read the live ``service_token`` from the target port's ``/health``.
+
+    ``/health`` is ungated and echoes the running service's per-process
+    ``service_token``, so a CLI invocation that points ``--port`` at a service
+    started out-of-band (e.g. by another project, under a different status
+    directory) can still authenticate against the token-gated routes. Returns
+    ``""`` on any failure - including connection refused - so the caller's
+    normal request still runs and the existing unreachable/error handling
+    applies.
+    """
+    url = f"http://127.0.0.1:{port}/health"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(
+            req, timeout=timeout or DEFAULT_ADMIN_TIMEOUT_SECONDS
+        ) as resp:
+            data: object = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.debug("health token probe on port %s failed: %s", port, exc)
+        return ""
+    if isinstance(data, dict):
+        token = cast("dict[str, object]", data).get("service_token")
+        if isinstance(token, str):
+            return token
+    return ""
+
+
+def _build_call_request(
+    port: int,
+    path: str,
+    payload: dict[str, object] | None,
+    token: str,
+) -> urllib.request.Request:
+    url = f"http://127.0.0.1:{port}{path}"
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+        return urllib.request.Request(url, data=data, headers=headers, method="POST")
+    return urllib.request.Request(url, headers=headers, method="GET")
+
+
+def _send_call(
+    req: urllib.request.Request, timeout: float | None
+) -> tuple[int, dict[str, object]]:
+    """Send *req*; return ``(status_code, parsed_body)``.
+
+    HTTP error responses (e.g. a 401 from the token gate) are parsed and
+    returned alongside their status code rather than raised, so the caller can
+    react to a 401 by refreshing the token. Connection-level failures still
+    propagate to the caller's unreachable handling.
+    """
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
+            return int(resp.status), body
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8")
+        try:
+            return e.code, cast("dict[str, object]", json.loads(raw))
+        except json.JSONDecodeError:
+            return e.code, {
+                "ok": False,
+                "error": "http_error",
+                "message": f"{e.code}: {raw}",
+            }
+
+
 def _do_http_call(
     port: int,
     path: str,
     payload: dict[str, object] | None,
     timeout: float | None = None,
 ) -> dict[str, object] | None:
-    from ._service_status import _read_service_status
+    """Call a service route, recovering the auth token on a 401.
 
-    status = _read_service_status()
-    token = status.get("service_token", status.get("token", "")) if status else ""
+    The token from the local status file is sent first (it may be empty or
+    stale). Only if the route rejects it with 401 does the client fetch the
+    live token from the target port's ungated ``/health`` and retry once. This
+    keeps the happy path a single request while letting ``--port`` authenticate
+    against a service started out-of-band (missing status file) or restarted
+    (rotated token), without an extra round-trip when the first call succeeds.
+    """
+    token = _status_file_token()
+    status_code, result = _send_call(
+        _build_call_request(port, path, payload, token), timeout
+    )
 
-    url = f"http://127.0.0.1:{port}{path}"
-    headers: dict[str, str] = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    if payload is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    else:
-        req = urllib.request.Request(url, headers=headers, method="GET")
-
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        try:
-            return cast("dict[str, object]", json.loads(body))
-        except json.JSONDecodeError:
-            return {"ok": False, "error": "http_error", "message": f"{e.code}: {body}"}
+    if status_code == 401:
+        fresh = _fetch_health_token(port, timeout)
+        if fresh and fresh != token:
+            logger.debug(
+                "token rejected on port %s; retrying with the /health token", port
+            )
+            _, result = _send_call(
+                _build_call_request(port, path, payload, fresh), timeout
+            )
+    return result
 
 
 def _try_http_reindex(
