@@ -165,6 +165,52 @@ class TestServerModeRoundTrip:
         finally:
             store.close()
 
+    def test_scoped_delete_evicts_in_server_mode(
+        self,
+        server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """A scoped reindex of a deleted file evicts its chunks server-side.
+
+        The store-level delete must be durable against the real Rust engine, not
+        only the local on-disk store: index two files, delete one, run the scoped
+        incremental reindex over the deleted path, and confirm the chunks are gone
+        while the surviving file is untouched.
+        """
+        from ... import CodebaseIndexer, VaultStore
+
+        build_synthetic_vault(tmp_path, n_docs=3, seed=11)
+        pkg = tmp_path / "pkg"
+        pkg.mkdir(parents=True, exist_ok=True)
+        keep = pkg / "alpha.py"
+        gone = pkg / "beta.py"
+        keep.write_text("def alpha():\n    return 'alpha-one'\n", encoding="utf-8")
+        gone.write_text("def beta():\n    return 'beta-one'\n", encoding="utf-8")
+
+        store = VaultStore(tmp_path)
+        try:
+            assert store._server_mode is True
+            code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+            code_indexer.full_index(reporter=NullProgressReporter())
+
+            keep_rel = str(keep.relative_to(tmp_path)).replace("\\", "/")
+            gone_rel = str(gone.relative_to(tmp_path)).replace("\\", "/")
+            assert code_indexer._get_chunk_ids_for_files({gone_rel})
+
+            gone.unlink()
+            result = code_indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths={gone},
+            )
+
+            assert result.removed == 1
+            assert not code_indexer._get_chunk_ids_for_files({gone_rel})
+            assert code_indexer._get_chunk_ids_for_files({keep_rel})
+            assert gone_rel not in code_indexer._load_meta()
+        finally:
+            store.close()
+
     def test_two_roots_namespace_collections_on_one_server(
         self,
         server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam

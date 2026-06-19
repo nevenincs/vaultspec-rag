@@ -365,13 +365,23 @@ class TestCliMcpFastPath:
     def test_do_http_call_uses_urllib(self):
         import inspect
 
-        from ..cli._http_search import _do_http_call
+        from ..serviceclient import _transport
 
-        src = inspect.getsource(_do_http_call)
+        # The invariant is the HTTP fast path stays synchronous (urllib),
+        # because Typer handlers are sync and the MCP offloads these blocking
+        # calls onto a worker thread. The wire client was factored into the
+        # import-light serviceclient package, so inspect that module (the CLI
+        # _http_search shim only re-exports it).
+        src = inspect.getsource(_transport)
         assert "urllib.request" in src, (
-            "_do_http_call must use synchronous urllib.request instead of async HTTP "
-            "because Typer handlers are sync."
+            "the HTTP fast path must use synchronous urllib.request instead "
+            "of async HTTP because Typer handlers are sync."
         )
+        for forbidden in ("aiohttp", "AsyncClient", "await "):
+            assert forbidden not in src, (
+                "the HTTP fast path must stay synchronous; "
+                f"found async marker {forbidden!r}."
+            )
 
 
 class TestWatcherGraphInvalidation:

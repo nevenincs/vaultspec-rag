@@ -3,7 +3,6 @@ tags:
   - '#exec'
   - '#{feature}'
 date: '{yyyy-mm-dd}'
-modified: '{yyyy-mm-dd}'
 related:
   - '[[{yyyy-mm-dd-*-plan}]]'
 ---
@@ -15,9 +14,6 @@ related:
 
      Related: use wiki-links as '[[yyyy-mm-dd-foo-bar-plan]]' and link the
      parent plan.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
 
      DO NOT add fields beyond those scaffolded; metadata lives
      only in the frontmatter. -->

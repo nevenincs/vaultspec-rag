@@ -9,7 +9,10 @@ imports (and the tests that import these names from
 Each ``_try_http_*`` helper talks to a running RAG service over HTTP and
 discriminates "service unreachable" (connection refused -> ``None``) from
 "live but broken" (structured error dict). ``_is_connection_refused`` walks
-the exception chain to make that call.
+the exception chain to make that call. ``_do_http_call`` carries the
+status-file token first and, on a 401, refreshes it from the target port's
+ungated ``/health`` so ``--port`` authenticates against a service started
+out-of-band or restarted with a rotated token.
 """
 
 from __future__ import annotations
