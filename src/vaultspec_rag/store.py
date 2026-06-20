@@ -461,6 +461,9 @@ class VaultStore:
         self._embedding_dim = embedding_dim or EMBEDDING_DIM
         self._vault_ensured = False
         self._code_ensured = False
+        # Best-effort storage-manifest attribution is recorded at most once per
+        # store instance (server mode only) so it never re-enters the hot path.
+        self._manifest_recorded = False
 
     @property
     def client(self) -> QdrantClient:
@@ -632,10 +635,37 @@ class VaultStore:
                 logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
             self._code_ensured = False
 
+    def _record_manifest(self) -> None:
+        """Record this root in the storage manifest (server mode only).
+
+        Populates the prefix-to-root attribution the storage survey/prune
+        surface needs to classify a namespace as live or orphaned. Runs at
+        most once per store instance (guarded by ``_manifest_recorded``), so
+        it never adds a per-operation manifest read to the search/index hot
+        path. A manifest failure is logged, never raised - this best-effort
+        attribution must not break indexing.
+        """
+        if self._manifest_recorded or not self._server_mode:
+            return
+        # Mark before attempting so a failure is not retried on every store
+        # operation; attribution is best-effort and recovers on the next open.
+        self._manifest_recorded = True
+        try:
+            from .storage_manifest import record_root
+
+            record_root(self.root_dir, backend="server")
+        except Exception:  # best-effort attribution hook; must never break indexing
+            logger.debug(
+                "could not record storage manifest for %s",
+                self.root_dir,
+                exc_info=True,
+            )
+
     def ensure_table(self) -> None:
         """Create the vault_docs collection if it doesn't exist."""
         from qdrant_client import models
 
+        self._record_manifest()
         with self._lifecycle_lock:
             if self._vault_ensured:
                 return
@@ -667,6 +697,7 @@ class VaultStore:
         """Create the codebase_docs collection if it doesn't exist."""
         from qdrant_client import models
 
+        self._record_manifest()
         with self._lifecycle_lock:
             if self._code_ensured:
                 return

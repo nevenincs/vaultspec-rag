@@ -29,6 +29,7 @@ __all__ = [
     "server_app",
     "server_projects_app",
     "server_qdrant_app",
+    "server_storage_app",
     "server_watcher_app",
     "version_callback",
 ]
@@ -62,6 +63,11 @@ server_qdrant_app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=False,
 )
+server_storage_app = typer.Typer(
+    help="Survey and reclaim per-root RAG index storage.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
+)
 preprocess_app = typer.Typer(
     help="Inspect and validate document preprocessing rules.",
     rich_markup_mode=None,
@@ -72,6 +78,7 @@ app.add_typer(server_root_app, name="server")
 server_root_app.add_typer(server_projects_app, name="projects")
 server_root_app.add_typer(server_watcher_app, name="updates")
 server_root_app.add_typer(server_qdrant_app, name="qdrant")
+server_root_app.add_typer(server_storage_app, name="storage")
 app.add_typer(preprocess_app, name="preprocess")
 
 
@@ -102,6 +109,12 @@ def server_updates_main(ctx: typer.Context) -> None:
 @server_qdrant_app.callback(invoke_without_command=True)
 def server_qdrant_main(ctx: typer.Context) -> None:
     """Show Qdrant command help when no Qdrant subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_storage_app.callback(invoke_without_command=True)
+def server_storage_main(ctx: typer.Context) -> None:
+    """Show storage command help when no storage subcommand is provided."""
     _show_group_help_if_no_command(ctx)
 
 

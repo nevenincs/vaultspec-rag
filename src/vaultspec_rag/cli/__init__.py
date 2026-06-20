@@ -42,6 +42,7 @@ from ._app import (
     server_app,
     server_projects_app,
     server_qdrant_app,
+    server_storage_app,
     server_watcher_app,
     version_callback,
 )
@@ -129,6 +130,7 @@ from ._service_status import (
     _update_service_token,
     _write_service_status,
 )
+from ._service_storage import storage_survey
 from ._service_watcher import (
     service_watcher_start,
     service_watcher_status,
@@ -199,6 +201,7 @@ __all__ = [
     "server_app",
     "server_projects_app",
     "server_qdrant_app",
+    "server_storage_app",
     "server_watcher_app",
     "service_doctor",
     "service_jobs",
@@ -213,6 +216,7 @@ __all__ = [
     "service_watcher_status",
     "service_watcher_stop",
     "service_watcher_timing",
+    "storage_survey",
     "sys",
     "version_callback",
 ]

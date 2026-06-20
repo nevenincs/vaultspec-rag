@@ -11,6 +11,7 @@ same server, and shutdown reaps the child with no orphaned process.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import socket
@@ -240,6 +241,296 @@ class TestServerModeRoundTrip:
         finally:
             store_a.close()
             store_b.close()
+
+
+class TestServerModeDeletionEviction:
+    """Issue 192: a scoped incremental reindex must evict a deleted file's
+    data from the store in server mode, so search no longer surfaces it,
+    without a full rebuild. Every prior deletion test forced local mode;
+    these drive the real managed server.
+    """
+
+    def test_scoped_delete_evicts_code_chunks_and_search_in_server_mode(
+        self,
+        server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """Deleting a code file then scoped-reindexing drops its chunks and
+        removes it from hybrid search, in server mode."""
+        from ... import CodebaseIndexer, VaultStore
+        from ...search import VaultSearcher
+
+        src = tmp_path / "src"
+        src.mkdir(parents=True)
+        keep = src / "keep_utils.py"
+        gone = src / "gone_utils.py"
+        keep.write_text(
+            '"""Kept module."""\n\n\n'
+            "def keep_sentinel() -> str:\n"
+            '    """Return the kept sentinel."""\n'
+            '    return "retained-keeptoken"\n',
+            encoding="utf-8",
+        )
+        gone.write_text(
+            '"""Doomed module."""\n\n\n'
+            "def gone_sentinel() -> str:\n"
+            '    """Return the doomed sentinel."""\n'
+            '    return "deleteme-uniquegonetoken"\n',
+            encoding="utf-8",
+        )
+
+        store = VaultStore(tmp_path)
+        try:
+            assert store._server_mode is True
+            code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+            code_indexer.full_index(reporter=NullProgressReporter())
+
+            gone_rel = str(gone.relative_to(tmp_path)).replace("\\", "/")
+            assert code_indexer._get_chunk_ids_for_files({gone_rel}), (
+                "doomed file must have chunks before deletion (sanity)"
+            )
+
+            searcher = VaultSearcher(tmp_path, embedding_model, store)
+            assert any(
+                "gone_utils" in hit.path
+                for hit in searcher.search_codebase(
+                    "deleteme uniquegonetoken doomed sentinel", top_k=5
+                )
+            ), "doomed file must be searchable before deletion (sanity)"
+
+            gone.unlink()
+            result = code_indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths={gone},
+            )
+            assert result.removed == 1
+
+            assert not code_indexer._get_chunk_ids_for_files({gone_rel}), (
+                "deleted file's chunks must be evicted from the store (issue 192)"
+            )
+            keep_rel = str(keep.relative_to(tmp_path)).replace("\\", "/")
+            assert code_indexer._get_chunk_ids_for_files({keep_rel}), (
+                "kept file's chunks must remain"
+            )
+            assert not any(
+                "gone_utils" in hit.path
+                for hit in searcher.search_codebase(
+                    "deleteme uniquegonetoken doomed sentinel", top_k=5
+                )
+            ), "deleted file still returned by server-mode search (issue 192)"
+        finally:
+            store.close()
+
+    def test_scoped_delete_evicts_vault_doc_in_server_mode(
+        self,
+        server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """Deleting a vault document then scoped-reindexing evicts it from
+        the vault collection, in server mode."""
+        from ... import VaultIndexer, VaultStore
+        from ...config import get_config
+
+        build_synthetic_vault(tmp_path, n_docs=6, seed=7)
+        store = VaultStore(tmp_path)
+        try:
+            assert store._server_mode is True
+            vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
+            vault_indexer.full_index(reporter=NullProgressReporter())
+            before = store.count()
+            assert before > 0
+
+            docs_dir = tmp_path / get_config().docs_dir
+            doc = next(iter(sorted(docs_dir.rglob("*.md"))))
+            doc.unlink()
+
+            result = vault_indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths={doc},
+            )
+            assert result.removed >= 1
+            assert store.count() < before, (
+                "deleted vault document must reduce the stored count (issue 192)"
+            )
+        finally:
+            store.close()
+
+
+class TestServerModeWatcherEviction:
+    """Issue 192 through the real watcher: deleting a file on disk while the
+    watcher runs must evict it from search in server mode, end to end. This
+    drives the actual ``awatch`` -> classify -> pending-set -> scoped
+    incremental path the operator hits, not a direct indexer call.
+    """
+
+    async def test_watcher_evicts_deleted_vault_doc_in_server_mode(
+        self,
+        server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import CodebaseIndexer, VaultIndexer, VaultStore
+        from ...graph_cache import GraphCache
+        from ...watcher import watch_and_reindex
+
+        vault_dir = tmp_path / ".vault"
+        adr_dir = vault_dir / "adr"
+        adr_dir.mkdir(parents=True)
+        (adr_dir / "init.md").write_text(
+            "---\ntags: ['#adr', '#initial']\ndate: '2026-06-18'\n"
+            "related: []\ntitle: Init\n---\n# Init\n\nInitial body.\n",
+            encoding="utf-8",
+        )
+        doomed = adr_dir / "doomed.md"
+        doomed.write_text(
+            "---\ntags: ['#adr', '#doomed']\ndate: '2026-06-18'\n"
+            "related: []\ntitle: Doomed\n---\n# Doomed\n\n"
+            "This doomed decision mentions uniquewatchertoken repeatedly.\n",
+            encoding="utf-8",
+        )
+
+        store = VaultStore(tmp_path)
+        vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
+        code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+        graph_cache = GraphCache()
+        vault_indexer.full_index(reporter=NullProgressReporter())
+
+        q_vec = embedding_model.encode_query(
+            "uniquewatchertoken doomed decision"
+        ).tolist()
+
+        def _hits() -> bool:
+            results = store.hybrid_search(
+                query_vector=q_vec,
+                _query_text="uniquewatchertoken doomed decision",
+                limit=10,
+            )
+            return any("uniquewatchertoken" in r.get("content", "") for r in results)
+
+        assert _hits(), "doomed doc must be searchable before deletion (sanity)"
+
+        stop_event = asyncio.Event()
+        watcher_task = asyncio.create_task(
+            watch_and_reindex(
+                root_dir=tmp_path,
+                vault_dir=vault_dir,
+                vault_indexer=vault_indexer,
+                code_indexer=code_indexer,
+                stop_event=stop_event,
+                graph_cache=graph_cache,
+                debounce=50,
+                cooldown=0.1,
+            )
+        )
+        try:
+            await asyncio.sleep(0.2)
+            doomed.unlink()
+            for _ in range(50):  # up to ~5s
+                await asyncio.sleep(0.1)
+                if not _hits():
+                    break
+            else:
+                pytest.fail(
+                    "watcher did not evict the deleted doc from server-mode "
+                    "search within timeout (issue 192)"
+                )
+            # Survivor check: eviction removed the doomed doc, NOT the whole
+            # collection. A kept sibling must still surface (distinguishes real
+            # eviction from a search/store that simply stopped returning hits).
+            init_vec = embedding_model.encode_query("Init initial body").tolist()
+            init_results = store.hybrid_search(
+                query_vector=init_vec, _query_text="Init initial body", limit=10
+            )
+            assert any("Initial body" in r.get("content", "") for r in init_results), (
+                "kept sibling doc must still be searchable after eviction"
+            )
+        finally:
+            stop_event.set()
+            await watcher_task
+            store.close()
+
+    async def test_watcher_evicts_deleted_code_file_in_server_mode(
+        self,
+        server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """The user's exact scenario: a deleted code file must drop out of
+        code search after the watcher's scoped reindex, in server mode."""
+        from ... import CodebaseIndexer, VaultIndexer, VaultStore
+        from ...graph_cache import GraphCache
+        from ...search import VaultSearcher
+        from ...watcher import watch_and_reindex
+
+        vault_dir = tmp_path / ".vault"
+        vault_dir.mkdir(parents=True)
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "keep_mod.py").write_text(
+            '"""Kept."""\n\n\ndef keep() -> str:\n    return "retained"\n',
+            encoding="utf-8",
+        )
+        gone = src / "gone_mod.py"
+        gone.write_text(
+            '"""Doomed."""\n\n\ndef gone() -> str:\n'
+            '    return "uniquecodewatchertoken"\n',
+            encoding="utf-8",
+        )
+
+        store = VaultStore(tmp_path)
+        vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
+        code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+        graph_cache = GraphCache()
+        code_indexer.full_index(reporter=NullProgressReporter())
+        searcher = VaultSearcher(tmp_path, embedding_model, store)
+
+        def _hits() -> bool:
+            return any(
+                "gone_mod" in hit.path
+                for hit in searcher.search_codebase(
+                    "uniquecodewatchertoken doomed", top_k=5
+                )
+            )
+
+        assert _hits(), "doomed code file must be searchable before deletion (sanity)"
+
+        stop_event = asyncio.Event()
+        watcher_task = asyncio.create_task(
+            watch_and_reindex(
+                root_dir=tmp_path,
+                vault_dir=vault_dir,
+                vault_indexer=vault_indexer,
+                code_indexer=code_indexer,
+                stop_event=stop_event,
+                graph_cache=graph_cache,
+                debounce=50,
+                cooldown=0.1,
+            )
+        )
+        try:
+            await asyncio.sleep(0.2)
+            gone.unlink()
+            for _ in range(50):  # up to ~5s
+                await asyncio.sleep(0.1)
+                if not _hits():
+                    break
+            else:
+                pytest.fail(
+                    "watcher did not evict the deleted code file from "
+                    "server-mode search within timeout (issue 192)"
+                )
+            # Survivor check: the kept module must still surface, proving the
+            # watcher evicted only the deleted file, not the whole collection.
+            assert any(
+                "keep_mod" in hit.path
+                for hit in searcher.search_codebase("retained keep", top_k=5)
+            ), "kept code file must still be searchable after eviction"
+        finally:
+            stop_event.set()
+            await watcher_task
+            store.close()
 
 
 class TestSupervision:

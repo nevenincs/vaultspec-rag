@@ -39,8 +39,31 @@ __all__ = [
     "start_supervised_from_config",
 ]
 
-_READY_TIMEOUT_SECONDS = 60.0
+_READY_TIMEOUT_DEFAULT_SECONDS = 300.0
+_READY_TIMEOUT_ENV = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
 _STOP_TIMEOUT_SECONDS = 10.0
+
+
+def _ready_timeout_seconds() -> float:
+    """Resolve the qdrant readiness timeout, env-overridable.
+
+    A large managed store cold-loads every collection before answering
+    ``/readyz``; a multi-hundred-GB store with ~170 collections was
+    measured at ~131s, well over the original fixed 60s, so the default is
+    generous and operators with even larger stores can raise it via
+    ``VAULTSPEC_RAG_QDRANT_READY_TIMEOUT`` (seconds). A missing, malformed,
+    or non-positive value falls back to the default rather than failing
+    startup.
+    """
+    raw = os.environ.get(_READY_TIMEOUT_ENV)
+    if raw is None:
+        return _READY_TIMEOUT_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return _READY_TIMEOUT_DEFAULT_SECONDS
+    return value if value > 0 else _READY_TIMEOUT_DEFAULT_SECONDS
+
 
 # Environment variables the qdrant child inherits. Least privilege: only
 # OS-operation variables (so the binary runs correctly on every platform),
@@ -315,13 +338,19 @@ class QdrantSupervisor:
             logger.debug("qdrant readyz probe failed: %s", exc)
             return False
 
-    def wait_ready(self, timeout: float = _READY_TIMEOUT_SECONDS) -> bool:
+    def wait_ready(self, timeout: float | None = None) -> bool:
         """Poll ``/readyz`` with backoff until ready or *timeout*.
+
+        Args:
+            timeout: Seconds to wait; ``None`` resolves the env-overridable
+                default via :func:`_ready_timeout_seconds`.
 
         Returns:
             True once the server answers ready; False on timeout or
             child death (both logged).
         """
+        if timeout is None:
+            timeout = _ready_timeout_seconds()
         deadline = time.monotonic() + timeout
         delay = 0.1
         while time.monotonic() < deadline:
@@ -335,13 +364,19 @@ class QdrantSupervisor:
         logger.error("qdrant child pid=%s not ready after %.0fs", self.pid, timeout)
         return False
 
-    def start(self, timeout: float = _READY_TIMEOUT_SECONDS) -> None:
+    def start(self, timeout: float | None = None) -> None:
         """Spawn the child and wait for readiness.
+
+        Args:
+            timeout: Seconds to wait for readiness; ``None`` resolves the
+                env-overridable default via :func:`_ready_timeout_seconds`.
 
         Raises:
             RuntimeError: If the server does not become ready in time
                 (the child is terminated before raising).
         """
+        if timeout is None:
+            timeout = _ready_timeout_seconds()
         self.spawn()
         if not self.wait_ready(timeout):
             self.stop()
@@ -350,12 +385,18 @@ class QdrantSupervisor:
                 f"ready within {timeout:.0f}s; see {self.log_path}"
             )
 
-    def restart(self, timeout: float = _READY_TIMEOUT_SECONDS) -> bool:
+    def restart(self, timeout: float | None = None) -> bool:
         """One supervised restart attempt; increments the counter.
+
+        Args:
+            timeout: Seconds to wait for readiness; ``None`` resolves the
+                env-overridable default via :func:`_ready_timeout_seconds`.
 
         Returns:
             True when the restarted child reports ready.
         """
+        if timeout is None:
+            timeout = _ready_timeout_seconds()
         self.restart_count += 1
         self.stop()
         try:
