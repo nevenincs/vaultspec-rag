@@ -8,6 +8,7 @@ a real ``.vaultragpreprocess.toml`` and a real extractor script (no mocks).
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
 import textwrap
@@ -17,13 +18,33 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
+from ..config import EnvVar, reset_config
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _enable_preprocess() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Preprocessing is OFF by default (untrusted-repo RCE gate); the CLI verbs
+    (list/check/run-one) operate on rules, so opt in to exercise them."""
+    key = EnvVar.PREPROCESS_ENABLED.value
+    prev = os.environ.get(key)
+    os.environ[key] = "1"
+    reset_config()
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
+        reset_config()
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -132,7 +153,8 @@ def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
     assert "Preprocess rules: 1" in result.output
     assert "Files: *.pdf" in result.output
     assert "Failure handling: skip file on failure" in result.output
-    assert "Timeout: no timeout" in result.output
+    # H1: an omitted timeout_s now resolves to the bounded default, not "none".
+    assert "Timeout: 120s" in result.output
     assert "Command:" in result.output
     assert "pattern=" not in result.output
     assert "on_error" not in result.output

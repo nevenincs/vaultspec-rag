@@ -62,6 +62,19 @@ def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> No
                 report.data_removed = True
         else:
             report.data_removed = True
+            # Preview the concrete target so --force operators see exactly what
+            # --remove-data will delete (resolved path + size).
+            try:
+                size_bytes = sum(
+                    f.stat().st_size for f in data_dir.rglob("*") if f.is_file()
+                )
+                logger.info(
+                    "Would remove %s (%.1f MB) with --remove-data",
+                    data_dir.resolve(),
+                    size_bytes / 1_000_000,
+                )
+            except OSError as exc:
+                logger.debug("could not size %s for preview: %s", data_dir, exc)
 
 
 def uninstall_run(

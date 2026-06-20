@@ -39,6 +39,34 @@ def test_service_idle_ttl_default() -> None:
     assert cfg.service_idle_ttl_seconds == 1800
 
 
+def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
+    # M1 (security): an empty/whitespace path override must be treated as absent
+    # and fall back to the default, never collapse to cwd (Path("") == ".") -
+    # which would repoint the managed-dir delete/clean blast radius.
+    default = get_config().status_dir
+    reset_config()
+    prev = _set_env(EnvVar.STATUS_DIR, "   ")
+    reset_config()
+    try:
+        resolved = get_config().status_dir
+        assert resolved == default
+        assert str(resolved) not in ("", ".")
+    finally:
+        _restore_env(EnvVar.STATUS_DIR, prev)
+        reset_config()
+
+
+def test_nonempty_path_env_is_still_honoured() -> None:
+    # Control: a real override must still win (M1 only neutralises blanks).
+    prev = _set_env(EnvVar.STATUS_DIR, "/custom/status/dir")
+    reset_config()
+    try:
+        assert str(get_config().status_dir) == "/custom/status/dir"
+    finally:
+        _restore_env(EnvVar.STATUS_DIR, prev)
+        reset_config()
+
+
 def test_service_max_projects_default() -> None:
     cfg = get_config()
     assert cfg.service_max_projects == 16

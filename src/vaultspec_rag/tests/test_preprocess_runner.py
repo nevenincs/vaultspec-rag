@@ -16,10 +16,45 @@ import pytest
 from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._preprocess_runner import (
     PreprocessAbortError,
+    _build_argv,
     run_preprocessor,
 )
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_dash_leading_path_operand_is_neutralised() -> None:
+    """H2 (CWE-88): a bare path operand beginning with - is prefixed with ./ so
+    the child parses it as a path, not an option."""
+    rule = PreprocessRule(
+        pattern="*",
+        command="extract {path}",
+        entry_point=None,
+        priority=100,
+        on_error="skip",
+        timeout_s=30.0,
+        options={},
+        order=0,
+    )
+    argv = _build_argv(rule, Path("-rf.pdf"))
+    assert argv == ["extract", "./-rf.pdf"]
+    # An absolute path (the normal case) is untouched (no ./ prefix).
+    argv_abs = _build_argv(rule, Path("/tmp/-rf.pdf"))
+    assert argv_abs[-1] == str(Path("/tmp/-rf.pdf"))
+    assert not argv_abs[-1].startswith("./")
+    # An embedded (non-standalone) substitution is not mangled.
+    rule_embedded = PreprocessRule(
+        pattern="*",
+        command="extract --in={path}",
+        entry_point=None,
+        priority=100,
+        on_error="skip",
+        timeout_s=30.0,
+        options={},
+        order=0,
+    )
+    assert _build_argv(rule_embedded, Path("-x")) == ["extract", "--in=-x"]
+
 
 _CAP = 1024 * 1024
 

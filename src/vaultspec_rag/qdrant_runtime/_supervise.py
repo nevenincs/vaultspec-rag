@@ -42,6 +42,43 @@ __all__ = [
 _READY_TIMEOUT_SECONDS = 60.0
 _STOP_TIMEOUT_SECONDS = 10.0
 
+# Environment variables the qdrant child inherits. Least privilege: only
+# OS-operation variables (so the binary runs correctly on every platform),
+# never the daemon's full environment, so daemon secrets are not exposed.
+_CHILD_ENV_PASSTHROUGH = frozenset(
+    {
+        "PATH",
+        "SystemRoot",
+        "SYSTEMROOT",
+        "windir",
+        "ComSpec",
+        "COMSPEC",
+        "PATHEXT",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "HOME",
+        "USERPROFILE",
+        "NUMBER_OF_PROCESSORS",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        # Diagnostics for the Rust child: operator-set crash backtraces and log
+        # tuning. Diagnostic-only, no secrets - kept so curating the env does not
+        # silently swallow an operator's RUST_BACKTRACE=1 / RUST_LOG=...
+        "RUST_BACKTRACE",
+        "RUST_LOG",
+    }
+)
+
+# Loopback probes must never traverse an HTTP(S) proxy from the environment:
+# a proxy could spoof a "ready"/version response the supervisor would trust.
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 # Windows process-creation flags for the qdrant child. Unlike the
 # daemon spawn, the child must NOT break away from the daemon's Job
 # Object - membership is exactly the no-orphan guarantee.
@@ -131,9 +168,10 @@ def _win_assign_to_job(job: object, proc: subprocess.Popen[bytes]) -> bool:
     handle = int(cast("Any", proc)._handle)
     if kernel32.AssignProcessToJobObject(job, handle):
         return True
-    logger.warning(
-        "AssignProcessToJobObject failed for qdrant pid %d; orphan guard "
-        "disabled for this child",
+    logger.error(
+        "AssignProcessToJobObject failed for qdrant pid %d; kill-on-close "
+        "orphan guard is DISABLED for this child - a hard daemon death may "
+        "orphan it",
         proc.pid,
     )
     return False
@@ -188,7 +226,14 @@ class QdrantSupervisor:
         return self._proc.pid if self._proc is not None else None
 
     def _child_env(self) -> dict[str, str]:
-        env = dict(os.environ)
+        # Least privilege: pass only OS-operation variables plus the QDRANT__*
+        # knobs, never the daemon's full environment, so any secrets the daemon
+        # holds (cloud creds, tokens) are not exposed to the qdrant child.
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in _CHILD_ENV_PASSTHROUGH
+        }
         env.update(
             {
                 "QDRANT__SERVICE__HOST": "127.0.0.1",
@@ -217,9 +262,12 @@ class QdrantSupervisor:
 
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_fd = os.open(
-                self.log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666
-            )
+            # Owner-only (0o600), and refuse to follow a pre-planted symlink at
+            # the log path (O_NOFOLLOW where the platform offers it) so a local
+            # user cannot redirect the appended log.
+            log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            log_flags |= getattr(os, "O_NOFOLLOW", 0)
+            log_fd = os.open(self.log_path, log_flags, 0o600)
         else:
             log_fd = os.open(os.devnull, os.O_WRONLY)
 
@@ -261,7 +309,7 @@ class QdrantSupervisor:
     def _ready_probe(self) -> bool:
         url = f"{self.url}/readyz"
         try:
-            with urllib.request.urlopen(url, timeout=2.0) as resp:
+            with _LOOPBACK_OPENER.open(url, timeout=2.0) as resp:
                 return int(resp.status) == 200
         except (urllib.error.URLError, OSError, ValueError) as exc:
             logger.debug("qdrant readyz probe failed: %s", exc)
@@ -372,7 +420,7 @@ class QdrantSupervisor:
             The version string, or ``""`` when unreachable.
         """
         try:
-            with urllib.request.urlopen(self.url, timeout=2.0) as resp:
+            with _LOOPBACK_OPENER.open(self.url, timeout=2.0) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             return str(payload.get("version", ""))
         except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -419,6 +467,29 @@ def start_supervised_from_config() -> QdrantSupervisor:
                 "match its manifest digest; refusing to execute. Re-run: "
                 "vaultspec-rag server qdrant install --upgrade"
             )
+    elif resolved.source in ("env", "path"):
+        # An env-var or PATH binary carries no pinned digest, so it runs
+        # UNVERIFIED. Make the bypass loud (it is otherwise silent), and call
+        # out when it is shadowing a verified provisioned install - the case a
+        # PATH/env plant would exploit.
+        from ..config import EnvVar
+        from ._resolve import has_provisioned_binary
+
+        shadowed = has_provisioned_binary(QDRANT_SERVER_VERSION)
+        remedy = (
+            f"It is SHADOWING a verified provisioned install; unset "
+            f"{EnvVar.QDRANT_BINARY.value} or remove qdrant from PATH to run the "
+            "pinned binary."
+            if shadowed
+            else "Provision a pinned binary with: vaultspec-rag server qdrant install."
+        )
+        logger.warning(
+            "qdrant binary resolved from %s (%s) runs UNVERIFIED - no "
+            "pinned-digest check applies to this source. %s",
+            resolved.source,
+            resolved.path,
+            remedy,
+        )
 
     storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
     log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"

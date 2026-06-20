@@ -117,9 +117,27 @@ def _build_argv(rule: PreprocessRule, source_path: pathlib.Path) -> list[str]:
             str(source_path),
         ]
     if rule.command is not None:
+        path_str = str(source_path)
         tokens = shlex.split(rule.command, posix=True)
-        return [token.replace("{path}", str(source_path)) for token in tokens]
+        return [_substitute_path(token, path_str) for token in tokens]
     return []
+
+
+def _substitute_path(token: str, path_str: str) -> str:
+    """Substitute ``{path}`` into one argv token, neutralising option-injection.
+
+    Token-wise substitution already defeats shell injection. This additionally
+    closes argv-position injection (CWE-88): if a standalone ``{path}`` operand
+    resolves to a value beginning with ``-`` (a file whose name an attacker
+    controls, e.g. ``--output=...``), it would be parsed by the child as an
+    option, not an operand. A bare ``-``-leading path operand is prefixed with
+    ``./`` so it is unambiguously a path. Absolute paths (the normal case) never
+    begin with ``-`` and are unchanged.
+    """
+    substituted = token.replace("{path}", path_str)
+    if substituted == path_str and substituted.startswith("-"):
+        return f"./{substituted}"
+    return substituted
 
 
 def _run_bounded(

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "asset_for_platform",
     "binary_filename",
+    "has_provisioned_binary",
     "qdrant_bin_dir",
     "read_manifest",
     "resolve_binary",
@@ -173,6 +174,15 @@ def _resolve_provisioned(version: str) -> ResolvedBinary | None:
         version=recorded_version,
         sha256=str(manifest.get("binary_sha256", "")),
     )
+
+
+def has_provisioned_binary(version: str = QDRANT_SERVER_VERSION) -> bool:
+    """Return whether a verified provisioned binary exists for *version*.
+
+    Lets callers detect when an unpinned env/PATH binary would shadow a
+    properly provisioned (pinned, digest-checked) install.
+    """
+    return _resolve_provisioned(version) is not None
 
 
 def resolve_binary(

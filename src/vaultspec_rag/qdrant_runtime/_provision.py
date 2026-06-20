@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import shutil
-import stat
 import sys
 import tarfile
 import urllib.error
@@ -25,7 +24,7 @@ import urllib.request
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 from ._constants import (
     ALLOWED_DOWNLOAD_HOSTS,
@@ -146,6 +145,20 @@ def _download(url: str, dest: Path) -> None:
             out.write(chunk)
 
 
+def _open_extract_dest(path: Path) -> IO[bytes]:
+    """Open *path* for writing without following a pre-planted symlink.
+
+    A local attacker who can pre-create a symlink at the managed destination
+    could otherwise redirect the extraction write outside the managed dir. We
+    unlink any existing symlink and open with ``O_NOFOLLOW`` where available,
+    owner-only.
+    """
+    if path.is_symlink():
+        path.unlink()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags, 0o600), "wb")
+
+
 def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
     """Extract the qdrant executable from *archive* into *dest_dir*.
 
@@ -168,7 +181,7 @@ def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
         with zipfile.ZipFile(archive) as zf:
             for info in zf.infolist():
                 if Path(info.filename).name == target_name and not info.is_dir():
-                    with zf.open(info) as src, out_path.open("wb") as out:
+                    with zf.open(info) as src, _open_extract_dest(out_path) as out:
                         shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
                     return out_path
     else:
@@ -178,7 +191,7 @@ def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
                     src = tf.extractfile(member)
                     if src is None:
                         continue
-                    with src, out_path.open("wb") as out:
+                    with src, _open_extract_dest(out_path) as out:
                         shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
                     return out_path
     raise RuntimeError(f"Archive {archive.name} contains no {target_name} member")
@@ -213,8 +226,9 @@ def extract_verified_archive(
 
     binary = _extract_binary_member(archive, dest_dir)
     if sys.platform != "win32":
-        mode = binary.stat().st_mode
-        binary.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        # Owner-only rwx: the service runs as one user; a world-executable
+        # managed binary needlessly widens who can run it on a shared host.
+        binary.chmod(0o700)
     return binary, file_sha256(binary)
 
 
@@ -286,10 +300,22 @@ def _provision_operator_binary(
             binary=binary,
             message=f"Operator binary {binary} does not exist.",
         )
+    if binary.is_symlink():
+        # Copying a symlink dereferences it, so a swap between the operator's
+        # intent and the copy (TOCTOU on a shared dir) could register attacker
+        # content under an operator-blessed manifest. Require a regular file.
+        return ProvisionReport(
+            action=QdrantProvisionAction.FAILED,
+            binary=binary,
+            message=(
+                f"Operator binary {binary} is a symlink; refusing to follow it. "
+                "Provide a regular-file path."
+            ),
+        )
     version_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(binary, target)
+    shutil.copyfile(binary, target, follow_symlinks=False)
     if sys.platform != "win32":
-        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+        target.chmod(0o700)
     digest = file_sha256(target)
     _write_manifest(
         version_dir,
@@ -345,6 +371,10 @@ def _download_and_install(
         zipfile.BadZipFile,
     ) as exc:
         archive.unlink(missing_ok=True)
+        # Also remove any partially-extracted binary so a failed install never
+        # leaves a half-written executable behind (it would lack a manifest and
+        # so never run, but it should not linger or mislead install state).
+        (version_dir / binary_filename()).unlink(missing_ok=True)
         logger.error("qdrant provisioning failed: %s", exc)
         return ProvisionReport(
             action=QdrantProvisionAction.FAILED,
@@ -515,10 +545,26 @@ def clean_provisioned(*, keep_current: bool = False) -> list[str]:
         return []
     removed: list[str] = []
     for child in sorted(base.iterdir()):
-        if not child.is_dir():
+        # Never recurse through a symlink/Windows junction: is_dir() is True for
+        # a reparse point and rmtree would delete the *target's* contents.
+        if child.is_symlink() or not child.is_dir():
             continue
         if keep_current and child.name == QDRANT_SERVER_VERSION:
             continue
-        shutil.rmtree(child)
+        shutil.rmtree(child, onexc=_rmtree_safe_onexc)
         removed.append(child.name)
     return removed
+
+
+def _rmtree_safe_onexc(_func: object, path: str | bytes, exc: BaseException) -> None:
+    """``shutil.rmtree`` error handler that unlinks a symlink rather than
+    following it (defense-in-depth for a symlink/junction encountered mid-tree
+    after the top-level ``is_symlink`` check)."""
+    p = Path(os.fsdecode(path))
+    if p.is_symlink():
+        try:
+            p.unlink()
+        except OSError as exc_unlink:
+            logger.warning("Failed to unlink symlink %s: %s", p, exc_unlink)
+        return
+    raise exc

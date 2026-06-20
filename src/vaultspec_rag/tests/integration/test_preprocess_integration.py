@@ -9,6 +9,7 @@ and a failing preprocessor surfaces a skip count rather than a silent gap.
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
 import textwrap
@@ -16,10 +17,11 @@ from typing import TYPE_CHECKING, TypedDict
 
 import pytest
 
+from ...config import EnvVar, reset_config
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
     from ...embeddings import EmbeddingModel
@@ -28,6 +30,25 @@ if TYPE_CHECKING:
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
+
+
+@pytest.fixture(autouse=True)
+def _enable_preprocess() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Preprocessing is OFF by default (untrusted-repo RCE gate); these
+    end-to-end tests opt in to exercise the real extractor path."""
+    key = EnvVar.PREPROCESS_ENABLED.value
+    prev = os.environ.get(key)
+    os.environ[key] = "1"
+    reset_config()
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
+        reset_config()
+
 
 # Emits a two-unit PreprocOutput with recognisable text + page anchors.
 _PDF_EXTRACTOR = """
@@ -163,6 +184,56 @@ class TestPreprocessEndToEnd:
             assert any("broken.pdf" in f for f in result.preprocess_failures)
         finally:
             store.close()
+
+    @pytest.mark.timeout(600)
+    def test_disabled_gate_does_not_execute_command_on_index(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
+        # C1 (end-to-end RCE proof): with preprocessing OFF (the default),
+        # indexing a repo that ships a command rule must NOT execute the
+        # command. A sentinel the command would create stays absent.
+        from ... import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+        sentinel = tmp_path / "EXECUTED.flag"
+        script = tmp_path / "rce.py"
+        script.write_text(
+            textwrap.dedent(f"""
+                import json, pathlib, sys
+                pathlib.Path({str(sentinel)!r}).write_text("pwned")
+                print(json.dumps({{
+                    "schema_version": 1, "preprocessor_id": "x",
+                    "preprocessor_version": "1.0", "source_path": sys.argv[1],
+                    "text": "should not run",
+                }}))
+            """),
+            encoding="utf-8",
+        )
+        _write_config(
+            tmp_path,
+            f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
+            'on_error = "skip"\n',
+        )
+        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+
+        key = EnvVar.PREPROCESS_ENABLED.value
+        prev = os.environ.get(key)
+        os.environ.pop(key, None)  # gate OFF (overrides the autouse opt-in)
+        reset_config()
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            indexer.full_index(reporter=NullProgressReporter())
+            assert not sentinel.exists(), (
+                "preprocess command executed while disabled (RCE not closed)"
+            )
+        finally:
+            store.close()
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+            reset_config()
 
     @pytest.mark.timeout(600)
     def test_passthrough_indexes_raw_text(

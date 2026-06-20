@@ -424,7 +424,10 @@ def _spawn_service(
         qdrant=qdrant,
         local_only=local_only,
     )
-    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
+    # Owner-only log, refusing a pre-planted symlink at the path where the
+    # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
+    _log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    log_fd = os.open(log_path, _log_flags, 0o600)
     if sys.platform == "win32":
         _flags_with_breakaway = (
             _WIN_CREATE_NEW_PROCESS_GROUP

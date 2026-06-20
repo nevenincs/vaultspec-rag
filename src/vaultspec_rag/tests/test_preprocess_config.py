@@ -5,10 +5,13 @@ tmp project root, deterministic ordering, ignore-style matching, the v1
 command-only constraint, and the degrade-vs-strict error policy.
 """
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from ..config import EnvVar, reset_config
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
     PreprocessConfig,
@@ -17,6 +20,24 @@ from ..indexer._preprocess_config import (
 )
 
 pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture(autouse=True)
+def _enable_preprocess() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Opt this module's project in: preprocessing is OFF by default (security),
+    so the rule-loading tests must enable it to exercise rule parsing."""
+    key = EnvVar.PREPROCESS_ENABLED.value
+    prev = os.environ.get(key)
+    os.environ[key] = "1"
+    reset_config()
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
+        reset_config()
 
 
 def _write_config(root: Path, body: str) -> None:
@@ -28,6 +49,34 @@ def test_absent_config_yields_empty(tmp_path: Path) -> None:
     assert not config
     assert config.rules == []
     assert config.match("anything.pdf") is None
+
+
+def test_disabled_gate_ignores_present_config(tmp_path: Path) -> None:
+    """C1 security gate: a present config is inert unless explicitly opted in,
+    so an untrusted repo's commands never load (and so never run) by default."""
+    _write_config(
+        tmp_path,
+        """
+        version = 1
+
+        [[rule]]
+        pattern = "*.pdf"
+        command = "echo {path}"
+        """,
+    )
+    key = EnvVar.PREPROCESS_ENABLED.value
+    saved = os.environ.get(key)
+    os.environ.pop(key, None)  # absent -> default OFF
+    reset_config()
+    try:
+        config = load_preprocess_rules(tmp_path)
+        assert not config
+        assert config.rules == []
+        assert config.match("doc.pdf") is None
+    finally:
+        if saved is not None:
+            os.environ[key] = saved
+        reset_config()
 
 
 def test_single_command_rule_loads_and_matches(tmp_path: Path) -> None:
@@ -51,6 +100,24 @@ def test_single_command_rule_loads_and_matches(tmp_path: Path) -> None:
     assert rule.on_error == "skip"
     assert rule.timeout_s == 30.0
     assert config.match("docs/report.txt") is None
+
+
+def test_omitted_timeout_defaults_to_bounded_ceiling(tmp_path: Path) -> None:
+    """H1: a rule without timeout_s gets a finite default, never wait-forever."""
+    _write_config(
+        tmp_path,
+        """
+        version = 1
+
+        [[rule]]
+        pattern = "*.pdf"
+        command = "extract {path}"
+        """,
+    )
+    rule = load_preprocess_rules(tmp_path).match("a.pdf")
+    assert rule is not None
+    assert rule.timeout_s is not None
+    assert rule.timeout_s == 120.0
 
 
 def test_priority_then_file_order_is_deterministic(tmp_path: Path) -> None:

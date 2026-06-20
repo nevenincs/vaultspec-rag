@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A preprocess command with no declared ``timeout_s`` still gets a bounded
+# wall-clock ceiling so an omitted timeout can never mean "wait forever" (DoS).
+# An explicit value is honoured up to the hard maximum.
+_DEFAULT_PREPROCESS_TIMEOUT_S = 120.0
+_MAX_PREPROCESS_TIMEOUT_S = 1800.0
+
 __all__ = [
     "PREPROCESS_CONFIG_FILENAME",
     "OnError",
@@ -213,6 +219,23 @@ def load_preprocess_rules(
     if not config_file.is_file():
         return PreprocessConfig([])
 
+    # Security gate (untrusted-repo RCE): a project-supplied config runs
+    # project-defined commands, so it is inert unless the operator has explicitly
+    # opted this host in. Default off, so cloning/indexing/watching an untrusted
+    # repo never executes its preprocess commands.
+    from ..config import get_config
+
+    if not get_config().preprocess_enabled:
+        logger.warning(
+            "%s present at %s but preprocessing is disabled; its rules are "
+            "ignored. Set VAULTSPEC_RAG_PREPROCESS_ENABLED=1 to enable - only "
+            "for projects whose preprocess commands you trust, as they run with "
+            "your privileges.",
+            PREPROCESS_CONFIG_FILENAME,
+            config_file,
+        )
+        return PreprocessConfig([])
+
     data: dict[str, object]
     try:
         raw = config_file.read_bytes()
@@ -384,13 +407,19 @@ def _resolve_priority(
 def _resolve_timeout(
     rule_map: dict[str, object],
     reject: Callable[[str], _RuleRejectedError],
-) -> float | None:
-    """Resolve and validate the optional ``timeout_s``."""
+) -> float:
+    """Resolve and validate ``timeout_s``, defaulting to a bounded ceiling.
+
+    Never returns ``None``: an omitted timeout must not mean "wait forever" for a
+    project-supplied command. A blocking or hostile command with no timeout would
+    otherwise hang the indexer or the resident watcher indefinitely (DoS). An
+    explicit value is honoured up to a hard maximum.
+    """
     timeout_raw = rule_map.get("timeout_s")
     if timeout_raw is None:
-        return None
+        return _DEFAULT_PREPROCESS_TIMEOUT_S
     if isinstance(timeout_raw, bool) or not isinstance(timeout_raw, (int, float)):
         raise reject("'timeout_s' must be a number")
     if timeout_raw <= 0:
         raise reject("'timeout_s' must be positive")
-    return float(timeout_raw)
+    return min(float(timeout_raw), _MAX_PREPROCESS_TIMEOUT_S)

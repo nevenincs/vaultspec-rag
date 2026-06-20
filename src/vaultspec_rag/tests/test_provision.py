@@ -88,6 +88,100 @@ def consumer_workspace(tmp_path: Path) -> Path:
     return ws
 
 
+def test_operator_symlink_binary_is_refused(
+    isolated_status_dir: Path,  # noqa: ARG001  # managed-dir isolation
+    tmp_path: Path,
+) -> None:
+    # H5 (security): an operator-supplied binary path that is a symlink must be
+    # refused, never followed - copying it would dereference the link and could
+    # register attacker content (TOCTOU) under an operator-blessed manifest.
+    from ..qdrant_runtime import QdrantProvisionAction, provision
+
+    real = tmp_path / "real_qdrant"
+    real.write_bytes(b"#!/bin/sh\necho real\n")
+    link = tmp_path / "link_qdrant"
+    try:
+        os.symlink(real, link)
+    except OSError:
+        pytest.fail("Cannot create symlink - test requires symlink support")
+
+    report = provision(binary=link)
+    assert report.action == QdrantProvisionAction.FAILED
+    assert "symlink" in report.message.lower()
+    # Nothing was registered into the managed dir.
+    assert not (qdrant_bin_dir() / binary_filename()).exists()
+
+
+def test_has_provisioned_binary_reflects_managed_install(
+    isolated_status_dir: Path,  # noqa: ARG001  # managed-dir isolation
+) -> None:
+    # H3/H4 helper: drives the "unverified env/PATH binary shadows a verified
+    # install" warning. False with no managed install, True once one is seeded.
+    from ..qdrant_runtime._resolve import has_provisioned_binary
+
+    assert has_provisioned_binary() is False
+    _seed_verified_install()
+    assert has_provisioned_binary() is True
+
+
+def test_clean_provisioned_skips_symlinked_version_dir(
+    isolated_status_dir: Path,  # noqa: ARG001  # managed-dir isolation
+    tmp_path: Path,
+) -> None:
+    # M2 (security): a symlink/junction among the version dirs must be skipped,
+    # never recursed - rmtree through a reparse point would delete the target's
+    # contents (out-of-scope data loss on Windows).
+    from ..qdrant_runtime._provision import clean_provisioned
+
+    base = qdrant_bin_dir().parent
+    base.mkdir(parents=True, exist_ok=True)
+    real = base / "0.0.1"
+    real.mkdir()
+    (real / "marker").write_text("x", encoding="utf-8")
+
+    external = tmp_path / "external_precious"
+    external.mkdir()
+    (external / "precious").write_text("keep me", encoding="utf-8")
+    link = base / "9.9.9"
+    try:
+        os.symlink(external, link, target_is_directory=True)
+    except OSError:
+        pytest.fail("Cannot create symlink - test requires symlink support")
+
+    removed = clean_provisioned()
+    assert "0.0.1" in removed
+    assert not real.exists()
+    assert "9.9.9" not in removed  # the symlink was skipped, not recursed
+    assert (external / "precious").exists()  # target contents untouched
+
+
+def test_child_env_excludes_secrets_keeps_essentials() -> None:
+    # M6 (security): the qdrant child env passes only OS-operation + QDRANT__*
+    # vars, never the daemon's secrets.
+    from pathlib import Path as _Path
+
+    from ..qdrant_runtime._supervise import QdrantSupervisor
+
+    prev = os.environ.get("MY_FAKE_SECRET_TOKEN")
+    os.environ["MY_FAKE_SECRET_TOKEN"] = "do-not-leak"
+    try:
+        sup = QdrantSupervisor(
+            _Path("qdrant"), http_port=6333, storage_dir=_Path("storage")
+        )
+        env = sup._child_env()
+        assert "MY_FAKE_SECRET_TOKEN" not in env
+        assert env["QDRANT__SERVICE__HOST"] == "127.0.0.1"
+        assert env["QDRANT__SERVICE__HTTP_PORT"] == "6333"
+        # PATH is an OS-operation var and must survive the curation.
+        if "PATH" in os.environ:
+            assert "PATH" in env
+    finally:
+        if prev is None:
+            os.environ.pop("MY_FAKE_SECRET_TOKEN", None)
+        else:
+            os.environ["MY_FAKE_SECRET_TOKEN"] = prev
+
+
 def _seed_verified_install() -> Path:
     """Pre-seed the managed dir exactly as a verified provision leaves it.
 
