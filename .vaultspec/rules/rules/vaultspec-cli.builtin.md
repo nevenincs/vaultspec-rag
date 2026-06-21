@@ -18,10 +18,20 @@ the body prose of a document scaffolded by `vaultspec-core vault add` is permitt
 wiki-link resolution, schema dependencies, and provider sync; bypassing it produces
 drift that `vaultspec-core vault check` and `vaultspec-core spec doctor` will flag.
 
+## Orientation
+
+Before starting work in a vaultspec-managed project you have no session context for, run
+`vaultspec-core status` and read the in-flight plans it names. Each in-flight plan shows
+a one-line overview: tier, completed waves and phases, step completion, and the next
+open step. The targeted form `vaultspec-core status <plan-or-feature>` traces a plan to
+its steps, execution records, and grounding documents. Orientation is descriptive and
+read-only: it is the zeroth move, not a pipeline phase, and produces no artifact.
+
 ## Commands
 
 | Task                                                  | Run                                                                       |
 | ----------------------------------------------------- | ------------------------------------------------------------------------- |
+| Orient in an unknown or resumed project               | `vaultspec-core status [TARGET]`                                          |
 | Create a `.vault/` document                           | `vaultspec-core vault add <type> --feature <tag>`                         |
 | List or filter vault documents                        | `vaultspec-core vault list [DOC_TYPE] [--feature <tag>]`                  |
 | Show statistics, invalid, or orphan documents         | `vaultspec-core vault stats [--invalid] [--orphaned]`                     |
@@ -30,6 +40,7 @@ drift that `vaultspec-core vault check` and `vaultspec-core spec doctor` will fl
 | Strip generated template annotations                  | `vaultspec-core vault sanitize annotations [--feature <tag>] [--dry-run]` |
 | Confirm required documents exist for a feature        | `vaultspec-core vault check features --feature <tag>`                     |
 | Archive a completed feature                           | `vaultspec-core vault feature archive <tag>`                              |
+| Promote an audit finding to a project rule            | `vaultspec-core vault rule promote --from <audit-stem> --as <rule-name>`  |
 | List registered rules, skills, agents, hooks, or MCPs | `vaultspec-core spec <resource> list`                                     |
 | Verify MCP config health                              | `vaultspec-core spec mcps status --json`                                  |
 | Inspect the assembled system prompt                   | `vaultspec-core spec system show`                                         |

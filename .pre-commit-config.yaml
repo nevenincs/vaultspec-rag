@@ -50,7 +50,11 @@ repos:
     pass_filenames: true
     types:
     - markdown
-    exclude: ^test-project/
+    # vaultspec-core owns the formatting of everything it generates (the
+    # provider mirrors and the synced .vaultspec/ rules tree, plus the root
+    # CLAUDE/AGENTS/GEMINI manifests). Its generated output is canonical and is
+    # not subject to this repo's mdformat normalisation, so exclude those paths.
+    exclude: '^(test-project/|\.(agents|antigravity|claude|codex|gemini|vaultspec)/|(CLAUDE|AGENTS|GEMINI)\.md$)'
   - id: pymarkdown
     name: Lint Markdown style (pymarkdown)
     entry: uv run --no-sync pymarkdown --config .pymarkdown.json scan
@@ -58,7 +62,7 @@ repos:
     pass_filenames: true
     types:
     - markdown
-    exclude: ^test-project/
+    exclude: '^(test-project/|\.(agents|antigravity|claude|codex|gemini|vaultspec)/|(CLAUDE|AGENTS|GEMINI)\.md$)'
   - id: check-provider-artifacts
     name: Check provider artifacts
     entry: uv run --no-sync vaultspec-core check-providers

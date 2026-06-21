@@ -1,11 +1,9 @@
 ---
 name: vaultspec-code-review
-description: >-
-  Skill to conduct a formal code review. Audits code for safety, intent, and
-  quality. Mandates loading the vaultspec-code-reviewer agent persona.
+description: Run a formal code review for safety, intent, and quality. Use to verify completed work before marking it done.
 ---
 
-# Code Review Skill
+# Code review skill (vaultspec-code-review)
 
 When to use this skill:
 
@@ -21,7 +19,7 @@ When to use this skill:
 - **Announce at start:** "I'm using the `vaultspec-code-review` skill to audit the
   implementation."
 
-- Identify relevant docs, the plan (`.vault/plan/...`), adr and research documents
+- Identify relevant docs, the plan (`.vault/plan/...`), ADR and research documents
 
 - Identify files modified
 
@@ -40,7 +38,7 @@ When to use this skill:
 
 - Code review is not a code fixer skill - do NOT modify the codebase.
 
-## IMPORTANT
+## Important
 
 - **Template:** You MUST read and use the template at
   `.vaultspec/rules/templates/code-review.md`; its embedded hint blocks govern the body

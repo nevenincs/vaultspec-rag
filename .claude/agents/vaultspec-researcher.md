@@ -1,7 +1,7 @@
 ---
 name: vaultspec-researcher
-description: General-purpose research agent for information gathering, analysis, and
-  synthesis tasks.
+description: Gather, analyze, and synthesize information on a question. Use for general
+  research.
 tools:
 - Glob
 - Grep

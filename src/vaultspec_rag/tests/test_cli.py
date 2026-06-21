@@ -2347,6 +2347,9 @@ class TestSearchSafetyContract:
             "vaultspec_rag.cli._search._default_service_port", lambda: None
         )
 
+        # Search is service-first: the local store is only opened under an
+        # explicit local mandate, so --allow-fallback is required to reach the
+        # in-process path that surfaces the locked-store message.
         result = runner.invoke(
             app,
             [
@@ -2354,6 +2357,7 @@ class TestSearchSafetyContract:
                 str(tmp_path),
                 "search",
                 "anything",
+                "--allow-fallback",
             ],
         )
         assert result.exit_code != 0
@@ -2388,6 +2392,8 @@ class TestSearchSafetyContract:
             "vaultspec_rag.cli._search._default_service_port", lambda: None
         )
 
+        # Service-first: --allow-fallback is the explicit mandate that opens the
+        # local store, the only path that can report local_store_locked.
         result = runner.invoke(
             app,
             [
@@ -2395,6 +2401,7 @@ class TestSearchSafetyContract:
                 str(tmp_path),
                 "search",
                 "anything",
+                "--allow-fallback",
                 "--json",
             ],
         )

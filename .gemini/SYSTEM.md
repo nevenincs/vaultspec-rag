@@ -2,17 +2,17 @@
 
 ## Vaultspec Skills
 
-- **vaultspec-adr**: Use this skill to persist Architecture Decision Records (ADRs) after completing research. ADRs document significant architectural choices, their context, and consequences.
-- **vaultspec-code-research**: Skill for grounding coding tasks by researching projects, code snippets, reference implementations. Highly recommended for complex feature implementation, or where documentation coverage is insufficient and direct source-code referencing is required.
-- **vaultspec-code-review**: Skill to conduct a formal code review. Audits code for safety, intent, and quality. Mandates loading the vaultspec-code-reviewer agent persona.
-- **vaultspec-codify**: Use this skill to promote durable lessons from a completed audit or ADR into a project-shared rule under `.vaultspec/rules/rules/`. Codification is the discretionary sixth phase of the pipeline; engage only when a lesson satisfies the three durability criteria.
-- **vaultspec-curate**: Use this skill to audit and clean the .vault/ documentation vault. Validates frontmatter, wiki-links, naming conventions, template compliance, and directory structure. Fixes violations through the CLI repair paths and produces an audit report.
-- **vaultspec-documentation**: Agent-driven documentation writer that produces polished, user-facing docs through a structured pipeline: wireframe -> refinement -> approval -> context gathering -> drafting -> technical review -> editorial review -> user approval. Use this skill whenever the user wants to create or rewrite user documentation, README files, getting-started guides, feature docs, or any principal user-facing document. Also trigger when the user mentions "write docs", "documentation pipeline", "doc wireframe", or asks for help structuring a user guide. This skill produces ONE high-quality document per invocation -- it is not for bulk/batch doc generation.
-- **vaultspec-execute**: Skill to execute implementation plans. Loads specialized agent personas for focused work, or coordinates multiple personas through the host environment for complex multi-agent execution. Use when you have a plan document to execute.
-- **vaultspec-projectmanager**: Manage GitHub Projects, triage issues, track milestones, provision worktrees, coordinate release cycles, and query roadmaps. Operates outside the vaultspec pipeline as a project coordination layer.
-- **vaultspec-research**: Use this skill for structured research and brainstorming when unsure how to proceed with a complex feature, refactor, or debugging task and options need exploring before implementation.
-- **vaultspec-team**: Skill to start coding teams for tackling difficult coding challenges.
-- **vaultspec-write**: Use this skill to write implementation plans, Step flows. It must be explicitly called after a vaultspec-adr skill has yielded an approved ADR document.
+- **vaultspec-adr**: Capture an architectural decision as an ADR in .vault/adr/. Use after research, before planning, when a significant design choice and its trade-offs must be recorded.
+- **vaultspec-code-research**: Ground a coding task in real source code, reference implementations, and library docs. Use before implementing a complex feature or when documentation is thin.
+- **vaultspec-code-review**: Run a formal code review for safety, intent, and quality. Use to verify completed work before marking it done.
+- **vaultspec-codify**: Promote a durable lesson from an audit or ADR into a shared project rule. Use when a finding should bind future work.
+- **vaultspec-curate**: Audit and repair the .vault/ vault: frontmatter, wiki-links, naming, templates, structure. Use to clean the vault or fix schema violations.
+- **vaultspec-documentation**: Write one polished user-facing document through a structured pipeline. Use to create or rewrite a README, guide, or feature doc.
+- **vaultspec-execute**: Execute an approved implementation plan, dispatching agent personas per step. Use when a plan document is ready to build.
+- **vaultspec-projectmanager**: Coordinate GitHub Projects: triage issues, track milestones, provision worktrees, manage releases. Use for project management outside the pipeline.
+- **vaultspec-research**: Explore an unfamiliar problem and weigh options before committing. Use when unsure how to approach a complex feature, refactor, or bug.
+- **vaultspec-team**: Start a multi-agent coding team for a hard challenge. Use when a problem is too large for a single agent.
+- **vaultspec-write**: Write an implementation plan of waves, phases, and steps. Use only after an ADR is approved.
 
 # Core mandates
 
@@ -184,10 +184,10 @@ times.
   feature indexes live in `.vault/index/` and are managed by
   `vaultspec-core vault feature index`; do not author them by hand.
 
-**Orient first.** In a project with no session context, run
-`vaultspec-core vault status` before invoking any pipeline skill. Read the in-flight
-plans it names, then enter the pipeline at the right phase: resume an in-flight plan via
-`vaultspec-execute`, or start fresh at Research.
+**Orient first.** In a project with no session context, run `vaultspec-core status`
+before invoking any pipeline skill. Read the in-flight plans it names, then enter the
+pipeline at the right phase: resume an in-flight plan via `vaultspec-execute`, or start
+fresh at Research.
 
 All significant work must follow this pipeline:
 

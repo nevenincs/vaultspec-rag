@@ -1,7 +1,7 @@
 ---
 name: vaultspec-code-reviewer
-description: High-tier code reviewer that enforces safety, architectural intent, and
-  code quality. Use for final verification before 'done'.
+description: Review code for safety, architectural intent, and quality. Use for final
+  verification before done.
 tools:
 - Glob
 - Grep

@@ -1,8 +1,7 @@
 ---
 name: vaultspec-docs-curator
-description: Specialized auditor and orchestrator for the .vault/ documentation vault.
-  Enforces strict compliance with documentation standards, orchestrates repairs via
-  agent personas, and ensures zero-tolerance for schema violations.
+description: Audit and repair the .vault/ docs to schema, orchestrating fixes. Use
+  to enforce documentation compliance.
 tools:
 - Glob
 - Grep

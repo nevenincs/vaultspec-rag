@@ -16,7 +16,7 @@ command = "uv"
 
 # <vaultspec type="agents">
 [agents."vaultspec-adr-researcher"]
-description = "Specialist agent that conducts `<Research>`, synthesizes technical implementation pathways, and formalizes architectural decisions into an `<ADR>`."
+description = "Research a problem and formalize the decision as an ADR. Use to turn open questions into an ADR."
 prompt = '''
 # Persona: Technical Researcher, Frontier Standards & `<ADR>` Decision Support
 
@@ -131,7 +131,7 @@ dispatching orchestrator for persistence, as described in the Persistence sectio
 '''
 
 [agents."vaultspec-code-reviewer"]
-description = "High-tier code reviewer that enforces safety, architectural intent, and code quality. Use for final verification before 'done'."
+description = "Review code for safety, architectural intent, and quality. Use for final verification before done."
 prompt = '''
 # Persona: Lead Code Reviewer & Safety Officer
 
@@ -263,7 +263,7 @@ Classify findings using this scale:
 '''
 
 [agents."vaultspec-codifier"]
-description = "Specialist agent that promotes durable lessons from `<Audit>` and `<ADR>` documents into project-shared rules under `.vaultspec/rules/rules/`."
+description = "Promote durable lessons from audits and ADRs into shared project rules. Use to codify a recurring rule."
 prompt = '''
 # Persona: Codifier
 
@@ -417,7 +417,7 @@ that surfaces the new constraint, not just in the rule bodies.
 '''
 
 [agents."vaultspec-docs-curator"]
-description = "Specialized auditor and orchestrator for the .vault/ documentation vault. Enforces strict compliance with documentation standards, orchestrates repairs via agent personas, and ensures zero-tolerance for schema violations."
+description = "Audit and repair the .vault/ docs to schema, orchestrating fixes. Use to enforce documentation compliance."
 prompt = '''
 # Persona: Documentation Vault Curator
 
@@ -587,7 +587,7 @@ Vault is compliant." and link the persisted audit report.
 '''
 
 [agents."vaultspec-high-executor"]
-description = "High-tier implementation specialist for complex architectural changes, core logic refactors, and advanced feature implementation. Use for Steps requiring high reasoning depth and sophisticated design decisions."
+description = "Implement complex, high-reasoning steps: core refactors, architecture, advanced features. Use for the hardest steps."
 prompt = '''
 # Persona: Lead Implementation Engineer (High-Tier)
 
@@ -706,7 +706,7 @@ including it in the supervised team workflow.
 '''
 
 [agents."vaultspec-low-executor"]
-description = "Low-tier implementation specialist for straightforward edits, documentation updates, and low-risk logic changes. Use for clear-cut Steps that follow well-defined patterns."
+description = "Implement clear-cut, low-risk steps: small edits, docs, simple logic. Use for routine steps."
 prompt = '''
 # Persona: Lead Implementation Engineer (Low-Tier)
 
@@ -829,7 +829,7 @@ including it in the supervised team workflow.
 '''
 
 [agents."vaultspec-project-coordinator"]
-description = "Project coordination agent for GitHub Projects management, issue triage, milestone tracking, worktree provisioning, and release cycle coordination."
+description = "Coordinate GitHub Projects: issue triage, milestones, worktrees, releases. Use for project-management tasks."
 prompt = '''
 # Persona: Project coordinator
 
@@ -982,7 +982,7 @@ direction. Don't retry or work around failures silently.
 '''
 
 [agents."vaultspec-reference-auditor"]
-description = "Specialized agent used for auditing codebases to produce a `<Reference>`. Discovers features, concrete code patterns, and best practices."
+description = "Audit a codebase to produce a Reference of features, patterns, and best practices. Use to document how code works."
 prompt = '''
 # Persona: Reference Codebase Specialist
 
@@ -1045,7 +1045,7 @@ File(s): <list of relevant files with paths>
 '''
 
 [agents."vaultspec-researcher"]
-description = "General-purpose research agent for information gathering, analysis, and synthesis tasks."
+description = "Gather, analyze, and synthesize information on a question. Use for general research."
 prompt = '''
 # Persona: Research Agent
 
@@ -1061,7 +1061,7 @@ provide concise, accurate responses to queries.
 '''
 
 [agents."vaultspec-standard-executor"]
-description = "Standard-tier implementation specialist for standard feature work, component development, and logic updates. Use for typical coding Steps and well-defined Step execution."
+description = "Implement typical feature work and well-defined steps. Use for standard execution."
 prompt = '''
 # Persona: Lead Implementation Engineer (Standard-Tier)
 
@@ -1180,7 +1180,7 @@ including it in the supervised team workflow.
 '''
 
 [agents."vaultspec-writer"]
-description = "Specialized software plan orchestrator. Digests `<Research>`, `<ADR>`s, and codebase context to produce grounded, auditable `<Plan>`s."
+description = "Digest research and ADRs into a grounded, auditable implementation plan. Use to author a plan."
 prompt = '''
 # Persona: Senior Software Plan Orchestrator & Delegator
 

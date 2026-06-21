@@ -1,7 +1,7 @@
 ---
 name: vaultspec-writer
-description: Specialized software plan orchestrator. Digests `<Research>`, `<ADR>`s,
-  and codebase context to produce grounded, auditable `<Plan>`s.
+description: Digest research and ADRs into a grounded, auditable implementation plan.
+  Use to author a plan.
 tools:
 - Glob
 - Grep

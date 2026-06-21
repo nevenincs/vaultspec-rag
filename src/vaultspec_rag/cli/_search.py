@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
@@ -13,7 +14,7 @@ import vaultspec_rag.cli as _cli
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
-from ._http_search import _try_http_search
+from ._http_search import _get_search_timeout, _try_http_search
 from ._render import (
     _display_port_unreachable_error,
     _display_search_results,
@@ -25,6 +26,7 @@ from ._service_status import _default_service_port
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable, Generator
     from typing import NoReturn
 
     from ..search import SearchResult
@@ -532,11 +534,148 @@ def _render_empty_in_process_results(
     )
 
 
+def _local_only_configured() -> bool:
+    """Return True when local-only backend mode is explicitly configured.
+
+    Delegates to the canonical config resolver (``VAULTSPEC_RAG_LOCAL_ONLY``
+    env, then the persisted ``install --local-only`` marker, then the default),
+    so the truthiness parsing is identical to every other consumer of the knob
+    and cannot diverge. This is the configured half of the local-search
+    mandate: it stands in for an operator who has already opted the whole
+    workspace into local mode, so the router need not require
+    ``--allow-fallback`` on every call.
+    """
+    from ..config import get_config
+
+    return bool(get_config().local_only)
+
+
+def _local_search_mandated(allow_fallback: bool) -> bool:
+    """Return True only when the operator has explicitly authorised local search.
+
+    Search is service-first: the in-process local search loads the GPU model
+    stack and opens the local index directly, so it runs only under an explicit
+    mandate - the per-call ``--allow-fallback`` flag, or the workspace-level
+    local-only configuration. Merely discovering a service port does NOT grant
+    a mandate; a discovered-but-dead service with no mandate is an error, not a
+    silent local degrade.
+    """
+    return bool(allow_fallback) or _local_only_configured()
+
+
+def _display_service_down_error(*, json_mode: bool) -> NoReturn:
+    """Report that no service is reachable and local search was not mandated."""
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "service_down",
+            (
+                "No running vaultspec-rag service was found and local search "
+                "was not authorised. Start the service or rerun with "
+                "--allow-fallback (one local user only)."
+            ),
+            1,
+            remediation=[
+                "vaultspec-rag server status",
+                "vaultspec-rag server start",
+                "rerun with --allow-fallback (one local user only)",
+            ],
+        )
+    _cli.console.print(
+        "No running vaultspec-rag service was found.\n"
+        "The CLI will not silently run the search locally because that would "
+        "open the local search index directly and block other users.\n"
+        "Next actions:\n"
+        "  1. Check status:  vaultspec-rag server status\n"
+        "  2. Start service: vaultspec-rag server start\n"
+        "  3. Or run locally anyway: re-run with "
+        "--allow-fallback (one user only).",
+        markup=False,
+        highlight=False,
+    )
+    raise typer.Exit(code=1)
+
+
+def _abort_on_local_deadline(seconds: float, json_mode: bool) -> NoReturn:
+    """Stop a wedged local search at the deadline, releasing the index lock.
+
+    Invoked from a watchdog thread, so it must not depend on the main thread
+    making progress: it writes a terse timeout envelope to stderr and then
+    force-exits the process. Process exit is what releases the OS file lock the
+    local store holds, so a hung model load or store open can never strand the
+    lock for the next search.
+    """
+    import sys
+
+    if json_mode:
+        payload = {
+            "ok": False,
+            "command": "search",
+            "error": "local_search_timeout",
+            "message": (
+                f"Local search exceeded the {seconds:g}s deadline and was "
+                "stopped to release the local index lock."
+            ),
+            "timeout_seconds": seconds,
+            "remediation": [
+                "vaultspec-rag server start",
+                "rerun with a longer --timeout",
+            ],
+        }
+        sys.stderr.write(json.dumps(payload) + "\n")
+    else:
+        sys.stderr.write(
+            f"Local search exceeded the {seconds:g}s deadline and was stopped "
+            "to release the local index lock.\n"
+            "Next actions:\n"
+            "  1. Start the service: vaultspec-rag server start\n"
+            "  2. Or rerun with a longer --timeout.\n"
+        )
+    sys.stderr.flush()
+    # Hard stop from a watchdog thread: only process exit reliably frees the
+    # OS file lock the local store holds. A normal exit cannot interrupt a
+    # wedged model load or store open on the main thread.
+    os._exit(124)
+
+
+@contextlib.contextmanager
+def _local_search_deadline(
+    seconds: float | None,
+    *,
+    json_mode: bool,
+    on_timeout: Callable[[], object] | None = None,
+) -> Generator[None]:
+    """Bound a mandated local search by a wall-clock deadline.
+
+    A daemon timer fires ``on_timeout`` (default: write a timeout envelope and
+    force-exit) if the body has not finished within ``seconds``. The timer is
+    cancelled on normal completion. ``on_timeout`` is an injectable seam so the
+    timer mechanism is testable without the default's process exit.
+    """
+    import threading
+
+    if seconds is None or seconds <= 0:
+        yield
+        return
+
+    def _default_timeout() -> None:
+        _abort_on_local_deadline(float(seconds), json_mode)
+
+    timer = threading.Timer(float(seconds), on_timeout or _default_timeout)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+
+
 @app.command(
     "search",
     help=(
         "Search project documents or source code. Uses the running service "
-        "when available; otherwise runs the search locally."
+        "when available. Local search runs only with an explicit mandate "
+        "(--allow-fallback or configured local-only mode)."
     ),
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
@@ -739,10 +878,14 @@ def handle_search(
     )
     search_type = _canonical_search_type(search_type)
 
+    # Search is service-first: local execution requires an explicit mandate
+    # (--allow-fallback or configured local-only mode). Discovering a service
+    # port does NOT grant a mandate, so a discovered-but-dead service degrades
+    # to a clear error rather than a silent, unbounded local run.
+    mandate = _local_search_mandated(allow_fallback)
+
     if port is None:
         port = _default_service_port()
-        if port is not None:
-            allow_fallback = True
 
     if port is not None:
         service_results = _try_http_search(
@@ -776,48 +919,55 @@ def handle_search(
                 target,
             )
             return
-        if not allow_fallback:
+        if not mandate:
             _display_port_unreachable_error(
                 port,
                 command="search",
                 json_mode=json_mode,
             )
             raise typer.Exit(code=1)
+    elif not mandate:
+        _display_service_down_error(json_mode=json_mode)
 
-    try:
-        results = _try_in_process_search(
-            target,
-            query,
-            search_type,
-            max_results,
-            language,
-            path,
-            structure,
-            function_name,
-            class_name,
-            include_paths,
-            exclude_paths,
-            dedup_locales,
-            prefer,
-            doc_type,
-            feature,
-            date,
-            tag,
-            json_mode,
-        )
+    # A local mandate is present; run the in-process search under a wall-clock
+    # deadline so a degraded local store or wedged model load cannot hang while
+    # holding the index lock.
+    deadline = _get_search_timeout(timeout)
+    with _local_search_deadline(deadline, json_mode=json_mode):
+        try:
+            results = _try_in_process_search(
+                target,
+                query,
+                search_type,
+                max_results,
+                language,
+                path,
+                structure,
+                function_name,
+                class_name,
+                include_paths,
+                exclude_paths,
+                dedup_locales,
+                prefer,
+                doc_type,
+                feature,
+                date,
+                tag,
+                json_mode,
+            )
 
-        _render_in_process_results(
-            results,
-            query,
-            search_type,
-            json_mode,
-            show_scores,
-            target,
-        )
-    finally:
-        from ..registry import get_registry
+            _render_in_process_results(
+                results,
+                query,
+                search_type,
+                json_mode,
+                show_scores,
+                target,
+            )
+        finally:
+            from ..registry import get_registry
 
-        get_registry().close_project(target)
+            get_registry().close_project(target)
 
 
 def _validate_search_extra_args(ctx: typer.Context) -> None:

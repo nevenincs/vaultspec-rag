@@ -1,7 +1,6 @@
 ---
 name: vaultspec-standard-executor
-description: Standard-tier implementation specialist for standard feature work, component
-  development, and logic updates. Use for typical coding Steps and well-defined Step
+description: Implement typical feature work and well-defined steps. Use for standard
   execution.
 tools:
 - glob
