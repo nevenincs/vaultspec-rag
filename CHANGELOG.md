@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.23](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.22...vaultspec-rag-v0.2.23) (2026-06-21)
+
+
+### Bug Fixes
+
+* **cli:** make search service-first; never silently fall back to local ([#202](https://github.com/wgergely/vaultspec-rag/issues/202)) ([#205](https://github.com/wgergely/vaultspec-rag/issues/205)) ([204651a](https://github.com/wgergely/vaultspec-rag/commit/204651a246b165aaccaa6483f9e2d3816b403be4))
+
 ## [0.2.22](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.21...vaultspec-rag-v0.2.22) (2026-06-20)
 
 
