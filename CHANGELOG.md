@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.22](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.21...vaultspec-rag-v0.2.22) (2026-06-20)
+
+
+### Features
+
+* **mcp:** P01 import-light serviceclient package + lazy package init ([#194](https://github.com/wgergely/vaultspec-rag/issues/194)) ([6fb2c52](https://github.com/wgergely/vaultspec-rag/commit/6fb2c52d4563a5fea4a292876521d08cdee713b3))
+* **mcp:** P02 MCP tools delegate to serviceclient, drop duplicate seam ([#194](https://github.com/wgergely/vaultspec-rag/issues/194)) ([63d9f99](https://github.com/wgergely/vaultspec-rag/commit/63d9f99536992dce26a48232ad086ddd0dccac64))
+* **mcp:** P03 stdio-only MCP, remove daemon mount and in-process model load ([#194](https://github.com/wgergely/vaultspec-rag/issues/194)) ([f7b14ed](https://github.com/wgergely/vaultspec-rag/commit/f7b14ed3cc4c0f3d2566e33b4dfd01fe03b4a41c))
+
+
+### Bug Fixes
+
+* **cli:** authenticate --port calls via /health token when status file is absent or stale ([ab28b7e](https://github.com/wgergely/vaultspec-rag/commit/ab28b7e9ded521d76ea0c791a8d8e8125b08e19b))
+* **mcp:** P04 remove dead and phantom MCP artifacts ([#194](https://github.com/wgergely/vaultspec-rag/issues/194)) ([033c78f](https://github.com/wgergely/vaultspec-rag/commit/033c78f461afab8e9648f860fdb22c04b081b668))
+* **mcp:** P06 review fixes (M-1 docstring, M-2 dead route) + audit ([#194](https://github.com/wgergely/vaultspec-rag/issues/194)) ([3784c17](https://github.com/wgergely/vaultspec-rag/commit/3784c17594d2a166548bc74a3b9301253fe5b44a))
+* **watcher:** evict deleted files on idle — flush cooldown-suppressed changes ([#192](https://github.com/wgergely/vaultspec-rag/issues/192)) ([c579e9b](https://github.com/wgergely/vaultspec-rag/commit/c579e9b89cb4a57bb8464c0acb37d302a4d7b536))
+
 ## [0.2.21](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.20...vaultspec-rag-v0.2.21) (2026-06-13)
 
 
