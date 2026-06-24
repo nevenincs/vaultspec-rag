@@ -1,17 +1,50 @@
 """``install`` and ``uninstall`` commands: workspace enrollment mirror."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import click
 import typer
+from typer.core import TyperCommand
 
 import vaultspec_rag.cli as _cli
 
 from ._app import _global_target, app
 from ._render import _render_install_report, _render_uninstall_report
 
+# Group name used when ``--torch-group`` is passed without an explicit
+# value. Surfaced both in the help text and as the Click ``flag_value``.
+_DEFAULT_TORCH_GROUP = "dev"
 
-@app.command("install")
+
+class _InstallCommand(TyperCommand):
+    """Install command that gives ``--torch-group`` an optional value.
+
+    Typer 0.25's option builder does not forward ``flag_value`` to the
+    underlying Click option, so ``--torch-group`` cannot be expressed as
+    an optional-value flag through ``typer.Option`` alone. This command
+    class re-enables Click's native optional-value behaviour after the
+    params are built: ``--torch-group`` with no value resolves to the
+    default group name, ``--torch-group NAME`` to ``NAME``, and an
+    omitted flag stays ``None`` (the historic ``[project].dependencies``
+    placement). Running per build keeps it effective across every
+    ``get_command`` invocation rather than mutating a throwaway instance.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        for param in self.params:
+            if isinstance(param, click.Option) and param.name == "torch_group":
+                param.is_flag = False
+                param.flag_value = _DEFAULT_TORCH_GROUP
+                # Click computes ``_flag_needs_value`` in ``Option.__init__``
+                # from the original (no-flag-value) construction; recompute
+                # it so the parser consumes ``--torch-group`` standalone as
+                # the default group rather than demanding an argument.
+                param._flag_needs_value = True  # pyright: ignore[reportPrivateUsage]  # Click optional-value mechanism
+
+
+@app.command("install", cls=_InstallCommand)
 def handle_install(
     ctx: typer.Context,
     target: Annotated[
@@ -67,6 +100,24 @@ def handle_install(
             ),
         ),
     ] = True,
+    torch_group: Annotated[
+        str | None,
+        typer.Option(
+            "--torch-group",
+            is_flag=False,
+            flag_value="dev",
+            help=(
+                "Place the managed CUDA torch direct-dependency under the "
+                "PEP 735 [dependency-groups].NAME surface instead of "
+                "[project].dependencies, so a dev-only consumer does not "
+                "leak torch into its published requirements. Defaults the "
+                "group name to 'dev' when passed without a value. Omit the "
+                "flag entirely to keep the historic [project].dependencies "
+                "placement. The group must be enabled for the resolve "
+                "(`uv sync --group NAME`) for the cu130 pin to apply."
+            ),
+        ),
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option(
@@ -200,6 +251,7 @@ def handle_install(
             provision=provision,
             local_only=local_only,
             provision_skip=provision_skip,
+            torch_group=torch_group,
         )
     except Exception as exc:
         _cli.console.print(

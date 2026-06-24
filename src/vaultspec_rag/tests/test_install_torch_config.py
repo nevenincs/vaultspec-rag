@@ -255,7 +255,11 @@ class TestInstallTorchConfig:
         assert report.torch_direct_dep_location == "[project].dependencies"
         pyproject = (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
         assert '"torch>=2.4"' in pyproject
-        assert "managed-torch-direct-dependency = true" in pyproject
+        # The ownership marker is location-bearing; the default path
+        # records the project-deps surface.
+        assert (
+            'managed-torch-direct-dependency = "[project].dependencies"' in pyproject
+        )
         assert any(
             "direct dependency" in w.lower() and "torch" in w.lower()
             for w in report.warnings
@@ -934,3 +938,229 @@ class TestManualSnippetBytes:
             f"snippet[1:] starts: {snippet_cu130[:200]!r}\n"
             f"applied:           {applied[:200]!r}"
         )
+
+
+class TestInstallTorchGroupPlacement:
+    """Issue #186: an optional PEP 735 dependency-group placement keeps
+    the managed CUDA torch out of a dev-only consumer's published
+    ``Requires-Dist``. All assertions run against real tomlkit
+    documents on ``tmp_path`` pyproject files - no mocks.
+    """
+
+    def test_group_target_writes_under_group_not_project_deps(
+        self, consumer_workspace: Path
+    ) -> None:
+        """P04.S08: a ``--torch-group`` target writes torch under
+        ``[dependency-groups].<NAME>`` and NOT ``[project].dependencies``,
+        with the cu130 index and sources block still written.
+        """
+        report = install_run(
+            path=consumer_workspace, assume_yes=True, torch_group="rag"
+        )
+        assert report.torch_config_action == "applied"
+        assert report.torch_direct_dep_action == "applied"
+        assert report.torch_direct_dep_location == "[dependency-groups].rag"
+
+        pyproject = consumer_workspace / "pyproject.toml"
+        parsed = tomlkit.parse(pyproject.read_text(encoding="utf-8"))
+
+        # torch is in the group...
+        group_deps = parsed["dependency-groups"]["rag"]  # pyright: ignore[reportIndexIssue]
+        assert any("torch" in str(entry) for entry in group_deps)  # pyright: ignore[reportGeneralTypeIssues]
+
+        # ...and NOT in project.dependencies (which only carries the
+        # original vaultspec-rag entry).
+        project_deps = parsed["project"]["dependencies"]  # pyright: ignore[reportIndexIssue]
+        assert not any("torch" in str(entry) for entry in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
+
+        # The cu130 index + sources block still landed.
+        assert tc.detect_state(pyproject) == tc.TorchConfigState.CANONICAL
+        raw = pyproject.read_text(encoding="utf-8")
+        assert "pytorch-cu130" in raw
+        assert "[tool.uv.sources]" in raw
+
+        # The inert-pin guidance fires for the operator.
+        assert any(
+            "enable that group" in w and "uv sync --group rag" in w
+            for w in report.warnings
+        ), report.warnings
+
+    def test_group_default_name_is_dev_when_flag_value_omitted(
+        self, consumer_workspace: Path
+    ) -> None:
+        """The CLI defaults the group name to ``dev`` when ``--torch-group``
+        is passed without a value; the orchestrator receives ``"dev"``.
+        Exercise the orchestrator with the resolved default directly.
+        """
+        report = install_run(
+            path=consumer_workspace, assume_yes=True, torch_group="dev"
+        )
+        assert report.torch_direct_dep_location == "[dependency-groups].dev"
+        parsed = tomlkit.parse(
+            (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        dev_deps = parsed["dependency-groups"]["dev"]  # pyright: ignore[reportIndexIssue]
+        assert any("torch" in str(entry) for entry in dev_deps)  # pyright: ignore[reportGeneralTypeIssues]
+
+    def test_marker_records_group_location_and_uninstall_removes_group(
+        self, consumer_workspace: Path
+    ) -> None:
+        """P04.S09 (group half): the marker records the group location and
+        uninstall removes the group entry, clearing the marker.
+        """
+        install_run(path=consumer_workspace, assume_yes=True, torch_group="rag")
+        pyproject = consumer_workspace / "pyproject.toml"
+        raw = pyproject.read_text(encoding="utf-8")
+        assert (
+            'managed-torch-direct-dependency = "[dependency-groups].rag"' in raw
+        ), raw
+
+        report = uninstall_run(path=consumer_workspace, force=True)
+        assert report.torch_direct_dep_action == "removed"
+        assert report.torch_direct_dep_location == "[dependency-groups].rag"
+        after = pyproject.read_text(encoding="utf-8")
+        assert '"torch>=2.4"' not in after
+        assert "managed-torch-direct-dependency" not in after
+        # The original project dep survived untouched.
+        parsed = tomlkit.parse(after)
+        project_deps = parsed["project"]["dependencies"]  # pyright: ignore[reportIndexIssue]
+        assert any("vaultspec-rag" in str(entry) for entry in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
+
+    def test_legacy_boolean_marker_still_removes_from_project_deps(
+        self, tmp_path: Path
+    ) -> None:
+        """P04.S09 (legacy half): an existing install carrying the bare
+        boolean ``managed-torch-direct-dependency = true`` marker must
+        still uninstall correctly from ``[project].dependencies``.
+        """
+        ws = tmp_path / "legacy"
+        ws.mkdir()
+        (ws / ".vaultspec").mkdir()
+        # Hand-author the pre-location-marker shape: torch in project deps
+        # plus the legacy boolean marker plus the canonical cu130 block.
+        (ws / "pyproject.toml").write_text(
+            "[project]\n"
+            'name = "demo"\n'
+            'version = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag", "torch>=2.4"]\n'
+            "\n"
+            "[tool.vaultspec-rag]\n"
+            "managed-torch-direct-dependency = true\n"
+            "\n"
+            "[[tool.uv.index]]\n"
+            'name = "pytorch-cu130"\n'
+            'url = "https://download.pytorch.org/whl/cu130"\n'
+            "explicit = true\n"
+            "\n"
+            "[tool.uv.sources]\n"
+            "torch = [\n"
+            '    {index = "pytorch-cu130", '
+            "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
+            "]\n",
+            encoding="utf-8",
+            newline="",
+        )
+        report = uninstall_run(path=ws, force=True)
+        assert report.torch_direct_dep_action == "removed"
+        assert report.torch_direct_dep_location == "[project].dependencies"
+        after = (ws / "pyproject.toml").read_text(encoding="utf-8")
+        assert '"torch>=2.4"' not in after
+        assert "managed-torch-direct-dependency" not in after
+
+    def test_default_no_flag_path_writes_project_deps_unchanged(
+        self, consumer_workspace: Path, tmp_path: Path
+    ) -> None:
+        """P04.S10 (default half): with no group flag the managed dep lands
+        in ``[project].dependencies`` exactly as before. Compare the
+        produced pyproject byte-for-byte against the historic write so a
+        future refactor cannot drift the default surface.
+        """
+        report = install_run(path=consumer_workspace, assume_yes=True)
+        assert report.torch_direct_dep_action == "applied"
+        assert report.torch_direct_dep_location == "[project].dependencies"
+        produced = (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
+
+        # Reproduce the same install on a second identical workspace with
+        # the explicit ``torch_group=None`` default to prove the selector
+        # default is a no-op against the implicit default.
+        other = tmp_path / "other-consumer"
+        other.mkdir()
+        (other / "pyproject.toml").write_text(
+            PROJECT_ONLY, encoding="utf-8", newline=""
+        )
+        install_run(path=other, assume_yes=True, torch_group=None)
+        produced_explicit = (other / "pyproject.toml").read_text(encoding="utf-8")
+        assert produced == produced_explicit
+
+        # The marker records the project-deps surface, and no group table
+        # was created.
+        assert (
+            'managed-torch-direct-dependency = "[project].dependencies"' in produced
+        )
+        assert "[dependency-groups]" not in produced
+
+    def test_user_declared_torch_in_group_is_left_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        """P04.S10 (preserve half): a user-declared torch already in a
+        dependency group is never marked or touched. A no-group install
+        leaves it; uninstall does not remove it (no marker).
+        """
+        ws = tmp_path / "user-group-torch"
+        ws.mkdir()
+        (ws / ".vaultspec").mkdir()
+        (ws / "pyproject.toml").write_text(
+            "[project]\n"
+            'name = "demo"\n'
+            'version = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n'
+            "\n"
+            "[dependency-groups]\n"
+            'dev = ["torch>=2.4"]\n',
+            encoding="utf-8",
+            newline="",
+        )
+        report = install_run(path=ws, assume_yes=True)
+        # torch is already a direct dep (detection scans groups), so the
+        # direct-dep step is a no-op and writes no marker.
+        assert report.torch_direct_dep_action == "already"
+        assert report.torch_direct_dep_location == "[dependency-groups].dev"
+        raw = (ws / "pyproject.toml").read_text(encoding="utf-8")
+        assert "managed-torch-direct-dependency" not in raw
+
+        # Uninstall must not strip the user's torch (no ownership marker).
+        unreport = uninstall_run(path=ws, force=True)
+        assert unreport.torch_direct_dep_action != "removed"
+        after = (ws / "pyproject.toml").read_text(encoding="utf-8")
+        parsed = tomlkit.parse(after)
+        dev_deps = parsed["dependency-groups"]["dev"]  # pyright: ignore[reportIndexIssue]
+        assert any("torch" in str(entry) for entry in dev_deps)  # pyright: ignore[reportGeneralTypeIssues]
+
+    def test_rerun_with_different_target_warns_and_does_not_migrate(
+        self, consumer_workspace: Path
+    ) -> None:
+        """P02.S06: a re-run whose ``--torch-group`` differs from the
+        existing managed placement warns and no-ops rather than migrating.
+        """
+        # First install: project-deps default.
+        first = install_run(path=consumer_workspace, assume_yes=True)
+        assert first.torch_direct_dep_location == "[project].dependencies"
+
+        # Re-run requesting a group target. torch is already a direct dep
+        # in project deps, so the dep step reports "already" and warns it
+        # will not be migrated.
+        second = install_run(
+            path=consumer_workspace, assume_yes=True, torch_group="rag"
+        )
+        assert second.torch_direct_dep_action == "already"
+        assert second.torch_direct_dep_location == "[project].dependencies"
+        assert any(
+            "will NOT migrate" in w and "[project].dependencies" in w
+            for w in second.warnings
+        ), second.warnings
+
+        # torch was not added to a group; placement is unchanged.
+        parsed = tomlkit.parse(
+            (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert "dependency-groups" not in parsed

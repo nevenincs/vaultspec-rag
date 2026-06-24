@@ -97,6 +97,7 @@ def install_run(
     provision: bool = False,
     local_only: bool = False,
     provision_skip: set[str] | None = None,
+    torch_group: str | None = None,
 ) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
@@ -146,6 +147,12 @@ def install_run(
             (``"torch"`` / ``"models"`` / ``"qdrant"``) forwarded to the
             front door's ``skip`` set, for callers wanting some but not
             all steps.
+        torch_group: When given, the managed direct ``torch`` dependency
+            is written to the PEP 735 ``[dependency-groups].<torch_group>``
+            surface instead of ``[project].dependencies`` so a dev-only
+            consumer does not leak torch into its published runtime
+            requirements. ``None`` (the default) preserves the historic
+            project-deps placement byte-for-byte.
 
     Returns:
         :class:`InstallReport` with the structured result, including the
@@ -177,6 +184,7 @@ def install_run(
         assume_yes=assume_yes,
         sync_after=sync_after,
         confirm=confirm,
+        torch_group=torch_group,
     )
     if not dry_run:
         _maybe_warn_hf_auth(report)
