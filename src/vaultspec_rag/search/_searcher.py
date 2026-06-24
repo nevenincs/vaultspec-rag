@@ -496,7 +496,7 @@ class VaultSearcher:
             content = str(r.get("content", ""))
             related_raw = r.get("related")
             related = (
-                [str(x) for x in related_raw]
+                [str(x) for x in cast("list[object]", related_raw)]
                 if isinstance(related_raw, list)
                 else []
             )

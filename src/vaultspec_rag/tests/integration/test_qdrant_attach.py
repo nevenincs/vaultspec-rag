@@ -27,7 +27,7 @@ from ...qdrant_runtime._supervise import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
 
@@ -53,7 +53,7 @@ def _handler_for(version: str) -> type[BaseHTTPRequestHandler]:
 @contextlib.contextmanager
 def _running_managed_qdrant(
     tmp_path: Path, *, version: str
-) -> Iterator[tuple[int, Path]]:
+) -> Generator[tuple[int, Path]]:
     """Run a fake managed Qdrant and point the managed config at it."""
     server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(version))
     port = int(server.server_address[1])

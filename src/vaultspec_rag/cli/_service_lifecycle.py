@@ -43,6 +43,19 @@ from ._service_status import (
     _write_service_status,
 )
 
+__all__ = [
+    "_evaluate_service_signals",
+    "_existing_service_running",
+    "_should_unlink_discovery_file",
+    "_status_busy_label",
+    "_status_jobs_label",
+    "_status_queue_label",
+    "service_start",
+    "service_status",
+    "service_stop",
+    "service_warmup",
+]
+
 
 def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
     """Fail fast (or provision with consent) before a server-mode start.

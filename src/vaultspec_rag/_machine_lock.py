@@ -31,6 +31,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ def _machine_lock_holder(path: Path) -> int:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return 0
-    pid = data.get("pid") if isinstance(data, dict) else None
+    pid = cast("dict[str, object]", data).get("pid") if isinstance(data, dict) else None
     return int(pid) if isinstance(pid, int) else 0
 
 

@@ -305,8 +305,9 @@ def _search_result_meta_line(result: dict[str, object]) -> str | None:
         parts.append(date)
     related = result.get("related")
     if isinstance(related, list) and related:
-        shown = ", ".join(str(x) for x in related[:5])
-        suffix = ", ..." if len(related) > 5 else ""
+        related_items = cast("list[object]", related)
+        shown = ", ".join(str(x) for x in related_items[:5])
+        suffix = ", ..." if len(related_items) > 5 else ""
         parts.append(f"related: {shown}{suffix}")
     return " | ".join(parts)
 

@@ -119,7 +119,7 @@ def probe_qdrant_endpoint(
         with _LOOPBACK_OPENER.open(base, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if isinstance(payload, dict):
-            version = str(payload.get("version", ""))
+            version = str(cast("dict[str, object]", payload).get("version", ""))
     except (urllib.error.URLError, OSError, ValueError) as exc:
         logger.debug("qdrant version probe on %d failed: %s", http_port, exc)
 
@@ -270,13 +270,14 @@ def read_qdrant_identity() -> QdrantIdentity | None:
         return None
     if not isinstance(data, dict):
         return None
+    d = cast("dict[str, object]", data)
     try:
         return QdrantIdentity(
-            storage_path=str(data["storage_path"]),
-            version=str(data["version"]),
-            owner_pid=int(data["owner_pid"]),
-            http_port=int(data["http_port"]),
-            qdrant_pid=int(data.get("qdrant_pid", 0)),
+            storage_path=str(d["storage_path"]),
+            version=str(d["version"]),
+            owner_pid=int(cast("str | int | float", d["owner_pid"])),
+            http_port=int(cast("str | int | float", d["http_port"])),
+            qdrant_pid=int(cast("str | int | float", d.get("qdrant_pid", 0))),
         )
     except (KeyError, TypeError, ValueError) as exc:
         logger.debug("qdrant identity sidecar incomplete at %s: %s", path, exc)

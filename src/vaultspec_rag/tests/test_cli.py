@@ -10,7 +10,7 @@ import typing
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner, Result
+from typer.testing import CliRunner
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config as reset_base_config,
 )
@@ -30,6 +30,9 @@ from ..cli._http_search import DEFAULT_SEARCH_TIMEOUT_SECONDS, _get_search_timeo
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..torch_config import TorchConfigAction
+
+if typing.TYPE_CHECKING:
+    from click.testing import Result
 
 pytestmark = [pytest.mark.unit]
 
