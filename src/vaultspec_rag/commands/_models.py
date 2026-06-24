@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..torch_config import TorchConfigAction
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ._provision import ProvisionOutcome
 
 ConfirmFn = Callable[[str], bool]
