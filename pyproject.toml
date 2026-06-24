@@ -5,7 +5,7 @@ requires = ["hatchling"]
 [project]
 authors = [{ name = "Gergely Wootsch", email = "hello@gergely-wootsch.com" }]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: GPU :: NVIDIA CUDA",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
@@ -133,22 +133,15 @@ constraint-dependencies = ["python-multipart>=0.0.26"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/vaultspec_rag"]
 
-# `uv build` builds the sdist first, then rebuilds the wheel from the unpacked
-# sdist — so any path referenced by `wheel.force-include` must also live inside
-# the sdist, otherwise the wheel rebuild fails with FileNotFoundError. Mirror
-# the two companion-owned files into the sdist so the wheel build can find
-# them. Bundle ONLY the files vaultspec-rag exclusively owns; the broader
-# .vaultspec/rules/ tree contains vaultspec-core's bundled content too and
-# each companion must ship only its own.
+# The companion-owned builtins (the rule and MCP definition) ship as
+# committed package data under ``src/vaultspec_rag/builtins/``, mirroring
+# how ``vaultspec_core.builtins`` bundles core's own content. They reach
+# both the sdist and the wheel through ``packages`` above, so no
+# force-include indirection is needed. Only the standalone assets, which
+# live outside the package, still need an explicit sdist include.
 [tool.hatch.build.targets.sdist.force-include]
-".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = ".vaultspec/rules/mcps/vaultspec-rag.builtin.json"
-".vaultspec/rules/rules/vaultspec-rag.builtin.md" = ".vaultspec/rules/rules/vaultspec-rag.builtin.md"
 "assets/logo.png" = "assets/logo.png"
 "assets/logo.svg" = "assets/logo.svg"
-
-  [tool.hatch.build.targets.wheel.force-include]
-  ".vaultspec/rules/mcps/vaultspec-rag.builtin.json" = "vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json"
-  ".vaultspec/rules/rules/vaultspec-rag.builtin.md" = "vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

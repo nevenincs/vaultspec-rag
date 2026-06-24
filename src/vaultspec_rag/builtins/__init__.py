@@ -1,15 +1,17 @@
 """Bundled builtin resources deployed during ``vaultspec-rag install``.
 
-Contains the canonical rule (``vaultspec-rag.builtin.md``) and MCP server
-definition (``vaultspec-rag.builtin.json``) seeded into ``.vaultspec/rules/``
-on first install. Consumed by :mod:`vaultspec_rag.commands` via
-:func:`seed_builtins` and :func:`list_builtins`. Uses
-:mod:`importlib.resources` for package-relative file access.
+Contains the canonical rule (``rules/vaultspec-rag.builtin.md``) and MCP
+server definition (``mcps/vaultspec-rag.builtin.json``) seeded into
+``.vaultspec/rules/`` on first install. Consumed by
+:mod:`vaultspec_rag.commands` via :func:`seed_builtins` and
+:func:`list_builtins`. Uses :mod:`importlib.resources` for
+package-relative file access.
 
-Unlike :mod:`vaultspec_core.builtins` (which bundles a recursive tree of
-core-owned content), rag bundles only the two files it exclusively owns.
-The list lives in :data:`_BUNDLED_FILES` as the single source of truth so
-the manifest is identical between editable and wheel builds.
+The builtin files live as committed package data under this package,
+mirroring :mod:`vaultspec_core.builtins`: the package directory is the
+single source of truth, and the seed/list helpers walk that tree. rag
+bundles only the files it exclusively owns; the broader
+``.vaultspec/rules/`` tree is core-managed and not authored here.
 """
 
 from __future__ import annotations
@@ -24,44 +26,32 @@ from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeSt
 
 logger = logging.getLogger(__name__)
 
-# The exact set of relative paths (under ``.vaultspec/rules/``) that
-# vaultspec-rag owns and seeds during install. Each entry must match
-# both the wheel ``force-include`` mapping in ``pyproject.toml`` and
-# the source location under ``.vaultspec/rules/`` in the repo.
-_BUNDLED_FILES: tuple[str, ...] = (
-    "rules/vaultspec-rag.builtin.md",
-    "mcps/vaultspec-rag.builtin.json",
-)
-
 
 def _builtins_root() -> Path:
     """Return the filesystem path to the bundled builtins directory.
 
-    For installed (wheel) builds the content lives alongside this module
-    under ``vaultspec_rag/builtins/`` (laid down by hatch
-    ``force-include``). For editable / development installs the content
-    is not copied into ``src/``; instead we resolve the canonical
-    ``.vaultspec/rules/`` directory at the repository root.
+    The builtin files ship as package data under this package, so the
+    package directory is the root in both editable and wheel installs.
+    Mirrors :func:`vaultspec_core.builtins._builtins_root`.
     """
-    pkg_dir = Path(str(resources.files(__package__)))
+    return Path(str(resources.files(__package__)))
 
-    # Wheel build: at least one of the bundled files lives under pkg_dir.
-    if any((pkg_dir / rel).is_file() for rel in _BUNDLED_FILES):
-        return pkg_dir
 
-    # Editable install - walk up to the repo root and use the canonical
-    # source directly. The repo root is identified by ``pyproject.toml``.
-    candidate = pkg_dir
-    for _ in range(10):
-        candidate = candidate.parent
-        if (candidate / "pyproject.toml").is_file():
-            rules = candidate / ".vaultspec" / "rules"
-            if rules.is_dir():
-                return rules
-            break
+def _iter_builtin_files(src_root: Path) -> list[Path]:
+    """Return the bundled builtin files, skipping Python package artifacts.
 
-    # Fallback: return the package directory regardless.
-    return pkg_dir
+    Walks the package tree like :mod:`vaultspec_core.builtins` so the
+    manifest is whatever ships under this package, never a hardcoded list
+    that can drift from the files on disk.
+    """
+    files: list[Path] = []
+    for path in sorted(src_root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name in ("__init__.py", "__pycache__") or "__pycache__" in str(path):
+            continue
+        files.append(path)
+    return files
 
 
 def seed_builtins(
@@ -73,8 +63,8 @@ def seed_builtins(
     """Copy bundled builtins into a target ``.vaultspec/rules/`` directory.
 
     Only copies files that don't already exist unless *force* is ``True``.
-    Iterates the explicit :data:`_BUNDLED_FILES` manifest so editable and
-    wheel installs both seed exactly the same set.
+    Walks the package builtins tree like :mod:`vaultspec_core.builtins`, so
+    the seeded set is exactly the files shipped under this package.
 
     Per-file ``OSError`` is **raised**, not swallowed. Silent partial
     seeding would leave the workspace half-installed and bypass the
@@ -104,20 +94,8 @@ def seed_builtins(
     if written is None:
         written = []
 
-    for rel in _BUNDLED_FILES:
-        # Defense in depth: even though _BUNDLED_FILES is a static
-        # tuple, refuse anything that could escape target_rules_dir.
-        # Future maintainers must not be able to introduce a path
-        # traversal by editing the manifest without noticing.
-        if rel.startswith(("/", "\\")) or ".." in Path(rel).parts:
-            logger.warning("Refusing unsafe bundled rel path: %s", rel)
-            continue
-
-        src_file = src_root / rel
-        if not src_file.is_file():
-            logger.warning("Bundled file missing at source: %s", src_file)
-            continue
-
+    for src_file in _iter_builtin_files(src_root):
+        rel = str(src_file.relative_to(src_root)).replace("\\", "/")
         dest = target_rules_dir / rel
         try:
             dest_resolved = dest.resolve()
@@ -161,7 +139,11 @@ def list_builtins() -> list[str]:
         Sorted list of relative paths (forward-slash separated) that
         rag owns and seeds.
     """
-    return sorted(_BUNDLED_FILES)
+    src_root = _builtins_root()
+    return sorted(
+        str(f.relative_to(src_root)).replace("\\", "/")
+        for f in _iter_builtin_files(src_root)
+    )
 
 
 __all__ = ["list_builtins", "seed_builtins"]

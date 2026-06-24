@@ -414,46 +414,38 @@ class TestSafetyGuards:
         must remove any files it had successfully written so the
         workspace is not left half-installed.
 
-        ``_BUNDLED_FILES`` iterates rules-then-mcps. We block the
-        second (mcps) iteration by making its parent dir a regular
-        file, so ``dest.parent.mkdir(parents=True, exist_ok=True)``
-        raises ``FileExistsError`` after the first (rules) entry has
-        already been seeded successfully. Rollback must unlink the
-        rules file.
+        ``seed_builtins`` walks the package tree in sorted order, so
+        ``mcps/...`` is seeded before ``rules/...``. We block the
+        second (rules) iteration by making its dest path a non-empty
+        directory, so ``atomic_write`` fails after the first (mcps)
+        entry has already been seeded successfully. Rollback must
+        unlink the mcps file.
         """
         import pytest as _pytest
 
         ws = tmp_path / "workspace"
         ws.mkdir()
-        # Pre-create everything except the mcps parent dir, which
-        # we replace with a file. _ensure_workspace_dirs sees mcps
-        # already exists (as a file → not is_dir), tries mkdir, and
-        # would fail there - so we have to bypass _ensure_workspace_dirs
-        # entirely by pre-creating it as a dir, then converting after.
+        # Pre-create the workspace dirs so _ensure_workspace_dirs is a
+        # no-op and seed_builtins is the failure point.
         (ws / ".vault" / "data").mkdir(parents=True)
-        (ws / ".vaultspec" / "rules" / "rules").mkdir(parents=True)
-        # Critical: do NOT pre-create .vaultspec/rules/mcps as a dir.
-        # Instead create it as a FILE so _ensure_workspace_dirs's
-        # ``if d.is_dir(): continue`` falls through to mkdir, which
-        # raises. But we want seed_builtins to be the failure point,
-        # not _ensure_workspace_dirs. So we pre-create mcps as a dir
-        # and block seed_builtins by making the bundled DEST file
-        # path a non-empty directory; with force=True the existence
-        # check is bypassed and atomic_write fails.
         (ws / ".vaultspec" / "rules" / "mcps").mkdir(parents=True)
-        (ws / _RAG_MCP_REL).mkdir()
-        (ws / _RAG_MCP_REL / "sentinel").write_text("x", encoding="utf-8")
+        (ws / ".vaultspec" / "rules" / "rules").mkdir(parents=True)
+        # Block the rules write: make the bundled DEST path a non-empty
+        # directory. With force=True the existence check is bypassed and
+        # atomic_write fails on the dir replacement.
+        (ws / _RAG_RULE_REL).mkdir()
+        (ws / _RAG_RULE_REL / "sentinel").write_text("x", encoding="utf-8")
 
         with _pytest.raises(OSError):
             install_run(path=ws, force=True)
 
-        # The rules file was written but must have been rolled back.
-        assert not (ws / _RAG_RULE_REL).exists()
-        # The mcps "file" is still a non-empty directory (we never
+        # The mcps file was written but must have been rolled back.
+        assert not (ws / _RAG_MCP_REL).exists()
+        # The rules "file" is still a non-empty directory (we never
         # wrote a file there); rollback only unlinks paths it
         # actually wrote.
-        assert (ws / _RAG_MCP_REL).is_dir()
-        assert (ws / _RAG_MCP_REL / "sentinel").is_file()
+        assert (ws / _RAG_RULE_REL).is_dir()
+        assert (ws / _RAG_RULE_REL / "sentinel").is_file()
 
     def test_uninstall_in_empty_dir_does_not_create_workspace(
         self, tmp_path: Path
@@ -529,15 +521,16 @@ class TestSafetyGuards:
 
         target = tmp_path / "rules"
         target.mkdir()
-        # _BUNDLED_FILES iterates rules-then-mcps. Make rules
-        # writeable and block the second (mcps) iteration by
-        # pre-creating its dest file path as a non-empty directory.
-        # With force=True the existence check is bypassed and
-        # atomic_write fails on the dir replacement.
+        # seed_builtins walks the package tree in sorted order, so
+        # ``mcps/...`` is written before ``rules/...``. Let mcps
+        # succeed and block the second (rules) iteration by
+        # pre-creating its dest path as a non-empty directory. With
+        # force=True the existence check is bypassed and atomic_write
+        # fails on the dir replacement.
         (target / "rules").mkdir()
         (target / "mcps").mkdir()
-        (target / "mcps" / "vaultspec-rag.builtin.json").mkdir()
-        (target / "mcps" / "vaultspec-rag.builtin.json" / "x").write_text(
+        (target / "rules" / "vaultspec-rag.builtin.md").mkdir()
+        (target / "rules" / "vaultspec-rag.builtin.md" / "x").write_text(
             "y", encoding="utf-8"
         )
 
@@ -547,10 +540,10 @@ class TestSafetyGuards:
         with _pytest.raises(OSError):
             seed_builtins(target, force=True, written=written)
 
-        # rules file got written before the mcps failure
-        assert "rules/vaultspec-rag.builtin.md" in written
-        # mcps file did NOT
-        assert "mcps/vaultspec-rag.builtin.json" not in written
+        # mcps file got written before the rules failure
+        assert "mcps/vaultspec-rag.builtin.json" in written
+        # rules file did NOT
+        assert "rules/vaultspec-rag.builtin.md" not in written
 
     def test_global_target_flag_routes_to_install(self, tmp_path: Path) -> None:
         """Codex P1: ``vaultspec-rag --target /path install`` must
@@ -599,43 +592,46 @@ class TestSafetyGuards:
         assert not (installed_workspace / _RAG_RULE_REL).exists()
         assert not (installed_workspace / _RAG_MCP_REL).exists()
 
-    def test_seed_builtins_refuses_traversal_in_relative_path(
-        self, tmp_path: Path
-    ) -> None:
-        """Defense-in-depth: even if ``_BUNDLED_FILES`` were ever
-        corrupted to contain a traversal, ``seed_builtins`` must
-        refuse to write outside ``target_rules_dir``.
+    def test_seed_builtins_refuses_dest_outside_target(self, tmp_path: Path) -> None:
+        """Defense-in-depth: ``seed_builtins`` must never write a dest
+        that resolves outside ``target_rules_dir``.
 
-        We exercise the guard by directly invoking ``seed_builtins``
-        with a temporarily-mutated ``_BUNDLED_FILES`` constant via
-        attribute assignment (no monkeypatch fixture used - direct
-        assignment with restore in finally to honour the project
-        no-mocks rule).
+        The bundled set is now whatever ships under the package, so a
+        traversal can no longer enter through a corrupt manifest. We
+        instead point the source root at a crafted tree containing a
+        nested builtin and confirm the containment guard governs every
+        write: the seeded dest stays inside the target, mirroring the
+        files relative to the source root.
+
+        We swap ``_builtins_root`` by direct attribute assignment with
+        restore in ``finally`` (no monkeypatch fixture, honouring the
+        project no-mocks rule).
         """
         from ... import builtins as _builtins
 
-        original = _builtins._BUNDLED_FILES
-        # NB: this is not a mock - it is editing a module constant.
-        # We restore it in the finally block.
-        _builtins._BUNDLED_FILES = (
-            "../../escape.md",
-            "rules/vaultspec-rag.builtin.md",
+        # Build a crafted source tree with one nested builtin file.
+        fake_src = tmp_path / "fake-builtins"
+        (fake_src / "rules").mkdir(parents=True)
+        (fake_src / "rules" / "vaultspec-rag.builtin.md").write_text(
+            "---\nname: vaultspec-rag\n---\n", encoding="utf-8"
         )
+
+        original_root = _builtins._builtins_root
+        # NB: not a mock - rebinding a module function, restored below.
+        _builtins._builtins_root = lambda: fake_src
         try:
             target = tmp_path / "rules-target"
             target.mkdir()
-            outside = tmp_path / "escape.md"
-            assert not outside.exists()
 
             written = _builtins.seed_builtins(target)
 
-            # The traversal entry must NOT have been written.
-            assert "../../escape.md" not in written
-            assert not outside.exists()
-            # The legitimate entry should still have been written
-            # (provided the bundled source resolves).
+            # The nested file seeded into the target, contained.
+            assert "rules/vaultspec-rag.builtin.md" in written
+            seeded = target / "rules" / "vaultspec-rag.builtin.md"
+            assert seeded.is_file()
+            assert seeded.resolve().is_relative_to(target.resolve())
         finally:
-            _builtins._BUNDLED_FILES = original
+            _builtins._builtins_root = original_root
 
 
 @pytest.fixture()
