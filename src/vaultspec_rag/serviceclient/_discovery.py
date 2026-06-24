@@ -17,12 +17,35 @@ from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
+#: Discovery-file schema discriminator (#190). A consumer pins on
+#: ``(SERVICE_DISCOVERY_SCHEMA, SERVICE_DISCOVERY_VERSION)``; bump the version on
+#: any breaking shape change and update the schema document at
+#: ``docs/service-discovery.md``.
+SERVICE_DISCOVERY_SCHEMA = "vaultspec.rag.service"
+SERVICE_DISCOVERY_VERSION = 1
+
 __all__ = [
+    "SERVICE_DISCOVERY_SCHEMA",
+    "SERVICE_DISCOVERY_VERSION",
     "_default_service_port",
+    "_discovery_timestamp",
     "_read_service_status",
     "_status_dir",
     "_status_file",
 ]
+
+
+def _discovery_timestamp() -> str:
+    """Return the one declared discovery-file timestamp format (#190).
+
+    ISO-8601 with offset at second precision. Both writers - the CLI-parent
+    initial write (``started_at``) and the daemon heartbeat (``last_heartbeat``) -
+    use this single helper so the two fields never diverge in format or precision
+    (the divergence that broke a consumer parsing the file).
+    """
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _status_dir() -> Path:

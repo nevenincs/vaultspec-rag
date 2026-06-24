@@ -3528,7 +3528,13 @@ class TestServiceDaemonHelpers:
 
             sf = tmp_path / "service.json"
             data = json.loads(sf.read_text(encoding="utf-8"))
-            assert set(data.keys()) == {"pid", "port", "started_at"}
+            assert set(data.keys()) == {
+                "schema",
+                "version",
+                "pid",
+                "port",
+                "started_at",
+            }
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 

@@ -14,7 +14,6 @@ import atexit
 import json
 import logging
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 __all__ = [
@@ -32,7 +31,12 @@ __all__ = [
 import vaultspec_rag.server as _m
 
 from ..logging_config import log_event
-from ._state import _HEARTBEAT_INTERVAL_SECONDS
+from ..serviceclient._discovery import (
+    SERVICE_DISCOVERY_SCHEMA,
+    SERVICE_DISCOVERY_VERSION,
+    _discovery_timestamp,
+)
+from ._state import _HEARTBEAT_INTERVAL_SECONDS, _HEARTBEAT_STALENESS_SECONDS
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -134,7 +138,15 @@ def _heartbeat_tick_sync() -> None:
             type(data).__name__,
         )
         return
-    data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+    # Re-assert the schema discriminator and the single declared timestamp format
+    # so a file written by an older parent is upgraded on the first tick and the
+    # two timestamp fields never diverge in precision (#190). Surface the staleness
+    # contract in the file so a consumer reads it rather than hard-coding a guess.
+    data["schema"] = SERVICE_DISCOVERY_SCHEMA
+    data["version"] = SERVICE_DISCOVERY_VERSION
+    data["last_heartbeat"] = _discovery_timestamp()
+    data["heartbeat_interval_s"] = _HEARTBEAT_INTERVAL_SECONDS
+    data["stale_after_s"] = _HEARTBEAT_STALENESS_SECONDS
     data["pid"] = os.getpid()
     data["parent_pid"] = os.getppid()
     # Record the supervised qdrant child (if any) so operators and the

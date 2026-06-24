@@ -24,7 +24,10 @@ from typing import TYPE_CHECKING, Any
 import vaultspec_rag.cli as _cli
 
 from ..serviceclient._discovery import (
+    SERVICE_DISCOVERY_SCHEMA,
+    SERVICE_DISCOVERY_VERSION,
     _default_service_port,
+    _discovery_timestamp,
     _read_service_status,
     _status_dir,
     _status_file,
@@ -105,9 +108,11 @@ def _write_service_status(pid: int, port: int) -> None:
 
     """
     data = {
+        "schema": SERVICE_DISCOVERY_SCHEMA,
+        "version": SERVICE_DISCOVERY_VERSION,
         "pid": pid,
         "port": port,
-        "started_at": datetime.now(UTC).isoformat(),
+        "started_at": _discovery_timestamp(),
     }
     path = _status_file()
     tmp = path.with_suffix(".tmp")
