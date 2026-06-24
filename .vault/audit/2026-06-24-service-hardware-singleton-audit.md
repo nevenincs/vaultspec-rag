@@ -72,12 +72,37 @@ lock, the CLI `server start`/`stop` lifecycle, and the daemon lifespan, plus the
 
 ## Recommendations
 
-- Land `W04.P09.S28`-`S31` as the post-acceptance follow-ups; none block the core guarantees,
+- Land `W04.P09.S28`-`S33` as the post-acceptance follow-ups; none block the core guarantees,
   which are verified.
-- Run `vaultspec-code-reviewer` over the W01-W04 diff before merge (mandatory per the execute
-  skill), resolving any CRITICAL/HIGH before proceeding.
 - The plan's S27 scope names `-hardening-audit.md`; the CLI scaffolded the canonical
   `2026-06-24-service-hardware-singleton-audit.md`. Treat this file as the feature's audit.
+
+### Code-review outcome (vaultspec-code-reviewer, resolved)
+
+The mandatory review returned one HIGH (merge blocker) and three MEDIUM; all blockers are
+fixed and re-verified (40-test gate green):
+
+- **HIGH-1 (fixed): empty-lock crash deadlock.** The `O_EXCL`-create-then-write lock could be
+  left empty by a crash in the write window, which the prior mid-write-race fix treated as
+  permanently held - a machine-wide deadlock. Reworked `acquire_machine_lock` to claim by
+  `os.link`-ing a temp file that already contains the pid, so the lock is never observably
+  empty; a holder-0 file is now only genuine corruption and is safely reclaimable. Regression
+  test added.
+- **MEDIUM-1 (fixed): reap of a recycled pid.** The reaper killed `qdrant_pid` without
+  confirming it was still a qdrant process; a recycled pid could be an unrelated process.
+  Added `pid_image_is_qdrant` and gated the reap on it (refuse rather than kill a non-qdrant
+  pid). Regression test added.
+- **MEDIUM-2 (fixed): version gate bypass on empty version.** `verify_attachable` skipped the
+  version check when the probe version was empty; now an unreadable version is a gate failure.
+  Regression test added.
+- **MEDIUM-3 (tracked `W04.P09.S32`): owner-pid-reuse misclassification.** A recycled owner
+  pid can read as a live `managed_running` owner; data safety holds (health/version/storage
+  gates), but the ownership proof should add a start-time/nonce.
+- **LOW-1 (tracked `W04.P09.S33`): reap-to-spawn bind race.** A short post-reap settle before
+  spawn would make it deterministic; today it degrades to a named failure.
+- **LOW-2:** resolved by the HIGH-1 fix (empty lock is now reclaimable, so the CLI pre-check
+  and daemon acquire agree). **LOW-3** (ADR identifiers in comments) is consistent with the
+  pervasive existing convention in this codebase; left as-is.
 
 ## Codification candidates
 

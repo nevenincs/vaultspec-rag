@@ -79,3 +79,15 @@ class TestMachineLock:
         acquired, holder = acquire_machine_lock()
         assert acquired is True
         assert holder == os.getpid()
+
+    def test_empty_lock_file_is_reclaimed_not_a_deadlock(
+        self, isolated_lock: Path
+    ) -> None:
+        # A crash between claiming the lock and writing the pid (or a corrupt /
+        # legacy file) can leave an empty lock. It must be reclaimable, never a
+        # permanent machine-wide deadlock.
+        isolated_lock.parent.mkdir(parents=True, exist_ok=True)
+        isolated_lock.write_text("", encoding="utf-8")
+        acquired, holder = acquire_machine_lock()
+        assert acquired is True
+        assert holder == os.getpid()

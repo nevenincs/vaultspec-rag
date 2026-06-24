@@ -16,6 +16,7 @@ from ...qdrant_runtime._resolve import (
     QdrantIdentity,
     decide_qdrant_action,
     pid_alive,
+    pid_image_is_qdrant,
     reap_qdrant_orphan,
 )
 
@@ -78,3 +79,14 @@ class TestLiveHolderNeverReaped:
             expected_storage="/srv/storage",
         )
         assert action == "reap_then_spawn"
+
+
+class TestReapTargetImageGuard:
+    """A recycled pid (now an unrelated process) must never be reaped."""
+
+    def test_this_python_process_is_not_a_qdrant_target(self) -> None:
+        # The reap guard checks the target's image; this test process is python.
+        assert pid_image_is_qdrant(os.getpid()) is False
+
+    def test_dead_pid_is_not_a_qdrant_target(self) -> None:
+        assert pid_image_is_qdrant(2_000_000_000) is False

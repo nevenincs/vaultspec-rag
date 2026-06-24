@@ -76,32 +76,33 @@ def acquire_machine_lock() -> tuple[bool, int]:
     """
     path = machine_lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"pid": os.getpid()})
-    for _ in range(2):
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            holder = _machine_lock_holder(path)
-            if holder == os.getpid():
-                # Our own prior lock (same-process re-acquire): reclaim, retry.
+    # Claim by hard-linking a temp file that ALREADY contains our pid into
+    # place. os.link is atomically exclusive (one winner; losers get
+    # FileExistsError), and because the link target already holds the pid, the
+    # lock file is never observable empty - so a crash can never strand an
+    # empty, unreclaimable lock, and a concurrent loser always reads the
+    # winner's pid (never a transient holder-0). A holder-0 file can now only be
+    # genuine corruption or a legacy file, which is safely reclaimable.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    try:
+        for _ in range(2):
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                holder = _machine_lock_holder(path)
+                if holder and holder != os.getpid() and pid_alive(holder):
+                    return (False, holder)
+                # Our own prior lock, a dead-holder orphan, or a corrupt/empty
+                # legacy file: reclaim and retry.
                 with contextlib.suppress(OSError):
                     path.unlink()
                 continue
-            if holder == 0:
-                # Empty/unparseable: almost always the winner of a concurrent
-                # O_EXCL create still mid-write. Treat as held, NOT stale - a
-                # reclaim here is the race that lets two processes both "win".
-                return (False, 0)
-            if pid_alive(holder):
-                return (False, holder)
-            # A non-zero but dead holder: a genuine stale orphan - reclaim.
-            with contextlib.suppress(OSError):
-                path.unlink()
-            continue
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-        return (True, os.getpid())
-    return (False, _machine_lock_holder(path))
+            return (True, os.getpid())
+        return (False, _machine_lock_holder(path))
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def release_machine_lock() -> None:

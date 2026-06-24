@@ -45,6 +45,7 @@ __all__ = [
     "decide_qdrant_action",
     "has_provisioned_binary",
     "pid_alive",
+    "pid_image_is_qdrant",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
     "qdrant_identity_path",
@@ -360,6 +361,36 @@ def reap_qdrant_orphan(pid: int, *, wait_seconds: float = 5.0) -> bool:
     return not pid_alive(pid)
 
 
+def pid_image_is_qdrant(pid: int) -> bool:
+    """Return whether *pid* is a live process whose executable is qdrant.
+
+    A reap target's pid comes from a now-dead owner's identity record; on a busy
+    machine that pid may have been recycled by an unrelated process. Reaping
+    must confirm the target is actually a qdrant process (not a recycled pid)
+    before issuing a hard kill, so an unrelated process is never killed.
+    """
+    if not pid_alive(pid):
+        return False
+    if sys.platform == "win32":
+        import subprocess
+
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return "qdrant" in result.stdout.lower()
+    for proc_file in ("comm", "cmdline"):
+        try:
+            text = Path(f"/proc/{pid}/{proc_file}").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "qdrant" in text.lower():
+            return True
+    return False
+
+
 def write_qdrant_identity(
     *,
     storage_path: str,
@@ -421,10 +452,14 @@ def verify_attachable(
         return False, "qdrant on the port is not ready (/readyz did not return 200)"
     if identity is None:
         return False, "no managed identity sidecar; the port holder is not ours"
-    if probe.version and expected_version and probe.version != expected_version:
+    if expected_version and probe.version != expected_version:
+        # The capability gate is non-optional: an unreadable version (empty) is
+        # a gate FAILURE, not a pass - attaching to a server whose version we
+        # could not confirm defeats the version check.
+        running = probe.version or "<unreadable>"
         return (
             False,
-            f"version mismatch: running {probe.version!r} != managed "
+            f"version mismatch or unreadable: running {running!r} != managed "
             f"{expected_version!r}",
         )
     if os.path.normcase(os.path.normpath(identity.storage_path)) != os.path.normcase(

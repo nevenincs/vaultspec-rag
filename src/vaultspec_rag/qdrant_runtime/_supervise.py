@@ -582,6 +582,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     from ._provision import file_sha256
     from ._resolve import (
         decide_qdrant_action,
+        pid_image_is_qdrant,
         probe_qdrant_endpoint,
         read_qdrant_identity,
         reap_qdrant_orphan,
@@ -628,7 +629,17 @@ def start_supervised_from_config() -> QdrantSupervisor:
     if action == "reap_then_spawn":
         target = identity.qdrant_pid if identity is not None else 0
         logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
-        if target <= 0 or not reap_qdrant_orphan(target):
+        # Confirm the recorded child pid is still a qdrant process before the
+        # hard kill: the pid came from a dead owner's record and may have been
+        # recycled by an unrelated process, which must never be killed.
+        if target <= 0 or not pid_image_is_qdrant(target):
+            raise RuntimeError(
+                f"qdrant orphan on port {qport}: recorded child pid {target} is "
+                "not a live qdrant process (likely a dead/recycled pid); refusing "
+                "to kill it. Stop the holder manually, then retry; or run "
+                "local-only: vaultspec-rag server start --local-only"
+            )
+        if not reap_qdrant_orphan(target):
             raise RuntimeError(
                 f"qdrant orphan holding port {qport} could not be reaped "
                 f"(child pid {target}); stop it manually, then retry; or run "

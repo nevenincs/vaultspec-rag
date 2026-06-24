@@ -126,3 +126,17 @@ class TestVerifyAttachable:
         )
         assert ok is False
         assert "storage" in reason
+
+    def test_refuse_on_empty_unreadable_version(self) -> None:
+        # An unreadable (empty) version is a capability-gate FAILURE, not a pass:
+        # attaching to a server whose version we could not confirm defeats the
+        # version check.
+        probe = QdrantEndpointProbe(listening=True, ready=True, version="")
+        ok, reason = verify_attachable(
+            probe,
+            self._identity("/srv/storage"),
+            expected_version="1.18.2",
+            expected_storage="/srv/storage",
+        )
+        assert ok is False
+        assert "version" in reason
