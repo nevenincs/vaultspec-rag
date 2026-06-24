@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Unit-test identity write and validation
 
 ## Scope

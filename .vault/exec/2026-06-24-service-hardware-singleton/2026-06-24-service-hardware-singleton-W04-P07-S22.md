@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Adversarial: N concurrent starts yield exactly one service and one qdrant
 
 ## Scope

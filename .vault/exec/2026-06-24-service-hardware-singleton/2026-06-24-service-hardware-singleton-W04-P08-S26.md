@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Run the full hardening gate across unit, integration, and adversarial suites
 
 ## Scope
@@ -23,7 +20,7 @@ related:
 - Ran the full hardening gate: the 8 hardening test modules (detection, identity, supervise
   diagnostics, attach, orphan reap, machine singleton, adversarial singleton, adversarial
   multi-repo) together - 36 passed in ~38s on the real GPU.
-- Ran the refactor regression checks: package import smoke (no `server`<->`cli` cycle from the
+- Ran the refactor regression checks: package import smoke (no `server`\<->`cli` cycle from the
   `_machine_lock` move + lifespan/CLI wiring) and the ADR regression suite (27 passed).
 
 ## Outcome

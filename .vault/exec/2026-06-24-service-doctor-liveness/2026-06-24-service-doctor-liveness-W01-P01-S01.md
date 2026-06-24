@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"
 ---
 
-
-
-
 # Add a live-service axis to server doctor that reads the discovery file and probes health and port, reusing the status-path liveness truth
 
 ## Scope
@@ -28,4 +25,4 @@ doctor now renders two clearly-labelled axes - installed dependencies and live s
 
 ## Notes
 
-Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (_machine_lock, _lifespan) left untouched.
+Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (\_machine_lock, \_lifespan) left untouched.

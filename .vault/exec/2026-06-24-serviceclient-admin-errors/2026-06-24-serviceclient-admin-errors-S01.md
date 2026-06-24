@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-serviceclient-admin-errors-plan]]"
 ---
 
-
-
-
 # Replace the catch-all empty-dict swallow in the admin helper with the structured http_call_failed ok=False envelope (mirroring the search and reindex helpers), leaving the connection-refused→None and timeout→admin_timeout branches unchanged
 
 ## Scope

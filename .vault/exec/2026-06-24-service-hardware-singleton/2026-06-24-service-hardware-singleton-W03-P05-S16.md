@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Add a crash-safe machine-scoped service lock under the managed dir
 
 ## Scope
@@ -37,4 +34,5 @@ release removes the lock. `ruff` and `ty` pass.
 
 The lock co-locates with the shared Qdrant storage because that is the actual machine
 resource the singleton protects; this also makes it test-isolatable. Wiring into `server start`
-+ the daemon lifespan is S17. No blockers.
+
+- the daemon lifespan is S17. No blockers.

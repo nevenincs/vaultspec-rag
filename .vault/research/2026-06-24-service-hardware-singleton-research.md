@@ -102,7 +102,7 @@ investigation found two compounding causes, both consequences of the singleton a
    death path did not tear the child down), and the supervisor has no pre-flight detection of
    an already-running Qdrant. Killing the orphan was necessary to recover.
 
-2. **A corrupt collection panics the whole server.** Running the Qdrant binary directly with
+1. **A corrupt collection panics the whole server.** Running the Qdrant binary directly with
    the supervisor's env reproduced a hard Rust panic (exit 101) while *loading* the collection
    `r0b2bd3608445_codebase_docs`. Because the storage is one shared machine-global store, a
    single root's corrupt collection takes down RAG for **every** root on the machine.

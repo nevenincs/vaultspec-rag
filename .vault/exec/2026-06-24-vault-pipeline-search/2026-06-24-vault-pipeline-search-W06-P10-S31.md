@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Reindex the real vault on the new code and capture orientation persona live-search testimonials
 
 ## Scope

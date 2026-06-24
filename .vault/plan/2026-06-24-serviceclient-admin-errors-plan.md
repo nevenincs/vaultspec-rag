@@ -9,11 +9,11 @@ related:
   - '[[2026-06-24-serviceclient-admin-errors-adr]]'
 ---
 
-
 # `serviceclient-admin-errors` plan
 
 - [x] `S01` - Replace the catch-all empty-dict swallow in the admin helper with the structured http_call_failed ok=False envelope (mirroring the search and reindex helpers), leaving the connection-refused→None and timeout→admin_timeout branches unchanged; `src/vaultspec_rag/serviceclient/_transport.py`.
 - [x] `S02` - Add a no-mock regression test: drive an admin call against a real in-process route that raises a non-refused, non-timeout error (e.g. a malformed non-JSON response) and assert it returns the http_call_failed envelope, distinguishable from a real empty result and from the unreachable None sentinel; `src/vaultspec_rag/tests/test_http_admin_errors.py`.
+
 ## Description
 
 Correct a single swallowing branch in the shared HTTP service-client transport so that an
@@ -30,12 +30,6 @@ no-mock regression test - grounded in the ADR and its research. This is the plan
 artifact only; no code is written here, and the ADR awaits user sign-off before execution.
 
 ## Steps
-
-
-
-
-
-
 
 ## Parallelization
 

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Emit the schema string and integer version discriminator in the CLI-parent initial discovery-file write
 
 ## Scope

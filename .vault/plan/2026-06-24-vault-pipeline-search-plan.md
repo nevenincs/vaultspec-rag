@@ -9,16 +9,6 @@ related:
   - '[[2026-06-24-vault-pipeline-search-adr]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `vault-pipeline-search` plan
 
 ## Wave `W01` - Validation instrument and baseline
@@ -155,12 +145,6 @@ service domain with the CLI as a thin adapter; no GPU-lock or reranker-content r
 disturbed because the prior composes after the forward pass.
 
 ## Steps
-
-
-
-
-
-
 
 ## Parallelization
 

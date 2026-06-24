@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Classify a managed qdrant orphan by expected storage and dead owner pid
 
 ## Scope

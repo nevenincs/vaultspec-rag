@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Integration-test that a dead orphan is reaped and a live holder is never killed
 
 ## Scope

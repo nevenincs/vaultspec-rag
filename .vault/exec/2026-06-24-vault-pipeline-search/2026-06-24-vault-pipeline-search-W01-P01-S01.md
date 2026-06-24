@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Author the graded-relevance rubric table keyed on intent x doc_type x status
 
 ## Scope

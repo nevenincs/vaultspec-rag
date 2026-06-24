@@ -104,8 +104,9 @@ a second instance reuses the one Qdrant instead of deadlocking on its storage lo
 machine singleton (D1) removes the deeper hazard of two residents fighting for the GPU. The
 verification gates are non-negotiable per the owner's direction: attaching to an unhealthy,
 wrong-version, wrong-storage, or unowned server would be worse than spawning, so health + lock
-+ capability checks gate every attach. D3/D5 turn the current opaque 300s failure into a fast,
-named one, which is what made the live incident hard to diagnose.
+
+- capability checks gate every attach. D3/D5 turn the current opaque 300s failure into a fast,
+  named one, which is what made the live incident hard to diagnose.
 
 ## Consequences
 

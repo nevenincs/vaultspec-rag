@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Tune the weight profiles against the gold set and record the improvement over baseline
 
 ## Scope

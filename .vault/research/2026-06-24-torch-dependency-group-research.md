@@ -7,8 +7,6 @@ modified: '2026-06-24'
 related: []
 ---
 
-
-
 # `torch-dependency-group` research: `placing the managed torch direct-dependency in a dependency group`
 
 GitHub issue **#186**: `vaultspec-rag install` patches the *consuming* project's pyproject to

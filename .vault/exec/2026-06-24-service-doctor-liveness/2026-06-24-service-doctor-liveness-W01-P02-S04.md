@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"
 ---
 
-
-
-
 # Add a no-mock test asserting doctor reports a not-ready or degraded live status with no daemon running while still reporting dependency readiness truthfully
 
 ## Scope
@@ -28,4 +25,4 @@ The live axis is proven against real (dead) signals with no mocks.
 
 ## Notes
 
-Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (_machine_lock, _lifespan) left untouched.
+Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (\_machine_lock, \_lifespan) left untouched.

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Warn and no-op on a re-run whose target differs from the recorded placement so torch is never silently migrated between surfaces
 
 ## Scope

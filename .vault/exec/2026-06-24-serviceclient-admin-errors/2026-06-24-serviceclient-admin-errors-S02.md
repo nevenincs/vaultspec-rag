@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-serviceclient-admin-errors-plan]]"
 ---
 
-
-
-
 # Add a no-mock regression test: drive an admin call against a real in-process route that raises a non-refused, non-timeout error (e.g. a malformed non-JSON response) and assert it returns the http_call_failed envelope, distinguishable from a real empty result and from the unreachable None sentinel
 
 ## Scope

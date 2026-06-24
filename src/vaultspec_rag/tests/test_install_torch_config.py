@@ -147,25 +147,26 @@ class TestInstallTorchConfig:
     def test_install_warns_when_hf_token_missing(
         self, consumer_workspace: Path, tmp_path: Path
     ) -> None:
-        env = {
+        env: dict[str, str] = {
             **os.environ,
             "HF_HOME": str(tmp_path / "empty-hf-home"),
         }
         env.pop("HF_TOKEN", None)
+        cmd: list[str] = [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "from pathlib import Path; "
+                "from vaultspec_rag" + ".commands import install_run; "
+                "report = install_run(path=Path(r'"
+                + str(consumer_workspace)
+                + "'), assume_yes=True); "
+                "print(json.dumps(report.to_dict()))"
+            ),
+        ]
         completed = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import json; "
-                    "from pathlib import Path; "
-                    "from vaultspec_rag" + ".commands import install_run; "
-                    "report = install_run(path=Path(r'"
-                    + str(consumer_workspace)
-                    + "'), assume_yes=True); "
-                    "print(json.dumps(report.to_dict()))"
-                ),
-            ],
+            cmd,
             check=True,
             capture_output=True,
             encoding="utf-8",

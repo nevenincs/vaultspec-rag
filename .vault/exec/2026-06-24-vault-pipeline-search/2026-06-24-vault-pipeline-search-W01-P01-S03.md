@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Enrich the synthetic corpus generator with status markers and pipeline-role edges
 
 ## Scope
@@ -24,11 +21,11 @@ related:
   (both additive; the existing public API and fields are unchanged).
 - Added a `_make_title` helper rendering ADR-aware headings: the legacy `# ADR: ...`
   no-marker form for the first ADR (status `unknown`), the modern
-  `# \`feature\` adr: \`...\` | (**status:** \`value\`)` form otherwise; non-ADR titles
+  `# \`feature\` adr: \`...\` | (**status:** \`value\`)\` form otherwise; non-ADR titles
   unchanged.
 - Assigned ADR statuses deterministically (first ADR `unknown`, then cycling
   proposed/superseded/accepted) so all extraction paths have coverage.
-- Added `_add_pipeline_edges` writing research<-adr<-plan<-exec and reference<-research
+- Added `_add_pipeline_edges` writing research\<-adr\<-plan\<-exec and reference\<-research
   lineage links on top of the density-based random edges.
 
 ## Outcome

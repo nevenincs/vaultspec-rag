@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Add orientation and debug intent weight profiles and the per-type cap to config
 
 ## Scope

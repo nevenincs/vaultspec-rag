@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"
 ---
 
-
-
-
 # Add a no-mock test that a daemon survives a simulated parent-shell exit on this platform
 
 ## Scope
@@ -28,4 +25,4 @@ The remediation path is guarded; any behaviour requiring the live Windows host i
 
 ## Notes
 
-Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (_machine_lock, _lifespan) left untouched.
+Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (\_machine_lock, \_lifespan) left untouched.

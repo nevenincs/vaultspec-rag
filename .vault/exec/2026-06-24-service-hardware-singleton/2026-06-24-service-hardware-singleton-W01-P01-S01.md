@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Capture the qdrant child stdout and stderr to the log reliably across platforms
 
 ## Scope

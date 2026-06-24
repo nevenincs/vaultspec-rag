@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Adversarial: an injected held port or storage lock yields fast-fail or reap, never a competitor
 
 ## Scope

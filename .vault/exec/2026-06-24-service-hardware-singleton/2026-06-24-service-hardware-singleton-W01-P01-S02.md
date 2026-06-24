@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Report a non-ready child exit with the captured log tail and a named cause
 
 ## Scope

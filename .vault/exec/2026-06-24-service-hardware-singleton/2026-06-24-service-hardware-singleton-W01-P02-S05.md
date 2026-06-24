@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Add a storage-lock probe distinguishing a live holder from a dead owner
 
 ## Scope

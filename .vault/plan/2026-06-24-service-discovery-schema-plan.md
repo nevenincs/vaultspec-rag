@@ -9,7 +9,6 @@ related:
   - '[[2026-06-24-service-discovery-schema-adr]]'
 ---
 
-
 # `service-discovery-schema` plan
 
 ### Phase `P01` - Versioning and timestamp normalisation
@@ -49,12 +48,6 @@ heartbeat tick, with no mocks. Grounded in the ADR and its research; this is the
 artifact only, and the ADR awaits user sign-off before execution.
 
 ## Steps
-
-
-
-
-
-
 
 ## Parallelization
 

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"
 ---
 
-
-
-
 # Report ready:false or an explicit degraded/needs-restart status when the daemon is dead, keeping the installed-dependency axis present and labelled so the two are never conflated
 
 ## Scope
@@ -28,4 +25,4 @@ A dead daemon is never reported as ready - the #204 false-ready bug is closed wi
 
 ## Notes
 
-Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (_machine_lock, _lifespan) left untouched.
+Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (\_machine_lock, \_lifespan) left untouched.

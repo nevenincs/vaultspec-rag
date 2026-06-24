@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"
 ---
 
-
-
-
 # Unlink the discovery file only when the holder is confirmed dead, never on an ambiguous identity result, so a transient health or PID miss cannot delete a live service's file
 
 ## Scope
@@ -28,4 +25,4 @@ A transient identity/health miss can no longer delete a live daemon's discovery 
 
 ## Notes
 
-Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (_machine_lock, _lifespan) left untouched.
+Implemented via a high-reasoning executor; ruff/ty/pytest re-verified by the orchestrator (277 passed across process/singleton/lifecycle/CLI; 11 in the doctor/flapping suites). Singleton surfaces (\_machine_lock, \_lifespan) left untouched.

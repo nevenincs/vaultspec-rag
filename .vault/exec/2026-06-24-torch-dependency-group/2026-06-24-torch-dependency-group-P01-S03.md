@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Add a parameterised group-target write helper that creates the dependency-groups table and named array when absent and returns the dependency-groups location string
 
 ## Scope

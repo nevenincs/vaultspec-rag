@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-research]]"
 ---
 
-
-
 # `vault-pipeline-search` adr: `intent-aware pipeline ranking and result shape for vault search` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -108,8 +106,7 @@ explicit values). Status is a new payload field (D7) requiring a reindex.
 **D6 — Doc-type union as first-class selection, back-compatible.** `--type vault` remains
 the union of all indexable doc types; doc-type names become selectable as a union subset
 (repeatable `--doc-type`, accepting multiple values), with the existing single-valued
-`--doc-type` preserved. The indexable union is `research | reference | adr | audit | plan
-| exec`; `index` is excluded as auto-generated navigational content. `audit` ranks in the
+`--doc-type` preserved. The indexable union is `research | reference | adr | audit | plan | exec`; `index` is excluded as auto-generated navigational content. `audit` ranks in the
 authoritative tier with ADRs.
 
 **D7 — Frontmatter-enriched results.** `SearchResult` gains `related` and `status`. The
@@ -130,15 +127,15 @@ declares its intent and a gold list of `(doc_id, grade)` judgments on a 0–3 sc
 independently of any retriever output, which is what keeps it non-tautological. Indicative
 rubric (topically-relevant docs only; off-topic = 0):
 
-| doc_type / status | orientation | debugging | implementation |
-| --- | --- | --- | --- |
-| adr (accepted) | 3 | 1 | 2 |
-| adr (proposed/superseded) | 1 | 0–1 | 1 |
-| research / reference | 2 | 1 | 1 |
-| plan | 1 | 1 | 3 |
-| exec (step/summary) | 0–1 | 3 | 2 |
-| audit | 1 | 2 | 1 |
-| code chunk | 0 | 2 | 1 |
+| doc_type / status         | orientation | debugging | implementation |
+| ------------------------- | ----------- | --------- | -------------- |
+| adr (accepted)            | 3           | 1         | 2              |
+| adr (proposed/superseded) | 1           | 0–1       | 1              |
+| research / reference      | 2           | 1         | 1              |
+| plan                      | 1           | 1         | 3              |
+| exec (step/summary)       | 0–1         | 3         | 2              |
+| audit                     | 1           | 2         | 1              |
+| code chunk                | 0           | 2         | 1              |
 
 Metrics, reported per-intent (never blended): role-aware **NDCG@10** with gain = the rubric
 grade (headline); orientation **Authoritative@3** (a grade-3 accepted ADR in the top 3) and
@@ -168,8 +165,7 @@ for confidence. A precondition the instrument exposes: `status` must be surfaced
 intent-aware instrument (D8) lands as a `quality`-marked pytest integration test under
 `src/vaultspec_rag/tests/`, never a production CLI verb. The same responsibility split
 applies to the already-shipping `vaultspec-rag quality` (`src/vaultspec_rag/cli/_quality.py`,
-which builds a throwaway synthetic vault and runs needle probes) and `vaultspec-rag
-benchmark` (`src/vaultspec_rag/cli/_benchmark.py`, a latency/VRAM micro-bench): both expose
+which builds a throwaway synthetic vault and runs needle probes) and `vaultspec-rag benchmark` (`src/vaultspec_rag/cli/_benchmark.py`, a latency/VRAM micro-bench): both expose
 developer regression tooling on a production-facing binary and even self-describe as "not a
 report on your current project," yet ship to every operator. This ADR records the decision
 to remove `quality` and `benchmark` from the production command group, retaining the

@@ -9,7 +9,6 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 ---
 
-
 # `service-doctor-liveness` plan
 
 ## Wave `W01` - Doctor live-service truth
@@ -71,12 +70,6 @@ overlap the singleton campaign and are coordinated with its owners rather than r
 Grounded in the ADR and its research; planning artifact only, ADR pending user sign-off.
 
 ## Steps
-
-
-
-
-
-
 
 ## Parallelization
 

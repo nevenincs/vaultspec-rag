@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Thread the group selector through install-run and the torch flow down to the ensure-direct-dep call without breaking the idempotent re-run path
 
 ## Scope

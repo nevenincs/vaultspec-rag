@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Author the consumer-facing discovery-file schema document naming interface fields, marking internal diagnostics as non-interface, and stating the staleness and PID-reuse contract
 
 ## Scope

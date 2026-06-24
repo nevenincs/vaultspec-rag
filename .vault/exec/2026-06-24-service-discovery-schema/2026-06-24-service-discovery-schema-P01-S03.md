@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Preserve and re-assert the schema, version, and staleness fields in the daemon heartbeat additive merge
 
 ## Scope

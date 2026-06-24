@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Add a no-mock test that the default no-flag path still writes project dependencies unchanged and a user-declared torch in a group is left untouched
 
 ## Scope

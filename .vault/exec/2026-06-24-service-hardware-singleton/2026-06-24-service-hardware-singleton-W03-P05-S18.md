@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Reclaim a stale machine lock held by a dead owner on start
 
 ## Scope
@@ -23,7 +20,7 @@ related:
 - Built crash-safe stale reclaim into `acquire_machine_lock`: when the lock file exists but
   its recorded holder pid is dead (via `_is_pid_alive`) - or is this process's own prior lock
   - the stale file is unlinked and acquisition retried, so a lock left by a crashed daemon
-  never blocks the next start.
+    never blocks the next start.
 
 ## Outcome
 

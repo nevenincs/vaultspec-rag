@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Add a qdrant port-holder probe reporting whether a managed server is listening
 
 ## Scope

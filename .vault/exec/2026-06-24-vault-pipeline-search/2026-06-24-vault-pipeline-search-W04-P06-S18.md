@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Add doc-type union selection with audit included and index excluded
 
 ## Scope

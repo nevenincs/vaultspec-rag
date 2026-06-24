@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Parse status from the ADR H1 and strip the status suffix from the displayed title
 
 ## Scope

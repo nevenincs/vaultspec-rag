@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Warn when a group target is selected that the group must be enabled for the resolve for the cu130 source pin to apply, so a group-placed dep is never a silently inert pin
 
 ## Scope

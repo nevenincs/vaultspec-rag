@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Integration-test refuse-fast on unhealthy, wrong-version, or foreign holder
 
 ## Scope

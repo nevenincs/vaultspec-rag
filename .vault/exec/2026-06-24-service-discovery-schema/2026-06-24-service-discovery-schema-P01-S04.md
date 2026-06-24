@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Emit heartbeat_interval_s and stale_after_s from the same config the heartbeat loop uses so the liveness contract is machine-readable
 
 ## Scope

@@ -7,8 +7,6 @@ modified: '2026-06-24'
 related: []
 ---
 
-
-
 # `vault-pipeline-search` audit: `live persona testimonials`
 
 ## Scope
@@ -87,5 +85,3 @@ fully - overcomes at the current weights.
   **Rule:** Auto-generated feature-index documents must be excluded from vault search results
   at query time, not merely rejected as a doc-type filter value; a type marked non-searchable
   must never surface in unfiltered results.
-
-

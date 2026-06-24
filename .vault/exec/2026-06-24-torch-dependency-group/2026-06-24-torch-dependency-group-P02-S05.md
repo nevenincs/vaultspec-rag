@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Make uninstall remove the managed torch dep from the marker-recorded surface only, preserving symmetric install and uninstall and never touching an unmarked user-declared torch
 
 ## Scope

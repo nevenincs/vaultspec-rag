@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
 # `service-discovery-schema` audit: `discovery-file schema/version/timestamp contract review (PASS)`
 
 ## Scope

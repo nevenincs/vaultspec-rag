@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Promote the managed-torch-direct-dependency marker to record the written location, reading a legacy boolean true as the project-dependencies location
 
 ## Scope

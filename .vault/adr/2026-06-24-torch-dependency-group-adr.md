@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-research]]"
 ---
 
-
-
 # `torch-dependency-group` adr: `optional dependency-group placement for the managed torch direct-dependency` | (**status:** `accepted`)
 
 ## Problem Statement

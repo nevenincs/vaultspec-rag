@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Make server start detect an existing healthy machine service and refuse with a pointer
 
 ## Scope
@@ -23,7 +20,7 @@ related:
 - Resolved the layering gotcha first: moved the machine-lock primitive to a neutral leaf
   `src/vaultspec_rag/_machine_lock.py` (depends only on config + `qdrant_runtime._resolve.pid_alive`),
   re-exported from `cli/_process.py` so both the CLI and the daemon import it without a
-  `server` <-> `cli` cycle. Added `machine_lock_live_holder`.
+  `server` \<-> `cli` cycle. Added `machine_lock_live_holder`.
 - Wired the CLI pre-flight refusal in `server start` (`cli/_service_lifecycle.py`): a live
   machine-lock holder on any port/status-dir refuses a second daemon with a pointer.
 - Wired the authoritative acquire/release into the daemon lifespan (`server/_lifespan.py`):

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Author the intent-tagged labeled query set with hand-graded gold judgments
 
 ## Scope

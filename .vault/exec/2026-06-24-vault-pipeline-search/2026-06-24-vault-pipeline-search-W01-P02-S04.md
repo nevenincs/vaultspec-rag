@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Implement role-aware NDCG, Authoritative-at-k, MRR, and role-precision metrics
 
 ## Scope

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Normalise the CLI-parent initial write of started_at to ISO-8601 with offset at second precision, matching the heartbeat last_heartbeat format
 
 ## Scope

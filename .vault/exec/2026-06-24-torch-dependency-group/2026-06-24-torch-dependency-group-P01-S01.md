@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Add a --torch-group NAME install flag selecting a PEP 735 dependency-group surface for the managed torch direct-dependency, defaulting to dev when given without a value
 
 ## Scope

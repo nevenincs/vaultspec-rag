@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Add the per-intent persona ranking-testimonial integration test
 
 ## Scope

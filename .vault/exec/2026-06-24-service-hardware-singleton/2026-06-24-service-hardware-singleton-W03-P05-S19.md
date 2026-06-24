@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Integration-test that a second start refuses and a stale lock is reclaimed
 
 ## Scope

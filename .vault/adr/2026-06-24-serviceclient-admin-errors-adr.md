@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-serviceclient-admin-errors-research]]"
 ---
 
-
-
 # `serviceclient-admin-errors` adr: `surface admin failures through the transport's structured error envelope` | (**status:** `accepted`)
 
 ## Problem Statement

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Thread intent, status, and doc-type-union params through the HTTP search client
 
 ## Scope

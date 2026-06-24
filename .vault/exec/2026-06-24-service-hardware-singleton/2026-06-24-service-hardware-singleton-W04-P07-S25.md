@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Adversarial: concurrent multi-repo search and index load through one service holds under saturation
 
 ## Scope

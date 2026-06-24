@@ -7,8 +7,6 @@ modified: '2026-06-24'
 related: []
 ---
 
-
-
 # `service-discovery-schema` research: `documenting and versioning the service discovery file`
 
 The resident RAG service writes a discovery file that sibling tools read to locate and

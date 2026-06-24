@@ -9,7 +9,6 @@ related:
   - '[[2026-06-24-torch-dependency-group-adr]]'
 ---
 
-
 # `torch-dependency-group` plan
 
 ### Phase `P01` - Group-target write path and selector
@@ -57,12 +56,6 @@ is enabled for the resolve. Phase P04 proves all of it against real tomlkit docu
 mocks. Grounded in the ADR and its research; planning artifact only, ADR pending sign-off.
 
 ## Steps
-
-
-
-
-
-
 
 ## Parallelization
 

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Capture and commit the baseline ranking report on the current reranker
 
 ## Scope

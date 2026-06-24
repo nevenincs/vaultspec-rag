@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Add a no-mock test asserting the version is present after the CLI-parent write and preserved across a heartbeat tick, with the atomic-write discipline intact
 
 ## Scope

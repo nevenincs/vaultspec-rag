@@ -30,8 +30,8 @@ Vault documents carry equal topical footing regardless of pipeline role, and the
 cross-encoder rewards the document whose prose most echoes the query — which is routinely
 an execution record, not the decision it implements. Live, against the running service:
 
-| Query (intent: orientation) | Top hit today | Score | The authoritative doc |
-| --- | --- | --- | --- |
+| Query (intent: orientation)  | Top hit today                  | Score  | The authoritative doc                        |
+| ---------------------------- | ------------------------------ | ------ | -------------------------------------------- |
 | "decision on gpu lock scope" | exec step record `W03-P06-S15` | 0.8455 | `service-concurrency` adr scores only 0.4642 |
 
 The decision record is *retrieved* — it surfaces immediately under `--doc-type adr` — but
@@ -125,7 +125,7 @@ vaultspec-core template form:
 
 Two title formats coexist in the live vault:
 
-- **Modern** (2026-04 onward): carries the `| (**status:** `value`)` suffix.
+- **Modern** (2026-04 onward): carries the `| (**status:** value)` status suffix.
 - **Legacy** (the 2026-03 batch, e.g. `manual-node-walking`, `score-normalization`):
   `# ADR: {description}` with **no** status token at all.
 
@@ -161,8 +161,7 @@ vault filtering is a thin `--doc-type / --feature / --date / --tag` set, single-
 threaded CLI → `_try_http_search` → server route → `VaultSearcher`. Code search by
 contrast has a rich filter surface (`--language`, `--include-path`, `--prefer`, etc.).
 
-`SearchResult` (`src/vaultspec_rag/search/_models.py`) carries `doc_type/feature/date/
-title` but **not** `related` and **not** `status`. The searcher maps only the former from
+`SearchResult` (`src/vaultspec_rag/search/_models.py`) carries `doc_type/feature/date/ title` but **not** `related` and **not** `status`. The searcher maps only the former from
 the Qdrant row.
 
 Rendering: `--json` serializes the dataclass via `asdict` inside the stable envelope

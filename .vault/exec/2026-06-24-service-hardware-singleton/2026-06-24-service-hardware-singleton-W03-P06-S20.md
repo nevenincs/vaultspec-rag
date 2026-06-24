@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Reap a provably-dead managed qdrant orphan before spawning
 
 ## Scope

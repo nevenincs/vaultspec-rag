@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
 # `torch-dependency-group` audit: `optional dependency-group placement review (PASS)`
 
 ## Scope

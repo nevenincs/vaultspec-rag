@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Run the full acceptance gate and produce the A/B delta report
 
 ## Scope

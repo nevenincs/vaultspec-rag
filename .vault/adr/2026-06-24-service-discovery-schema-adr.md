@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-research]]"
 ---
 
-
-
 # `service-discovery-schema` adr: `version and document the service discovery file as a stable interface` | (**status:** `accepted`)
 
 ## Problem Statement

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Remove the quality and benchmark verbs from the production CLI command group
 
 ## Scope

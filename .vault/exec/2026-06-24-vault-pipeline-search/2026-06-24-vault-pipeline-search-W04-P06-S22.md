@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Thread the new params into the searcher entry points and apply them
 
 ## Scope

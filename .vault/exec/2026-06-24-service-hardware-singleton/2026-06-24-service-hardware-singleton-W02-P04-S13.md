@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Refuse fast without spawning when a holder fails the attach gate
 
 ## Scope

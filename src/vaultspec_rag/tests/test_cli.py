@@ -235,21 +235,6 @@ def _assert_record(
     }
 
 
-def _latency_values(lines: list[str]) -> dict[str, float]:
-    values: dict[str, float] = {}
-    for line in lines:
-        match = re.fullmatch(r"(?P<label>.+): (?P<value>\d+\.\d)ms.*", line)
-        if match is not None:
-            values[match.group("label")] = float(match.group("value"))
-    return values
-
-
-def _quality_probe_line(line: str) -> tuple[str, str, str]:
-    match = re.fullmatch(r"1\. (passed|failed): (.+) - (.+)", line)
-    assert match is not None
-    return (match.group(1), match.group(2), match.group(3))
-
-
 def _hold_local_index_lock(root: Path):
     from ..config import get_config
     from ..store import FileLock

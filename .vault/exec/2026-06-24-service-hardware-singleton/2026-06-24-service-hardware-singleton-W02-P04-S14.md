@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Integration-test attach to a healthy managed qdrant with no second spawn
 
 ## Scope
@@ -23,8 +20,7 @@ related:
 - Authored `test_qdrant_attach.py` with a real stdlib HTTP server standing in for a running
   managed Qdrant (answers `/readyz`, reports a configurable version), the managed config
   driven through genuine env knobs, and the identity sidecar written to make it owned.
-- Added the attach test: with a healthy, owned, version-matching server, `start_supervised_
-  from_config` returns an attached supervisor (no child pid) that reports alive.
+- Added the attach test: with a healthy, owned, version-matching server, `start_supervised_ from_config` returns an attached supervisor (no child pid) that reports alive.
 
 ## Outcome
 

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Mirror the new params on the MCP search_vault tool for adapter parity
 
 ## Scope

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Write a machine-local qdrant identity sidecar on bring-up (storage, version, owner token)
 
 ## Scope

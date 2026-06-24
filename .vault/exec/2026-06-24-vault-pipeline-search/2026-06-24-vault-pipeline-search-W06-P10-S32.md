@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Capture debugging persona live-search testimonials and the consolidated verdict
 
 ## Scope

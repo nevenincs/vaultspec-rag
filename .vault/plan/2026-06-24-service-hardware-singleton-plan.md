@@ -9,7 +9,6 @@ related:
   - '[[2026-06-24-service-hardware-singleton-adr]]'
 ---
 
-
 # `service-hardware-singleton` plan
 
 ## Wave `W01` - Failure legibility and detection primitives
@@ -133,12 +132,6 @@ spawning; and a second resident is refused, because one GPU and one single-write
 cannot be co-owned.
 
 ## Steps
-
-
-
-
-
-
 
 ## Parallelization
 

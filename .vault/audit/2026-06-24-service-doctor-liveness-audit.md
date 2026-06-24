@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"
 ---
 
-
-
 # `service-doctor-liveness` audit: `doctor live-truth + flapping remediation review (PASS)`
 
 ## Scope

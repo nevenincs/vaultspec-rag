@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-service-doctor-liveness-research]]"
 ---
 
-
-
 # `service-doctor-liveness` adr: `doctor reports live service truth; flapping is diagnosed before it is fixed` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -25,9 +23,10 @@ file on a transient identity-check miss; the machine-lock-versus-status-dir inte
 pre-yield lifespan failure unlinking the just-written file). The orphan-reap and failed-start
 cleanup half of #204 is owned by the landed machine-singleton campaign; this ADR decides the
 **residual**: making `doctor` tell the truth about a running service, and fixing the flapping
+
 - with the explicit discipline that the flapping causes are *confirmed by diagnosis before
-they are remediated*, since there are several and not all may fire on every host. Grounded in
-`2026-06-24-service-doctor-liveness-research`.
+  they are remediated*, since there are several and not all may fire on every host. Grounded in
+  `2026-06-24-service-doctor-liveness-research`.
 
 ## Considerations
 

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Make supervised start attach-or-spawn using the gate
 
 ## Scope

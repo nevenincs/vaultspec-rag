@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-torch-dependency-group-plan]]"
 ---
 
-
-
-
 # Add a no-mock test that a group target writes torch under the dependency-group and not project dependencies, with the cu130 index and sources block still written
 
 ## Scope

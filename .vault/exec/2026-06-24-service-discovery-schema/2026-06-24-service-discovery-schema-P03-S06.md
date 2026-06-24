@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-discovery-schema-plan]]"
 ---
 
-
-
-
 # Add a no-mock test asserting both writers emit the same schema and version and the same timestamp format and precision for started_at and last_heartbeat
 
 ## Scope

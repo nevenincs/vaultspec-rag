@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Add human and JSON result-shape tests for the enriched fields
 
 ## Scope

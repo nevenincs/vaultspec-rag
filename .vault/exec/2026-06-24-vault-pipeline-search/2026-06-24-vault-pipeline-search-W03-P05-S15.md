@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Implement the per-type result cap to prevent one type crowding the top-k
 
 ## Scope

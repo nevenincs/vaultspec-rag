@@ -8,8 +8,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
 # `service-hardware-singleton` audit: `hardening`
 
 ## Scope
@@ -116,9 +114,10 @@ fixed:
   The OS guarantees exclusion with no create/reclaim window and releases the lock automatically
   on process death - so there is no stale-file reclaim at all, no empty-lock deadlock, and no
   two-winner race. The Windows lock is taken at a high byte offset so the recorded pid (offset
-  0) stays readable for the refusal message. New regression tests: a dead-holder concurrent
+  0\) stays readable for the refusal message. New regression tests: a dead-holder concurrent
   race (N starts → one winner over the orphan path), a real lock-holding subprocess as the
   foreign holder, and release idempotency.
+
 - **MEDIUM (NEW, fixed): uncaught `os.link` `EXDEV`/non-NTFS error.** Moot under the OS-lock
   rewrite (no `os.link`); `acquire` now opens the file and locks it, with no cross-device path.
 
@@ -134,9 +133,9 @@ hygiene all confirmed clean) and found one more HIGH:
   the unlock->unlink window had its freshly-locked file deleted out from under it, and the next
   acquire created a fresh inode and locked it uncontended: two live holders (Windows was benign
   - unlink-while-open raises a sharing violation). The common `server stop`->`server start`
-  overlap triggers it. Fixed by NOT unlinking on release at all - the file's existence is not
-  the authority (the OS lock is), a lingering file is harmless, and the next acquirer overwrites
-  the stale pid. Dependent test assertion updated (release -> re-acquirable, not file-absent).
+    overlap triggers it. Fixed by NOT unlinking on release at all - the file's existence is not
+    the authority (the OS lock is), a lingering file is harmless, and the next acquirer overwrites
+    the stale pid. Dependent test assertion updated (release -> re-acquirable, not file-absent).
 
 The three-reviewer arc is itself the lesson: a file-`O_EXCL`/`os.link` lock with any manual
 file manipulation (create, reclaim, OR unlink) is inherently racy; an OS advisory lock with NO
@@ -168,5 +167,3 @@ the shutdown block's comment claims) is real and, if so, release on a pre-yield 
   This candidate has held across exactly one execution cycle (the leak, then the `_service_env`
   fix); per the codify rule it qualifies for promotion after the follow-up `S31` confirms it
   across the lifecycle-test fix, not before.
-
-

@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Carry status on VaultDocument and VaultChunk and write it to the Qdrant payload
 
 ## Scope

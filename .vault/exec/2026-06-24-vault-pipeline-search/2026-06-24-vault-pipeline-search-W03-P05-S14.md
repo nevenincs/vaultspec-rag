@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Compose the intent prior post-rerank and select the active profile in vault search
 
 ## Scope

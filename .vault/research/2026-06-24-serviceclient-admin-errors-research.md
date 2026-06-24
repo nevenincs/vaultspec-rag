@@ -7,8 +7,6 @@ modified: '2026-06-24'
 related: []
 ---
 
-
-
 # `serviceclient-admin-errors` research: `swallowed admin errors in the shared service client`
 
 The resident RAG service is reached through one import-light HTTP transport shared by both

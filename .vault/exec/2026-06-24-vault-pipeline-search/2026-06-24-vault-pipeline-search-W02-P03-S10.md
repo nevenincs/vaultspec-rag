@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Map related and status from Qdrant rows in the vault search path
 
 ## Scope

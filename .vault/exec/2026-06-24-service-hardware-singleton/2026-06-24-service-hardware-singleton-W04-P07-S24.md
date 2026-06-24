@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Adversarial: an unhealthy or corrupt qdrant holder is refused-attach with a named cause
 
 ## Scope

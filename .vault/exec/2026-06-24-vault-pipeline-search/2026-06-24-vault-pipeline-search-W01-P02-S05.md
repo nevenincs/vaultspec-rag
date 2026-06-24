@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Add the quality-marked integration harness driving a real index against the gold set
 
 ## Scope

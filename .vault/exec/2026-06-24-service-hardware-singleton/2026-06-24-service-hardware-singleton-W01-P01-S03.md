@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
 
-
-
-
 # Test that a non-ready child surfaces its cause instead of an opaque timeout
 
 ## Scope

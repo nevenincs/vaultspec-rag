@@ -9,9 +9,6 @@ related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
 ---
 
-
-
-
 # Regenerate the bundled CLI reference for the removed verbs
 
 ## Scope

@@ -7,15 +7,11 @@ modified: '2026-06-24'
 related: []
 ---
 
-
-
 # `service-doctor-liveness` research: `doctor truth and daemon flapping`
 
 GitHub issue **#204** reports two lifecycle gaps observed after a failed or crashed
-`server start`, plus a third symptom. (1) `server doctor --json` reports `ready: true,
-server_mode: true` with all dependencies `ready` while the daemon is dead, and at the same
-time its qdrant runtime block reads `{"mode":"local","url":null,"pid":null,"alive":null,
-"port":null}` - nothing is actually running. (2) A crashed daemon leaves an orphaned qdrant
+`server start`, plus a third symptom. (1) `server doctor --json` reports `ready: true, server_mode: true` with all dependencies `ready` while the daemon is dead, and at the same
+time its qdrant runtime block reads `{"mode":"local","url":null,"pid":null,"alive":null, "port":null}` - nothing is actually running. (2) A crashed daemon leaves an orphaned qdrant
 and an empty/stale discovery file with no cleanup. (3) The daemon "flaps": it comes up
 healthy and then, minutes later with no explicit stop, is gone. Concern (2) - orphan reap and
 failed-start cleanup - is being addressed by the landed machine-singleton hardening campaign
