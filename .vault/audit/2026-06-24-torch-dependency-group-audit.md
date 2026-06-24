@@ -39,3 +39,7 @@ Merge. Both actionable LOW findings are optional polish (reject empty group name
 ## Codification candidates
 
 None this review. The ADR's `managed-dependency-marker-records-location` is a candidate only, promoted after the constraint holds across a full execution cycle, per the codify discipline.
+
+## Resolution
+
+`empty-torch-group-accepted` (LOW) ADDRESSED: `_group_dependencies` now rejects an empty/whitespace group name with a clear conflict, covered by `test_empty_torch_group_is_rejected`. `inert-pin-warning-only-on-fresh-apply` (LOW) ADDRESSED: the inert-pin reminder now also fires on an idempotent re-run when torch is already in the requested group, covered by `test_rerun_torch_already_in_requested_group_warns_inert_pin`. `uninstall-coupled-to-block-state` (LOW) deferred as pre-existing and out-of-scope.

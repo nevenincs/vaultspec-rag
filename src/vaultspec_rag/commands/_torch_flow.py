@@ -256,6 +256,10 @@ def _ensure_torch_direct_dep(
                     f"to {requested}. Remove it from {dep_report.location} "
                     f"first if you want it managed in the group."
                 )
+            else:
+                # Already in the requested group: still remind the operator to
+                # enable it so the pin is not silently inert on a re-run.
+                report.warnings.append(_inert_pin_warning(torch_group))
     elif dep_report.action == "conflict":
         report.warnings.append(
             "torch-config patched, but vaultspec-rag could not add the direct "

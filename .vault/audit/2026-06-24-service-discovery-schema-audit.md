@@ -35,3 +35,7 @@ Optional follow-ups only; nothing blocks merge. (1) Add the unversioned-upgrade 
 ## Codification candidates
 
 None this review. The ADR's `discovery-file-is-a-versioned-interface` is a candidate only and is promoted after the constraint holds across a full execution cycle, per the codify discipline.
+
+## Resolution
+
+`test-coverage-unversioned-upgrade` (MEDIUM) ADDRESSED: added `test_unversioned_file_is_upgraded_on_first_heartbeat_tick`, which seeds a bare `{pid, port, started_at}` file and asserts `schema`/`version` appear after a heartbeat tick. `mirrored-staleness-constant` (LOW) deferred as out-of-scope pre-existing.

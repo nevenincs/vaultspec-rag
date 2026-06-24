@@ -1164,3 +1164,43 @@ class TestInstallTorchGroupPlacement:
             (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
         )
         assert "dependency-groups" not in parsed
+
+    def test_empty_torch_group_is_rejected(
+        self, consumer_workspace: Path
+    ) -> None:
+        """An empty/whitespace ``--torch-group`` is refused: torch is not
+        written into an empty-named group and the dep step reports a conflict.
+        """
+        report = install_run(
+            path=consumer_workspace, assume_yes=True, torch_group="   "
+        )
+        assert report.torch_direct_dep_action == "conflict"
+        parsed = tomlkit.parse(
+            (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        # No empty-named group table was created, and torch was placed nowhere.
+        assert "dependency-groups" not in parsed
+        project_deps = parsed["project"]["dependencies"]  # pyright: ignore[reportIndexIssue]
+        assert not any("torch" in str(e) for e in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
+
+    def test_rerun_torch_already_in_requested_group_warns_inert_pin(
+        self, consumer_workspace: Path
+    ) -> None:
+        """A re-run whose ``--torch-group`` matches the existing managed group
+        still reminds the operator to enable the group (the pin is otherwise
+        inert until the group is enabled for the resolve).
+        """
+        first = install_run(
+            path=consumer_workspace, assume_yes=True, torch_group="rag"
+        )
+        assert first.torch_direct_dep_action == "applied"
+
+        second = install_run(
+            path=consumer_workspace, assume_yes=True, torch_group="rag"
+        )
+        assert second.torch_direct_dep_action == "already"
+        assert second.torch_direct_dep_location == "[dependency-groups].rag"
+        assert any(
+            "enable that group" in w and "uv sync --group rag" in w
+            for w in second.warnings
+        ), second.warnings

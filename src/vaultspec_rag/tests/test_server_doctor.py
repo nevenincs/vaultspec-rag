@@ -73,8 +73,10 @@ def test_doctor_json_envelope_carries_both_axes(
     # No daemon expected => top-line tracks installed dependencies.
     assert data["ready"] == bool(snapshot["ready"])
     assert envelope["ok"] == data["ready"]
-    # Exit code mirrors the verdict (0 when ready, non-zero otherwise).
-    assert (result.exit_code == 0) == data["ready"]
+    # No daemon expected => exit 0 regardless of dependency readiness (the
+    # pre-install informational contract); the non-zero exit is reserved for a
+    # daemon that is expected but dead.
+    assert result.exit_code == 0
 
 
 def test_doctor_json_dependency_axis_is_bounded_three_dimensions(

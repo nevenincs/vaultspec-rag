@@ -364,6 +364,8 @@ def _group_dependencies(
     enabled for the resolve, but the placement itself is still a valid
     direct-dep surface.
     """
+    if not group.strip():
+        return None, "", ["--torch-group requires a non-empty group name"]
     location = f"{_GROUP_LOCATION_PREFIX}{group}"
     groups = doc.setdefault("dependency-groups", tomlkit.table())
     if not isinstance(groups, _TABLE_LIKE_TYPES):

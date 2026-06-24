@@ -65,13 +65,20 @@ def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, 
     return server, port
 
 
-def _free_port() -> int:
-    """Return a port number with nothing listening (connection-refused source)."""
+@pytest.fixture
+def refused_port() -> Iterator[int]:
+    """Yield a port that deterministically refuses connections.
+
+    A socket bound to an ephemeral port but never put into ``listen()`` rejects
+    every connect with ECONNREFUSED for as long as it is held - so there is no
+    bind/close/reuse window (which returning a closed port number would leave).
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
+    try:
+        yield sock.getsockname()[1]
+    finally:
+        sock.close()
 
 
 @pytest.fixture
@@ -113,8 +120,8 @@ class TestAdminErrorSurfacing:
             server.shutdown()
         assert result == {}
 
-    def test_unreachable_service_returns_none(self) -> None:
+    def test_unreachable_service_returns_none(self, refused_port: int) -> None:
         # Nothing listening on the port: the refused connection is the
         # service-down sentinel and must stay None, not an envelope.
-        result = _try_http_admin("list_projects", {}, _free_port())
+        result = _try_http_admin("list_projects", {}, refused_port)
         assert result is None

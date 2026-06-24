@@ -31,3 +31,7 @@ Merge. The implementation is minimal, correct, and fully grounded; the lone LOW 
 ## Codification candidates
 
 None this review. The ADR's `serviceclient-helpers-envelope-not-swallow` is a candidate only, promoted after the constraint holds across a full execution cycle, per the codify discipline.
+
+## Resolution
+
+`free-port-reuse-race` (LOW) ADDRESSED: the test now uses a `refused_port` fixture that holds a bound-but-not-listening socket open for the test, giving a deterministic connection-refused with no bind/close/reuse window.

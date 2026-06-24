@@ -68,10 +68,13 @@ def service_doctor(
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
-    # Exit non-zero when not ready so scripts (and a dead-daemon check) branch
-    # on the verdict, mirroring ``server status``. The envelope/render is
-    # emitted first so the operator always sees the detail.
-    if not overall_ready:
+    # Exit non-zero ONLY when a daemon is expected (a discovery file exists) but
+    # is not live - the actionable dead-daemon signal scripts branch on. A
+    # pre-install / no-daemon run keeps exit 0 even when dependencies are not yet
+    # ready, preserving the informational pre-install contract (callers that ran
+    # `doctor` as a non-gating probe relied on exit 0). The ``ready`` field and
+    # the JSON ``ok`` still report the honest verdict regardless of exit code.
+    if service.get("present") and not service.get("live"):
         raise typer.Exit(code=1)
 
 
@@ -216,7 +219,7 @@ def _render_live_service_axis(service: dict[str, object]) -> None:
         highlight=False,
     )
     heartbeat_age = service.get("heartbeat_age_seconds")
-    if isinstance(heartbeat_age, int | float):
+    if isinstance(heartbeat_age, int | float) and not isinstance(heartbeat_age, bool):
         suffix = " (stale)" if service.get("heartbeat_stale") else ""
         _cli.console.print(
             f"  heartbeat: {heartbeat_age:.0f}s ago{suffix}",

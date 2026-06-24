@@ -39,3 +39,7 @@ Resolve the MEDIUM before/with PR: make the doctor exit-code change a deliberate
 ## Codification candidates
 
 None this review. The ADR's `doctor-separates-installed-from-running` and `never-unlink-live-discovery-on-ambiguous-identity` are candidates only, promoted after the constraint holds across a full execution cycle.
+
+## Resolution
+
+`doctor-exit-code-backcompat` (MEDIUM) ADDRESSED: the non-zero exit is now gated to the daemon-expected-but-dead case (`present and not live`); a pre-install / no-daemon run keeps exit 0 even when dependencies are not ready, and the `ready`/`ok` fields still report the honest verdict. The doctor test was updated accordingly. `doctor-render-heartbeat-isinstance` (LOW) ADDRESSED: added a `not isinstance(..., bool)` guard on the heartbeat-age render. `breakaway-test-naming` (LOW) acknowledged and kept (cosmetic; the docstring is honest about what is asserted).

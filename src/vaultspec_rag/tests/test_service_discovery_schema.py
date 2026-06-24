@@ -97,3 +97,24 @@ class TestDiscoverySchema:
         assert list(status_dir.glob("*.tmp")) == []
         data = json.loads(_status_file().read_text(encoding="utf-8"))
         assert data["version"] == SERVICE_DISCOVERY_VERSION
+
+    def test_unversioned_file_is_upgraded_on_first_heartbeat_tick(self) -> None:
+        # A file written by an older parent (no schema/version) must gain the
+        # discriminator on the first tick (ADR D2). Seed a bare legacy file
+        # directly, then tick.
+        legacy = {
+            "pid": os.getpid(),
+            "port": 8766,
+            "started_at": "2026-06-24T10:23:52+00:00",
+        }
+        _status_file().write_text(json.dumps(legacy), encoding="utf-8")
+        token_prev = _m._SERVICE_TOKEN
+        _m._SERVICE_TOKEN = "test-token"
+        try:
+            _m._heartbeat_tick_sync()
+        finally:
+            _m._SERVICE_TOKEN = token_prev
+        data = json.loads(_status_file().read_text(encoding="utf-8"))
+        assert data["schema"] == SERVICE_DISCOVERY_SCHEMA
+        assert data["version"] == SERVICE_DISCOVERY_VERSION
+        assert _is_second_precision_offset_iso(data["last_heartbeat"])
