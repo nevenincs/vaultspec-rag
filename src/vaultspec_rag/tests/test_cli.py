@@ -31,9 +31,6 @@ from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..torch_config import TorchConfigAction
 
-if typing.TYPE_CHECKING:
-    from click.testing import Result
-
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
@@ -194,7 +191,7 @@ def _invoke_search_contract(
     tmp_path: Path,
     port: int,
     *extra: str,
-) -> Result:
+) -> typing.Any:
     return runner.invoke(
         app,
         [
@@ -2655,7 +2652,7 @@ class TestHelpCleanup:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _assert_clean(self, result: Result) -> None:
+    def _assert_clean(self, result: typing.Any) -> None:
         """Shared guard: no forbidden tokens in help output."""
         out = result.output
         for token in _FORBIDDEN_DOCSTRING_TOKENS:

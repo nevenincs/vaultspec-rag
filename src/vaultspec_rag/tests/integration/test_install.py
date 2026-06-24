@@ -617,8 +617,13 @@ class TestSafetyGuards:
         )
 
         original_root = _builtins._builtins_root
-        # NB: not a mock - rebinding a module function, restored below.
-        _builtins._builtins_root = lambda: fake_src
+
+        def _fake_root() -> Path:
+            return fake_src
+
+        # NB: not a mock - rebinding a module function via __dict__ (restored
+        # below); __dict__ assignment avoids retyping the module attribute.
+        _builtins.__dict__["_builtins_root"] = _fake_root
         try:
             target = tmp_path / "rules-target"
             target.mkdir()
@@ -631,7 +636,7 @@ class TestSafetyGuards:
             assert seeded.is_file()
             assert seeded.resolve().is_relative_to(target.resolve())
         finally:
-            _builtins._builtins_root = original_root
+            _builtins.__dict__["_builtins_root"] = original_root
 
 
 @pytest.fixture()
