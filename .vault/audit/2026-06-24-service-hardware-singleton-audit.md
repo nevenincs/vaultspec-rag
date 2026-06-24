@@ -143,6 +143,20 @@ file manipulation (create, reclaim, OR unlink) is inherently racy; an OS advisor
 unlink is the correct primitive for a machine singleton. This generalizes the `W04.P09.S31`
 codify candidate.
 
+**Fourth pass (broad sweep): PASS - the review loop converged.** After three fixed HIGHs, the
+fourth pass confirmed the release fix converged (a released-but-present file is correctly seen
+as free; no leak, no wrong-pid report) and swept the under-covered surfaces - the supervisor
+drain thread (no full-pipe deadlock; bounded join; daemon thread), `start()` named-cause
+ready-wait, attach mode (an attached server is never killed; `stop()` early-returns on no
+child), the detection/decision/reap policy, the CLI/lifespan wiring and layering, and all eight
+test modules (real, no mocks/skips/tautologies, no leaked threads/servers/subprocesses). It
+found nothing above LOW. The single LOW is the already-tracked `W04.P09.S28`: the lifespan
+acquires the lock before `yield` but the release-running `finally` starts at the `yield`, so a
+startup failure in between (qdrant start, model load) leaks the held lock. Harmless for the
+shipping daemon (process exit OS-releases the lock - the crash-safety design); it only bites an
+in-process lifespan REUSE path. `S28` should decide whether that embedded-reuse contract (which
+the shutdown block's comment claims) is real and, if so, release on a pre-yield failure.
+
 ## Codification candidates
 
 - **Source:** the `W04.P09.S31` finding (writers target the real machine path without storage

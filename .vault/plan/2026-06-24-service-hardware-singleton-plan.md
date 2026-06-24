@@ -99,7 +99,7 @@ Run the full hardening gate and record the adversarial results in an audit.
 
 Track and manage the gaps surfaced during execution: lifespan lock-release robustness, live-daemon lifecycle test coverage, and the server stop --port operability gap.
 
-- [ ] `W04.P09.S28` - Release the machine lock on a pre-yield startup failure so a failed bring-up frees the singleton immediately, not only via the next start's stale reclaim; `src/vaultspec_rag/server/_lifespan.py`.
+- [ ] `W04.P09.S28` - Decide whether in-process lifespan reuse is a supported contract; if so, release the machine lock on a pre-yield startup failure (acquire inside the try, or release-on-failure around the qdrant/model startup) - the shipping daemon already self-heals via OS release on process exit; `src/vaultspec_rag/server/_lifespan.py`.
 - [ ] `W04.P09.S29` - Make the qdrant binary resolvable under the isolated test STATUS_DIR so the service-lifecycle integration tests exercise the live daemon attach and lock path instead of fast-failing on the binary guard in this env; `src/vaultspec_rag/tests/integration/_helpers.py`.
 - [ ] `W04.P09.S30` - Add --port to server stop and align stop with the status-dir discovery divergence (research F7) so a non-default-port service is stoppable; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [ ] `W04.P09.S31` - Codify that any test or caller of write_qdrant_identity or acquire_machine_lock must isolate VAULTSPEC_RAG_QDRANT_STORAGE_DIR or it writes the real machine-global path, after a leaked identity sidecar was observed; `.vaultspec/rules/rules/`.
