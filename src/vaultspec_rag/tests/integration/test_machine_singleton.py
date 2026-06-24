@@ -80,13 +80,18 @@ def isolated_lock(tmp_path: Path) -> Iterator[Path]:
 
 
 class TestMachineLock:
-    def test_acquire_then_release(self, isolated_lock: Path) -> None:
+    def test_acquire_release_then_reacquire(self, isolated_lock: Path) -> None:
         acquired, holder = acquire_machine_lock()
         assert acquired is True
         assert holder == os.getpid()
         assert isolated_lock.exists()
         release_machine_lock()
-        assert not isolated_lock.exists()
+        # The file persists (its existence is not the authority); releasing
+        # frees the OS lock, so the lock is immediately re-acquirable.
+        reacquired, holder2 = acquire_machine_lock()
+        assert reacquired is True
+        assert holder2 == os.getpid()
+        release_machine_lock()
 
     def test_second_acquire_refused_while_foreign_holder_alive(
         self, isolated_lock: Path

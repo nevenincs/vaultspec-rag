@@ -141,7 +141,16 @@ def acquire_machine_lock() -> tuple[bool, int]:
 
 
 def release_machine_lock() -> None:
-    """Release the machine-scoped service lock if this process holds it."""
+    """Release the machine-scoped service lock if this process holds it.
+
+    Unlocks and closes the fd; deliberately does NOT unlink the lock file. The
+    file's existence is not the authority (the OS lock is), and unlinking after
+    unlocking is racy: a contender that acquires in the unlock->unlink window
+    would have its freshly-locked file deleted out from under it, and the next
+    acquire would create a fresh inode and lock it uncontended - two live
+    holders. The lingering file is harmless; the next acquirer overwrites the
+    stale pid, and a dead/empty file is always acquirable.
+    """
     path = machine_lock_path()
     fd = _held_fds.pop(str(path), None)
     if fd is None:
@@ -149,8 +158,6 @@ def release_machine_lock() -> None:
     _unlock(fd)
     with contextlib.suppress(OSError):
         os.close(fd)
-    with contextlib.suppress(OSError):
-        path.unlink()
 
 
 def machine_lock_live_holder() -> int:

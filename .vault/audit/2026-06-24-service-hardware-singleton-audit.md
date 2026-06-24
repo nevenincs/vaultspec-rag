@@ -122,12 +122,26 @@ fixed:
 - **MEDIUM (NEW, fixed): uncaught `os.link` `EXDEV`/non-NTFS error.** Moot under the OS-lock
   rewrite (no `os.link`); `acquire` now opens the file and locks it, with no cross-device path.
 
-The two-reviewer arc itself is a lesson: a file-`O_EXCL`/`os.link` lock with manual stale
-reclaim is inherently racy; OS advisory locks are the correct primitive for a machine
-singleton. This generalizes the `W04.P09.S31` codify candidate.
-- **LOW-2:** resolved by the HIGH-1 fix (empty lock is now reclaimable, so the CLI pre-check
-  and daemon acquire agree). **LOW-3** (ADR identifiers in comments) is consistent with the
-  pervasive existing convention in this codebase; left as-is.
+- **LOW-2:** resolved by the rewrite (no empty-lock state). **LOW-3** (ADR identifiers in
+  comments) is consistent with the pervasive existing convention in this codebase; left as-is.
+
+**Third pass** (on the OS-lock rewrite specifically) verified the lock semantics empirically on
+a win32 host (past-EOF lock, foreign-holder block, dead-holder auto-release, fd lifetime, test
+hygiene all confirmed clean) and found one more HIGH:
+
+- **HIGH (NEW, fixed): POSIX unlink-race in `release_machine_lock`.** Release unlocked, closed
+  the fd, then `unlink`-ed the file - three non-atomic steps. On POSIX a contender acquiring in
+  the unlock->unlink window had its freshly-locked file deleted out from under it, and the next
+  acquire created a fresh inode and locked it uncontended: two live holders (Windows was benign
+  - unlink-while-open raises a sharing violation). The common `server stop`->`server start`
+  overlap triggers it. Fixed by NOT unlinking on release at all - the file's existence is not
+  the authority (the OS lock is), a lingering file is harmless, and the next acquirer overwrites
+  the stale pid. Dependent test assertion updated (release -> re-acquirable, not file-absent).
+
+The three-reviewer arc is itself the lesson: a file-`O_EXCL`/`os.link` lock with any manual
+file manipulation (create, reclaim, OR unlink) is inherently racy; an OS advisory lock with NO
+unlink is the correct primitive for a machine singleton. This generalizes the `W04.P09.S31`
+codify candidate.
 
 ## Codification candidates
 
