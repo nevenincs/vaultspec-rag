@@ -81,8 +81,8 @@ Add a crash-safe machine-scoped lock and make server start detect an existing he
 
 Reap a provably-dead managed Qdrant orphan before spawning so a leaked prior child cannot block startup.
 
-- [ ] `W03.P06.S20` - Reap a provably-dead managed qdrant orphan before spawning; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W03.P06.S21` - Integration-test that a dead orphan is reaped and a live holder is never killed; `src/vaultspec_rag/tests/integration/test_qdrant_orphan_reap.py`.
+- [x] `W03.P06.S20` - Reap a provably-dead managed qdrant orphan before spawning; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W03.P06.S21` - Integration-test that a dead orphan is reaped and a live holder is never killed; `src/vaultspec_rag/tests/integration/test_qdrant_orphan_reap.py`.
 
 ## Wave `W04` - Adversarial verification and hardening
 

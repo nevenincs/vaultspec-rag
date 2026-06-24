@@ -584,6 +584,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
         decide_qdrant_action,
         probe_qdrant_endpoint,
         read_qdrant_identity,
+        reap_qdrant_orphan,
         resolve_binary,
         write_qdrant_identity,
     )
@@ -625,15 +626,19 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "vaultspec-rag server start --local-only"
         )
     if action == "reap_then_spawn":
-        # Automatic reaping lands in W03.P06; until then, refuse with the owner
-        # pointer rather than spawn a competitor on the held storage.
-        raise RuntimeError(
-            f"qdrant on port {qport}: {reason}. Automatic orphan reaping is not "
-            "yet enabled; stop the orphaned qdrant process, then retry; or run "
-            "local-only: vaultspec-rag server start --local-only"
-        )
+        target = identity.qdrant_pid if identity is not None else 0
+        logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
+        if target <= 0 or not reap_qdrant_orphan(target):
+            raise RuntimeError(
+                f"qdrant orphan holding port {qport} could not be reaped "
+                f"(child pid {target}); stop it manually, then retry; or run "
+                "local-only: vaultspec-rag server start --local-only"
+            )
+        logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
+        # fall through to the spawn path below.
 
-    # action == "spawn": resolve the binary and start a fresh managed child.
+    # action in ("spawn", "reap_then_spawn" after a successful reap): resolve
+    # the binary and start a fresh managed child.
     resolved = resolve_binary()
     if resolved is None:
         raise RuntimeError(
@@ -695,7 +700,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
         storage_path=str(storage_dir),
         version=supervisor.server_version() or QDRANT_SERVER_VERSION,
         owner_pid=os.getpid(),
-        http_port=int(cfg.qdrant_port),
+        http_port=qport,
+        qdrant_pid=supervisor.pid or 0,
     )
     return supervisor
 

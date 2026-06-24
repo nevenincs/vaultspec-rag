@@ -13,6 +13,7 @@ Resolution order for the binary the service will execute:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -49,6 +50,7 @@ __all__ = [
     "qdrant_identity_path",
     "read_manifest",
     "read_qdrant_identity",
+    "reap_qdrant_orphan",
     "resolve_binary",
     "verify_attachable",
     "write_qdrant_identity",
@@ -231,12 +233,16 @@ class QdrantIdentity:
         version: The managed server version that was started.
         owner_pid: PID of the service process that spawned the Qdrant child.
         http_port: The REST port the managed server was started on.
+        qdrant_pid: PID of the Qdrant child process itself - the reap target when
+            the owner is dead but the child still holds the port. ``0`` when the
+            record predates this field (treated as "unknown, cannot reap").
     """
 
     storage_path: str
     version: str
     owner_pid: int
     http_port: int
+    qdrant_pid: int = 0
 
 
 def qdrant_identity_path() -> Path:
@@ -269,6 +275,7 @@ def read_qdrant_identity() -> QdrantIdentity | None:
             version=str(data["version"]),
             owner_pid=int(data["owner_pid"]),
             http_port=int(data["http_port"]),
+            qdrant_pid=int(data.get("qdrant_pid", 0)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         logger.debug("qdrant identity sidecar incomplete at %s: %s", path, exc)
@@ -311,12 +318,55 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def reap_qdrant_orphan(pid: int, *, wait_seconds: float = 5.0) -> bool:
+    """Terminate an orphaned managed-Qdrant process by pid; report success.
+
+    Used only after the orphan has been positively classified (the recorded
+    owner is dead but the child still holds the port). Terminates gracefully,
+    escalating to a hard kill, then verifies the pid is gone. A non-positive or
+    already-dead pid is a no-op that reports success.
+
+    Returns:
+        ``True`` when the pid is no longer alive after the attempt.
+    """
+    import time as _time
+
+    if pid <= 0:
+        return False
+    if not pid_alive(pid):
+        return True
+    if sys.platform == "win32":
+        import subprocess
+
+        subprocess.run(  # fixed argv, no shell, trusted pid
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        import signal
+
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+        deadline = _time.monotonic() + wait_seconds
+        while _time.monotonic() < deadline and pid_alive(pid):
+            _time.sleep(0.1)
+        if pid_alive(pid):
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+    deadline = _time.monotonic() + wait_seconds
+    while _time.monotonic() < deadline and pid_alive(pid):
+        _time.sleep(0.1)
+    return not pid_alive(pid)
+
+
 def write_qdrant_identity(
     *,
     storage_path: str,
     version: str,
     owner_pid: int,
     http_port: int,
+    qdrant_pid: int = 0,
 ) -> Path:
     """Atomically write the managed-Qdrant identity sidecar.
 
@@ -338,6 +388,7 @@ def write_qdrant_identity(
                 "version": version,
                 "owner_pid": owner_pid,
                 "http_port": http_port,
+                "qdrant_pid": qdrant_pid,
             }
         ),
         encoding="utf-8",
