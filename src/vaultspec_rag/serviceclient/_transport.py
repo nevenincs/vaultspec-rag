@@ -369,7 +369,12 @@ def _try_http_admin(
             port,
             exc_info=True,
         )
-        return {}
+        cls = exc.__class__.__name__
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP admin call on port {port} failed: {cls}: {exc}",
+        }
 
 
 def _try_http_code_file(
