@@ -77,17 +77,19 @@ lock, the CLI `server start`/`stop` lifecycle, and the daemon lifespan, plus the
 - The plan's S27 scope names `-hardening-audit.md`; the CLI scaffolded the canonical
   `2026-06-24-service-hardware-singleton-audit.md`. Treat this file as the feature's audit.
 
-### Code-review outcome (vaultspec-code-reviewer, resolved)
+### Code-review outcome (two vaultspec-code-reviewer passes, resolved)
 
-The mandatory review returned one HIGH (merge blocker) and three MEDIUM; all blockers are
-fixed and re-verified (40-test gate green):
+Two independent review passes ran. All HIGH/MEDIUM blockers are fixed and re-verified
+(42-test gate green). The lock went through three designs across the reviews, landing on an
+OS advisory lock as the correct primitive.
 
-- **HIGH-1 (fixed): empty-lock crash deadlock.** The `O_EXCL`-create-then-write lock could be
-  left empty by a crash in the write window, which the prior mid-write-race fix treated as
-  permanently held - a machine-wide deadlock. Reworked `acquire_machine_lock` to claim by
-  `os.link`-ing a temp file that already contains the pid, so the lock is never observably
-  empty; a holder-0 file is now only genuine corruption and is safely reclaimable. Regression
-  test added.
+**First pass** returned one HIGH and three MEDIUM:
+
+- **HIGH-1 (superseded by the second-pass rewrite): empty-lock crash deadlock.** The
+  `O_EXCL`-create-then-write lock could be left empty by a crash in the write window, which the
+  prior mid-write-race fix treated as permanently held - a machine-wide deadlock. First fixed
+  by claiming via `os.link` of a pid-bearing temp file; the second pass then found that fix
+  still racy (below) and it was replaced by the OS-lock design.
 - **MEDIUM-1 (fixed): reap of a recycled pid.** The reaper killed `qdrant_pid` without
   confirming it was still a qdrant process; a recycled pid could be an unrelated process.
   Added `pid_image_is_qdrant` and gated the reap on it (refuse rather than kill a non-qdrant
@@ -99,7 +101,30 @@ fixed and re-verified (40-test gate green):
   pid can read as a live `managed_running` owner; data safety holds (health/version/storage
   gates), but the ownership proof should add a start-time/nonce.
 - **LOW-1 (tracked `W04.P09.S33`): reap-to-spawn bind race.** A short post-reap settle before
-  spawn would make it deterministic; today it degrades to a named failure.
+  spawn would make it deterministic; today it degrades to a named failure. (Separately, the
+  second pass's note about a timing-fragile 2s sleep in the race test was resolved by the
+  race-worker rewrite below - the OS lock is held for the worker's lifetime, no sleep needed.)
+
+**Second pass** verified the first three fixes and found a NEW HIGH plus a MEDIUM, both now
+fixed:
+
+- **HIGH (NEW, fixed): two-winner reclaim race.** The `os.link` *fresh-claim* was exclusive,
+  but the stale-lock *reclaim* path (unlink-then-retry, the orphan-recovery case) still let one
+  contender unlink another's freshly-won lock - a real double-acquire of the machine gate.
+  **Resolved by replacing the whole file-based create/reclaim scheme with an OS advisory lock**
+  (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows) held for the holder's process lifetime.
+  The OS guarantees exclusion with no create/reclaim window and releases the lock automatically
+  on process death - so there is no stale-file reclaim at all, no empty-lock deadlock, and no
+  two-winner race. The Windows lock is taken at a high byte offset so the recorded pid (offset
+  0) stays readable for the refusal message. New regression tests: a dead-holder concurrent
+  race (N starts → one winner over the orphan path), a real lock-holding subprocess as the
+  foreign holder, and release idempotency.
+- **MEDIUM (NEW, fixed): uncaught `os.link` `EXDEV`/non-NTFS error.** Moot under the OS-lock
+  rewrite (no `os.link`); `acquire` now opens the file and locks it, with no cross-device path.
+
+The two-reviewer arc itself is a lesson: a file-`O_EXCL`/`os.link` lock with manual stale
+reclaim is inherently racy; OS advisory locks are the correct primitive for a machine
+singleton. This generalizes the `W04.P09.S31` codify candidate.
 - **LOW-2:** resolved by the HIGH-1 fix (empty lock is now reclaimable, so the CLI pre-check
   and daemon acquire agree). **LOW-3** (ADR identifiers in comments) is consistent with the
   pervasive existing convention in this codebase; left as-is.
