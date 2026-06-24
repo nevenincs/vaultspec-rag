@@ -72,10 +72,10 @@ Make the resident service one-per-machine (D1) via a crash-safe machine-scoped l
 
 Add a crash-safe machine-scoped lock and make server start detect an existing healthy service machine-wide and refuse to spawn a second.
 
-- [ ] `W03.P05.S16` - Add a crash-safe machine-scoped service lock under the managed dir; `src/vaultspec_rag/cli/_process.py`.
+- [x] `W03.P05.S16` - Add a crash-safe machine-scoped service lock under the managed dir; `src/vaultspec_rag/cli/_process.py`.
 - [ ] `W03.P05.S17` - Make server start detect an existing healthy machine service and refuse with a pointer; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `W03.P05.S18` - Reclaim a stale machine lock held by a dead owner on start; `src/vaultspec_rag/cli/_process.py`.
-- [ ] `W03.P05.S19` - Integration-test that a second start refuses and a stale lock is reclaimed; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
+- [x] `W03.P05.S18` - Reclaim a stale machine lock held by a dead owner on start; `src/vaultspec_rag/cli/_process.py`.
+- [x] `W03.P05.S19` - Integration-test that a second start refuses and a stale lock is reclaimed; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
 
 ### Phase `W03.P06` - Orphan reaping on start
 

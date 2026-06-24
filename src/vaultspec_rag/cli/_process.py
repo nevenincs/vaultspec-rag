@@ -41,7 +41,74 @@ __all__ = [
     "_service_child_env",
     "_spawn_service",
     "_terminate_pid",
+    "acquire_machine_lock",
+    "machine_lock_path",
+    "release_machine_lock",
 ]
+
+_MACHINE_LOCK_FILENAME = "service.lock"
+
+
+def machine_lock_path() -> Path:
+    """Path of the machine-scoped service lock.
+
+    Lives alongside the machine-global managed Qdrant storage (the shared
+    hardware resource), not under the per-instance status dir, so it is
+    machine-wide even when ``VAULTSPEC_RAG_STATUS_DIR`` is overridden - which is
+    exactly how a second instance (e.g. the dashboard's project-local status
+    dir) would otherwise slip past a status-dir-scoped guard. The
+    ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR`` knob still relocates it for tests.
+    """
+    from ..config import get_config
+
+    storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
+    return storage.parent / _MACHINE_LOCK_FILENAME
+
+
+def _machine_lock_holder(path: Path) -> int:
+    """Return the pid recorded in the lock file, or 0 when absent/unreadable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    pid = data.get("pid") if isinstance(data, dict) else None
+    return int(pid) if isinstance(pid, int) else 0
+
+
+def acquire_machine_lock() -> tuple[bool, int]:
+    """Acquire the machine-scoped service lock; report success and the holder.
+
+    Crash-safe: a lock left by a dead holder (the orphan class this very guard
+    addresses) is reclaimed. Returns ``(True, our_pid)`` on success, or
+    ``(False, holder_pid)`` when a *live* process already holds it - the signal
+    that a second resident service must not start.
+    """
+    path = machine_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"pid": os.getpid()})
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            holder = _machine_lock_holder(path)
+            if holder and holder != os.getpid() and _is_pid_alive(holder):
+                return (False, holder)
+            # Stale (dead holder) or our own prior lock: reclaim and retry.
+            with contextlib.suppress(OSError):
+                path.unlink()
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        return (True, os.getpid())
+    return (False, _machine_lock_holder(path))
+
+
+def release_machine_lock() -> None:
+    """Release the machine-scoped service lock if this process holds it."""
+    path = machine_lock_path()
+    if _machine_lock_holder(path) == os.getpid():
+        with contextlib.suppress(OSError):
+            path.unlink()
 
 
 def _is_pid_alive(pid: int) -> bool:
