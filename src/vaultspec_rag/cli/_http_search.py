@@ -25,9 +25,7 @@ from ..serviceclient._transport import (
     _logs_route_path,
     _timeout_diagnostics,
     _try_http_admin,
-    _try_http_benchmark,
     _try_http_code_file,
-    _try_http_quality,
     _try_http_reindex,
     _try_http_search,
 )
@@ -40,9 +38,7 @@ __all__ = [
     "_logs_route_path",
     "_timeout_diagnostics",
     "_try_http_admin",
-    "_try_http_benchmark",
     "_try_http_code_file",
-    "_try_http_quality",
     "_try_http_reindex",
     "_try_http_search",
 ]

@@ -34,9 +34,7 @@ __all__ = [
     "_logs_route_path",
     "_timeout_diagnostics",
     "_try_http_admin",
-    "_try_http_benchmark",
     "_try_http_code_file",
-    "_try_http_quality",
     "_try_http_reindex",
     "_try_http_search",
     "_try_http_vault_document",
@@ -414,62 +412,6 @@ def _try_http_vault_document(
         port,
         timeout=timeout,
     )
-
-
-def _try_http_benchmark(
-    project_root: str,
-    n_queries: int,
-    port: int,
-    timeout: float | None = None,
-) -> dict[str, object] | None:
-    """POST the daemon's ``/benchmark`` route.
-
-    Thin forwarder over :func:`_do_http_call`; the daemon owns the benchmark
-    logic. Refused connections fall through to ``None``.
-    """
-    try:
-        payload: dict[str, object] = {
-            "project_root": project_root,
-            "n_queries": n_queries,
-        }
-        res = _do_http_call(port, "/benchmark", payload, timeout=timeout)
-        return res if res is not None else {}
-    except Exception as exc:
-        if _is_connection_refused(exc):
-            logger.debug(
-                "HTTP benchmark on port %s: connection refused (%s)", port, exc
-            )
-            return None
-        cls = exc.__class__.__name__
-        return {
-            "ok": False,
-            "error": "http_call_failed",
-            "message": f"HTTP benchmark on port {port} failed: {cls}: {exc}",
-        }
-
-
-def _try_http_quality(
-    port: int,
-    timeout: float | None = None,
-) -> dict[str, object] | None:
-    """POST the daemon's ``/quality`` route.
-
-    Thin forwarder over :func:`_do_http_call`; the daemon owns the quality
-    probe. Refused connections fall through to ``None``.
-    """
-    try:
-        res = _do_http_call(port, "/quality", {}, timeout=timeout)
-        return res if res is not None else {}
-    except Exception as exc:
-        if _is_connection_refused(exc):
-            logger.debug("HTTP quality on port %s: connection refused (%s)", port, exc)
-            return None
-        cls = exc.__class__.__name__
-        return {
-            "ok": False,
-            "error": "http_call_failed",
-            "message": f"HTTP quality on port {port} failed: {cls}: {exc}",
-        }
 
 
 def _get_search_timeout(timeout: float | None) -> float:

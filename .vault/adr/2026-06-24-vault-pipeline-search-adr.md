@@ -214,6 +214,26 @@ role-weighted, baseline-anchored benchmark.
   document corpora; the lineage rollup and grouped view become natural follow-ons; the
   intent-aware benchmark becomes the standing guard against ranking regressions.
 
+## Implementation erratum (2026-06-24)
+
+Two decisions changed shape at implementation time and are recorded here so the ADR matches
+what shipped (surfaced by the final code review):
+
+- **CLI surface is query tokens, not dedicated flags (amends D1/D5/D6).** D1's
+  `--intent orientation|debug` flag, D5's `--status` control, and D6's repeatable doc-type
+  flag are exposed on the CLI as inline query tokens - `intent:orientation`,
+  `intent:debugging`, `status:active|accepted|...`, and `type:adr,plan` - parsed by the
+  query parser, not as new `handle_search` options. A dedicated flag would breach the
+  project's frozen `max-args = 23` lint ratchet (a codified "never raise" gate), and the
+  token form is consistent with the existing `type:`/`lang:` filter-token UX. The explicit
+  `intent` parameter is still carried end-to-end on the HTTP `/search` route and the MCP
+  `search_vault` tool for programmatic callers; only the operator CLI uses the token. The
+  doc-type union additionally accepts a comma list on the existing `--doc-type` option.
+
+- **The second profile is named `debugging`, not `debug` (amends D1/D3 prose).** Config,
+  the query set, the rubric, and the tests standardized on `debugging`; the CLI accepts
+  `debug` as an alias. The D1/D3 prose wording `debug` is an erratum.
+
 ## Codification candidates
 
 - **Rule slug:** `vault-ranking-prior-is-intent-scoped`.

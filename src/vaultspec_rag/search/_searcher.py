@@ -381,7 +381,20 @@ class VaultSearcher:
         if not cfg.vault_intent_ranking_enabled:
             return None
         name = (intent or cfg.vault_intent_default or "orientation").strip().lower()
-        return cfg.intent_weight_profiles.get(name)
+        # Accept the ADR-prose spelling ``debug`` as an alias for the canonical
+        # ``debugging`` profile so a literal ``intent:debug`` is not a silent no-op.
+        if name == "debug":
+            name = "debugging"
+        profile = cfg.intent_weight_profiles.get(name)
+        if profile is None and intent is not None:
+            # An explicitly requested intent with no shipped profile (e.g. a
+            # typo, or the deferred ``implementation`` profile) silently falls
+            # back to the bare-reranker ordering; log it so it is diagnosable.
+            logger.debug(
+                "intent %r has no ranking profile; using bare-reranker ordering",
+                intent,
+            )
+        return profile
 
     def _apply_intent_prior(
         self, results: list[SearchResult], intent: str | None
