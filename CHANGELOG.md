@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.24](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.23...vaultspec-rag-v0.2.24) (2026-06-24)
+
+
+### Features
+
+* **install:** optional dependency-group placement for managed torch ([#186](https://github.com/wgergely/vaultspec-rag/issues/186)) ([5e91195](https://github.com/wgergely/vaultspec-rag/commit/5e911959596c43bd0b5d4183dac6b8ac95391d67))
+* **qdrant:** auto-reap managed orphan before spawn (W03.P06) ([b992b61](https://github.com/wgergely/vaultspec-rag/commit/b992b6166df3b48911c4c427667994c4f0d9abbc))
+* **qdrant:** capture supervised child output and diagnose non-ready exits (W01.P01) ([581b558](https://github.com/wgergely/vaultspec-rag/commit/581b558ddacbf35ba5640dbf2536a3023f362c5f))
+* **qdrant:** verified attach-not-spawn + detection/identity primitives (W01.P02, W02) ([5564677](https://github.com/wgergely/vaultspec-rag/commit/55646778ec3cd320bb48f0b9a1ae02af4a965b20))
+* **search:** intent-aware pipeline-role ranking for vault search ([c02c12c](https://github.com/wgergely/vaultspec-rag/commit/c02c12cff9505f5283dc9c37b08696416a791fe8))
+* **serviceclient:** surface admin failures as a structured envelope ([#199](https://github.com/wgergely/vaultspec-rag/issues/199)) ([d87d190](https://github.com/wgergely/vaultspec-rag/commit/d87d19004e54e50ec2505c0479e28e0a9788119f))
+* **service:** crash-safe machine-scoped service lock primitive (W03.P05) ([ab12f52](https://github.com/wgergely/vaultspec-rag/commit/ab12f525900512fd0ed48db4aa34b6e09a414fad))
+* **service:** doctor reports live truth; daemon survives its launching shell ([#204](https://github.com/wgergely/vaultspec-rag/issues/204)) ([ffee70e](https://github.com/wgergely/vaultspec-rag/commit/ffee70e65f01a018b6d934efe5e0fad297424ed5))
+* **service:** machine-singleton wiring + adversarial verification gate (W03.P05.S17, W04) ([8747786](https://github.com/wgergely/vaultspec-rag/commit/8747786796d44c7bcb2f5e01b434da003253a008))
+* **service:** version and document the discovery file as a stable interface ([#190](https://github.com/wgergely/vaultspec-rag/issues/190)) ([a201f6c](https://github.com/wgergely/vaultspec-rag/commit/a201f6c4b762398f8da74abde9f337947e6bffef))
+
+
+### Bug Fixes
+
+* **ci:** format vault docs and clear lint/type/test gates on the bundle ([04c16e0](https://github.com/wgergely/vaultspec-rag/commit/04c16e0aae0ef891e237a4d1ba0dbcc0f78ec181))
+* **deps,types:** restore typer 0.26.7 and clear strict basedpyright errors ([551cd3b](https://github.com/wgergely/vaultspec-rag/commit/551cd3b6f3781307a458bb956deda4a76df59f2b))
+* **lint:** move annotation-only pathlib.Path into TYPE_CHECKING (_models) ([9266fe1](https://github.com/wgergely/vaultspec-rag/commit/9266fe1f391ba093b81795ee5ab97d2649072bcf))
+* **review:** address audit MEDIUM/LOW findings across the four features ([5f6cd63](https://github.com/wgergely/vaultspec-rag/commit/5f6cd63e6da9ca9643fae08a99f2fc5d4beb82bd))
+* **search:** address code-review findings (HIGH-1, HIGH-2, MEDIUM-2) ([801d959](https://github.com/wgergely/vaultspec-rag/commit/801d959339d305677a39db983de9bca81fc1c9c6))
+* **service:** drop unlink on machine-lock release (3rd review HIGH) ([dcfa20f](https://github.com/wgergely/vaultspec-rag/commit/dcfa20f0ad330a16f0aebc242a6fd3c4e5276350))
+* **service:** replace machine lock with OS advisory lock (2nd review HIGH) ([5bdf47a](https://github.com/wgergely/vaultspec-rag/commit/5bdf47a2312b186beb5eae4ef3589ba632310fe7))
+* **service:** resolve code-review HIGH/MEDIUM in machine-singleton hardening ([689c2fa](https://github.com/wgergely/vaultspec-rag/commit/689c2fafac5bb1c1a497716171eb6e2e0985e3aa))
+* **ty:** clear strict ty errors in test_cli and test_install ([8a13f29](https://github.com/wgergely/vaultspec-rag/commit/8a13f29f5e8029d1cfd06aeb82bcfe25f5ca5d25))
+
 ## [0.2.23](https://github.com/wgergely/vaultspec-rag/compare/vaultspec-rag-v0.2.22...vaultspec-rag-v0.2.23) (2026-06-21)
 
 
