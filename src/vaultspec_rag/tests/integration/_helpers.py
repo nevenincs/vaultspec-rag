@@ -81,6 +81,14 @@ def _service_env(
     saved: dict[str, str | None] = {env_key: os.environ.get(env_key)}
     os.environ[env_key] = str(tmp_path)
 
+    # Isolate the machine-global Qdrant storage too: the machine-scoped service
+    # lock is co-located with it, so without this a test daemon would acquire
+    # the real machine lock and collide with a real service or a sibling test.
+    storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    if storage_key not in (env_overrides or {}):
+        saved[storage_key] = os.environ.get(storage_key)
+        os.environ[storage_key] = str(tmp_path / "qdrant-storage")
+
     if env_overrides:
         for k, v in env_overrides.items():
             saved[k] = os.environ.get(k)

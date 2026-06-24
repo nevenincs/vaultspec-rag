@@ -73,7 +73,7 @@ Make the resident service one-per-machine (D1) via a crash-safe machine-scoped l
 Add a crash-safe machine-scoped lock and make server start detect an existing healthy service machine-wide and refuse to spawn a second.
 
 - [x] `W03.P05.S16` - Add a crash-safe machine-scoped service lock under the managed dir; `src/vaultspec_rag/cli/_process.py`.
-- [ ] `W03.P05.S17` - Make server start detect an existing healthy machine service and refuse with a pointer; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `W03.P05.S17` - Make server start detect an existing healthy machine service and refuse with a pointer; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `W03.P05.S18` - Reclaim a stale machine lock held by a dead owner on start; `src/vaultspec_rag/cli/_process.py`.
 - [x] `W03.P05.S19` - Integration-test that a second start refuses and a stale lock is reclaimed; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
 
@@ -92,17 +92,26 @@ Prove the backend serves correctly under multi-user, multi-repo, adversarial con
 
 Drive concurrent multi-start races, orphan/lock injection, unhealthy/corrupt-Qdrant injection, and multi-repo concurrent load against real service plumbing.
 
-- [ ] `W04.P07.S22` - Adversarial: N concurrent starts yield exactly one service and one qdrant; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
-- [ ] `W04.P07.S23` - Adversarial: an injected held port or storage lock yields fast-fail or reap, never a competitor; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
-- [ ] `W04.P07.S24` - Adversarial: an unhealthy or corrupt qdrant holder is refused-attach with a named cause; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
-- [ ] `W04.P07.S25` - Adversarial: concurrent multi-repo search and index load through one service holds under saturation; `src/vaultspec_rag/tests/integration/test_adversarial_multirepo.py`.
+- [x] `W04.P07.S22` - Adversarial: N concurrent starts yield exactly one service and one qdrant; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
+- [x] `W04.P07.S23` - Adversarial: an injected held port or storage lock yields fast-fail or reap, never a competitor; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
+- [x] `W04.P07.S24` - Adversarial: an unhealthy or corrupt qdrant holder is refused-attach with a named cause; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
+- [x] `W04.P07.S25` - Adversarial: concurrent multi-repo search and index load through one service holds under saturation; `src/vaultspec_rag/tests/integration/test_adversarial_multirepo.py`.
 
 ### Phase `W04.P08` - Acceptance and hardening audit
 
 Run the full hardening gate and record the adversarial results in an audit.
 
-- [ ] `W04.P08.S26` - Run the full hardening gate across unit, integration, and adversarial suites; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
-- [ ] `W04.P08.S27` - Author the hardening audit summarizing the adversarial verification results; `.vault/audit/2026-06-24-service-hardware-singleton-hardening-audit.md`.
+- [x] `W04.P08.S26` - Run the full hardening gate across unit, integration, and adversarial suites; `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py`.
+- [x] `W04.P08.S27` - Author the hardening audit summarizing the adversarial verification results; `.vault/audit/2026-06-24-service-hardware-singleton-hardening-audit.md`.
+
+### Phase `W04.P09` - Discovered hardening follow-ups
+
+Track and manage the gaps surfaced during execution: lifespan lock-release robustness, live-daemon lifecycle test coverage, and the server stop --port operability gap.
+
+- [ ] `W04.P09.S28` - Release the machine lock on a pre-yield startup failure so a failed bring-up frees the singleton immediately, not only via the next start's stale reclaim; `src/vaultspec_rag/server/_lifespan.py`.
+- [ ] `W04.P09.S29` - Make the qdrant binary resolvable under the isolated test STATUS_DIR so the service-lifecycle integration tests exercise the live daemon attach and lock path instead of fast-failing on the binary guard in this env; `src/vaultspec_rag/tests/integration/_helpers.py`.
+- [ ] `W04.P09.S30` - Add --port to server stop and align stop with the status-dir discovery divergence (research F7) so a non-default-port service is stoppable; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [ ] `W04.P09.S31` - Codify that any test or caller of write_qdrant_identity or acquire_machine_lock must isolate VAULTSPEC_RAG_QDRANT_STORAGE_DIR or it writes the real machine-global path, after a leaked identity sidecar was observed; `.vaultspec/rules/rules/`.
 
 ## Description
 

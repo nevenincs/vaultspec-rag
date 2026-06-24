@@ -248,6 +248,28 @@ def service_start(
         )
         raise typer.Exit(code=1)
 
+    # Machine-level guard (ADR D1 / P3): one resident service per machine - it
+    # owns the single GPU and the single managed Qdrant. A live holder on ANY
+    # port or status dir refuses a second daemon; a stale lock from a dead
+    # holder is reclaimed by the daemon's own acquire. This catches a second
+    # instance that a port-scoped check (different --port / status dir) misses.
+    from .._machine_lock import machine_lock_live_holder
+
+    machine_holder = machine_lock_live_holder()
+    if machine_holder:
+        _print_lifecycle_lines(
+            "Service start failed",
+            f"A vaultspec-rag service already owns this machine "
+            f"(pid {machine_holder}).",
+            "One service owns the machine's GPU and managed Qdrant; a second "
+            "resident service is not supported.",
+        )
+        _print_lifecycle_next_actions(
+            "vaultspec-rag server status",
+            "vaultspec-rag server stop",
+        )
+        raise typer.Exit(code=1)
+
     # Server mode is the default backend, so the qdrant-binary guard runs
     # by default. --local-only (and an explicit --no-qdrant) select the
     # on-disk store and skip it, so a default start fails fast on a missing
