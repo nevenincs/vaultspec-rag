@@ -19,6 +19,7 @@ from ._gpu_errors import _handle_gpu_error
 from ._http_search import _try_http_admin
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
+    DaemonBreakawayError,
     _health_probe,
     _heartbeat_age_seconds,
     _port_is_available,
@@ -123,12 +124,28 @@ def _address_line(port: object) -> str:
     return f"Address: http://127.0.0.1:{port}"
 
 
-def _existing_service_running() -> bool:
-    """Report a live service and clean up stale state.
+def _should_unlink_discovery_file(pid_alive: bool) -> bool:
+    """Decide whether a lifecycle command may remove the discovery file.
 
-    Returns True when a healthy service we own is already running (the
-    caller should not spawn another); removes a stale status file and
-    returns False otherwise.
+    The discovery file is removed only when the recorded holder is *confirmed
+    dead* - its PID is not alive. An ambiguous result (the PID is alive but a
+    ``/health`` token round-trip or PID-identity heuristic transiently missed)
+    must never delete a possibly-live service's discovery file, which is the
+    issue #204 flapping cause where a routine ``status`` or second ``start``
+    erased a running daemon's file. Pure and unit-testable: the caller passes
+    the already-computed liveness signal.
+    """
+    return not pid_alive
+
+
+def _existing_service_running() -> bool:
+    """Report a live service and clean up only a confirmed-dead status file.
+
+    Returns True when a healthy service we own is already running (the caller
+    should not spawn another). Removes the status file only when its recorded
+    PID is confirmed dead; an ambiguous identity/health miss on a *live* PID
+    leaves the file untouched so a transient probe failure cannot erase a
+    running daemon's discovery file (issue #204).
     """
     status = _read_service_status()
     if status is None:
@@ -150,8 +167,11 @@ def _existing_service_running() -> bool:
                 _address_line(existing_port),
             )
             return True
-    # Stale PID -- remove status file
-    _status_file().unlink(missing_ok=True)
+    # Identity or health did not confirm a live service we own. Remove the
+    # status file only when the recorded PID is confirmed dead; leave it in
+    # place on an ambiguous miss against a live PID (issue #204).
+    if _should_unlink_discovery_file(_cli._is_pid_alive(existing_pid)):
+        _status_file().unlink(missing_ok=True)
     return False
 
 
@@ -282,15 +302,31 @@ def service_start(
 
     log_path = _log_file()
     t0 = time.perf_counter()
-    pid = _spawn_service(
-        port,
-        log_path,
-        watch=updates,
-        watch_debounce_ms=update_delay_ms,
-        watch_cooldown_s=repeat_update_delay_s,
-        qdrant=qdrant,
-        local_only=local_only,
-    )
+    try:
+        pid = _spawn_service(
+            port,
+            log_path,
+            watch=updates,
+            watch_debounce_ms=update_delay_ms,
+            watch_cooldown_s=repeat_update_delay_s,
+            qdrant=qdrant,
+            local_only=local_only,
+        )
+    except DaemonBreakawayError as exc:
+        # The launching shell's Job Object denied detachment, so a daemon
+        # started here would die when the shell exits (the issue #204 flapping
+        # symptom). Surface the actionable guidance rather than spawning a
+        # doomed daemon. No status file was written, so nothing to clean up.
+        _print_lifecycle_lines(
+            "Service start failed",
+            str(exc),
+        )
+        _print_lifecycle_next_actions(
+            "Start from a plain console (cmd.exe or powershell.exe) outside a "
+            "restricted terminal",
+            "Or run the service under a service manager that permits breakaway",
+        )
+        raise typer.Exit(code=1) from exc
     _write_service_status(pid, port)
 
     # Poll health with exponential backoff
@@ -368,10 +404,24 @@ def service_stop() -> None:
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) else None
     if not _cli._is_our_service(pid, port=port, expected_token=expected_token):
-        _status_file().unlink(missing_ok=True)
+        # Identity not confirmed. Remove the discovery file only when the PID
+        # is confirmed dead; an alive-but-unconfirmed PID (a transient
+        # /health/identity miss) must not have its file erased, which would
+        # both mis-report a live daemon as gone and break discovery (#204).
+        if _should_unlink_discovery_file(_cli._is_pid_alive(pid)):
+            _status_file().unlink(missing_ok=True)
+            _print_lifecycle_lines(
+                "Service status cleaned",
+                f"Recorded process {pid} is no longer running.",
+            )
+            return
         _print_lifecycle_lines(
-            "Service status cleaned",
-            f"Recorded process {pid} is no longer running.",
+            "Service stop skipped",
+            f"Recorded process {pid} is alive but its identity could not be "
+            "confirmed; the discovery file was left in place.",
+        )
+        _print_lifecycle_next_actions(
+            "vaultspec-rag server status --verbose",
         )
         return
 
@@ -425,7 +475,11 @@ def _compute_state(
     heartbeat_stale: bool,
 ) -> tuple[str, str, int]:
     if not pid_alive:
-        _status_file().unlink(missing_ok=True)
+        # Confirmed dead: the only state in which the discovery file may be
+        # removed (#204). The ambiguous branches below keep the file and only
+        # report a degraded state.
+        if _should_unlink_discovery_file(pid_alive):
+            _status_file().unlink(missing_ok=True)
         return (
             "crashed_pid_dead",
             "crashed (PID dead, stale service.json cleaned)",

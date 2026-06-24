@@ -38,6 +38,7 @@ from ._core import logger
 
 __all__ = [
     "_HEARTBEAT_STALENESS_SECONDS",
+    "DaemonBreakawayError",
     "_health_probe",
     "_heartbeat_age_seconds",
     "_is_our_service",
@@ -52,6 +53,17 @@ __all__ = [
     "machine_lock_path",
     "release_machine_lock",
 ]
+
+
+class DaemonBreakawayError(RuntimeError):
+    """The launching shell's Job Object denied daemon breakaway.
+
+    Raised when ``CREATE_BREAKAWAY_FROM_JOB`` is refused so the daemon cannot
+    be detached from the parent's Windows Job Object. Spawning anyway would
+    create a daemon doomed to die when the launching shell closes (the flapping
+    symptom of issue #204), so the spawn fails loudly with this actionable
+    error instead of silently producing a shell-bound process.
+    """
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -373,8 +385,16 @@ _WIN_CREATE_NEW_PROCESS_GROUP = 0x00000200
 _WIN_CREATE_NO_WINDOW = 0x08000000
 # Detaches the new process from the launching shell's Windows Job Object so the
 # daemon survives when the parent shell exits.  Some restricted Job Objects deny
-# breakaway; _spawn_service catches OSError and retries without this flag.
+# breakaway; _spawn_service then attempts a console-detached spawn and, if that
+# is also refused, fails loudly rather than silently producing a shell-bound
+# daemon doomed to die with the launching shell.
 _WIN_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+# Detaches the child from the parent's console.  Combined with a new process
+# group this is the best-effort fallback when breakaway is denied: it severs the
+# console association and the CTRL_BREAK group so an interactive shell exit is
+# less likely to reach the daemon, though a Job Object configured to kill on
+# close can still terminate it (which is why breakaway denial fails loudly).
+_WIN_DETACHED_PROCESS = 0x00000008
 
 
 def _resolve_daemon_interpreter() -> str:
@@ -438,50 +458,89 @@ def _spawn_service(
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
     _log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     log_fd = os.open(log_path, _log_flags, 0o600)
-    if sys.platform == "win32":
-        _flags_with_breakaway = (
-            _WIN_CREATE_NEW_PROCESS_GROUP
-            | _WIN_CREATE_NO_WINDOW
-            | _WIN_CREATE_BREAKAWAY_FROM_JOB
-        )
-        _flags_without_breakaway = _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW
-        try:
+    try:
+        if sys.platform == "win32":
+            proc = _spawn_windows(cmd, env, log_fd)
+        else:
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=log_fd,
                 stderr=subprocess.STDOUT,
                 env=env,
-                creationflags=_flags_with_breakaway,
+                start_new_session=True,
             )
-        except OSError:
-            # The parent Job Object disallows breakaway (e.g., terminal emulators,
-            # CI runners, VS Code integrated terminal).  Fall back to spawning
-            # without the flag — no worse than the pre-fix behaviour, but the
-            # daemon may be killed when the launching shell exits.
-            logger.warning(
-                "CREATE_BREAKAWAY_FROM_JOB denied by parent Job Object; "
-                "daemon may be killed when the launching shell exits"
-            )
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=log_fd,
-                stderr=subprocess.STDOUT,
-                env=env,
-                creationflags=_flags_without_breakaway,
-            )
-    else:
-        proc = subprocess.Popen(
+    finally:
+        os.close(log_fd)  # child has the fd now (or the spawn failed)
+    return proc.pid
+
+
+def _spawn_windows(
+    cmd: list[str],
+    env: dict[str, str],
+    log_fd: int,
+) -> subprocess.Popen[bytes]:
+    """Spawn the daemon on Windows, detaching it from the launching shell.
+
+    The preferred path breaks the daemon out of the parent's Job Object with
+    ``CREATE_BREAKAWAY_FROM_JOB`` so it survives the launching shell's exit.
+    When the parent Job Object denies breakaway (common in terminal emulators,
+    VS Code integrated terminals, and CI runners), this attempts a
+    console-detached spawn (``DETACHED_PROCESS`` + a new process group) as a
+    best-effort survival path. If that too is refused, it raises
+    :class:`DaemonBreakawayError` rather than silently spawning a daemon bound
+    to the shell's Job Object - the previous behaviour, which produced the
+    flapping daemon of issue #204 (it died minutes later when the shell closed).
+    """
+    flags_with_breakaway = (
+        _WIN_CREATE_NEW_PROCESS_GROUP
+        | _WIN_CREATE_NO_WINDOW
+        | _WIN_CREATE_BREAKAWAY_FROM_JOB
+    )
+    try:
+        return subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
-            start_new_session=True,
+            creationflags=flags_with_breakaway,
         )
-    os.close(log_fd)  # child has the fd now
-    return proc.pid
+    except OSError as breakaway_exc:
+        logger.warning(
+            "CREATE_BREAKAWAY_FROM_JOB denied by parent Job Object (%s); "
+            "attempting a console-detached spawn so the daemon is not "
+            "bound to the launching shell",
+            breakaway_exc,
+        )
+
+    flags_detached = (
+        _WIN_CREATE_NEW_PROCESS_GROUP
+        | _WIN_CREATE_NO_WINDOW
+        | _WIN_DETACHED_PROCESS
+    )
+    try:
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fd,
+            stderr=subprocess.STDOUT,
+            env=env,
+            creationflags=flags_detached,
+        )
+    except OSError as detached_exc:
+        # Neither breakaway nor console detachment is permitted. Spawning
+        # without them would leave the daemon a member of the parent shell's
+        # Job Object, doomed to die when the shell exits. Fail loudly so the
+        # operator can start the daemon from an environment that permits it
+        # (or via a service manager) instead of seeing a daemon that flaps.
+        raise DaemonBreakawayError(
+            "Could not detach the background service from the launching shell: "
+            "the parent Job Object denied both CREATE_BREAKAWAY_FROM_JOB and a "
+            "console-detached spawn. A daemon started here would be killed when "
+            "this shell exits. Start the service from a plain console or a "
+            "service manager that permits process breakaway."
+        ) from detached_exc
 
 
 def _terminate_pid(pid: int) -> None:
