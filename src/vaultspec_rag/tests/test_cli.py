@@ -10,7 +10,7 @@ import typing
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner, Result
+from typer.testing import CliRunner
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config as reset_base_config,
 )
@@ -191,7 +191,7 @@ def _invoke_search_contract(
     tmp_path: Path,
     port: int,
     *extra: str,
-) -> Result:
+) -> typing.Any:
     return runner.invoke(
         app,
         [
@@ -233,21 +233,6 @@ def _assert_record(
         "score": score,
         "text": text,
     }
-
-
-def _latency_values(lines: list[str]) -> dict[str, float]:
-    values: dict[str, float] = {}
-    for line in lines:
-        match = re.fullmatch(r"(?P<label>.+): (?P<value>\d+\.\d)ms.*", line)
-        if match is not None:
-            values[match.group("label")] = float(match.group("value"))
-    return values
-
-
-def _quality_probe_line(line: str) -> tuple[str, str, str]:
-    match = re.fullmatch(r"1\. (passed|failed): (.+) - (.+)", line)
-    assert match is not None
-    return (match.group(1), match.group(2), match.group(3))
 
 
 def _hold_local_index_lock(root: Path):
@@ -2667,7 +2652,7 @@ class TestHelpCleanup:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _assert_clean(self, result: Result) -> None:
+    def _assert_clean(self, result: typing.Any) -> None:
         """Shared guard: no forbidden tokens in help output."""
         out = result.output
         for token in _FORBIDDEN_DOCSTRING_TOKENS:
@@ -2925,26 +2910,17 @@ class TestHelpCleanup:
         assert result.exit_code != 0
         assert "No such command" in result.output
 
-    def test_benchmark_help_clean(self):
+    def test_benchmark_verb_removed(self):
+        # D9: dev-only quality/benchmark tooling no longer ships as production
+        # CLI verbs; the capability is retained in the marked test suite.
         result = runner.invoke(app, ["benchmark", "--help"])
-        assert result.exit_code == 0, result.output
-        self._assert_clean(result)
-        normalized = " ".join(result.output.split())
-        assert "Measure local search speed" in result.output
-        assert "can take several minutes" in normalized
-        for forbidden in ("Args:", "Raises:", "CLIState", "VRAM usage"):
-            assert forbidden not in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
-    def test_quality_help_clean(self):
+    def test_quality_verb_removed(self):
         result = runner.invoke(app, ["quality", "--help"])
-        assert result.exit_code == 0, result.output
-        self._assert_clean(result)
-        normalized = " ".join(result.output.split())
-        assert "built-in search quality checks" in result.output
-        assert "can take several minutes" in normalized
-        assert "not a report on your current project" in result.output
-        for forbidden in ("Args:", "Raises:", "synthetic test corpus"):
-            assert forbidden not in result.output
+        assert result.exit_code != 0
+        assert "No such command" in result.output
 
     def test_install_help_clean(self):
         result = runner.invoke(app, ["install", "--help"])
@@ -3537,7 +3513,13 @@ class TestServiceDaemonHelpers:
 
             sf = tmp_path / "service.json"
             data = json.loads(sf.read_text(encoding="utf-8"))
-            assert set(data.keys()) == {"pid", "port", "started_at"}
+            assert set(data.keys()) == {
+                "schema",
+                "version",
+                "pid",
+                "port",
+                "started_at",
+            }
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
@@ -5979,207 +5961,3 @@ class TestAutoDelegation:
         )
         assert len(called) == 1
         assert called[0] == ("reindex_vault", 8766)
-
-
-class TestBenchmarkAndQualityCommands:
-    """Tests for the benchmark and quality subcommands, asserting delegation to APIs."""
-
-    def test_benchmark_command_delegation(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-
-        called: list[tuple[object, object]] = []
-
-        def mock_run_benchmark(root: object, n_queries: object) -> dict[str, object]:
-            called.append((root, n_queries))
-            return {
-                "p50": 1.2,
-                "p95": 3.4,
-                "p99": 5.6,
-                "mean": 2.3,
-                "stdev": 0.5,
-                "vault_count": 42,
-                "code_count": 100,
-                "gpu": "GeForce RTX 4090",
-                "vram_mb": 512.0,
-            }
-
-        monkeypatch.setattr("vaultspec_rag.api.run_benchmark", mock_run_benchmark)
-
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "benchmark",
-                "--queries",
-                "10",
-            ],
-        )
-        assert result.exit_code == 0
-        assert len(called) == 1
-        assert called[0][1] == 10
-        lines = _plain_lines(result.output)
-        assert lines[0] == "Benchmark: running 10 local search queries."
-        assert re.fullmatch(r"Search latency: 10 queries", lines[1])
-        assert _latency_values(lines) == {
-            "Median": 1.2,
-            "95th percentile": 3.4,
-            "99th percentile": 5.6,
-            "Average": 2.3,
-            "Variation": 0.5,
-        }
-        index_line = next(line for line in lines if line.startswith("Index:"))
-        index_match = re.fullmatch(
-            r"Index: (?P<vault_count>\d+) vault documents; "
-            r"(?P<code_count>\d+) source code sections",
-            index_line,
-        )
-        assert index_match is not None
-        assert index_match.groupdict() == {
-            "vault_count": "42",
-            "code_count": "100",
-        }
-        gpu_line = next(line for line in lines if line.startswith("GPU:"))
-        assert "GeForce RTX 4090" in gpu_line
-        assert "512.0 MB" in gpu_line
-        _assert_no_table_borders(result.output)
-
-    def test_benchmark_empty_vault(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-
-        def mock_run_benchmark(*args: object, **kwargs: object) -> None:
-            del args, kwargs
-            raise ValueError("No vault documents indexed.")
-
-        monkeypatch.setattr("vaultspec_rag.api.run_benchmark", mock_run_benchmark)
-
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "benchmark",
-            ],
-        )
-        assert result.exit_code == 1
-        assert "No vault documents indexed" in result.output
-        assert "Benchmark: running 20 local search queries." in result.output
-
-    def test_benchmark_rejects_non_positive_query_count(self, tmp_path: Path) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "benchmark",
-                "--queries",
-                "0",
-            ],
-        )
-
-        assert result.exit_code == 2
-        lines = _plain_lines(result.output)
-        assert lines == [
-            "Benchmark query count must be one or greater.",
-            "Run:",
-            "vaultspec-rag benchmark --queries 10",
-        ]
-        assert "Loading weights" not in result.output
-
-    def test_quality_command_delegation_pass(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-        monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
-        monkeypatch.delenv("TRANSFORMERS_NO_ADVISORY_WARNINGS", raising=False)
-        monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
-
-        called: list[bool] = []
-
-        def mock_run_quality_probe() -> dict[str, object]:
-            assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
-            assert os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] == "1"
-            assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
-            called.append(True)
-            return {
-                "passed": 8,
-                "total": 8,
-                "precision": 1.0,
-                "threshold": 0.75,
-                "probes": [
-                    {"query": "q1", "label": "L1", "passed": True},
-                ],
-            }
-
-        monkeypatch.setattr(
-            "vaultspec_rag.api.run_quality_probe",
-            mock_run_quality_probe,
-        )
-
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "quality",
-            ],
-        )
-        assert result.exit_code == 0
-        assert len(called) == 1
-        lines = _plain_lines(result.output)
-        assert lines[0] == "Running built-in search quality checks..."
-        assert _quality_probe_line(lines[2]) == ("passed", "L1", "q1")
-        summary_match = re.fullmatch(
-            r"Result: (\d+) of (\d+) probes passed \((\d+)%\)\.",
-            lines[3],
-        )
-        assert summary_match is not None
-        assert tuple(map(int, summary_match.groups())) == (8, 8, 100)
-        assert lines[-1] == "Passed."
-        _assert_no_table_borders(result.output)
-
-    def test_quality_command_delegation_fail(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-
-        def mock_run_quality_probe() -> dict[str, object]:
-            return {
-                "passed": 4,
-                "total": 8,
-                "precision": 0.5,
-                "threshold": 0.75,
-                "probes": [
-                    {"query": "q1", "label": "L1", "passed": False},
-                ],
-            }
-
-        monkeypatch.setattr(
-            "vaultspec_rag.api.run_quality_probe",
-            mock_run_quality_probe,
-        )
-
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "quality",
-            ],
-        )
-        assert result.exit_code == 1
-        lines = _plain_lines(result.output)
-        assert lines[0] == "Running built-in search quality checks..."
-        assert _quality_probe_line(lines[2]) == ("failed", "L1", "q1")
-        failure_match = re.fullmatch(
-            r"Failed: (\d+)% passed; required (\d+)%.",
-            lines[-1],
-        )
-        assert failure_match is not None
-        assert tuple(map(int, failure_match.groups())) == (50, 75)

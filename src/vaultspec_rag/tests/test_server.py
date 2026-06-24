@@ -98,14 +98,12 @@ class TestToolRegistration:
             "get_service_state",
             "get_logs",
             "get_jobs",
-            "benchmark",
-            "quality",
         }
         assert expected == tool_names
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 17
+        assert len(tools) == 15
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())
@@ -122,7 +120,6 @@ class TestToolRegistration:
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
-            "benchmark",
         }
         for tool in tools:
             if tool.name in tools_with_project_root:

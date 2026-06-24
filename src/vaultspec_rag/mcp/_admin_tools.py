@@ -13,11 +13,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any
 
-from ..serviceclient import (
-    _try_http_admin,
-    _try_http_benchmark,
-    _try_http_quality,
-)
+from ..serviceclient import _try_http_admin
 from ._mcp import mcp
 from ._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
@@ -133,22 +129,3 @@ async def reconfigure_watcher(
     if cooldown_s is not None:
         args["cooldown_s"] = cooldown_s
     return await _admin("reconfigure_watcher", args)
-
-
-@mcp.tool()
-async def benchmark(
-    project_root: str | None = None,
-    n_queries: int = 20,
-) -> dict[str, Any]:
-    """Run search latency benchmarks against the indexed vault."""
-    port = _require_port()
-    return await _delegate(
-        partial(_try_http_benchmark, project_root or "", n_queries, port)
-    )
-
-
-@mcp.tool()
-async def quality() -> dict[str, Any]:
-    """Run quality-scoring probes against a synthetic test corpus."""
-    port = _require_port()
-    return await _delegate(partial(_try_http_quality, port))

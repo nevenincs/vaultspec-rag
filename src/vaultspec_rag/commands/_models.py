@@ -11,29 +11,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..torch_config import TorchConfigAction
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ._provision import ProvisionOutcome
 
 ConfirmFn = Callable[[str], bool]
 
 __all__ = [
-    "_RAG_MCP_REL_PATH",
-    "_RAG_RULE_REL_PATH",
     "ConfirmFn",
     "InstallReport",
     "UninstallReport",
 ]
-
-# Names of the bundled rag enrollment artefacts (relative to
-# ``.vaultspec/rules/``). Defined here once so install and uninstall
-# stay symmetric and tests can assert against a single source of truth.
-_RAG_RULE_REL_PATH = Path("rules") / "vaultspec-rag.builtin.md"
-_RAG_MCP_REL_PATH = Path("mcps") / "vaultspec-rag.builtin.json"
 
 
 @dataclass

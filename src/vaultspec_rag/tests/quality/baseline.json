@@ -1,0 +1,116 @@
+{
+  "note": "S16: baseline (bare reranker) vs intent prior, per-intent aggregates.",
+  "baseline": {
+    "orientation": {
+      "n": 6,
+      "mean_ndcg_at_10": 0.7266,
+      "authoritative_at_3_rate": 0.5
+    },
+    "debugging": {
+      "n": 2,
+      "mean_ndcg_at_10": 0.5,
+      "mean_mrr_at_grade_3": 0.5
+    },
+    "implementation": {
+      "n": 3,
+      "mean_ndcg_at_10": 0.8906,
+      "mean_mrr_at_grade_3": 1.0
+    }
+  },
+  "with_intent_prior": {
+    "orientation": {
+      "n": 6,
+      "mean_ndcg_at_10": 0.7382,
+      "authoritative_at_3_rate": 0.8333
+    },
+    "debugging": {
+      "n": 2,
+      "mean_ndcg_at_10": 0.484,
+      "mean_mrr_at_grade_3": 0.5
+    },
+    "implementation": {
+      "n": 3,
+      "mean_ndcg_at_10": 0.8906,
+      "mean_mrr_at_grade_3": 1.0
+    }
+  },
+  "queries_with_intent_prior": [
+    {
+      "text": "decision on gpu lock scope",
+      "intent": "orientation",
+      "ndcg_at_k": 0.4138,
+      "role_precision_at_3": 0.3333,
+      "authoritative_at_3": true
+    },
+    {
+      "text": "qdrant server mode with provisioned binary verification",
+      "intent": "orientation",
+      "ndcg_at_k": 0.6168,
+      "role_precision_at_3": 0.3333,
+      "authoritative_at_3": true
+    },
+    {
+      "text": "decoupled producer consumer indexing pipeline with a dedicated gpu consumer thread",
+      "intent": "orientation",
+      "ndcg_at_k": 1.0,
+      "role_precision_at_3": 0.3333,
+      "authoritative_at_3": true
+    },
+    {
+      "text": "defense in depth security model for the mcp service",
+      "intent": "orientation",
+      "ndcg_at_k": 1.0,
+      "role_precision_at_3": 0.3333,
+      "authoritative_at_3": true
+    },
+    {
+      "text": "asgi path rewrite to skip the starlette mount redirect for the mcp route",
+      "intent": "orientation",
+      "ndcg_at_k": 0.4427,
+      "role_precision_at_3": 0.0,
+      "authoritative_at_3": false
+    },
+    {
+      "text": "document preprocessing hook infrastructure design",
+      "intent": "orientation",
+      "ndcg_at_k": 0.9558,
+      "role_precision_at_3": 0.6667,
+      "authoritative_at_3": true
+    },
+    {
+      "text": "narrow the gpu lock to model forward calls in the search encode and rerank path",
+      "intent": "debugging",
+      "ndcg_at_k": 0.968,
+      "role_precision_at_3": 0.3333,
+      "mrr_at_grade_3": 1.0
+    },
+    {
+      "text": "backend aware per collection storage locking implementation",
+      "intent": "debugging",
+      "ndcg_at_k": 0.0,
+      "role_precision_at_3": 0.0,
+      "mrr_at_grade_3": 0.0
+    },
+    {
+      "text": "implementation plan for the service concurrency saturation rework",
+      "intent": "implementation",
+      "ndcg_at_k": 1.0,
+      "role_precision_at_3": 0.6667,
+      "mrr_at_grade_3": 1.0
+    },
+    {
+      "text": "plan for the qdrant server provisioning work",
+      "intent": "implementation",
+      "ndcg_at_k": 0.8847,
+      "role_precision_at_3": 0.3333,
+      "mrr_at_grade_3": 1.0
+    },
+    {
+      "text": "plan and steps for document preprocessing hooks",
+      "intent": "implementation",
+      "ndcg_at_k": 0.7872,
+      "role_precision_at_3": 0.3333,
+      "mrr_at_grade_3": 1.0
+    }
+  ]
+}

@@ -14,9 +14,9 @@ from ._models import ParsedQuery
 
 # Filter token patterns: type:adr, feature:rag, date:2026-02,
 # tag:#research, lang:python, path:src/,
-# func:encode, class:Foo, nodetype:function_definition
+# func:encode, class:Foo, nodetype:function_definition, intent:orientation
 _FILTER_PATTERN = re.compile(
-    r"\b(type|feature|date|tag|lang|path|func|class|nodetype):(\S+)",
+    r"\b(type|feature|date|tag|lang|path|func|class|nodetype|intent|status):(\S+)",
 )
 
 _FILTER_KEY_MAP = {
@@ -28,6 +28,8 @@ _FILTER_KEY_MAP = {
     "func": "function_name",
     "class": "class_name",
     "nodetype": "node_type",
+    "intent": "intent",
+    "status": "status",
 }
 
 

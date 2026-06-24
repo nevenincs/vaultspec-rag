@@ -85,10 +85,14 @@ def _confirm_torch_patch(
 
 
 def _handle_canonical_state(
-    pyproject: Path, target: Path, report: InstallReport, sync_after: bool
+    pyproject: Path,
+    target: Path,
+    report: InstallReport,
+    sync_after: bool,
+    torch_group: str | None,
 ) -> None:
     report.torch_config_action = TorchConfigAction.ALREADY
-    _ensure_torch_direct_dep(pyproject, report)
+    _ensure_torch_direct_dep(pyproject, report, torch_group)
     if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
         _run_uv_sync_torch(target=target, report=report)
 
@@ -119,6 +123,7 @@ def _run_torch_config_install(
     assume_yes: bool,
     sync_after: bool,
     confirm: ConfirmFn | None,
+    torch_group: str | None = None,
 ) -> None:
     """Apply the cu130 torch-config patch to the consumer pyproject.
 
@@ -150,7 +155,7 @@ def _run_torch_config_install(
         )
         return
     if state == torch_config.TorchConfigState.CANONICAL:
-        _handle_canonical_state(pyproject, target, report, sync_after)
+        _handle_canonical_state(pyproject, target, report, sync_after, torch_group)
         return
     if state == torch_config.TorchConfigState.CUSTOMISED:
         _handle_customised_state(pyproject, report)
@@ -160,11 +165,18 @@ def _run_torch_config_install(
     if dry_run:
         report.torch_config_action = TorchConfigAction.DRY_RUN
         if not torch_config.has_direct_torch_dep(pyproject)[0]:
+            preview_location = (
+                f"[dependency-groups].{torch_group}"
+                if torch_group is not None
+                else "[project].dependencies"
+            )
             report.warnings.append(
                 "(dry-run preview) torch-config would add "
                 f"direct dependency `{torch_config.DIRECT_TORCH_REQUIREMENT}` to "
-                "[project].dependencies so uv applies the cu130 source pin."
+                f"{preview_location} so uv applies the cu130 source pin."
             )
+            if torch_group is not None:
+                report.warnings.append(_inert_pin_warning(torch_group))
         return
 
     if not _confirm_torch_patch(pyproject, report, assume_yes, force, confirm):
@@ -185,15 +197,41 @@ def _run_torch_config_install(
 
     # The patch landed; the workspace is now in CANONICAL state. Ensure
     # torch is also a direct dependency so uv actually applies the source pin.
-    _ensure_torch_direct_dep(pyproject, report)
+    _ensure_torch_direct_dep(pyproject, report, torch_group)
 
     if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
         _run_uv_sync_torch(target=target, report=report)
 
 
-def _ensure_torch_direct_dep(pyproject: Path, report: InstallReport) -> None:
-    """Make the direct ``torch`` dependency match the cu130 source pin."""
-    dep_report = torch_config.ensure_direct_torch_dep(pyproject)
+def _inert_pin_warning(torch_group: str) -> str:
+    """Operator guidance for a group-placed dep whose pin is otherwise inert.
+
+    uv applies a ``[tool.uv.sources]`` pin to a group dependency only
+    when that group is enabled for the resolve, so a group-placed torch
+    is a silently inert pin until the operator enables the group.
+    """
+    return (
+        f"torch was added to [dependency-groups].{torch_group}; enable that "
+        f"group for the resolve (`uv sync --group {torch_group}` or a "
+        "configured default group) for the cu130 source pin to apply."
+    )
+
+
+def _ensure_torch_direct_dep(
+    pyproject: Path, report: InstallReport, torch_group: str | None = None
+) -> None:
+    """Make the direct ``torch`` dependency match the cu130 source pin.
+
+    With ``torch_group`` set, the managed dep is placed in the named PEP
+    735 group instead of ``[project].dependencies`` so torch stays out
+    of a dev-only consumer's published metadata. Migration is out of
+    scope: when torch is already managed in a surface other than the
+    requested group target, the existing placement is left untouched and
+    a warning explains it will not be moved.
+    """
+    dep_report = torch_config.ensure_direct_torch_dep(
+        pyproject, torch_group=torch_group
+    )
     report.torch_direct_dep_action = dep_report.action
     report.torch_direct_dep_location = dep_report.location
     report.torch_config_conflicts.extend(dep_report.conflicts)
@@ -202,6 +240,26 @@ def _ensure_torch_direct_dep(pyproject: Path, report: InstallReport) -> None:
             f"added direct dependency `{torch_config.DIRECT_TORCH_REQUIREMENT}` to "
             f"{dep_report.location} so uv applies the cu130 torch source pin."
         )
+        if torch_group is not None:
+            report.warnings.append(_inert_pin_warning(torch_group))
+    elif dep_report.action == "already":
+        # torch is already a direct dep somewhere. When a group target was
+        # requested and the existing placement differs, do not migrate -
+        # warn that the existing placement wins. The placement may be a
+        # user-declared (unmarked) torch, which we never touch regardless.
+        if torch_group is not None:
+            requested = f"[dependency-groups].{torch_group}"
+            if dep_report.location != requested:
+                report.warnings.append(
+                    f"torch is already a direct dependency in "
+                    f"{dep_report.location}; vaultspec-rag will NOT migrate it "
+                    f"to {requested}. Remove it from {dep_report.location} "
+                    f"first if you want it managed in the group."
+                )
+            else:
+                # Already in the requested group: still remind the operator to
+                # enable it so the pin is not silently inert on a re-run.
+                report.warnings.append(_inert_pin_warning(torch_group))
     elif dep_report.action == "conflict":
         report.warnings.append(
             "torch-config patched, but vaultspec-rag could not add the direct "

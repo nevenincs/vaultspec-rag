@@ -79,11 +79,20 @@ async def search_vault(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    intent: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Search the documentation vault for relevant ADRs, plans, and research."""
+    """Search the documentation vault for relevant ADRs, plans, and research.
+
+    ``intent`` selects the ranking profile: ``orientation`` (default; surfaces
+    active ADRs and grounding) or ``debugging`` (surfaces execution records and
+    audits). ``doc_type`` accepts a single type or a comma-separated union
+    (e.g. ``adr,plan``; ``index`` is not searchable). The inline query tokens
+    ``intent:``, ``status:``, and ``type:`` are equivalent and also honored.
+    Results carry each document's status and related-document edges.
+    """
     port = _require_port()
     return await _delegate(
         partial(
@@ -97,6 +106,7 @@ async def search_vault(
             feature=feature,
             date=date,
             tag=tag,
+            intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )

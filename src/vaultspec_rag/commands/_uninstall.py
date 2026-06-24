@@ -11,11 +11,8 @@ from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeS
     sync_provider,
 )
 
-from ._models import (
-    _RAG_MCP_REL_PATH,
-    _RAG_RULE_REL_PATH,
-    UninstallReport,
-)
+from ..builtins import list_builtins
+from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
 
@@ -23,11 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> None:
+    # Mirror install symmetrically: remove exactly the files that
+    # ``seed_builtins`` would write, derived from the same package tree
+    # via ``list_builtins``. A new bundled file is then seeded and
+    # removed by one source of truth and can never be orphaned.
     rules_dir = target / ".vaultspec" / "rules"
-    candidates = [
-        rules_dir / _RAG_RULE_REL_PATH,
-        rules_dir / _RAG_MCP_REL_PATH,
-    ]
+    candidates = [rules_dir / rel for rel in list_builtins()]
     for src_file in candidates:
         if not src_file.exists():
             continue

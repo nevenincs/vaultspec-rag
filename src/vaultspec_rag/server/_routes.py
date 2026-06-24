@@ -627,6 +627,7 @@ async def search_route(request: Request) -> JSONResponse:
                     feature=payload.get("feature"),
                     date=payload.get("date"),
                     tag=payload.get("tag"),
+                    intent=payload.get("intent"),
                     like_ids=payload.get("like_ids"),
                     unlike_ids=payload.get("unlike_ids"),
                 )

@@ -67,6 +67,10 @@ class EnvVar(StrEnum):
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
     # Vault document chunking knob.
     VAULT_CHUNK_CHARS = "VAULTSPEC_RAG_VAULT_CHUNK_CHARS"
+    # Intent-aware vault ranking knobs.
+    VAULT_INTENT_DEFAULT = "VAULTSPEC_RAG_VAULT_INTENT_DEFAULT"
+    VAULT_INTENT_RANKING_ENABLED = "VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED"
+    VAULT_INTENT_TYPE_CAP = "VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP"
     # Reranker input token bound.
     RERANKER_MAX_LENGTH = "VAULTSPEC_RAG_RERANKER_MAX_LENGTH"
     # Worker-thread pool partitioning.
@@ -131,6 +135,10 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # Vault chunking + reranker input knobs.
     "vault_chunk_chars": EnvVar.VAULT_CHUNK_CHARS,
     "reranker_max_length": EnvVar.RERANKER_MAX_LENGTH,
+    # Intent-aware vault ranking knobs.
+    "vault_intent_default": EnvVar.VAULT_INTENT_DEFAULT,
+    "vault_intent_ranking_enabled": EnvVar.VAULT_INTENT_RANKING_ENABLED,
+    "vault_intent_type_cap": EnvVar.VAULT_INTENT_TYPE_CAP,
     # Worker-thread pool partitioning.
     "search_concurrency": EnvVar.SEARCH_CONCURRENCY,
     "index_job_concurrency": EnvVar.INDEX_JOB_CONCURRENCY,
@@ -369,6 +377,18 @@ class VaultSpecConfigWrapper:
         # point per chunk; ~3000 chars is ~750 BPE tokens, well inside
         # the 2048-token encoder cap with the title header prepended.
         "vault_chunk_chars": 3000,
+        # Intent-aware vault ranking. The prior multiplies each vault
+        # result's calibrated rerank score by a per-(doc_type, status)
+        # weight from the active intent profile (see
+        # ``intent_weight_profiles``), then a per-type cap bounds how many
+        # results of one doc_type may occupy the returned page. Default
+        # intent is orientation (surfaces active ADRs); ``debug`` inverts
+        # toward exec/audit. Set ``vault_intent_ranking_enabled`` false to
+        # restore the bare-reranker ordering. ``vault_intent_type_cap=0``
+        # disables the cap.
+        "vault_intent_default": "orientation",
+        "vault_intent_ranking_enabled": True,
+        "vault_intent_type_cap": 4,
         # Worker-thread pool partitioning: interactive searches and
         # long-running index jobs draw from separate capacity limiters
         # so reindex runs can never exhaust the threads that serve
@@ -408,6 +428,51 @@ class VaultSpecConfigWrapper:
         # Falls back to raw-markup chunking on any parse error.
         "html_strip": True,
     }
+
+    # Intent-aware vault ranking weight profiles (ADR D2/D3). Each profile maps
+    # a doc_type and (for ADRs) a status to a multiplier applied to the
+    # calibrated rerank score. A type or status absent from a profile defaults
+    # to 1.0 (the prior leaves it unchanged). Orientation lifts active decisions
+    # and grounding and demotes implementation artifacts and inactive ADRs;
+    # debug inverts toward exec and audit and stays status-neutral. These are
+    # the tunable, inspectable knobs the validation harness sweeps; only the
+    # ``orientation`` and ``debug`` profiles ship.
+    _INTENT_WEIGHT_PROFILES: ClassVar[dict[str, dict[str, dict[str, float]]]] = {
+        "orientation": {
+            "type": {
+                "adr": 1.0,
+                "audit": 1.0,
+                "research": 0.85,
+                "reference": 0.85,
+                "plan": 0.6,
+                "exec": 0.4,
+            },
+            "status": {
+                "accepted": 1.0,
+                "unknown": 1.0,
+                "proposed": 0.6,
+                "superseded": 0.3,
+                "rejected": 0.3,
+                "deprecated": 0.3,
+            },
+        },
+        "debugging": {
+            "type": {
+                "exec": 1.0,
+                "audit": 0.9,
+                "plan": 0.7,
+                "research": 0.6,
+                "reference": 0.6,
+                "adr": 0.6,
+            },
+            "status": {},
+        },
+    }
+
+    @property
+    def intent_weight_profiles(self) -> dict[str, dict[str, dict[str, float]]]:
+        """Return the intent-aware ranking weight profiles (read-only view)."""
+        return self._INTENT_WEIGHT_PROFILES
 
     def __init__(self, base: BaseConfig) -> None:
         """Initialise the wrapper around an existing config.

@@ -9,7 +9,7 @@ rerank, and searcher submodules share a single source of truth.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -53,6 +53,12 @@ class SearchResult:
             ``"editor-demo"``).  Empty string when not applicable.
         date: ISO-8601 date string from vault frontmatter.  Empty string
             when not applicable.
+        status: ADR lifecycle status parsed from the H1 title (e.g.
+            ``"accepted"``, ``"superseded"``).  Empty string for non-ADR
+            vault documents, legacy no-marker ADRs, and codebase results.
+        related: Related-document wiki-link stems from the vault
+            frontmatter (the pipeline-lineage edges).  Empty for codebase
+            results.
         language: Programming language of the source file (codebase
             results only).  Empty string when not applicable.
         line_start: Starting line number in the source file (codebase
@@ -88,6 +94,8 @@ class SearchResult:
     doc_type: str = ""
     feature: str = ""
     date: str = ""
+    status: str = ""
+    related: list[str] = field(default_factory=list)
     language: str = ""
     line_start: int | None = None
     line_end: int | None = None

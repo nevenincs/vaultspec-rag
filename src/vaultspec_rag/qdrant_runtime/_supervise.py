@@ -18,9 +18,11 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from typing import TYPE_CHECKING, cast
 
 from ._constants import QDRANT_SERVER_VERSION, QdrantRuntimeState
@@ -42,6 +44,11 @@ __all__ = [
 _READY_TIMEOUT_DEFAULT_SECONDS = 300.0
 _READY_TIMEOUT_ENV = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
 _STOP_TIMEOUT_SECONDS = 10.0
+# How many of the child's most-recent output lines to retain in memory so a
+# non-ready exit can be reported with its cause (a Rust panic, a bind error, a
+# storage-lock error) instead of an opaque timeout.
+_RECENT_OUTPUT_LINES = 50
+_DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
 
 
 def _ready_timeout_seconds() -> float:
@@ -179,7 +186,7 @@ def _win_kill_on_close_job() -> object | None:
     return job
 
 
-def _win_assign_to_job(job: object, proc: subprocess.Popen[bytes]) -> bool:
+def _win_assign_to_job(job: object, proc: subprocess.Popen[str]) -> bool:
     """Assign *proc* to *job*; True on success (logged otherwise)."""
     if sys.platform != "win32" or job is None:
         return False
@@ -229,7 +236,14 @@ class QdrantSupervisor:
         self.storage_dir = storage_dir
         self.log_path = log_path
         self.restart_count = 0
-        self._proc: subprocess.Popen[bytes] | None = None
+        self._proc: subprocess.Popen[str] | None = None
+        # Most-recent child output lines, filled by the drain thread, so a
+        # non-ready exit reports its cause instead of an opaque timeout.
+        self._recent_output: deque[str] = deque(maxlen=_RECENT_OUTPUT_LINES)
+        self._drain_thread: threading.Thread | None = None
+        # Attached mode: this supervisor points at an already-running managed
+        # Qdrant it did NOT spawn, so it must never terminate it on stop().
+        self._attached = False
         # The Windows kill-on-close job handle is deliberately held for
         # the supervisor's whole lifetime and never explicitly closed:
         # the OS kills the child exactly when the last handle closes
@@ -282,45 +296,47 @@ class QdrantSupervisor:
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
-
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            # Owner-only (0o600), and refuse to follow a pre-planted symlink at
-            # the log path (O_NOFOLLOW where the platform offers it) so a local
-            # user cannot redirect the appended log.
-            log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-            log_flags |= getattr(os, "O_NOFOLLOW", 0)
-            log_fd = os.open(self.log_path, log_flags, 0o600)
-        else:
-            log_fd = os.open(os.devnull, os.O_WRONLY)
+        self._recent_output.clear()
 
-        try:
-            if sys.platform == "win32":
-                self._proc = subprocess.Popen(
-                    [str(self.binary)],
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_fd,
-                    stderr=subprocess.STDOUT,
-                    env=self._child_env(),
-                    creationflags=(
-                        _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW
-                    ),
-                )
-                if self._job_handle is None:
-                    self._job_handle = _win_kill_on_close_job()
-                if self._job_handle is not None:
-                    _win_assign_to_job(self._job_handle, self._proc)
-            else:
-                self._proc = subprocess.Popen(
-                    [str(self.binary)],
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_fd,
-                    stderr=subprocess.STDOUT,
-                    env=self._child_env(),
-                    start_new_session=True,
-                )
-        finally:
-            os.close(log_fd)
+        # Capture the child's combined stdout/stderr through a pipe drained by a
+        # thread, rather than redirecting straight to a file: an abnormal exit
+        # (a Rust panic, a port-bind failure, a storage-lock error) is then
+        # retained in memory and reported as the cause, never lost behind an
+        # opaque readiness timeout. The drain thread appends to the log file
+        # with the same owner-only, no-symlink-follow protection as before.
+        if sys.platform == "win32":
+            self._proc = subprocess.Popen(
+                [str(self.binary)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=self._child_env(),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=(_WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW),
+            )
+            if self._job_handle is None:
+                self._job_handle = _win_kill_on_close_job()
+            if self._job_handle is not None:
+                _win_assign_to_job(self._job_handle, self._proc)
+        else:
+            self._proc = subprocess.Popen(
+                [str(self.binary)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=self._child_env(),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                start_new_session=True,
+            )
+        self._start_output_drain()
         logger.info(
             "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s",
             self._proc.pid,
@@ -328,6 +344,55 @@ class QdrantSupervisor:
             self.grpc_port,
             self.storage_dir,
         )
+
+    def _start_output_drain(self) -> None:
+        """Start the daemon thread that drains the child's output pipe."""
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
+        thread = threading.Thread(
+            target=self._drain_output,
+            args=(proc.stdout,),
+            name=f"qdrant-log-drain-{proc.pid}",
+            daemon=True,
+        )
+        self._drain_thread = thread
+        thread.start()
+
+    def _drain_output(self, stream: object) -> None:
+        """Append each child output line to the log and the recent-output ring.
+
+        Runs until the child closes the pipe (EOF on death). Opens the log with
+        owner-only permission and ``O_NOFOLLOW`` (where available) so a planted
+        symlink at the log path cannot redirect the appended output.
+        """
+        log_handle = None
+        try:
+            if self.log_path is not None:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(
+                    os, "O_NOFOLLOW", 0
+                )
+                log_handle = os.fdopen(
+                    os.open(self.log_path, flags, 0o600),
+                    "a",
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            for line in cast("Any", stream):
+                self._recent_output.append(line)
+                if log_handle is not None:
+                    log_handle.write(line)
+                    log_handle.flush()
+        except (OSError, ValueError) as exc:
+            logger.debug("qdrant output drain ended: %s", exc)
+        finally:
+            if log_handle is not None:
+                log_handle.close()
+
+    def recent_output_tail(self, max_lines: int = 20) -> str:
+        """Return the most-recent captured child output lines, joined."""
+        lines = list(self._recent_output)
+        return "".join(lines[-max_lines:])
 
     def _ready_probe(self) -> bool:
         url = f"{self.url}/readyz"
@@ -379,10 +444,16 @@ class QdrantSupervisor:
             timeout = _ready_timeout_seconds()
         self.spawn()
         if not self.wait_ready(timeout):
+            tail = self.recent_output_tail()
             self.stop()
+            cause = (
+                f" Last child output:\n{tail}"
+                if tail.strip()
+                else " The child produced no output before exiting."
+            )
             raise RuntimeError(
                 f"qdrant server on port {self.http_port} failed to become "
-                f"ready within {timeout:.0f}s; see {self.log_path}"
+                f"ready within {timeout:.0f}s; see {self.log_path}.{cause}"
             )
 
     def restart(self, timeout: float | None = None) -> bool:
@@ -406,8 +477,22 @@ class QdrantSupervisor:
             return False
         return self.wait_ready(timeout)
 
+    def mark_attached(self) -> None:
+        """Mark this supervisor as attached to an externally-owned managed server.
+
+        Used when a healthy managed Qdrant is already serving the port: this
+        supervisor reuses it without spawning a child and must not terminate it.
+        """
+        self._attached = True
+
     def is_alive(self) -> bool:
-        """True while the child process is running."""
+        """True while the managed server is running.
+
+        In attached mode there is no owned child, so liveness is the readiness
+        of the server this supervisor points at.
+        """
+        if self._attached:
+            return self._ready_probe()
         return self._proc is not None and self._proc.poll() is None
 
     def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> None:
@@ -439,6 +524,11 @@ class QdrantSupervisor:
                     proc.wait(timeout=5.0)
                 except subprocess.TimeoutExpired:
                     logger.error("qdrant pid=%d survived kill", proc.pid)
+        # The child's exit closes the output pipe, so the drain thread sees EOF
+        # and finishes; join it (bounded) so the log handle is flushed/closed.
+        if self._drain_thread is not None:
+            self._drain_thread.join(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS)
+            self._drain_thread = None
         logger.info("qdrant child pid=%d stopped", proc.pid)
         self._proc = None
 
@@ -490,9 +580,76 @@ def start_supervised_from_config() -> QdrantSupervisor:
 
     from ..config import get_config
     from ._provision import file_sha256
-    from ._resolve import resolve_binary
+    from ._resolve import (
+        decide_qdrant_action,
+        pid_image_is_qdrant,
+        probe_qdrant_endpoint,
+        read_qdrant_identity,
+        reap_qdrant_orphan,
+        resolve_binary,
+        write_qdrant_identity,
+    )
 
     cfg = get_config()
+    qport = int(cfg.qdrant_port)
+    storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
+    log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
+
+    # Decide before spawning. A healthy, owned, capable managed server is
+    # attached (never re-spawned onto its single-writer storage); a foreign or
+    # unverifiable holder, or a managed orphan, is refused fast with a named
+    # cause instead of a competing child and an opaque timeout.
+    probe = probe_qdrant_endpoint(qport)
+    identity = read_qdrant_identity()
+    action, reason = decide_qdrant_action(
+        probe,
+        identity,
+        expected_version=QDRANT_SERVER_VERSION,
+        expected_storage=str(storage_dir),
+    )
+    if action == "attach":
+        logger.info(
+            "Attaching to the running managed qdrant on port %d: %s", qport, reason
+        )
+        supervisor = QdrantSupervisor(
+            Path("attached-qdrant"),
+            http_port=qport,
+            storage_dir=storage_dir,
+            log_path=log_path,
+        )
+        supervisor.mark_attached()
+        set_active_supervisor(supervisor)
+        return supervisor
+    if action == "refuse":
+        raise RuntimeError(
+            f"refusing to start qdrant on port {qport}: {reason}. Stop or fix "
+            "the process holding the port, then retry; or run local-only: "
+            "vaultspec-rag server start --local-only"
+        )
+    if action == "reap_then_spawn":
+        target = identity.qdrant_pid if identity is not None else 0
+        logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
+        # Confirm the recorded child pid is still a qdrant process before the
+        # hard kill: the pid came from a dead owner's record and may have been
+        # recycled by an unrelated process, which must never be killed.
+        if target <= 0 or not pid_image_is_qdrant(target):
+            raise RuntimeError(
+                f"qdrant orphan on port {qport}: recorded child pid {target} is "
+                "not a live qdrant process (likely a dead/recycled pid); refusing "
+                "to kill it. Stop the holder manually, then retry; or run "
+                "local-only: vaultspec-rag server start --local-only"
+            )
+        if not reap_qdrant_orphan(target):
+            raise RuntimeError(
+                f"qdrant orphan holding port {qport} could not be reaped "
+                f"(child pid {target}); stop it manually, then retry; or run "
+                "local-only: vaultspec-rag server start --local-only"
+            )
+        logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
+        # fall through to the spawn path below.
+
+    # action in ("spawn", "reap_then_spawn" after a successful reap): resolve
+    # the binary and start a fresh managed child.
     resolved = resolve_binary()
     if resolved is None:
         raise RuntimeError(
@@ -532,11 +689,9 @@ def start_supervised_from_config() -> QdrantSupervisor:
             remedy,
         )
 
-    storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
-    log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
     supervisor = QdrantSupervisor(
         resolved.path,
-        http_port=int(cfg.qdrant_port),
+        http_port=qport,
         storage_dir=storage_dir,
         log_path=log_path,
     )
@@ -550,6 +705,15 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "back to local mode: vaultspec-rag server start --local-only"
         ) from exc
     set_active_supervisor(supervisor)
+    # Record the managed-Qdrant identity now that it is ready, so a later start
+    # can verify ownership and learn this owner pid to classify orphans.
+    write_qdrant_identity(
+        storage_path=str(storage_dir),
+        version=supervisor.server_version() or QDRANT_SERVER_VERSION,
+        owner_pid=os.getpid(),
+        http_port=qport,
+        qdrant_pid=supervisor.pid or 0,
+    )
     return supervisor
 
 

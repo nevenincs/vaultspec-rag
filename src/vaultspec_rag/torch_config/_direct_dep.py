@@ -288,14 +288,28 @@ def _tool_vaultspec_rag(doc: TOMLDocument) -> TableLike | None:
     return rag
 
 
-def _set_managed_direct_dep_marker(doc: TOMLDocument) -> None:
+# The canonical location string for the PEP 621 project-deps surface.
+# A legacy boolean ``managed-torch-direct-dependency = true`` marker is
+# read as this surface so installs that predate the location-bearing
+# marker uninstall from the same place they were written.
+_PROJECT_DEPS_LOCATION: str = "[project].dependencies"
+_GROUP_LOCATION_PREFIX: str = "[dependency-groups]."
+
+
+def _set_managed_direct_dep_marker(doc: TOMLDocument, location: str) -> None:
+    """Record the surface the managed torch dep was written to.
+
+    The marker is location-bearing (the dotted-key path of the written
+    surface) rather than a bare boolean, so uninstall removes from the
+    surface install actually wrote and never from a hard-coded guess.
+    """
     tool = doc.setdefault("tool", tomlkit.table())
     if not isinstance(tool, _TABLE_LIKE_TYPES):
         raise TypeError("pyproject.toml [tool] is not a table")
     rag = tool.setdefault("vaultspec-rag", tomlkit.table())
     if not isinstance(rag, _TABLE_LIKE_TYPES):
         raise TypeError("pyproject.toml [tool.vaultspec-rag] is not a table")
-    rag[_MANAGED_DIRECT_DEP_KEY] = True
+    rag[_MANAGED_DIRECT_DEP_KEY] = location
 
 
 def _clear_managed_direct_dep_marker(doc: TOMLDocument) -> None:
@@ -304,10 +318,21 @@ def _clear_managed_direct_dep_marker(doc: TOMLDocument) -> None:
         del rag[_MANAGED_DIRECT_DEP_KEY]
 
 
-def _managed_direct_dep_marker(doc: TOMLDocument) -> bool:
+def _managed_direct_dep_marker(doc: TOMLDocument) -> str | None:
+    """Return the recorded write location, or ``None`` when unmanaged.
+
+    A legacy boolean ``True`` marker (written before the marker carried
+    a location) maps to ``[project].dependencies``, the only surface the
+    historic code could write. Absent, ``False``, or any non-string /
+    non-``True`` value reads as unmanaged.
+    """
     rag = _tool_vaultspec_rag(doc)
     marker: object = _tget(rag, _MANAGED_DIRECT_DEP_KEY) if rag is not None else None
-    return marker is True
+    if marker is True:
+        return _PROJECT_DEPS_LOCATION
+    if isinstance(marker, str) and marker:
+        return marker
+    return None
 
 
 def _project_dependencies(
@@ -323,16 +348,69 @@ def _project_dependencies(
         deps = new_arr
     if not isinstance(deps, list):
         return None, "", ["[project].dependencies is not an array"]
-    return cast("list[object]", deps), "[project].dependencies", []
+    return cast("list[object]", deps), _PROJECT_DEPS_LOCATION, []
 
 
-def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
+def _group_dependencies(
+    doc: TOMLDocument, group: str
+) -> tuple[list[object] | None, str, list[str]]:
+    """Resolve the named PEP 735 ``[dependency-groups].<group>`` array.
+
+    Mirrors :func:`_project_dependencies`: creates the
+    ``[dependency-groups]`` table and the named array via
+    ``setdefault`` / ``tomlkit.array()`` when absent, and returns the
+    ``[dependency-groups].<group>`` location string. uv applies a
+    ``[tool.uv.sources]`` pin to a group dep only when that group is
+    enabled for the resolve, but the placement itself is still a valid
+    direct-dep surface.
+    """
+    if not group.strip():
+        return None, "", ["--torch-group requires a non-empty group name"]
+    location = f"{_GROUP_LOCATION_PREFIX}{group}"
+    groups = doc.setdefault("dependency-groups", tomlkit.table())
+    if not isinstance(groups, _TABLE_LIKE_TYPES):
+        return None, "", ["[dependency-groups] is not a table"]
+    deps = _tget(groups, group)
+    if deps is None:
+        new_arr = tomlkit.array()
+        groups[group] = new_arr
+        deps = new_arr
+    if not isinstance(deps, list):
+        return None, "", [f"{location} is not an array"]
+    return cast("list[object]", deps), location, []
+
+
+def _resolve_write_target(
+    doc: TOMLDocument, torch_group: str | None
+) -> tuple[list[object] | None, str, list[str]]:
+    """Pick the dependency surface the managed torch dep is written to.
+
+    With no group selector the target is ``[project].dependencies``
+    (the historic default, byte-for-byte unchanged). With a group
+    selector the target is ``[dependency-groups].<group>``.
+    """
+    if torch_group is None:
+        return _project_dependencies(doc)
+    return _group_dependencies(doc, torch_group)
+
+
+def ensure_direct_torch_dep(
+    pyproject: Path, *, torch_group: str | None = None
+) -> DirectTorchDepReport:
     """Ensure the consumer pyproject declares ``torch`` directly.
 
     uv applies ``[tool.uv.sources]`` only to direct dependencies. When
     rag writes the CUDA source pin, it must also ensure ``torch`` is
     present in the consumer's dependency graph, otherwise the pin is a
     no-op and uv keeps resolving the CPU wheel from PyPI.
+
+    Args:
+        pyproject: Path to the consumer's ``pyproject.toml``.
+        torch_group: When given, the managed dep is written to the PEP
+            735 ``[dependency-groups].<torch_group>`` surface instead of
+            ``[project].dependencies``, keeping torch out of a dev-only
+            consumer's published ``Requires-Dist``. ``None`` (the
+            default) preserves the historic project-deps placement.
     """
     report = DirectTorchDepReport(action="skipped", path=pyproject)
     doc = load_pyproject(pyproject)
@@ -346,31 +424,52 @@ def ensure_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
         report.location = location
         return report
 
-    deps, location, conflicts = _project_dependencies(doc)
+    deps, location, conflicts = _resolve_write_target(doc, torch_group)
     if deps is None:
         report.action = "conflict"
         report.conflicts = conflicts
         return report
 
     deps.append(DIRECT_TORCH_REQUIREMENT)
-    _set_managed_direct_dep_marker(doc)
+    _set_managed_direct_dep_marker(doc, location)
     write_doc_preserving_shape(pyproject, doc)
     report.action = "applied"
     report.location = location
     return report
 
 
+def _deps_for_location(
+    doc: TOMLDocument, location: str
+) -> tuple[list[object] | None, str, list[str]]:
+    """Resolve the dependency array named by a recorded marker location.
+
+    Inverse of :func:`_resolve_write_target`: parses the location string
+    the marker recorded so uninstall removes from exactly that surface.
+    """
+    if location.startswith(_GROUP_LOCATION_PREFIX):
+        group = location[len(_GROUP_LOCATION_PREFIX) :]
+        return _group_dependencies(doc, group)
+    return _project_dependencies(doc)
+
+
 def remove_managed_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
-    """Remove the direct ``torch`` dependency only when rag added it."""
+    """Remove the direct ``torch`` dependency only when rag added it.
+
+    Removal targets the surface the ownership marker recorded - so a
+    group-placed dep is removed from its group, a project-deps dep from
+    project deps, and a legacy boolean marker from project deps. An
+    unmarked user-declared torch is never touched.
+    """
     report = DirectTorchDepReport(action="skipped", path=pyproject)
     doc = load_pyproject(pyproject)
     if doc is None:
         report.action = "absent"
         return report
-    if not _managed_direct_dep_marker(doc):
+    marker_location = _managed_direct_dep_marker(doc)
+    if marker_location is None:
         return report
 
-    deps, location, conflicts = _project_dependencies(doc)
+    deps, location, conflicts = _deps_for_location(doc, marker_location)
     if deps is None:
         report.action = "conflict"
         report.conflicts = conflicts

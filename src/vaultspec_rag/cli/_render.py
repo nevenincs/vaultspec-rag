@@ -265,6 +265,14 @@ def _display_search_results(
         if show_scores:
             line += f" (score {_search_result_score(result):.4f})"
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        meta_line = _search_result_meta_line(result)
+        if meta_line is not None:
+            _cli.console.print(
+                f"   {meta_line}",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
         for text_line in _search_result_text_lines(result, root=root):
             _cli.console.print(
                 f"   {text_line}",
@@ -272,6 +280,36 @@ def _display_search_results(
                 highlight=False,
                 soft_wrap=True,
             )
+
+
+def _search_result_meta_line(result: dict[str, object]) -> str | None:
+    """Render the vault frontmatter line: type, feature, status, date, related.
+
+    Returns ``None`` for results without a ``doc_type`` (codebase hits), so only
+    vault documents gain the metadata line. Surfaces the pipeline context that
+    turns a hit into an orientation entry point - especially ``status`` (so a
+    superseded ADR is visible as such) and the ``related`` lineage edges.
+    """
+    doc_type = _non_empty_result_string(result, "doc_type")
+    if doc_type is None:
+        return None
+    parts: list[str] = [doc_type]
+    feature = _non_empty_result_string(result, "feature")
+    if feature is not None:
+        parts.append(f"feature: {feature}")
+    status = _non_empty_result_string(result, "status")
+    if status is not None:
+        parts.append(f"status: {status}")
+    date = _non_empty_result_string(result, "date")
+    if date is not None:
+        parts.append(date)
+    related = result.get("related")
+    if isinstance(related, list) and related:
+        related_items = cast("list[object]", related)
+        shown = ", ".join(str(x) for x in related_items[:5])
+        suffix = ", ..." if len(related_items) > 5 else ""
+        parts.append(f"related: {shown}{suffix}")
+    return " | ".join(parts)
 
 
 def _display_text_lines(value: object) -> list[str]:

@@ -46,7 +46,6 @@ from ._app import (
     server_watcher_app,
     version_callback,
 )
-from ._benchmark import handle_benchmark
 
 # 1. Shared runtime state (console, logger). ``sys`` is re-exported so
 #    tests that do ``monkeypatch.setattr(cli.sys, "platform", …)`` keep
@@ -87,7 +86,6 @@ from ._process import (
     _spawn_service,
     _terminate_pid,
 )
-from ._quality import handle_quality
 from ._render import (
     _display_port_unreachable_error,
     _display_search_results,
@@ -181,14 +179,12 @@ __all__ = [
     "_write_service_status",
     "app",
     "console",
-    "handle_benchmark",
     "handle_clean",
     "handle_index",
     "handle_install",
     "handle_preprocess_check",
     "handle_preprocess_list",
     "handle_preprocess_run_one",
-    "handle_quality",
     "handle_search",
     "handle_status",
     "handle_test",

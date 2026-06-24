@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, cast
 
+from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
 from ._models import ParsedQuery, SearchResult
 from ._parsing import parse_query
 from ._postprocess import (
@@ -28,7 +29,7 @@ from ._rerank import rerank_with_graph
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from sentence_transformers import CrossEncoder
     from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
@@ -365,6 +366,49 @@ class VaultSearcher:
                         raise VaultGraphError("Failed to build vault graph") from e
         return self._cached_graph
 
+    def _resolve_intent_profile(
+        self, intent: str | None
+    ) -> Mapping[str, Mapping[str, float]] | None:
+        """Resolve the active intent weight profile, or ``None`` to skip.
+
+        Returns ``None`` when intent ranking is disabled in config or the
+        requested/default intent name has no profile, so the caller leaves the
+        bare-reranker ordering untouched.
+        """
+        from ..config import get_config
+
+        cfg = get_config()
+        if not cfg.vault_intent_ranking_enabled:
+            return None
+        name = (intent or cfg.vault_intent_default or "orientation").strip().lower()
+        # Accept the ADR-prose spelling ``debug`` as an alias for the canonical
+        # ``debugging`` profile so a literal ``intent:debug`` is not a silent no-op.
+        if name == "debug":
+            name = "debugging"
+        profile = cfg.intent_weight_profiles.get(name)
+        if profile is None and intent is not None:
+            # An explicitly requested intent with no shipped profile (e.g. a
+            # typo, or the deferred ``implementation`` profile) silently falls
+            # back to the bare-reranker ordering; log it so it is diagnosable.
+            logger.debug(
+                "intent %r has no ranking profile; using bare-reranker ordering",
+                intent,
+            )
+        return profile
+
+    def _apply_intent_prior(
+        self, results: list[SearchResult], intent: str | None
+    ) -> list[SearchResult]:
+        """Apply the intent type x status prior and per-type cap when active."""
+        from ..config import get_config
+
+        profile = self._resolve_intent_profile(intent)
+        if profile is None:
+            return results
+        results = apply_intent_prior(results, profile)
+        cap = int(get_config().vault_intent_type_cap)
+        return apply_type_cap(results, cap)
+
     def _search_vault_encoded(
         self,
         query_vector: list[float],
@@ -377,6 +421,7 @@ class VaultSearcher:
         feature: str | None = None,
         date: str | None = None,
         tag: str | None = None,
+        intent: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
         timings: dict[str, float] | None = None,
@@ -435,6 +480,13 @@ class VaultSearcher:
         )
         _record_seconds(timings, "qdrant_seconds", phase_started)
 
+        # Auto-generated feature-index documents are navigational document-lists
+        # with no semantic content (ADR D6); they are never searchable and are
+        # dropped before rerank so they cannot crowd or top the results (a real
+        # vault search lists every feature doc inside one index file, which the
+        # cross-encoder otherwise scores very high on feature-name queries).
+        raw_results = [r for r in raw_results if r.get("doc_type") != "index"]
+
         phase_started = time.perf_counter()
         docs_prefix = self._vault_docs_prefix()
         results: list[SearchResult] = []
@@ -442,6 +494,12 @@ class VaultSearcher:
             raw_score = r.get("_relevance_score", 0.0)
             score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
             content = str(r.get("content", ""))
+            related_raw = r.get("related")
+            related = (
+                [str(x) for x in cast("list[object]", related_raw)]
+                if isinstance(related_raw, list)
+                else []
+            )
             results.append(
                 SearchResult(
                     id=str(r["id"]),
@@ -453,6 +511,8 @@ class VaultSearcher:
                     doc_type=str(r.get("doc_type", "")),
                     feature=str(r.get("feature", "")),
                     date=str(r.get("date", "")),
+                    status=str(r.get("status", "")),
+                    related=related,
                     rerank_text=content or None,
                 ),
             )
@@ -470,6 +530,17 @@ class VaultSearcher:
         results = _group_chunks_by_document(results)
         graph = self._get_graph()
         results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+        # Intent-conditioned type x status prior: composes after the graph
+        # nudges so the pipeline-role/status signal is primary and the graph
+        # in-link/feature nudges break ties within the reweighted ordering. An
+        # explicit intent argument wins; otherwise an inline ``intent:`` query
+        # token selects the profile (the CLI surface, since a flag would breach
+        # the frozen max-args lint ratchet).
+        effective_intent = intent or parsed.filters.get("intent")
+        results = self._apply_intent_prior(results, effective_intent)
+        status_spec = parsed.filters.get("status")
+        if status_spec:
+            results = apply_status_filter(results, status_spec)
         _record_seconds(timings, "graph_rerank_seconds", phase_started)
         if timings is not None:
             timings["postprocess_seconds"] = (
@@ -783,6 +854,7 @@ class VaultSearcher:
         feature: str | None = None,
         date: str | None = None,
         tag: str | None = None,
+        intent: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
     ) -> list[SearchResult]:
@@ -812,6 +884,7 @@ class VaultSearcher:
             feature=feature,
             date=date,
             tag=tag,
+            intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
@@ -826,6 +899,7 @@ class VaultSearcher:
         feature: str | None = None,
         date: str | None = None,
         tag: str | None = None,
+        intent: str | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
     ) -> tuple[list[SearchResult], dict[str, float]]:
@@ -848,6 +922,7 @@ class VaultSearcher:
             feature=feature,
             date=date,
             tag=tag,
+            intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
             timings=timings,

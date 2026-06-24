@@ -20,8 +20,6 @@ Complete reference for the `vaultspec-rag` command line. For setup workflows see
 - [install](#install)
 - [uninstall](#uninstall)
 - [test](#test)
-- [quality](#quality)
-- [benchmark](#benchmark)
 - [server start](#server-start)
 - [server stop](#server-stop)
 - [server status](#server-status)
@@ -47,7 +45,7 @@ Complete reference for the `vaultspec-rag` command line. For setup workflows see
 
 Run the CLI as `vaultspec-rag <command>` when the package is on your `PATH`. In uv-managed projects, run `uv run vaultspec-rag <command>`. The same binary also runs as `python -m vaultspec_rag`.
 
-Most commands accept `--json` for scripting. `test`, `quality`, `benchmark`, `server stop`, and `server warmup` produce human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`: the payload appears under `data` on success and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
+Most commands accept `--json` for scripting. `test`, `server stop`, and `server warmup` produce human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`: the payload appears under `data` on success and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
 
 RAG behavior is also configurable through `VAULTSPEC_RAG_*` environment variables. See the [configuration reference](configuration.md) for the complete inventory and defaults.
 
@@ -66,7 +64,7 @@ Pass these before the subcommand. They apply to every invocation.
 | `--log-file`      | text | `service.log`             | Service log filename inside `--status-dir`.                                        |
 | `--version`, `-V` | flag | off                       | Print the version and exit.                                                        |
 
-The `test`, `quality`, `server`, `install`, and `uninstall` commands skip workspace resolution; every other command resolves a workspace from `--target`.
+The `test`, `server`, `install`, and `uninstall` commands skip workspace resolution; every other command resolves a workspace from `--target`.
 
 ## Exit codes
 
@@ -256,34 +254,6 @@ Arguments:
 Options: run `vaultspec-rag test --help` for the full list. Most arguments pass straight through to pytest.
 
 Exit/JSON: pytest's own exit code is propagated.
-
-## quality
-
-`vaultspec-rag quality`
-
-Run needle-precision probes against a synthetic vault corpus. Output is plain text.
-
-Arguments: none.
-
-Options: none.
-
-Exit: `0` when precision meets the threshold; `1` when precision falls below it or on a GPU error.
-
-## benchmark
-
-`vaultspec-rag benchmark`
-
-Measure local search-latency percentiles against the indexed vault. Output is plain text.
-
-Arguments: none.
-
-Options:
-
-| Flag                       | Type    | Default | Description                                       |
-| -------------------------- | ------- | ------- | ------------------------------------------------- |
-| `--queries`, `--n-queries` | integer | `20`    | Number of queries to run. Must be `1` or greater. |
-
-Exit: `0` on success; `1` on an empty vault or a GPU error; `2` when `--queries` is less than `1`.
 
 ## server start
 

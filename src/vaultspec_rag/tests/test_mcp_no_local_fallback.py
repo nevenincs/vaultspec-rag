@@ -68,14 +68,12 @@ def _tool_invocations() -> list[tuple[str, Callable[[], Coroutine[Any, Any, Any]
     import-light and to mirror how the MCP package is reached at runtime.
     """
     from ..mcp._admin_tools import (
-        benchmark,
         evict_project,
         get_jobs,
         get_logs,
         get_service_state,
         get_watcher_state,
         list_projects,
-        quality,
         reconfigure_watcher,
         start_watcher,
         stop_watcher,
@@ -106,8 +104,6 @@ def _tool_invocations() -> list[tuple[str, Callable[[], Coroutine[Any, Any, Any]
         ("get_logs", lambda: get_logs()),
         ("get_jobs", lambda: get_jobs()),
         ("reconfigure_watcher", lambda: reconfigure_watcher("/some/root")),
-        ("benchmark", lambda: benchmark()),
-        ("quality", lambda: quality()),
         ("get_vault_document", lambda: get_vault_document("adr/overview")),
     ]
 

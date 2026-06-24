@@ -621,7 +621,9 @@ def test_ensure_direct_torch_dep_adds_project_dependency(tmp_path: Path) -> None
     assert report.location == "[project].dependencies"
     after = p.read_text(encoding="utf-8")
     assert '"torch>=2.4"' in after
-    assert "managed-torch-direct-dependency = true" in after
+    # The marker now records the written surface (location-bearing),
+    # not a bare boolean.
+    assert 'managed-torch-direct-dependency = "[project].dependencies"' in after
     found, location = tc.has_direct_torch_dep(p)
     assert found is True
     assert location == "[project].dependencies"

@@ -23,6 +23,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.server as _m
 
+from .._machine_lock import acquire_machine_lock, release_machine_lock
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
 
@@ -33,6 +34,22 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+
+def _claim_machine_singleton() -> None:
+    """Acquire the machine singleton lock or abort startup with a clear cause.
+
+    A live holder means another resident service already owns this machine's
+    single GPU and single-writer Qdrant storage; a stale lock from a dead holder
+    is reclaimed by the acquire itself.
+    """
+    acquired, holder = acquire_machine_lock()
+    if not acquired:
+        raise RuntimeError(
+            f"another vaultspec-rag service (pid {holder}) already owns this "
+            "machine; one resident service owns the GPU and the managed Qdrant. "
+            "Stop it first, or run on a dedicated machine."
+        )
 
 
 @asynccontextmanager
@@ -59,6 +76,11 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # token into service.json). The token round-trips through
     # /health for CLI-side identity verification (gh #124/#125).
     _m._SERVICE_TOKEN = uuid.uuid4().hex
+
+    # Machine singleton (ADR D1 / P3): claim the machine before committing GPU
+    # memory or spawning Qdrant. This is the authoritative, race-safe gate (the
+    # CLI pre-check is advisory; this acquire wins or loses atomically).
+    _claim_machine_singleton()
 
     t_total = time.perf_counter()
 
@@ -187,6 +209,9 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             # now-dead port (the daemon process just exits, so this
             # only matters for in-process reuse).
             os.environ.pop(EnvVar.QDRANT_URL.value, None)
+        # Release the machine singleton last, so the slot is free for the next
+        # service only after this one has fully torn down its GPU and Qdrant.
+        release_machine_lock()
         logger.info("Service shutdown complete")
         _m._record_shutdown("clean")
 
