@@ -241,6 +241,9 @@ class QdrantSupervisor:
         # non-ready exit reports its cause instead of an opaque timeout.
         self._recent_output: deque[str] = deque(maxlen=_RECENT_OUTPUT_LINES)
         self._drain_thread: threading.Thread | None = None
+        # Attached mode: this supervisor points at an already-running managed
+        # Qdrant it did NOT spawn, so it must never terminate it on stop().
+        self._attached = False
         # The Windows kill-on-close job handle is deliberately held for
         # the supervisor's whole lifetime and never explicitly closed:
         # the OS kills the child exactly when the last handle closes
@@ -474,8 +477,22 @@ class QdrantSupervisor:
             return False
         return self.wait_ready(timeout)
 
+    def mark_attached(self) -> None:
+        """Mark this supervisor as attached to an externally-owned managed server.
+
+        Used when a healthy managed Qdrant is already serving the port: this
+        supervisor reuses it without spawning a child and must not terminate it.
+        """
+        self._attached = True
+
     def is_alive(self) -> bool:
-        """True while the child process is running."""
+        """True while the managed server is running.
+
+        In attached mode there is no owned child, so liveness is the readiness
+        of the server this supervisor points at.
+        """
+        if self._attached:
+            return self._ready_probe()
         return self._proc is not None and self._proc.poll() is None
 
     def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> None:
@@ -563,9 +580,60 @@ def start_supervised_from_config() -> QdrantSupervisor:
 
     from ..config import get_config
     from ._provision import file_sha256
-    from ._resolve import resolve_binary
+    from ._resolve import (
+        decide_qdrant_action,
+        probe_qdrant_endpoint,
+        read_qdrant_identity,
+        resolve_binary,
+        write_qdrant_identity,
+    )
 
     cfg = get_config()
+    qport = int(cfg.qdrant_port)
+    storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
+    log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
+
+    # Decide before spawning. A healthy, owned, capable managed server is
+    # attached (never re-spawned onto its single-writer storage); a foreign or
+    # unverifiable holder, or a managed orphan, is refused fast with a named
+    # cause instead of a competing child and an opaque timeout.
+    probe = probe_qdrant_endpoint(qport)
+    identity = read_qdrant_identity()
+    action, reason = decide_qdrant_action(
+        probe,
+        identity,
+        expected_version=QDRANT_SERVER_VERSION,
+        expected_storage=str(storage_dir),
+    )
+    if action == "attach":
+        logger.info(
+            "Attaching to the running managed qdrant on port %d: %s", qport, reason
+        )
+        supervisor = QdrantSupervisor(
+            Path("attached-qdrant"),
+            http_port=qport,
+            storage_dir=storage_dir,
+            log_path=log_path,
+        )
+        supervisor.mark_attached()
+        set_active_supervisor(supervisor)
+        return supervisor
+    if action == "refuse":
+        raise RuntimeError(
+            f"refusing to start qdrant on port {qport}: {reason}. Stop or fix "
+            "the process holding the port, then retry; or run local-only: "
+            "vaultspec-rag server start --local-only"
+        )
+    if action == "reap_then_spawn":
+        # Automatic reaping lands in W03.P06; until then, refuse with the owner
+        # pointer rather than spawn a competitor on the held storage.
+        raise RuntimeError(
+            f"qdrant on port {qport}: {reason}. Automatic orphan reaping is not "
+            "yet enabled; stop the orphaned qdrant process, then retry; or run "
+            "local-only: vaultspec-rag server start --local-only"
+        )
+
+    # action == "spawn": resolve the binary and start a fresh managed child.
     resolved = resolve_binary()
     if resolved is None:
         raise RuntimeError(
@@ -605,11 +673,9 @@ def start_supervised_from_config() -> QdrantSupervisor:
             remedy,
         )
 
-    storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
-    log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
     supervisor = QdrantSupervisor(
         resolved.path,
-        http_port=int(cfg.qdrant_port),
+        http_port=qport,
         storage_dir=storage_dir,
         log_path=log_path,
     )
@@ -623,6 +689,14 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "back to local mode: vaultspec-rag server start --local-only"
         ) from exc
     set_active_supervisor(supervisor)
+    # Record the managed-Qdrant identity now that it is ready, so a later start
+    # can verify ownership and learn this owner pid to classify orphans.
+    write_qdrant_identity(
+        storage_path=str(storage_dir),
+        version=supervisor.server_version() or QDRANT_SERVER_VERSION,
+        owner_pid=os.getpid(),
+        http_port=int(cfg.qdrant_port),
+    )
     return supervisor
 
 

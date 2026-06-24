@@ -37,10 +37,10 @@ Capture the Qdrant child's stdout/stderr to the log reliably and report a non-re
 
 Resolve who holds the Qdrant port and storage lock, and classify a managed orphan (our storage, dead owner).
 
-- [ ] `W01.P02.S04` - Add a qdrant port-holder probe reporting whether a managed server is listening; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `W01.P02.S05` - Add a storage-lock probe distinguishing a live holder from a dead owner; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `W01.P02.S06` - Classify a managed qdrant orphan by expected storage and dead owner pid; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `W01.P02.S07` - Unit-test the holder and orphan detection primitives; `src/vaultspec_rag/tests/test_qdrant_detection.py`.
+- [x] `W01.P02.S04` - Add a qdrant port-holder probe reporting whether a managed server is listening; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
+- [x] `W01.P02.S05` - Add a storage-lock probe distinguishing a live holder from a dead owner; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
+- [x] `W01.P02.S06` - Classify a managed qdrant orphan by expected storage and dead owner pid; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
+- [x] `W01.P02.S07` - Unit-test the holder and orphan detection primitives; `src/vaultspec_rag/tests/test_qdrant_detection.py`.
 
 ## Wave `W02` - Verified Qdrant attach
 
@@ -50,19 +50,19 @@ Attach to an already-running Qdrant instead of spawning a competitor (D2), gated
 
 Record and validate a local-trust machine identity for the managed Qdrant so attach can confirm ownership, not just version.
 
-- [ ] `W02.P03.S08` - Write a machine-local qdrant identity sidecar on bring-up (storage, version, owner token); `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W02.P03.S09` - Validate the identity signal under local trust for safe attach; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `W02.P03.S10` - Unit-test identity write and validation; `src/vaultspec_rag/tests/test_qdrant_identity.py`.
+- [x] `W02.P03.S08` - Write a machine-local qdrant identity sidecar on bring-up (storage, version, owner token); `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W02.P03.S09` - Validate the identity signal under local trust for safe attach; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
+- [x] `W02.P03.S10` - Unit-test identity write and validation; `src/vaultspec_rag/tests/test_qdrant_identity.py`.
 
 ### Phase `W02.P04` - Attach decision and wiring
 
 Implement the health + capability + ownership attach gate and wire it into the supervised-start path so a running healthy Qdrant is reused, never re-spawned.
 
-- [ ] `W02.P04.S11` - Implement the attach gate: health, version match, storage match, ownership; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W02.P04.S12` - Make supervised start attach-or-spawn using the gate; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W02.P04.S13` - Refuse fast without spawning when a holder fails the attach gate; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W02.P04.S14` - Integration-test attach to a healthy managed qdrant with no second spawn; `src/vaultspec_rag/tests/integration/test_qdrant_attach.py`.
-- [ ] `W02.P04.S15` - Integration-test refuse-fast on unhealthy, wrong-version, or foreign holder; `src/vaultspec_rag/tests/integration/test_qdrant_attach.py`.
+- [x] `W02.P04.S11` - Implement the attach gate: health, version match, storage match, ownership; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W02.P04.S12` - Make supervised start attach-or-spawn using the gate; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W02.P04.S13` - Refuse fast without spawning when a holder fails the attach gate; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W02.P04.S14` - Integration-test attach to a healthy managed qdrant with no second spawn; `src/vaultspec_rag/tests/integration/test_qdrant_attach.py`.
+- [x] `W02.P04.S15` - Integration-test refuse-fast on unhealthy, wrong-version, or foreign holder; `src/vaultspec_rag/tests/integration/test_qdrant_attach.py`.
 
 ## Wave `W03` - Machine-singleton service
 

@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform as _platform
 import shutil
 import sys
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -32,13 +36,91 @@ from ._constants import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "QdrantEndpointProbe",
+    "QdrantIdentity",
     "asset_for_platform",
     "binary_filename",
+    "classify_qdrant_state",
+    "decide_qdrant_action",
     "has_provisioned_binary",
+    "pid_alive",
+    "probe_qdrant_endpoint",
     "qdrant_bin_dir",
+    "qdrant_identity_path",
     "read_manifest",
+    "read_qdrant_identity",
     "resolve_binary",
+    "verify_attachable",
+    "write_qdrant_identity",
 ]
+
+# Loopback probes must never traverse an HTTP(S) proxy from the environment: a
+# proxy could spoof a "ready"/version response a caller would trust when
+# deciding whether to attach to an already-running Qdrant.
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+@dataclass(frozen=True)
+class QdrantEndpointProbe:
+    """The observable state of whatever is on the Qdrant port.
+
+    Attributes:
+        listening: A TCP connection was accepted on the port.
+        ready: The ``/readyz`` endpoint returned HTTP 200.
+        version: The server version from the root route, or ``""`` when
+            unavailable (not listening, or the route did not parse).
+    """
+
+    listening: bool
+    ready: bool
+    version: str
+
+
+def probe_qdrant_endpoint(
+    http_port: int,
+    *,
+    timeout: float = 2.0,
+) -> QdrantEndpointProbe:
+    """Probe ``127.0.0.1:http_port`` for a live, ready Qdrant and its version.
+
+    Pure observation with no side effects: distinguishes "nothing is listening"
+    (connection refused) from "something is listening" and, when it is,
+    whether it is ready and what version it reports. The attach decision (a
+    later step) layers capability and ownership checks on top of this.
+
+    Args:
+        http_port: The loopback REST port to probe.
+        timeout: Per-request connect/read timeout in seconds.
+
+    Returns:
+        A :class:`QdrantEndpointProbe` snapshot.
+    """
+    base = f"http://127.0.0.1:{http_port}"
+    listening = False
+    ready = False
+    try:
+        with _LOOPBACK_OPENER.open(f"{base}/readyz", timeout=timeout) as resp:
+            listening = True
+            ready = int(resp.status) == 200
+    except urllib.error.HTTPError as exc:
+        # An HTTP error response still means something is listening and
+        # answering - just not ready.
+        listening = True
+        logger.debug("qdrant /readyz on %d returned HTTP %s", http_port, exc.code)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        logger.debug("qdrant /readyz probe on %d failed: %s", http_port, exc)
+        return QdrantEndpointProbe(listening=False, ready=False, version="")
+
+    version = ""
+    try:
+        with _LOOPBACK_OPENER.open(base, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        if isinstance(payload, dict):
+            version = str(payload.get("version", ""))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        logger.debug("qdrant version probe on %d failed: %s", http_port, exc)
+
+    return QdrantEndpointProbe(listening=listening, ready=ready, version=version)
 
 _ARM_MACHINES = frozenset({"arm64", "aarch64"})
 _X86_MACHINES = frozenset({"amd64", "x86_64"})
@@ -131,6 +213,256 @@ def read_manifest(version_dir: Path) -> dict[str, Any] | None:
         logger.debug("qdrant manifest at %s is not a dict", path)
         return None
     return cast("dict[str, Any]", data)
+
+
+_IDENTITY_FILENAME = "identity.json"
+
+
+@dataclass(frozen=True)
+class QdrantIdentity:
+    """The managed-Qdrant identity sidecar written by the supervisor on bring-up.
+
+    A local-trust record (it lives in the machine-global managed dir, not on the
+    network) letting a later start confirm a running Qdrant is the one this
+    machine's service manages, and learn its owner pid to classify orphans.
+
+    Attributes:
+        storage_path: The storage directory the managed server was started on.
+        version: The managed server version that was started.
+        owner_pid: PID of the service process that spawned the Qdrant child.
+        http_port: The REST port the managed server was started on.
+    """
+
+    storage_path: str
+    version: str
+    owner_pid: int
+    http_port: int
+
+
+def qdrant_identity_path() -> Path:
+    """Path of the managed-Qdrant identity sidecar (machine-global)."""
+    cfg = get_config()
+    storage = Path(str(cfg.qdrant_storage_dir)).expanduser()
+    return storage.parent / _IDENTITY_FILENAME
+
+
+def read_qdrant_identity() -> QdrantIdentity | None:
+    """Read the managed-Qdrant identity sidecar, or ``None`` when absent/invalid.
+
+    A missing sidecar (no managed Qdrant was ever brought up here) or a
+    malformed one is treated as "no record" rather than raised, so detection
+    degrades to "unknown owner" rather than crashing startup.
+    """
+    path = qdrant_identity_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        logger.debug("qdrant identity sidecar unreadable at %s: %s", path, exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return QdrantIdentity(
+            storage_path=str(data["storage_path"]),
+            version=str(data["version"]),
+            owner_pid=int(data["owner_pid"]),
+            http_port=int(data["http_port"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.debug("qdrant identity sidecar incomplete at %s: %s", path, exc)
+        return None
+
+
+def pid_alive(pid: int) -> bool:
+    """Return whether *pid* is a live process (cross-platform, best-effort).
+
+    Used to tell a live storage owner from a dead one when classifying an
+    orphan. A permission error means the process exists but is not ours to
+    signal, which still counts as alive.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+
+        process_query_limited = 0x1000
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(process_query_limited, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def write_qdrant_identity(
+    *,
+    storage_path: str,
+    version: str,
+    owner_pid: int,
+    http_port: int,
+) -> Path:
+    """Atomically write the managed-Qdrant identity sidecar.
+
+    Called by the supervisor once the managed server is confirmed ready, so a
+    later start can verify ownership and learn the owner pid. Written via a
+    ``.tmp`` sibling and ``os.replace`` so a concurrent reader never sees a
+    half-written record.
+
+    Returns:
+        The path the sidecar was written to.
+    """
+    path = qdrant_identity_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(
+            {
+                "storage_path": storage_path,
+                "version": version,
+                "owner_pid": owner_pid,
+                "http_port": http_port,
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.replace(tmp, path)
+    logger.debug("wrote qdrant identity sidecar at %s (owner pid %d)", path, owner_pid)
+    return path
+
+
+def verify_attachable(
+    probe: QdrantEndpointProbe,
+    identity: QdrantIdentity | None,
+    *,
+    expected_version: str,
+    expected_storage: str,
+) -> tuple[bool, str]:
+    """Decide whether a running Qdrant is safe to attach to, with a reason.
+
+    Attach only when every gate passes: the server is *healthy* (``/readyz``
+    ready), it is *owned* (a managed identity sidecar exists), and it is
+    *capable* - the live version matches the managed version and it is serving
+    the expected storage path. Any failure returns ``(False, reason)`` so the
+    caller refuses fast with a named cause rather than attaching blindly or
+    spawning a competitor.
+
+    Returns:
+        ``(attachable, reason)``.
+    """
+    if not probe.ready:
+        return False, "qdrant on the port is not ready (/readyz did not return 200)"
+    if identity is None:
+        return False, "no managed identity sidecar; the port holder is not ours"
+    if probe.version and expected_version and probe.version != expected_version:
+        return (
+            False,
+            f"version mismatch: running {probe.version!r} != managed "
+            f"{expected_version!r}",
+        )
+    if os.path.normcase(os.path.normpath(identity.storage_path)) != os.path.normcase(
+        os.path.normpath(expected_storage)
+    ):
+        return (
+            False,
+            f"storage mismatch: managed identity serves {identity.storage_path!r} "
+            f"!= expected {expected_storage!r}",
+        )
+    return True, "attachable"
+
+
+def classify_qdrant_state(
+    probe: QdrantEndpointProbe,
+    identity: QdrantIdentity | None,
+) -> str:
+    """Classify the Qdrant port/owner state for the attach/spawn decision.
+
+    Returns one of:
+
+    - ``"absent"``: nothing is listening and no managed owner is recorded -
+      safe to spawn.
+    - ``"stale_identity"``: an identity is recorded but its owner is dead and
+      nothing is listening - the sidecar is stale; safe to spawn after cleanup.
+    - ``"managed_orphan"``: something is still listening but the recorded owner
+      is dead - a leaked managed child holding the singleton; must be reaped,
+      not competed with.
+    - ``"managed_running"``: listening with a live recorded owner - the managed
+      Qdrant is up; attach (subject to the capability/ownership gate).
+    - ``"foreign"``: listening but no/again-mismatched managed identity - an
+      unrelated process owns the port; never spawn a competitor, never attach.
+    """
+    owner_alive = identity is not None and pid_alive(identity.owner_pid)
+    if not probe.listening:
+        if identity is not None and not owner_alive:
+            return "stale_identity"
+        return "absent"
+    if identity is None:
+        return "foreign"
+    if owner_alive:
+        return "managed_running"
+    return "managed_orphan"
+
+
+def decide_qdrant_action(
+    probe: QdrantEndpointProbe,
+    identity: QdrantIdentity | None,
+    *,
+    expected_version: str,
+    expected_storage: str,
+) -> tuple[str, str]:
+    """Decide what to do about the Qdrant port, with a reason.
+
+    Pure policy over the classified state and the attach gate. Returns one of:
+
+    - ``("attach", reason)``: a healthy, owned, capable managed server is up -
+      reuse it, do not spawn.
+    - ``("refuse", reason)``: the port is held by a foreign process, or by a
+      managed server that fails the attach gate (unhealthy / wrong version /
+      wrong storage) - never spawn a competitor on the shared single-writer
+      storage; fail fast with the reason.
+    - ``("reap_then_spawn", reason)``: a managed orphan (recorded owner dead) is
+      holding the port - reap it, then spawn.
+    - ``("spawn", reason)``: nothing usable is there (clean slate or a stale
+      identity from a dead owner) - spawn a fresh child.
+    """
+    state = classify_qdrant_state(probe, identity)
+    if state == "managed_running":
+        ok, reason = verify_attachable(
+            probe,
+            identity,
+            expected_version=expected_version,
+            expected_storage=expected_storage,
+        )
+        return ("attach", reason) if ok else ("refuse", reason)
+    if state == "foreign":
+        return (
+            "refuse",
+            "port held by a non-managed process (listening, no managed "
+            f"identity); refusing to spawn a competitor on {expected_storage!r}",
+        )
+    if state == "managed_orphan":
+        return (
+            "reap_then_spawn",
+            "a managed qdrant orphan (recorded owner is dead) is holding the "
+            "port; it must be reaped before spawning",
+        )
+    return ("spawn", state)
 
 
 def _resolve_env_binary() -> ResolvedBinary | None:
