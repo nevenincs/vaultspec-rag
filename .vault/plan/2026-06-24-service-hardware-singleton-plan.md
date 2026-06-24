@@ -9,12 +9,15 @@ related:
   - '[[2026-06-24-service-hardware-singleton-adr]]'
 ---
 
-
-
-
-
-
-
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 # `service-hardware-singleton` plan
 
@@ -22,14 +25,13 @@ related:
 
 Make Qdrant child failures visible (D5) and build the port-holder, storage-lock, and orphan detection primitives (D3). Foundation: nothing downstream can be verified or guarded without legible failures and reliable holder detection. Required by all later Waves.
 
-
 ### Phase `W01.P01` - Child-output capture and readiness diagnosis
 
 Capture the Qdrant child's stdout/stderr to the log reliably and report a non-ready exit with its named cause instead of an opaque timeout.
 
-- [ ] `W01.P01.S01` - Capture the qdrant child stdout and stderr to the log reliably across platforms; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W01.P01.S02` - Report a non-ready child exit with the captured log tail and a named cause; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W01.P01.S03` - Test that a non-ready child surfaces its cause instead of an opaque timeout; `src/vaultspec_rag/tests/test_qdrant_supervise_diagnostics.py`.
+- [x] `W01.P01.S01` - Capture the qdrant child stdout and stderr to the log reliably across platforms; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W01.P01.S02` - Report a non-ready child exit with the captured log tail and a named cause; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `W01.P01.S03` - Test that a non-ready child surfaces its cause instead of an opaque timeout; `src/vaultspec_rag/tests/test_qdrant_supervise_diagnostics.py`.
 
 ### Phase `W01.P02` - Holder and orphan detection
 
