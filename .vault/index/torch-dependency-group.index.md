@@ -17,6 +17,7 @@ related:
   - '[[2026-06-24-torch-dependency-group-P04-S09]]'
   - '[[2026-06-24-torch-dependency-group-P04-S10]]'
   - '[[2026-06-24-torch-dependency-group-adr]]'
+  - '[[2026-06-24-torch-dependency-group-audit]]'
   - '[[2026-06-24-torch-dependency-group-plan]]'
   - '[[2026-06-24-torch-dependency-group-research]]'
 ---
@@ -30,6 +31,10 @@ Auto-generated index of all documents tagged with `#torch-dependency-group`.
 ### adr
 
 - `2026-06-24-torch-dependency-group-adr` - `torch-dependency-group` adr: `optional dependency-group placement for the managed torch direct-dependency` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-24-torch-dependency-group-audit` - `torch-dependency-group` audit: `optional dependency-group placement review (PASS)`
 
 ### exec
 

@@ -14,6 +14,7 @@ related:
   - '[[2026-06-24-service-discovery-schema-P03-S06]]'
   - '[[2026-06-24-service-discovery-schema-P03-S07]]'
   - '[[2026-06-24-service-discovery-schema-adr]]'
+  - '[[2026-06-24-service-discovery-schema-audit]]'
   - '[[2026-06-24-service-discovery-schema-plan]]'
   - '[[2026-06-24-service-discovery-schema-research]]'
 ---
@@ -27,6 +28,10 @@ Auto-generated index of all documents tagged with `#service-discovery-schema`.
 ### adr
 
 - `2026-06-24-service-discovery-schema-adr` - `service-discovery-schema` adr: `version and document the service discovery file as a stable interface` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-24-service-discovery-schema-audit` - `service-discovery-schema` audit: `discovery-file schema/version/timestamp contract review (PASS)`
 
 ### exec
 

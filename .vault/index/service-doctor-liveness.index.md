@@ -17,6 +17,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-W02-P05-S09]]'
   - '[[2026-06-24-service-doctor-liveness-W02-P05-S10]]'
   - '[[2026-06-24-service-doctor-liveness-adr]]'
+  - '[[2026-06-24-service-doctor-liveness-audit]]'
   - '[[2026-06-24-service-doctor-liveness-plan]]'
   - '[[2026-06-24-service-doctor-liveness-research]]'
 ---
@@ -30,6 +31,10 @@ Auto-generated index of all documents tagged with `#service-doctor-liveness`.
 ### adr
 
 - `2026-06-24-service-doctor-liveness-adr` - `service-doctor-liveness` adr: `doctor reports live service truth; flapping is diagnosed before it is fixed` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-24-service-doctor-liveness-audit` - `service-doctor-liveness` audit: `doctor live-truth + flapping remediation review (PASS)`
 
 ### exec
 

@@ -9,6 +9,7 @@ related:
   - '[[2026-06-24-serviceclient-admin-errors-S01]]'
   - '[[2026-06-24-serviceclient-admin-errors-S02]]'
   - '[[2026-06-24-serviceclient-admin-errors-adr]]'
+  - '[[2026-06-24-serviceclient-admin-errors-audit]]'
   - '[[2026-06-24-serviceclient-admin-errors-plan]]'
   - '[[2026-06-24-serviceclient-admin-errors-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#serviceclient-admin-errors`.
 ### adr
 
 - `2026-06-24-serviceclient-admin-errors-adr` - `serviceclient-admin-errors` adr: `surface admin failures through the transport's structured error envelope` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-24-serviceclient-admin-errors-audit` - `serviceclient-admin-errors` audit: `admin-error envelope contract review (PASS)`
 
 ### exec
 
