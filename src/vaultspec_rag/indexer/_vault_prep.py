@@ -9,6 +9,7 @@ both indexers.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -29,10 +30,25 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "IndexResult",
     "_extract_feature",
+    "_extract_status",
     "_extract_title",
     "prepare_document",
     "split_document",
 ]
+
+# ADR status lives in the H1 title, not frontmatter, in the canonical
+# vaultspec-core form ``... | (**status:** `value`)``. The marker is optional
+# (legacy ``# ADR: ...`` headings carry none) and the value may or may not be
+# backtick-wrapped, so both patterns are tolerant of surrounding backticks and
+# whitespace.
+_STATUS_RE = re.compile(
+    r"\(\s*\*\*status:\*\*\s*`?\s*([A-Za-z][A-Za-z-]*)\s*`?\s*\)",
+    re.IGNORECASE,
+)
+_STATUS_SUFFIX_RE = re.compile(
+    r"\s*\|\s*\(\s*\*\*status:\*\*.*?\)\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -64,20 +80,54 @@ class IndexResult:
     preprocess_failures: list[str] = field(default_factory=list)
 
 
+def _first_h1(body: str) -> str:
+    """Return the first H1 heading text (without the leading ``# ``), or ``""``."""
+    for raw in body.splitlines():
+        line = raw.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return ""
+
+
 def _extract_title(body: str) -> str:
-    """Extract first H1 heading from markdown body, or return empty string.
+    """Extract the first H1 heading, stripped of any trailing status marker.
+
+    The canonical ADR heading carries a ``| (**status:** `value`)`` suffix; it
+    is a status signal, not part of the title, so it is removed here (fixing
+    the prior behaviour that leaked the marker into the displayed title).
+    Non-ADR and legacy headings are returned unchanged.
 
     Args:
         body: Raw markdown text to scan.
 
     Returns:
-        The heading text (without the leading ``# ``), or ``""`` if none found.
+        The cleaned heading text, or ``""`` if no H1 is found.
     """
-    for line in body.splitlines():
-        line = line.strip()
-        if line.startswith("# "):
-            return line[2:].strip()
-    return ""
+    heading = _first_h1(body)
+    if not heading:
+        return ""
+    return _STATUS_SUFFIX_RE.sub("", heading).strip()
+
+
+def _extract_status(body: str) -> str:
+    """Extract the ADR status encoded in the H1 title, lowercased.
+
+    Returns the status value (e.g. ``"accepted"``, ``"superseded"``) when the
+    ``(**status:** ...)`` marker is present, or ``""`` when absent (legacy
+    ``# ADR: ...`` headings and every non-ADR document). Callers treat an empty
+    status as ``unknown`` and active.
+
+    Args:
+        body: Raw markdown text to scan.
+
+    Returns:
+        The lowercased status value, or ``""`` when no marker is present.
+    """
+    heading = _first_h1(body)
+    if not heading:
+        return ""
+    match = _STATUS_RE.search(heading)
+    return match.group(1).lower() if match else ""
 
 
 def _extract_feature(metadata_tags: list[str]) -> str:
@@ -136,6 +186,7 @@ def split_document(
             tags=doc.tags,
             related=doc.related,
             title=doc.title,
+            status=doc.status,
             doc_content=doc.content if ordinal == 0 else None,
         )
         for ordinal, piece in enumerate(pieces)
@@ -204,6 +255,7 @@ def prepare_document(
         tags=metadata.tags,
         related=metadata.related,
         title=title,
+        status=_extract_status(body),
         content=body.strip(),
         vector=[],  # filled during embedding step
     )

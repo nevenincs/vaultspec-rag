@@ -230,6 +230,8 @@ class VaultDocument:
         tags: List of frontmatter tags.
         related: List of related wiki-link strings.
         title: H1 heading extracted from the document body.
+        status: ADR lifecycle status parsed from the H1 (e.g. ``accepted``,
+            ``superseded``); empty for legacy no-marker ADRs and non-ADR types.
         content: Full markdown body text.
         vector: Dense embedding vector.
         sparse_indices: Sparse vector indices (SPLADE).
@@ -245,6 +247,7 @@ class VaultDocument:
     related: list[str]
     title: str
     content: str
+    status: str = ""
     vector: list[float] = field(default_factory=list)
     sparse_indices: list[int] = field(default_factory=list)
     sparse_values: list[float] = field(default_factory=list)
@@ -273,6 +276,7 @@ class VaultChunk:
         tags: Parent frontmatter tags.
         related: Parent related wiki-link strings.
         title: Parent document title.
+        status: Parent ADR status (empty for non-ADR and legacy headings).
         doc_content: Full parent body; populated only on ordinal 0.
         vector: Dense embedding vector.
         sparse_indices: Sparse vector indices (SPLADE).
@@ -290,6 +294,7 @@ class VaultChunk:
     tags: list[str]
     related: list[str]
     title: str
+    status: str = ""
     doc_content: str | None = None
     vector: list[float] = field(default_factory=list)
     sparse_indices: list[int] = field(default_factory=list)
@@ -776,6 +781,7 @@ class VaultStore:
                         "tags": doc.tags,
                         "related": doc.related,
                         "title": doc.title,
+                        "status": doc.status,
                         "content": doc.content,
                     },
                 ),
@@ -825,6 +831,7 @@ class VaultStore:
                 "tags": chunk.tags,
                 "related": chunk.related,
                 "title": chunk.title,
+                "status": chunk.status,
                 "content": chunk.text,
             }
             if chunk.ordinal == 0 and chunk.doc_content is not None:
@@ -1587,7 +1594,25 @@ class VaultStore:
                         match=models.MatchAny(any=[value]),
                     ),
                 )
-            elif key in ("doc_type", "feature"):
+            elif key == "doc_type":
+                # A comma-separated doc_type selects a union of pipeline kinds
+                # (e.g. "adr,plan"); a single value stays an exact match.
+                values = [v.strip() for v in value.split(",") if v.strip()]
+                if len(values) == 1:
+                    conditions.append(
+                        models.FieldCondition(
+                            key="doc_type",
+                            match=models.MatchValue(value=values[0]),
+                        ),
+                    )
+                elif values:
+                    conditions.append(
+                        models.FieldCondition(
+                            key="doc_type",
+                            match=models.MatchAny(any=values),
+                        ),
+                    )
+            elif key == "feature":
                 conditions.append(
                     models.FieldCondition(
                         key=key,

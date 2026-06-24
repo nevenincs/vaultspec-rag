@@ -605,6 +605,7 @@ def _build_http_search_payload(
     feature: str | None,
     date: str | None,
     tag: str | None,
+    intent: str | None,
     include_paths: list[str] | None,
     exclude_paths: list[str] | None,
     dedup_locales: bool,
@@ -648,6 +649,7 @@ def _build_http_search_payload(
             "feature": feature,
             "date": date,
             "tag": tag,
+            "intent": intent,
         }
         for key, value in vault_filters.items():
             if value is not None:
@@ -672,6 +674,7 @@ def _try_http_search(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    intent: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
     dedup_locales: bool = False,
@@ -730,6 +733,7 @@ def _try_http_search(
         feature,
         date,
         tag,
+        intent,
         include_paths,
         exclude_paths,
         dedup_locales,

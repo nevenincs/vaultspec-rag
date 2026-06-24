@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
+# The vault doc types that carry semantic content and are searchable. ``index``
+# is excluded: feature-index documents are auto-generated navigational
+# document-lists with no semantic value. A doc-type filter may name one of these
+# or a comma-separated union of them.
+INDEXABLE_DOC_TYPES: frozenset[str] = frozenset(
+    {"adr", "audit", "exec", "plan", "reference", "research"}
+)
+
 
 class InvalidPreferValueError(ValueError):
     """Raised when the --prefer value is not supported."""
@@ -22,6 +30,17 @@ class InvalidFilterForSearchTypeError(ValueError):
         super().__init__(message)
         self.filter_kind = filter_kind
         self.offending_filters = offending_filters
+
+
+class InvalidDocTypeError(InvalidFilterForSearchTypeError):
+    """Raised when a doc-type filter names a non-indexable or unknown type.
+
+    Subclasses ``InvalidFilterForSearchTypeError`` so existing handlers that
+    catch the base type render it as a clean exit-2 error without new wiring.
+    """
+
+    def __init__(self, message: str, offending: list[str]) -> None:
+        super().__init__(message, filter_kind="doc_type", offending_filters=offending)
 
 
 def _format_flags(names: list[str]) -> list[str]:
@@ -66,6 +85,20 @@ def validate_search_filters(
             ),
             prefer_value=prefer,
         )
+
+    if doc_type is not None:
+        requested = [t.strip() for t in doc_type.split(",") if t.strip()]
+        invalid = [t for t in requested if t not in INDEXABLE_DOC_TYPES]
+        if invalid:
+            allowed = ", ".join(sorted(INDEXABLE_DOC_TYPES))
+            raise InvalidDocTypeError(
+                (
+                    f"doc-type must be one or a comma-separated union of: {allowed} "
+                    f"(the auto-generated 'index' type is not searchable); "
+                    f"got {', '.join(invalid)}."
+                ),
+                offending=invalid,
+            )
 
     code_filter_fields = [
         ("language", language),

@@ -4,6 +4,14 @@ Generates `.vault/` directories with predictable content, unique needle
 keywords per document, and configurable graph density.  Each document is
 parseable by `vaultspec_core.vaultcore.parse_vault_metadata` and
 `prepare_document`.
+
+ADR documents additionally exercise the three real-world heading formats so
+status extraction has deterministic coverage: the modern
+``| (**status:** `value`)`` marker, the legacy ``# ADR: ...`` heading with no
+marker (status ``unknown``), and a spread of status values. Pipeline-role
+edges (research <- adr <- plan <- exec, reference <- research) are added on
+top of the density-based random edges so the related-link graph expresses
+pipeline lineage, not just arbitrary links.
 """
 
 import random
@@ -19,6 +27,21 @@ __all__ = [
 
 DOC_TYPES: list[str] = ["adr", "plan", "research", "exec", "reference", "audit"]
 FEATURES: list[str] = ["alpha-engine", "beta-pipeline", "gamma-index", "delta-store"]
+
+# ADR status values cycled across generated ADRs (after the first, which is a
+# legacy no-marker heading resolving to ``unknown``). Mostly accepted, with the
+# inactive statuses represented so status-derank has something to derank.
+_ADR_STATUS_CYCLE: list[str] = ["proposed", "superseded", "accepted", "accepted"]
+
+# Pipeline-role link targets: a document of the key type links to the first
+# document of the value type, expressing research <- adr <- plan <- exec and
+# reference <- research lineage.
+_PIPELINE_LINK_TARGET: dict[str, str] = {
+    "adr": "research",
+    "plan": "adr",
+    "exec": "plan",
+    "reference": "research",
+}
 
 # Topical paragraphs keyed by doc_type - each doc gets its type paragraph
 # plus its needle keyword for deterministic retrieval.
@@ -67,6 +90,9 @@ class GeneratedDoc:
         needle: Unique keyword embedded in the document body.
         path: Absolute path to the written ``.md`` file.
         related_ids: List of doc_ids this document links to.
+        status: For ADRs, the status the heading encodes (``accepted``,
+            ``proposed``, ``superseded``, or ``unknown`` for the legacy
+            no-marker heading). Empty string for non-ADR types.
     """
 
     doc_id: str
@@ -76,6 +102,7 @@ class GeneratedDoc:
     date: str
     path: Path
     related_ids: list[str] = field(default_factory=list)
+    status: str = ""
 
 
 @dataclass
@@ -88,17 +115,32 @@ class CorpusManifest:
         needles: Mapping from needle keyword to doc_id.
         graph_edges: Directed edges ``(from_id, to_id)`` in the
             related-links graph.
+        statuses: Mapping from doc_id to the ADR status it encodes; only
+            ADR doc_ids appear (``accepted``/``proposed``/``superseded``/
+            ``unknown``).
     """
 
     root: Path
     docs: list[GeneratedDoc]
     needles: dict[str, str]
     graph_edges: list[tuple[str, str]]
+    statuses: dict[str, str] = field(default_factory=dict)
 
 
 def _needle_for(doc_type: str, index: int) -> str:
     """Generate a unique needle keyword for a document."""
     return f"NEEDLE_{doc_type.upper()}_{index:03d}"
+
+
+def _adr_status_for(adr_ordinal: int) -> str:
+    """Return the status an ADR encodes given its 0-based ADR ordinal.
+
+    The first ADR uses the legacy no-marker heading and resolves to
+    ``unknown``; subsequent ADRs cycle through the status cycle.
+    """
+    if adr_ordinal == 0:
+        return "unknown"
+    return _ADR_STATUS_CYCLE[(adr_ordinal - 1) % len(_ADR_STATUS_CYCLE)]
 
 
 def _make_frontmatter(
@@ -119,20 +161,74 @@ def _make_frontmatter(
     return f"---\ntags:\n{tags_str}\ndate: {date}\nrelated:\n{related_str}\n---\n"
 
 
+def _make_title(
+    doc_type: str,
+    feature: str,
+    index: int,
+    status: str,
+) -> str:
+    """Render the H1 title, ADR-aware.
+
+    For ADRs the heading mirrors the canonical vaultspec-core forms: an
+    ``unknown`` status renders the legacy ``# ADR: ...`` heading with no status
+    marker; any other status renders the modern
+    ``# `feature` adr: `...` | (**status:** `value`)`` form. Non-ADR types keep
+    the simple ``# feature doc_type index`` heading.
+    """
+    if doc_type == "adr":
+        subject = f"{feature} decision {index:03d}"
+        if status == "unknown":
+            return f"# ADR: {subject}"
+        return f"# `{feature}` adr: `{subject}` | (**status:** `{status}`)"
+    return f"# {feature} {doc_type} {index:03d}"
+
+
 def _make_body(
     doc_type: str,
     feature: str,
     needle: str,
     index: int,
+    status: str,
 ) -> str:
     """Render the markdown body with type-specific content and needle."""
-    title = f"# {feature} {doc_type} {index:03d}"
+    title = _make_title(doc_type, feature, index, status)
     paragraph = _TYPE_PARAGRAPHS[doc_type]
     needle_line = (
         f"This document contains the unique identifier {needle} which "
         f"can be used for precision retrieval testing."
     )
     return f"{title}\n\n{paragraph}\n\n{needle_line}\n"
+
+
+def _add_pipeline_edges(
+    docs: list[GeneratedDoc],
+    graph_edges: list[tuple[str, str]],
+) -> None:
+    """Add deterministic pipeline-role edges on top of random edges.
+
+    Links each document of a type in ``_PIPELINE_LINK_TARGET`` to the first
+    document of its target type, expressing pipeline lineage. Skips
+    self-links and duplicates already present from the density pass.
+    """
+    first_of_type: dict[str, str] = {}
+    for doc in docs:
+        first_of_type.setdefault(doc.doc_type, doc.doc_id)
+
+    existing = set(graph_edges)
+    for doc in docs:
+        target_type = _PIPELINE_LINK_TARGET.get(doc.doc_type)
+        if target_type is None:
+            continue
+        target_id = first_of_type.get(target_type)
+        if target_id is None or target_id == doc.doc_id:
+            continue
+        edge = (doc.doc_id, target_id)
+        if edge in existing:
+            continue
+        if target_id not in doc.related_ids:
+            doc.related_ids.append(target_id)
+        graph_edges.append(edge)
+        existing.add(edge)
 
 
 def build_synthetic_vault(
@@ -157,13 +253,14 @@ def build_synthetic_vault(
 
     Returns:
         A ``CorpusManifest`` with all generated documents, their
-        needle keywords, and the graph edge list.
+        needle keywords, status map, and the graph edge list.
     """
     rng = random.Random(seed)
     vault_dir = root / ".vault"
     docs: list[GeneratedDoc] = []
     needles: dict[str, str] = {}
     graph_edges: list[tuple[str, str]] = []
+    statuses: dict[str, str] = {}
 
     # Ensure all doc_type subdirs exist.
     for dt in DOC_TYPES:
@@ -176,12 +273,13 @@ def build_synthetic_vault(
     doc_index = 0
 
     for dt in DOC_TYPES:
-        for _i in range(per_type):
+        for type_ordinal in range(per_type):
             feature = FEATURES[doc_index % len(FEATURES)]
             needle = _needle_for(dt, doc_index)
             date = f"2026-01-{(doc_index % 28) + 1:02d}"
             stem = f"2026-01-{(doc_index % 28) + 1:02d}-{feature}-test-{doc_index:03d}"
             doc_id = f"{dt}/{stem}"
+            status = _adr_status_for(type_ordinal) if dt == "adr" else ""
 
             docs.append(
                 GeneratedDoc(
@@ -192,9 +290,12 @@ def build_synthetic_vault(
                     date=date,
                     path=vault_dir / dt / f"{stem}.md",
                     related_ids=[],
+                    status=status,
                 ),
             )
             needles[needle] = doc_id
+            if dt == "adr":
+                statuses[doc_id] = status
             doc_index += 1
 
     # Build graph links based on density.
@@ -206,13 +307,16 @@ def build_synthetic_vault(
                 doc.related_ids.append(target.doc_id)
                 graph_edges.append((doc.doc_id, target.doc_id))
 
+    # Add deterministic pipeline-role edges on top of the random ones.
+    _add_pipeline_edges(docs, graph_edges)
+
     # Write all documents.
     for doc in docs:
         # related: strip doc_type prefix for wiki-link stem
         related_stems = [rid.split("/", 1)[1] for rid in doc.related_ids]
         fm = _make_frontmatter(doc.doc_type, doc.feature, doc.date, related_stems)
         idx = int(doc.doc_id.split("-")[-1])
-        body = _make_body(doc.doc_type, doc.feature, doc.needle, idx)
+        body = _make_body(doc.doc_type, doc.feature, doc.needle, idx, doc.status)
         doc.path.write_text(fm + "\n" + body, encoding="utf-8")
 
     # Optionally add malformed documents.
@@ -224,6 +328,7 @@ def build_synthetic_vault(
         docs=docs,
         needles=needles,
         graph_edges=graph_edges,
+        statuses=statuses,
     )
 
 

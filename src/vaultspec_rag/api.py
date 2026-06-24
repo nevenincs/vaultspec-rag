@@ -139,6 +139,7 @@ def search_vault(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    intent: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
 ) -> list[SearchResult]:
@@ -183,6 +184,7 @@ def search_vault(
             feature=feature,
             date=date,
             tag=tag,
+            intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
@@ -197,6 +199,7 @@ def search_vault_timed(
     feature: str | None = None,
     date: str | None = None,
     tag: str | None = None,
+    intent: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
 ) -> tuple[list[SearchResult], dict[str, float]]:
@@ -228,6 +231,7 @@ def search_vault_timed(
             feature=feature,
             date=date,
             tag=tag,
+            intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )

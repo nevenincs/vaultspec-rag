@@ -1,0 +1,131 @@
+# Intent-tagged labeled query set for vault search ranking evaluation.
+#
+# Each [[query]] carries a natural-language query, a declared intent
+# (orientation | debugging | implementation), and a list of gold judgments.
+# Each gold judgment is a vault doc_id (path without extension, relative to the
+# docs dir, e.g. "adr/2026-06-12-service-concurrency-adr") and a graded
+# relevance in [0, 3].
+#
+# Grades are assigned MECHANICALLY from tests/quality/rubric.py applied to each
+# document's (intent, doc_type, status) - never read off a retriever's output.
+# Documents not listed for a query are implicitly grade 0. Intent is authored,
+# never inferred. The set targets the real project vault so the gating harness
+# runs against the actual corpus the live failure lives in.
+#
+# Statuses recorded inline as comments are the documents' true H1 status at
+# authoring time; if a document is later superseded, regenerate its grade.
+
+# --- Orientation: the authoritative, active decision should lead. ------------
+
+[[query]]
+text = "decision on gpu lock scope"
+intent = "orientation"
+note = "Canonical regression: the accepted ADR must outrank the exec record that implements it."
+  [[query.gold]]
+  doc_id = "adr/2026-06-12-service-concurrency-adr"  # accepted
+  grade = 3
+  [[query.gold]]
+  doc_id = "research/2026-06-12-service-concurrency-research"
+  grade = 2
+  [[query.gold]]
+  doc_id = "exec/2026-06-12-service-concurrency/2026-06-12-service-concurrency-W03-P06-S15"
+  grade = 1
+
+[[query]]
+text = "qdrant server mode with provisioned binary verification"
+intent = "orientation"
+  [[query.gold]]
+  doc_id = "adr/2026-06-12-qdrant-server-provisioning-adr"  # accepted
+  grade = 3
+  [[query.gold]]
+  doc_id = "research/2026-06-12-qdrant-server-provisioning-research"
+  grade = 2
+
+[[query]]
+text = "decoupled producer consumer indexing pipeline with a dedicated gpu consumer thread"
+intent = "orientation"
+  [[query.gold]]
+  doc_id = "adr/2026-06-02-index-gpu-pipeline-adr"  # accepted
+  grade = 3
+
+[[query]]
+text = "defense in depth security model for the mcp service"
+intent = "orientation"
+  [[query.gold]]
+  doc_id = "adr/2026-04-04-security-hardening-adr"  # accepted
+  grade = 3
+
+[[query]]
+text = "asgi path rewrite to skip the starlette mount redirect for the mcp route"
+intent = "orientation"
+note = "Status-derank trap: the most topical ADR is superseded and must not lead."
+  [[query.gold]]
+  doc_id = "adr/2026-05-31-server-mcp-route-adr"  # superseded
+  grade = 1
+  [[query.gold]]
+  doc_id = "research/2026-06-18-mcp-service-client-research"
+  grade = 2
+
+[[query]]
+text = "document preprocessing hook infrastructure design"
+intent = "orientation"
+  [[query.gold]]
+  doc_id = "adr/2026-06-10-preprocess-hooks-adr"  # accepted
+  grade = 3
+  [[query.gold]]
+  doc_id = "research/2026-06-10-preprocess-hooks-research"
+  grade = 2
+
+# --- Debugging: the concrete artifact that touched the symptom should lead. --
+
+[[query]]
+text = "narrow the gpu lock to model forward calls in the search encode and rerank path"
+intent = "debugging"
+  [[query.gold]]
+  doc_id = "exec/2026-06-12-service-concurrency/2026-06-12-service-concurrency-W03-P06-S15"
+  grade = 3
+  [[query.gold]]
+  doc_id = "adr/2026-06-12-service-concurrency-adr"
+  grade = 1
+
+[[query]]
+text = "backend aware per collection storage locking implementation"
+intent = "debugging"
+  [[query.gold]]
+  doc_id = "exec/2026-06-12-service-concurrency/2026-06-12-service-concurrency-W02-P03-S07"
+  grade = 3
+  [[query.gold]]
+  doc_id = "exec/2026-06-12-service-concurrency/2026-06-12-service-concurrency-W02-P03-S08"
+  grade = 3
+
+# --- Implementation: the plan and its execution trail should lead. -----------
+
+[[query]]
+text = "implementation plan for the service concurrency saturation rework"
+intent = "implementation"
+  [[query.gold]]
+  doc_id = "plan/2026-06-12-service-concurrency-plan"
+  grade = 3
+  [[query.gold]]
+  doc_id = "adr/2026-06-12-service-concurrency-adr"
+  grade = 2
+
+[[query]]
+text = "plan for the qdrant server provisioning work"
+intent = "implementation"
+  [[query.gold]]
+  doc_id = "plan/2026-06-12-qdrant-server-provisioning-plan"
+  grade = 3
+  [[query.gold]]
+  doc_id = "adr/2026-06-12-qdrant-server-provisioning-adr"
+  grade = 2
+
+[[query]]
+text = "plan and steps for document preprocessing hooks"
+intent = "implementation"
+  [[query.gold]]
+  doc_id = "plan/2026-06-10-preprocess-hooks-plan"
+  grade = 3
+  [[query.gold]]
+  doc_id = "exec/2026-06-10-preprocess-hooks/2026-06-10-preprocess-hooks-W01-P01-S01"
+  grade = 2
