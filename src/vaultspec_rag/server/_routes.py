@@ -811,6 +811,114 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     return JSONResponse(state)
 
 
+_STORAGE_SURVEY_DEFAULT_LIMIT = 200
+_STORAGE_SURVEY_MAX_LIMIT = 1000
+_STORAGE_SURVEY_STATUSES = frozenset(
+    {"live", "orphaned", "unknown", "unverifiable"}
+)
+
+
+def _clamp_survey_limit(raw: str | None) -> int:
+    """Parse and clamp the survey ``?limit=`` to a bounded window."""
+    if raw is None:
+        return _STORAGE_SURVEY_DEFAULT_LIMIT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _STORAGE_SURVEY_DEFAULT_LIMIT
+    if value <= 0:
+        return _STORAGE_SURVEY_DEFAULT_LIMIT
+    return min(value, _STORAGE_SURVEY_MAX_LIMIT)
+
+
+def _gather_storage_survey(status_filter: str | None, limit: int) -> dict[str, Any]:
+    """Run the read-only storage survey and shape it as a bounded response.
+
+    Opens a short-lived client to the managed server, classifies every
+    per-root namespace through the persisted manifest, applies the optional
+    status filter, and truncates to the clamped limit. Pure storage IO,
+    never touches the GPU.
+    """
+    from qdrant_client import QdrantClient
+
+    from ..config import get_config
+    from ..storage_ops import gather_survey, server_storage_collections_dir
+
+    cfg = get_config()
+    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    client = QdrantClient(url=url)
+    try:
+        surveys = gather_survey(client, server_storage_collections_dir())
+    finally:
+        client.close()
+    if status_filter:
+        surveys = [s for s in surveys if s.status == status_filter]
+    total = len(surveys)
+    bounded = surveys[:limit]
+    return {
+        "namespaces": [
+            {
+                "prefix": s.prefix,
+                "root": s.root,
+                "status": s.status,
+                "collections": s.collections,
+                "points": s.points,
+                "footprint_bytes": s.footprint_bytes,
+            }
+            for s in bounded
+        ],
+        "returned": len(bounded),
+        "total": total,
+        "limit": limit,
+    }
+
+
+async def storage_survey_route(request: Request) -> JSONResponse:
+    """Return a bounded, filterable read-only survey of stored namespaces.
+
+    Server-mode only (the local store has a single namespace and nothing to
+    reconcile). Token-gated like every other monitoring route. The optional
+    ``?status=`` narrows to one classification and ``?limit=`` bounds the
+    window; the default is biased to the actionable states first.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    from ..config import get_config
+
+    if not get_config().effective_server_mode():
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "server_mode_required",
+                "message": (
+                    "Storage survey requires server mode. A local-only store has "
+                    "a single namespace and nothing to reconcile."
+                ),
+            },
+            status_code=409,
+        )
+    raw_status = request.query_params.get("status")
+    if raw_status is not None and raw_status not in _STORAGE_SURVEY_STATUSES:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "bad_request",
+                "message": (
+                    "status must be one of live, orphaned, unknown, unverifiable."
+                ),
+            },
+            status_code=400,
+        )
+    limit = _clamp_survey_limit(request.query_params.get("limit"))
+
+    def _run() -> dict[str, Any]:
+        return _gather_storage_survey(raw_status, limit)
+
+    result = await _run_in_thread(_run)
+    return JSONResponse(result)
+
+
 async def start_watcher_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
@@ -1074,6 +1182,7 @@ ROUTES: list[Route] = [
     Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
     Route("/service-state", get_service_state_route, methods=["GET"]),
+    Route("/storage/survey", storage_survey_route, methods=["GET"]),
     Route("/code-file", code_file_route, methods=["POST"]),
     Route("/vault-document", vault_document_route, methods=["POST"]),
     Route("/benchmark", benchmark_route, methods=["POST"]),

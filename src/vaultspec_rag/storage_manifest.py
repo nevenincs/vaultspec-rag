@@ -38,10 +38,13 @@ from .store import root_collection_prefix
 
 __all__ = [
     "ManifestEntry",
+    "ReconcileResult",
     "classify_root",
     "load_manifest",
     "manifest_path",
+    "reconcile_manifest",
     "record_root",
+    "rekey_prefix",
     "remove_prefix",
     "remove_root",
     "reverse_map",
@@ -56,6 +59,21 @@ _MANIFEST_FILENAME = "storage-manifest.json"
 # still rely on atomic ``os.replace`` (last-writer-wins on the whole file),
 # which is acceptable because the daemon is the primary writer.
 _LOCK = threading.RLock()
+
+
+@dataclass(frozen=True)
+class ReconcileResult:
+    """Outcome of reconciling the manifest against the live server.
+
+    Attributes:
+        dropped: Prefixes removed because their root is gone AND no
+            collection backs them on the live server (stale bookkeeping).
+        kept: Prefixes left in place (root still resolves, or collections
+            still exist, or existence could not be confirmed).
+    """
+
+    dropped: list[str]
+    kept: list[str]
 
 
 @dataclass(frozen=True)
@@ -295,3 +313,80 @@ def classify_root(entry: ManifestEntry) -> str:
     except OSError:
         return "unverifiable"
     return "orphaned"
+
+
+def rekey_prefix(
+    old_prefix: str, *, root: Path | str, backend: str, last_indexed: str = ""
+) -> ManifestEntry:
+    """Move a manifest entry from ``old_prefix`` to ``root``'s current prefix.
+
+    A backend change (server<->local) or a root move re-derives the prefix
+    from the new root, so the old key no longer attributes the data. This
+    drops the stale key and writes the entry under the freshly-derived
+    prefix in one atomic read-modify-write, so attribution survives a
+    migrate without leaving a dangling old key the survey would report as
+    unknown.
+
+    Args:
+        old_prefix: The prefix the entry was stored under before the move.
+        root: The root whose new prefix keys the entry.
+        backend: ``"server"`` or ``"local"`` after the move.
+        last_indexed: ISO-8601 timestamp to carry forward.
+
+    Returns:
+        The persisted :class:`ManifestEntry` under its new prefix.
+    """
+    resolved = str(Path(root).resolve())
+    new_prefix = root_collection_prefix(root)
+    entry = ManifestEntry(
+        prefix=new_prefix,
+        root=resolved,
+        backend=backend,
+        last_indexed=last_indexed,
+    )
+    with _LOCK:
+        entries = load_manifest()
+        if old_prefix != new_prefix:
+            entries.pop(old_prefix, None)
+        entries[new_prefix] = entry
+        _write_manifest(entries)
+    return entry
+
+
+def reconcile_manifest(known_prefixes: set[str]) -> ReconcileResult:
+    """Drop manifest entries whose root is gone and whose data is gone too.
+
+    Called on service start (and after a root rename/move) to keep the
+    manifest consistent with reality. An entry is dropped only when BOTH
+    conditions hold: its recorded root no longer resolves to a live
+    directory, AND no live collection on the server still carries its
+    prefix. That conservative AND is the safety property - a stale manifest
+    key whose data the operator already dropped is bookkeeping noise worth
+    clearing, but an entry whose collections still exist (even if the source
+    root moved) is preserved so the survey can still attribute that stored
+    data rather than mislabel it ``unknown``. An ``unverifiable`` root (an
+    offline volume) is always kept.
+
+    Args:
+        known_prefixes: The set of collection prefixes the live server
+            currently backs (each stored collection's ``r{hash}_`` prefix).
+
+    Returns:
+        A :class:`ReconcileResult` naming the dropped and kept prefixes.
+    """
+    dropped: list[str] = []
+    kept: list[str] = []
+    with _LOCK:
+        entries = load_manifest()
+        survivors: dict[str, ManifestEntry] = {}
+        for prefix, entry in entries.items():
+            root_gone = classify_root(entry) == "orphaned"
+            data_gone = prefix not in known_prefixes
+            if root_gone and data_gone:
+                dropped.append(prefix)
+                continue
+            survivors[prefix] = entry
+            kept.append(prefix)
+        if dropped:
+            _write_manifest(survivors)
+    return ReconcileResult(sorted(dropped), sorted(kept))

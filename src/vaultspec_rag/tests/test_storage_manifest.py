@@ -18,7 +18,9 @@ from ..storage_manifest import (
     classify_root,
     load_manifest,
     manifest_path,
+    reconcile_manifest,
     record_root,
+    rekey_prefix,
     remove_root,
     reverse_map,
 )
@@ -149,3 +151,95 @@ def test_write_leaves_no_tmp_sibling(tmp_path: Path) -> None:
     path = manifest_path()
     assert path.exists()
     assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
+def test_reconcile_drops_orphan_with_no_data(tmp_path: Path) -> None:
+    """An entry whose root is gone AND whose data is gone is dropped."""
+    gone_root = tmp_path / "gone"
+    gone_root.mkdir()
+    entry = record_root(gone_root, backend="server")
+    gone_root.rmdir()  # root vanished -> orphaned
+
+    # The server backs no collection with this prefix, so the entry is stale.
+    result = reconcile_manifest(known_prefixes=set())
+
+    assert entry.prefix in result.dropped
+    assert entry.prefix not in load_manifest()
+
+
+def test_reconcile_keeps_live_root(tmp_path: Path) -> None:
+    """A live root is kept even when the server reports no collections yet."""
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    entry = record_root(live_root, backend="server")
+
+    result = reconcile_manifest(known_prefixes=set())
+
+    assert entry.prefix in result.kept
+    assert entry.prefix in load_manifest()
+
+
+def test_reconcile_keeps_orphan_whose_data_still_exists(tmp_path: Path) -> None:
+    """An orphaned root whose collections still exist is preserved.
+
+    The source root moved/vanished but its stored data is still on the
+    server, so dropping the manifest entry would mislabel that live data as
+    unknown. Reconcile only clears entries where BOTH the root and the data
+    are gone.
+    """
+    gone_root = tmp_path / "moved"
+    gone_root.mkdir()
+    entry = record_root(gone_root, backend="server")
+    gone_root.rmdir()  # orphaned, but data still backed below
+
+    result = reconcile_manifest(known_prefixes={entry.prefix})
+
+    assert entry.prefix in result.kept
+    assert entry.prefix in load_manifest()
+
+
+def test_reconcile_preserves_unrelated_entries(tmp_path: Path) -> None:
+    """Reconcile drops only the stale entry, never a sibling."""
+    live_root = tmp_path / "live"
+    gone_root = tmp_path / "gone"
+    live_root.mkdir()
+    gone_root.mkdir()
+    live = record_root(live_root, backend="server")
+    gone = record_root(gone_root, backend="server")
+    gone_root.rmdir()
+
+    reconcile_manifest(known_prefixes=set())
+
+    loaded = load_manifest()
+    assert live.prefix in loaded
+    assert gone.prefix not in loaded
+
+
+def test_rekey_changes_backend_in_place(tmp_path: Path) -> None:
+    """Re-keying with the same root updates the backend under the same prefix."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    record_root(root, backend="server", last_indexed="2026-06-18T00:00:00")
+    prefix = root_collection_prefix(root)
+
+    rekey_prefix(prefix, root=root, backend="local")
+
+    loaded = load_manifest()
+    assert prefix in loaded
+    assert loaded[prefix].backend == "local"
+    assert loaded[prefix].root == str(root.resolve())
+
+
+def test_rekey_moves_stale_key(tmp_path: Path) -> None:
+    """Re-keying from a different old prefix drops the old key entirely."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    new_prefix = root_collection_prefix(root)
+    stale_prefix = "rdeadbeefdead_"
+    record_root(root, backend="server")
+    # Simulate a stale alias that should be cleared on re-key.
+    rekey_prefix(stale_prefix, root=root, backend="local")
+
+    loaded = load_manifest()
+    assert stale_prefix not in loaded
+    assert loaded[new_prefix].backend == "local"

@@ -13,7 +13,7 @@ impossible without an explicit manifest attribution.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import typer
 
@@ -143,6 +143,51 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         )
 
 
+def _survey_from_service() -> list[NamespaceSurvey] | None:
+    """Fetch the survey from a running service, or ``None`` if it is down.
+
+    The survey is the one read-only storage surface the service owns
+    (``service-domain-owns-operability``): when a daemon is up, the CLI reads
+    its ``/storage/survey`` route so operator and MCP see one classification.
+    A refused connection returns ``None`` so the caller falls back to the
+    CLI-direct path; a live-but-error response (e.g. a non-server-mode 409)
+    also returns ``None`` so the direct path renders the proper message.
+    """
+    from ..serviceclient import _try_http_admin
+    from ..storage_survey import NamespaceSurvey
+    from ._service_status import _default_service_port
+
+    result = _try_http_admin("get_storage_survey", {}, _default_service_port())
+    if not result or result.get("ok") is False:
+        return None
+    raw = result.get("namespaces")
+    if not isinstance(raw, list):
+        return None
+    surveys: list[NamespaceSurvey] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, dict):
+            continue
+        entry = cast("dict[str, object]", item)
+        root = entry.get("root")
+        collections = entry.get("collections")
+        names = (
+            [str(c) for c in cast("list[object]", collections)]
+            if isinstance(collections, list)
+            else []
+        )
+        surveys.append(
+            NamespaceSurvey(
+                prefix=str(entry.get("prefix", "")),
+                root=root if isinstance(root, str) else None,
+                status=str(entry.get("status", "")),
+                collections=names,
+                points=int(cast("int", entry.get("points", 0) or 0)),
+                footprint_bytes=int(cast("int", entry.get("footprint_bytes", 0) or 0)),
+            )
+        )
+    return surveys
+
+
 @server_storage_app.command(
     "survey",
     help="List stored RAG namespaces classified as live, orphaned, or unknown.",
@@ -158,14 +203,22 @@ def storage_survey(
         False, "--unknown", help="Show only unattributable (unknown) namespaces."
     ),
 ) -> None:
-    """Survey the managed server's per-root index namespaces."""
-    from ..storage_ops import gather_survey, server_storage_collections_dir
+    """Survey the managed server's per-root index namespaces.
 
-    surveys = _run_storage_op(
-        _SURVEY_CMD,
-        json_mode,
-        lambda c: gather_survey(c, server_storage_collections_dir()),
-    )
+    Service-first: when a daemon is running, the survey comes from its
+    ``/storage/survey`` route so operator, CLI, and MCP share one
+    classification. When no service answers, the CLI opens its own client to
+    the managed server directly (the same path the destructive verbs use).
+    """
+    surveys = _survey_from_service()
+    if surveys is None:
+        from ..storage_ops import gather_survey, server_storage_collections_dir
+
+        surveys = _run_storage_op(
+            _SURVEY_CMD,
+            json_mode,
+            lambda c: gather_survey(c, server_storage_collections_dir()),
+        )
     if orphaned_only:
         surveys = [s for s in surveys if s.status == "orphaned"]
     if unknown_only:
@@ -402,9 +455,37 @@ def storage_migrate(
     finally:
         local.close()
         server.close()
+    _rekey_manifest_on_migrate(root, to_backend, preview, results)
     _render_migrate(results, json_mode)
     if not dry_run and not yes and any(r.status == "would_migrate" for r in results):
         raise typer.Exit(1)
+
+
+def _rekey_manifest_on_migrate(
+    root: str,
+    to_backend: str,
+    preview: bool,
+    results: list[MigrateResult],
+) -> None:
+    """Re-key the root's manifest entry to the new backend after a real migrate.
+
+    The prefix is derived from the resolved root, so a backend change keeps
+    the same key but must update ``backend`` (and carry the prefix forward)
+    so a later survey attributes the migrated data to the right backend
+    instead of leaving a stale ``server`` label on a now-local root. Skipped
+    on a preview and when nothing actually migrated; best-effort, so a
+    manifest hiccup never fails an applied data move.
+    """
+    if preview or not any(r.status == "migrated" for r in results):
+        return
+    from ..storage_manifest import rekey_prefix
+    from ..store import root_collection_prefix
+
+    try:
+        prefix = root_collection_prefix(root)
+        rekey_prefix(prefix, root=root, backend=to_backend)
+    except Exception as exc:  # best-effort attribution; never fail an applied move
+        typer.echo(f"Note: migrated data but could not update the manifest: {exc}")
 
 
 def _emit_or_echo_error(

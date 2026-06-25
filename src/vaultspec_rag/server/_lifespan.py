@@ -52,6 +52,47 @@ def _claim_machine_singleton() -> None:
         )
 
 
+def _reconcile_storage_manifest() -> None:
+    """Reconcile the storage manifest against the live managed server.
+
+    Enumerates the server's collections, derives each one's per-root prefix,
+    and drops manifest entries whose root is gone and whose data is gone too.
+    Runs on a worker thread off the GPU lock. Any failure is logged and
+    swallowed: a stale-but-present manifest is a survey nuisance, never a
+    reason to fail service startup.
+    """
+    import re
+
+    from ..config import get_config
+    from ..storage_manifest import reconcile_manifest
+
+    prefix_re = re.compile(r"^(r[0-9a-f]{12}_)")
+    try:
+        from qdrant_client import QdrantClient
+
+        cfg = get_config()
+        url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+        client = QdrantClient(url=url)
+        try:
+            names = [c.name for c in client.get_collections().collections]
+        finally:
+            client.close()
+        known: set[str] = set()
+        for name in names:
+            match = prefix_re.match(name)
+            if match:
+                known.add(match.group(1))
+        result = reconcile_manifest(known)
+        if result.dropped:
+            logger.info(
+                "storage manifest reconcile dropped %d stale prefix(es): %s",
+                len(result.dropped),
+                ", ".join(result.dropped),
+            )
+    except Exception:
+        logger.debug("storage manifest reconcile skipped", exc_info=True)
+
+
 @asynccontextmanager
 async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     """Eagerly load GPU models before accepting connections.
@@ -179,6 +220,15 @@ async def _start_components() -> asyncio.Task[None]:
                 supervisor.url,
                 supervisor.pid,
             )
+
+    # Reconcile the storage manifest against the live server before models
+    # load: drop bookkeeping for roots that are gone AND whose collections no
+    # longer exist, so the survey/prune surface starts from an accurate
+    # prefix-to-root map after an out-of-band root removal or rename. Pure
+    # storage IO on a worker thread, never under the GPU lock; a failure here
+    # is logged and never aborts startup (attribution is best-effort).
+    if cfg.effective_server_mode():
+        await _run_in_thread(_reconcile_storage_manifest)
 
     # Wire watcher lifecycle into registry so close_project() stops watchers
     _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]

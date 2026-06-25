@@ -70,6 +70,27 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def survey_storage(
+    status: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Survey stored RAG index namespaces (live / orphaned / unknown).
+
+    Read-only: classifies every per-root namespace through the persisted
+    prefix-to-root manifest and reports point counts and on-disk footprint.
+    Optional ``status`` narrows to one classification and ``limit`` bounds
+    the returned window. The destructive prune / delete / migrate verbs stay
+    CLI-only; the MCP exposes the survey alone.
+    """
+    args: dict[str, Any] = {}
+    if status:
+        args["status"] = status
+    if limit is not None:
+        args["limit"] = limit
+    return await _admin("get_storage_survey", args)
+
+
+@mcp.tool()
 async def get_logs(
     lines: int = 200,
     job_id: str | None = None,

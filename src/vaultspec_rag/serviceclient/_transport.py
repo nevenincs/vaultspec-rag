@@ -294,6 +294,22 @@ def _jobs_route_path(args: dict[str, Any]) -> str:
     return url_path
 
 
+_STORAGE_SURVEY_PARAMS = {"status", "limit"}
+
+
+def _storage_survey_route_path(args: dict[str, Any]) -> str:
+    """Build the ``/storage/survey`` route path with its bounded filters."""
+    url_path = "/storage/survey"
+    params = {
+        key: value
+        for key, value in args.items()
+        if key in _STORAGE_SURVEY_PARAMS and value is not None
+    }
+    if params:
+        url_path += "?" + urllib.parse.urlencode(params)
+    return url_path
+
+
 def _resolve_admin_call(
     tool_name: str, args: dict[str, Any]
 ) -> tuple[str, dict[str, Any] | None] | None:
@@ -302,6 +318,8 @@ def _resolve_admin_call(
         return _logs_route_path(args), None
     if tool_name == "get_jobs":
         return _jobs_route_path(args), None
+    if tool_name == "get_storage_survey":
+        return _storage_survey_route_path(args), None
     if tool_name in _GET_ROOT_ROUTES:
         return _admin_url_with_root(_GET_ROOT_ROUTES[tool_name], args), None
     if tool_name in _POST_BODY_ROUTES:

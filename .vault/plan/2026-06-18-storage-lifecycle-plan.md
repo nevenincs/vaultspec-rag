@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#storage-lifecycle'
 date: '2026-06-18'
+modified: '2026-06-25'
 tier: L3
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'
@@ -21,11 +22,11 @@ Close issue 192 first to de-risk the feature: reproduce the server-mode deleted-
 
 Add real server-mode regression coverage that reproduces the issue-192 leak, then apply the minimal durability fix the test demands.
 
-- [ ] `W01.P01.S01` - Add a server-mode integration test that indexes two code files, deletes one, runs a scoped incremental index, and asserts the deleted file chunks are gone from the store; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
-- [ ] `W01.P01.S02` - Extend the server-mode test to assert a real hybrid search no longer returns the deleted file; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
-- [ ] `W01.P01.S03` - Add a vault-side twin test deleting a vault document, running the scoped incremental index, and asserting document eviction and search absence in server mode; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
-- [ ] `W01.P01.S04` - Diagnose the reproduced server-mode leak and apply the minimal durability fix to the delete path; `src/vaultspec_rag/store.py`.
-- [ ] `W01.P01.S05` - Add an explicit watcher delete-carry-forward assertion covering the pending-set batching path; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W01.P01.S01` - Add a server-mode integration test that indexes two code files, deletes one, runs a scoped incremental index, and asserts the deleted file chunks are gone from the store; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
+- [x] `W01.P01.S02` - Extend the server-mode test to assert a real hybrid search no longer returns the deleted file; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
+- [x] `W01.P01.S03` - Add a vault-side twin test deleting a vault document, running the scoped incremental index, and asserting document eviction and search absence in server mode; `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`.
+- [x] `W01.P01.S04` - Diagnose the reproduced server-mode leak and apply the minimal durability fix to the delete path; `src/vaultspec_rag/store.py`.
+- [x] `W01.P01.S05` - Add an explicit watcher delete-carry-forward assertion covering the pending-set batching path; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 
 ## Wave `W02` - prefix-to-root manifest and survey foundation
 
@@ -38,8 +39,8 @@ Introduce a durable manifest mapping each collection prefix to its resolved root
 - [x] `W02.P02.S06` - Define the prefix-to-root manifest schema and its on-disk location under the managed service directory; `src/vaultspec_rag/registry.py`.
 - [x] `W02.P02.S07` - Write and update the manifest entry whenever a root is indexed; `src/vaultspec_rag/api.py`.
 - [x] `W02.P02.S08` - Add a manifest read and reverse-map helper resolving a collection prefix to its root; `src/vaultspec_rag/registry.py`.
-- [ ] `W02.P02.S09` - Reconcile the manifest on service start and on root rename or move; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `W02.P02.S10` - Add unit and real-backend tests for manifest write, read, and reverse-map; `src/vaultspec_rag/tests/integration/test_storage_manifest.py`.
+- [x] `W02.P02.S09` - Reconcile the manifest on service start and on root rename or move; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `W02.P02.S10` - Add unit and real-backend tests for manifest write, read, and reverse-map; `src/vaultspec_rag/tests/integration/test_storage_manifest.py`.
 
 ### Phase `W02.P03` - service-domain survey surface
 
@@ -47,12 +48,12 @@ Expose a bounded, filterable read-only survey of stored namespaces over a servic
 
 - [x] `W02.P03.S11` - Implement a service-domain survey function that enumerates namespaces, joins the manifest, and classifies live, orphaned, and unknown; `src/vaultspec_rag/service.py`.
 - [x] `W02.P03.S12` - Compute daemon-side byte footprint for each namespace from the server storage tree; `src/vaultspec_rag/service.py`.
-- [ ] `W02.P03.S13` - Add a gated GET storage route, bounded and filterable, and register it in the route table; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W02.P03.S13` - Add a gated GET storage route, bounded and filterable, and register it in the route table; `src/vaultspec_rag/server/_routes.py`.
 - [x] `W02.P03.S14` - Create the storage CLI group and a survey command with bounded filters and json output; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `W02.P03.S15` - Wire the storage group into the CLI app and import registration; `src/vaultspec_rag/cli/_app.py`.
-- [ ] `W02.P03.S16` - Add the CLI-to-service survey HTTP adapter handling the not-running case; `src/vaultspec_rag/cli/_http_search.py`.
-- [ ] `W02.P03.S17` - Add a single-root in-process survey path for local mode; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `W02.P03.S18` - Add a read-only survey MCP tool delegating to the service; `src/vaultspec_rag/mcp/_admin_tools.py`.
+- [x] `W02.P03.S15` - Wire the storage group into the CLI app and import registration; `src/vaultspec_rag/cli/_app.py`.
+- [x] `W02.P03.S16` - Add the CLI-to-service survey HTTP adapter handling the not-running case; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `W02.P03.S17` - Add a single-root in-process survey path for local mode; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `W02.P03.S18` - Add a read-only survey MCP tool delegating to the service; `src/vaultspec_rag/mcp/_admin_tools.py`.
 - [x] `W02.P03.S19` - Add real-backend survey tests for server and local classifying live, orphaned, and unknown; `src/vaultspec_rag/tests/integration/test_storage_survey.py`.
 
 ## Wave `W03` - prune and delete destructive verbs
@@ -65,9 +66,9 @@ Add a per-root delete that releases the in-memory slot, then drops the root name
 
 - [x] `W03.P04.S20` - Implement a service-domain delete that releases the in-memory slot before dropping data and returns busy when the root is in use; `src/vaultspec_rag/service.py`.
 - [x] `W03.P04.S21` - Drop the root namespaced collections in server mode and remove the local store tree only when the store is confirmed closed; `src/vaultspec_rag/store.py`.
-- [ ] `W03.P04.S22` - Add a gated POST storage delete route and register it; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W03.P04.S22` - Add a gated POST storage delete route and register it; `src/vaultspec_rag/server/_routes.py`.
 - [x] `W03.P04.S23` - Add a storage delete CLI command with a required explicit target, dry-run preview, confirmation, and json; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `W03.P04.S24` - Add the CLI-to-service delete HTTP adapter; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `W03.P04.S24` - Add the CLI-to-service delete HTTP adapter; `src/vaultspec_rag/cli/_http_search.py`.
 - [x] `W03.P04.S25` - Drop the manifest entry on delete; `src/vaultspec_rag/registry.py`.
 - [x] `W03.P04.S26` - Add real-backend delete tests for server and local including the busy-root path; `src/vaultspec_rag/tests/integration/test_storage_delete.py`.
 
@@ -76,9 +77,9 @@ Add a per-root delete that releases the in-memory slot, then drops the root name
 Add a server-mode prune that reclaims namespaces whose manifest root has vanished, never touching unattributable unknown namespaces.
 
 - [x] `W03.P05.S27` - Implement a service-domain prune that selects orphaned namespaces from the manifest and never targets unknown namespaces; `src/vaultspec_rag/service.py`.
-- [ ] `W03.P05.S28` - Add a gated POST storage prune route and register it; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W03.P05.S28` - Add a gated POST storage prune route and register it; `src/vaultspec_rag/server/_routes.py`.
 - [x] `W03.P05.S29` - Add a storage prune CLI command with a dry-run preview of exact targets, confirmation, and json; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `W03.P05.S30` - Add the CLI-to-service prune HTTP adapter; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `W03.P05.S30` - Add the CLI-to-service prune HTTP adapter; `src/vaultspec_rag/cli/_http_search.py`.
 - [x] `W03.P05.S31` - Add a real-backend prune test that creates an orphaned namespace and asserts it is reclaimed while unknown namespaces are untouched; `src/vaultspec_rag/tests/integration/test_storage_prune.py`.
 
 ## Wave `W04` - adversarial and data-safety hardening
@@ -92,8 +93,8 @@ Harden every destructive path against out-of-scope deletion, traversal, symlink 
 - [x] `W04.P06.S32` - Enforce that every destructive op operates only on the resolved root namespaces or managed storage tree and rejects roots outside the allowed base; `src/vaultspec_rag/service.py`.
 - [x] `W04.P06.S33` - Reject path traversal and symlink escape in any path the surface deletes; `src/vaultspec_rag/service.py`.
 - [x] `W04.P06.S34` - Guarantee prune and delete never remove unattributable unknown namespaces without an explicit separate gate; `src/vaultspec_rag/service.py`.
-- [ ] `W04.P06.S35` - Verify refcount and store-lock checks run before any drop and that no deletion touches a live server storage file; `src/vaultspec_rag/store.py`.
-- [ ] `W04.P06.S36` - Confirm destructive routes are loopback and token gated and that control-plane verbs are absent from MCP; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W04.P06.S35` - Verify refcount and store-lock checks run before any drop and that no deletion touches a live server storage file; `src/vaultspec_rag/store.py`.
+- [x] `W04.P06.S36` - Confirm destructive routes are loopback and token gated and that control-plane verbs are absent from MCP; `src/vaultspec_rag/server/_routes.py`.
 - [x] `W04.P06.S37` - Add an adversarial test suite covering out-of-scope deletion, traversal and symlink payloads, unknown-namespace, busy-root, and json-without-confirmation; `src/vaultspec_rag/tests/integration/test_storage_adversarial.py`.
 
 ## Wave `W05` - migrate
@@ -111,12 +112,20 @@ Run a bounded research spike to select the most capable C-backed Python tooling 
 Implement migrate to relocate and convert a root index between backends using the selected tooling, reusing the single GPU consumer when re-embedding.
 
 - [x] `W05.P08.S39` - Implement a service-domain migrate that relocates and converts a root index between local and server backends using the selected tooling; `src/vaultspec_rag/service.py`.
-- [ ] `W05.P08.S40` - Reuse the single GPU consumer pipeline when migrate must re-embed and keep all storage IO outside the GPU lock; `src/vaultspec_rag/service.py`.
-- [ ] `W05.P08.S41` - Add a gated POST storage migrate route and register it; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W05.P08.S40` - Reuse the single GPU consumer pipeline when migrate must re-embed and keep all storage IO outside the GPU lock; `src/vaultspec_rag/service.py`.
+- [x] `W05.P08.S41` - Add a gated POST storage migrate route and register it; `src/vaultspec_rag/server/_routes.py`.
 - [x] `W05.P08.S42` - Add a storage migrate CLI command with dry-run, confirmation, and json; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `W05.P08.S43` - Add the CLI-to-service migrate HTTP adapter; `src/vaultspec_rag/cli/_http_search.py`.
-- [ ] `W05.P08.S44` - Re-key the manifest prefix, root, and backend on migrate; `src/vaultspec_rag/registry.py`.
+- [x] `W05.P08.S43` - Add the CLI-to-service migrate HTTP adapter; `src/vaultspec_rag/cli/_http_search.py`.
+- [x] `W05.P08.S44` - Re-key the manifest prefix, root, and backend on migrate; `src/vaultspec_rag/registry.py`.
 - [x] `W05.P08.S45` - Add a real-backend migrate round-trip test between local and server with an integrity check; `src/vaultspec_rag/tests/integration/test_storage_migrate.py`.
+
+## Reconciliation note
+
+This plan shipped through pull request 196 with a deliberate architectural divergence from the design its rows describe, and was then reconciled to the shipped design. The original design routed every destructive operation through a service-owned HTTP control plane: gated GET and POST storage routes on the daemon, with the CLI as thin HTTP adapters over the service. The feature instead shipped CLI-direct: delete, prune, and migrate run as `server storage` CLI verbs that open their own client to the managed loopback Qdrant server and call the service-domain storage functions in-process, requiring server mode. The destructive control plane was deliberately not built, and this reconciliation did not build it.
+
+The one service surface the ADR sanctions as service-domain-owned - the read-only survey - was built in this reconciliation: a token-gated, bounded, server-mode-only `storage/survey` route, a thin MCP survey tool delegating to it, and a service-first CLI survey path, so operator, CLI, and MCP share one classification. The destructive verbs stay CLI-only and are absent from MCP.
+
+Accordingly the steps that described the superseded service-HTTP architecture are closed as superseded with this recorded rationale rather than implemented: the GET storage route and its survey HTTP adapter, the local-mode in-process survey path (storage requires server mode), the POST delete, prune, and migrate routes and their CLI-to-service HTTP adapters, and the migrate GPU-consumer reuse (migrate is copy-only and re-embeds nothing, so no GPU lock is involved). The genuine gaps the shipped feature left - manifest reconcile on service start, its tests, the read-only survey MCP surface, and the migrate manifest re-key - were built and closed with real code and real tests. The shared supersession execution record carries the per-step rationale.
 
 ## Description
 

@@ -312,6 +312,87 @@ def test_migrate_remaps_name_and_copies_points(
 
 
 @pytest.mark.usefixtures("isolated_status_dir")
+def test_reconcile_drops_stale_manifest_against_live_server(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """Reconcile drops a manifest entry whose root and data are both gone, and
+    keeps an orphan whose collections still exist, against the real server."""
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import load_manifest, reconcile_manifest
+
+    client = QdrantClient(url=ops_qdrant.url)
+    try:
+        # stale: root gone, no backing collection.
+        stale_root = tmp_path / "stale"
+        stale_root.mkdir()
+        stale_pref = root_collection_prefix(stale_root)
+        record_root(stale_root, backend="server")
+        stale_root.rmdir()
+
+        # kept: root gone, but its collection still lives on the server.
+        kept_root = tmp_path / "kept"
+        kept_root.mkdir()
+        kept_pref = root_collection_prefix(kept_root)
+        record_root(kept_root, backend="server")
+        kept_root.rmdir()
+        _make_collection(client, f"{kept_pref}vault_docs")
+
+        names = [c.name for c in client.get_collections().collections]
+        import re
+
+        prefix_re = re.compile(r"^(r[0-9a-f]{12}_)")
+        known = {m.group(1) for n in names if (m := prefix_re.match(n))}
+
+        result = reconcile_manifest(known)
+
+        assert stale_pref in result.dropped
+        assert kept_pref in result.kept
+        loaded = load_manifest()
+        assert stale_pref not in loaded
+        assert kept_pref in loaded
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_migrate_then_rekey_manifest_records_new_backend(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """After a server->server name-remap migrate, re-keying the manifest stamps
+    the new backend so a later survey attributes the moved data correctly."""
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import load_manifest, record_root, rekey_prefix
+
+    client = QdrantClient(url=ops_qdrant.url)
+    try:
+        root = tmp_path / "movable"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        record_root(root, backend="server")
+        assert load_manifest()[prefix].backend == "server"
+
+        # Migrate the root's data (here a single collection round-trip on one
+        # server, exercising the real copy path), then re-key to local.
+        source = f"{prefix}vault_docs"
+        target = f"{prefix}codebase_docs"
+        _make_collection(client, source)
+        results = migrate_collections(
+            client, client, {source: target}, dry_run=False
+        )
+        assert results[0].status == "migrated"
+
+        rekey_prefix(prefix, root=root, backend="local")
+        assert load_manifest()[prefix].backend == "local"
+        assert load_manifest()[prefix].root == str(root.resolve())
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
 @pytest.mark.parametrize("bad_prefix", ["", "r", "rdeadbeef", "notaprefix"])
 def test_delete_rejects_noncanonical_prefix_even_with_allow_unknown(
     ops_qdrant: QdrantSupervisor,
