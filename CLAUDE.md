@@ -8,6 +8,7 @@ You MUST respect these rules at all times:
 @.claude/rules/gpu-consumer-single-thread.md
 @.claude/rules/gpu-lock-wraps-forward-passes-only.md
 @.claude/rules/index-workers-stay-cpu-only.md
+@.claude/rules/managed-singleton-paths-isolate-storage-dir-in-tests.md
 @.claude/rules/operator-views-are-bounded.md
 @.claude/rules/pinned-binaries-verify-before-execute.md
 @.claude/rules/rerankers-score-real-content.md

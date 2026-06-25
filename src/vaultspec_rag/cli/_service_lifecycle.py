@@ -394,8 +394,106 @@ def service_start(
     raise typer.Exit(code=1)
 
 
+def _terminate_and_confirm(pid: int) -> None:
+    """Terminate *pid*, wait briefly, and emit the platform shutdown trail."""
+    _cli._terminate_pid(pid)
+
+    # Wait briefly for process to exit
+    for _ in range(50):
+        if not _cli._is_pid_alive(pid):
+            break
+        time.sleep(0.1)
+
+    if sys.platform == "win32":
+        # On Windows, os.kill(SIGTERM) is TerminateProcess so the
+        # daemon's atexit handler and lifespan ``finally`` never
+        # fire. POSIX flows through uvicorn's signal handler →
+        # lifespan finally → ``_record_shutdown("clean")`` which
+        # emits ``service.lifecycle event=shutdown reason=clean``.
+        # The CLI parent emits a mirror line here so Windows
+        # operators get the same audit trail.
+        _cli._append_lifecycle_shutdown_log(
+            "cli_terminate",
+            pid=pid,
+            platform="win32",
+        )
+
+
+def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
+    """Resolve the live serving pid (and token) on *port* via ``/health``.
+
+    The service domain owns identity: ``/health`` reports the serving pid and
+    the per-process token, so a service on a non-default port is resolvable
+    without the status file (which is keyed per status dir and may diverge from
+    the running instance - research F7). Returns ``None`` when nothing healthy
+    is serving the port.
+    """
+    if not _port_is_listening(port):
+        return None
+    health = _health_probe(port)
+    if health is None:
+        return None
+    serving_pid = health.get("pid")
+    if not isinstance(serving_pid, int) or serving_pid <= 0:
+        return None
+    raw_token = health.get("service_token")
+    token = raw_token if isinstance(raw_token, str) and raw_token else None
+    return serving_pid, token
+
+
+def _stop_service_on_port(port: int) -> None:
+    """Stop the service answering on *port*, status-file independent.
+
+    Targets the running instance the operator named with ``--port`` even when
+    the status file is missing or records a divergent port (research F7). The
+    discovery file is only removed when it actually points at this port, so
+    stopping one config's service never erases another's discovery file.
+    """
+    resolved = _service_pid_on_port(port)
+    if resolved is None:
+        _print_lifecycle_lines(
+            "Service is not running.",
+            f"No service is answering on http://127.0.0.1:{port}.",
+        )
+        return
+    pid, token = resolved
+    if not _cli._is_our_service(pid, port=port, expected_token=token):
+        _print_lifecycle_lines(
+            "Service stop skipped",
+            f"A process is answering on port {port} but its identity could not "
+            "be confirmed as a vaultspec-rag service; it was left running.",
+        )
+        _print_lifecycle_next_actions(
+            f"vaultspec-rag server status --port {port} --verbose",
+        )
+        return
+
+    _terminate_and_confirm(pid)
+
+    # Remove the discovery file only when it points at the port we just stopped,
+    # so stopping a non-default-port service never erases a different config's
+    # status file.
+    status = _read_service_status()
+    if status is not None and int(status.get("port", 0)) == port:
+        _status_file().unlink(missing_ok=True)
+    _print_lifecycle_lines("Service stopped", _process_line(pid))
+
+
 @server_app.command("stop", help="Stop the background search service.")
-def service_stop() -> None:
+def service_stop(
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            help=(
+                "Stop the service answering on this port, resolving its identity "
+                "from /health rather than the status file. Use when the service "
+                "runs on a non-default port or the status file diverges from the "
+                "running instance."
+            ),
+        ),
+    ] = None,
+) -> None:
     """Stop the background search service.
 
     Reads the status file from ``~/.vaultspec-rag/service.json``, verifies
@@ -403,7 +501,15 @@ def service_stop() -> None:
     a graceful termination signal (SIGTERM on Unix, CTRL_BREAK_EVENT on
     Windows), waits briefly for graceful shutdown, and removes the status file.
     Force-kills (SIGKILL/TerminateProcess) if graceful shutdown fails.
+
+    With ``--port`` the running instance on that port is targeted directly via
+    its ``/health`` identity, so a non-default-port service whose status file is
+    missing or divergent (research F7) is still stoppable.
     """
+    if port is not None:
+        _stop_service_on_port(port)
+        return
+
     status = _read_service_status()
     if status is None:
         # No service.json => nothing to stop for this config. We do NOT probe
@@ -438,28 +544,8 @@ def service_stop() -> None:
         )
         return
 
-    _cli._terminate_pid(pid)
-
-    # Wait briefly for process to exit
-    for _ in range(50):
-        if not _cli._is_pid_alive(pid):
-            break
-        time.sleep(0.1)
-
+    _terminate_and_confirm(pid)
     _status_file().unlink(missing_ok=True)
-    if sys.platform == "win32":
-        # On Windows, os.kill(SIGTERM) is TerminateProcess so the
-        # daemon's atexit handler and lifespan ``finally`` never
-        # fire. POSIX flows through uvicorn's signal handler →
-        # lifespan finally → ``_record_shutdown("clean")`` which
-        # emits ``service.lifecycle event=shutdown reason=clean``.
-        # The CLI parent emits a mirror line here so Windows
-        # operators get the same audit trail.
-        _cli._append_lifecycle_shutdown_log(
-            "cli_terminate",
-            pid=pid,
-            platform="win32",
-        )
     _print_lifecycle_lines("Service stopped", _process_line(pid))
 
 

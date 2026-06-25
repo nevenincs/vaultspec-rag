@@ -82,6 +82,40 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # CLI pre-check is advisory; this acquire wins or loses atomically).
     _claim_machine_singleton()
 
+    # Once the lock is held, every startup step up to ``yield`` runs under a
+    # release-on-failure guard. The shipping daemon's crash-safe lock self-heals
+    # via OS release on process exit, but a pre-yield startup failure (qdrant
+    # spawn, model load) would otherwise leak the held lock for an in-process
+    # lifespan REUSE path that never reaches the post-yield ``finally``. A
+    # supported embedded-reuse contract requires the lock be freed the moment
+    # startup fails, so a subsequent in-process acquire succeeds.
+    try:
+        heartbeat_task = await _start_components()
+        try:
+            yield
+        finally:
+            await _shutdown_components(heartbeat_task)
+    except BaseException:
+        # The post-yield ``finally`` releases the lock on a clean run; this
+        # branch covers the pre-yield startup failure (and a cancelled startup)
+        # where that ``finally`` was never entered. Release exactly once: a
+        # successful run drops out the bottom without re-releasing.
+        release_machine_lock()
+        raise
+
+
+async def _start_components() -> asyncio.Task[None]:
+    """Run the pre-yield startup: qdrant, models, hooks, heartbeat.
+
+    Factored out of :func:`service_lifespan` so the machine-lock
+    release-on-failure guard wraps the whole startup body without nesting the
+    ``yield`` inside a startup-only ``try``. Any failure here propagates to the
+    caller, which releases the held machine lock before re-raising.
+
+    Returns:
+        The running heartbeat task, handed back so the post-yield shutdown can
+        cancel and await it.
+    """
     t_total = time.perf_counter()
 
     # HF cache status
@@ -178,42 +212,53 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             exc_info=True,
         )
 
-    try:
-        yield
-    finally:
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await heartbeat_task
-        # Shutdown ordering: watchers BEFORE stores (so no
-        # incremental_index() runs against a closed store), stores
-        # BEFORE the qdrant child (so clients release their server
-        # connections), the qdrant child LAST among data components.
-        _m._stop_all_watchers()
-        _m._registry.close_all()
-        supervisor = _qr.active_supervisor()
-        if supervisor is not None:
-            try:
-                supervisor.stop()
-            except Exception:
-                log_event(
-                    logger,
-                    "service.lifecycle",
-                    "qdrant_stop_failed",
-                    severity=logging.WARNING,
-                    exc_info=True,
-                )
-            _qr.set_active_supervisor(None)
-            # Undo the in-process env publish so an embedded caller
-            # that runs the lifespan and then continues in the same
-            # interpreter does not keep reading server mode against a
-            # now-dead port (the daemon process just exits, so this
-            # only matters for in-process reuse).
-            os.environ.pop(EnvVar.QDRANT_URL.value, None)
-        # Release the machine singleton last, so the slot is free for the next
-        # service only after this one has fully torn down its GPU and Qdrant.
-        release_machine_lock()
-        logger.info("Service shutdown complete")
-        _m._record_shutdown("clean")
+    return heartbeat_task
+
+
+async def _shutdown_components(heartbeat_task: asyncio.Task[None]) -> None:
+    """Tear down the daemon's data components and release the machine lock.
+
+    Mirrors :func:`_start_components`: cancels the heartbeat, stops watchers
+    before stores and stores before the qdrant child, then releases the machine
+    singleton last so the slot is free for the next service only after this one
+    has fully torn down its GPU and Qdrant.
+    """
+    from .. import qdrant_runtime as _qr
+    from ..config import EnvVar
+
+    heartbeat_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await heartbeat_task
+    # Shutdown ordering: watchers BEFORE stores (so no
+    # incremental_index() runs against a closed store), stores
+    # BEFORE the qdrant child (so clients release their server
+    # connections), the qdrant child LAST among data components.
+    _m._stop_all_watchers()
+    _m._registry.close_all()
+    supervisor = _qr.active_supervisor()
+    if supervisor is not None:
+        try:
+            supervisor.stop()
+        except Exception:
+            log_event(
+                logger,
+                "service.lifecycle",
+                "qdrant_stop_failed",
+                severity=logging.WARNING,
+                exc_info=True,
+            )
+        _qr.set_active_supervisor(None)
+        # Undo the in-process env publish so an embedded caller
+        # that runs the lifespan and then continues in the same
+        # interpreter does not keep reading server mode against a
+        # now-dead port (the daemon process just exits, so this
+        # only matters for in-process reuse).
+        os.environ.pop(EnvVar.QDRANT_URL.value, None)
+    # Release the machine singleton last, so the slot is free for the next
+    # service only after this one has fully torn down its GPU and Qdrant.
+    release_machine_lock()
+    logger.info("Service shutdown complete")
+    _m._record_shutdown("clean")
 
 
 async def health_handler(_request: Request) -> object:

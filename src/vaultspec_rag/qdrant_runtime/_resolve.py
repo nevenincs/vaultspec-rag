@@ -44,8 +44,10 @@ __all__ = [
     "classify_qdrant_state",
     "decide_qdrant_action",
     "has_provisioned_binary",
+    "owner_pid_is_live_owner",
     "pid_alive",
     "pid_image_is_qdrant",
+    "pid_start_time",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
     "qdrant_identity_path",
@@ -237,6 +239,13 @@ class QdrantIdentity:
         qdrant_pid: PID of the Qdrant child process itself - the reap target when
             the owner is dead but the child still holds the port. ``0`` when the
             record predates this field (treated as "unknown, cannot reap").
+        owner_start_time: The owner process's creation time (epoch seconds), the
+            anti-pid-reuse witness. A pid alone is reusable: on a busy machine a
+            dead owner's pid may be recycled by an unrelated live process, which
+            a bare liveness check would misread as a live owner (``managed_running``).
+            The start-time pins the identity to one process incarnation. ``0.0``
+            when the record predates this field (treated as "unknown": liveness
+            falls back to the pid alone).
     """
 
     storage_path: str
@@ -244,6 +253,7 @@ class QdrantIdentity:
     owner_pid: int
     http_port: int
     qdrant_pid: int = 0
+    owner_start_time: float = 0.0
 
 
 def qdrant_identity_path() -> Path:
@@ -278,6 +288,9 @@ def read_qdrant_identity() -> QdrantIdentity | None:
             owner_pid=int(cast("str | int | float", d["owner_pid"])),
             http_port=int(cast("str | int | float", d["http_port"])),
             qdrant_pid=int(cast("str | int | float", d.get("qdrant_pid", 0))),
+            owner_start_time=float(
+                cast("str | int | float", d.get("owner_start_time", 0.0))
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         logger.debug("qdrant identity sidecar incomplete at %s: %s", path, exc)
@@ -318,6 +331,51 @@ def pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def pid_start_time(pid: int) -> float:
+    """Return *pid*'s process creation time (epoch seconds), or ``0.0``.
+
+    The pid-reuse witness: two processes that share a recycled pid have
+    different creation times, so comparing this against a recorded value tells a
+    surviving original owner from an unrelated process that inherited its pid.
+    ``0.0`` means the time could not be read (no such process, or no permission)
+    and the caller must not treat it as a match.
+    """
+    if pid <= 0:
+        return 0.0
+    try:
+        import psutil
+
+        return float(psutil.Process(pid).create_time())
+    except Exception as exc:  # psutil raises NoSuchProcess/AccessDenied/etc.
+        logger.debug("could not read start time for pid %d: %s", pid, exc)
+        return 0.0
+
+
+def owner_pid_is_live_owner(identity: QdrantIdentity | None) -> bool:
+    """Return whether *identity*'s owner pid is the live original owner.
+
+    Hardens the bare ``pid_alive`` check against pid reuse: a dead owner's pid
+    recycled by an unrelated live process must NOT read as a live owner. The
+    owner is live only when its pid is alive AND its recorded creation time
+    matches the live process's creation time. A legacy record without a recorded
+    start time (``0.0``) degrades to the pid-only check, the prior behaviour.
+    """
+    if identity is None or not pid_alive(identity.owner_pid):
+        return False
+    if identity.owner_start_time <= 0.0:
+        # Legacy record: no witness to compare. Fall back to pid liveness.
+        return True
+    live_start = pid_start_time(identity.owner_pid)
+    if live_start <= 0.0:
+        # The pid is alive but its start time is unreadable; cannot confirm it
+        # is the same incarnation, so do not assert ownership.
+        return False
+    # Creation times are float seconds; compare with a small tolerance to absorb
+    # platform rounding (Windows reports 100ns ticks; psutil normalises, but a
+    # round-trip through JSON can lose ulps).
+    return abs(live_start - identity.owner_start_time) < 1.0
 
 
 def reap_qdrant_orphan(pid: int, *, wait_seconds: float = 5.0) -> bool:
@@ -399,6 +457,7 @@ def write_qdrant_identity(
     owner_pid: int,
     http_port: int,
     qdrant_pid: int = 0,
+    owner_start_time: float | None = None,
 ) -> Path:
     """Atomically write the managed-Qdrant identity sidecar.
 
@@ -407,9 +466,17 @@ def write_qdrant_identity(
     ``.tmp`` sibling and ``os.replace`` so a concurrent reader never sees a
     half-written record.
 
+    Args:
+        owner_start_time: The owner process's creation time (epoch seconds), the
+            anti-pid-reuse witness. ``None`` resolves it from the owner pid, so
+            callers normally omit it; a recycled pid later reads a different
+            creation time and is no longer mistaken for the live owner.
+
     Returns:
         The path the sidecar was written to.
     """
+    if owner_start_time is None:
+        owner_start_time = pid_start_time(owner_pid)
     path = qdrant_identity_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -421,6 +488,7 @@ def write_qdrant_identity(
                 "owner_pid": owner_pid,
                 "http_port": http_port,
                 "qdrant_pid": qdrant_pid,
+                "owner_start_time": owner_start_time,
             }
         ),
         encoding="utf-8",
@@ -494,7 +562,7 @@ def classify_qdrant_state(
     - ``"foreign"``: listening but no/again-mismatched managed identity - an
       unrelated process owns the port; never spawn a competitor, never attach.
     """
-    owner_alive = identity is not None and pid_alive(identity.owner_pid)
+    owner_alive = owner_pid_is_live_owner(identity)
     if not probe.listening:
         if identity is not None and not owner_alive:
             return "stale_identity"

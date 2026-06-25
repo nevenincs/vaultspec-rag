@@ -173,6 +173,42 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
 
 
 @pytest.mark.subprocess_gpu
+def test_stop_running_service_by_port_without_status_file(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    """``server stop --port`` stops a running daemon with no status file (F7).
+
+    The status file is keyed per status dir and can diverge from (or be missing
+    for) the running instance, so a non-default-port service was unstoppable by
+    the verb. With ``--port`` the daemon's own /health identity resolves the
+    serving pid and stop succeeds without ever reading the status file.
+    """
+    with _service_env(tmp_path):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+
+        pid = _spawn_service(port, log_path)
+        request.addfinalizer(lambda: _terminate_pid(pid))
+        health = _poll_health(port)
+        serving_pid = int(health["pid"])
+
+        # Deliberately do NOT write service.json: this is the F7 case where the
+        # status file is absent/divergent but the daemon is genuinely running.
+        assert not _status_file().exists()
+
+        result = runner.invoke(
+            app,
+            ["server", "stop", "--port", str(port)],
+            env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+        )
+        assert "no such option" not in (result.stdout or "").lower()
+        assert _wait_for_exit(serving_pid), (
+            f"serving PID {serving_pid} did not exit after stop --port"
+        )
+        assert not _is_pid_alive(serving_pid)
+
+
+@pytest.mark.subprocess_gpu
 def test_service_status_running(
     request: pytest.FixtureRequest,
     tmp_path: Path,

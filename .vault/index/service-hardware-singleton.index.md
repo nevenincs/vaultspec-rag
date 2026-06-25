@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-hardware-singleton'
-date: '2026-06-24'
-modified: '2026-06-24'
+date: '2026-06-25'
+modified: '2026-06-25'
 related:
   - '[[2026-06-24-service-hardware-singleton-W01-P01-S01]]'
   - '[[2026-06-24-service-hardware-singleton-W01-P01-S02]]'
@@ -32,6 +32,12 @@ related:
   - '[[2026-06-24-service-hardware-singleton-W04-P07-S24]]'
   - '[[2026-06-24-service-hardware-singleton-W04-P07-S25]]'
   - '[[2026-06-24-service-hardware-singleton-W04-P08-S26]]'
+  - '[[2026-06-24-service-hardware-singleton-W04-P09-S28]]'
+  - '[[2026-06-24-service-hardware-singleton-W04-P09-S29]]'
+  - '[[2026-06-24-service-hardware-singleton-W04-P09-S30]]'
+  - '[[2026-06-24-service-hardware-singleton-W04-P09-S31]]'
+  - '[[2026-06-24-service-hardware-singleton-W04-P09-S32]]'
+  - '[[2026-06-24-service-hardware-singleton-W04-P09-S33]]'
   - '[[2026-06-24-service-hardware-singleton-adr]]'
   - '[[2026-06-24-service-hardware-singleton-audit]]'
   - '[[2026-06-24-service-hardware-singleton-plan]]'
@@ -80,6 +86,12 @@ Auto-generated index of all documents tagged with `#service-hardware-singleton`.
 - `2026-06-24-service-hardware-singleton-W04-P07-S24` - Adversarial: an unhealthy or corrupt qdrant holder is refused-attach with a named cause
 - `2026-06-24-service-hardware-singleton-W04-P07-S25` - Adversarial: concurrent multi-repo search and index load through one service holds under saturation
 - `2026-06-24-service-hardware-singleton-W04-P08-S26` - Run the full hardening gate across unit, integration, and adversarial suites
+- `2026-06-24-service-hardware-singleton-W04-P09-S28` - Decide whether in-process lifespan reuse is a supported contract
+- `2026-06-24-service-hardware-singleton-W04-P09-S29` - Make the qdrant binary resolvable under the isolated test STATUS_DIR so the service-lifecycle integration tests exercise the live daemon attach and lock path instead of fast-failing on the binary guard in this env
+- `2026-06-24-service-hardware-singleton-W04-P09-S30` - Add --port to server stop and align stop with the status-dir discovery divergence (research F7) so a non-default-port service is stoppable
+- `2026-06-24-service-hardware-singleton-W04-P09-S31` - Codify that any test or caller of write_qdrant_identity or acquire_machine_lock must isolate VAULTSPEC_RAG_QDRANT_STORAGE_DIR or it writes the real machine-global path, after a leaked identity sidecar was observed
+- `2026-06-24-service-hardware-singleton-W04-P09-S32` - Harden the ownership proof against owner-pid reuse (record and re-verify a process start-time or per-owner nonce in the identity) so a recycled owner pid is not misclassified as a live managed_running owner (review MEDIUM-3)
+- `2026-06-24-service-hardware-singleton-W04-P09-S33` - After a successful orphan reap, poll for port/storage-handle release before spawning so the fresh child cannot lose a reap-to-spawn bind race (review LOW-1)
 
 ### plan
 

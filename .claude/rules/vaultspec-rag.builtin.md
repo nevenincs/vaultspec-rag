@@ -12,18 +12,20 @@ instead of grepping keywords or guessing identifiers.
 ## Write good queries
 
 The index is hybrid: dense embeddings match meaning, sparse vectors match exact terms,
-and a cross-encoder reranks the top hits. So:
+and a cross-encoder reranks the top hits. A good query feeds both halves. So:
 
-- Describe the concept or behavior in a short natural-language phrase.
-- Include the concrete domain nouns the target code or docs would use - they drive the
-  exact-match half of the search.
+- Describe the concept or behavior in a short phrase - this drives the dense, semantic
+  half.
+- In that same phrase, name the concrete domain nouns the target code or docs would use
+  - these drive the sparse, exact-match half. A query of pure natural language leaves
+    the sparse half nothing to match.
 - One concept per query. Narrow with filters; don't paste bare keywords or a guessed
   function name.
 
 ```
-vaultspec-rag search "where file locks are acquired during indexing" --type code
-vaultspec-rag search "retry policy for failed webhook delivery" --type code --language python
-vaultspec-rag search "decision on gpu lock scope" --type vault --doc-type adr
+vaultspec-rag search "file lock acquired around incremental index write" --type code
+vaultspec-rag search "retry policy backoff for failed webhook delivery" --type code --language python
+vaultspec-rag search "decision on gpu_lock scope around forward pass" --type vault --doc-type adr
 ```
 
 Code filters: `--language --path --function-name --class-name --include-path GLOB`.

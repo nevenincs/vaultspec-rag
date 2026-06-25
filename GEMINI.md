@@ -8,6 +8,7 @@ You MUST respect these rules at all times:
 @.agents/rules/gpu-consumer-single-thread.md
 @.agents/rules/gpu-lock-wraps-forward-passes-only.md
 @.agents/rules/index-workers-stay-cpu-only.md
+@.agents/rules/managed-singleton-paths-isolate-storage-dir-in-tests.md
 @.agents/rules/operator-views-are-bounded.md
 @.agents/rules/pinned-binaries-verify-before-execute.md
 @.agents/rules/rerankers-score-real-content.md

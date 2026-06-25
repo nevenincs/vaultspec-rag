@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
 
+    from ._resolve import QdrantIdentity
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -559,6 +561,102 @@ class QdrantSupervisor:
             return ""
 
 
+_PORT_RELEASE_TIMEOUT_SECONDS = 10.0
+_PORT_RELEASE_SETTLE_SECONDS = 0.25
+
+
+def _port_is_listening(http_port: int, *, timeout: float = 0.25) -> bool:
+    """Return whether something accepts a loopback TCP connection on *http_port*.
+
+    A connection refused (or any connect error) means nothing is listening - the
+    port is free. Used after an orphan reap to wait for the prior child's
+    listening socket to be fully released before a fresh bind.
+    """
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", http_port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_for_port_release(
+    http_port: int,
+    *,
+    timeout: float = _PORT_RELEASE_TIMEOUT_SECONDS,
+) -> bool:
+    """Poll until *http_port* stops listening, then settle; report success.
+
+    Closes the reap-to-spawn bind race: a just-reaped child's socket lingers in
+    a closing state for a moment, and spawning into that window loses the bind.
+    Returns ``True`` once the port is observed free (with a short settle so the
+    storage lock handle is released too), or ``False`` on timeout so the caller
+    fails with a named cause rather than spawning a doomed child.
+    """
+    deadline = time.monotonic() + timeout
+    delay = 0.05
+    while time.monotonic() < deadline:
+        if not _port_is_listening(http_port):
+            # The port is free; settle briefly so the OS also releases the
+            # storage-lock handle the prior child held before we open it.
+            time.sleep(_PORT_RELEASE_SETTLE_SECONDS)
+            return not _port_is_listening(http_port)
+        time.sleep(delay)
+        delay = min(delay * 2, 1.0)
+    return False
+
+
+def _reap_orphan_before_spawn(
+    qport: int,
+    identity: QdrantIdentity | None,
+    reason: str,
+) -> None:
+    """Reap a provably-dead managed qdrant orphan, then wait for port release.
+
+    Called only when the decision layer classified a managed orphan (recorded
+    owner dead, child still holding the port). Confirms the recorded child pid
+    is still a qdrant process before the hard kill (a recycled pid must never be
+    killed), reaps it, then polls for the port to free so the fresh child cannot
+    lose a reap-to-spawn bind race. Raises with a named, actionable cause at each
+    failure rather than spawning a doomed competitor.
+    """
+    from ._resolve import pid_image_is_qdrant, reap_qdrant_orphan
+
+    target = identity.qdrant_pid if identity is not None else 0
+    logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
+    # Confirm the recorded child pid is still a qdrant process before the hard
+    # kill: the pid came from a dead owner's record and may have been recycled by
+    # an unrelated process, which must never be killed.
+    if target <= 0 or not pid_image_is_qdrant(target):
+        raise RuntimeError(
+            f"qdrant orphan on port {qport}: recorded child pid {target} is "
+            "not a live qdrant process (likely a dead/recycled pid); refusing "
+            "to kill it. Stop the holder manually, then retry; or run "
+            "local-only: vaultspec-rag server start --local-only"
+        )
+    if not reap_qdrant_orphan(target):
+        raise RuntimeError(
+            f"qdrant orphan holding port {qport} could not be reaped "
+            f"(child pid {target}); stop it manually, then retry; or run "
+            "local-only: vaultspec-rag server start --local-only"
+        )
+    # A reaped process can outlive its own exit by a moment at the OS level: its
+    # listening socket lingers in TIME_WAIT/CLOSING and its storage lock handle
+    # is released asynchronously. Spawning into that window loses a bind race -
+    # the fresh child fails to bind the port or open the single-writer storage
+    # and dies. Poll for the port to go quiet before spawning so the
+    # reap-to-spawn handoff is deterministic, not racy.
+    if not _wait_for_port_release(qport):
+        raise RuntimeError(
+            f"qdrant orphan on port {qport} was reaped but the port did not "
+            "free in time; the prior child's socket or storage handle is "
+            "still held. Retry shortly; or run local-only: "
+            "vaultspec-rag server start --local-only"
+        )
+    logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
+
+
 def start_supervised_from_config() -> QdrantSupervisor:
     """Resolve, verify, spawn, and ready-wait the qdrant child per config.
 
@@ -582,10 +680,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
     from ._provision import file_sha256
     from ._resolve import (
         decide_qdrant_action,
-        pid_image_is_qdrant,
         probe_qdrant_endpoint,
         read_qdrant_identity,
-        reap_qdrant_orphan,
         resolve_binary,
         write_qdrant_identity,
     )
@@ -627,25 +723,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "vaultspec-rag server start --local-only"
         )
     if action == "reap_then_spawn":
-        target = identity.qdrant_pid if identity is not None else 0
-        logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
-        # Confirm the recorded child pid is still a qdrant process before the
-        # hard kill: the pid came from a dead owner's record and may have been
-        # recycled by an unrelated process, which must never be killed.
-        if target <= 0 or not pid_image_is_qdrant(target):
-            raise RuntimeError(
-                f"qdrant orphan on port {qport}: recorded child pid {target} is "
-                "not a live qdrant process (likely a dead/recycled pid); refusing "
-                "to kill it. Stop the holder manually, then retry; or run "
-                "local-only: vaultspec-rag server start --local-only"
-            )
-        if not reap_qdrant_orphan(target):
-            raise RuntimeError(
-                f"qdrant orphan holding port {qport} could not be reaped "
-                f"(child pid {target}); stop it manually, then retry; or run "
-                "local-only: vaultspec-rag server start --local-only"
-            )
-        logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
+        _reap_orphan_before_spawn(qport, identity, reason)
         # fall through to the spawn path below.
 
     # action in ("spawn", "reap_then_spawn" after a successful reap): resolve
