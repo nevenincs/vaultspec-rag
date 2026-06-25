@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.25](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.24...vaultspec-rag-v0.2.25) (2026-06-25)
+
+
+### Features
+
+* **service-hw-singleton:** complete W04.P09 hardening follow-ups (S28–S33) ([#212](https://github.com/nevenincs/vaultspec-rag/issues/212)) ([355b011](https://github.com/nevenincs/vaultspec-rag/commit/355b011e7198dd54049b4809b268468119d95573))
+* **storage-lifecycle:** reconcile plan to shipped CLI-direct design + build genuine gaps (45/45) ([#213](https://github.com/nevenincs/vaultspec-rag/issues/213)) ([d3be70d](https://github.com/nevenincs/vaultspec-rag/commit/d3be70d01da224ea5643194553756767214326aa))
+
+
+### Bug Fixes
+
+* **ci:** make local `just ci` green — relative test imports + precise absolute-imports gate ([#210](https://github.com/nevenincs/vaultspec-rag/issues/210)) ([ca3f934](https://github.com/nevenincs/vaultspec-rag/commit/ca3f934f4907949d9c114bcb3a07d93e7c73895c))
+
 ## [0.2.24](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.23...vaultspec-rag-v0.2.24) (2026-06-24)
 
 
