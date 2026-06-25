@@ -15,10 +15,10 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-import vaultspec_rag.server as _m
-from vaultspec_rag.indexer._ast_chunker import ASTChunker
-from vaultspec_rag.search._searcher import _join_doc_path
-from vaultspec_rag.server._routes import ROUTES
+from .. import server as _m
+from ..indexer._ast_chunker import ASTChunker
+from ..search._searcher import _join_doc_path
+from ..server._routes import ROUTES
 
 Chunk = tuple[str, int, int, str | None, str | None, str | None]
 

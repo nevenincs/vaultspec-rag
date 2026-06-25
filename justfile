@@ -160,9 +160,9 @@ _dev-lint target='all':
       break \
     } \
     "absolute-imports" { \
-      if (Select-String -Path src\vaultspec_rag\*.py, src\vaultspec_rag\*\*.py -Pattern "from vaultspec_rag\." -Quiet -CaseSensitive) { \
+      if (Select-String -Path src\vaultspec_rag\*.py, src\vaultspec_rag\*\*.py -Pattern "^\s*from vaultspec_rag\." -Quiet -CaseSensitive) { \
         Write-Host "ABSOLUTE IMPORTS FOUND!" -ForegroundColor Red ; \
-        Select-String -Path src\vaultspec_rag\*.py, src\vaultspec_rag\*\*.py -Pattern "from vaultspec_rag\." -CaseSensitive ; \
+        Select-String -Path src\vaultspec_rag\*.py, src\vaultspec_rag\*\*.py -Pattern "^\s*from vaultspec_rag\." -CaseSensitive ; \
         exit 1 \
       } ; \
       break \
