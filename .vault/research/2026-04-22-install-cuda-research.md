@@ -31,7 +31,7 @@ vaultspec-rag requires a CUDA-capable NVIDIA GPU.
   cannot distinguish "torch has no CUDA support" from "CUDA GPU
   missing" and prints the wrong remediation.
 
-Scope: GitHub issue [#81](https://github.com/wgergely/vaultspec-rag/issues/81).
+Scope: GitHub issue [#81](https://github.com/nevenincs/vaultspec-rag/issues/81).
 
 ## uv source-propagation semantics
 

@@ -1,8 +1,8 @@
 # Glossary
 
-Plain-English definitions for terms used across the vaultspec-rag docs. Consult this page when you hit an unfamiliar word and want a one-paragraph explanation plus a pointer to the doc that defines it.
+Plain-English definitions for terms used across the vaultspec-rag docs. Consult this page when you hit an unfamiliar word. Each entry gives a one-paragraph explanation and a pointer to the doc that defines the term.
 
-**Ad-hoc**. A single CLI command that starts its own short-lived process, loads the GPU models, does the work, and exits. Each invocation pays the model-loading cost again, which makes ad-hoc convenient for a one-off search or index but slow for repeated calls. See [the service-mode guide](service-mode.md).
+**Ad-hoc**. A single CLI command that starts its own short-lived process, loads the GPU models, does the work, and exits. Each invocation pays the model-loading cost again, which is convenient for a one-off search or index but slow for repeated calls. See [the service-mode guide](service-mode.md).
 
 **Backend**. The storage layer that holds the index. vaultspec-rag has two backend implementations: the managed Qdrant server and the local-only on-disk store. The active backend is chosen once and reported by `server doctor`. See [the backends guide](backends.md).
 
@@ -30,25 +30,25 @@ Plain-English definitions for terms used across the vaultspec-rag docs. Consult 
 
 **Locale deduplication**. A code-search flag, `--dedup-locales`, that collapses near-duplicate translated files into a single result so one source surfaces once instead of once per locale. It acts only on search results, at search time. See [the search guide](search-and-index.md).
 
-**Managed Qdrant server**. The supervised local Qdrant database server that the service runs by default. The daemon spawns it on loopback (default `127.0.0.1:8765`) before loading models, supervises its lifetime, and shuts it down last. See [the backends guide](backends.md).
+**Managed Qdrant server**. The supervised local Qdrant database server that the service runs by default. The daemon spawns it on loopback (default `127.0.0.1:8765`) before loading models. It supervises the server's lifetime and shuts it down last. See [the backends guide](backends.md).
 
 **MCP (Model Context Protocol)**. An open protocol that lets AI clients, such as Claude Code, call tools running in a separate server process. vaultspec-rag exposes search and indexing as MCP tools. See [the MCP guide](mcp.md).
 
 **Project root**. The directory vaultspec-rag treats as the project boundary, the folder holding `.vault`. It is resolved from the current working directory or from `VAULTSPEC_RAG_ROOT`. See [the configuration guide](configuration.md).
 
-**Provisioning**. The one-time setup, run during `install`, that obtains the three external dependencies vaultspec-rag needs: the CUDA PyTorch build, the search models cached from Hugging Face, and the managed Qdrant server binary. See [the installation guide](installation.md).
+**Provisioning**. The one-time setup, run during `install`, that obtains the three external dependencies vaultspec-rag needs. These are the CUDA PyTorch build, the search models cached from Hugging Face, and the managed Qdrant server binary. See [the installation guide](installation.md).
 
 **Readiness**. Whether the service can serve requests: torch sees CUDA, the models are cached, and the active backend is present and usable. The `server doctor` command reports it. See [the service-mode guide](service-mode.md).
 
 **Reciprocal rank fusion (RRF)**. The method that merges the dense and sparse result lists into one ranking. It scores each result by its rank position in each list rather than by raw scores, so the two signals combine fairly. See [the search guide](search-and-index.md).
 
-**Reranker (cross-encoder)**. A second-stage model that takes the top results from hybrid search and rescores them by reading the query and each result's full content together, improving the final order. See [the search guide](search-and-index.md).
+**Reranker (cross-encoder)**. A second-stage model that rescores the top results from hybrid search. It reads the query and each result's full content together to improve the final order. See [the search guide](search-and-index.md).
 
 **Score**. The numeric relevance value attached to each search result. Higher is better, but absolute values are not comparable across different queries. Scores show only when you pass `--scores`. See [the search guide](search-and-index.md).
 
 **Semantic search**. Search that ranks results by meaning rather than exact word matches, using vectors to compare the query against indexed chunks. See [the search guide](search-and-index.md).
 
-**Service**. The long-running background process that keeps the GPU models loaded so requests skip the per-call model-loading cost, and supervises the managed Qdrant server. Running as a service is the default. See [the service-mode guide](service-mode.md).
+**Service**. The long-running background process that keeps the GPU models loaded, so requests skip the per-call model-loading cost. It also supervises the managed Qdrant server. Running as a service is the default. See [the service-mode guide](service-mode.md).
 
 **Slot**. A reserved seat for one project in the running service. The service keeps a fixed number of slots warm; opening a new project may evict the least recently used one. See [the service-mode guide](service-mode.md).
 

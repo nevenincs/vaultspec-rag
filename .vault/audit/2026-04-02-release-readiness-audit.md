@@ -115,10 +115,10 @@ Documentation, Bug Tracker).
 keywords = ["rag", "mcp", "vaultspec", "embeddings", "gpu", "vector-search"]
 
 [project.urls]
-Homepage = "https://github.com/wgergely/vaultspec-rag"
-Repository = "https://github.com/wgergely/vaultspec-rag"
-Documentation = "https://github.com/wgergely/vaultspec-rag/tree/main/.vaultspec/README.md"
-"Bug Tracker" = "https://github.com/wgergely/vaultspec-rag/issues"
+Homepage = "https://github.com/nevenincs/vaultspec-rag"
+Repository = "https://github.com/nevenincs/vaultspec-rag"
+Documentation = "https://github.com/nevenincs/vaultspec-rag/tree/main/.vaultspec/README.md"
+"Bug Tracker" = "https://github.com/nevenincs/vaultspec-rag/issues"
 
 classifiers = [
     "Development Status :: 3 - Alpha",

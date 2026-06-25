@@ -1,12 +1,22 @@
 <p align="center"><img src="assets/logo.svg" alt="vaultspec-rag logo" width="160"></p>
 
-# vaultspec-rag - semantic search for a vaultspec-core workspace
+# vaultspec-rag: semantic search for a vaultspec-core workspace
 
-[![PyPI version](https://img.shields.io/pypi/v/vaultspec-rag.svg)](https://pypi.org/project/vaultspec-rag/) [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![CI](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/vaultspec-rag.svg)](https://pypi.org/project/vaultspec-rag/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)](https://github.com/nevenincs/vaultspec-rag/releases)
 
-vaultspec-rag is the semantic search companion to [vaultspec-core](https://github.com/wgergely/vaultspec-core). The RAG in the name stands for retrieval-augmented generation. That's the pattern of pulling relevant snippets out of your own files so an agent can answer with grounded context. It indexes the markdown documents in your vault and the source code that sits beside them, then lets you search them by meaning rather than by exact keyword match. Search by meaning closes the vocabulary gap. A query for "how do we handle file locks during indexing" finds a decision record about concurrent writes and per-root locks, even though it never uses the word "indexing."
+A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a durable record of decisions, plans, research, and the code they produced. vaultspec-rag searches that record and your source code by meaning, not by keyword.
+
+Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as an AI assistant reads it.
+
+The [architecture overview](docs/architecture.md) explains how it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
 
 ## Requirements
+
+Before you install, confirm your machine meets these minimum requirements:
 
 - Python 3.13 or newer
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) as the package manager
@@ -14,29 +24,84 @@ vaultspec-rag is the semantic search companion to [vaultspec-core](https://githu
 - About 3 GB of free GPU memory
 - Linux or Windows
 
-macOS, AMD GPUs, and Apple Silicon are not supported. For the reasoning behind the hardware floor, see the [architecture overview](docs/architecture.md).
+macOS, AMD GPUs, and Apple Silicon are not supported. The [architecture overview](docs/architecture.md) explains why the hardware floor sits where it does.
 
 ## Quickstart
+
+### Install
+
+Add vaultspec-rag to your project and set it up:
 
 ```bash
 uv add vaultspec-rag
 uv run vaultspec-rag install
 uv sync
-uv run vaultspec-rag index
-uv run vaultspec-rag search "your question here"
 ```
 
-`install` configures the GPU PyTorch build and provisions the search models and the managed Qdrant server. `uv sync` then fetches the GPU PyTorch build. The first run is slower because of one-time model downloads.
+`install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. `uv sync` then pulls in that GPU build. The models total a few gigabytes, so the first download takes several minutes, but it runs only once.
 
-For repeat use, start the server-backed service first - see the [getting started guide](docs/getting-started.md) for the full walkthrough.
+### Index and search
 
-## What's a vault?
+1. Start the server:
 
-A vault is a `.vault/` directory of markdown files - research notes, architecture decision records, plans, and execution logs - that [vaultspec-core](https://github.com/wgergely/vaultspec-core) creates and manages. If you don't have one yet, set one up there first.
+   ```bash
+   uv run vaultspec-rag server start
+   ```
 
-vaultspec-rag adds exactly one capability on top of that: semantic search over the vault and the source code beside it. Vault creation, document templates, frontmatter validation, and the spec-driven workflow all stay in vaultspec-core.
+1. Index your project:
 
-Both packages live side by side in the same project. You can use vaultspec-core on its own without ever installing vaultspec-rag. vaultspec-rag without vaultspec-core has nothing to search.
+   ```bash
+   uv run vaultspec-rag index
+   ```
+
+1. Search:
+
+   ```bash
+   uv run vaultspec-rag search "concept plus the domain terms"
+   ```
+
+The first run builds the index. After that, the running service watches your files and reindexes changes automatically, so the index stays current without another command. See the [getting started guide](docs/getting-started.md) for the full walkthrough.
+
+## Searching by meaning
+
+The index is hybrid. A semantic half matches concepts and a keyword half matches exact terms, so write your query as a short phrase that both describes the concept and names the domain terms the target text would use. Pure prose starves the keyword half.
+
+```bash
+uv run vaultspec-rag search "reentrant collection lock ordering during indexing"
+```
+
+```
+1. adr/2026-06-12-service-concurrency-adr
+   adr | feature: service-concurrency | status: accepted | 2026-06-12
+   Store-layer locking distinguishes local mode (one reentrant lock per
+   collection) from server mode (no point locks). The lifecycle lock is
+   always acquired before any collection lock.
+2. reference/2026-06-12-service-concurrency-reference
+   reference | feature: service-concurrency | 2026-06-12
+   Per-root locks keep concurrent writers from colliding on the shared store.
+```
+
+Each result is a rank, a location you can open, and the matching text. Vault hits carry a metadata line, so a superseded ADR shows as superseded before you read it.
+
+### Searching code and filtering
+
+Search code with `--type code`, and narrow with filters including `--language`, `--path`, and a symbol name. Add `--scores` to see the relevance number beside each rank:
+
+```bash
+uv run vaultspec-rag search "gpu section wrapping the reranker predict forward pass" --type code --language python --scores
+```
+
+```
+1. src/vaultspec_rag/search/_searcher.py:308 (score 0.9241)
+   # The GPU lock wraps only the model forward call; the
+   # score-to-float conversion below runs after release.
+   with self._gpu_section(timings):
+       while True:
+           try:
+               raw_scores = reranker.predict(
+```
+
+For the full filter set (path globs, document type, feature, date), see [search and index](docs/search-and-index.md).
 
 ## Documentation
 
@@ -58,23 +123,22 @@ Both packages live side by side in the same project. You can use vaultspec-core 
 
 - [CLI reference](docs/cli.md) - every command and flag.
 - [Configuration](docs/configuration.md) - settings, environment variables, and defaults.
+- [Service discovery](docs/service-discovery.md) - the `service.json` contract for integrators.
 - [Glossary](docs/glossary.md) - terms used across the docs.
 
 ### Concepts
 
-- [Architecture](docs/architecture.md) - how it works, why a GPU is required, and why the service is server-first.
+- [Architecture](docs/architecture.md) - how it works, why a GPU is required, and the server and local-only modes.
 - [Indexing](docs/indexing.md) - indexing and retrieval internals.
 
 ## Support and help
 
-File bugs and ask questions on the [GitHub issue tracker](https://github.com/wgergely/vaultspec-rag/issues).
+File bugs and ask questions on the [GitHub issue tracker](https://github.com/nevenincs/vaultspec-rag/issues).
 
-A useful bug report includes your vaultspec-rag version, your operating system, your GPU model, the exact command you ran, and the full stderr output.
+A good bug report carries five things: your vaultspec-rag version, your operating system, your GPU model, the exact command you ran, and the full stderr output. With those, a maintainer can reproduce the fault. Without them, the report is hard to act on.
 
-## What changed
+## Changelog and license
 
-See the [changelog](CHANGELOG.md) for release notes and version history.
-
-## License
+The [changelog](CHANGELOG.md) holds release notes and version history.
 
 vaultspec-rag is released under the MIT License. See [LICENSE](./LICENSE) for the full text.

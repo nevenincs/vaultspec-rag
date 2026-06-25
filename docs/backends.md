@@ -1,6 +1,6 @@
 # Storage backends
 
-vaultspec-rag stores its search index in one of two backends: a managed, supervised local Qdrant server (the default) or a local-only embedded on-disk store. This page explains what each backend is, why the server is the default, when to choose local-only instead, and how to operate each one. Read it if you're deciding which backend to run, or you need the commands to provision, inspect, or switch backends.
+vaultspec-rag stores its search index in one of two backends. The default is a managed, supervised local Qdrant server. The alternative is a local-only embedded on-disk store. This page explains what each backend is, why the server is the default, when to choose local-only instead, and how to operate each one.
 
 The how-to sections here stay thin on purpose. For the full flag list on any command, see the [CLI reference](cli.md).
 
@@ -8,15 +8,15 @@ The how-to sections here stay thin on purpose. For the full flag list on any com
 
 The **managed Qdrant server** is a supervised local process. vaultspec-rag downloads a pinned Qdrant server binary, verifies it, runs it bound to loopback, and monitors it for the life of the search service. This is the default backend, and it handles its own concurrency, so many searches and index jobs can run at once.
 
-The **local-only store** is an embedded on-disk Qdrant database. No separate process runs - the search service reads and writes the index files directly. The on-disk store lives under your project at `.vault/data/search-data/qdrant/`. It's the minimal alternative: nothing to download, nothing to supervise.
+The **local-only store** is an embedded on-disk Qdrant database. No separate process runs. The search service reads and writes the index files directly. The on-disk store lives under your project at `.vault/data/search-data/qdrant/`. Nothing to download, nothing to supervise.
 
 ## Why the server is the default
 
-The embedded mode serializes work through a single process. Under concurrent load - several searches arriving together, or a search competing with an index job - requests queue behind one another and throughput drops. The supervised server removes that limit. It accepts concurrent requests directly, so concurrent searches no longer queue behind a single process.
+The embedded mode serializes work through a single process. Concurrent load means several searches arriving together, or a search competing with an index job. Under that load, requests queue behind one another and throughput drops. The supervised server removes that limit. It accepts concurrent requests directly, so concurrent searches no longer queue behind a single process.
 
 "Managed and supervised" means vaultspec-rag does the operational work. It downloads the server binary, runs it as a child process, monitors its health, restarts it once if it dies, and shuts it down cleanly when the service stops. You don't install or start Qdrant by hand.
 
-A **pinned binary** is a specific version whose contents are known ahead of time - vaultspec-rag targets Qdrant `1.18.2` exactly, not "whatever is latest." A **checksum** is a fingerprint of the binary's contents, compared against a known-good value before the binary runs, so a tampered or corrupted download is refused.
+A **pinned binary** is a specific version whose contents are known ahead of time. vaultspec-rag targets Qdrant `1.18.2` exactly, not "whatever is latest." A **checksum** is a fingerprint of the binary's contents, compared against a known-good value before the binary runs, so a tampered or corrupted download is refused.
 
 ## When to choose local-only instead
 
@@ -31,7 +31,7 @@ The trade-off you accept is lower throughput under concurrent load. For one deve
 
 ## How provisioning and verification work
 
-During setup, vaultspec-rag downloads the pinned Qdrant server binary - version `1.18.2` - over HTTPS from an allowlist of hosts. It computes the SHA256 checksum of the downloaded archive and compares it to a checksum built into the tool. If the checksums don't match, vaultspec-rag deletes the partial download and refuses to continue. Only a verified binary is extracted, and it's re-checked against its recorded fingerprint immediately before it runs. The verified binary is stored in a managed location under your status directory.
+During setup, vaultspec-rag downloads the pinned Qdrant server binary, version `1.18.2`, over HTTPS from an allowlist of hosts. It computes the SHA256 checksum of the downloaded archive and compares it to a checksum built into the tool. If the checksums don't match, vaultspec-rag deletes the partial download and refuses to continue. Only a verified binary is extracted, and it's re-checked against its recorded fingerprint immediately before it runs. The verified binary is stored in a managed location under your status directory.
 
 For air-gapped machines, you supply your own binary instead of downloading one. The operator-supplied binary still flows through the same supervised path, and a checksum mismatch is still a hard failure.
 

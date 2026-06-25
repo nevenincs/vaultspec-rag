@@ -1,6 +1,6 @@
 # Use vaultspec-rag with MCP clients
 
-An assistant like Claude Desktop or Claude Code can search your vault and source code directly. The Model Context Protocol (MCP) is a JSON-RPC interface assistants use to call external tools, and vaultspec-rag ships an MCP server that exposes its search and indexing operations as MCP tools. Any client that speaks stdio MCP or streamable HTTP MCP can connect.
+An assistant like Claude Desktop or Claude Code can search your vault and source code without leaving the editor. The Model Context Protocol (MCP) is a JSON-RPC interface assistants use to call external tools. vaultspec-rag ships an MCP server that exposes its search and indexing operations as MCP tools. Any client that speaks stdio MCP or streamable HTTP MCP can connect.
 
 Before you start, this page assumes you've installed vaultspec-rag and run at least one search. See the [installation guide](installation.md) for setup and the [getting-started tutorial](getting-started.md) for the first-search path. The MCP server binary `vaultspec-search-mcp` lands on `PATH` when you install the package.
 
@@ -11,13 +11,13 @@ vaultspec-rag offers two transports. The right pick depends on how you work.
 - **stdio**: the client launches `vaultspec-search-mcp` as a child process, one per project. The server reads the project from `VAULTSPEC_RAG_ROOT`.
 - **HTTP**: the client connects to one long-running service that serves many projects. Start the service first, then point the client at its MCP endpoint.
 
-Pick stdio when you work in one project at a time. Pick HTTP when several projects share one service. The next two sections are common examples - either transport works with any compatible client.
+Pick stdio when you work in one project at a time. Pick HTTP when several projects share one service. The next two sections are common examples. Either transport works with any compatible client.
 
 ## Configure a stdio client (Claude Desktop)
 
 Claude Desktop reads its MCP config from `claude_desktop_config.json`. The location varies by operating system; open Claude Desktop's settings dialog to find the path on your machine.
 
-Add a `vaultspec-rag` entry under `mcpServers`, point it at `vaultspec-search-mcp`, and set `VAULTSPEC_RAG_ROOT` to the absolute path of the project you want the assistant to search.
+Add a `vaultspec-rag` entry under `mcpServers` and point it at `vaultspec-search-mcp`. Set `VAULTSPEC_RAG_ROOT` to the absolute path of the project you want the assistant to search.
 
 ```json
 {
@@ -55,15 +55,23 @@ Create or edit `.mcp.json` at the project root and add the entry. Note the trail
 }
 ```
 
-The HTTP service is multi-tenant, so it needs the project path on every tool call. An editor like Claude Code sends its workspace path automatically once the server is registered. See how to [run and supervise the service](service-mode.md).
+The HTTP service is multi-tenant, so it needs the project path on every tool call. Once the server is registered, an editor like Claude Code sends its workspace path automatically. See how to [run and supervise the service](service-mode.md).
 
 ## Confirm the assistant sees the tools
 
 In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` server. In Claude Code, run `/mcp` and check that `vaultspec-rag` appears in the connected-servers list.
 
-A connected server publishes the search and indexing tools, including `search_vault` and `search_codebase`. For the full tool list and parameters, see the [search and index guide](search-and-index.md) and the [CLI reference](cli.md).
+A connected server publishes these tools. The search and index tools are the ones an assistant uses day to day:
 
-For a smoke test, ask the assistant a retrieval question about your project, such as "find the ADR about caching" or "where is authentication handled?". A successful answer cites file locations from your project - a document path or a source file and line - rather than answering from general knowledge.
+- `search_vault` - search the documentation vault, with the same filters as the `search` command (doc type, feature, date, tag).
+- `search_codebase` - search source code, with the code filters (language, path, symbol, include and exclude globs).
+- `get_code_file` - return the full content of a source file by path.
+- `get_index_status` - report index and GPU readiness.
+- `reindex_vault` / `reindex_codebase` - re-index a corpus, incrementally by default or with `clean` to rebuild.
+
+The server also exposes admin tools for operating a multi-project service: `list_projects`, `evict_project`, `get_service_state`, `get_jobs`, `get_logs`, and the watcher controls (`get_watcher_state`, `start_watcher`, `stop_watcher`, `reconfigure_watcher`). The search filters mirror the CLI, so the [CLI reference](cli.md) documents the filter values in full.
+
+For a smoke test, ask the assistant a retrieval question about your project, such as "find the ADR about caching" or "where is authentication handled?". A successful answer cites file locations from your project, a document path or a source file and line, rather than answering from general knowledge.
 
 ## Troubleshooting
 
@@ -91,18 +99,12 @@ In stdio mode, set `VAULTSPEC_RAG_ROOT` to the absolute project path in the `env
 
 ### First call is slow
 
-Embedding and reranker models load on first use, which can take several seconds. Pre-warm them before launching the assistant:
-
-```bash
-uv run vaultspec-rag server warmup
-```
-
-Otherwise, accept the one-time delay on the first search of the session.
+The first search of a session loads the models and can take several seconds. Pre-warm them before launching the assistant with `uv run vaultspec-rag server warmup`. See [run and supervise the service](service-mode.md) for how warmup works.
 
 ## Where to go next
 
 - [Run and supervise the HTTP service](service-mode.md).
-- [Browse the full tool list and search filters](search-and-index.md).
-- [Look up commands and parameters in the CLI reference](cli.md).
+- [Search filters and result formats](search-and-index.md).
+- [Commands, flags, and filter values in the CLI reference](cli.md).
 
 If something still doesn't work, check the [Support](../README.md#support-and-help) section of the repo README.

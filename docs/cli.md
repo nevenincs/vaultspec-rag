@@ -1,6 +1,6 @@
 # CLI reference
 
-Complete reference for the `vaultspec-rag` command line. For setup workflows see the [getting-started tutorial](getting-started.md); for search and indexing how-tos see the [search and index guide](search-and-index.md); for running the background service see the [background service guide](service-mode.md); for the storage backends see the [storage backends guide](backends.md).
+Complete reference for the `vaultspec-rag` command line. For task-oriented walkthroughs, see the guides listed under Related documents below.
 
 ## Related documents
 
@@ -45,7 +45,7 @@ Complete reference for the `vaultspec-rag` command line. For setup workflows see
 
 Run the CLI as `vaultspec-rag <command>` when the package is on your `PATH`. In uv-managed projects, run `uv run vaultspec-rag <command>`. The same binary also runs as `python -m vaultspec_rag`.
 
-Most commands accept `--json` for scripting. `test`, `server stop`, and `server warmup` produce human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`: the payload appears under `data` on success and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
+Most commands accept `--json` for scripting. `test`, `server stop`, and `server warmup` produce human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`. The payload appears under `data` on success, and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
 
 RAG behavior is also configurable through `VAULTSPEC_RAG_*` environment variables. See the [configuration reference](configuration.md) for the complete inventory and defaults.
 
@@ -73,10 +73,10 @@ These codes are consistent across commands.
 | Code | Meaning                                                                                                                                                                       |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Success.                                                                                                                                                                      |
-| `1`  | Generic failure: GPU or torch error, a busy local index, an unreachable `--port` without `--allow-fallback`, a service-reported error, or a failed install or provision step. |
-| `2`  | Usage error: an invalid argument, filter, or flag combination.                                                                                                                |
-| `3`  | Service stopped: no `service.json` was found for the targeted service.                                                                                                        |
-| `4`  | Service crashed or divergent: `service.json` is present but a signal contradicts it (dead PID, reused PID, silent port, or stale heartbeat).                                  |
+| `1`  | A generic failure such as a GPU or torch error, a busy local index, an unreachable `--port` without `--allow-fallback`, a service-reported error, or a failed install step. |
+| `2`  | A usage error such as an invalid argument, filter, or flag combination.                                                                                                       |
+| `3`  | Service stopped. No `service.json` was found for the targeted service.                                                                                                       |
+| `4`  | Service crashed or divergent. `service.json` is present but a signal contradicts it (dead PID, reused PID, silent port, or stale heartbeat).                                 |
 
 Per-command exit lines below note the codes each command can return.
 
@@ -213,7 +213,7 @@ Options:
 | `--skip-qdrant`                        | flag | off                       | Skip the Qdrant binary provisioning step.                                                                                       |
 | `--json`                               | flag | off                       | Emit a JSON report instead of human text.                                                                                       |
 
-Torch provisioning is two-phase: install configures the source in `pyproject.toml` and reports it as `configured, sync pending`; the GPU build lands only after a follow-up `uv sync` or `--sync`. Provisioning reports through the shared sync vocabulary: `created`, `updated`, `unchanged`, `skipped`, and `failed`.
+Torch provisioning runs in two phases. Install configures the source in `pyproject.toml` and reports it as `configured, sync pending`. The GPU build lands only after a follow-up `uv sync` or `--sync`. Provisioning reports through the shared sync vocabulary, namely `created`, `updated`, `unchanged`, `skipped`, and `failed`.
 
 Exit/JSON: `0` on success, including the torch-config terminal states `declined`, `conflict`, `absent`, and `disabled`; `1` on install failure; `2` when torch config was requested and ended in `error`, `skipped-eof`, or `skipped-non-tty`. With `--json`, the result is one report on stdout.
 
@@ -259,7 +259,7 @@ Exit/JSON: pytest's own exit code is propagated.
 
 `vaultspec-rag server start`
 
-Start the background search service as a detached process. The service spawns the daemon on the given port, polls `/health` until it reports `ready`, and records how the CLI can reach it. Server mode is the default: the daemon supervises the managed Qdrant child. If the Qdrant binary is missing, `start` prints the install command.
+Start the background search service as a detached process. The service spawns the daemon on the given port, polls `/health` until it reports `ready`, and records how the CLI can reach it. Server mode is the default. The daemon supervises the managed Qdrant child. If the Qdrant binary is missing, `start` prints the install command.
 
 Arguments: none.
 
@@ -295,7 +295,7 @@ Exit: `0` when stopped or already absent; `1` on a failure to stop.
 
 `vaultspec-rag server status`
 
-Show an operator status summary for the background service. The command gathers four signals - `service.json` present, PID alive, port listening, and heartbeat fresh - and derives a single state. The daemon writes its heartbeat every 15 seconds; a heartbeat older than 60 seconds is stale.
+Show an operator status summary for the background service. The command gathers four signals (`service.json` present, PID alive, port listening, and heartbeat fresh) and derives a single state. The daemon writes its heartbeat every 15 seconds; a heartbeat older than 60 seconds is stale.
 
 Arguments: none.
 
@@ -315,7 +315,7 @@ Exit/JSON: `0` when `running` (all signals green); `3` when `stopped` (no `servi
 
 `vaultspec-rag server doctor`
 
-Report a read-only readiness snapshot for every external dependency the server-first backend needs. The command provisions nothing; it reports the backend in use plus torch CUDA availability, model-snapshot presence, and the Qdrant binary's resolution source and the supervised server's liveness. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
+Report a read-only readiness snapshot for every external dependency server mode needs. The command provisions nothing. It reports the backend in use, torch CUDA availability, model-snapshot presence, the Qdrant binary's resolution source, and the supervised server's liveness. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
 
 Arguments: none.
 

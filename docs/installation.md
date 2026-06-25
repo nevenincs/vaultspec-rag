@@ -1,12 +1,12 @@
 # Installation
 
-vaultspec-rag is GPU-accelerated semantic search over your vault and source code. This guide covers how to install the package, provision its dependencies, verify the install, recover from setup failures, and uninstall. For a guided first run afterward, see the [getting started guide](getting-started.md).
+This guide covers how to install the package, provision its dependencies, verify the install, recover from setup failures, and uninstall. For what vaultspec-rag is and why it needs a GPU, see the [architecture overview](architecture.md). For a guided first run afterward, see the [getting started guide](getting-started.md).
 
 ## Before you begin
 
 You need:
 
-- Python 3.13 or newer. The runtime is locked to CPython 3.13.x; 3.14 and later are rejected at import.
+- Python 3.13.x. The runtime is locked to CPython 3.13; 3.14 and later are rejected at import.
 - [uv](https://docs.astral.sh/uv/) for dependency and tool management.
 - An NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM).
 - Linux or Windows.
@@ -45,23 +45,23 @@ uv run vaultspec-rag install
 
 By default it does three things:
 
-- Configures the GPU (cu130) PyTorch build as a package source in `pyproject.toml`. This reports `configured, sync pending` - it edits the project config but does not download PyTorch.
+- Configures the GPU (cu130) PyTorch build as a package source in `pyproject.toml`. This reports `configured, sync pending`. The step edits the project config but does not download PyTorch.
 - Ensures the dense, sparse, and reranker model files are present in the Hugging Face cache.
 - Downloads and verifies the pinned Qdrant server binary.
 
-The PyTorch step prompts before it edits `pyproject.toml`. For non-interactive installs, pass `--yes` to skip the prompt - unless you also pass `--no-torch-config`.
+The PyTorch step prompts before it edits `pyproject.toml`. For non-interactive installs, pass `--yes` to skip the prompt, unless you also pass `--no-torch-config`.
 
 Read the per-dependency outcome report using the shared sync vocabulary: `created` (downloaded), `updated`, `unchanged` (already present), `skipped`, and `failed`. The run is idempotent, so re-running a satisfied dependency reports `unchanged` with no network call.
 
 ## Pull the GPU build
 
-The `install` command *configures* the GPU PyTorch build but doesn't *fetch* it. After install configures the PyTorch source, run a sync to fetch the GPU build:
+The install is not complete until you run `uv sync`. The `install` command records the cu130 PyTorch source in `pyproject.toml` but does not download PyTorch. Until you sync, you have a CPU-only environment that cannot run searches:
 
 ```bash
 uv sync
 ```
 
-This step is required. Until you run it, the configured cu130 source is recorded in `pyproject.toml` but PyTorch is not yet installed. To fold the sync into setup, pass `--sync`, which runs `uv sync --reinstall-package torch` after configuring the source.
+To fold the sync into setup, pass `install --sync`, which runs `uv sync --reinstall-package torch` after configuring the source.
 
 ## Choose a lighter setup
 
@@ -72,6 +72,8 @@ The defaults provision the supervised Qdrant server for higher throughput under 
 - If you manage the GPU build yourself, pass `--no-torch-config` to leave `pyproject.toml` untouched.
 - To preview the full provisioning report without writing anything, pass `--dry-run`. The dry run reports `preview only` for each step and never prompts, so it's independent of the confirmation prompt.
 
+For the complete `install` flag set, see the [CLI reference](cli.md).
+
 ## Verify the install
 
 Check the installed version:
@@ -80,7 +82,7 @@ Check the installed version:
 uv run vaultspec-rag --version
 ```
 
-This branch reports `0.2.20`.
+This reports `vaultspec-rag v0.2.23`.
 
 Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qdrant binary and server:
 
@@ -88,7 +90,7 @@ Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qd
 uv run vaultspec-rag server doctor
 ```
 
-A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode, the `qdrant` line is ready once a binary resolves and no supervised child is dead; in local-only mode, an absent binary is reported ready because no server is needed. Add `--json` for a machine-readable envelope.
+A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode, the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode, an absent binary is reported ready because no server is needed. Add `--json` for a machine-readable envelope.
 
 Check the project's index location and compute device:
 
@@ -102,9 +104,9 @@ A healthy result names your GPU as the compute device and shows the index data l
 
 If `server doctor` reports the `torch` line as not ready and CPU-only, run `uv sync` (or `uv run vaultspec-rag install --sync`). Install configures the GPU build, but the sync fetches it; a CPU-only build means the sync hasn't run yet.
 
-If `nvidia-smi` shows no GPU, the driver isn't loaded. Fix the driver before installing - the stack raises at startup without CUDA and has no CPU fallback.
+If `nvidia-smi` shows no GPU, the driver isn't loaded. Fix the driver before installing. `install` only downloads files and does not check for CUDA. A missing GPU first surfaces at `server start`, which loads the models and fails with "No CUDA device found." The stack has no CPU fallback.
 
-If install refuses to edit your project config and exits non-zero, it ran the PyTorch step without consent. Re-run with `--yes` to approve the edit, or with `--no-torch-config` to skip it and manage the GPU build yourself.
+If the PyTorch step needs consent it does not have, install refuses to edit `pyproject.toml` and exits non-zero. Re-run with `--yes` to approve the edit, or with `--no-torch-config` to skip it and manage the GPU build yourself.
 
 If `server start` fails because the Qdrant server binary is missing, provision it:
 
@@ -122,7 +124,20 @@ If the Qdrant download fails with a checksum mismatch, the archive didn't match 
 
 ## First run notes
 
-The first index or search downloads the dense, sparse, and reranker model files once, so it runs slower than later searches. If a smaller card runs out of memory, tune the embedding batch sizes. If models appear to re-download every run, point the Hugging Face cache (`HF_HOME`) at a persistent location. See the [configuration guide](configuration.md) for the relevant variables.
+The first index or search downloads the dense, sparse, and reranker model files once, so it runs slower than later searches. If a smaller card runs out of memory, see [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed). If models appear to re-download every run, point the Hugging Face cache (`HF_HOME`) at a persistent location. See the [configuration guide](configuration.md) for the relevant variables.
+
+## Upgrade
+
+To move to a new release, bump the dependency and sync:
+
+```bash
+uv add --upgrade vaultspec-rag
+uv sync
+```
+
+`uv sync` refetches the GPU PyTorch build if it changed. Two optional follow-ups apply only when a release changes bundled content. Run `uv run vaultspec-rag install --upgrade` to refresh the bundled rules and integration files. If the release pins a newer Qdrant version, run `uv run vaultspec-rag server qdrant install --upgrade`. There is no migration step and no automatic reindex. If a release notes a changed embedding or reranker model, reindex by hand with `index --rebuild`.
+
+The `server updates` commands are unrelated to upgrades. They control the automatic-reindex watcher, covered in the [service mode guide](service-mode.md).
 
 ## Uninstall
 
@@ -146,7 +161,7 @@ uv run vaultspec-rag server qdrant clean --yes
 
 The `--yes` flag is required to delete; without it the command prints a preview only. Pass `--keep-current` to preserve the pinned version. For the full flag set, see the [CLI reference](cli.md).
 
-## Where to go next and where to get help
+## Where to go next
 
 - [Getting started](getting-started.md) walks through your first index and search.
 - [Search and index](search-and-index.md) covers query syntax, filters, and indexing.

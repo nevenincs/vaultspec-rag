@@ -1,57 +1,31 @@
 # Architecture and concepts
 
-This page explains what vaultspec-rag is and how it works, so you can decide whether it fits your project before you install it. It answers a handful of questions. Jump to the heading that matches yours:
+## What vaultspec-rag does
 
-- What does retrieval-augmented generation mean, and what does this tool actually do?
-- How do indexing and searching work at a high level?
-- Why does semantic search beat keyword search for some queries?
-- Why is a GPU required?
-- Why does a database server run by default?
+vaultspec-rag is the retrieval layer of a vaultspec-core project. It indexes the `.vault/` directory and your project's source code, then answers a query with a ranked list of file locations and snippets. A query like `"file lock reentrant collection ordering during indexing"` returns the chunks that match it most closely.
 
-For real depth on the models and data structures, the [indexing internals](indexing.md) page goes deeper. This page stays conceptual.
+This is the retrieval that the R in RAG refers to. vaultspec-rag finds and ranks the grounding, and a separate client reads it. That client is an AI assistant or another tool, and it reaches vaultspec-rag through the command-line tool or over the Model Context Protocol (MCP). The [MCP integration guide](mcp.md) covers that connection.
 
-## What RAG means and what this tool is
+## How indexing and search work
 
-Retrieval-augmented generation (RAG) is a two-part pattern. The retrieval half finds the most relevant material for a question. The generation half - an AI assistant, usually a large language model - reads that material and writes an answer grounded in it.
+Indexing splits every document and source file into self-contained chunks. Each chunk is encoded as two vectors. A dense vector captures meaning, and a sparse vector captures exact terms. Both vectors are stored in a local vector database. At search time, vaultspec-rag encodes the query the same two ways. It fuses the two signals into one ranking by how closely each chunk matches, and a reranking model reorders the top results.
 
-vaultspec-rag is only the retrieval half. It's the semantic-search companion to vaultspec-core, which manages a `.vault/` directory of markdown documents. vaultspec-rag indexes that vault and your project's source code, so you can search both by meaning.
-
-A search returns a ranked list of file locations with snippets, not prose. Think of it as a good librarian, not a chatbot: it points you to the right shelf, it doesn't read the book to you. The generation half is a separate AI assistant that reads those locations, typically through a client that speaks the Model Context Protocol (MCP). For how that connection works, see the [MCP integration guide](mcp.md).
-
-## How indexing and searching work
-
-The mental model is a card catalogue. Before you can look anything up, the tool reads through your vault and source code and writes a card for each piece.
-
-Indexing splits every document and source file into **chunks** - small, self-contained passages. For each chunk, the tool computes a meaning-capturing numeric form and stores it in a local search database. Searching computes the same numeric form for your query, then asks the database for the chunks that sit closest to it. That closeness becomes the relevance score.
-
-Three models run on the GPU to make this work. Two capture meaning from different angles; combining them improves precision. The third re-orders the top candidates so the best matches rise to the top. The [indexing internals](indexing.md) page names the specific models and explains the data flow. Because loading these models takes time, a [background service](service-mode.md) keeps them warm between searches.
-
-## Why semantic search instead of keyword search
-
-Keyword search matches the exact string you type. That fails on the **vocabulary-mismatch** problem: a question about "rate limiting" won't find a file titled "request throttling," even though they're the same idea. Semantic search closes that gap by matching meaning rather than letters.
-
-The trade-offs are honest ones. Indexing has an upfront cost. Results are ranked rather than exhaustive, so a match always comes back even when nothing is relevant. And an exact string you know is present can be ranked below a fuzzier conceptual hit.
-
-So this isn't an argument against grep. Use both: keyword search such as grep or ripgrep when you know the exact string, and vaultspec-rag when you know the concept but not the words.
+Results are ranked rather than exhaustive. A query always returns its closest matches, so an exact string can rank below a looser conceptual hit. Encoding and reranking both run on the GPU, and loading those models is slow, so a [background service](service-mode.md) keeps them resident between searches. The [indexing internals](indexing.md) page names the specific models and explains how the pipeline fits together.
 
 ## Why a GPU is required
 
-Turning text into its numeric form and re-ordering results are matrix-heavy workloads. GPUs are built for that kind of math; general-purpose CPUs are not, and they run it slowly enough to be impractical.
+Encoding and reranking run on the GPU, and on a CPU they are too slow to be usable. vaultspec-rag has no CPU fallback. When no GPU is present it refuses to start and reports why. The hardware floor is an NVIDIA card with CUDA support and roughly 3 GB of free GPU memory. The [installation guide](installation.md) and [configuration reference](configuration.md) carry the exact specifics.
 
-By design, the tool has no CPU fallback. Rather than start and crawl, it refuses to run when no GPU is present and tells you why. You're never left wondering whether it's broken or slow. The hardware floor is modest: an NVIDIA card with CUDA support and roughly 3 GB of free GPU memory. For specifics, see the [installation guide](installation.md) and the [configuration reference](configuration.md).
+## Server mode versus local-only mode
 
-## Why a database server runs by default
+Server mode is the default. vaultspec-rag runs the database as a standalone supervised server, so concurrent reads and writes go straight to it instead of serializing through the tool's own process. vaultspec-rag downloads a verified pinned binary and supervises it, so you install no separate service. The server still runs as a process and holds a port. Its storage is shared across projects and lives in your home directory at `~/.vaultspec-rag/qdrant-server/storage`.
 
-The local search database can run two ways. The default is server-first: vaultspec-rag runs a managed, supervised local search-database server.
-
-The older mode embedded the database as files inside the tool's own process, which serialized work through a single process and became a bottleneck under concurrent load. The supervised server removes that limit and is measurably faster under load. "Managed and supervised" means the tool downloads a verified, pinned binary, then runs and monitors it for you - you don't install or maintain a separate service.
-
-A single-flag **local-only** mode stays available as the minimal alternative, suited to constrained environments such as CI runs or air-gapped machines, where you don't want to run a server. For how to choose between the two and operate each, see the [storage backends](backends.md) page.
+Local-only mode runs the database in-process behind a single flag. No server is provisioned or supervised, and the storage stays inside the project under `.vault/data/`. Without a separate process, concurrent operations contend for the single one, so this mode trades throughput under load for a self-contained setup. Use it where a running service is impractical, such as continuous integration runs or air-gapped machines. The [storage backends](backends.md) page explains how to switch between the two modes and operate each.
 
 ## Where to go next
 
-- [Getting started](getting-started.md) - a hands-on tutorial that takes you from install to first search.
-- [Installation guide](installation.md) - prerequisites, the hardware floor, and setup.
-- [Storage backends](backends.md) - choosing and operating the server or local-only mode.
-- [Indexing internals](indexing.md) - the models and data structures behind the concepts on this page.
-- Need help? See the [Support section of the README](../README.md#support-and-help) for the issue tracker.
+- [Getting started](getting-started.md) is a hands-on tutorial that takes you from install to first search.
+- [Installation guide](installation.md) covers prerequisites, the hardware floor, and setup.
+- [Storage backends](backends.md) covers choosing and operating the server or local-only mode.
+- [Indexing internals](indexing.md) covers the models and data structures behind the concepts on this page.
+- For help, file an issue on the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues).

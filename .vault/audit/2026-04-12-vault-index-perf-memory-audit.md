@@ -431,7 +431,7 @@ state. Full unit + integration matrix re-run.
 **Iteration 5 is the first pass that produced zero action items.**
 The audit loop reaches a fixed point here for the current PR
 surface. Iteration 6+ will re-open when new code review comments
-arrive from wgergely, gemini-code-assist, codex-connector, or a
+arrive from nevenincs, gemini-code-assist, codex-connector, or a
 Claude self-review pass.
 
 **Loop state:** idle. New findings append as F6.x, F7.x, … below

@@ -46,7 +46,7 @@ fork the project or rotate the publisher configuration.
 1. Under **Add a new pending publisher** (or **Manage** for an existing
    project), enter:
    - PyPI Project Name: `vaultspec-rag`
-   - Owner: `wgergely`
+   - Owner: `nevenincs`
    - Repository name: `vaultspec-rag`
    - Workflow name: `publish.yml`
    - Environment name: `pypi`
@@ -84,7 +84,7 @@ The `publish-pypi` job already declares `environment: pypi` and
   are present, dispatch Publish manually:
 
   1. Open
-     <https://github.com/wgergely/vaultspec-rag/actions/workflows/publish.yml>.
+     <https://github.com/nevenincs/vaultspec-rag/actions/workflows/publish.yml>.
   1. Click **Run workflow**, supply the tag (for example
      `vaultspec-rag-v0.2.9`), and run.
 

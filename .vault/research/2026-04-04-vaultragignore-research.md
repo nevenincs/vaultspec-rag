@@ -27,7 +27,7 @@ The `CodebaseIndexer` has hardcoded exclusions (`.venv/`, `.git/`, `node_modules
 fixtures, build artifacts checked into git, etc. get indexed unnecessarily — wasting
 GPU compute, inflating the vector store, and degrading search relevance.
 
-**Issue:** wgergely/vaultspec-rag#31
+**Issue:** nevenincs/vaultspec-rag#31
 
 ## Current architecture
 

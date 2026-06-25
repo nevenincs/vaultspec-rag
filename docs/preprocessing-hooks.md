@@ -6,10 +6,10 @@ can't read directly: PDFs, spreadsheets, Word documents, XML schemas, and large 
 pages that index poorly as raw markup.
 
 Preprocessing hooks let your project supply its own extraction logic for those formats.
-You register a command per file pattern, vaultspec-rag runs it, validates the output
-against a versioned schema, and indexes the extracted text first-class - searchable with
-anchors that deep-link back into the original document. vaultspec-rag never learns your
-formats; it owns the contract and runs your extractor.
+You register a command per file pattern. vaultspec-rag runs it, validates the output
+against a versioned schema, and indexes the extracted text first-class. The indexed chunks
+are searchable with anchors that deep-link back into the original document. vaultspec-rag
+never learns your formats; it owns the contract and runs your extractor.
 
 ## How it works
 
@@ -23,7 +23,7 @@ formats; it owns the contract and runs your extractor.
    example `report.pdf#page=12`) instead of a line number.
 
 vaultspec-rag indexes a matched file even when its extension is unsupported, it exceeds
-the source-size cap, or it's binary - your extractor turns it into text. A preprocess rule
+the source-size cap, or it's binary. Your extractor turns it into text. A preprocess rule
 never re-includes files excluded by `.gitignore` or `.vaultragignore`. Ignore always wins.
 
 ## Configure rules
@@ -73,7 +73,7 @@ Rule fields:
 Both `command` and `entry_point` rules run out-of-process (a subprocess), so they share
 the same CPU-only isolation and `timeout_s` bound. An `entry_point` callable must be
 importable in the service's environment and return a mapping (or pydantic model) shaped
-like the [output schema](#reference-the-output-schema).
+like the [output schema](#output-schema).
 
 ### Inspect and validate your configuration
 
@@ -97,7 +97,7 @@ uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule agains
 
 All three accept `--json` for scripting.
 
-## Reference: the output schema
+## Output schema
 
 Your command receives a source file path and prints **one JSON object** on stdout. This
 is the contract between your extractor and the indexer; invalid output is a per-file
@@ -160,17 +160,16 @@ Locator fields (the optional `locator` object):
 
 Rules:
 
-- Provide **either** `units` (you chunk) **or** `text` (the indexer chunks it) - never
-  both, never neither. When you provide `units`, it must be non-empty.
-- Unknown fields are rejected, so a typo is a loud validation error.
+- Provide **either** `units` (you chunk) **or** `text` (the indexer chunks it), never
+  both and never neither. When you provide `units`, it must be non-empty.
 
 ## Cache and incremental indexing
 
 Successful extraction output is cached under the data directory, keyed on the source
 content hash plus your command (or `entry_point`) and the schema version. An unchanged
-file isn't re-extracted on a full or restart reindex. A changed file produces a new hash and is
-re-extracted. Only successful outputs are cached, so a transient extractor failure (a
-timeout under load, say) is never made sticky.
+file isn't re-extracted on a full or restart reindex. A changed file produces a new hash
+and is re-extracted. Only successful outputs are cached, so a transient extractor failure
+is never made sticky.
 
 To force re-extraction of unchanged files after upgrading your extractor, either change
 the rule's command (or `entry_point`) or run a clean rebuild, which drops the cache:
@@ -209,13 +208,10 @@ environment variables.
 ## Security posture
 
 Preprocessors are arbitrary project code executed by the indexing service. They run
-**only** when declared in the project-root `.vaultragpreprocess.toml` - the same trust
-model as the project's own code and build scripts. Each preprocessor (both `command` and
-`entry_point`) runs in a separate OS process, so it can't touch the indexer's GPU or
-interpreter state, and `timeout_s` bounds runaway extractors. The captured output is
-also size-bounded, so a runaway extractor can't exhaust memory. Treat
-`.vaultragpreprocess.toml` as you would any executable project configuration: review it
-in code review, and don't point it at untrusted commands.
+**only** when declared in the project-root `.vaultragpreprocess.toml`, the same trust
+model as the project's own code and build scripts. Treat `.vaultragpreprocess.toml` as you
+would any executable project configuration. Review it in code review, and don't point it at
+untrusted commands.
 
 ## Adjacent improvements
 
@@ -250,9 +246,8 @@ print(json.dumps({"schema_version": 1, "preprocessor_id": "pypdf",
                   "preprocessor_version": "1.0", "source_path": src, "units": units}))
 ```
 
-`PyMuPDF` / `fitz` is faster but **AGPL-3.0** - it infects your project's licence the
-moment you import it. For a licence-clean project, use `pypdf` (BSD-3) or `pdfplumber`
-(MIT); reach for PyMuPDF only under a commercial licence.
+`PyMuPDF` / `fitz` is faster but **AGPL-3.0**, which infects your project's licence; prefer
+`pypdf` (BSD-3) or `pdfplumber` (MIT) for a licence-clean project.
 
 **XLSX - `openpyxl` (MIT):** iterate worksheets, then rows; the sheet name is the
 locator (`{"kind": "sheet", "value": ws.title}`). Legacy `.xls` needs `xlrd` (BSD) or a
@@ -263,9 +258,6 @@ conversion step.
 
 **XML / XSD - stdlib `xml.etree` (PSF):** walk elements, emit element text with a
 tag-path anchor; reach for `lxml` (BSD) only if you need XPath or source line numbers.
-
-A licence-clean stack is `pypdf` + `openpyxl` (plus `xlrd`) + `python-docx` +
-`xml.etree`, and never imports PyMuPDF.
 
 ## See also
 

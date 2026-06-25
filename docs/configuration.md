@@ -1,6 +1,6 @@
 # Configuration reference
 
-This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag reads, the matching CLI flag where one exists, and the rules for parsing values.
+This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag reads. It gives the matching CLI flag where one exists and the rules for parsing values.
 
 See also:
 
@@ -12,13 +12,13 @@ See also:
 
 ## Resolution order
 
-Each setting resolves through a fixed precedence: CLI flag > environment variable > persisted local-only marker > built-in default. A flag on the invoked command wins over an exported environment variable, which wins over the persisted backend marker, which wins over the built-in default.
+Each setting resolves through a fixed precedence: CLI flag > environment variable > persisted local-only marker > built-in default.
 
-The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only`, so a later `server start` with no flag or environment variable still selects the on-disk store.
+The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only`. A later `server start` with no flag or environment variable then still selects the on-disk store.
 
 ## Backend selection
 
-These variables choose between the supervised Qdrant server (the default) and the on-disk store, and configure a remote or managed server. The server is the assumed backend; local-only is the opt-out and always wins over the server default.
+These variables choose between the supervised Qdrant server (the default) and the on-disk store. They also configure a remote or managed server.
 
 | Variable                            | Type    | Default                                  | Controls                                                       | CLI flag                   |
 | ----------------------------------- | ------- | ---------------------------------------- | -------------------------------------------------------------- | -------------------------- |
@@ -137,6 +137,25 @@ An unset variable falls back to the built-in default.
 
 vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. The Hub client honours its own environment variables, which vaultspec-rag does not wrap: `HF_HOME`, `HF_HUB_DOWNLOAD_TIMEOUT`, and `DISABLE_SAFETENSORS_CONVERSION`. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
+## Tuning for memory and speed
+
+On a small GPU, the dense and sparse encoders halve their batch size and retry on a CUDA out-of-memory error, down to a batch of one. Most cards work without tuning. The knobs below reduce memory pressure before that automatic backoff has to engage, or raise throughput.
+
+To fit a smaller GPU:
+
+- Lower `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (default 32 each).
+- Cap `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` (default 2048) to shrink padded-attention memory.
+- Set `VAULTSPEC_RAG_QDRANT_QUANTIZATION` to `scalar` to compress the stored vectors.
+- Turn off a model to free the most memory. Set `sparse_enabled` to drop the SPLADE encoder, or `reranker_enabled` to drop the CrossEncoder. Both are config-only keys with no environment variable, so set them in the project config.
+
+To speed up indexing:
+
+- Raise `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS` (0 auto-sizes to the CPU count, 1 forces serial).
+- Lower `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` so the process pool engages on smaller trees.
+- Raise `VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY` (default 4) if the host has spare cores.
+
+Each variable's default and meaning is listed in the preceding variable tables.
+
 ## Examples
 
 Pin the project root for a single search invocation:
@@ -163,6 +182,6 @@ Raise the log level to DEBUG for one command:
 vaultspec-rag --debug search "billing flow"
 ```
 
-## Need help?
+## Where to go next
 
 See the [Support](../README.md#support-and-help) section of the repo README.

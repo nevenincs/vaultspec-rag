@@ -1,6 +1,6 @@
 # Run the background service
 
-Run vaultspec-rag as a long-lived background service to keep the GPU models loaded and the managed Qdrant server running. This is the standard server-backed path: the first query pays the model-loading cost once, and every later query reuses the already-loaded models instead of reloading them.
+Run vaultspec-rag as a long-lived background service to keep the GPU models loaded and the managed Qdrant server running. This is the standard server-backed path. The first query pays the model-loading cost once, and every later query reuses the already-loaded models instead of reloading them.
 
 This guide assumes the workspace is already installed and provisioned. "Provisioned" means the `install` command has fetched the GPU model files and the Qdrant server binary. If you haven't done that yet, start with the [installation guide](installation.md). For the difference between the managed server and the on-disk store, see the [backends guide](backends.md). For how the service, the GPU consumer, and the vector store fit together, see the [architecture overview](architecture.md).
 
@@ -22,7 +22,7 @@ uv run vaultspec-rag server start --local-only
 
 "Local-only" means an on-disk store with no separate server process. The on-disk store skips the Qdrant binary, so it's the path to use on a machine where the binary isn't provisioned. See the [backends guide](backends.md) for the trade-offs.
 
-Other start flags - `--port`, `--updates` / `--no-updates`, `--update-delay-ms`, `--repeat-update-delay-s`, `--qdrant` / `--no-qdrant`, and `--qdrant-auto-provision` - cover specific cases described in the sections that follow. For the full list, see the [CLI reference](cli.md).
+Other start flags control the port, automatic updates, update timing, and the managed Qdrant server. The relevant sections of this guide describe them in context, and the [CLI reference](cli.md) carries the full list.
 
 ## Warm models before serving
 
@@ -62,7 +62,7 @@ To check whether each dependency is ready, run:
 uv run vaultspec-rag server doctor
 ```
 
-`doctor` reports the readiness of PyTorch CUDA, the models, and Qdrant, names the active backend (`server` or `local-only`), and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line - usually a provision or install step. Add `--json` for a machine-readable report.
+`doctor` reports the readiness of PyTorch CUDA, the models, and Qdrant. It names the active backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, usually a provision or install step. Add `--json` for a machine-readable report.
 
 To check the running service, run:
 
@@ -70,7 +70,7 @@ To check the running service, run:
 uv run vaultspec-rag server status
 ```
 
-`status` shows whether the server is up, its address, uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, and `4` crashed or divergent. "Divergent" means the status file disagrees with the live process - for example, the file names a process ID that's no longer alive. If `status` reports crashed or divergent, see the troubleshooting section.
+`status` shows whether the server is up, its address, uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, and `4` crashed or divergent. "Divergent" means the status file disagrees with the live process. For example, the file names a process ID that is no longer alive. If `status` reports crashed or divergent, see the [troubleshooting](#troubleshooting) section.
 
 Both commands accept `--json`, and `status` accepts `--verbose` for extra detail. For the full meaning of every field and exit code, see the [CLI reference](cli.md).
 
@@ -159,9 +159,9 @@ Shutdown removes the status file and stops the Qdrant child last, so the vector 
 
 **The server can't start.** Server mode needs the managed Qdrant binary. Provision it with `uv run vaultspec-rag server qdrant install`, or run the service local-only with `uv run vaultspec-rag server start --local-only`.
 
-**The index seems stale.** Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running - it competes for the single-writer GPU and Qdrant path.
+**The index seems stale.** Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running. Manual reindexing competes for the single-writer GPU and Qdrant path.
 
-## See also and where to get help
+## Where to go next
 
 - [Installation guide](installation.md) - install and provision the workspace.
 - [Backends guide](backends.md) - managed server vs local-only, and managing the Qdrant binary.

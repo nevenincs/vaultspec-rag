@@ -2,9 +2,9 @@
 
 The resident background service writes a discovery file that sibling tools read to locate the
 daemon and judge whether it is alive. This document is the **consumer-facing contract** for that
-file: the fields a consumer may rely on, their formats, the version discriminator, and the
-staleness semantics. Fields not listed under [Interface fields](#interface-fields) are internal
-diagnostics and must not be relied upon.
+file. It covers the fields a consumer may rely on, their formats, the version discriminator, and
+the staleness semantics. Fields not listed under [Interface fields](#interface-fields) are
+internal diagnostics and must not be relied upon.
 
 ## Location
 
@@ -32,22 +32,26 @@ change. Additive fields do not bump the version.
 
 | Field | Type | Format / meaning |
 | --- | --- | --- |
-| `schema` | string | Schema discriminator (above). |
-| `version` | integer | Schema version (above). |
-| `pid` | integer | OS process id of the serving daemon. See the PID-reuse caveat below. |
+| `schema` | string | Schema discriminator (see Version discriminator). |
+| `version` | integer | Schema version (see Version discriminator). |
+| `pid` | integer | OS process id of the serving daemon. See the PID-reuse caveat in the Staleness contract section. |
 | `port` | integer | TCP port the service listens on (loopback). |
-| `started_at` | string | Service start time, **ISO-8601 with offset, second precision** (e.g. `2026-06-24T10:23:52+00:00`). |
+| `started_at` | string | Service start time, **ISO-8601 with UTC offset, second precision** (e.g. `2026-06-24T10:23:52+00:00`). |
 | `last_heartbeat` | string | Time of the last heartbeat write, **same format as `started_at`**. Drives the staleness check. |
 | `heartbeat_interval_s` | integer | Seconds between heartbeat writes. |
 | `stale_after_s` | integer | Age in seconds past which `last_heartbeat` is considered stale. |
 | `service_token` | string | Per-process identity token; also echoed by the ungated `/health` route for identity verification. |
-| `qdrant_pid` | integer or null | PID of the supervised Qdrant child, when one is managed. |
+| `qdrant_pid` | integer or null | PID of the supervised Qdrant child. Null when the daemon attached to an externally-started Qdrant rather than spawning one. |
 | `qdrant_alive` | boolean or null | Whether the supervised Qdrant child is alive. |
 | `qdrant_port` | integer or null | Port of the supervised Qdrant child. |
 
-Both timestamp fields use one declared format — ISO-8601 with offset at second precision — and
-are emitted by a single shared helper so they never diverge. Parse them as ISO-8601; do **not**
-assume an epoch number.
+The three `qdrant_*` fields are present only in managed-server mode. In local-only mode, and when
+the service targets a remote Qdrant URL, the daemon supervises no child, so the fields are absent
+from the file rather than null. Treat absent and null alike: no managed Qdrant child to report.
+
+Both timestamp fields use one declared format, ISO-8601 with a UTC offset at second precision, and
+a single shared helper emits them so they never diverge. The offset is always UTC (`+00:00`).
+Parse them as ISO-8601 and do **not** assume an epoch number.
 
 ## Staleness contract
 
@@ -57,13 +61,13 @@ consumer should treat the service as **stale / not live** when
 rather than hard-coding them, since they are authoritative for the daemon that wrote them.
 
 **PID-reuse caveat.** A recorded `pid` may, after a crash without clean shutdown, belong to an
-unrelated process. Do not treat a live `pid` alone as proof the service is up; combine it with a
-fresh `last_heartbeat` and, where stronger proof is needed, verify the `service_token` against
-the target port's `/health` response.
+unrelated process. Do not treat a live `pid` alone as proof the service is up. Combine it with a
+fresh `last_heartbeat`. Where stronger proof is needed, verify the `service_token` against the
+target port's `/health` response.
 
 ## Internal fields (not interface)
 
 The file also carries process-introspection fields used by the local status surface:
 `parent_pid`, `executable`, `prefix`, `base_prefix`, `virtual_env`, and GPU/model diagnostics
-such as `cuda` and `models_loaded`. These are diagnostics only — they are **not** part of the
+such as `cuda` and `models_loaded`. These are diagnostics only. They are **not** part of the
 discovery contract and may change or disappear without a version bump. Do not depend on them.

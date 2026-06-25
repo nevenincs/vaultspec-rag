@@ -125,39 +125,28 @@ The sparse vector is sometimes absent - sparse disabled, or a document that
 produced a zero-weight sparse vector. In that case the query falls back to
 dense-only retrieval automatically.
 
-### Backends
+### Backends and store-layer locking
 
-The store runs against one of two backends, chosen by configuration rather than
-by editing this path. By default the running service supervises a **managed
-local Qdrant server**: the daemon spawns a loopback-bound Qdrant child before it
-loads any model, and points the store at it. This server-first default is what
-removes the single-process file-lock constraint of the embedded store. A
-single-flag **local-only** mode skips the child entirely and opens the embedded
-on-disk store at `.vault/data/search-data/qdrant/` instead - the right choice for
-a one-off index or an air-gapped host with no server binary.
-
-The store selects its backend from `VAULTSPEC_RAG_QDRANT_URL`: when a URL is
-present it connects to that server, otherwise it opens the embedded store. The
-daemon sets this variable to its supervised child automatically for its own
-lifetime, so server mode is the path you get without configuring anything. The
-embedded store is guarded by an exclusive file lock; a second writer raises
-rather than corrupting the index.
+The store runs against either the managed Qdrant server or the embedded on-disk
+store, selected from `VAULTSPEC_RAG_QDRANT_URL`. When a URL is present it connects
+to that server; otherwise it opens the embedded store. The daemon sets this
+variable to its supervised child automatically, so server mode is the path you
+get without configuring anything. The [backends guide](backends.md) covers
+choosing between the two and operating the managed server.
 
 Locking is backend-aware. The embedded store takes one reentrant lock per
 collection plus a lifecycle lock for open, close, and collection create or drop,
 because the collections are independent and a single store-wide mutex would
-serialise unrelated searches. Server mode takes no point-operation locks at all -
-the remote server handles its own concurrency, so client-side locking there only
-caps throughput.
+serialise unrelated searches. A second writer to the embedded store hits an
+exclusive file lock and raises rather than corrupting the index. Server mode
+takes no point-operation locks at all. The remote server handles its own
+concurrency, so client-side locking there only caps throughput.
 
-On a shared server, each project root's collections are kept apart by
-per-project namespacing: a per-root collection prefix derived from a short
-blake2b hash of the project's resolved path, applied only in server mode. Two
-roots indexed against one server never collide.
-
-Optional vector quantization (`scalar`, `turbo`, or `product`) trades some
-recall for lower VRAM and disk. For choosing between backends and operating the
-managed server, see the [backends guide](backends.md).
+On a shared server, per-root namespacing keeps each project's collections apart:
+a collection prefix derived from a short blake2b hash of the resolved project
+path, applied only in server mode, so two roots indexed against one server never
+collide. Optional vector quantization (`scalar`, `turbo`, or `product`) trades
+some recall for lower VRAM and disk.
 
 ## Indexing pipeline
 
@@ -218,41 +207,24 @@ watcher in detail.
 
 ## Configuration knobs
 
-The following table lists the environment variables most relevant to indexing
-and retrieval. Each maps to a config key that can also be set in the project
-config; the environment variable takes priority. Only variables that exist in
-the current build are listed - some knobs are config-only and have no environment
-variable. For the full inventory, see the
-[configuration reference](configuration.md).
+A handful of knobs shape the chunking and encoding pipeline this page describes.
+The [configuration reference](configuration.md) holds every variable with its
+default and precedence; the ones specific to this pipeline are:
 
-| Variable                                         | Default           | Controls                                                          |
-| ------------------------------------------------ | ----------------- | ----------------------------------------------------------------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`                   | `1`               | SPLADE sparse channel; `0` falls back to dense-only               |
-| `VAULTSPEC_RAG_DENSE_BACKEND`                    | `torch`           | Dense encoder backend; `onnx` is experimental and opt-in          |
-| `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE`             | `64`              | Outer slice: documents encoded and upserted per Qdrant write      |
-| `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`      | `32`              | Inner encode sub-batch for vault documents                        |
-| `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` | `32`              | Inner encode sub-batch for code chunks                            |
-| `VAULTSPEC_RAG_MAX_EMBED_CHARS`                  | `8000`            | Character truncation limit per document before encoding           |
-| `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`         | `2048`            | Token cap on the dense model's sequence length                    |
-| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`                | `3000`            | Character budget per vault chunk                                  |
-| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`              | `0` (auto)        | Chunk worker processes; `0` is auto, `1` is serial                |
-| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES`         | `8388608` (8 MiB) | Auto-mode source-size threshold before the process pool activates |
-| `VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES`         | `8`               | Flush the CUDA allocator every N code encode slices               |
-| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`              | `1024`            | Reranker token bound on candidate content                         |
-| `VAULTSPEC_RAG_QDRANT_URL`                       | _(unset)_         | Server URL; unset selects the embedded local store                |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`              | _(none)_          | Vector quantization: `scalar`, `turbo`, or `product`              |
-| `VAULTSPEC_RAG_SEARCH_CONCURRENCY`               | `16`              | Concurrent search worker limiter                                  |
-| `VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY`            | `4`               | Concurrent index job limiter                                      |
-| `VAULTSPEC_RAG_WATCH_ENABLED`                    | `1`               | Automatic index updates; `0` makes the service pull-only          |
-| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS`                | `2000`            | Debounce window after a change burst, in milliseconds             |
-| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`                 | `30`              | Per-source minimum wait between successive reindexes, in seconds  |
+| Variable                                 | Controls                                                          |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`           | SPLADE sparse channel; off falls back to dense-only               |
+| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`        | Character budget per vault chunk                                  |
+| `VAULTSPEC_RAG_MAX_EMBED_CHARS`          | Character truncation limit per document before encoding           |
+| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | Chunk worker processes; auto-sizes by default, 1 forces serial    |
+| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | Source-size threshold before the process pool activates           |
+| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`      | Reranker token bound on candidate content                         |
+| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`      | Vector quantization: `scalar`, `turbo`, or `product`              |
 
-Reranking is governed by config-only keys that have no environment variable:
-`reranker_enabled` (default on) and `reranker_batch_size` (default 32, halved on
-CUDA out-of-memory). Set them through the project config rather than the
-environment.
+For "my GPU is small" or "indexing is slow" tuning, see
+[tuning for memory and speed](configuration.md#tuning-for-memory-and-speed).
 
-## Getting help
+## Where to go next
 
 If indexing or retrieval behaves unexpectedly, the
 [backends guide](backends.md) covers backend selection and the managed server,

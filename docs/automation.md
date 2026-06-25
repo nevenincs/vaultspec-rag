@@ -1,15 +1,12 @@
 # Scripting and automation
 
-vaultspec-rag is GPU-accelerated semantic search over your vault documents and
-source code. New here? Start with the [getting-started guide](getting-started.md).
-
 Every vaultspec-rag command supports `--json`. The flag suppresses Rich console
 formatting and emits exactly one JSON document on stdout, newline-terminated.
 Use it when shell scripts, CI jobs, or agent loops need to read results
 programmatically instead of parsing tables. Logs still go to stderr, so an
 automation pipeline detects every error category by code rather than
-substring-matching on prose. The continuous integration (CI) examples in this
-guide rely on that contract.
+substring-matching on prose. The continuous integration (CI) examples below
+rely on that contract.
 
 ## Before you start
 
@@ -62,8 +59,8 @@ esac
 
 Exit codes map to error categories: `0` success, `1` generic failure, `2` usage
 error, `3` service stopped, `4` service crashed or divergent. The
-[error-code reference](#error-code-reference) lists which code each error string
-returns; [cli.md](cli.md) is the authoritative per-command exit-code and error
+[exit codes and error strings](#exit-codes-and-error-strings) section lists the
+codes; [cli.md](cli.md) is the authoritative per-command exit-code and error
 list.
 
 ## Worked example: gate CI on index health
@@ -132,39 +129,14 @@ Error:
 }
 ```
 
-## Exit codes
+## Exit codes and error strings
 
-| Code | Meaning                                                                         |
-| ---- | ------------------------------------------------------------------------------- |
-| `0`  | Success.                                                                        |
-| `1`  | Generic failure (GPU error, locked index, unreachable port, etc.).              |
-| `2`  | Usage error (invalid argument, missing required flag).                          |
-| `3`  | Service stopped - no service is running.                                        |
-| `4`  | Service crashed or divergent - the status file disagrees with the live process. |
-
-Divergent and crashed states (status file present, signals disagree) surface as
-exit `4`. The detail appears in the status output rows rather than as `error`
-strings in the JSON envelope.
-
-## Error code reference
-
-The `error` field carries a stable string code. The common ones:
-
-| Code                              | When it appears                                                   | Exit |
-| --------------------------------- | ----------------------------------------------------------------- | ---- |
-| `port_unreachable`                | `--port N` cannot reach the service. Retry or `--allow-fallback`. | 1    |
-| `local_store_locked`              | Another process holds the local store lock.                       | 1    |
-| `index_locked`                    | An index operation is already in flight.                          | 1    |
-| `rebuild_locked`                  | The rebuild lock could not be acquired.                           | 1    |
-| `clean_locked`                    | The clean lock could not be acquired.                             | 1    |
-| `rebuild_requires_explicit_type`  | `index --rebuild` invoked without an explicit `--type`.           | 2    |
-| `dry_run_requires_code`           | `index --dry-run` invoked without `--type code` or `--type all`.  | 2    |
-| `json_requires_yes`               | `clean --json` invoked without `--yes`.                           | 2    |
-| `invalid_filter_for_search_type`  | A filter flag does not apply to the chosen search type.           | 2    |
-| `service_not_running` / `stopped` | A `server` subcommand queried while no service is running.        | 3    |
-
-This is a representative set, not the complete list. See [cli.md](cli.md) for the
-authoritative per-command error and exit-code reference.
+Scripts gate on two signals: the process exit code and the `error` string. The
+exit codes are `0` success, `1` generic failure, `2` usage error, `3` service
+stopped, and `4` service crashed or divergent. The `error` field carries a stable
+string code such as `port_unreachable`, `local_store_locked`, or `stopped`, which
+is what the `case` branch above keys on. The [CLI reference](cli.md) is the
+authoritative per-command list of exit codes and error strings.
 
 ## Caveats
 
@@ -189,7 +161,7 @@ Inspect and tune it with the `vaultspec-rag server updates ...` verbs. See
 [service-mode.md](service-mode.md) for the full watcher story and
 [configuration.md](configuration.md) for the environment variables.
 
-## Where to go next, and help
+## Where to go next
 
 - [getting-started.md](getting-started.md) - index a project and run your first search.
 - [service-mode.md](service-mode.md) - run the background service and its watcher.

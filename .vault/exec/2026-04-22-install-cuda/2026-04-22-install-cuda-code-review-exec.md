@@ -15,7 +15,7 @@ related:
 ## scope
 
 Reviews the diff landed under feature branch `feature/install-cuda`
-for [issue #81](https://github.com/wgergely/vaultspec-rag/issues/81).
+for [issue #81](https://github.com/nevenincs/vaultspec-rag/issues/81).
 Files under review:
 
 - `src/vaultspec_rag/torch_config.py` (new)

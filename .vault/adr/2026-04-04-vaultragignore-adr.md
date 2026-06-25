@@ -16,7 +16,7 @@ related:
 but users have no mechanism to exclude files that are tracked by git yet irrelevant to
 semantic search (generated code, vendored deps, large fixtures, build outputs).
 
-Issue: wgergely/vaultspec-rag#31.
+Issue: nevenincs/vaultspec-rag#31.
 See research in `2026-04-04-vaultragignore-research`.
 
 ## Considerations

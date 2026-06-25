@@ -1,6 +1,6 @@
 # vaultspec-rag
 
-vaultspec-rag is the semantic-search companion to [vaultspec-core](https://github.com/wgergely/vaultspec-core). It indexes your vault's markdown documents and the source code beside them, then searches both by meaning rather than by exact words. A query for "how do we authenticate users" finds a note titled "login flow," which a keyword search would miss.
+vaultspec-rag is the semantic-search companion to [vaultspec-core](https://github.com/nevenincs/vaultspec-core). It indexes your vault's markdown documents and the source code beside them, then searches both by meaning rather than by exact words. A query for "how do we authenticate users" finds a note titled "login flow," which a keyword search would miss.
 
 vaultspec-core manages a `.vault/` directory of markdown documents - research notes, decisions, and plans. vaultspec-rag reads that vault and your code so you can search across both. Without a vaultspec-core workspace, vaultspec-rag has nothing to search.
 
@@ -35,8 +35,8 @@ For repeat use, start the server-backed service first - it keeps the models warm
 
 ## Documentation
 
-The [GitHub docs tree](https://github.com/wgergely/vaultspec-rag/tree/main/docs) holds the getting-started walkthrough, daily-use guides, CLI and configuration reference, and an architecture explanation.
+The [GitHub docs tree](https://github.com/nevenincs/vaultspec-rag/tree/main/docs) holds the getting-started walkthrough, daily-use guides, CLI and configuration reference, and an architecture explanation.
 
 ## Support
 
-Report issues on the [GitHub issue tracker](https://github.com/wgergely/vaultspec-rag/issues). A good bug report includes the vaultspec-rag version, your operating system, your GPU model, the exact command you ran, and the full stderr output.
+Report issues on the [GitHub issue tracker](https://github.com/nevenincs/vaultspec-rag/issues). A good bug report includes the vaultspec-rag version, your operating system, your GPU model, the exact command you ran, and the full stderr output.

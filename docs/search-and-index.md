@@ -18,7 +18,7 @@ To search source code instead, add `--type code`:
 uv run vaultspec-rag search "gpu lock around the forward pass" --type code
 ```
 
-Results come back as records - a rank, a file location, and the matching text.
+Each result is a record with a rank, a file location, and the matching text.
 
 Search returns 10 results by default. Change the count with `--max-results` (or its alias `--limit`):
 
@@ -32,7 +32,7 @@ To see numeric relevance scores beside each record, add `--scores`:
 uv run vaultspec-rag search "rerank inputs" --scores
 ```
 
-If nothing comes back, the index may be empty or still building. Build it first - see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight; wait for it to finish, then search again.
+If nothing comes back, the index may be empty or still building. Build it first; see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight, so wait for it to finish, then search again.
 
 ## Narrow code results by path
 
@@ -126,7 +126,7 @@ uv run vaultspec-rag search "encode batch" --type code --prefer production
 
 ## Build and refresh the index
 
-Indexing keeps search results current with your files. By default, `index` covers both documents and code and runs incrementally - it processes only what's changed:
+Indexing keeps search results current with your files. By default, `index` covers both documents and code and runs incrementally, processing only what changed:
 
 ```
 uv run vaultspec-rag index
@@ -148,7 +148,7 @@ uv run vaultspec-rag index --type code
 
 ## Rebuild from scratch
 
-To drop one index and recreate it - for example, after changing the embedding model or recovering from a corrupted index - use `--rebuild` with an explicit `--type`:
+Use `--rebuild` with an explicit `--type` to drop one index and recreate it (for example, after changing the embedding model or recovering from a corrupted index):
 
 ```
 uv run vaultspec-rag index --rebuild --type vault
@@ -166,7 +166,7 @@ uv run vaultspec-rag clean vault --yes
 uv run vaultspec-rag clean all --yes
 ```
 
-The target is required, so nothing is deleted by accident. `clean` doesn't load models or touch the GPU.
+The target is required, so no corpus is removed unless you name it. `clean` doesn't load models or touch the GPU.
 
 ## Where to go next
 
@@ -174,4 +174,4 @@ The target is required, so nothing is deleted by accident. `clean` doesn't load 
 - Every command, flag, and exit code: [CLI reference](cli.md).
 - Tune defaults like result counts, batch sizes, and the data directory: [configuration](configuration.md).
 
-Need help? See [support and help](../README.md#support-and-help).
+For more help, see [support and help](../README.md#support-and-help).

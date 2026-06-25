@@ -66,11 +66,11 @@ version = "0.2.24"
   vaultspec-search-mcp = "vaultspec_rag.server:main"
 
   [project.urls]
-  "Bug Tracker" = "https://github.com/wgergely/vaultspec-rag/issues"
-  Changelog = "https://github.com/wgergely/vaultspec-rag/blob/main/CHANGELOG.md"
-  Documentation = "https://github.com/wgergely/vaultspec-rag/tree/main/docs"
-  Homepage = "https://github.com/wgergely/vaultspec-rag"
-  Repository = "https://github.com/wgergely/vaultspec-rag"
+  "Bug Tracker" = "https://github.com/nevenincs/vaultspec-rag/issues"
+  Changelog = "https://github.com/nevenincs/vaultspec-rag/blob/main/CHANGELOG.md"
+  Documentation = "https://github.com/nevenincs/vaultspec-rag/tree/main/docs"
+  Homepage = "https://github.com/nevenincs/vaultspec-rag"
+  Repository = "https://github.com/nevenincs/vaultspec-rag"
 
   [project.optional-dependencies]
   dev = [
