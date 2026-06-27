@@ -14,6 +14,7 @@ related:
   - '[[2026-06-27-rag-broker-affordances-P02-S06]]'
   - '[[2026-06-27-rag-broker-affordances-P02-S07]]'
   - '[[2026-06-27-rag-broker-affordances-adr]]'
+  - '[[2026-06-27-rag-broker-affordances-audit]]'
   - '[[2026-06-27-rag-broker-affordances-plan]]'
   - '[[2026-06-27-rag-broker-affordances-research]]'
 ---
@@ -27,6 +28,10 @@ Auto-generated index of all documents tagged with `#rag-broker-affordances`.
 ### adr
 
 - `2026-06-27-rag-broker-affordances-adr` - `rag-broker-affordances` adr: `idempotent JSON start and a machine-global discovery pointer` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-27-rag-broker-affordances-audit` - `rag-broker-affordances` audit: `code review verification`
 
 ### exec
 

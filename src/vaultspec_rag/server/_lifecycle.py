@@ -86,8 +86,8 @@ def _unlink_status_file_silently() -> None:
     Called from atexit, signal handlers, and the lifespan finally block.
     Idempotent because any of those code paths may have already removed a file.
     Both the per-STATUS_DIR ``service.json`` and the machine-global discovery
-    pointer beside the lock (rag-broker-affordances ADR D3) are cleaned, so a
-    stopped service leaves neither behind.
+    pointer beside the lock are cleaned, so a stopped service leaves neither
+    behind.
     """
     from .._machine_lock import machine_discovery_path
 
@@ -179,9 +179,9 @@ def _heartbeat_tick_sync() -> None:
     tmp.write_text(json.dumps(data), encoding="utf-8")
     os.replace(str(tmp), str(path))
     # Mirror the same versioned payload to the machine-global discovery pointer
-    # beside the lock (rag-broker-affordances ADR D3), so a consumer that does not
-    # share this daemon's STATUS_DIR can still find it. Best-effort: a pointer
-    # write failure is a discovery nuisance, never a reason to break the heartbeat.
+    # beside the lock, so a consumer that does not share this daemon's STATUS_DIR
+    # can still find it. Best-effort: a pointer write failure is a discovery
+    # nuisance, never a reason to break the heartbeat.
     _write_machine_discovery(cast("dict[str, object]", data))
 
 

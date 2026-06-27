@@ -334,11 +334,10 @@ def service_start(
     ] = False,
 ) -> None:
     """Start the background search service."""
-    # Idempotent check FIRST (rag-broker-affordances ADR D1): a healthy owned
-    # service already running is a SUCCESS (`already_running`, exit 0), decided
-    # before the port/machine guards so the friendly path is no longer shadowed
-    # by the port-guard exit 1 - a supervising broker attaches instead of seeing
-    # a gateway fault.
+    # Idempotent check FIRST: a healthy owned service already running is a
+    # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
+    # so the friendly path is no longer shadowed by the port-guard exit 1 - a
+    # supervising broker attaches instead of seeing a gateway fault.
     existing = _existing_service_running()
     if existing is not None:
         existing_pid, existing_port = existing

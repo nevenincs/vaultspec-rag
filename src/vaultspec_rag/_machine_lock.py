@@ -46,11 +46,11 @@ __all__ = [
 
 _MACHINE_LOCK_FILENAME = "service.lock"
 
-# The machine-global discovery pointer sits beside the lock (rag-broker-affordances
-# ADR D3), so it is STATUS_DIR-independent like the lock: a consumer that does not
-# share rag's VAULTSPEC_RAG_STATUS_DIR can still find the one running service. It is
-# distinct from the per-STATUS_DIR ``service.json`` (a different directory), and the
-# daemon writes the SAME versioned discovery payload to both on each heartbeat.
+# The machine-global discovery pointer sits beside the lock, so it is
+# STATUS_DIR-independent like the lock: a consumer that does not share rag's
+# VAULTSPEC_RAG_STATUS_DIR can still find the one running service. It is distinct
+# from the per-STATUS_DIR ``service.json`` (a different directory), and the daemon
+# writes the SAME versioned discovery payload to both on each heartbeat.
 _MACHINE_DISCOVERY_FILENAME = "service.json"
 
 # The byte offset the OS lock is taken at. On Windows ``msvcrt.locking`` is
@@ -95,14 +95,10 @@ def read_machine_discovery() -> dict[str, object] | None:
     not the singleton authority; the OS lock remains that). Returns the parsed
     object, or ``None`` when the file is absent, unreadable, or not a JSON object.
     """
-    path = machine_discovery_path()
     try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    try:
+        raw = machine_discovery_path().read_text(encoding="utf-8")
         parsed: object = json.loads(raw)
-    except ValueError:
+    except (OSError, ValueError):
         return None
     return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else None
 
