@@ -2820,8 +2820,17 @@ class TestHelpCleanup:
         assert "watcher" not in out
         assert "VAULTSPEC_RAG_WATCH_ENABLED" not in result.output
 
-    def test_server_start_port_in_use_gives_next_actions(self):
+    def test_server_start_port_in_use_gives_next_actions(self, tmp_path: Path):
         import socket
+
+        # Isolate the status dir so the idempotent already-running check (now the
+        # first guard) finds no recorded service and falls through to the port
+        # guard - otherwise an ambient running service would make start return
+        # `already_running` regardless of the bound port (service-tests-isolate-
+        # status-dir).
+        prior_status = os.environ.get(EnvVar.STATUS_DIR)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
+        reset_rag_config()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
@@ -2831,6 +2840,11 @@ class TestHelpCleanup:
             result = runner.invoke(app, ["server", "start", "--port", str(port)])
         finally:
             sock.close()
+            if prior_status is None:
+                os.environ.pop(EnvVar.STATUS_DIR, None)
+            else:
+                os.environ[EnvVar.STATUS_DIR] = prior_status
+            reset_rag_config()
 
         assert result.exit_code == 1, result.output
         assert f"Port {port} is already in use." in result.output
@@ -2843,8 +2857,14 @@ class TestHelpCleanup:
         assert "vaultspec-rag server start --port <free-port>" in result.output
         assert "Traceback" not in result.output
 
-    def test_server_start_update_options_parse_before_port_guard(self):
+    def test_server_start_update_options_parse_before_port_guard(self, tmp_path: Path):
         import socket
+
+        # Isolated status dir so the idempotent check falls through to the port
+        # guard (service-tests-isolate-status-dir).
+        prior_status = os.environ.get(EnvVar.STATUS_DIR)
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
+        reset_rag_config()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
@@ -2867,6 +2887,11 @@ class TestHelpCleanup:
             )
         finally:
             sock.close()
+            if prior_status is None:
+                os.environ.pop(EnvVar.STATUS_DIR, None)
+            else:
+                os.environ[EnvVar.STATUS_DIR] = prior_status
+            reset_rag_config()
 
         assert result.exit_code == 1, result.output
         assert f"Port {port} is already in use." in result.output

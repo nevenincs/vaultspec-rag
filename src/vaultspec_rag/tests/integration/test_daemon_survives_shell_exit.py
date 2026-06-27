@@ -119,7 +119,7 @@ class TestExistingServiceRunningUnlink:
 
         running = _existing_service_running()
 
-        assert running is False  # not actually our healthy daemon
+        assert running is None  # not actually our healthy daemon
         assert sf.exists(), (
             "a live-but-unconfirmed PID's discovery file must not be erased"
         )
@@ -132,7 +132,7 @@ class TestExistingServiceRunningUnlink:
 
         running = _existing_service_running()
 
-        assert running is False
+        assert running is None
         assert not sf.exists(), "a confirmed-dead holder's stale file is cleaned"
 
 
