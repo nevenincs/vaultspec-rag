@@ -15,6 +15,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import cast
 
 __all__ = [
     "_heartbeat_loop",
@@ -80,27 +81,36 @@ def _lifecycle_log(event: str, **kv: object) -> None:
 
 
 def _unlink_status_file_silently() -> None:
-    """Best-effort unlink of service.json; ignores missing/locked.
+    """Best-effort unlink of service.json and the machine-global pointer.
 
-    Called from atexit, signal handlers, and the lifespan finally
-    block. Idempotent because any of those code paths may have
-    already removed the file.
+    Called from atexit, signal handlers, and the lifespan finally block.
+    Idempotent because any of those code paths may have already removed a file.
+    Both the per-STATUS_DIR ``service.json`` and the machine-global discovery
+    pointer beside the lock are cleaned, so a stopped service leaves neither
+    behind.
     """
-    path = _m._status_file_path()
+    from .._machine_lock import machine_discovery_path
+
+    paths = [_m._status_file_path()]
     try:
-        path.unlink()
-    except FileNotFoundError as exc:
-        # Already-removed is the expected idempotent case.
-        logger.debug("service.json already gone at %s: %s", path, exc)
-    except OSError as exc:
-        log_event(
-            logger,
-            "service.lifecycle",
-            "cleanup_failed",
-            severity=logging.WARNING,
-            path=path,
-            error=exc,
-        )
+        paths.append(machine_discovery_path())
+    except Exception as exc:  # config unavailable at a late shutdown stage
+        logger.debug("machine discovery pointer path unresolved: %s", exc)
+    for path in paths:
+        try:
+            path.unlink()
+        except FileNotFoundError as exc:
+            # Already-removed is the expected idempotent case.
+            logger.debug("discovery file already gone at %s: %s", path, exc)
+        except OSError as exc:
+            log_event(
+                logger,
+                "service.lifecycle",
+                "cleanup_failed",
+                severity=logging.WARNING,
+                path=path,
+                error=exc,
+            )
 
 
 def _heartbeat_tick_sync() -> None:
@@ -168,6 +178,31 @@ def _heartbeat_tick_sync() -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
     os.replace(str(tmp), str(path))
+    # Mirror the same versioned payload to the machine-global discovery pointer
+    # beside the lock, so a consumer that does not share this daemon's STATUS_DIR
+    # can still find it. Best-effort: a pointer write failure is a discovery
+    # nuisance, never a reason to break the heartbeat.
+    _write_machine_discovery(cast("dict[str, object]", data))
+
+
+def _write_machine_discovery(data: dict[str, object]) -> None:
+    """Mirror the discovery payload to the machine-global pointer atomically.
+
+    The pointer is STATUS_DIR-independent (beside the machine lock); a consumer
+    reads it to find the one service regardless of its own STATUS_DIR. Best-effort
+    and observable: a failure is debug-logged and swallowed (the STATUS_DIR file
+    still describes the service; the lock remains the singleton authority).
+    """
+    from .._machine_lock import machine_discovery_path
+
+    try:
+        pointer = machine_discovery_path()
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        tmp = pointer.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(str(tmp), str(pointer))
+    except OSError as exc:
+        logger.debug("machine discovery pointer write skipped: %s", exc, exc_info=True)
 
 
 def _qdrant_liveness_tick() -> None:

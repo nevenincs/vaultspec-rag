@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sys
@@ -57,42 +58,47 @@ __all__ = [
 ]
 
 
-def _ensure_qdrant_binary(*, auto_provision: bool) -> None:
+def _ensure_qdrant_binary(*, auto_provision: bool, json_mode: bool = False) -> None:
     """Fail fast (or provision with consent) before a server-mode start.
 
     Server mode is the default backend, so this guard runs by default and
     only ``--local-only`` (or an explicit ``--no-qdrant``) skips it. Never
-    downloads silently: an absent executable without ``auto_provision``
-    prints the exact install command and exits non-zero.
+    downloads silently: an absent executable without ``auto_provision`` prints
+    the exact install command and exits non-zero. In ``--json`` mode the absent/
+    failed outcomes are emitted as start envelopes so a broker reads one document.
     """
     from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
 
     if resolve_binary() is not None:
         return
     if not auto_provision:
-        _print_lifecycle_lines(
-            "Service start failed",
-            (
+        raise _fail_start(
+            json_mode,
+            error="qdrant_missing",
+            message="Service start failed",
+            human_lines=(
                 "Qdrant server mode needs the managed Qdrant server, "
-                "which is not installed."
+                "which is not installed.",
+                "Run: vaultspec-rag server qdrant install",
+                "(or re-run with --qdrant-auto-provision to consent to the download)",
+                "Local-only option: vaultspec-rag server start --local-only",
             ),
-            "Run: vaultspec-rag server qdrant install",
-            "(or re-run with --qdrant-auto-provision to consent to the download)",
-            "Local-only option: vaultspec-rag server start --local-only",
         )
-        raise typer.Exit(code=1)
     report = provision()
     if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
-        _print_lifecycle_lines(
-            "Service start failed",
-            f"Qdrant install failed: {report.message}",
+        raise _fail_start(
+            json_mode,
+            error="qdrant_provision_failed",
+            message="Service start failed",
+            human_lines=(f"Qdrant install failed: {report.message}",),
+            detail=str(report.message),
         )
-        raise typer.Exit(code=1)
-    _print_lifecycle_lines(
-        "Installed Qdrant server",
-        f"Version: {report.version}",
-        f"Install: {report.binary}",
-    )
+    if not json_mode:
+        _print_lifecycle_lines(
+            "Installed Qdrant server",
+            f"Version: {report.version}",
+            f"Install: {report.binary}",
+        )
 
 
 def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
@@ -151,18 +157,19 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     return not pid_alive
 
 
-def _existing_service_running() -> bool:
-    """Report a live service and clean up only a confirmed-dead status file.
+def _existing_service_running() -> tuple[int, int] | None:
+    """Return the ``(pid, port)`` of a healthy owned running service, else ``None``.
 
-    Returns True when a healthy service we own is already running (the caller
-    should not spawn another). Removes the status file only when its recorded
-    PID is confirmed dead; an ambiguous identity/health miss on a *live* PID
-    leaves the file untouched so a transient probe failure cannot erase a
+    Detection only - it no longer prints, so the caller renders the human
+    "already running" lines or the JSON envelope from one shared detection path
+    (the idempotent-start contract). Removes the status file only when its
+    recorded PID is confirmed dead; an ambiguous identity/health miss on a *live*
+    PID leaves the file untouched so a transient probe failure cannot erase a
     running daemon's discovery file (issue #204).
     """
     status = _read_service_status()
     if status is None:
-        return False
+        return None
     existing_pid = int(status["pid"])
     existing_port = int(status["port"])
     existing_token = status.get("service_token")
@@ -174,18 +181,66 @@ def _existing_service_running() -> bool:
     ):
         health = _health_probe(existing_port)
         if health is not None:
-            _print_lifecycle_lines(
-                "Service already running",
-                _process_line(existing_pid),
-                _address_line(existing_port),
-            )
-            return True
+            return (existing_pid, existing_port)
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
     if _should_unlink_discovery_file(_cli._is_pid_alive(existing_pid)):
         _status_file().unlink(missing_ok=True)
-    return False
+    return None
+
+
+_START_COMMAND = "service.start"
+
+
+def _start_success(
+    json_mode: bool,
+    *,
+    status: str,
+    human_title: str,
+    human_lines: tuple[str, ...],
+    **data: object,
+) -> None:
+    """Emit a successful start outcome (``already_running`` / ``started``).
+
+    In ``--json`` mode emits one ``{ok, command, data:{status, ...}}`` envelope;
+    otherwise the bespoke human lines. The caller returns after this (exit 0).
+    """
+    if json_mode:
+        _emit_json(True, _START_COMMAND, data={"status": status, **data})
+    else:
+        _print_lifecycle_lines(human_title, *human_lines)
+
+
+def _fail_start(
+    json_mode: bool,
+    *,
+    error: str,
+    message: str,
+    human_lines: tuple[str, ...],
+    next_actions: tuple[str, ...] = (),
+    **data: object,
+) -> typer.Exit:
+    """Render a failed start outcome and RETURN the ``typer.Exit`` to raise.
+
+    In ``--json`` mode emits one ``ok:false`` error envelope (``error`` is the
+    machine status, ``data`` the structured fields); otherwise the bespoke human
+    lines and next actions. Returns the ``Exit`` so the call site keeps an
+    explicit ``raise`` for control-flow clarity.
+    """
+    if json_mode:
+        _emit_json(
+            False,
+            _START_COMMAND,
+            error=error,
+            message=message,
+            data=dict(data) or None,
+        )
+    else:
+        _print_lifecycle_lines(message, *human_lines)
+        if next_actions:
+            _print_lifecycle_next_actions(*next_actions)
+    return typer.Exit(code=1)
 
 
 @server_app.command(
@@ -265,21 +320,56 @@ def service_start(
             ),
         ),
     ] = False,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one machine-readable outcome envelope instead of human "
+                "text. An already-running owned service is the success "
+                "`already_running` (exit 0), so a supervising broker can attach "
+                "rather than treating it as a fault."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Start the background search service."""
-    # Port-level guard: prevents concurrent start races (ADR D1)
+    # Idempotent check FIRST: a healthy owned service already running is a
+    # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
+    # so the friendly path is no longer shadowed by the port-guard exit 1 - a
+    # supervising broker attaches instead of seeing a gateway fault.
+    existing = _existing_service_running()
+    if existing is not None:
+        existing_pid, existing_port = existing
+        _start_success(
+            json_mode,
+            status="already_running",
+            human_title="Service already running",
+            human_lines=(_process_line(existing_pid), _address_line(existing_port)),
+            pid=existing_pid,
+            port=existing_port,
+        )
+        return
+
+    # Port-level guard: prevents concurrent start races (ADR D1). A foreign
+    # process holding the port (NOT our service, which the idempotent check above
+    # already handled) is a genuine failure.
     if not _port_is_available(port):
-        _print_lifecycle_lines(
-            "Service start failed",
-            f"Port {port} is already in use.",
-            "Another process is already using this service address.",
+        raise _fail_start(
+            json_mode,
+            error="port_in_use",
+            message="Service start failed",
+            human_lines=(
+                f"Port {port} is already in use.",
+                "Another process is already using this service address.",
+            ),
+            next_actions=(
+                f"vaultspec-rag server status --port {port}",
+                f"vaultspec-rag server jobs --state active --port {port}",
+                "vaultspec-rag server start --port <free-port>",
+            ),
+            port=port,
         )
-        _print_lifecycle_next_actions(
-            f"vaultspec-rag server status --port {port}",
-            f"vaultspec-rag server jobs --state active --port {port}",
-            "vaultspec-rag server start --port <free-port>",
-        )
-        raise typer.Exit(code=1)
 
     # Machine-level guard (ADR D1 / P3): one resident service per machine - it
     # owns the single GPU and the single managed Qdrant. A live holder on ANY
@@ -290,28 +380,29 @@ def service_start(
 
     machine_holder = machine_lock_live_holder()
     if machine_holder:
-        _print_lifecycle_lines(
-            "Service start failed",
-            f"A vaultspec-rag service already owns this machine "
-            f"(pid {machine_holder}).",
-            "One service owns the machine's GPU and managed Qdrant; a second "
-            "resident service is not supported.",
+        raise _fail_start(
+            json_mode,
+            error="machine_owned",
+            message="Service start failed",
+            human_lines=(
+                f"A vaultspec-rag service already owns this machine "
+                f"(pid {machine_holder}).",
+                "One service owns the machine's GPU and managed Qdrant; a second "
+                "resident service is not supported.",
+            ),
+            next_actions=(
+                "vaultspec-rag server status",
+                "vaultspec-rag server stop",
+            ),
+            holder_pid=machine_holder,
         )
-        _print_lifecycle_next_actions(
-            "vaultspec-rag server status",
-            "vaultspec-rag server stop",
-        )
-        raise typer.Exit(code=1)
 
     # Server mode is the default backend, so the qdrant-binary guard runs
     # by default. --local-only (and an explicit --no-qdrant) select the
     # on-disk store and skip it, so a default start fails fast on a missing
     # binary while the local opt-out never touches the server.
     if not local_only and qdrant is not False:
-        _ensure_qdrant_binary(auto_provision=qdrant_auto_provision)
-
-    if _existing_service_running():
-        return
+        _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
 
     log_path = _log_file()
     t0 = time.perf_counter()
@@ -330,23 +421,31 @@ def service_start(
         # started here would die when the shell exits (the issue #204 flapping
         # symptom). Surface the actionable guidance rather than spawning a
         # doomed daemon. No status file was written, so nothing to clean up.
-        _print_lifecycle_lines(
-            "Service start failed",
-            str(exc),
-        )
-        _print_lifecycle_next_actions(
-            "Start from a plain console (cmd.exe or powershell.exe) outside a "
-            "restricted terminal",
-            "Or run the service under a service manager that permits breakaway",
-        )
-        raise typer.Exit(code=1) from exc
+        raise _fail_start(
+            json_mode,
+            error="daemon_breakaway",
+            message="Service start failed",
+            human_lines=(str(exc),),
+            next_actions=(
+                "Start from a plain console (cmd.exe or powershell.exe) outside a "
+                "restricted terminal",
+                "Or run the service under a service manager that permits breakaway",
+            ),
+            detail=str(exc),
+        ) from exc
     _write_service_status(pid, port)
 
-    # Poll health with exponential backoff
+    # Poll health with exponential backoff. The live spinner writes to the
+    # console, so it is suppressed in --json mode (one clean envelope on stdout).
     delay = 0.1
     deadline = 300.0
     elapsed = 0.0
-    with _cli.console.status("Starting service..."):
+    spinner: contextlib.AbstractContextManager[object] = (
+        contextlib.nullcontext()
+        if json_mode
+        else _cli.console.status("Starting service...")
+    )
+    with spinner:
         while elapsed < deadline:
             time.sleep(delay)
             elapsed = time.perf_counter() - t0
@@ -354,13 +453,19 @@ def service_start(
             # Check if process died (port conflict, etc.)
             if not _cli._is_pid_alive(pid):
                 _status_file().unlink(missing_ok=True)
-                _print_lifecycle_lines(
-                    "Service start failed",
-                    _process_line(pid),
-                    _address_line(port),
-                    f"Log: {log_path}",
+                raise _fail_start(
+                    json_mode,
+                    error="start_died",
+                    message="Service start failed",
+                    human_lines=(
+                        _process_line(pid),
+                        _address_line(port),
+                        f"Log: {log_path}",
+                    ),
+                    pid=pid,
+                    port=port,
+                    log=str(log_path),
                 )
-                raise typer.Exit(code=1)
 
             health = _health_probe(port)
             if health is not None and health.get("status") == "ready":
@@ -373,25 +478,39 @@ def service_start(
                 pid = _health_service_pid(health, pid)
                 _update_service_metadata(_status_metadata_from_health(health, pid=pid))
                 startup_s = time.perf_counter() - t0
-                _print_lifecycle_lines(
-                    "Service started",
-                    _process_line(pid),
-                    _address_line(port),
-                    f"Startup: {startup_s:.1f}s",
-                    f"Log: {log_path}",
+                _start_success(
+                    json_mode,
+                    status="started",
+                    human_title="Service started",
+                    human_lines=(
+                        _process_line(pid),
+                        _address_line(port),
+                        f"Startup: {startup_s:.1f}s",
+                        f"Log: {log_path}",
+                    ),
+                    pid=pid,
+                    port=port,
+                    startup_s=round(startup_s, 1),
+                    log=str(log_path),
                 )
                 return
 
             delay = min(delay * 2, 5.0)
 
-    _print_lifecycle_lines(
-        "Service start timed out",
-        f"Waited: {deadline:.0f}s",
-        _process_line(pid),
-        "Server: process is running but not ready",
-        f"Log: {log_path}",
+    raise _fail_start(
+        json_mode,
+        error="start_timeout",
+        message="Service start timed out",
+        human_lines=(
+            f"Waited: {deadline:.0f}s",
+            _process_line(pid),
+            "Server: process is running but not ready",
+            f"Log: {log_path}",
+        ),
+        pid=pid,
+        waited_s=deadline,
+        log=str(log_path),
     )
-    raise typer.Exit(code=1)
 
 
 def _terminate_and_confirm(pid: int) -> None:

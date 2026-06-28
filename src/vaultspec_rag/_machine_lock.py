@@ -37,12 +37,21 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "acquire_machine_lock",
+    "machine_discovery_path",
     "machine_lock_live_holder",
     "machine_lock_path",
+    "read_machine_discovery",
     "release_machine_lock",
 ]
 
 _MACHINE_LOCK_FILENAME = "service.lock"
+
+# The machine-global discovery pointer sits beside the lock, so it is
+# STATUS_DIR-independent like the lock: a consumer that does not share rag's
+# VAULTSPEC_RAG_STATUS_DIR can still find the one running service. It is distinct
+# from the per-STATUS_DIR ``service.json`` (a different directory), and the daemon
+# writes the SAME versioned discovery payload to both on each heartbeat.
+_MACHINE_DISCOVERY_FILENAME = "service.json"
 
 # The byte offset the OS lock is taken at. On Windows ``msvcrt.locking`` is
 # MANDATORY - a locked byte cannot be read by another process - so the lock byte
@@ -64,6 +73,34 @@ def machine_lock_path() -> Path:
 
     storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
     return storage.parent / _MACHINE_LOCK_FILENAME
+
+
+def machine_discovery_path() -> Path:
+    """Path of the machine-global discovery pointer (beside the lock).
+
+    STATUS_DIR-independent (anchored to the machine-global Qdrant storage, like the
+    lock), so a consumer that does not share rag's ``VAULTSPEC_RAG_STATUS_DIR`` can
+    discover the one running service. The daemon writes the versioned discovery
+    payload here on each heartbeat and removes it on shutdown.
+    """
+    return machine_lock_path().parent / _MACHINE_DISCOVERY_FILENAME
+
+
+def read_machine_discovery() -> dict[str, object] | None:
+    """Read the machine-global discovery pointer, or ``None`` when absent.
+
+    Tolerant by design (mirroring a consumer's own discovery): a missing or
+    unreadable/non-JSON file is truthful absence, never an error - the caller
+    applies the heartbeat staleness contract the payload carries (it is discovery,
+    not the singleton authority; the OS lock remains that). Returns the parsed
+    object, or ``None`` when the file is absent, unreadable, or not a JSON object.
+    """
+    try:
+        raw = machine_discovery_path().read_text(encoding="utf-8")
+        parsed: object = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else None
 
 
 def _machine_lock_holder(path: Path) -> int:
