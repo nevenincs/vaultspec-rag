@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.26](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.25...vaultspec-rag-v0.2.26) (2026-06-28)
+
+
+### Features
+
+* **rag-broker-affordances:** idempotent JSON server start + machine-global discovery pointer ([#216](https://github.com/nevenincs/vaultspec-rag/issues/216)) ([143120d](https://github.com/nevenincs/vaultspec-rag/commit/143120d3529bee407f932898a37dca8233ba8075))
+* **storage-schema:** versioned typed runtime-advertised Qdrant schema contract ([#215](https://github.com/nevenincs/vaultspec-rag/issues/215)) ([fe7e0ee](https://github.com/nevenincs/vaultspec-rag/commit/fe7e0ee388685ad50d8429a118798e78d3552b55))
+
 ## [0.2.25](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.24...vaultspec-rag-v0.2.25) (2026-06-25)
 
 
