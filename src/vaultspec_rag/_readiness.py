@@ -144,11 +144,20 @@ class ReadinessReport:
         return None
 
     def to_dict(self) -> dict[str, object]:
-        """Return a JSON-serialisable view of the whole report."""
+        """Return a JSON-serialisable view of the whole report.
+
+        Carries the bounded storage-schema descriptor so a consumer can assert
+        compatibility against the Qdrant data shape before a direct read. The
+        descriptor is config-derived and torch-free, so it stays inside the
+        no-GPU readiness contract.
+        """
+        from . import store_schema
+
         return {
             "ready": self.ready,
             "server_mode": self.server_mode,
             "dependencies": [dep.to_dict() for dep in self.dependencies],
+            "schema": store_schema.describe_storage_schema(),
         }
 
 

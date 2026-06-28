@@ -29,6 +29,7 @@ from .._readiness import (
     compute_readiness,
 )
 from ..config import EnvVar, reset_config
+from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -150,8 +151,16 @@ class TestComputeReadinessShape:
     def test_report_round_trips_through_json(self) -> None:
         data = compute_readiness().to_dict()
         restored = json.loads(json.dumps(data))
-        assert set(restored.keys()) == {"ready", "server_mode", "dependencies"}
+        # The report carries the bounded storage-schema descriptor alongside the
+        # readiness dimensions.
+        assert set(restored.keys()) == {
+            "ready",
+            "server_mode",
+            "dependencies",
+            "schema",
+        }
         assert [d["name"] for d in restored["dependencies"]] == list(_DIMENSIONS)
+        assert restored["schema"]["version"] == _STORAGE_SCHEMA_VERSION
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

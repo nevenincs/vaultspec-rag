@@ -846,6 +846,7 @@ def get_service_state(
         "running": str(root) in watching,
     }
 
+    from . import store_schema
     from .qdrant_runtime import runtime_state
 
     return {
@@ -853,4 +854,8 @@ def get_service_state(
         "projects": projects_data,
         "watcher": watcher_data,
         "qdrant": runtime_state().to_dict(),
+        # Bare storage-schema version echo: lets a consumer polling
+        # /service-state for freshness also pre-check the data shape without a
+        # separate /readiness round-trip. The full descriptor is on /readiness.
+        "schema_version": store_schema.STORAGE_SCHEMA_VERSION,
     }

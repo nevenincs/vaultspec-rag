@@ -323,6 +323,8 @@ async def health_handler(_request: Request) -> object:
     """
     from starlette.responses import JSONResponse
 
+    from .. import store_schema
+
     try:
         import torch
 
@@ -366,6 +368,10 @@ async def health_handler(_request: Request) -> object:
             "project_count": reg_health["project_count"],
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
+            # Bare storage-schema version: the cheapest ungated pre-read gate a
+            # direct-Qdrant consumer can check before scrolling. The full
+            # descriptor lives on /readiness.
+            "schema_version": store_schema.STORAGE_SCHEMA_VERSION,
             # Per-process identity token. Mirrors the value written
             # to service.json. The CLI compares the two to detect
             # PID-reuse and unrelated-HTTP-server-on-port collisions

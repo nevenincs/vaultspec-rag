@@ -12,7 +12,9 @@ import threading
 import warnings
 from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from . import store_schema
 
 if TYPE_CHECKING:
     import pathlib
@@ -123,7 +125,7 @@ class FileLock:
             self.fd = None
 
 
-EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B default
+EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
 
 
 def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
@@ -358,6 +360,81 @@ class CodeChunk:
     locator_end_str: str | None = None
 
 
+def _vault_doc_payload(doc: VaultDocument) -> store_schema.VaultDocPayload:
+    """Build a ``vault_docs`` document point payload from a document.
+
+    The one place the document-level payload shape is constructed; the typed
+    return binds it to the schema contract so a field drift is a type error
+    and the parity test can assert the produced dict directly.
+    """
+    return {
+        "doc_id": doc.id,
+        "path": doc.path,
+        "doc_type": doc.doc_type,
+        "feature": doc.feature,
+        "date": doc.date,
+        "tags": doc.tags,
+        "related": doc.related,
+        "title": doc.title,
+        "status": doc.status,
+        "content": doc.content,
+    }
+
+
+def _vault_chunk_payload(chunk: VaultChunk) -> store_schema.VaultChunkPayload:
+    """Build a ``vault_docs`` chunk point payload from a chunk.
+
+    ``doc_content`` is added only on the ordinal-0 chunk (it is ``NotRequired``
+    in the schema), so retrieval-by-id stays exact while the per-chunk payload
+    carries just its own text.
+    """
+    payload: store_schema.VaultChunkPayload = {
+        "doc_id": chunk.doc_id,
+        "chunk_ordinal": chunk.ordinal,
+        "chunk_count": chunk.chunk_count,
+        "path": chunk.path,
+        "doc_type": chunk.doc_type,
+        "feature": chunk.feature,
+        "date": chunk.date,
+        "tags": chunk.tags,
+        "related": chunk.related,
+        "title": chunk.title,
+        "status": chunk.status,
+        "content": chunk.text,
+    }
+    if chunk.ordinal == 0 and chunk.doc_content is not None:
+        payload["doc_content"] = chunk.doc_content
+    return payload
+
+
+def _code_chunk_payload(chunk: CodeChunk) -> store_schema.CodeChunkPayload:
+    """Build a ``codebase_docs`` chunk point payload from a code chunk.
+
+    The document-preprocessing hook fields are ``None`` for ordinary code
+    chunks; they carry the preprocessed source's own addressing scheme when
+    present.
+    """
+    return {
+        "chunk_id": chunk.id,
+        "path": chunk.path,
+        "language": chunk.language,
+        "content": chunk.content,
+        "line_start": chunk.line_start,
+        "line_end": chunk.line_end,
+        "node_type": chunk.node_type,
+        "function_name": chunk.function_name,
+        "class_name": chunk.class_name,
+        "source_path": chunk.source_path,
+        "preprocessor_id": chunk.preprocessor_id,
+        "anchor": chunk.anchor,
+        "locator_kind": chunk.locator_kind,
+        "locator_value_int": chunk.locator_value_int,
+        "locator_value_str": chunk.locator_value_str,
+        "locator_end_int": chunk.locator_end_int,
+        "locator_end_str": chunk.locator_end_str,
+    }
+
+
 class VaultStore:
     """Qdrant-backed vector store for vault documents and codebase chunks.
 
@@ -463,7 +540,10 @@ class VaultStore:
                     raise VaultStoreLockedError(str(self.db_path)) from exc
                 raise
 
-        self._embedding_dim = embedding_dim or EMBEDDING_DIM
+        # Default the collection's dense dimension from the same source the wire
+        # descriptor advertises, so the advertised dimension always equals what
+        # the live collection is built with - even under a config override.
+        self._embedding_dim = embedding_dim or store_schema.effective_dense_dim()
         self._vault_ensured = False
         self._code_ensured = False
         # Best-effort storage-manifest attribution is recorded at most once per
@@ -610,13 +690,13 @@ class VaultStore:
             self.client.create_collection(
                 collection_name=name,
                 vectors_config={
-                    "dense": models.VectorParams(
+                    store_schema.DENSE_VECTOR_NAME: models.VectorParams(
                         size=self._embedding_dim,
-                        distance=models.Distance.COSINE,
+                        distance=models.Distance(store_schema.DENSE_DISTANCE),
                     ),
                 },
                 sparse_vectors_config={
-                    "sparse": models.SparseVectorParams(),
+                    store_schema.SPARSE_VECTOR_NAME: models.SparseVectorParams(),
                 },
                 **kwargs,
             )
@@ -682,20 +762,22 @@ class VaultStore:
             self._ensure_collection(self.TABLE_NAME)
 
             # ``doc_id`` backs delete-by-document and chunk grouping;
-            # ``chunk_ordinal`` backs the doc-level listing filter.
-            for fname in ("doc_type", "feature", "date", "tags", "doc_id"):
+            # ``chunk_ordinal`` backs the doc-level listing filter. The field
+            # sets are declared once in ``store_schema``.
+            for fname in store_schema.VAULT_KEYWORD_INDEXES:
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
                         collection_name=self.TABLE_NAME,
                         field_name=fname,
                         field_schema=models.PayloadSchemaType.KEYWORD,
                     )
-            with _suppress_local_qdrant_warnings():
-                self.client.create_payload_index(
-                    collection_name=self.TABLE_NAME,
-                    field_name="chunk_ordinal",
-                    field_schema=models.PayloadSchemaType.INTEGER,
-                )
+            for fname in store_schema.VAULT_INTEGER_INDEXES:
+                with _suppress_local_qdrant_warnings():
+                    self.client.create_payload_index(
+                        collection_name=self.TABLE_NAME,
+                        field_name=fname,
+                        field_schema=models.PayloadSchemaType.INTEGER,
+                    )
             self._vault_ensured = True
 
     def ensure_code_table(self) -> None:
@@ -713,32 +795,20 @@ class VaultStore:
 
             self._ensure_collection(self.CODE_TABLE_NAME)
 
-            # ``node_type`` is added to the KEYWORD index set so the
-            # MCP `search_codebase(node_type=...)` filter does not fall
-            # back to a linear scan on remote Qdrant deployments. Local
-            # mode already returned correct results without the index;
-            # this is purely a perf-on-remote completeness fix.
-            for fname in (
-                "path",
-                "language",
-                "function_name",
-                "class_name",
-                "node_type",
-                # Document-preprocessing hook payload (#185). The split
-                # locator keeps a typed index per value kind (D12): numeric
-                # kinds (page/line/byte/char) go to locator_value_int below,
-                # string kinds (sheet) to locator_value_str here.
-                "preprocessor_id",
-                "locator_kind",
-                "locator_value_str",
-            ):
+            # ``node_type`` is in the KEYWORD set so the MCP
+            # `search_codebase(node_type=...)` filter does not fall back to a
+            # linear scan on remote Qdrant deployments, and the
+            # document-preprocessing hook locators (#185) keep a typed index
+            # per value kind. The field sets are declared once in
+            # ``store_schema``.
+            for fname in store_schema.CODE_KEYWORD_INDEXES:
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
                         collection_name=self.CODE_TABLE_NAME,
                         field_name=fname,
                         field_schema=models.PayloadSchemaType.KEYWORD,
                     )
-            for fname in ("line_start", "locator_value_int"):
+            for fname in store_schema.CODE_INTEGER_INDEXES:
                 with _suppress_local_qdrant_warnings():
                     self.client.create_payload_index(
                         collection_name=self.CODE_TABLE_NAME,
@@ -772,18 +842,7 @@ class VaultStore:
                 models.PointStruct(
                     id=self._stable_id(doc.id),
                     vector=vector,
-                    payload={
-                        "doc_id": doc.id,
-                        "path": doc.path,
-                        "doc_type": doc.doc_type,
-                        "feature": doc.feature,
-                        "date": doc.date,
-                        "tags": doc.tags,
-                        "related": doc.related,
-                        "title": doc.title,
-                        "status": doc.status,
-                        "content": doc.content,
-                    },
+                    payload=cast("dict[str, Any]", _vault_doc_payload(doc)),
                 ),
             )
 
@@ -820,27 +879,11 @@ class VaultStore:
                     indices=chunk.sparse_indices,
                     values=chunk.sparse_values,
                 )
-            payload: dict[str, Any] = {
-                "doc_id": chunk.doc_id,
-                "chunk_ordinal": chunk.ordinal,
-                "chunk_count": chunk.chunk_count,
-                "path": chunk.path,
-                "doc_type": chunk.doc_type,
-                "feature": chunk.feature,
-                "date": chunk.date,
-                "tags": chunk.tags,
-                "related": chunk.related,
-                "title": chunk.title,
-                "status": chunk.status,
-                "content": chunk.text,
-            }
-            if chunk.ordinal == 0 and chunk.doc_content is not None:
-                payload["doc_content"] = chunk.doc_content
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.point_key),
                     vector=vector,
-                    payload=payload,
+                    payload=cast("dict[str, Any]", _vault_chunk_payload(chunk)),
                 ),
             )
 
@@ -877,25 +920,7 @@ class VaultStore:
                 models.PointStruct(
                     id=self._stable_id(chunk.id),
                     vector=vector,
-                    payload={
-                        "chunk_id": chunk.id,
-                        "path": chunk.path,
-                        "language": chunk.language,
-                        "content": chunk.content,
-                        "line_start": chunk.line_start,
-                        "line_end": chunk.line_end,
-                        "node_type": chunk.node_type,
-                        "function_name": chunk.function_name,
-                        "class_name": chunk.class_name,
-                        "source_path": chunk.source_path,
-                        "preprocessor_id": chunk.preprocessor_id,
-                        "anchor": chunk.anchor,
-                        "locator_kind": chunk.locator_kind,
-                        "locator_value_int": chunk.locator_value_int,
-                        "locator_value_str": chunk.locator_value_str,
-                        "locator_end_int": chunk.locator_end_int,
-                        "locator_end_str": chunk.locator_end_str,
-                    },
+                    payload=cast("dict[str, Any]", _code_chunk_payload(chunk)),
                 ),
             )
 
