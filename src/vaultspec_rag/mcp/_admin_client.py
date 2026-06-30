@@ -1,11 +1,17 @@
-"""Admin and observability MCP tools.
+"""Async admin/observability client for the running RAG daemon.
 
-Each tool is a thin delegation to the running RAG daemon through the shared
-:mod:`vaultspec_rag.serviceclient` admin client. The MCP carries no bespoke
-logic: it resolves the service port, offloads the synchronous wire call to a
-worker thread, and maps an unreachable service to the one clear service-down
-``RuntimeError`` defined in :mod:`._tools`. Importing this module runs the
-``@mcp.tool()`` decorators for the admin/observability tools.
+These are **not** MCP tools. The MCP search surface is narrowed to search,
+index-refresh, and read-only retrieval (see the ``mcp-search-scope`` ADR); the
+mutating and observability admin verbs - project listing/eviction, watcher
+control, service-state, storage survey, jobs, and logs - are CLI-only on the
+public surface and are not registered on the FastMCP instance.
+
+The thin async wrappers below survive only as a programmatic client over the
+daemon's admin routes (the same ``/admin`` routes the CLI uses through
+:func:`vaultspec_rag.serviceclient._try_http_admin`). They centralise the
+tool-name-to-route argument shaping in one place for the service integration
+tests that drive those routes; production lifecycle and observability flow
+through the CLI.
 """
 
 from __future__ import annotations
@@ -14,7 +20,6 @@ from functools import partial
 from typing import Any
 
 from ..serviceclient import _try_http_admin
-from ._mcp import mcp
 from ._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
@@ -27,19 +32,16 @@ async def _admin(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     return await _delegate(partial(_try_http_admin, tool_name, args, port))
 
 
-@mcp.tool()
 async def list_projects() -> dict[str, Any]:
     """Return a snapshot of every active project slot."""
     return await _admin("list_projects", {})
 
 
-@mcp.tool()
 async def evict_project(root: str) -> dict[str, Any]:
     """Force-evict the project slot for *root*."""
     return await _admin("evict_project", {"root": root})
 
 
-@mcp.tool()
 async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
     """Report filesystem-watcher configuration and running state."""
     args: dict[str, Any] = {}
@@ -48,19 +50,16 @@ async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
     return await _admin("get_watcher_state", args)
 
 
-@mcp.tool()
 async def start_watcher(root: str) -> dict[str, Any]:
     """Eagerly start the filesystem watcher for *root*."""
     return await _admin("start_watcher", {"root": root})
 
 
-@mcp.tool()
 async def stop_watcher(root: str) -> dict[str, Any]:
     """Stop the filesystem watcher for *root* (pull-only for that root)."""
     return await _admin("stop_watcher", {"root": root})
 
 
-@mcp.tool()
 async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state."""
     args: dict[str, Any] = {}
@@ -69,19 +68,11 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     return await _admin("get_service_state", args)
 
 
-@mcp.tool()
 async def survey_storage(
     status: str | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    """Survey stored RAG index namespaces (live / orphaned / unknown).
-
-    Read-only: classifies every per-root namespace through the persisted
-    prefix-to-root manifest and reports point counts and on-disk footprint.
-    Optional ``status`` narrows to one classification and ``limit`` bounds
-    the returned window. The destructive prune / delete / migrate verbs stay
-    CLI-only; the MCP exposes the survey alone.
-    """
+    """Survey stored RAG index namespaces (live / orphaned / unknown)."""
     args: dict[str, Any] = {}
     if status:
         args["status"] = status
@@ -90,7 +81,6 @@ async def survey_storage(
     return await _admin("get_storage_survey", args)
 
 
-@mcp.tool()
 async def get_logs(
     lines: int = 200,
     job_id: str | None = None,
@@ -105,7 +95,6 @@ async def get_logs(
     return await _admin("get_logs", args)
 
 
-@mcp.tool()
 async def get_jobs(
     limit: int | None = None,
     phase: str | None = None,
@@ -137,7 +126,6 @@ async def get_jobs(
     return await _admin("get_jobs", args)
 
 
-@mcp.tool()
 async def reconfigure_watcher(
     root: str,
     debounce_ms: int | None = None,

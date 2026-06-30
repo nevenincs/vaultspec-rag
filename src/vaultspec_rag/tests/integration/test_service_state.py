@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-import vaultspec_rag.mcp._admin_tools as admin
+import vaultspec_rag.mcp._admin_client as admin
 
 from ... import server
 from ...cli import app

@@ -111,7 +111,7 @@ def test_reset_zeroes_counters(_clean_metrics: None) -> None:
 # --------------------------------------------------------------------------- #
 
 
-import vaultspec_rag.mcp._admin_tools as admin_tools  # noqa: E402
+import vaultspec_rag.mcp._admin_client as admin_tools  # noqa: E402
 
 
 async def _fetch_daemon_metrics(port: int, token: str) -> str:

@@ -85,26 +85,15 @@ class TestToolRegistration:
         expected = {
             "search_vault",
             "search_codebase",
-            "get_index_status",
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
-            "list_projects",
-            "evict_project",
-            "get_watcher_state",
-            "start_watcher",
-            "stop_watcher",
-            "reconfigure_watcher",
-            "get_service_state",
-            "get_logs",
-            "get_jobs",
-            "survey_storage",
         }
         assert expected == tool_names
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 16
+        assert len(tools) == 5
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())
@@ -117,7 +106,6 @@ class TestToolRegistration:
         tools_with_project_root = {
             "search_vault",
             "search_codebase",
-            "get_index_status",
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
@@ -868,16 +856,6 @@ class TestMultiProjectWatcher:
         from ..server import _stop_watcher
 
         _stop_watcher(tmp_path)  # must not raise
-
-
-class TestAdminTools:
-    """list_projects and evict_project MCP admin tools."""
-
-    def test_list_projects_help_tool_registered(self) -> None:
-        tools = _run(mcp.list_tools())
-        names = {t.name for t in tools}
-        assert "list_projects" in names
-        assert "evict_project" in names
 
 
 class TestRegistryFullErrorShape:

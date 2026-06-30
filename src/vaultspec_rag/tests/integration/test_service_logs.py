@@ -29,7 +29,7 @@ from typer.testing import CliRunner
 if TYPE_CHECKING:
     import httpx
 
-import vaultspec_rag.mcp._admin_tools as admin
+import vaultspec_rag.mcp._admin_client as admin
 import vaultspec_rag.server as _m
 
 from ...cli import app
