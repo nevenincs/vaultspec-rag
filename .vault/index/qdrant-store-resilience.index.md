@@ -12,6 +12,7 @@ related:
   - '[[2026-06-30-qdrant-store-resilience-P04-S04]]'
   - '[[2026-06-30-qdrant-store-resilience-P05-S05]]'
   - '[[2026-06-30-qdrant-store-resilience-adr]]'
+  - '[[2026-06-30-qdrant-store-resilience-audit]]'
   - '[[2026-06-30-qdrant-store-resilience-plan]]'
   - '[[2026-06-30-qdrant-store-resilience-research]]'
 ---
@@ -25,6 +26,10 @@ Auto-generated index of all documents tagged with `#qdrant-store-resilience`.
 ### adr
 
 - `2026-06-30-qdrant-store-resilience-adr` - `qdrant-store-resilience` adr: `Detect, quarantine, and retry a corrupt collection on supervised start` | (**status:** `accepted`)
+
+### audit
+
+- `2026-06-30-qdrant-store-resilience-audit` - `qdrant-store-resilience` audit: `Code review of the corrupt-collection recovery`
 
 ### exec
 
