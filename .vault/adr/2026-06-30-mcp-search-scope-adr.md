@@ -101,7 +101,9 @@ The MCP server is narrowed to a semantic-search surface and brought into line wi
   declared `outputSchema` with matching `structuredContent`, and an explicit display
   `title`. The two search tools are annotated read-only and idempotent over a closed
   world, and their return shape is narrowed from a loose `dict | list` union to one stable
-  schema. The transport stays Streamable HTTP at the `/mcp` endpoint.
+  schema. The transport is unchanged by this ADR: the MCP server is served over its existing
+  stdio transport (`mcp.run(transport="stdio")`), and the daemon serves native REST only with
+  no `/mcp` mount.
 
 - **SB6 - Index-refresh keeps an honest annotation; the destructive rebuild is CLI-only.**
   The incremental refresh path stays on MCP and is annotated non-destructive and

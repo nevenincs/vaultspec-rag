@@ -83,11 +83,13 @@ no-op alias retained for install compatibility). MCP Python SDK `1.26.x` targets
 output, and the Streamable HTTP transport.
 
 **Transport.** `mcp/_mcp.py` constructs a single shared
-`FastMCP("VaultSpec Search", stateless_http=True)`; the daemon serves it via
-`streamable_http_app()` mounted at `/mcp`. So the server speaks Streamable HTTP in
-stateless mode - no `MCP-Session-Id` persistence, no SSE resumability. That is the correct
-transport family for a multi-agent local service; statelessness is a deliberate
-simplification, not a spec violation.
+`FastMCP("VaultSpec Search", stateless_http=True)`, but the daemon does not serve it over
+HTTP. The daemon serves native REST routes only and mounts no `/mcp` endpoint; the MCP
+server runs as a standalone stdio subprocess via `mcp.run(transport="stdio")` in
+`server/_main.py`. That stdio forwarder loads no model - every tool delegates to the running
+daemon over HTTP through `serviceclient`. The `stateless_http=True` flag is therefore
+vestigial under stdio. Stdio is one-subprocess-per-client, the intended model for the
+agent-facing MCP here.
 
 **Tool shape.** All tools are registered with a bare `@mcp.tool()` (no `annotations=`, no
 `outputSchema`, no explicit `title`). Each is a thin async delegation: resolve the port
@@ -168,10 +170,14 @@ absent-service condition yields a tool result with `isError:true` and the action
 "service is not running; start it with `vaultspec-rag server start`" text, matching the
 spec's tool-execution-error guidance for recoverable failures.
 
-**Transport.** Retain Streamable HTTP at `/mcp` (the recommended multi-agent transport).
-`stateless_http=True` remains acceptable for short search calls; revisit only if streaming
-or resumable long index jobs are ever surfaced through MCP. Continue binding to localhost
-and validating `Origin` per the transport security guidance.
+**Transport.** The shipped transport is stdio - the MCP server runs as a standalone stdio
+subprocess (`mcp.run(transport="stdio")`) that forwards every call to the running daemon's
+native REST through `serviceclient`, and the daemon mounts no `/mcp` endpoint. This is a
+settled prior decision (the MCP-as-thin-service-client architecture) and is out of scope to
+change here; the `stateless_http` flag on the FastMCP instance is vestigial under stdio. The
+MCP specification also defines Streamable HTTP for multi-agent HTTP serving, which the
+project deliberately does not use; if a future need for HTTP-served MCP arises, that is the
+spec-correct transport to adopt.
 
 ## Sources
 

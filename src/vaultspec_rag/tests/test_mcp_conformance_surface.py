@@ -95,16 +95,30 @@ class TestNarrowedSurface:
             assert tool.title, f"tool {tool.name} has no title"
 
     def test_search_default_top_k_matches_cli_default(self) -> None:
-        search_vault = next(t for t in _tools() if t.name == "search_vault")
-        props = search_vault.inputSchema.get("properties", {})
-        assert props["top_k"].get("default") == 10
+        from ..mcp._tools import _DEFAULT_TOP_K
+
+        # The MCP default tracks the CLI --max-results default (10). Assert the
+        # source constant and both published schemas agree, so a drift in either
+        # the constant or the introspected schema fails here rather than a magic
+        # literal that cannot catch the divergence it claims to guard.
+        assert _DEFAULT_TOP_K == 10
+        for name in ("search_vault", "search_codebase"):
+            tool = next(t for t in _tools() if t.name == name)
+            props = tool.inputSchema.get("properties", {})
+            assert props["top_k"].get("default") == _DEFAULT_TOP_K
 
     def test_search_tools_declare_a_result_output_schema(self) -> None:
+        # The declared outputSchema must reflect the SearchResults model the
+        # tools return (results + summary), not merely be present.
+        from ..mcp._tools import SearchResults
+
+        model_props = set(SearchResults.model_json_schema().get("properties", {}))
         for tool in _tools():
             if tool.name in {"search_vault", "search_codebase"}:
                 assert tool.outputSchema is not None, tool.name
-                props = tool.outputSchema.get("properties", {})
-                assert "results" in props
+                props = set(tool.outputSchema.get("properties", {}))
+                assert {"results", "summary"} <= props, tool.name
+                assert {"results", "summary"} <= model_props
 
 
 class _EmptyBody404Handler(BaseHTTPRequestHandler):
