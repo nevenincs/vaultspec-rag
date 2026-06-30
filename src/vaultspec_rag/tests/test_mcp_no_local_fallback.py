@@ -113,8 +113,14 @@ def test_tool_raises_service_not_running(
     rather than constructing a local engine.
     """
     assert not (isolated_status_dir / "service.json").exists()
-    with pytest.raises(RuntimeError, match="is not running"):
+    with pytest.raises(RuntimeError) as exc_info:
         asyncio.run(make_coro())
+    # SD6: the failure must be fast and carry the full actionable remediation,
+    # not just the "is not running" diagnosis - a regression dropping the
+    # start-the-service instruction must fail this test.
+    message = str(exc_info.value)
+    assert "is not running" in message
+    assert "vaultspec-rag server start" in message
 
 
 def test_failed_call_loads_no_heavy_ml_libs() -> None:
