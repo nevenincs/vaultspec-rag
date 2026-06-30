@@ -142,19 +142,11 @@ def _check_rag_deps() -> None:
             installed.
         RuntimeError: If no CUDA GPU device is available.
     """
-    try:
-        import torch
+    from ._gpu import load_torch
 
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA GPU required. No CUDA device found. "
-                "Install torch with CUDA support.",
-            )
-    except ImportError:
-        raise ImportError(
-            "GPU RAG dependencies not installed. "
-            "Run: uv sync (then `vaultspec-rag install` for CUDA torch wheels).",
-        ) from None
+    # The single centralized gate: import torch and assert a CUDA device,
+    # failing hard on a CPU-only build rather than degrading to CPU compute.
+    load_torch()
 
     import importlib.util
 

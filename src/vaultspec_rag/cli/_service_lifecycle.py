@@ -1767,13 +1767,11 @@ def service_status(
 def service_warmup() -> None:
     """Download GPU model files before they are needed."""
     try:
-        import torch
-    except ImportError:
-        _cli.console.print("Error: torch is not installed.")
-        raise typer.Exit(code=1) from None
+        from .._gpu import load_torch
 
-    if not torch.cuda.is_available():
-        _handle_gpu_error(RuntimeError("CUDA runtime unavailable"))
+        load_torch()
+    except (ImportError, RuntimeError) as exc:
+        _handle_gpu_error(exc)
 
     try:
         from huggingface_hub import (

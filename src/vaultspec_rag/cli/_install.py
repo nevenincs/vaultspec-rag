@@ -270,6 +270,15 @@ def handle_install(
         )
     else:
         _render_install_report(report)
+        # The report's "PyTorch configuration" line describes pyproject.toml,
+        # not the wheel in the active interpreter. When torch was meant to be
+        # provisioned (not an explicit opt-out), probe the real wheel and warn
+        # loudly if it is CPU-only or absent - a GPU-only project must never
+        # report success over a CPU torch. An explicit opt-out is respected.
+        if configure_torch:
+            from ._gpu_errors import warn_if_active_torch_not_gpu
+
+            warn_if_active_torch_not_gpu()
 
     # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
     # wanted but couldn't be applied"). The configure_torch=True path
