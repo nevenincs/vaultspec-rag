@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-
 class _FakeQdrantHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # stdlib handler contract
         if self.path == "/readyz":

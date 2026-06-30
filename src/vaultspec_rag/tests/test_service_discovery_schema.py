@@ -42,9 +42,7 @@ def _is_second_precision_offset_iso(value: str) -> bool:
     """True iff value is ISO-8601, timezone-aware, with no fractional seconds."""
     parsed = datetime.fromisoformat(value)
     return (
-        parsed.utcoffset() is not None
-        and parsed.microsecond == 0
-        and "." not in value
+        parsed.utcoffset() is not None and parsed.microsecond == 0 and "." not in value
     )
 
 

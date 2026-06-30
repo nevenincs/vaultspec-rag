@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#install-cuda'
 date: 2026-04-22
-modified: '2026-04-22'
+modified: '2026-06-30'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
   - '[[2026-04-06-ecosystem-integration-adr]]'

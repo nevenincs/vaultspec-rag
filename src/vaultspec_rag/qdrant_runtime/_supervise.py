@@ -371,8 +371,11 @@ class QdrantSupervisor:
         log_handle = None
         try:
             if self.log_path is not None:
-                flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(
-                    os, "O_NOFOLLOW", 0
+                flags = (
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_APPEND
+                    | getattr(os, "O_NOFOLLOW", 0)
                 )
                 log_handle = os.fdopen(
                     os.open(self.log_path, flags, 0o600),

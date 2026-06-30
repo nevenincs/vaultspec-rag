@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-03-07'
+modified: '2026-06-30'
 ---
 
 # Round 27 Audit -- Final Sweep (__init__.py, mcp_server.py second pass, root conftest.py)

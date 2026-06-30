@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#service-stress-watcher'
 date: '2026-06-06'
-modified: '2026-06-06'
+modified: '2026-06-30'
 related:
   - '[[2026-06-05-service-stress-watcher-plan]]'
 ---

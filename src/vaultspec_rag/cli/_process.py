@@ -515,9 +515,7 @@ def _spawn_windows(
         )
 
     flags_detached = (
-        _WIN_CREATE_NEW_PROCESS_GROUP
-        | _WIN_CREATE_NO_WINDOW
-        | _WIN_DETACHED_PROCESS
+        _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW | _WIN_DETACHED_PROCESS
     )
     try:
         return subprocess.Popen(

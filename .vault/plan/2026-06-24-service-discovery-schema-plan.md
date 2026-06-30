@@ -3,10 +3,11 @@ tags:
   - '#plan'
   - '#service-discovery-schema'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-06-30'
 tier: L2
 related:
   - '[[2026-06-24-service-discovery-schema-adr]]'
+  - '[[2026-06-24-service-discovery-schema-research]]'
 ---
 
 # `service-discovery-schema` plan

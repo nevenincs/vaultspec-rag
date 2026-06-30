@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#sparse-search-latency'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 step_id: 'S04'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'

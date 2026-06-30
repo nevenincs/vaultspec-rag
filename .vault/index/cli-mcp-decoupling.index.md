@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#cli-mcp-decoupling'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 related:
   - '[[2026-06-05-cli-mcp-decoupling-P01-S01]]'
   - '[[2026-06-05-cli-mcp-decoupling-P01-S02]]'

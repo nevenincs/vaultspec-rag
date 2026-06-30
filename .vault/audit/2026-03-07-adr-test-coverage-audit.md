@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-03-07'
+modified: '2026-06-30'
 ---
 
 # ADR Test Coverage Audit — 2026-03-07

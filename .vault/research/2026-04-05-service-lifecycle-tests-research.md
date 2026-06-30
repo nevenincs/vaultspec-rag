@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-lifecycle-tests'
 date: 2026-04-05
-modified: '2026-04-05'
+modified: '2026-06-30'
 related:
   - '[[2026-04-02-service-graph-code-review-audit]]'
 ---

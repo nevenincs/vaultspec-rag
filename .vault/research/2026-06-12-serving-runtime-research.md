@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#serving-runtime'
 date: '2026-06-12'
-modified: '2026-06-12'
+modified: '2026-06-30'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"

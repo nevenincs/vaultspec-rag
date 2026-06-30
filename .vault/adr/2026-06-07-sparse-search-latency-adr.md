@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#sparse-search-latency'
 date: '2026-06-07'
-modified: '2026-06-07'
+modified: '2026-06-30'
 related:
   - "[[2026-06-07-sparse-search-latency-research]]"
   - '[[2026-06-09-sparse-search-latency-research]]'

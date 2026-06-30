@@ -24,9 +24,7 @@ pytestmark = [pytest.mark.quality]
 def _searcher(components: RagComponentsWithManifest) -> VaultSearcher:
     from ... import VaultSearcher
 
-    return VaultSearcher(
-        components["root"], components["model"], components["store"]
-    )
+    return VaultSearcher(components["root"], components["model"], components["store"])
 
 
 class TestVaultPayloadFields:

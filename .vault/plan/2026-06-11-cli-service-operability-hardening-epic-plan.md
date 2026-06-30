@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#cli-service-operability-hardening'
 date: '2026-06-11'
-modified: '2026-06-11'
+modified: '2026-06-30'
 related:
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
   - '[[2026-06-11-service-status-convergence-adr]]'

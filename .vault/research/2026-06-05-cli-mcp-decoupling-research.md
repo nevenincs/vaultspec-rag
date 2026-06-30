@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
-modified: '2026-06-05'
+modified: '2026-06-30'
 related: []
 ---
 

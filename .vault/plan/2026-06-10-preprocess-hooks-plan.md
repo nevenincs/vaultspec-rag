@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-06-10'
+modified: '2026-06-30'
 tier: L3
 related:
   - '[[2026-06-10-preprocess-hooks-adr]]'

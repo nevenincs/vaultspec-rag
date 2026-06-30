@@ -3,6 +3,7 @@ tags:
   - '#adr'
   - '#storage-lifecycle'
 date: '2026-06-18'
+modified: '2026-06-30'
 related:
   - "[[2026-06-18-storage-lifecycle-research]]"
   - "[[2026-06-13-server-first-default-adr]]"

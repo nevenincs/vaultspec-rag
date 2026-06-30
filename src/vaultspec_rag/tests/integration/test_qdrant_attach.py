@@ -87,9 +87,10 @@ def _running_managed_qdrant(
 
 class TestVerifiedAttach:
     def test_attaches_to_healthy_owned_capable_server(self, tmp_path: Path) -> None:
-        with _running_managed_qdrant(
-            tmp_path, version=QDRANT_SERVER_VERSION
-        ) as (port, storage):
+        with _running_managed_qdrant(tmp_path, version=QDRANT_SERVER_VERSION) as (
+            port,
+            storage,
+        ):
             write_qdrant_identity(
                 storage_path=str(storage),
                 version=QDRANT_SERVER_VERSION,

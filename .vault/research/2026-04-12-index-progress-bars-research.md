@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-04-12'
+modified: '2026-06-30'
 related:
   - '[[2026-04-12-index-progress-bars-reference]]'
   - '[[2026-04-12-index-progress-bars-adr]]'

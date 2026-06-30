@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-status-convergence'
 date: '2026-06-11'
-modified: '2026-06-11'
+modified: '2026-06-30'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

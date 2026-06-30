@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#sparse-search-latency'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 tier: L2
 related:
   - '[[2026-06-07-sparse-search-latency-adr]]'

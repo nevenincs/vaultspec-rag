@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
-modified: '2026-06-10'
+modified: '2026-06-30'
 related: []
 ---
 

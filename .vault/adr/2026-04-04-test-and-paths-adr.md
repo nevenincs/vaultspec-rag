@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#test-and-paths'
 date: 2026-04-04
-modified: '2026-04-04'
+modified: '2026-06-30'
 related:
   - '[[2026-04-04-test-and-paths-research]]'
   - '[[2026-04-02-service-graph-adr]]'

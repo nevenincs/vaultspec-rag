@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-tree-overhaul'
 date: '2026-06-06'
-modified: '2026-06-06'
+modified: '2026-06-30'
 related: []
 ---
 

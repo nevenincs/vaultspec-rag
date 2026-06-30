@@ -124,9 +124,7 @@ class TestExistingServiceRunningUnlink:
             "a live-but-unconfirmed PID's discovery file must not be erased"
         )
 
-    def test_confirmed_dead_pid_unlinks_file(
-        self, isolated_status_dir: Path
-    ) -> None:
+    def test_confirmed_dead_pid_unlinks_file(self, isolated_status_dir: Path) -> None:
         """A confirmed-dead recorded PID has its stale discovery file removed."""
         sf = self._write(isolated_status_dir, pid=_DEAD_PID, port=1)
 

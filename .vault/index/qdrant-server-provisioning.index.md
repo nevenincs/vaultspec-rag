@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-06-12'
+modified: '2026-06-30'
 related:
   - '[[2026-06-12-qdrant-server-provisioning-P01-S01]]'
   - '[[2026-06-12-qdrant-server-provisioning-P01-S02]]'

@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-06-10'
+modified: '2026-06-30'
 related:
   - "[[2026-06-10-preprocess-hooks-research]]"
 ---

@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#storage-lifecycle'
 date: '2026-06-18'
-modified: '2026-06-18'
+modified: '2026-06-30'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
   - '[[2026-06-12-qdrant-server-provisioning-adr]]'

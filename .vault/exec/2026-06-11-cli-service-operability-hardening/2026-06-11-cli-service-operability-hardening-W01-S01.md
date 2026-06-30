@@ -1,7 +1,7 @@
 ---
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-11'
-modified: '2026-06-11'
+modified: '2026-06-30'
 step_id: 'W01.S01'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

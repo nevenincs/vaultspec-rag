@@ -120,9 +120,7 @@ class TestConcurrentStartRace:
         # exactly one winner (the file content is ignored; the OS lock is the
         # sole gate). Covers the reclaim race a fresh-lock race cannot.
         isolated_lock.parent.mkdir(parents=True, exist_ok=True)
-        isolated_lock.write_text(
-            json.dumps({"pid": 2_000_000_000}), encoding="utf-8"
-        )
+        isolated_lock.write_text(json.dumps({"pid": 2_000_000_000}), encoding="utf-8")
         storage = str(isolated_lock.parent / "storage")
         workers = 8
         with ProcessPoolExecutor(max_workers=workers) as pool:

@@ -380,9 +380,7 @@ def test_migrate_then_rekey_manifest_records_new_backend(
         source = f"{prefix}vault_docs"
         target = f"{prefix}codebase_docs"
         _make_collection(client, source)
-        results = migrate_collections(
-            client, client, {source: target}, dry_run=False
-        )
+        results = migrate_collections(client, client, {source: target}, dry_run=False)
         assert results[0].status == "migrated"
 
         rekey_prefix(prefix, root=root, backend="local")

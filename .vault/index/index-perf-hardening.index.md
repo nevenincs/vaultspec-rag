@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#index-perf-hardening'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 related:
   - '[[2026-06-02-index-perf-hardening-P01-S01]]'
   - '[[2026-06-02-index-perf-hardening-P01-S02]]'

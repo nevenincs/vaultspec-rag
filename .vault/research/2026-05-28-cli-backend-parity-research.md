@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-backend-parity'
 date: '2026-05-28'
-modified: '2026-05-28'
+modified: '2026-06-30'
 related:
   - '[[2026-05-28-cli-search-filters-plan]]'
   - '[[2026-05-28-cli-search-filters-adr]]'

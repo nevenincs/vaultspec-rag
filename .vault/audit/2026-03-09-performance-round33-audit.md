@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-09
-modified: '2026-03-09'
+modified: '2026-06-30'
 ---
 
 # Performance Audit — Round 33 (2026-03-09)

@@ -11,7 +11,7 @@ supersedes:
   - '2026-06-05-cli-mcp-decoupling-adr'
   - '2026-06-07-mcp-server-deconflation-adr'
   - '2026-06-10-install-mcp-dependency-fix-adr'
-modified: '2026-06-18'
+modified: '2026-06-30'
 ---
 
 # `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `accepted`)

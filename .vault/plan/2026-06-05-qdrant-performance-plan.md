@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#qdrant-performance'
 date: '2026-06-05'
-modified: '2026-06-05'
+modified: '2026-06-30'
 tier: L3
 related:
   - '[[2026-06-05-qdrant-performance-adr]]'

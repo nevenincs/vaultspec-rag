@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#vault-index-perf-memory'
 date: 2026-04-12
-modified: '2026-04-12'
+modified: '2026-06-30'
 related:
   - '[[2026-03-06-indexer-pipeline-audit]]'
 ---

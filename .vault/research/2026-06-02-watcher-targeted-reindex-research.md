@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#watcher-targeted-reindex'
 date: '2026-06-02'
-modified: '2026-06-02'
+modified: '2026-06-30'
 related: []
 ---
 

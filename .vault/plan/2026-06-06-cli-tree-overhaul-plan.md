@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#cli-tree-overhaul'
 date: '2026-06-06'
-modified: '2026-06-06'
+modified: '2026-06-30'
 tier: L3
 related:
   - '[[2026-06-06-cli-tree-overhaul-adr]]'

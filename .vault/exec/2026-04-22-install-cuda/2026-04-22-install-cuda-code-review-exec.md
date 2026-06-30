@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#install-cuda'
 date: 2026-04-22
-modified: '2026-04-22'
+modified: '2026-06-30'
 related:
   - '[[2026-04-22-install-cuda-phase1-summary-exec]]'
   - '[[2026-04-22-install-cuda-adr]]'

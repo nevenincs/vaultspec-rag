@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#cli-search-filters'
 date: '2026-05-28'
-modified: '2026-05-28'
+modified: '2026-06-30'
 related:
   - '[[2026-05-28-cli-search-filters-adr]]'
   - '[[2026-05-28-cli-search-filters-research]]'

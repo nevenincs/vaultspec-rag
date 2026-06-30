@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#security-hardening'
 date: 2026-04-04
-modified: '2026-04-04'
+modified: '2026-06-30'
 related:
   - '[[2026-04-04-security-hardening-research]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'

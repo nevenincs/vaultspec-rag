@@ -6,7 +6,7 @@ date: '2026-06-10'
 related:
   - "[[2026-06-10-install-mcp-dependency-fix-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-06-10'
+modified: '2026-06-30'
 ---
 
 # `install-mcp-dependency-fix` adr: `declare mcp as a core dependency; reject pywin32 dll shim` | (**status:** `superseded`)
