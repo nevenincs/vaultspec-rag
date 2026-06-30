@@ -17,9 +17,9 @@ related:
 
 Resolve the one resident machine service through the status-directory-independent machine-global pointer, gated by the OS-lock live holder and heartbeat staleness, authoritative over any per-status-directory service.json (SD1-SD3).
 
-- [ ] `P01.S01` - Add a machine-singleton discovery resolver that returns the live service port and token from read_machine_discovery validated by machine_lock_live_holder and heartbeat staleness; `src/vaultspec_rag/serviceclient/_discovery.py`.
-- [ ] `P01.S02` - Make the machine-global resolution authoritative and demote the per-status-directory service.json to a non-overriding hint; `src/vaultspec_rag/serviceclient/_discovery.py`.
-- [ ] `P01.S03` - Route \_default_service_port and the MCP \_require_port through the per-call status-directory-independent resolver; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `P01.S01` - Add a machine-singleton discovery resolver that returns the live service port and token from read_machine_discovery validated by machine_lock_live_holder and heartbeat staleness; `src/vaultspec_rag/serviceclient/_discovery.py`.
+- [x] `P01.S02` - Make the machine-global resolution authoritative and demote the per-status-directory service.json to a non-overriding hint; `src/vaultspec_rag/serviceclient/_discovery.py`.
+- [x] `P01.S03` - Route \_default_service_port and the MCP \_require_port through the per-call status-directory-independent resolver; `src/vaultspec_rag/mcp/_tools.py`.
 
 ### Phase `P02` - Legible errors and fail-fast remediation
 
