@@ -54,6 +54,11 @@ class InstallReport:
     torch_direct_dep_action: str = "skipped"
     torch_direct_dep_location: str = ""
     torch_sync_action: str = "skipped"
+    # Whether install ensured the optional ``[mcp]`` extra (the MCP server's
+    # dependency). ``skipped`` when ``--no-mcp`` was passed; otherwise the
+    # ``uv add vaultspec-rag[mcp]`` outcome (``succeeded`` / ``failed`` /
+    # ``uv-not-found`` / ``would-add`` for a dry run).
+    mcp_extra_action: str = "skipped"
     # Heterogeneous per-dependency provisioning outcome from the unified
     # front door (``provision_dependencies``). ``None`` when provisioning
     # did not run (e.g. ``provision=False``); otherwise carries one result
@@ -76,6 +81,7 @@ class InstallReport:
             "torch_direct_dep_action": self.torch_direct_dep_action,
             "torch_direct_dep_location": self.torch_direct_dep_location,
             "torch_sync_action": self.torch_sync_action,
+            "mcp_extra_action": self.mcp_extra_action,
             "provisioning": (
                 self.provision_outcome.to_dict()
                 if self.provision_outcome is not None

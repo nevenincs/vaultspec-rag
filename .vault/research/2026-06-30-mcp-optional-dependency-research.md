@@ -71,7 +71,7 @@ a core dependency" to "install `vaultspec-rag[mcp]`". Risks to weigh in the ADR:
 now require the `[mcp]` extra - the install story must make that explicit; (b)
 the project's own dev/test environment imports `mcp` in tests, so the dev extra
 (or the test path) must include it; (c) a user who previously relied on a bare
-`pip install vaultspec-rag` giving them the MCP server will need to add `[mcp]` -
+`uv add vaultspec-rag` giving them the MCP server will need to add `[mcp]` -
 a one-line, clearly-messaged change. None of these reintroduce `pywin32` onto the
 CLI path, which is the goal. This fully resolves #182/#184 without an upstream
 dependency.

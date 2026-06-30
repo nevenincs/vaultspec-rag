@@ -150,6 +150,19 @@ def handle_install(
             ),
         ),
     ] = True,
+    install_mcp: Annotated[
+        bool,
+        typer.Option(
+            "--mcp/--no-mcp",
+            help=(
+                "Ensure the optional MCP extra (`uv add vaultspec-rag[mcp]`) so "
+                "the agent-facing MCP search surface can run. On by default - "
+                "install wires up that surface; --no-mcp sets up a CLI-only "
+                "workspace without the mcp dependency (and, on Windows, without "
+                "pywin32)."
+            ),
+        ),
+    ] = True,
     local_only: Annotated[
         bool,
         typer.Option(
@@ -194,11 +207,13 @@ def handle_install(
     integration files, and syncs the files used by supported tools. By
     default, install also provisions the external dependencies the
     server-first default needs - the embedding/reranker models and the
-    pinned Qdrant server binary - and asks before changing PyTorch package
-    configuration. Use --local-only for the minimal local backend (skips
+    pinned Qdrant server binary - and ensures the optional MCP extra so the
+    agent-facing MCP search surface can run, and asks before changing PyTorch
+    package configuration. Use --local-only for the minimal local backend (skips
     the binary), the finer --skip-torch/--skip-models/--skip-qdrant flags
-    for partial opt-out, and --no-provision to set up the workspace only;
-    use --yes or --no-torch-config for non-interactive runs.
+    for partial opt-out, --no-mcp for a CLI-only workspace without the mcp
+    dependency, and --no-provision to set up the workspace only; use --yes
+    or --no-torch-config for non-interactive runs.
     """
     import sys as _sys
 
@@ -252,6 +267,7 @@ def handle_install(
             local_only=local_only,
             provision_skip=provision_skip,
             torch_group=torch_group,
+            install_mcp=install_mcp,
         )
     except Exception as exc:
         _cli.console.print(

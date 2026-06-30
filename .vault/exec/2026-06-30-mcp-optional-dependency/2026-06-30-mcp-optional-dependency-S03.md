@@ -21,7 +21,7 @@ Retargeted the MCP entry-point ImportError guard at the [mcp] extra.
 
 ## Outcome
 
-`server/_main.py`'s guarded `from ..mcp import mcp` now tells the user to `pip install vaultspec-rag[mcp]` (or `uv sync --extra mcp`), keeping the pywin32-postinstall hint for the installed-but-broken case (MO3).
+`server/_main.py`'s guarded `from ..mcp import mcp` now tells the user to `uv add vaultspec-rag[mcp]` (or `uv sync --extra mcp`), keeping the pywin32-postinstall hint for the installed-but-broken case (MO3).
 
 ## Notes
 

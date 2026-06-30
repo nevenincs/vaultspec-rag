@@ -3,7 +3,7 @@
 `mcp` is an opt-in extra, not a core dependency: the CLI and the HTTP search
 daemon never import it (only the optional stdio MCP server does), so a base
 install must not declare it - on Windows that would force `pywin32` and break a
-plain `pip install vaultspec-rag`. This reads the installed distribution metadata
+plain `uv add vaultspec-rag`. This reads the installed distribution metadata
 and asserts `mcp` is absent from core and present in the `[mcp]` extra. Supersedes
 the #182 "mcp is core" guard.
 """

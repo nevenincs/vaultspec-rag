@@ -10,7 +10,84 @@ if TYPE_CHECKING:
 
     from ._models import InstallReport
 
-__all__ = ["_classify_uv_sync_result", "_run_uv_sync_torch"]
+__all__ = [
+    "_classify_uv_add_result",
+    "_classify_uv_sync_result",
+    "_run_uv_add_mcp_extra",
+    "_run_uv_sync_torch",
+]
+
+# The package spelling that carries the MCP server's dependency; ``uv add`` of
+# this updates the consumer's existing ``vaultspec-rag`` requirement to include
+# the optional extra (and resolves it), so a later ``uv run vaultspec-search-mcp``
+# has ``mcp`` available.
+_MCP_EXTRA_SPEC = "vaultspec-rag[mcp]"
+
+
+def _run_uv_add_mcp_extra(*, target: Path, report: InstallReport) -> None:
+    """Shell out to ``uv add vaultspec-rag[mcp]`` to ensure the MCP extra.
+
+    Non-fatal: a missing ``uv`` or a non-zero exit is recorded as a warning, not
+    raised, so wiring up the MCP surface never aborts the rest of the install.
+    Classification lives in :func:`_classify_uv_add_result` so tests can pin every
+    branch without forging subprocesses (the same reason the torch-sync helper
+    splits its classifier out).
+    """
+    try:
+        proc = subprocess.run(
+            ["uv", "add", _MCP_EXTRA_SPEC],
+            cwd=str(target),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        report.mcp_extra_action = "uv-not-found"
+        report.warnings.append(
+            "MCP extra requested but `uv` is not on PATH; run "
+            f"`uv add {_MCP_EXTRA_SPEC}` manually to enable the MCP server "
+            "(or re-run install with --no-mcp)."
+        )
+        return
+    except OSError as exc:
+        report.mcp_extra_action = "error"
+        report.warnings.append(f"uv add {_MCP_EXTRA_SPEC} failed to launch: {exc}")
+        return
+
+    action, warning = _classify_uv_add_result(
+        returncode=proc.returncode,
+        stdout=proc.stdout or "",
+        stderr=proc.stderr or "",
+    )
+    report.mcp_extra_action = action
+    if warning is not None:
+        report.warnings.append(warning)
+
+
+def _classify_uv_add_result(
+    *, returncode: int, stdout: str, stderr: str
+) -> tuple[str, str | None]:
+    """Classify ``uv add vaultspec-rag[mcp]`` by exit code and streams.
+
+    Pure function returning ``(action, warning_or_none)`` for the install
+    report; centralising it lets tests pin every branch without a subprocess.
+    """
+    if returncode == 0:
+        return "succeeded", None
+    stream = stderr.strip() or stdout.strip()
+    if stream:
+        tail = "\n".join(stream.splitlines()[-5:])
+        return (
+            "failed",
+            f"uv add {_MCP_EXTRA_SPEC} exited with code {returncode}; "
+            f"last output:\n{tail}. The MCP server will not start until the "
+            f"`mcp` extra is installed; run `uv add {_MCP_EXTRA_SPEC}` manually "
+            "or re-run install with --no-mcp.",
+        )
+    return (
+        "failed",
+        f"uv add {_MCP_EXTRA_SPEC} exited with code {returncode}.",
+    )
 
 
 def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:

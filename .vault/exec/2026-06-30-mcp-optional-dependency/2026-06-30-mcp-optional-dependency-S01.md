@@ -21,7 +21,7 @@ Moved mcp out of core dependencies into the [mcp] extra.
 
 ## Outcome
 
-`mcp>=1.26.0` removed from `[project.dependencies]` and `[project.optional-dependencies].mcp` set to `["mcp>=1.26.0"]` (was a no-op alias). A base `pip install vaultspec-rag` now installs no mcp and no pywin32; `vaultspec-rag[mcp]` installs it. uv.lock re-resolved (MO1).
+`mcp>=1.26.0` removed from `[project.dependencies]` and `[project.optional-dependencies].mcp` set to `["mcp>=1.26.0"]` (was a no-op alias). A base `uv add vaultspec-rag` now installs no mcp and no pywin32; `vaultspec-rag[mcp]` installs it. uv.lock re-resolved (MO1).
 
 ## Notes
 

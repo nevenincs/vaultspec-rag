@@ -15,7 +15,7 @@ related:
 `mcp` is a hard core dependency of a CLI-first tool whose CLI and HTTP search
 daemon never import it. On Windows that core dependency transitively forces
 `pywin32`, whose post-install step routinely fails under uv
-(modelcontextprotocol/python-sdk#2233), breaking a plain `pip install vaultspec-rag`. Issue #184 deferred this as blocked on an upstream lazy-import
+(modelcontextprotocol/python-sdk#2233), breaking a plain `uv add vaultspec-rag`. Issue #184 deferred this as blocked on an upstream lazy-import
 fix. The grounding research shows the blockage is self-inflicted: only the
 optional stdio MCP entry point imports `mcp`, and it already guards the import.
 This ADR decides to demote `mcp` to an optional extra, removing the forced
@@ -61,8 +61,8 @@ spelling stays stable for users.
 ## Implementation
 
 - **MO1 - `mcp` moves from core to the `[mcp]` extra.** Remove `mcp>=1.26.0`
-  from `[project.dependencies]` and define `[project.optional-dependencies].mcp = ["mcp>=1.26.0"]`, replacing the no-op alias. A bare `pip install vaultspec-rag`
-  then installs no `mcp` and no `pywin32`; `pip install vaultspec-rag[mcp]`
+  from `[project.dependencies]` and define `[project.optional-dependencies].mcp = ["mcp>=1.26.0"]`, replacing the no-op alias. A bare `uv add vaultspec-rag`
+  then installs no `mcp` and no `pywin32`; `uv add vaultspec-rag[mcp]`
   installs the MCP server's dependency.
 
 - **MO2 - The dev/test environment carries the extra.** The development
@@ -71,7 +71,7 @@ spelling stays stable for users.
 
 - **MO3 - The guard message points at the extra.** `server/_main.py`'s
   `ImportError` guard changes its remediation from "reinstall vaultspec-rag (mcp
-  is a core dependency)" to "install the MCP extra: `pip install vaultspec-rag[mcp]`" (keeping the pywin32-postinstall hint for the
+  is a core dependency)" to "install the MCP extra: `uv add vaultspec-rag[mcp]`" (keeping the pywin32-postinstall hint for the
   extra-present-but-broken case).
 
 - **MO4 - A regression test pins the contract.** A test asserts that importing
@@ -91,7 +91,7 @@ the only behavioral change for an MCP user is an explicit, clearly-messaged
 
 ## Consequences
 
-A plain `pip install vaultspec-rag` no longer pulls `mcp`/`pywin32`; Windows CLI
+A plain `uv add vaultspec-rag` no longer pulls `mcp`/`pywin32`; Windows CLI
 installs stop hitting the pywin32 post-install break. Users who run the MCP server
 (`vaultspec-search-mcp`, or an agent launcher) must install `vaultspec-rag[mcp]`,
 surfaced by the install docs and the guard message. The `2026-06-10-install-mcp-dependency-fix`

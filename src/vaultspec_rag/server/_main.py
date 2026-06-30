@@ -148,10 +148,11 @@ def main(port: int | None = None) -> None:
             raise RuntimeError(
                 "The RAG MCP stdio transport requires the optional 'mcp' extra, "
                 f"which failed to import ({exc}). Install it with "
-                "`pip install vaultspec-rag[mcp]` (or `uv sync --extra mcp`). On "
-                "Windows under uv, an installed-but-broken import is usually "
-                "pywin32's post-install step not having run (a known mcp/pywin32 "
-                "issue, upstream modelcontextprotocol/python-sdk#2233): run "
+                "`uv add vaultspec-rag[mcp]` (or re-run `vaultspec-rag install`, "
+                "which adds it by default). On Windows, an installed-but-broken "
+                "import is usually pywin32's post-install step not having run (a "
+                "known mcp/pywin32 issue, upstream "
+                "modelcontextprotocol/python-sdk#2233): run "
                 "`python -m pywin32_postinstall -install` in this environment."
             ) from exc
 
