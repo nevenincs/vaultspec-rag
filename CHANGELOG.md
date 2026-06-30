@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.27](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.26...vaultspec-rag-v0.2.27) (2026-06-30)
+
+
+### Features
+
+* **deps:** make mcp an optional extra so CLI installs do not drag pywin32 ([048585e](https://github.com/nevenincs/vaultspec-rag/commit/048585e522e006c6b6aa9911cd176c9156263316))
+* **install:** vaultspec-rag install ensures the [mcp] extra by default (--no-mcp opt-out) ([78d1442](https://github.com/nevenincs/vaultspec-rag/commit/78d1442943f12cd3137d978272651a53bfaf61cf))
+* **mcp-conformance:** narrow the MCP surface and harden errors (P02-P06) ([1c859de](https://github.com/nevenincs/vaultspec-rag/commit/1c859deee220963620ed9e818160bb8d0c4ce321))
+* **mcp-conformance:** resolve the machine-singleton service via the global pointer (P01) ([f723ca9](https://github.com/nevenincs/vaultspec-rag/commit/f723ca9f2ba8eb6bc03d797b35b0eb36dac160ce))
+* **qdrant:** detect-quarantine-retry a corrupt collection on supervised start ([466cdfb](https://github.com/nevenincs/vaultspec-rag/commit/466cdfb83b46fd5e89b77be6c42d70788910304e))
+* **service:** make the service&lt;-&gt;python-env coupling legible and fail fast ([7abb85b](https://github.com/nevenincs/vaultspec-rag/commit/7abb85b591eb9936026c784fa83dff8f1daf2b78))
+* **torch:** centralize the GPU torch load + make install tell the truth about the wheel ([b6c4e34](https://github.com/nevenincs/vaultspec-rag/commit/b6c4e34bc60a986de42527485a283009797fff28))
+
+
+### Bug Fixes
+
+* **mcp,search:** typed search outputSchema + Windows model-load crash fix ([3c9d9d2](https://github.com/nevenincs/vaultspec-rag/commit/3c9d9d2f6073c0ea7bbcaca05bf165673b443aab))
+* **qdrant:** address code-review findings on store-resilience recovery ([cd2bb2a](https://github.com/nevenincs/vaultspec-rag/commit/cd2bb2a999a5e886a6b259b0e144dbdb202803ad))
+* **service:** make the torch pre-flight green (lint, types, complexity) ([1dc9c08](https://github.com/nevenincs/vaultspec-rag/commit/1dc9c085c7e4c2ea4ef9bc7c98aab8569389f35a))
+* **service:** reclaim a wedged machine-singleton holder via `server stop` ([45f3907](https://github.com/nevenincs/vaultspec-rag/commit/45f3907551b2608163f0ec37673a41e02f401e87))
+
 ## [0.2.26](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.25...vaultspec-rag-v0.2.26) (2026-06-28)
 
 
