@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ..cli._process import _probe_daemon_cuda
 from ..cli._service_lifecycle import _status_env_label, _tail_daemon_log
@@ -62,7 +66,7 @@ def test_probe_missing_interpreter_blocks_with_a_clear_reason() -> None:
     assert "does not exist" in reason
 
 
-def test_tail_daemon_log_returns_last_nonempty_lines(tmp_path) -> None:
+def test_tail_daemon_log_returns_last_nonempty_lines(tmp_path: Path) -> None:
     log = tmp_path / "service.log"
     log.write_text(
         "line one\n\n  \nline two\nRuntimeError: CUDA GPU required\n",
@@ -72,7 +76,7 @@ def test_tail_daemon_log_returns_last_nonempty_lines(tmp_path) -> None:
     assert tail == ["line two", "RuntimeError: CUDA GPU required"]
 
 
-def test_tail_daemon_log_missing_file_is_empty(tmp_path) -> None:
+def test_tail_daemon_log_missing_file_is_empty(tmp_path: Path) -> None:
     assert _tail_daemon_log(tmp_path / "absent.log") == []
 
 

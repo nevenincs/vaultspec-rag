@@ -956,6 +956,7 @@ class TestStatusCommand:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
         reset_base_config()
         reset_rag_config()
         try:
@@ -966,6 +967,7 @@ class TestStatusCommand:
             server.server_close()
             thread.join(timeout=1)
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()
             reset_rag_config()
 
@@ -991,6 +993,7 @@ class TestStatusCommand:
         status_dir = tmp_path / "status"
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
         reset_base_config()
         reset_rag_config()
         lock = _hold_local_index_lock(root)
@@ -999,6 +1002,7 @@ class TestStatusCommand:
         finally:
             lock.release()
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()
             reset_rag_config()
 

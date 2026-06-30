@@ -356,8 +356,8 @@ def _provision_torch(
             "the canonical cu130 configuration."
         )
     else:
-        detail = (
-            f"torch configuration {action}" + (f": {conflicts}" if conflicts else "")
+        detail = f"torch configuration {action}" + (
+            f": {conflicts}" if conflicts else ""
         )
     return ProvisionStepResult(
         step=ProvisionStep.TORCH,

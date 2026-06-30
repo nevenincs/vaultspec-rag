@@ -269,6 +269,45 @@ def _fail_start(
     return typer.Exit(code=1)
 
 
+def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
+    """Fail fast if the daemon interpreter cannot run the GPU-only service.
+
+    The daemon inherits this interpreter and is GPU-only, so a missing /
+    CPU-only / no-GPU torch should fail legibly here rather than as a background
+    model-load crash. The service does not provision its own python environment.
+    An inconclusive probe (CPU-only host, torch absent in a way we cannot
+    classify) is logged and allowed to proceed.
+    """
+    cuda_probe = _probe_daemon_cuda(interpreter)
+    if cuda_probe is None:
+        return
+    blocking, reason = cuda_probe
+    if blocking:
+        raise _fail_start(
+            json_mode,
+            error="service_env_no_gpu",
+            message="Service start failed",
+            human_lines=(
+                f"Service interpreter: {interpreter}",
+                f"That environment cannot run the GPU-only service: {reason}.",
+                "The service runs in the environment that launches it and does "
+                "not provision its own python.",
+                "Provision GPU (cu130) torch into that environment, then retry.",
+            ),
+            next_actions=(
+                "Install/repair GPU torch in the service environment: "
+                "vaultspec-rag install, then uv sync",
+                "Confirm the GPU is visible: nvidia-smi",
+            ),
+            detail=reason,
+        )
+    logger.warning(
+        "daemon torch pre-flight inconclusive for %s (%s); proceeding",
+        interpreter,
+        reason,
+    )
+
+
 @server_app.command(
     "start",
     help=(
@@ -431,38 +470,7 @@ def service_start(
         _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
 
     log_path = _log_file()
-    # Pre-flight: the daemon inherits this interpreter and is GPU-only, so a
-    # missing / CPU-only / no-GPU torch should fail fast and legibly here rather
-    # than as a background model-load crash the operator has to dig out of the
-    # log. The service does not provision its own python environment.
-    interpreter = _resolve_daemon_interpreter()
-    cuda_probe = _probe_daemon_cuda(interpreter)
-    if cuda_probe is not None:
-        blocking, reason = cuda_probe
-        if blocking:
-            raise _fail_start(
-                json_mode,
-                error="service_env_no_gpu",
-                message="Service start failed",
-                human_lines=(
-                    f"Service interpreter: {interpreter}",
-                    f"That environment cannot run the GPU-only service: {reason}.",
-                    "The service runs in the environment that launches it and does "
-                    "not provision its own python.",
-                    "Provision GPU (cu130) torch into that environment, then retry.",
-                ),
-                next_actions=(
-                    "Install/repair GPU torch in the service environment: "
-                    "vaultspec-rag install, then uv sync",
-                    "Confirm the GPU is visible: nvidia-smi",
-                ),
-                detail=reason,
-            )
-        logger.warning(
-            "daemon torch pre-flight inconclusive for %s (%s); proceeding",
-            interpreter,
-            reason,
-        )
+    _preflight_daemon_cuda(_resolve_daemon_interpreter(), json_mode=json_mode)
     t0 = time.perf_counter()
     try:
         pid = _spawn_service(

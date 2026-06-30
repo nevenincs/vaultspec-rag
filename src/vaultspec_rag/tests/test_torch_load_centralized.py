@@ -80,9 +80,10 @@ def test_compute_modules_have_no_module_scope_torch_import() -> None:
             if isinstance(node, ast.Import):
                 names = {alias.name.split(".")[0] for alias in node.names}
                 assert "torch" not in names, f"{path.name}: module-scope import torch"
-            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[
-                0
-            ] == "torch":
+            if (
+                isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".")[0] == "torch"
+            ):
                 msg = f"{path.name}: module-scope from torch import"
                 raise AssertionError(msg)
 
