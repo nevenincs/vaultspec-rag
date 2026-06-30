@@ -139,21 +139,20 @@ def main(port: int | None = None) -> None:
     else:
         # stdio is the sole MCP transport. ``mcp`` is imported only here:
         # the HTTP daemon no longer mounts any MCP app, so it never needs
-        # the package. The guarded ImportError keeps the actionable
-        # pywin32/missing-dep message on the path that actually requires
-        # ``mcp`` (a declared core dependency).
+        # the package, and ``mcp`` is an optional extra rather than a core
+        # dependency. The guarded ImportError keeps the actionable
+        # pywin32/missing-extra message on the one path that requires it.
         try:
             from ..mcp import mcp
-        except ImportError as exc:  # missing mcp, or a broken Windows pywin32 link
+        except ImportError as exc:  # missing mcp extra, or a broken pywin32 link
             raise RuntimeError(
-                "The RAG MCP stdio transport requires the 'mcp' package, which failed "
-                f"to import ({exc}). On Windows under uv this is usually "
-                "pywin32's post-install step not having run (a known "
-                "mcp/pywin32 issue, upstream "
-                "modelcontextprotocol/python-sdk#2233): run "
-                "`python -m pywin32_postinstall -install` in this environment. "
-                "If 'mcp' is missing entirely, reinstall vaultspec-rag (mcp is "
-                "a core dependency)."
+                "The RAG MCP stdio transport requires the optional 'mcp' extra, "
+                f"which failed to import ({exc}). Install it with "
+                "`pip install vaultspec-rag[mcp]` (or `uv sync --extra mcp`). On "
+                "Windows under uv, an installed-but-broken import is usually "
+                "pywin32's post-install step not having run (a known mcp/pywin32 "
+                "issue, upstream modelcontextprotocol/python-sdk#2233): run "
+                "`python -m pywin32_postinstall -install` in this environment."
             ) from exc
 
         # No model load: the stdio MCP holds no GPU resource. Every tool

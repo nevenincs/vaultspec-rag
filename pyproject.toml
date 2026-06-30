@@ -24,7 +24,6 @@ dependencies = [
   "pydantic>=2.12.5",
   "rich>=14.3.2",
   "vaultspec-core>=0.1.27",
-  "mcp>=1.26.0",
   "typer>=0.26.7",
   "click>=8.1.7",
   "python-dotenv>=1.0.0",
@@ -88,12 +87,18 @@ version = "0.2.25"
     "mdformat-gfm>=1.0.0",
     "pymarkdownlnt>=0.9.0",
   ]
-  # Deprecated no-op alias: `mcp` is now a core dependency (#182). Retained only
-  # so existing `vaultspec-rag[mcp]` installs keep resolving without error.
-  mcp = []
+  # The agent-facing MCP server is an opt-in extra: the CLI and the HTTP search
+  # daemon never import `mcp`, so a base install must not drag it (and, on
+  # Windows, its `pywin32` transitive). Install `vaultspec-rag[mcp]` to run the
+  # MCP server. See the `mcp-optional-dependency` ADR (supersedes the core-dep
+  # decision of #182).
+  mcp = ["mcp>=1.26.0"]
 
 [dependency-groups]
 dev = [
+  # The test suite imports `mcp` (it tests the optional MCP server surface), so
+  # the dev environment provides it even though it is not a core dependency.
+  "mcp>=1.26.0",
   "basedpyright>=1.39",
   "flake8>=7.3.0",
   "flake8-cognitive-complexity>=0.1.0",

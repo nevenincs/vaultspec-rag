@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     import httpx
     from starlette.applications import Starlette
 
-from ..config import EnvVar
+from ..config import EnvVar, reset_config
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (
@@ -609,16 +609,28 @@ class TestHttpModeResolveRoot:
 
         from ..mcp._resources import get_vault_document
 
-        prev = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
+        # Isolate both the status dir and the machine-global storage dir:
+        # discovery resolves the machine-global pointer (anchored to the storage
+        # dir) before the status-dir hint, so without the storage-dir isolation a
+        # real service running on the host would be discovered and the
+        # "not running" assertion would fail.
+        keys = ("VAULTSPEC_RAG_STATUS_DIR", "VAULTSPEC_RAG_QDRANT_STORAGE_DIR")
+        prev = {k: os.environ.get(k) for k in keys}
         os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(
+            tmp_path / "qdrant-server" / "storage"
+        )
+        reset_config()
         try:
             with pytest.raises(RuntimeError, match="is not running"):
                 _run(get_vault_document("adr/overview"))
         finally:
-            if prev is None:
-                os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
-            else:
-                os.environ["VAULTSPEC_RAG_STATUS_DIR"] = prev
+            for key, value in prev.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            reset_config()
 
 
 class TestMainTransportSetup:

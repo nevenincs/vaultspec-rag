@@ -2382,7 +2382,6 @@ version = "0.2.25"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "mcp" },
     { name = "packaging" },
     { name = "pathspec" },
     { name = "psutil" },
@@ -2418,6 +2417,9 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+mcp = [
+    { name = "mcp" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2425,6 +2427,7 @@ dev = [
     { name = "flake8" },
     { name = "flake8-cognitive-complexity" },
     { name = "identify" },
+    { name = "mcp" },
     { name = "mdformat" },
     { name = "mdformat-frontmatter" },
     { name = "mdformat-gfm" },
@@ -2445,7 +2448,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
     { name = "identify", marker = "extra == 'dev'", specifier = ">=2.0.0" },
-    { name = "mcp", specifier = ">=1.26.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0" },
     { name = "mdformat", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "mdformat-frontmatter", marker = "extra == 'dev'", specifier = ">=2.0.10" },
     { name = "mdformat-gfm", marker = "extra == 'dev'", specifier = ">=1.0.0" },
@@ -2484,6 +2487,7 @@ dev = [
     { name = "flake8", specifier = ">=7.3.0" },
     { name = "flake8-cognitive-complexity", specifier = ">=0.1.0" },
     { name = "identify", specifier = ">=2.0.0" },
+    { name = "mcp", specifier = ">=1.26.0" },
     { name = "mdformat", specifier = ">=1.0.0" },
     { name = "mdformat-frontmatter", specifier = ">=2.0.10" },
     { name = "mdformat-gfm", specifier = ">=1.0.0" },
