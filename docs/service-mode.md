@@ -24,6 +24,24 @@ uv run vaultspec-rag server start --local-only
 
 Other start flags control the port, automatic updates, update timing, and the managed Qdrant server. The relevant sections of this guide describe them in context, and the [CLI reference](cli.md) carries the full list.
 
+## The service runs in your Python environment
+
+`server start` does not create or provision a Python environment of its own. It spawns the daemon - `python -m vaultspec_rag.server` - using the interpreter of the environment you launched the command from. **The service runs in whatever Python environment started it**, and it inherits that environment's packages, including PyTorch.
+
+This coupling matters because vaultspec-rag is GPU-only. The service loads the embedding and reranker models on CUDA at startup and never runs inference on CPU, so the environment that starts the service must contain the CUDA (cu130) PyTorch wheel. The service does not - and will not - install or repair PyTorch for you. Provisioning the GPU torch wheel is a one-time, project-level step (see the [installation guide](installation.md)): `vaultspec-rag install` patches your project's `pyproject.toml` with the cu130 index, and `uv sync` installs the GPU wheel into that project's virtual environment.
+
+That is why the documented way to start the service is from the project:
+
+```
+uv run vaultspec-rag server start
+```
+
+`uv run` resolves the project's virtual environment, which carries the cu130 GPU torch. A globally installed CLI (for example `uv tool install vaultspec-rag`) is a fine *client* - `search`, `status`, and the other commands make HTTP calls to the running service and never load PyTorch - but it is *not* a suitable launcher for the service itself: a bare tool or `pip` install resolves PyTorch from PyPI as a CPU-only wheel, and the cu130 pin lives in project configuration that a tool install cannot read.
+
+**See which environment runs the service.** `server status` reports the daemon's interpreter on its `Service env:` line, and `GET /health` returns the `executable` and `prefix` of the running daemon. Use these to confirm the service is running in the GPU environment you expect.
+
+**Starting from an environment without GPU torch fails fast.** Before it spawns the daemon, `server start` probes the resolved interpreter for a working CUDA PyTorch. If that environment has no torch, a CPU-only wheel, or no visible GPU, the command refuses immediately - naming the interpreter and the reason - rather than spawning a daemon that crashes during model load. Provision the GPU wheel into that environment and start again.
+
 ## Warm models before serving
 
 The first search after a cold start downloads the GPU model files if they aren't cached yet, which delays that query. To pull the model files ahead of time, run:
@@ -70,7 +88,7 @@ To check the running service, run:
 uv run vaultspec-rag server status
 ```
 
-`status` shows whether the server is up, its address, uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, and `4` crashed or divergent. "Divergent" means the status file disagrees with the live process. For example, the file names a process ID that is no longer alive. If `status` reports crashed or divergent, see the [troubleshooting](#troubleshooting) section.
+`status` shows whether the server is up, its address, the Python environment running the service (its `Service env:` line - see [The service runs in your Python environment](#the-service-runs-in-your-python-environment)), uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, and `4` crashed or divergent. "Divergent" means the status file disagrees with the live process. For example, the file names a process ID that is no longer alive. If `status` reports crashed or divergent, see the [troubleshooting](#troubleshooting) section.
 
 Both commands accept `--json`, and `status` accepts `--verbose` for extra detail. For the full meaning of every field and exit code, see the [CLI reference](cli.md).
 
@@ -158,6 +176,8 @@ Shutdown removes the status file and stops the Qdrant child last, so the vector 
 **The service won't stop.** A stale process ID can keep `server stop` from completing. Kill the process by its ID, then remove the status file at `~/.vaultspec-rag/service.json`.
 
 **The server can't start.** Server mode needs the managed Qdrant binary. Provision it with `uv run vaultspec-rag server qdrant install`, or run the service local-only with `uv run vaultspec-rag server start --local-only`.
+
+**`server start` says the environment cannot run the GPU-only service.** The Python environment you launched `server start` from has no GPU PyTorch - no torch, a CPU-only wheel, or no visible GPU. The service runs in that environment and does not provision its own, so install the cu130 GPU wheel into it (`vaultspec-rag install`, then `uv sync`) and start again from that environment with `uv run vaultspec-rag server start`. See [The service runs in your Python environment](#the-service-runs-in-your-python-environment).
 
 **The index seems stale.** Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running. Manual reindexing competes for the single-writer GPU and Qdrant path.
 
