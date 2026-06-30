@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#cli-index-default'
 date: '2026-05-30'
-modified: '2026-05-30'
+modified: '2026-06-30'
 related:
   - '[[2026-05-30-cli-index-default-adr]]'
   - '[[2026-05-30-cli-index-default-research]]'

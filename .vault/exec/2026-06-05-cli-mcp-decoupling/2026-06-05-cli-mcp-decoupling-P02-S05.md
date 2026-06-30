@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
-modified: '2026-06-05'
+modified: '2026-06-30'
 step_id: 'S05'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-plan]]"

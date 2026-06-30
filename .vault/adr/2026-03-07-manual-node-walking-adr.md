@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-03-07'
+modified: '2026-06-30'
 related:
   - '[[2026-03-06-codebase-indexer-tech-stack-research]]'
   - '[[2026-03-07-api-verification-research]]'

@@ -98,6 +98,7 @@ def install_run(
     local_only: bool = False,
     provision_skip: set[str] | None = None,
     torch_group: str | None = None,
+    install_mcp: bool = False,
 ) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
@@ -206,6 +207,23 @@ def install_run(
             f"`uv sync --reinstall-package torch` manually after resolving "
             f"the reported torch configuration issue."
         )
+
+    # Ensure the optional [mcp] extra. Install wires up the MCP surface (it
+    # seeds the rag MCP config that `uv run vaultspec-search-mcp` launches), so
+    # the operator-facing default installs that server's dependency too - mcp is
+    # a base-install opt-out, not a setup-time opt-in. The opt-out polarity lives
+    # at the CLI edge (which passes ``install_mcp=True`` by default for --mcp);
+    # this orchestrator defaults it ``False`` so programmatic callers and their
+    # network-free unit tests do not shell out, mirroring ``provision``. --no-mcp
+    # skips it for a CLI-only setup. Non-fatal: a failure is a warning, since the
+    # guarded entry point still tells the operator what to install.
+    if install_mcp:
+        if dry_run:
+            report.mcp_extra_action = "would-add"
+        else:
+            from ._uv_sync import _run_uv_add_mcp_extra
+
+            _run_uv_add_mcp_extra(target=target, report=report)
 
     if provision:
         _run_provisioning(

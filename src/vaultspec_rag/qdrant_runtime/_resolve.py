@@ -127,6 +127,7 @@ def probe_qdrant_endpoint(
 
     return QdrantEndpointProbe(listening=listening, ready=ready, version=version)
 
+
 _ARM_MACHINES = frozenset({"arm64", "aarch64"})
 _X86_MACHINES = frozenset({"amd64", "x86_64"})
 

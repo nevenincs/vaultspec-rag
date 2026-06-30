@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#install-command'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
   - '[[2026-04-12-vaultspec-rag-install-plan]]'

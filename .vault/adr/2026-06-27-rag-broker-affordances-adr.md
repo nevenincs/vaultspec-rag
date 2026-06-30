@@ -3,34 +3,10 @@ tags:
   - '#adr'
   - '#rag-broker-affordances'
 date: '2026-06-27'
-modified: '2026-06-27'
+modified: '2026-06-30'
 related:
   - "[[2026-06-27-rag-broker-affordances-research]]"
 ---
-
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #adr) and one feature tag.
-     Replace rag-broker-affordances with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     Status convention: the H1 status value is one of proposed, accepted,
-     rejected, or deprecated. A new ADR starts as proposed; it moves to
-     accepted or rejected when the decision is made, and to deprecated
-     when a later ADR supersedes it.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
 
 # `rag-broker-affordances` adr: `idempotent JSON start and a machine-global discovery pointer` | (**status:** `accepted`)
 
@@ -163,17 +139,3 @@ convenience for finding the service, never a second gate on starting one.
 (Holds one full execution cycle before promotion, per the codify discipline. Complements
 `service-domain-owns-operability` and the dashboard-side
 `brokered-destructive-verbs-validate-args-and-default-to-preview`.)
-
-<!-- Example:
-
-- **Rule slug:** `destructive-verbs-need-dry-run`.
-  **Rule:** Every CLI verb that writes or removes state must
-  accept `--dry-run` and emit a usable preview before applying.
-
-<!-- Example:
-
-- **Rule slug:** `destructive-verbs-need-dry-run`.
-  **Rule:** Every CLI verb that writes or removes state must
-  accept `--dry-run` and emit a usable preview before applying.
-
--->

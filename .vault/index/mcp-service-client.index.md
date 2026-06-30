@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#mcp-service-client'
 date: '2026-06-18'
+modified: '2026-06-30'
 related:
   - '[[2026-06-18-mcp-service-client-P01-S01]]'
   - '[[2026-06-18-mcp-service-client-P01-S02]]'

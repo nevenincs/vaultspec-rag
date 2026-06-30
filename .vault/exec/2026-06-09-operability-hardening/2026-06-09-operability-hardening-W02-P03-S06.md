@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-09'
+modified: '2026-06-30'
 step_id: 'S06'
 related:
   - "[[2026-06-09-operability-hardening-plan]]"

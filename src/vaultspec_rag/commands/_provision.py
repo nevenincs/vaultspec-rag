@@ -262,10 +262,23 @@ def _provision_torch(
     distinct from a fetched binary's terminal ``downloaded``.
     """
     if not configure_torch or ProvisionStep.TORCH in skip:
+        # Distinguish the two skip reasons so the report is not misread as an
+        # operator opt-out when torch was simply configured by the dedicated step.
+        if ProvisionStep.TORCH in skip:
+            detail = (
+                "torch configuration handled by the dedicated PyTorch step "
+                "(it patches pyproject.toml; see 'PyTorch configuration' above) - "
+                "not re-run here"
+            )
+        else:
+            detail = (
+                "torch configuration skipped by request - pyproject.toml was not "
+                "patched with the cu130 index and source pin"
+            )
         return ProvisionStepResult(
             step=ProvisionStep.TORCH,
             action=ProvisionAction.SKIPPED,
-            detail="torch configuration opted out",
+            detail=detail,
         )
 
     from ..torch_config import TorchConfigAction
@@ -334,12 +347,22 @@ def _provision_torch(
             detail=_torch_skip_reason(action, report),
         )
     # CONFLICT or ERROR.
+    if action == TorchConfigAction.CONFLICT:
+        detail = (
+            "torch configuration conflict - pyproject.toml has a non-canonical "
+            "(hand-edited) torch / cu130 index block the installer refused to "
+            "overwrite" + (f": {conflicts}" if conflicts else "") + ". Remove the "
+            "manual edit from pyproject.toml and re-run so the installer can apply "
+            "the canonical cu130 configuration."
+        )
+    else:
+        detail = f"torch configuration {action}" + (
+            f": {conflicts}" if conflicts else ""
+        )
     return ProvisionStepResult(
         step=ProvisionStep.TORCH,
         action=ProvisionAction.FAILED,
-        detail=(
-            f"torch configuration {action}" + (f": {conflicts}" if conflicts else "")
-        ),
+        detail=detail,
     )
 
 

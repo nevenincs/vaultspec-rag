@@ -33,7 +33,7 @@ from typer.testing import CliRunner
 if TYPE_CHECKING:
     import httpx
 
-import vaultspec_rag.mcp._admin_tools as admin
+import vaultspec_rag.mcp._admin_client as admin
 import vaultspec_rag.mcp._tools as tools
 import vaultspec_rag.server as _m
 
@@ -212,7 +212,7 @@ async def test_get_jobs_returns_snapshot_shape(
     # Trigger a real job so the daemon has one in its registry.
     # We use an empty tmp_path so the reindex is near-instant.
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
-    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
+    await tools.reindex_vault(project_root=str(tmp_path))
 
     # Poll until it's done so the snapshot is stable.
     import asyncio
@@ -266,8 +266,8 @@ async def test_get_jobs_is_newest_first(
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
     # Trigger two jobs
-    job1 = await tools.reindex_vault(clean=True, project_root=str(tmp_path))
-    job2 = await tools.reindex_codebase(clean=True, project_root=str(tmp_path))
+    job1 = await tools.reindex_vault(project_root=str(tmp_path))
+    job2 = await tools.reindex_codebase(project_root=str(tmp_path))
 
     jobs = (await admin.get_jobs())["jobs"]
     # The list is newest-first, so job2 should appear before job1
@@ -283,7 +283,7 @@ async def test_get_jobs_honours_limit(
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
     # Trigger multiple jobs
     for _ in range(3):
-        await tools.reindex_vault(clean=True, project_root=str(tmp_path))
+        await tools.reindex_vault(project_root=str(tmp_path))
 
     jobs = (await admin.get_jobs(limit=2))["jobs"]
     assert len(jobs) == 2
@@ -295,8 +295,8 @@ async def test_get_jobs_filters_by_source(
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
-    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
-    await tools.reindex_codebase(clean=True, project_root=str(tmp_path))
+    await tools.reindex_vault(project_root=str(tmp_path))
+    await tools.reindex_codebase(project_root=str(tmp_path))
 
     jobs = (await admin.get_jobs(source="code"))["jobs"]
 
@@ -310,7 +310,7 @@ async def test_get_jobs_non_positive_limit_is_empty(
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
-    await tools.reindex_vault(clean=True, project_root=str(tmp_path))
+    await tools.reindex_vault(project_root=str(tmp_path))
     assert (await admin.get_jobs(limit=0))["jobs"] == []
 
 

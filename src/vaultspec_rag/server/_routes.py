@@ -813,9 +813,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
 
 _STORAGE_SURVEY_DEFAULT_LIMIT = 200
 _STORAGE_SURVEY_MAX_LIMIT = 1000
-_STORAGE_SURVEY_STATUSES = frozenset(
-    {"live", "orphaned", "unknown", "unverifiable"}
-)
+_STORAGE_SURVEY_STATUSES = frozenset({"live", "orphaned", "unknown", "unverifiable"})
 
 
 def _clamp_survey_limit(raw: str | None) -> int:

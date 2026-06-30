@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#vault-index-perf-memory'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 related:
   - '[[2026-04-12-vault-index-perf-memory-audit]]'
 ---

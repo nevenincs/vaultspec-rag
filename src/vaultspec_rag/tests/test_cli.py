@@ -956,6 +956,7 @@ class TestStatusCommand:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
         reset_base_config()
         reset_rag_config()
         try:
@@ -966,6 +967,7 @@ class TestStatusCommand:
             server.server_close()
             thread.join(timeout=1)
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()
             reset_rag_config()
 
@@ -991,6 +993,7 @@ class TestStatusCommand:
         status_dir = tmp_path / "status"
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
         reset_base_config()
         reset_rag_config()
         lock = _hold_local_index_lock(root)
@@ -999,6 +1002,7 @@ class TestStatusCommand:
         finally:
             lock.release()
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()
             reset_rag_config()
 
@@ -1263,12 +1267,17 @@ class TestServerCommands:
         assert "No such command" in result.output
 
     def test_service_stop_no_status_file(self, tmp_path: Path):
-        # Isolate the status dir to a guaranteed-empty tmp location: the
-        # default is ~/.vaultspec-rag/, so without this the assertion races
-        # any real service running on the machine (or a concurrent test).
+        # Isolate both the status dir and the machine-global storage dir to
+        # guaranteed-empty tmp locations. The defaults live under
+        # ~/.vaultspec-rag/, so without this the assertion races any real
+        # service: `server stop` reclaims a resident service through the
+        # machine singleton lock, which is anchored to the storage dir (not the
+        # status dir), so isolating the status dir alone is insufficient.
         status_dir = tmp_path / "status"
         status_dir.mkdir()
+        storage_dir = tmp_path / "qdrant-server" / "storage"
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(storage_dir)
         reset_base_config()
         reset_rag_config()
         try:
@@ -1279,6 +1288,7 @@ class TestServerCommands:
             )
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()
             reset_rag_config()
 

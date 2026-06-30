@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#project-hardening'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 related:
   - '[[2026-05-03-discoverability-research]]'
   - '[[2026-05-03-project-hardening-code-review-audit]]'

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#preprocess-hooks'
 date: '2026-06-11'
-modified: '2026-06-11'
+modified: '2026-06-30'
 step_id: 'S42'
 related:
   - "[[2026-06-10-preprocess-hooks-plan]]"

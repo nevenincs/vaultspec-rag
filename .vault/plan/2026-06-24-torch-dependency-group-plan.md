@@ -3,10 +3,11 @@ tags:
   - '#plan'
   - '#torch-dependency-group'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-06-30'
 tier: L2
 related:
   - '[[2026-06-24-torch-dependency-group-adr]]'
+  - '[[2026-06-24-torch-dependency-group-research]]'
 ---
 
 # `torch-dependency-group` plan

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     import httpx
     from starlette.applications import Starlette
 
-from ..config import EnvVar
+from ..config import EnvVar, reset_config
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (
@@ -85,26 +85,15 @@ class TestToolRegistration:
         expected = {
             "search_vault",
             "search_codebase",
-            "get_index_status",
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
-            "list_projects",
-            "evict_project",
-            "get_watcher_state",
-            "start_watcher",
-            "stop_watcher",
-            "reconfigure_watcher",
-            "get_service_state",
-            "get_logs",
-            "get_jobs",
-            "survey_storage",
         }
         assert expected == tool_names
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 16
+        assert len(tools) == 5
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())
@@ -117,7 +106,6 @@ class TestToolRegistration:
         tools_with_project_root = {
             "search_vault",
             "search_codebase",
-            "get_index_status",
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
@@ -621,16 +609,28 @@ class TestHttpModeResolveRoot:
 
         from ..mcp._resources import get_vault_document
 
-        prev = os.environ.get("VAULTSPEC_RAG_STATUS_DIR")
+        # Isolate both the status dir and the machine-global storage dir:
+        # discovery resolves the machine-global pointer (anchored to the storage
+        # dir) before the status-dir hint, so without the storage-dir isolation a
+        # real service running on the host would be discovered and the
+        # "not running" assertion would fail.
+        keys = ("VAULTSPEC_RAG_STATUS_DIR", "VAULTSPEC_RAG_QDRANT_STORAGE_DIR")
+        prev = {k: os.environ.get(k) for k in keys}
         os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(tmp_path)
+        os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(
+            tmp_path / "qdrant-server" / "storage"
+        )
+        reset_config()
         try:
             with pytest.raises(RuntimeError, match="is not running"):
                 _run(get_vault_document("adr/overview"))
         finally:
-            if prev is None:
-                os.environ.pop("VAULTSPEC_RAG_STATUS_DIR", None)
-            else:
-                os.environ["VAULTSPEC_RAG_STATUS_DIR"] = prev
+            for key, value in prev.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            reset_config()
 
 
 class TestMainTransportSetup:
@@ -868,16 +868,6 @@ class TestMultiProjectWatcher:
         from ..server import _stop_watcher
 
         _stop_watcher(tmp_path)  # must not raise
-
-
-class TestAdminTools:
-    """list_projects and evict_project MCP admin tools."""
-
-    def test_list_projects_help_tool_registered(self) -> None:
-        tools = _run(mcp.list_tools())
-        names = {t.name for t in tools}
-        assert "list_projects" in names
-        assert "evict_project" in names
 
 
 class TestRegistryFullErrorShape:

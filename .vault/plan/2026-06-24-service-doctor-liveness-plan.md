@@ -3,10 +3,11 @@ tags:
   - '#plan'
   - '#service-doctor-liveness'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-06-30'
 tier: L3
 related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
+  - '[[2026-06-24-service-doctor-liveness-research]]'
 ---
 
 # `service-doctor-liveness` plan

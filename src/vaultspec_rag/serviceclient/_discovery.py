@@ -24,11 +24,18 @@ logger = logging.getLogger(__name__)
 SERVICE_DISCOVERY_SCHEMA = "vaultspec.rag.service"
 SERVICE_DISCOVERY_VERSION = 1
 
+#: Fallback staleness window when a discovery payload omits ``stale_after_s``
+#: (a pre-upgrade pointer). Mirrors ``server._HEARTBEAT_STALENESS_SECONDS``; the
+#: payload's own ``stale_after_s`` is preferred when present so the threshold
+#: tracks the writing daemon, not this consumer.
+_HEARTBEAT_STALENESS_FALLBACK_SECONDS = 60
+
 __all__ = [
     "SERVICE_DISCOVERY_SCHEMA",
     "SERVICE_DISCOVERY_VERSION",
     "_default_service_port",
     "_discovery_timestamp",
+    "_machine_service_resolution",
     "_read_service_status",
     "_status_dir",
     "_status_file",
@@ -95,13 +102,98 @@ def _read_service_status() -> dict[str, Any] | None:
         return None
 
 
+def _coerce_port(port: Any) -> int | None:
+    """Coerce a discovery-payload ``port`` field to ``int`` or ``None``."""
+    if isinstance(port, bool):
+        return None
+    if isinstance(port, int):
+        return port
+    try:
+        return int(port) if port is not None else None
+    except (TypeError, ValueError) as exc:
+        logger.debug("discovery port %r not coercible: %s", port, exc)
+        return None
+
+
+def _discovery_is_stale(payload: dict[str, Any]) -> bool:
+    """Return whether *payload*'s heartbeat is past its staleness window.
+
+    The window is the payload's own ``stale_after_s`` (so it tracks the writing
+    daemon), falling back to ``_HEARTBEAT_STALENESS_FALLBACK_SECONDS``. A missing
+    or unparseable ``last_heartbeat`` is treated as *not* stale here: liveness is
+    already gated by the OS lock in :func:`_machine_service_resolution`, and a
+    pre-upgrade pointer without the field must not be rejected on staleness alone.
+    """
+    from datetime import UTC, datetime
+
+    raw = payload.get("last_heartbeat")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        logger.debug("discovery last_heartbeat %r unparseable: %s", raw, exc)
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - ts).total_seconds()
+    threshold = payload.get("stale_after_s")
+    if not isinstance(threshold, (int, float)) or threshold <= 0:
+        threshold = _HEARTBEAT_STALENESS_FALLBACK_SECONDS
+    return age > float(threshold)
+
+
+def _machine_service_resolution() -> dict[str, Any] | None:
+    """Resolve the one live machine service via the machine-global pointer.
+
+    Status-directory independent and re-read per call: the resident service is a
+    machine singleton, so a consumer locates it through machine-global state it
+    shares regardless of its own ``VAULTSPEC_RAG_STATUS_DIR``. The OS advisory
+    lock is the liveness authority (a dead daemon's lock is released by the OS),
+    and the machine-global pointer carries the address. The payload is accepted
+    only when a live lock holder exists *and* the pointer is fresh within its
+    staleness window - so an orphaned pointer left by a crashed daemon (a dead
+    pid, a days-old heartbeat) is treated as absence, not as a live service.
+
+    Returns the validated discovery payload (carrying ``port`` and, when written,
+    ``service_token``), or ``None`` when no live machine service resolves.
+    """
+    from .._machine_lock import machine_lock_live_holder, read_machine_discovery
+
+    try:
+        if machine_lock_live_holder() <= 0:
+            return None
+        payload = read_machine_discovery()
+    except Exception as exc:
+        # Broad except: discovery must never block the command path; any
+        # failure degrades to "no machine resolution" and the status-dir hint.
+        logger.debug("machine discovery probe raised: %s", exc, exc_info=True)
+        return None
+    if not payload or _coerce_port(payload.get("port")) is None:
+        return None
+    if _discovery_is_stale(payload):
+        logger.debug("machine discovery pointer is stale; treating as absent")
+        return None
+    return payload
+
+
 def _default_service_port() -> int | None:
     """Return the port of the currently running service, or ``None``.
 
-    Reads ``service.json`` in the status directory; if absent or
-    unparsable, returns ``None`` so callers emit the exit-3
-    "service down" code path.
+    Resolution is authoritative on machine-global state: the machine-singleton
+    pointer, gated by the OS-lock live holder and heartbeat staleness, wins when
+    it resolves - so a stale or foreign per-status-directory ``service.json`` can
+    no longer mislead a long-lived consumer (the MCP) frozen onto the wrong
+    status directory. The per-status-directory ``service.json`` is consulted only
+    as a compatibility fallback when no live machine service resolves (older
+    daemons, or a deployment that does not write the pointer). ``None`` means no
+    live service, and callers emit the exit-3 "service down" path.
     """
+    resolution = _machine_service_resolution()
+    if resolution is not None:
+        port = _coerce_port(resolution.get("port"))
+        if port is not None:
+            return port
     try:
         data = _read_service_status()
     except Exception as exc:
@@ -113,11 +205,4 @@ def _default_service_port() -> int | None:
         return None
     if not data:
         return None
-    port = data.get("port")
-    if isinstance(port, int):
-        return port
-    try:
-        return int(port) if port is not None else None
-    except (TypeError, ValueError) as exc:
-        logger.debug("status port %r not coercible: %s", port, exc)
-        return None
+    return _coerce_port(data.get("port"))

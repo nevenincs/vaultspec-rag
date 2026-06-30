@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#watcher-targeted-reindex'
 date: '2026-06-18'
+modified: '2026-06-30'
 related:
   - '[[2026-06-02-watcher-targeted-reindex-P03-S06]]'
   - '[[2026-06-02-watcher-targeted-reindex-P03-S07]]'

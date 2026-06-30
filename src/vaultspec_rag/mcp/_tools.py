@@ -16,9 +16,11 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from mcp.types import ToolAnnotations
+from pydantic import BaseModel, ConfigDict
+
 from ..serviceclient import (
     _default_service_port,
-    _try_http_admin,
     _try_http_code_file,
     _try_http_reindex,
     _try_http_search,
@@ -28,9 +30,59 @@ from ._mcp import mcp
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+
+class SearchResults(BaseModel):
+    """Structured envelope returned by the search tools (MCP ``outputSchema``).
+
+    Declares the load-bearing fields so clients get a validated result schema
+    and ``structuredContent``; ``extra="allow"`` carries the daemon's evolving
+    diagnostic fields (``timing``, ``index_state``, ``empty``, error envelopes)
+    without coupling the MCP layer to the daemon's full response shape.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    results: list[dict[str, Any]] = []
+    summary: str | None = None
+
+
 _SERVICE_DOWN_MESSAGE = (
     "vaultspec-rag service is not running. Start it with `vaultspec-rag server start`."
 )
+
+#: Default result count for the search tools, aligned with the CLI's
+#: ``--max-results`` default so the same query returns the same number of hits
+#: on both surfaces.
+_DEFAULT_TOP_K = 10
+
+# Behavioral hints advertised to clients (MCP 2025-11-25 tool annotations). The
+# search and retrieval tools only read and are repeatable; the index-refresh
+# tools write the index incrementally - they reconcile to the current files
+# without dropping data, so they are not read-only but are non-destructive and
+# idempotent. The destructive drop-and-recreate rebuild is a CLI-only operation
+# and is never exposed on this agent-facing surface. None of these tools reach
+# an open world of external entities - they talk to one local daemon.
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True, idempotentHint=True, openWorldHint=False
+)
+_INDEX_REFRESH = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+
+
+def _as_envelope(result: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any]:
+    """Return a stable dict envelope, wrapping a bare hit list under ``results``.
+
+    The daemon normally returns a dict envelope (hits plus index-state and
+    empty-result diagnostics); a bare list is the legacy shape. Normalising to
+    one dict shape gives clients a single result schema to validate against.
+    """
+    if isinstance(result, list):
+        return {"results": result}
+    return result
 
 
 def _require_port() -> int:
@@ -71,10 +123,10 @@ async def _delegate[T](call: Callable[[], T | None]) -> T:
     return _unwrap(result)
 
 
-@mcp.tool()
+@mcp.tool(title="Search vault", annotations=_READ_ONLY)
 async def search_vault(
     query: str,
-    top_k: int = 5,
+    top_k: int = _DEFAULT_TOP_K,
     doc_type: str | None = None,
     feature: str | None = None,
     date: str | None = None,
@@ -83,7 +135,7 @@ async def search_vault(
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
-) -> dict[str, Any] | list[dict[str, Any]]:
+) -> SearchResults:
     """Search the documentation vault for relevant ADRs, plans, and research.
 
     ``intent`` selects the ranking profile: ``orientation`` (default; surfaces
@@ -94,7 +146,7 @@ async def search_vault(
     Results carry each document's status and related-document edges.
     """
     port = _require_port()
-    return await _delegate(
+    result = await _delegate(
         partial(
             _try_http_search,
             query,
@@ -111,12 +163,13 @@ async def search_vault(
             unlike_ids=unlike_ids,
         )
     )
+    return SearchResults.model_validate(_as_envelope(result))
 
 
-@mcp.tool()
+@mcp.tool(title="Search codebase", annotations=_READ_ONLY)
 async def search_codebase(
     query: str,
-    top_k: int = 5,
+    top_k: int = _DEFAULT_TOP_K,
     language: str | None = None,
     path: str | None = None,
     node_type: str | None = None,
@@ -129,10 +182,10 @@ async def search_codebase(
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
-) -> dict[str, Any] | list[dict[str, Any]]:
+) -> SearchResults:
     """Search the source codebase for relevant functions, classes, or logic."""
     port = _require_port()
-    return await _delegate(
+    result = await _delegate(
         partial(
             _try_http_search,
             query,
@@ -153,25 +206,10 @@ async def search_codebase(
             unlike_ids=unlike_ids,
         )
     )
+    return SearchResults.model_validate(_as_envelope(result))
 
 
-@mcp.tool()
-async def get_index_status(
-    project_root: str | None = None,
-) -> dict[str, Any]:
-    """Return the current status of the RAG index and GPU hardware.
-
-    The daemon has no ``/status`` route; the index status is read from the live
-    ``/service-state`` route through the admin client path.
-    """
-    port = _require_port()
-    args: dict[str, Any] = {}
-    if project_root:
-        args["project_root"] = project_root
-    return await _delegate(partial(_try_http_admin, "get_service_state", args, port))
-
-
-@mcp.tool()
+@mcp.tool(title="Get code file", annotations=_READ_ONLY)
 async def get_code_file(
     path: str,
     project_root: str | None = None,
@@ -186,25 +224,23 @@ async def get_code_file(
     return ""
 
 
-@mcp.tool()
+@mcp.tool(title="Reindex vault", annotations=_INDEX_REFRESH)
 async def reindex_vault(
-    clean: bool = False,
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Re-index vault documentation (incremental by default)."""
+    """Re-index vault documentation incrementally."""
     port = _require_port()
     return await _delegate(
-        partial(_try_http_reindex, "vault", clean, port, project_root or "")
+        partial(_try_http_reindex, "vault", False, port, project_root or "")
     )
 
 
-@mcp.tool()
+@mcp.tool(title="Reindex codebase", annotations=_INDEX_REFRESH)
 async def reindex_codebase(
-    clean: bool = False,
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Re-index the source codebase (incremental by default)."""
+    """Re-index the source codebase incrementally."""
     port = _require_port()
     return await _delegate(
-        partial(_try_http_reindex, "codebase", clean, port, project_root or "")
+        partial(_try_http_reindex, "codebase", False, port, project_root or "")
     )

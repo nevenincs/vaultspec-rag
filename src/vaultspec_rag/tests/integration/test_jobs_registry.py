@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-import vaultspec_rag.mcp._admin_tools as admin_tools
+import vaultspec_rag.mcp._admin_client as admin_tools
 import vaultspec_rag.mcp._tools as tools
 
 from ... import server

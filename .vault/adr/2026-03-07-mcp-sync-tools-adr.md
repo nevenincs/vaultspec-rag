@@ -7,7 +7,7 @@ related:
   - "[[2026-03-07-threading-lock-for-singleton-adr]]"
   - "[[2026-03-07-continuous-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-03-07'
+modified: '2026-06-30'
 ---
 
 # ADR: MCP tools use `async def` + `anyio.to_thread.run_sync`

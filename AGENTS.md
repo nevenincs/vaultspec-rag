@@ -3,8 +3,6 @@
 
 You MUST respect these rules at all times:
 
-@.codex/rules/firmware-reference-parity.builtin.md
-@.codex/rules/generated-reference-is-cli-owned.builtin.md
 @.codex/rules/gpu-consumer-single-thread.md
 @.codex/rules/gpu-lock-wraps-forward-passes-only.md
 @.codex/rules/index-workers-stay-cpu-only.md
@@ -14,11 +12,8 @@ You MUST respect these rules at all times:
 @.codex/rules/rerankers-score-real-content.md
 @.codex/rules/service-domain-owns-operability.md
 @.codex/rules/storage-locks-are-backend-aware.md
-@.codex/rules/vaultspec-archive-discipline.builtin.md
 @.codex/rules/vaultspec-cli.builtin.md
-@.codex/rules/vaultspec-codify.builtin.md
-@.codex/rules/vaultspec-dry-run-discipline.builtin.md
-@.codex/rules/vaultspec-plan-editing-discipline.builtin.md
+@.codex/rules/vaultspec-discovery.builtin.md
 @.codex/rules/vaultspec-rag.builtin.md
 @.codex/rules/vaultspec-system.builtin.md
 @.codex/rules/vaultspec.builtin.md

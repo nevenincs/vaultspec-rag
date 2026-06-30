@@ -10,7 +10,7 @@ preview.
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 
@@ -363,3 +363,124 @@ def _perform_clean(*, keep_current: bool, json_mode: bool) -> list[str]:
         else:
             _print_line(message)
         raise typer.Exit(code=1) from exc
+
+
+def _fail_quarantine(error: str, message: str, *, json_mode: bool) -> NoReturn:
+    """Emit a quarantine failure (JSON or text) and exit non-zero."""
+    if json_mode:
+        _emit_json(False, "server.qdrant.quarantine", error=error, message=message)
+    else:
+        _print_line(message)
+    raise typer.Exit(code=1)
+
+
+def _emit_quarantine_listing(collections: list[str], *, json_mode: bool) -> None:
+    """Print (or emit as JSON) the shared store's collection names."""
+    if json_mode:
+        _emit_json(
+            True,
+            "server.qdrant.quarantine",
+            data={"collections": collections},
+        )
+        return
+    _print_line("Qdrant collections in the shared store")
+    if not collections:
+        _print_line("  (none)")
+    for name in collections:
+        _print_line(f"  {name}")
+
+
+@server_qdrant_app.command(
+    "quarantine",
+    help=(
+        "Move a corrupt collection out of the shared store so the server can "
+        "start again. Run with no name to list collections; name one to "
+        "quarantine it (requires --yes). The quarantined collection re-indexes "
+        "on its next use; nothing is deleted."
+    ),
+)
+def qdrant_quarantine(
+    collection: Annotated[
+        str | None,
+        typer.Argument(help="Collection to quarantine; omit to list the store."),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Confirm moving the named collection aside."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview the move without touching the store."),
+    ] = False,
+    json_mode: Annotated[
+        bool,
+        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
+    ] = False,
+) -> None:
+    """List the shared store's collections, or quarantine a named one.
+
+    The escape hatch for the ``qdrant-store-resilience`` ADR (QR5): when the
+    supervised start cannot identify a corrupt collection automatically, an
+    operator lists the store and quarantines the culprit by name. The move is
+    reversible (the files are preserved under ``quarantine/``).
+    """
+    from ..qdrant_runtime._supervise import (
+        _list_on_disk_collections,  # pyright: ignore[reportPrivateUsage]
+        _quarantine_collection,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
+    collections = sorted(_list_on_disk_collections(storage))
+
+    if collection is None:
+        _emit_quarantine_listing(collections, json_mode=json_mode)
+        return
+
+    if collection not in collections:
+        _fail_quarantine(
+            "unknown_collection",
+            f"Collection {collection!r} is not in the store. "
+            "Run `vaultspec-rag server qdrant quarantine` to list collections.",
+            json_mode=json_mode,
+        )
+
+    if dry_run:
+        message = f"Would quarantine collection {collection!r} from {storage}."
+        if json_mode:
+            _emit_json(
+                True,
+                "server.qdrant.quarantine",
+                data={"collection": collection, "dry_run": True},
+            )
+        else:
+            _print_line(message)
+        return
+
+    if not yes:
+        _fail_quarantine(
+            "confirmation_required",
+            f"Refusing to quarantine {collection!r} without --yes. "
+            "Re-run with --yes (or --dry-run to preview).",
+            json_mode=json_mode,
+        )
+
+    try:
+        dest = _quarantine_collection(storage, collection)
+    except OSError as exc:
+        _fail_quarantine(
+            "quarantine_failed",
+            f"Could not quarantine {collection!r}: {exc}. The managed server may "
+            "be running and holding the files - stop it first "
+            "(`vaultspec-rag server stop`), then retry.",
+            json_mode=json_mode,
+        )
+
+    if json_mode:
+        _emit_json(
+            True,
+            "server.qdrant.quarantine",
+            data={"collection": collection, "quarantined_to": str(dest)},
+        )
+        return
+    _print_line(f"Quarantined collection {collection!r} to {dest}.")
+    _print_line("Restart the server; that root re-indexes on its next use.")

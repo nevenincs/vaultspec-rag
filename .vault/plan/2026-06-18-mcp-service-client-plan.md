@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#mcp-service-client'
 date: '2026-06-18'
+modified: '2026-06-30'
 tier: L2
 related:
   - '[[2026-06-18-mcp-service-client-adr]]'

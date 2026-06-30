@@ -239,22 +239,25 @@ class VaultSearcher:
         with self._reranker_lock:
             if self._reranker is not None:
                 return self._reranker
-            import torch
             from sentence_transformers import CrossEncoder
 
+            from .._gpu import load_torch
             from ..config import get_config
 
-            if not torch.cuda.is_available():
-                msg = (
-                    "CUDA GPU required for CrossEncoder reranker. No CUDA device found."
+            torch = load_torch()
+            # Hold the shared GPU lock across the model load. Constructing the
+            # CrossEncoder materialises weights on the device, and that CUDA work
+            # must not run concurrently with another root's forward pass (or a
+            # second searcher's own lazy load) on the one shared GPU - an
+            # unserialised load races and crashes the process. The lock is
+            # released before the forward pass in ``_rerank`` re-acquires it.
+            with self._gpu_section():
+                self._reranker = CrossEncoder(
+                    self._reranker_model_name,
+                    device="cuda",
+                    activation_fn=torch.nn.Sigmoid(),
+                    max_length=int(get_config().reranker_max_length),
                 )
-                raise RuntimeError(msg)
-            self._reranker = CrossEncoder(
-                self._reranker_model_name,
-                device="cuda",
-                activation_fn=torch.nn.Sigmoid(),
-                max_length=int(get_config().reranker_max_length),
-            )
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
                 torch.cuda.get_device_name(0),

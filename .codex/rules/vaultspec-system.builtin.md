@@ -179,29 +179,23 @@ before invoking any pipeline skill. Read the in-flight plans it names, then ente
 pipeline at the right phase: resume an in-flight plan via `vaultspec-execute`, or start
 fresh at Research.
 
+Ground every pipeline phase in what the project already decided and built before acting;
+the always-on `vaultspec-discovery` rule defines the canonical discovery sequence.
+
 All significant work must follow this pipeline:
 
-| Phase        | Skill                   | Artifact                   | Requires                                        |
-| ------------ | ----------------------- | -------------------------- | ----------------------------------------------- |
-| 1a Research  | vaultspec-research      | .vault/research/...        | -                                               |
-| 1b Reference | vaultspec-code-research | .vault/reference/...       | -                                               |
-| 2 Specify    | vaultspec-adr           | .vault/adr/...             | Research artifact                               |
-| 3 Plan       | vaultspec-write         | .vault/plan/...            | ADR artifact                                    |
-| 4 Execute    | vaultspec-execute       | .vault/exec/.../steps      | Approved plan                                   |
-| 5 Verify     | vaultspec-code-review   | .vault/audit/...           | Completed step(s)                               |
-| 6 Codify     | vaultspec-codify        | .vaultspec/rules/rules/... | Review surfacing a durable cross-session lesson |
+| Phase        | Skill                   | Artifact              | Requires          |
+| ------------ | ----------------------- | --------------------- | ----------------- |
+| 1a Research  | vaultspec-research      | .vault/research/...   | -                 |
+| 1b Reference | vaultspec-code-research | .vault/reference/...  | -                 |
+| 2 Specify    | vaultspec-adr           | .vault/adr/...        | Research artifact |
+| 3 Plan       | vaultspec-write         | .vault/plan/...       | ADR artifact      |
+| 4 Execute    | vaultspec-execute       | .vault/exec/.../steps | Approved plan     |
+| 5 Verify     | vaultspec-code-review   | .vault/audit/...      | Completed step(s) |
 
 Phases 1a and 1b are parallel entry points: Research explores the problem space,
 Reference grounds the work in existing source code. A feature needs at least one of the
 two; complex features benefit from both.
-
-Phase 6 (Codify) is **discretionary**: most features end at Verify. Only when a Verify
-pass surfaces a lesson that satisfies the three durability criteria (cross-session,
-constraint-shaped, project-bound) does the work continue into Codify. The
-`vaultspec-codify` rule defines the criteria and the authoring path
-(`vaultspec-core vault rule promote`); the `vaultspec-codifier` agent persona enacts the
-discipline. A rule authored under Phase 6 binds future agents across sessions, clones,
-and CI runs.
 
 The pipeline scales with the work. Trivial, single-file fixes with no architectural
 weight may proceed directly with user approval; state explicitly that the pipeline is
@@ -214,7 +208,7 @@ adds Waves; `L4` adds an Epic frame and requires an external project-management
 association declared in the Epic intent block. The leaf row at every tier is named
 `Step`; the Execution Record artifact retains the name `<Step Record>` and maps
 one-to-one to a Step. Full conventions live in the Markdown comment hint blocks embedded
-in `.vaultspec/rules/templates/plan.md`.
+in `.vaultspec/templates/plan.md`.
 
 The `vaultspec-core vault plan` CLI is the canonical surface for structural manipulation
 of plan documents. Writers and executors MUST use the `vaultspec-core vault plan ...`
@@ -243,14 +237,13 @@ Supporting skills, invoked when appropriate:
 | "Plan the implementation"           | vaultspec-write         |
 | "Execute the plan" / "Build it"     | vaultspec-execute       |
 | "Review the code" / "Verify"        | vaultspec-code-review   |
-| "Codify X" / "Promote X to a rule"  | vaultspec-codify        |
 | "Clean up docs" / "Curate"          | vaultspec-curate        |
 | "Start a new feature" (broad)       | vaultspec-research      |
 | "Write documentation for {subject}" | vaultspec-documentation |
 
 ## Agents
 
-Agent personas are defined in `.vaultspec/rules/agents/`. Two mechanisms are available
+Agent personas are defined in `.vaultspec/agents/`. Two mechanisms are available
 depending on plan complexity:
 
 - **Parallel sub-agents** for focused, managed work

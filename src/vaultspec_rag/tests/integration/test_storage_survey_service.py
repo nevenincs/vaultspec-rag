@@ -11,12 +11,10 @@ classification against the managed server and the persisted manifest.
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ...mcp._admin_tools import survey_storage
 from ...serviceclient import _do_http_call, _try_http_admin
 
 if TYPE_CHECKING:
@@ -67,19 +65,6 @@ def test_storage_survey_route_honours_limit(
     result = _do_http_call(port, "/storage/survey?limit=5", None)
     assert result is not None
     assert result.get("limit") == 5
-
-
-@pytest.mark.usefixtures("live_service")
-def test_mcp_survey_storage_delegates_to_service() -> None:
-    """The MCP ``survey_storage`` tool returns the same survey envelope.
-
-    The MCP is a thin client: it must reach the running daemon's survey
-    route and surface its envelope, proving the read-only surface is wired
-    end to end through the service client.
-    """
-    result = asyncio.run(survey_storage())
-    assert isinstance(result.get("namespaces"), list)
-    assert "total" in result
 
 
 @pytest.mark.usefixtures("live_service")

@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-status-convergence'
 date: '2026-06-11'
-modified: '2026-06-11'
+modified: '2026-06-30'
 related:
   - '[[2026-06-11-service-status-convergence-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

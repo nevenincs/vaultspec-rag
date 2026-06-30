@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: 2026-03-08
-modified: '2026-03-08'
+modified: '2026-06-30'
 ---
 
 # Test Mandate Compliance Audit — 2026-03-08

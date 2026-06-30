@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#store-eviction-log-rotation'
 date: 2026-04-12
-modified: '2026-04-12'
+modified: '2026-06-30'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'

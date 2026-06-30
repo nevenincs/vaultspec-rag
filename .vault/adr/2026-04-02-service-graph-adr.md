@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-graph'
 date: 2026-04-02
-modified: '2026-04-02'
+modified: '2026-06-30'
 related:
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-02-release-readiness-audit]]'

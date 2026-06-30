@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-09'
+modified: '2026-06-30'
 tier: L3
 related:
   - '[[2026-06-09-operability-hardening-adr]]'

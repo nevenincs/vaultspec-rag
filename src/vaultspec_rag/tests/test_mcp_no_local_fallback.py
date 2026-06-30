@@ -38,25 +38,33 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.fixture()
 def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the service status dir at an empty *tmp_path* with no service.json.
+    """Point the status dir and machine-global dir at empty *tmp_path* dirs.
 
-    Sets ``VAULTSPEC_RAG_STATUS_DIR`` to a fresh empty directory and calls
-    ``reset_config()`` on enter and exit so the cached config picks up (and then
-    forgets) the redirect.  No ``service.json`` is written, so service discovery
-    must conclude the daemon is down.
+    Sets ``VAULTSPEC_RAG_STATUS_DIR`` to a fresh empty directory (no
+    ``service.json``) and ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR`` to a fresh path so
+    the machine-global discovery pointer and lock resolve under the temp dir too,
+    not the real machine singleton. Both knobs are required because service
+    discovery now resolves the machine-global pointer authoritatively before the
+    status-dir hint; isolating only the status dir would let a live machine
+    service on the host leak in. ``reset_config()`` brackets the redirect.
     """
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
+    prev = {
+        k: os.environ.get(k)
+        for k in (EnvVar.STATUS_DIR.value, EnvVar.QDRANT_STORAGE_DIR.value)
+    }
     status_dir = tmp_path / "vaultspec-rag"
     status_dir.mkdir()
     os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
+    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(tmp_path / "qdrant" / "storage")
     reset_config()
     try:
         yield status_dir
     finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         reset_config()
 
 
@@ -67,21 +75,9 @@ def _tool_invocations() -> list[tuple[str, Callable[[], Coroutine[Any, Any, Any]
     ``asyncio.run`` exactly once per test.  Imports are local to keep this module
     import-light and to mirror how the MCP package is reached at runtime.
     """
-    from ..mcp._admin_tools import (
-        evict_project,
-        get_jobs,
-        get_logs,
-        get_service_state,
-        get_watcher_state,
-        list_projects,
-        reconfigure_watcher,
-        start_watcher,
-        stop_watcher,
-    )
     from ..mcp._resources import get_vault_document
     from ..mcp._tools import (
         get_code_file,
-        get_index_status,
         reindex_codebase,
         reindex_vault,
         search_codebase,
@@ -91,19 +87,9 @@ def _tool_invocations() -> list[tuple[str, Callable[[], Coroutine[Any, Any, Any]
     return [
         ("search_vault", lambda: search_vault("anything")),
         ("search_codebase", lambda: search_codebase("anything")),
-        ("get_index_status", lambda: get_index_status()),
         ("get_code_file", lambda: get_code_file("src/x.py")),
         ("reindex_vault", lambda: reindex_vault()),
         ("reindex_codebase", lambda: reindex_codebase()),
-        ("list_projects", lambda: list_projects()),
-        ("evict_project", lambda: evict_project("/some/root")),
-        ("get_watcher_state", lambda: get_watcher_state()),
-        ("start_watcher", lambda: start_watcher("/some/root")),
-        ("stop_watcher", lambda: stop_watcher("/some/root")),
-        ("get_service_state", lambda: get_service_state()),
-        ("get_logs", lambda: get_logs()),
-        ("get_jobs", lambda: get_jobs()),
-        ("reconfigure_watcher", lambda: reconfigure_watcher("/some/root")),
         ("get_vault_document", lambda: get_vault_document("adr/overview")),
     ]
 
@@ -127,8 +113,14 @@ def test_tool_raises_service_not_running(
     rather than constructing a local engine.
     """
     assert not (isolated_status_dir / "service.json").exists()
-    with pytest.raises(RuntimeError, match="is not running"):
+    with pytest.raises(RuntimeError) as exc_info:
         asyncio.run(make_coro())
+    # SD6: the failure must be fast and carry the full actionable remediation,
+    # not just the "is not running" diagnosis - a regression dropping the
+    # start-the-service instruction must fail this test.
+    message = str(exc_info.value)
+    assert "is not running" in message
+    assert "vaultspec-rag server start" in message
 
 
 def test_failed_call_loads_no_heavy_ml_libs() -> None:
@@ -144,6 +136,7 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
         "import os, sys, tempfile, asyncio\n"
         "d = tempfile.mkdtemp()\n"
         "os.environ['VAULTSPEC_RAG_STATUS_DIR'] = d\n"
+        "os.environ['VAULTSPEC_RAG_QDRANT_STORAGE_DIR'] = os.path.join(d, 'qdrant')\n"
         "from vaultspec_rag.mcp._tools import search_vault\n"
         "raised = False\n"
         "try:\n"

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#rag-index-performance'
 date: '2026-06-02'
-modified: '2026-06-02'
+modified: '2026-06-30'
 step_id: 'S03'
 related:
   - "[[2026-06-02-rag-index-performance-plan]]"

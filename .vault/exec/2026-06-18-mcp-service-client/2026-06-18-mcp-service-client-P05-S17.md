@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#mcp-service-client'
 date: '2026-06-18'
-modified: '2026-06-18'
+modified: '2026-06-30'
 step_id: 'S17'
 related:
   - "[[2026-06-18-mcp-service-client-plan]]"

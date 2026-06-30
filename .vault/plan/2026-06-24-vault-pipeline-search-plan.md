@@ -3,10 +3,11 @@ tags:
   - '#plan'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-06-30'
 tier: L3
 related:
   - '[[2026-06-24-vault-pipeline-search-adr]]'
+  - '[[2026-06-24-vault-pipeline-search-research]]'
 ---
 
 # `vault-pipeline-search` plan

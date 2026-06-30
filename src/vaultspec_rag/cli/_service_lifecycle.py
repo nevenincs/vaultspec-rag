@@ -8,14 +8,18 @@ import re
 import sys
 import time
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 from ..config import EnvVar, get_config
 from ._app import server_app
+from ._core import logger
 from ._gpu_errors import _handle_gpu_error
 from ._http_search import _try_http_admin
 from ._process import (
@@ -25,6 +29,8 @@ from ._process import (
     _heartbeat_age_seconds,
     _port_is_available,
     _port_is_listening,
+    _probe_daemon_cuda,
+    _resolve_daemon_interpreter,
     _spawn_service,
 )
 from ._render import _emit_json
@@ -143,6 +149,26 @@ def _address_line(port: object) -> str:
     return f"Address: http://127.0.0.1:{port}"
 
 
+def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
+    """Return the last few non-empty lines of the daemon log, best-effort.
+
+    Surfaces why a detached daemon died during startup (e.g. the model-load
+    RuntimeError or a qdrant failure) instead of only pointing at the log file.
+    Bounded tail read; any IO failure yields an empty list and the caller still
+    prints the log path.
+    """
+    try:
+        with log_path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 8192))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = [ln.rstrip() for ln in tail.splitlines() if ln.strip()]
+    return lines[-max_lines:]
+
+
 def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     """Decide whether a lifecycle command may remove the discovery file.
 
@@ -241,6 +267,45 @@ def _fail_start(
         if next_actions:
             _print_lifecycle_next_actions(*next_actions)
     return typer.Exit(code=1)
+
+
+def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
+    """Fail fast if the daemon interpreter cannot run the GPU-only service.
+
+    The daemon inherits this interpreter and is GPU-only, so a missing /
+    CPU-only / no-GPU torch should fail legibly here rather than as a background
+    model-load crash. The service does not provision its own python environment.
+    An inconclusive probe (CPU-only host, torch absent in a way we cannot
+    classify) is logged and allowed to proceed.
+    """
+    cuda_probe = _probe_daemon_cuda(interpreter)
+    if cuda_probe is None:
+        return
+    blocking, reason = cuda_probe
+    if blocking:
+        raise _fail_start(
+            json_mode,
+            error="service_env_no_gpu",
+            message="Service start failed",
+            human_lines=(
+                f"Service interpreter: {interpreter}",
+                f"That environment cannot run the GPU-only service: {reason}.",
+                "The service runs in the environment that launches it and does "
+                "not provision its own python.",
+                "Provision GPU (cu130) torch into that environment, then retry.",
+            ),
+            next_actions=(
+                "Install/repair GPU torch in the service environment: "
+                "vaultspec-rag install, then uv sync",
+                "Confirm the GPU is visible: nvidia-smi",
+            ),
+            detail=reason,
+        )
+    logger.warning(
+        "daemon torch pre-flight inconclusive for %s (%s); proceeding",
+        interpreter,
+        reason,
+    )
 
 
 @server_app.command(
@@ -405,6 +470,7 @@ def service_start(
         _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
 
     log_path = _log_file()
+    _preflight_daemon_cuda(_resolve_daemon_interpreter(), json_mode=json_mode)
     t0 = time.perf_counter()
     try:
         pid = _spawn_service(
@@ -453,15 +519,17 @@ def service_start(
             # Check if process died (port conflict, etc.)
             if not _cli._is_pid_alive(pid):
                 _status_file().unlink(missing_ok=True)
+                tail = _tail_daemon_log(log_path)
+                human = [_process_line(pid), _address_line(port)]
+                if tail:
+                    human.append("Last log lines:")
+                    human.extend(f"  {ln}" for ln in tail)
+                human.append(f"Log: {log_path}")
                 raise _fail_start(
                     json_mode,
                     error="start_died",
                     message="Service start failed",
-                    human_lines=(
-                        _process_line(pid),
-                        _address_line(port),
-                        f"Log: {log_path}",
-                    ),
+                    human_lines=tuple(human),
                     pid=pid,
                     port=port,
                     log=str(log_path),
@@ -511,6 +579,36 @@ def service_start(
         waited_s=deadline,
         log=str(log_path),
     )
+
+
+def _reclaim_machine_singleton() -> int | None:
+    """Reclaim a resident machine-lock holder that has no discoverable status file.
+
+    The machine singleton lock is vaultspec-rag-exclusive and machine-scoped, so
+    a live holder is THE resident service even when it never registered (or lost)
+    a ``service.json`` in this status directory. Such a holder otherwise
+    deadlocks the machine: ``server start`` refuses it (lock held), ``server
+    stop`` reports "not running" (no discovery), and ``server status`` reports
+    stopped - leaving a manual OS kill as the only escape (the very orphan the
+    ``mcp-conformance`` research recorded). Terminating the confirmed holder
+    makes ``server stop`` the real recovery the start refusal points to.
+
+    Returns the reclaimed holder pid, or ``None`` when no reclaimable
+    vaultspec-rag holder is found. The ``_is_our_service`` executable check
+    guards against terminating an unrelated process after pid reuse.
+    """
+    from .._machine_lock import machine_lock_live_holder
+
+    holder = machine_lock_live_holder()
+    if (
+        holder
+        and holder != os.getpid()
+        and _cli._is_pid_alive(holder)
+        and _cli._is_our_service(holder)
+    ):
+        _terminate_and_confirm(holder)
+        return holder
+    return None
 
 
 def _terminate_and_confirm(pid: int) -> None:
@@ -631,9 +729,22 @@ def service_stop(
 
     status = _read_service_status()
     if status is None:
-        # No service.json => nothing to stop for this config. We do NOT probe
-        # the port: on the shared default port another project's healthy
-        # service would otherwise be misreported as this config's orphan.
+        # No service.json for this config. Before reporting "not running", fall
+        # back to the machine-global singleton lock: a live holder is the
+        # resident service even when it left no discovery file here, and
+        # reclaiming it is the documented recovery for a wedged/undiscoverable
+        # singleton that would otherwise deadlock `server start`.
+        reclaimed = _reclaim_machine_singleton()
+        if reclaimed is not None:
+            _print_lifecycle_lines(
+                "Service stopped",
+                f"Reclaimed the resident machine service (pid {reclaimed}); it "
+                "held the singleton lock without a discoverable status file.",
+            )
+            return
+        # No reclaimable holder. We do NOT probe the port: on the shared default
+        # port another project's healthy service would otherwise be misreported
+        # as this config's orphan.
         _cli.console.print("Service is not running.")
         return
 
@@ -1010,6 +1121,9 @@ def _print_health_detail(
             else "not reported by service"
         )
         _print_detail_line("Compute", compute)
+        env_exe = health.get("executable")
+        if isinstance(env_exe, str) and env_exe:
+            _print_detail_line("Service env", env_exe)
         _print_detail_line(
             "Search models", _model_ready_label(health.get("models_loaded"))
         )
@@ -1284,6 +1398,20 @@ def _status_uptime_label(health: dict[str, object] | None) -> str:
     return _format_status_duration(health.get("uptime_s"))
 
 
+def _status_env_label(health: dict[str, object] | None) -> str:
+    """Return the daemon's python interpreter from /health, or a clear miss.
+
+    The service runs in whatever interpreter launched ``server start`` (it does
+    not provision its own python), so surfacing it makes the service<->env
+    coupling visible at a glance.
+    """
+    if isinstance(health, dict):
+        exe = health.get("executable")
+        if isinstance(exe, str) and exe:
+            return exe
+    return "not reported by service"
+
+
 def _render_status_summary(
     *,
     state_label: str,
@@ -1300,6 +1428,7 @@ def _render_status_summary(
         f"Requests: {_status_health_label(health, port_listening=port_listening)}",
         f"Busy: {_status_busy_label(jobs_dict)}",
         f"Address: http://127.0.0.1:{port}",
+        f"Service env: {_status_env_label(health)}",
         f"Uptime: {_status_uptime_label(health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
@@ -1724,13 +1853,11 @@ def service_status(
 def service_warmup() -> None:
     """Download GPU model files before they are needed."""
     try:
-        import torch
-    except ImportError:
-        _cli.console.print("Error: torch is not installed.")
-        raise typer.Exit(code=1) from None
+        from .._gpu import load_torch
 
-    if not torch.cuda.is_available():
-        _handle_gpu_error(RuntimeError("CUDA runtime unavailable"))
+        load_torch()
+    except (ImportError, RuntimeError) as exc:
+        _handle_gpu_error(exc)
 
     try:
         from huggingface_hub import (

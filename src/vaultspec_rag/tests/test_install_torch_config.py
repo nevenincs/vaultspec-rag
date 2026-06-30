@@ -258,9 +258,7 @@ class TestInstallTorchConfig:
         assert '"torch>=2.4"' in pyproject
         # The ownership marker is location-bearing; the default path
         # records the project-deps surface.
-        assert (
-            'managed-torch-direct-dependency = "[project].dependencies"' in pyproject
-        )
+        assert 'managed-torch-direct-dependency = "[project].dependencies"' in pyproject
         assert any(
             "direct dependency" in w.lower() and "torch" in w.lower()
             for w in report.warnings
@@ -1012,9 +1010,7 @@ class TestInstallTorchGroupPlacement:
         install_run(path=consumer_workspace, assume_yes=True, torch_group="rag")
         pyproject = consumer_workspace / "pyproject.toml"
         raw = pyproject.read_text(encoding="utf-8")
-        assert (
-            'managed-torch-direct-dependency = "[dependency-groups].rag"' in raw
-        ), raw
+        assert 'managed-torch-direct-dependency = "[dependency-groups].rag"' in raw, raw
 
         report = uninstall_run(path=consumer_workspace, force=True)
         assert report.torch_direct_dep_action == "removed"
@@ -1095,9 +1091,7 @@ class TestInstallTorchGroupPlacement:
 
         # The marker records the project-deps surface, and no group table
         # was created.
-        assert (
-            'managed-torch-direct-dependency = "[project].dependencies"' in produced
-        )
+        assert 'managed-torch-direct-dependency = "[project].dependencies"' in produced
         assert "[dependency-groups]" not in produced
 
     def test_user_declared_torch_in_group_is_left_untouched(
@@ -1166,9 +1160,7 @@ class TestInstallTorchGroupPlacement:
         )
         assert "dependency-groups" not in parsed
 
-    def test_empty_torch_group_is_rejected(
-        self, consumer_workspace: Path
-    ) -> None:
+    def test_empty_torch_group_is_rejected(self, consumer_workspace: Path) -> None:
         """An empty/whitespace ``--torch-group`` is refused: torch is not
         written into an empty-named group and the dep step reports a conflict.
         """
@@ -1191,9 +1183,7 @@ class TestInstallTorchGroupPlacement:
         still reminds the operator to enable the group (the pin is otherwise
         inert until the group is enabled for the resolve).
         """
-        first = install_run(
-            path=consumer_workspace, assume_yes=True, torch_group="rag"
-        )
+        first = install_run(path=consumer_workspace, assume_yes=True, torch_group="rag")
         assert first.torch_direct_dep_action == "applied"
 
         second = install_run(

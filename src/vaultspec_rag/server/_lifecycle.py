@@ -14,6 +14,7 @@ import atexit
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -159,6 +160,14 @@ def _heartbeat_tick_sync() -> None:
     data["stale_after_s"] = _HEARTBEAT_STALENESS_SECONDS
     data["pid"] = os.getpid()
     data["parent_pid"] = os.getppid()
+    # Record the daemon's own python environment so operators and `server
+    # status` can see which interpreter and venv actually run the service. The
+    # daemon inherits the launcher's environment (see `_resolve_daemon_interpreter`)
+    # and never provisions its own python; this makes that coupling legible. Field
+    # names mirror the /health payload (`executable`/`prefix`) for one vocabulary.
+    data["executable"] = sys.executable
+    data["prefix"] = sys.prefix
+    data["python_version"] = sys.version.split()[0]
     # Record the supervised qdrant child (if any) so operators and the
     # CLI status surface can see the pair without probing the daemon.
     from .. import qdrant_runtime as _qr

@@ -45,6 +45,8 @@ __all__ = [
     "_is_pid_alive",
     "_port_is_available",
     "_port_is_listening",
+    "_probe_daemon_cuda",
+    "_resolve_daemon_interpreter",
     "_service_child_env",
     "_spawn_service",
     "_terminate_pid",
@@ -421,6 +423,70 @@ def _resolve_daemon_interpreter() -> str:
     return sys.executable
 
 
+def _probe_daemon_cuda(
+    interpreter: str, timeout: float = 60.0
+) -> tuple[bool, str] | None:
+    """Probe the resolved daemon interpreter for a working CUDA torch.
+
+    The service runs in ``interpreter`` (it inherits the launcher's env and does
+    not provision its own python), and it is GPU-only, so a pre-flight here turns
+    a background model-load crash into a fast, legible refusal. Runs the probe in
+    a subprocess so the torch-free CLI never imports torch itself.
+
+    Returns ``None`` when the interpreter has a CUDA-capable torch (the service
+    can run). Otherwise returns ``(blocking, reason)``:
+
+    - ``blocking=True`` for definitive misconfigurations - torch absent, a
+      CPU-only wheel, no visible GPU, or the interpreter missing - where spawning
+      would only produce a doomed daemon;
+    - ``blocking=False`` for ambiguous outcomes (the probe timed out or failed
+      opaquely) where the caller should warn and proceed rather than block on an
+      inconclusive signal, leaving the spawn-and-detect path as the backstop.
+    """
+    probe = (
+        "import sys\n"
+        "try:\n"
+        "    import torch\n"
+        "except Exception:\n"
+        "    sys.exit(3)\n"
+        "try:\n"
+        "    avail = bool(torch.cuda.is_available())\n"
+        "    cuda = torch.version.cuda\n"
+        "except Exception:\n"
+        "    sys.exit(6)\n"
+        "sys.exit(0 if avail else (5 if cuda else 4))\n"
+    )
+    try:
+        proc = subprocess.run(
+            [interpreter, "-c", probe],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return (True, f"the service interpreter does not exist: {interpreter}")
+    except subprocess.TimeoutExpired:
+        return (
+            False,
+            f"probing torch in the service interpreter timed out ({timeout:.0f}s)",
+        )
+    except OSError as exc:
+        return (False, f"could not probe the service interpreter ({exc})")
+    code = proc.returncode
+    if code == 0:
+        return None
+    if code == 3:
+        return (True, "torch is not installed in the service interpreter")
+    if code == 4:
+        return (True, "the service interpreter has a CPU-only torch wheel (no CUDA)")
+    if code == 5:
+        return (
+            True,
+            "torch is a CUDA build but no CUDA device is visible (driver/GPU)",
+        )
+    return (False, f"the torch pre-flight returned an unexpected exit code {code}")
+
+
 def _spawn_service(
     port: int,
     log_path: Path,
@@ -515,9 +581,7 @@ def _spawn_windows(
         )
 
     flags_detached = (
-        _WIN_CREATE_NEW_PROCESS_GROUP
-        | _WIN_CREATE_NO_WINDOW
-        | _WIN_DETACHED_PROCESS
+        _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW | _WIN_DETACHED_PROCESS
     )
     try:
         return subprocess.Popen(

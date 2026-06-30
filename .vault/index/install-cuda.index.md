@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#install-cuda'
 date: '2026-06-08'
-modified: '2026-06-08'
+modified: '2026-06-30'
 related:
   - '[[2026-04-22-install-cuda-adr]]'
   - '[[2026-04-22-install-cuda-code-review-exec]]'

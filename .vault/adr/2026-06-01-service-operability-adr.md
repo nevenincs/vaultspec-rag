@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-operability'
 date: '2026-06-01'
-modified: '2026-06-01'
+modified: '2026-06-30'
 related:
   - "[[2026-06-01-service-operability-research]]"
   - "[[2026-05-28-cli-backend-parity-adr]]"

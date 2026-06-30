@@ -160,10 +160,18 @@ def _send_call(
         try:
             return e.code, cast("dict[str, object]", json.loads(raw))
         except json.JSONDecodeError:
+            detail = raw.strip() or "(empty response body)"
             return e.code, {
                 "ok": False,
                 "error": "http_error",
-                "message": f"{e.code}: {raw}",
+                "http_code": e.code,
+                "message": (
+                    f"HTTP {e.code} from {req.full_url} with a non-JSON body: "
+                    f"{detail}. This usually means the request reached a service "
+                    "that is not the vaultspec-rag daemon (for example the Qdrant "
+                    "port). Confirm the running service with `vaultspec-rag server "
+                    "status`."
+                ),
             }
 
 

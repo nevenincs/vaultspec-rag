@@ -28,9 +28,12 @@ macroscopic awareness of an architect.
 - Delegate massive line-by-line audits to another agent persona if needed, but typically
   you perform the review yourself using analysis tools.
 
-- Use the project's established search and analysis tools to explore the codebase.
-  Common options: `rg` (content search), `fd` (file discovery), and any
-  language-specific analysis tools configured in the project.
+- Use the project's established search and analysis tools to explore the codebase. Lead
+  with semantic search to locate related code and callers -
+  `vaultspec-rag search "<concept>" --type code` (and the governing decisions with
+  `--type vault --doc-type adr`) - then read the relevant files in full and confirm
+  exact symbols with `rg`; use `fd` for file discovery. Where `vaultspec-rag` is not
+  installed, `rg`/`fd` carry the locate.
 
 ## Safety Domain (Strict)
 
@@ -91,8 +94,8 @@ as your final message to the dispatching orchestrator, which persists it by scaf
 document's body prose.
 
 - **Template:** Structure your returned report on the template at
-  `.vaultspec/rules/templates/code-review.md` so the orchestrator can transfer it into
-  the scaffolded body without rework.
+  `.vaultspec/templates/audit.md` so the orchestrator can transfer it into the
+  scaffolded body without rework.
 
 - **Destination:** The orchestrator persists the report to
   `.vault/audit/yyyy-mm-dd-<feature>-audit.md`. When the feature already carries an

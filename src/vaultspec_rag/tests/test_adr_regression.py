@@ -95,13 +95,6 @@ class TestMCPAsyncTools:
 
         assert inspect.iscoroutinefunction(reindex_codebase)
 
-    def test_get_index_status_is_async(self) -> None:
-        import inspect
-
-        from ..mcp._tools import get_index_status
-
-        assert inspect.iscoroutinefunction(get_index_status)
-
     def test_get_code_file_is_async(self) -> None:
         import inspect
 

@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
-modified: '2026-06-10'
+modified: '2026-06-30'
 related:
   - '[[2026-06-10-install-mcp-dependency-fix-S01]]'
   - '[[2026-06-10-install-mcp-dependency-fix-S02]]'

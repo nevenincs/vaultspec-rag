@@ -4,6 +4,7 @@ tags:
   - '#index'
   - '#storage-lifecycle'
 date: '2026-06-19'
+modified: '2026-06-30'
 related:
   - '[[2026-06-18-storage-lifecycle-W02-P02-S06]]'
   - '[[2026-06-18-storage-lifecycle-W02-P02-S07]]'

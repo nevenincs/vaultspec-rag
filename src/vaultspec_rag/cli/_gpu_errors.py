@@ -13,11 +13,14 @@ from ._core import logger
 if TYPE_CHECKING:
     from typing import NoReturn
 
+    from ..torch_config import TorchDiagnosis
+
 __all__ = [
     "_cpu_only_message",
     "_handle_gpu_error",
     "_no_gpu_message",
     "_no_torch_message",
+    "warn_if_active_torch_not_gpu",
 ]
 
 
@@ -70,6 +73,98 @@ def _no_gpu_message() -> str:
         "A GPU visible to the host is not automatically visible inside "
         "the container/VM."
     )
+
+
+def _running_in_uv_tool_env() -> bool:
+    """Best-effort: is the active interpreter a ``uv tool`` install?
+
+    uv tool environments live at ``<uv-data>/tools/<tool-name>/``, so the
+    running interpreter's prefix sits directly inside a ``tools`` directory.
+    Used only to tailor the remediation hint; a false negative just falls back
+    to the workspace copy.
+    """
+    import sys
+    from pathlib import Path
+
+    return Path(sys.prefix).resolve().parent.name.lower() == "tools"
+
+
+def _active_torch_diagnosis() -> TorchDiagnosis:
+    """Diagnose torch in the *running* interpreter - the installed wheel.
+
+    Distinct from the install report's ``PyTorch configuration`` line, which
+    reflects ``pyproject.toml`` text and says nothing about the wheel actually
+    present in the interpreter that will run the service.
+    """
+    from ..torch_config import TorchDiagnosis, diagnose_torch
+
+    try:
+        import torch
+    except ImportError:
+        return TorchDiagnosis.NO_TORCH
+    try:
+        return diagnose_torch(torch.version.cuda, torch.cuda.is_available())
+    except Exception as exc:
+        logger.debug("active torch diagnosis failed: %s", exc, exc_info=True)
+        return TorchDiagnosis.NO_TORCH
+
+
+def warn_if_active_torch_not_gpu() -> None:
+    """Loudly warn when the running interpreter's torch is not a CUDA build.
+
+    vaultspec-rag is GPU-only. A configured ``pyproject.toml`` does not
+    guarantee a GPU wheel in the active interpreter - a ``uv tool`` / ``pip``
+    install resolves torch from PyPI (CPU), since the cu130 source pin is
+    project-scoped and is not part of the published wheel metadata. This probes
+    the actual wheel and, when it is CPU-only, absent, or GPU-less, prints a
+    prominent topology-aware warning so a configured-but-CPU install never
+    passes silently.
+    """
+    import sys
+
+    from ..torch_config import TorchDiagnosis
+
+    diag = _active_torch_diagnosis()
+    if diag == TorchDiagnosis.WORKING:
+        return
+
+    lines = ["", "WARNING: the active interpreter's torch is not GPU-ready."]
+    if diag == TorchDiagnosis.NO_TORCH:
+        lines.append("  No torch is installed in the active interpreter.")
+    elif diag == TorchDiagnosis.CPU_ONLY:
+        lines.append(
+            "  The installed torch is a CPU-only wheel. pyproject.toml may be "
+            "configured for cu130, but the wheel actually present is CPU - "
+            "vaultspec-rag is GPU-only and the service will not start."
+        )
+    else:  # NO_GPU
+        lines.append(
+            "  torch is a CUDA build but no CUDA device is visible (driver or "
+            "hardware). Run nvidia-smi to check."
+        )
+        _cli.console.print("\n".join(lines), markup=False, highlight=False)
+        return
+
+    if _running_in_uv_tool_env():
+        lines += [
+            "",
+            "  This vaultspec-rag is a `uv tool` install. The cu130 GPU pin is "
+            "project-scoped and does not reach `uv tool` / `pip` installs "
+            "(`--torch-backend` is `uv pip`-only).",
+            "  Supported GPU path - install into a uv project instead:",
+            "    uv add vaultspec-rag && uv run vaultspec-rag install && uv sync",
+            "  Escape hatch - force the GPU wheel into this tool environment:",
+            f'    uv pip install --python "{sys.executable}" '
+            "--reinstall --torch-backend=cu130 torch",
+        ]
+    else:
+        lines += [
+            "",
+            "  Provision the cu130 GPU wheel in this environment:",
+            "    vaultspec-rag install   (patches pyproject.toml with the cu130 index)",
+            "    uv sync --reinstall-package torch",
+        ]
+    _cli.console.print("\n".join(lines), markup=False, highlight=False)
 
 
 def _handle_gpu_error(exc: Exception) -> NoReturn:

@@ -3,10 +3,11 @@ tags:
   - '#plan'
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-06-30'
 tier: L1
 related:
   - '[[2026-06-24-serviceclient-admin-errors-adr]]'
+  - '[[2026-06-24-serviceclient-admin-errors-research]]'
 ---
 
 # `serviceclient-admin-errors` plan
