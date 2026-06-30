@@ -87,12 +87,42 @@ uv run vaultspec-rag search "concurrency" --tag adr
 
 Pass `--date` as `yyyy-mm-dd`, and pass `--tag` without the leading `#`.
 
-## Collapse locale duplicates
+## Filter noise by domain
 
-When a code search returns near-identical results that differ only by locale, add `--dedup-locales` to keep one representative per group:
+Every code chunk is classified into a *domain* from its path: `prod`, `tests`,
+`docs`, `locale`, `generated`, `vendored`, or `worktree`. By default the search
+keeps production first - it hides the duplicate and derivative trees
+(`generated`, agent `worktree` clones; clones are also skipped at index time)
+and demotes `tests`, `docs`, `locale`, and `vendored` so they sit below
+production rather than crowding it. Locale duplicates are collapsed by default.
+
+Steer a single search with inline query tokens (no extra flags, so they pass
+through the running service unchanged):
 
 ```
-uv run vaultspec-rag search "greeting" --type code --dedup-locales
+# Drop the tests domain entirely for this search
+uv run vaultspec-rag search "retry backoff exclude:tests" --type code
+
+# Restrict to one domain (comma-separate or repeat for several)
+uv run vaultspec-rag search "fixture setup only:tests" --type code
+
+# Re-admit a domain the profile hides or demotes by default
+uv run vaultspec-rag search "translation table include:locale" --type code
+```
+
+The `search_codebase` MCP tool exposes the same control as typed
+`exclude_domains` / `only_domains` / `include_domains` parameters. Set the
+per-project defaults with the `code_noise_hide_domains`,
+`code_noise_demote_domains`, and `code_noise_demote_penalty` configuration knobs
+(see the configuration guide).
+
+## Collapse locale duplicates
+
+Locale-variant collapse is on by default. Turn it off for a search with
+`--no-dedup-locales`, or force it on with `--dedup-locales`:
+
+```
+uv run vaultspec-rag search "greeting" --type code --no-dedup-locales
 ```
 
 ## Prefer production, tests, or documentation
@@ -117,8 +147,11 @@ uv run vaultspec-rag search "encode batch" --type code --prefer production
 | `--function-name`                           | code       | Keeps results in a function of this name                            |
 | `--class-name`                              | code       | Keeps results in a class of this name                               |
 | `--path`                                    | code       | Keeps results from one exact project-relative path                  |
-| `--dedup-locales`                           | code       | Collapses locale-duplicate results to one each                      |
+| `--dedup-locales` / `--no-dedup-locales`    | code       | Forces locale-duplicate collapse on or off (on by default)          |
 | `--prefer production\|tests\|documentation` | code       | Biases results toward one kind of file                              |
+| `exclude:<domains>` (query token)           | code       | Hides one or more noise domains for this search                     |
+| `only:<domains>` (query token)              | code       | Restricts results to the named domains                              |
+| `include:<domains>` (query token)           | code       | Re-admits a domain the profile hides or demotes by default          |
 | `--doc-type`                                | vault      | Keeps documents of one type                                         |
 | `--feature`                                 | vault      | Keeps documents tagged with one feature                             |
 | `--date`                                    | vault      | Keeps documents from one `yyyy-mm-dd` date                          |

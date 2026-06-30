@@ -148,6 +148,7 @@ class CodeChunkPayload(TypedDict):
     locator_value_str: str | None
     locator_end_int: int | None
     locator_end_str: str | None
+    domain: str
 
 
 # Canonical payload index sets, per collection and qdrant schema type. store.py's
@@ -171,6 +172,7 @@ CODE_KEYWORD_INDEXES: tuple[str, ...] = (
     "preprocessor_id",
     "locator_kind",
     "locator_value_str",
+    "domain",
 )
 CODE_INTEGER_INDEXES: tuple[str, ...] = ("line_start", "locator_value_int")
 

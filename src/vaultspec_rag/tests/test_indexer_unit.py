@@ -1091,6 +1091,25 @@ class TestCodebaseInternalDirectoryExclusions:
 
         assert rel_paths == {"src/app.py"}
 
+    def test_scan_codebase_excludes_claude_worktree_clones(self, tmp_path: Path):
+        """Agent worktree clones under .claude/worktrees/ are never indexed."""
+        from ..indexer import CodebaseIndexer
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("REAL = True\n", encoding="utf-8")
+        clone = tmp_path / ".claude" / "worktrees" / "agent-x" / "src"
+        clone.mkdir(parents=True)
+        (clone / "app.py").write_text("REAL = True\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+
+        paths = indexer._scan_codebase()
+        rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
+
+        assert rel_paths == {"src/app.py"}
+
 
 class TestR10MinorBufferFunctionName:
     """R10-m5: Buffer flush preserves function_name from parent."""

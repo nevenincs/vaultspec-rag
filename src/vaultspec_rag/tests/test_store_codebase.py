@@ -81,6 +81,40 @@ class TestStoreCodebase:
         }
         assert keys == {"language", "path"}
 
+    def test_build_code_filter_exclude_domains_must_not(self) -> None:
+        """exclude_domains becomes a must_not MatchAny on the domain field."""
+        from qdrant_client import models
+
+        result = VaultStore._build_code_filter(
+            None, exclude_domains=["tests", "worktree"]
+        )
+        assert result is not None
+        assert result.must is None
+        assert isinstance(result.must_not, list)
+        assert len(result.must_not) == 1
+        cond = result.must_not[0]
+        assert isinstance(cond, models.FieldCondition)
+        assert cond.key == "domain"
+        assert isinstance(cond.match, models.MatchAny)
+        assert set(cond.match.any) == {"tests", "worktree"}
+
+    def test_build_code_filter_only_domains_must(self) -> None:
+        """only_domains becomes a must MatchAny on the domain field."""
+        from qdrant_client import models
+
+        result = VaultStore._build_code_filter(None, only_domains=["prod"])
+        assert result is not None
+        assert isinstance(result.must, list)
+        cond = result.must[0]
+        assert isinstance(cond, models.FieldCondition)
+        assert cond.key == "domain"
+        assert isinstance(cond.match, models.MatchAny)
+        assert list(cond.match.any) == ["prod"]
+
+    def test_build_code_filter_none_without_any_filter(self) -> None:
+        """No filters and no domain constraints yields None."""
+        assert VaultStore._build_code_filter(None) is None
+
     def test_delete_code_chunks(
         self,
         tmp_vault_store: VaultStore,

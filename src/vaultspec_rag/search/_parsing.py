@@ -14,9 +14,12 @@ from ._models import ParsedQuery
 
 # Filter token patterns: type:adr, feature:rag, date:2026-02,
 # tag:#research, lang:python, path:src/,
-# func:encode, class:Foo, nodetype:function_definition, intent:orientation
+# func:encode, class:Foo, nodetype:function_definition, intent:orientation,
+# and the code-search noise-domain tokens exclude:tests / only:prod /
+# include:docs (each value may be a comma-separated set).
 _FILTER_PATTERN = re.compile(
-    r"\b(type|feature|date|tag|lang|path|func|class|nodetype|intent|status):(\S+)",
+    r"\b(type|feature|date|tag|lang|path|func|class|nodetype|intent|status"
+    r"|exclude|only|include):(\S+)",
 )
 
 _FILTER_KEY_MAP = {
@@ -30,7 +33,13 @@ _FILTER_KEY_MAP = {
     "nodetype": "node_type",
     "intent": "intent",
     "status": "status",
+    "exclude": "exclude_domain",
+    "only": "only_domain",
+    "include": "include_domain",
 }
+
+# Filter keys whose value is a comma-separated set; repeats accumulate.
+_MULTI_VALUE_KEYS = frozenset({"exclude_domain", "only_domain", "include_domain"})
 
 
 def parse_query(raw_query: str) -> ParsedQuery:
@@ -56,7 +65,12 @@ def parse_query(raw_query: str) -> ParsedQuery:
         if key == "tag":
             filters["tag"] = value.lstrip("#")
         elif key in _FILTER_KEY_MAP:
-            filters[_FILTER_KEY_MAP[key]] = value
+            mapped = _FILTER_KEY_MAP[key]
+            if mapped in _MULTI_VALUE_KEYS and mapped in filters:
+                # Repeated token (e.g. exclude:tests exclude:docs) accumulates.
+                filters[mapped] = f"{filters[mapped]},{value}"
+            else:
+                filters[mapped] = value
 
     text = _FILTER_PATTERN.sub("", raw_query).strip()
     text = re.sub(r"\s+", " ", text)

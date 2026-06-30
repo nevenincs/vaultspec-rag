@@ -613,6 +613,8 @@ async def search_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _bad_request_invalid_root(exc)
 
+    notes: dict[str, object] = {}
+
     def _run():
         import vaultspec_rag
 
@@ -643,10 +645,14 @@ async def search_route(request: Request) -> JSONResponse:
                     class_name=payload.get("class_name"),
                     include_paths=payload.get("include_paths"),
                     exclude_paths=payload.get("exclude_paths"),
-                    dedup_locales=payload.get("dedup_locales", False),
+                    dedup_locales=payload.get("dedup_locales"),
                     prefer=payload.get("prefer"),
+                    exclude_domains=payload.get("exclude_domains"),
+                    only_domains=payload.get("only_domains"),
+                    include_domains=payload.get("include_domains"),
                     like_ids=payload.get("like_ids"),
                     unlike_ids=payload.get("unlike_ids"),
+                    notes=notes,
                 )
             search_seconds = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
@@ -666,6 +672,9 @@ async def search_route(request: Request) -> JSONResponse:
                 "request_id": request_id,
                 "results": items,
                 "summary": f"Found {len(results)} relevant items.",
+                # Per-domain counts of noise candidates dropped by the policy,
+                # so the caller sees what the filter removed (never silent).
+                "filtered": notes.get("dropped_domains"),
                 "timing": {
                     "status_seconds": status_seconds,
                     "search_seconds": search_seconds,
@@ -710,6 +719,8 @@ async def search_route(request: Request) -> JSONResponse:
                 port=request.url.port,
             )
         _m._ensure_watcher_soon(root)
+        hits = result.get("results")
+        hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
         log_event(
             logger,
             "service.search",
@@ -717,9 +728,7 @@ async def search_route(request: Request) -> JSONResponse:
             request_id=request_id,
             search_type=search_type,
             root=root,
-            results=len(result["results"])
-            if isinstance(result.get("results"), list)
-            else 0,
+            results=hit_count,
             total_seconds=f"{total_seconds:.3f}",
         )
     return JSONResponse(result)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from .._domain import DOMAINS
+
 # The vault doc types that carry semantic content and are searchable. ``index``
 # is excluded: feature-index documents are auto-generated navigational
 # document-lists with no semantic value. A doc-type filter may name one of these
@@ -11,6 +13,10 @@ from typing import Literal
 INDEXABLE_DOC_TYPES: frozenset[str] = frozenset(
     {"adr", "audit", "exec", "plan", "reference", "research"}
 )
+
+# The code-result noise domains a caller may name in --exclude-domain /
+# --only-domain / --include-domain. Mirrors ``_domain.DOMAINS``.
+SELECTABLE_DOMAINS: frozenset[str] = frozenset(DOMAINS)
 
 
 class InvalidPreferValueError(ValueError):
@@ -43,6 +49,17 @@ class InvalidDocTypeError(InvalidFilterForSearchTypeError):
         super().__init__(message, filter_kind="doc_type", offending_filters=offending)
 
 
+class InvalidDomainValueError(InvalidFilterForSearchTypeError):
+    """Raised when a domain filter names a label outside ``SELECTABLE_DOMAINS``.
+
+    Subclasses ``InvalidFilterForSearchTypeError`` so existing exit-2 handlers
+    render it without new wiring (mirrors ``InvalidDocTypeError``).
+    """
+
+    def __init__(self, message: str, offending: list[str]) -> None:
+        super().__init__(message, filter_kind="domain", offending_filters=offending)
+
+
 def _format_flags(names: list[str]) -> list[str]:
     flags: list[str] = []
     for name in names:
@@ -62,6 +79,26 @@ def _validate_prefer(prefer: str | None) -> None:
             ),
             prefer_value=prefer,
         )
+
+
+def _validate_domains(
+    *,
+    exclude_domains: list[str] | None,
+    only_domains: list[str] | None,
+    include_domains: list[str] | None,
+) -> None:
+    requested: list[str] = []
+    for group in (exclude_domains, only_domains, include_domains):
+        if group:
+            requested.extend(d.strip().lower() for d in group if d.strip())
+    invalid = sorted({d for d in requested if d not in SELECTABLE_DOMAINS})
+    if not invalid:
+        return
+    allowed = ", ".join(sorted(SELECTABLE_DOMAINS))
+    raise InvalidDomainValueError(
+        f"domain filters must name one of: {allowed}; got {', '.join(invalid)}.",
+        offending=invalid,
+    )
 
 
 def _validate_doc_type(doc_type: str | None) -> None:
@@ -95,8 +132,11 @@ def _supplied_filters(
     tag: str | None,
     include_paths: list[str] | None,
     exclude_paths: list[str] | None,
-    dedup_locales: bool,
+    dedup_locales: bool | None,
     prefer: str | None,
+    exclude_domains: list[str] | None,
+    only_domains: list[str] | None,
+    include_domains: list[str] | None,
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     """Return the (code, vault, glob, postproc) filter names actually supplied."""
     code_supplied = [
@@ -125,13 +165,16 @@ def _supplied_filters(
         for flag, supplied in (
             ("include_path", bool(include_paths)),
             ("exclude_path", bool(exclude_paths)),
+            ("exclude_domain", bool(exclude_domains)),
+            ("only_domain", bool(only_domains)),
+            ("include_domain", bool(include_domains)),
         )
         if supplied
     ]
     postproc_supplied = [
         flag
         for flag, supplied in (
-            ("dedup_locales", dedup_locales),
+            ("dedup_locales", dedup_locales is not None),
             ("prefer", prefer is not None),
         )
         if supplied
@@ -181,18 +224,26 @@ def validate_search_filters(
     tag: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
-    dedup_locales: bool = False,
+    dedup_locales: bool | None = None,
     prefer: str | None = None,
+    exclude_domains: list[str] | None = None,
+    only_domains: list[str] | None = None,
+    include_domains: list[str] | None = None,
 ) -> None:
     """Validate that the search filters match the requested search_type.
 
     Raises:
         InvalidPreferValueError: If the prefer option is invalid.
         InvalidFilterForSearchTypeError: If a filter is supplied that is
-            incompatible with the search_type.
+            incompatible with the search_type (including an unknown domain).
     """
     _validate_prefer(prefer)
     _validate_doc_type(doc_type)
+    _validate_domains(
+        exclude_domains=exclude_domains,
+        only_domains=only_domains,
+        include_domains=include_domains,
+    )
 
     code_supplied, vault_supplied, glob_supplied, postproc_supplied = _supplied_filters(
         language=language,
@@ -208,6 +259,9 @@ def validate_search_filters(
         exclude_paths=exclude_paths,
         dedup_locales=dedup_locales,
         prefer=prefer,
+        exclude_domains=exclude_domains,
+        only_domains=only_domains,
+        include_domains=include_domains,
     )
 
     if search_type != "code":

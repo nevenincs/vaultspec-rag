@@ -174,6 +174,9 @@ class CodebaseIndexer:
             ".vaultspec/",
             "node_modules/",
             "__pycache__/",
+            # Agent worktree clones duplicate the real source verbatim;
+            # indexing them floods results with identical-score duplicates.
+            ".claude/worktrees/",
             f"{cfg.data_dir}/",
         ]
         for gitignore in self.root_dir.rglob(".gitignore"):

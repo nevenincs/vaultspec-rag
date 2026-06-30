@@ -280,7 +280,7 @@ def _try_in_process_search(
     class_name: str | None,
     include_paths: list[str] | None,
     exclude_paths: list[str] | None,
-    dedup_locales: bool,
+    dedup_locales: bool | None,
     prefer: str | None,
     doc_type: str | None,
     feature: str | None,
@@ -355,7 +355,7 @@ def _validate_and_handle_filters(
     tag: str | None,
     include_paths: list[str] | None,
     exclude_paths: list[str] | None,
-    dedup_locales: bool,
+    dedup_locales: bool | None,
     prefer: str | None,
     json_mode: bool,
 ) -> None:
@@ -739,12 +739,15 @@ def handle_search(
         ),
     ] = None,
     dedup_locales: Annotated[
-        bool,
+        bool | None,
         typer.Option(
-            "--dedup-locales",
-            help=("Collapse matching locale files into one representative result."),
+            "--dedup-locales/--no-dedup-locales",
+            help=(
+                "Collapse matching locale files into one representative result. "
+                "Defaults to the configured value (on) when not specified."
+            ),
         ),
-    ] = False,
+    ] = None,
     prefer: Annotated[
         str | None,
         typer.Option(

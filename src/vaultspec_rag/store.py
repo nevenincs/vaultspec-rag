@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from . import store_schema
+from ._domain import classify_domain
 
 if TYPE_CHECKING:
     import pathlib
@@ -432,6 +433,9 @@ def _code_chunk_payload(chunk: CodeChunk) -> store_schema.CodeChunkPayload:
         "locator_value_str": chunk.locator_value_str,
         "locator_end_int": chunk.locator_end_int,
         "locator_end_str": chunk.locator_end_str,
+        # Path-derived noise domain, computed once here so the stored label and
+        # the query-time fallback share one source of truth (`_domain.py`).
+        "domain": classify_domain(chunk.path),
     }
 
 
@@ -780,41 +784,51 @@ class VaultStore:
                     )
             self._vault_ensured = True
 
-    def ensure_code_table(self) -> None:
-        """Create the codebase_docs collection if it doesn't exist."""
+    def _ensure_code_indexes(self) -> None:
+        """Create every declared code payload index (idempotent).
+
+        ``node_type`` is in the KEYWORD set so the MCP
+        ``search_codebase(node_type=...)`` filter does not fall back to a linear
+        scan on remote Qdrant deployments, ``domain`` backs the noise
+        exclude/only pushdown, and the document-preprocessing hook locators
+        (#185) keep a typed index per value kind. The field sets are declared
+        once in ``store_schema``. ``create_payload_index`` is a no-op when the
+        index already exists, so this is safe to call on a pre-existing
+        collection to backfill a newly added index (e.g. ``domain``).
+        """
         from qdrant_client import models
 
+        for fname in store_schema.CODE_KEYWORD_INDEXES:
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.CODE_TABLE_NAME,
+                    field_name=fname,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+        for fname in store_schema.CODE_INTEGER_INDEXES:
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.CODE_TABLE_NAME,
+                    field_name=fname,
+                    field_schema=models.PayloadSchemaType.INTEGER,
+                )
+
+    def ensure_code_table(self) -> None:
+        """Create the codebase_docs collection if it doesn't exist.
+
+        On an existing collection the declared indexes are still ensured so a
+        newly added KEYWORD index (e.g. ``domain``) is backfilled on the next
+        open rather than requiring a full drop-and-reindex.
+        """
         self._record_manifest()
         with self._lifecycle_lock:
             if self._code_ensured:
                 return
 
-            if self.client.collection_exists(self.CODE_TABLE_NAME):
-                self._code_ensured = True
-                return
+            if not self.client.collection_exists(self.CODE_TABLE_NAME):
+                self._ensure_collection(self.CODE_TABLE_NAME)
 
-            self._ensure_collection(self.CODE_TABLE_NAME)
-
-            # ``node_type`` is in the KEYWORD set so the MCP
-            # `search_codebase(node_type=...)` filter does not fall back to a
-            # linear scan on remote Qdrant deployments, and the
-            # document-preprocessing hook locators (#185) keep a typed index
-            # per value kind. The field sets are declared once in
-            # ``store_schema``.
-            for fname in store_schema.CODE_KEYWORD_INDEXES:
-                with _suppress_local_qdrant_warnings():
-                    self.client.create_payload_index(
-                        collection_name=self.CODE_TABLE_NAME,
-                        field_name=fname,
-                        field_schema=models.PayloadSchemaType.KEYWORD,
-                    )
-            for fname in store_schema.CODE_INTEGER_INDEXES:
-                with _suppress_local_qdrant_warnings():
-                    self.client.create_payload_index(
-                        collection_name=self.CODE_TABLE_NAME,
-                        field_name=fname,
-                        field_schema=models.PayloadSchemaType.INTEGER,
-                    )
+            self._ensure_code_indexes()
             self._code_ensured = True
 
     def upsert_documents(self, docs: list[VaultDocument]) -> None:
@@ -1361,6 +1375,8 @@ class VaultStore:
         sparse_vector: SparseResult | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Execute hybrid dense + sparse search with RRF on codebase_docs.
 
@@ -1385,7 +1401,9 @@ class VaultStore:
             UnexpectedResponse: Logged and caught internally;
                 triggers dense-only fallback.
         """
-        query_filter = self._build_code_filter(filters)
+        query_filter = self._build_code_filter(
+            filters, exclude_domains=exclude_domains, only_domains=only_domains
+        )
         dense_vec: list[float] = query_vector
         dense_query: Any = self._build_dense_query(dense_vec, like_ids, unlike_ids)
         prefetch: list[Any] = self._build_prefetch(
@@ -1653,24 +1671,29 @@ class VaultStore:
     @staticmethod
     def _build_code_filter(
         filters: dict[str, str] | None,
+        *,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
     ) -> Filter | None:
         """Convert codebase filters into a Qdrant ``Filter``.
 
         Args:
             filters: Mapping of codebase filter keys (``language``,
                 ``path``, ``node_type``, ``function_name``,
-                ``class_name``) to values.
+                ``class_name``) to exact-match values.
+            exclude_domains: Noise domains to drop via a ``must_not``
+                ``MatchAny`` on the ``domain`` payload field (pushdown).
+            only_domains: When set, keep only chunks whose ``domain`` is
+                in this set via a ``must`` ``MatchAny`` (pushdown).
 
         Returns:
             A ``qdrant_client.models.Filter`` instance, or ``None``
             if no valid conditions were produced.
         """
-        if not filters:
-            return None
         from qdrant_client import models
 
         conditions: list[Condition] = []
-        for key, value in filters.items():
+        for key, value in (filters or {}).items():
             if key in (
                 "language",
                 "path",
@@ -1686,9 +1709,24 @@ class VaultStore:
                 )
             else:
                 logger.warning("Unknown filter key: %s", key)
-        if not conditions:
+        if only_domains:
+            conditions.append(
+                models.FieldCondition(
+                    key="domain",
+                    match=models.MatchAny(any=list(only_domains)),
+                ),
+            )
+        must_not: list[Condition] = []
+        if exclude_domains:
+            must_not.append(
+                models.FieldCondition(
+                    key="domain",
+                    match=models.MatchAny(any=list(exclude_domains)),
+                ),
+            )
+        if not conditions and not must_not:
             return None
-        return models.Filter(must=conditions)
+        return models.Filter(must=conditions or None, must_not=must_not or None)
 
     @staticmethod
     def _stable_id(string_id: str) -> int:

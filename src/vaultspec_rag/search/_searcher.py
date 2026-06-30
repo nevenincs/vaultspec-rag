@@ -17,6 +17,11 @@ from typing import TYPE_CHECKING, cast
 
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
 from ._models import ParsedQuery, SearchResult
+from ._noise import (
+    apply_domain_demotion,
+    partition_hard_domains,
+    resolve_noise_policy,
+)
 from ._parsing import parse_query
 from ._postprocess import (
     GLOB_FETCH_MULTIPLIER,
@@ -38,6 +43,7 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel, SparseResult
     from ..store import VaultStore
+    from ._noise import NoisePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +96,23 @@ def _join_doc_path(docs_prefix: str, stored_path: str) -> str:
     if normalised == prefix or normalised.startswith(prefix + "/"):
         return normalised
     return f"{prefix}/{normalised}"
+
+
+def _merge_domain_tokens(
+    parsed: ParsedQuery, key: str, explicit: list[str] | None
+) -> list[str] | None:
+    """Union explicit domain kwargs with comma-split inline query tokens.
+
+    The inline ``exclude:``/``only:``/``include:`` tokens are stored on
+    ``parsed.filters`` as comma-joined strings; an explicit kwarg (from the api
+    or MCP surface) adds to them. Returns ``None`` when neither is present so
+    the policy resolver leaves that axis untouched.
+    """
+    merged = list(explicit or [])
+    token = parsed.filters.get(key)
+    if token:
+        merged.extend(part for part in token.split(",") if part)
+    return merged or None
 
 
 def _group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
@@ -660,6 +683,71 @@ class VaultSearcher:
                 r.score -= PREFER_SCORE_NUDGE
         results.sort(key=lambda r: r.score, reverse=True)
 
+    def _fetch_codebase_candidates(
+        self,
+        *,
+        query_vector: list[float],
+        sparse_vector: SparseResult | None,
+        query_text: str,
+        store_filters: dict[str, str],
+        top_k: int,
+        include_norm: list[str],
+        exclude_norm: list[str],
+        policy: NoisePolicy,
+        like_ids: list[str | int] | None,
+        unlike_ids: list[str | int] | None,
+        timings: dict[str, float] | None,
+    ) -> tuple[list[dict[str, object]], dict[str, int]]:
+        """Fetch and hard-filter raw candidates, backfilling to fill ``top_k``.
+
+        Domain hide/only constraints push down to Qdrant; the glob filter and
+        the domain fallback (for chunks lacking a stored ``domain``) run
+        post-query. Because post-query pruning can drop the page below
+        ``top_k``, the fetch widens its window and re-queries until it can
+        satisfy ``top_k``, the index is exhausted, or a hard cap is reached -
+        never returning a silently depleted page when more candidates exist.
+        Returns the surviving raw results and a per-domain drop count.
+        """
+        has_glob = bool(include_norm or exclude_norm)
+        if has_glob or policy.has_hard_filter:
+            base = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
+        else:
+            base = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        cap = max(base * 4, 500)
+        pushdown_exclude = sorted(policy.hide) or None
+        pushdown_only = sorted(policy.only) or None
+
+        started = time.perf_counter()
+        limit = base
+        kept: list[dict[str, object]] = []
+        dropped: dict[str, int] = {}
+        while True:
+            raw = cast(
+                "list[dict[str, object]]",
+                self.store.hybrid_search_codebase(
+                    query_vector=query_vector,
+                    _query_text=query_text,
+                    filters=store_filters or None,
+                    limit=limit,
+                    sparse_vector=sparse_vector,
+                    like_ids=like_ids,
+                    unlike_ids=unlike_ids,
+                    exclude_domains=pushdown_exclude,
+                    only_domains=pushdown_only,
+                ),
+            )
+            globbed = self._filter_raw_codebase_results(raw, include_norm, exclude_norm)
+            kept, dropped = partition_hard_domains(globbed, policy)
+            # Stop when the page is fillable, the index is exhausted for this
+            # query (fewer raw rows than asked), or we hit the cap.
+            if len(kept) >= top_k or len(raw) < limit or limit >= cap:
+                break
+            limit = min(limit * 2, cap)
+        _record_seconds(timings, "qdrant_seconds", started)
+        if dropped:
+            logger.info("code search dropped noise-domain candidates: %s", dropped)
+        return kept, dropped
+
     def _search_codebase_encoded(
         self,
         query_vector: list[float],
@@ -675,16 +763,22 @@ class VaultSearcher:
         class_name: str | None = None,
         include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
-        dedup_locales: bool = False,
+        dedup_locales: bool | None = None,
         prefer: str | None = None,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
+        include_domains: list[str] | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        notes: dict[str, object] | None = None,
         timings: dict[str, float] | None = None,
     ) -> list[SearchResult]:
         """Search codebase using pre-encoded dense and sparse vectors.
 
-        Runs hybrid search against the codebase collection, then
-        applies CrossEncoder reranking if enabled.
+        Runs hybrid search against the codebase collection with the noise
+        policy applied (hide/only as Qdrant pushdown plus a post-query
+        fallback, demote as a post-rerank score penalty), then CrossEncoder
+        reranking and the opt-in prefer/dedup passes.
 
         Args:
             query_vector: Dense embedding of the query (1024-d).
@@ -698,105 +792,113 @@ class VaultSearcher:
             class_name: Optional class/struct name filter.
             include_paths: Optional fnmatch glob list; a result is
                 kept only when at least one pattern matches its
-                project-relative path. Patterns are normalised so
-                Windows-style backslashes work transparently.
-            exclude_paths: Optional fnmatch glob list; a result is
-                dropped when any pattern matches its
                 project-relative path.
-            dedup_locales: When True, collapse near-duplicate
-                locale-variant paths after rerank - the highest
-                scoring entry wins, the others drop.
-            prefer: When set to ``"prod"`` / ``"tests"`` /
-                ``"docs"``, apply ``±PREFER_SCORE_NUDGE`` to
-                results based on path-derived category after
-                rerank, then re-sort. Opt-in; default is no
-                preference.
-            like_ids: Optional list of chunk IDs or point IDs to guide
-                search (positive feedback).
-            unlike_ids: Optional list of chunk IDs or point IDs to push
-                search away (negative feedback).
+            exclude_paths: Optional fnmatch glob list; a result is
+                dropped when any pattern matches its path.
+            dedup_locales: Tri-state. ``None`` resolves to the
+                ``dedup_locales_default`` config knob; ``True`` / ``False``
+                force the locale-collapse pass on or off.
+            prefer: ``"prod"`` / ``"tests"`` / ``"docs"`` score nudge.
+            exclude_domains: Noise domains to hard-drop for this call (adds
+                to the profile hide set).
+            only_domains: When set, keep only results in these domains.
+            include_domains: Domains to re-admit, overriding the profile's
+                hide/demote of them for this call.
+            like_ids: Chunk/point IDs to steer search toward.
+            unlike_ids: Chunk/point IDs to steer search away from.
+            notes: Optional mutable mapping the search annotates with
+                ``dropped_domains`` (per-domain drop counts) so a caller can
+                surface what the noise filter removed.
 
         Returns:
             Ranked list of codebase SearchResult instances.
         """
+        from ..config import get_config
+
+        cfg = get_config()
+        # Domain filters arrive either as explicit kwargs (api / MCP) or as
+        # inline query tokens (exclude:/only:/include:, the CLI + HTTP path that
+        # avoids the command's max-args ratchet); merge both before resolving.
+        policy = resolve_noise_policy(
+            cfg,
+            exclude_domains=_merge_domain_tokens(
+                parsed, "exclude_domain", exclude_domains
+            ),
+            only_domains=_merge_domain_tokens(parsed, "only_domain", only_domains),
+            include_domains=_merge_domain_tokens(
+                parsed, "include_domain", include_domains
+            ),
+        )
+        effective_dedup = (
+            bool(cfg.dedup_locales_default) if dedup_locales is None else dedup_locales
+        )
+
         store_filters = self._build_codebase_store_filters(
             parsed, language, path, node_type, function_name, class_name
         )
-
-        # Normalise caller patterns once. The codebase indexer stores
-        # POSIX paths on every platform (indexer.py:1600 replaces
-        # backslashes), so glob matching is consistent if patterns
-        # carry the same convention.
+        # Normalise caller patterns once. The codebase indexer stores POSIX
+        # paths on every platform, so glob matching is consistent when caller
+        # patterns carry the same convention.
         include_norm = (
             [p.replace("\\", "/") for p in include_paths] if include_paths else []
         )
         exclude_norm = (
             [p.replace("\\", "/") for p in exclude_paths] if exclude_paths else []
         )
-        has_glob_filter = bool(include_norm or exclude_norm)
 
-        if has_glob_filter:
-            fetch_limit = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
-        else:
-            fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
-        phase_started = time.perf_counter()
-        raw_results: list[dict[str, object]] = cast(
-            "list[dict[str, object]]",
-            self.store.hybrid_search_codebase(
-                query_vector=query_vector,
-                _query_text=query_text,
-                filters=store_filters or None,
-                limit=fetch_limit,
-                sparse_vector=sparse_vector,
-                like_ids=like_ids,
-                unlike_ids=unlike_ids,
-            ),
+        raw_results, dropped = self._fetch_codebase_candidates(
+            query_vector=query_vector,
+            sparse_vector=sparse_vector,
+            query_text=query_text,
+            store_filters=store_filters,
+            top_k=top_k,
+            include_norm=include_norm,
+            exclude_norm=exclude_norm,
+            policy=policy,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+            timings=timings,
         )
-        _record_seconds(timings, "qdrant_seconds", phase_started)
-
-        # Post-query glob filter. Runs before SearchResult / rerank
-        # so the CrossEncoder cost is proportional to the survivors,
-        # not the over-fetched raw set.
-        phase_started = time.perf_counter()
-        raw_results = self._filter_raw_codebase_results(
-            raw_results, include_norm, exclude_norm
-        )
-        _record_seconds(timings, "glob_filter_seconds", phase_started)
+        if notes is not None and dropped:
+            notes["dropped_domains"] = dropped
 
         phase_started = time.perf_counter()
         results = self._map_codebase_results(raw_results)
         _record_seconds(timings, "result_mapping_seconds", phase_started)
 
+        # Rerank the FULL surviving window (not a top_k slice) so the
+        # post-rerank demote pass can lift a production result above noise
+        # that initially out-scored it; truncation happens at return.
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, top_k, timings=timings)
+        results = self._rerank(query_text, results, len(results), timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
 
-        # --prefer post-rerank score nudge. Apply ±PREFER_SCORE_NUDGE
-        # based on path-derived category, then re-sort. The
-        # CrossEncoder's query-relevance scoring runs first; user
-        # preference re-orders ties and near-ties only.
+        # Noise demote: subtract the penalty from demoted-domain results and
+        # re-sort. Runs after rerank so query-relevance is scored first.
+        phase_started = time.perf_counter()
+        apply_domain_demotion(results, policy)
+        _record_seconds(timings, "demote_seconds", phase_started)
+
+        # --prefer post-rerank score nudge (opt-in, layered over demote).
         phase_started = time.perf_counter()
         self._apply_prefer_nudge(results, prefer)
         _record_seconds(timings, "prefer_seconds", phase_started)
 
-        # --dedup-locales collapse pass. Group results by locale
-        # stem; within each group, near-tie scores (within
-        # _LOCALE_DEDUP_SCORE_WINDOW) collapse to the highest-scoring
-        # entry. Non-locale paths and singletons pass through.
+        # Locale-variant collapse (default on via config; tri-state override).
         phase_started = time.perf_counter()
-        if dedup_locales:
+        if effective_dedup:
             results = _collapse_locale_variants(results)
         _record_seconds(timings, "dedup_seconds", phase_started)
         if timings is not None:
             timings["postprocess_seconds"] = (
-                timings.get("glob_filter_seconds", 0.0)
-                + timings.get("result_mapping_seconds", 0.0)
+                timings.get("result_mapping_seconds", 0.0)
                 + timings.get("rerank_seconds", 0.0)
+                + timings.get("demote_seconds", 0.0)
                 + timings.get("prefer_seconds", 0.0)
                 + timings.get("dedup_seconds", 0.0)
             )
 
-        return results
+        return results[:top_k]
 
     def _encode_query(
         self,
@@ -944,10 +1046,14 @@ class VaultSearcher:
         class_name: str | None = None,
         include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
-        dedup_locales: bool = False,
+        dedup_locales: bool | None = None,
         prefer: str | None = None,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
+        include_domains: list[str] | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        notes: dict[str, object] | None = None,
     ) -> list[SearchResult]:
         """Search only the source codebase.
 
@@ -966,14 +1072,17 @@ class VaultSearcher:
             exclude_paths: Optional fnmatch glob patterns; results
                 whose project-relative path matches any pattern
                 are dropped (post-query Python filter).
-            dedup_locales: When True, collapse near-tie locale
-                variants (e.g. ``locales/{en,es}.yml``) into a
-                single canonical result. Opt-in.
+            dedup_locales: Tri-state locale-collapse override; ``None``
+                resolves to the ``dedup_locales_default`` config knob.
             prefer: Optional ``"prod" | "tests" | "docs"`` -
                 applies a small +/- score nudge to the matching
                 category after rerank. Opt-in.
+            exclude_domains: Noise domains to hard-drop for this call.
+            only_domains: Restrict results to these domains.
+            include_domains: Re-admit domains the profile hides/demotes.
             like_ids: Optional list of chunk IDs or point IDs to guide search.
             unlike_ids: Optional list of chunk IDs or point IDs to push search away.
+            notes: Optional mutable mapping annotated with ``dropped_domains``.
 
         Returns:
             Ranked list of codebase SearchResult instances.
@@ -990,8 +1099,12 @@ class VaultSearcher:
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            exclude_domains=exclude_domains,
+            only_domains=only_domains,
+            include_domains=include_domains,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            notes=notes,
         )
         return results
 
@@ -1007,10 +1120,14 @@ class VaultSearcher:
         class_name: str | None = None,
         include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
-        dedup_locales: bool = False,
+        dedup_locales: bool | None = None,
         prefer: str | None = None,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
+        include_domains: list[str] | None = None,
         like_ids: list[str | int] | None = None,
         unlike_ids: list[str | int] | None = None,
+        notes: dict[str, object] | None = None,
     ) -> tuple[list[SearchResult], dict[str, float]]:
         """Search codebase and return phase timings for service diagnostics."""
         timings: dict[str, float] = {}
@@ -1036,8 +1153,12 @@ class VaultSearcher:
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            exclude_domains=exclude_domains,
+            only_domains=only_domains,
+            include_domains=include_domains,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            notes=notes,
             timings=timings,
         )
         return results, timings
