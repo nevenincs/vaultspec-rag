@@ -68,13 +68,21 @@ def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
     Sets ``VAULTSPEC_RAG_STATUS_DIR`` to a fresh empty directory and clears
     ``VAULTSPEC_RAG_LOCAL_ONLY`` so neither the env nor the persisted marker
     grants a local mandate, then resets the cached config on enter and exit.
+    Also isolates ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR``: service discovery now
+    resolves the machine-global pointer (status-directory independent) before
+    the status-dir hint, so without this a real service running on the host
+    would be discovered and the "no service" cases would not hold.
     """
     prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
     prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
+    prev_storage = os.environ.get(EnvVar.QDRANT_STORAGE_DIR.value)
     status_dir = tmp_path / "vaultspec-rag"
     status_dir.mkdir()
     os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
     os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
+    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(
+        tmp_path / "qdrant-server" / "storage"
+    )
     reset_config()
     try:
         yield status_dir
@@ -82,6 +90,7 @@ def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
         for key, prev in (
             (EnvVar.STATUS_DIR.value, prev_status),
             (EnvVar.LOCAL_ONLY.value, prev_local),
+            (EnvVar.QDRANT_STORAGE_DIR.value, prev_storage),
         ):
             if prev is None:
                 os.environ.pop(key, None)

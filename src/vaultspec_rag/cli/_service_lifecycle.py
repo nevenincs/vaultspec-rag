@@ -513,6 +513,36 @@ def service_start(
     )
 
 
+def _reclaim_machine_singleton() -> int | None:
+    """Reclaim a resident machine-lock holder that has no discoverable status file.
+
+    The machine singleton lock is vaultspec-rag-exclusive and machine-scoped, so
+    a live holder is THE resident service even when it never registered (or lost)
+    a ``service.json`` in this status directory. Such a holder otherwise
+    deadlocks the machine: ``server start`` refuses it (lock held), ``server
+    stop`` reports "not running" (no discovery), and ``server status`` reports
+    stopped - leaving a manual OS kill as the only escape (the very orphan the
+    ``mcp-conformance`` research recorded). Terminating the confirmed holder
+    makes ``server stop`` the real recovery the start refusal points to.
+
+    Returns the reclaimed holder pid, or ``None`` when no reclaimable
+    vaultspec-rag holder is found. The ``_is_our_service`` executable check
+    guards against terminating an unrelated process after pid reuse.
+    """
+    from .._machine_lock import machine_lock_live_holder
+
+    holder = machine_lock_live_holder()
+    if (
+        holder
+        and holder != os.getpid()
+        and _cli._is_pid_alive(holder)
+        and _cli._is_our_service(holder)
+    ):
+        _terminate_and_confirm(holder)
+        return holder
+    return None
+
+
 def _terminate_and_confirm(pid: int) -> None:
     """Terminate *pid*, wait briefly, and emit the platform shutdown trail."""
     _cli._terminate_pid(pid)
@@ -631,9 +661,22 @@ def service_stop(
 
     status = _read_service_status()
     if status is None:
-        # No service.json => nothing to stop for this config. We do NOT probe
-        # the port: on the shared default port another project's healthy
-        # service would otherwise be misreported as this config's orphan.
+        # No service.json for this config. Before reporting "not running", fall
+        # back to the machine-global singleton lock: a live holder is the
+        # resident service even when it left no discovery file here, and
+        # reclaiming it is the documented recovery for a wedged/undiscoverable
+        # singleton that would otherwise deadlock `server start`.
+        reclaimed = _reclaim_machine_singleton()
+        if reclaimed is not None:
+            _print_lifecycle_lines(
+                "Service stopped",
+                f"Reclaimed the resident machine service (pid {reclaimed}); it "
+                "held the singleton lock without a discoverable status file.",
+            )
+            return
+        # No reclaimable holder. We do NOT probe the port: on the shared default
+        # port another project's healthy service would otherwise be misreported
+        # as this config's orphan.
         _cli.console.print("Service is not running.")
         return
 
