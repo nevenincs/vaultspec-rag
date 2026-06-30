@@ -33,7 +33,7 @@ Auto-generated index of all documents tagged with `#qdrant-store-resilience`.
 
 ### exec
 
-- `2026-06-30-qdrant-store-resilience-P01-S01` - Add \_quarantine_collection that moves collections/<name> to collections/.quarantine/<name>.<timestamp>
+- `2026-06-30-qdrant-store-resilience-P01-S01` - Add \_quarantine_collection that moves `collections/<name>` to `collections/.quarantine/<name>.<timestamp>`
 - `2026-06-30-qdrant-store-resilience-P02-S02` - Add \_corrupt_collection_from_output that returns an on-disk collection name found in the failure tail or None
 - `2026-06-30-qdrant-store-resilience-P03-S03` - Wrap supervised start with a bounded detect-quarantine-retry loop, on by default, abstaining when no culprit is identified
 - `2026-06-30-qdrant-store-resilience-P04-S04` - Add a server qdrant quarantine CLI verb that lists collections and quarantines a named one

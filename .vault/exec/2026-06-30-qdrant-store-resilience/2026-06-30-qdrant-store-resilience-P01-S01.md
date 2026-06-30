@@ -9,7 +9,7 @@ related:
   - "[[2026-06-30-qdrant-store-resilience-plan]]"
 ---
 
-# Add \_quarantine_collection that moves collections/<name> to collections/.quarantine/<name>.<timestamp>
+# Add \_quarantine_collection that moves `collections/<name>` to `collections/.quarantine/<name>.<timestamp>`
 
 ## Scope
 

@@ -36,7 +36,7 @@ written.
 
 ## Findings
 
-### reindex-clean-path-retained | high | The destructive `clean` rebuild was not removed from the MCP refresh tools, contradicting ADR decision SB6.
+### reindex-clean-path-retained | high | The destructive `clean` rebuild was not removed from the MCP refresh tools, contradicting ADR decision SB6
 
 SB6 decides unambiguously that the MCP refresh tools must be annotated non-destructive and
 idempotent and that the destructive drop-and-recreate `clean` path is removed from them and
@@ -52,7 +52,7 @@ explicitly rejected alternative - rather than the ADR's binding
 behaviour, so SB5's no-lying-annotation rule holds and this is not critical; but SB6's
 removal requirement is unmet and a data-loss-capable verb remains on the agent surface.
 
-### boundary-test-misses-sb6 | medium | The conformance test does not guard SB6, so the deviation shipped green.
+### boundary-test-misses-sb6 | medium | The conformance test does not guard SB6, so the deviation shipped green
 
 The ADR's Consequences section explicitly requires the boundary to be enforced
 mechanically. The surface test `test_refresh_tools_are_not_read_only` in
@@ -64,7 +64,7 @@ very test the ADR mandated, which is why the deviation passed the full suite. On
 `clean` path is removed, this test must assert the chosen non-destructive contract and the
 absence of the `clean` parameter.
 
-### authoritative-token-discarded | medium | The resolved pointer's token is thrown away and the transport re-derives it from the foreign status file.
+### authoritative-token-discarded | medium | The resolved pointer's token is thrown away and the transport re-derives it from the foreign status file
 
 The machine-service resolution returns a payload carrying both the port and the
 `service_token`, but `_default_service_port()` discards everything except the port. The
@@ -76,7 +76,7 @@ call in the target scenario, and it under-delivers SD1/SD5 because the authorita
 exists but is never used. Resolve the port and token together and pass the pointer's token
 into the call, keeping the 401 self-heal as the fallback.
 
-### fallback-service-json-unvalidated | medium | The per-status-directory fallback bypasses the SD4 staleness and liveness validation.
+### fallback-service-json-unvalidated | medium | The per-status-directory fallback bypasses the SD4 staleness and liveness validation
 
 The machine-pointer path correctly refuses a stale or dead-pid pointer, but the
 compatibility fallback `_read_service_status()` validates only that the file carries `pid`
@@ -88,7 +88,7 @@ non-JSON-body guard catches a foreign listener), so it degrades legibility rathe
 safety, but it is unvalidated stale state by the ADR's own standard. Either apply the same
 staleness gate to the fallback or document it as a deliberate transport-guarded degrade.
 
-### sd5-resolution-legibility-missing | medium | Resolution failure class is lost at the `int | None` boundary, so SD5 legibility is not delivered for discovery.
+### sd5-resolution-legibility-missing | medium | Resolution failure class is lost at the `int | None` boundary, so SD5 legibility is not delivered for discovery
 
 Transport-level legibility is good - the empty-body 404 path the research flagged is gone,
 replaced by a structured envelope discriminating connection-refused, timeout, auth, and
@@ -100,7 +100,7 @@ but its pointer went stale" - the latter signalled only as a debug log. The oper
 distinguish a down service from a service whose pointer went stale. Surface a small
 resolution result (source, live-holder, port, failure class) into the MCP error text.
 
-### refresh-annotation-inverted | medium | The index-refresh idempotent and destructive hints are inverted relative to the ADR.
+### refresh-annotation-inverted | medium | The index-refresh idempotent and destructive hints are inverted relative to the ADR
 
 A direct corollary of the SB6 finding: the ADR and reference specify the incremental
 refresh path as `destructiveHint=False, idempotentHint=True`, but the shipped
@@ -108,7 +108,7 @@ refresh path as `destructiveHint=False, idempotentHint=True`, but the shipped
 parameter the shipped annotation is internally honest, but it does not match the decision.
 Removing `clean` from the MCP refresh tools should flip these to the ADR-specified values.
 
-### sd6-negative-test-underspecified | medium | The absent-service test under-specifies the remediation and never exercises the isError surfacing.
+### sd6-negative-test-underspecified | medium | The absent-service test under-specifies the remediation and never exercises the isError surfacing
 
 SD6 requires the absent-service path to fail fast with one actionable error naming the
 start command, surfaced as a tool result marked in error. The negative test in
@@ -119,7 +119,7 @@ call-tool path, so the exception-to-isError conversion SD6 names as the mechanis
 asserted nowhere. Assert the remediation substring and drive one tool through the MCP
 call-tool surface to confirm the error result.
 
-### transport-prose-stale | medium | The ADR and reference describe a Streamable-HTTP `/mcp` transport the shipped architecture does not use.
+### transport-prose-stale | medium | The ADR and reference describe a Streamable-HTTP `/mcp` transport the shipped architecture does not use
 
 ADR decision SB5 and the reference state the daemon serves the MCP app via
 `streamable_http_app()` mounted at `/mcp`. The shipped architecture is the opposite, by a
@@ -130,7 +130,7 @@ did not regress here - the transport prose in the conformance docs is simply ina
 Reconcile the ADR SB5 and reference transport text with the shipped stdio model so future
 agents are not misled.
 
-### monkeypatch-in-test-server | medium | A changed test file uses the forbidden `monkeypatch`, violating the project test mandate.
+### monkeypatch-in-test-server | medium | A changed test file uses the forbidden `monkeypatch`, violating the project test mandate
 
 The project mandate bans `monkeypatch`. `test_server.py`, a file changed in this work,
 replaces a real status-file-path function with a lambda via `monkeypatch.setattr` across
@@ -139,7 +139,7 @@ and surface assertions, so the violation predates this work, but it stands in an
 file and should be retired to the real temp-directory redirection the new discovery suite
 already uses.
 
-### lock-liveness-unguarded-at-ci-tier | medium | The OS-lock liveness authority that SD1/SD3 lean on is not exercised by the CI unit gate.
+### lock-liveness-unguarded-at-ci-tier | medium | The OS-lock liveness authority that SD1/SD3 lean on is not exercised by the CI unit gate
 
 Every discovery-resolution test that needs a live holder acquires the lock in-process, so
 the liveness probe returns via the same-process bookkeeping early-return and never reaches
@@ -149,7 +149,7 @@ and authoritative-precedence orchestration is verified for real, but the lock-pr
 authority is unguarded at the CI tier; add a subprocess-based liveness assertion to the
 gated layer or accept the gap explicitly.
 
-### pointer-pid-correspondence-unchecked | low | Liveness is an existence check, not a pid cross-check, leaving a narrow benign restart window.
+### pointer-pid-correspondence-unchecked | low | Liveness is an existence check, not a pid cross-check, leaving a narrow benign restart window
 
 SD1 says the pointer must correspond to a live lock holder, but resolution verifies only
 that some live holder exists and the pointer is fresh - it never checks that the pointer's
@@ -159,7 +159,7 @@ still-fresh pointer. It is benign - if B reused the default port the port is ide
 if B bound a different port the consumer hits connection-refused and fails fast - but a
 cheap pid-equality guard would make the code match the ADR wording.
 
-### shallow-conformance-assertions | low | Two conformance assertions are weaker than their names imply.
+### shallow-conformance-assertions | low | Two conformance assertions are weaker than their names imply
 
 The search-default test hardcodes the expected count rather than referencing the CLI's
 own default constant, so despite its name it cannot catch a CLI/MCP default divergence; and
@@ -190,7 +190,7 @@ SB5 unverified. Tighten both to assert the relationship they claim to guard.
 - **Not blocking:** the pointer pid-correspondence guard is optional hardening that would
   make the code literally match SD1's wording.
 
-### server-stop-test-not-machine-isolated | medium | A CLI server-stop unit test isolates only the status dir, so the new lock-reclaim path fails against a live machine service.
+### server-stop-test-not-machine-isolated | medium | A CLI server-stop unit test isolates only the status dir, so the new lock-reclaim path fails against a live machine service
 
 Surfaced while running the unit gate to verify the SB6 fix: `test_service_stop_no_status_file`
 in `test_cli.py` isolates only the status directory and asserts the output says the service
