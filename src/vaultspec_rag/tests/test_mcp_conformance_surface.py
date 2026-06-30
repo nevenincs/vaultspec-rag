@@ -72,11 +72,23 @@ class TestNarrowedSurface:
                 assert tool.annotations.idempotentHint is True
                 assert tool.annotations.openWorldHint is False
 
-    def test_refresh_tools_are_not_read_only(self) -> None:
+    def test_refresh_tools_are_non_destructive_and_idempotent(self) -> None:
         for tool in _tools():
             if tool.name in _REFRESH_TOOLS:
                 assert tool.annotations is not None
                 assert tool.annotations.readOnlyHint is False
+                assert tool.annotations.destructiveHint is False
+                assert tool.annotations.idempotentHint is True
+                assert tool.annotations.openWorldHint is False
+
+    def test_refresh_tools_expose_no_destructive_clean_input(self) -> None:
+        for tool in _tools():
+            if tool.name in _REFRESH_TOOLS:
+                props = tool.inputSchema.get("properties", {})
+                assert "clean" not in props, (
+                    f"{tool.name} exposes the destructive clean rebuild; it must be "
+                    "CLI-only"
+                )
 
     def test_every_tool_has_a_display_title(self) -> None:
         for tool in _tools():

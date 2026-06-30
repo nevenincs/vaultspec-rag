@@ -57,16 +57,18 @@ _DEFAULT_TOP_K = 10
 
 # Behavioral hints advertised to clients (MCP 2025-11-25 tool annotations). The
 # search and retrieval tools only read and are repeatable; the index-refresh
-# tools write the index and, via ``clean``, can drop-and-recreate, so they are
-# not read-only and carry the destructive hint. None of these tools reach an
-# open world of external entities - they talk to one local daemon.
+# tools write the index incrementally - they reconcile to the current files
+# without dropping data, so they are not read-only but are non-destructive and
+# idempotent. The destructive drop-and-recreate rebuild is a CLI-only operation
+# and is never exposed on this agent-facing surface. None of these tools reach
+# an open world of external entities - they talk to one local daemon.
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True, idempotentHint=True, openWorldHint=False
 )
 _INDEX_REFRESH = ToolAnnotations(
     readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
     openWorldHint=False,
 )
 
@@ -224,23 +226,21 @@ async def get_code_file(
 
 @mcp.tool(title="Reindex vault", annotations=_INDEX_REFRESH)
 async def reindex_vault(
-    clean: bool = False,
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Re-index vault documentation (incremental by default)."""
+    """Re-index vault documentation incrementally."""
     port = _require_port()
     return await _delegate(
-        partial(_try_http_reindex, "vault", clean, port, project_root or "")
+        partial(_try_http_reindex, "vault", False, port, project_root or "")
     )
 
 
 @mcp.tool(title="Reindex codebase", annotations=_INDEX_REFRESH)
 async def reindex_codebase(
-    clean: bool = False,
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Re-index the source codebase (incremental by default)."""
+    """Re-index the source codebase incrementally."""
     port = _require_port()
     return await _delegate(
-        partial(_try_http_reindex, "codebase", clean, port, project_root or "")
+        partial(_try_http_reindex, "codebase", False, port, project_root or "")
     )
