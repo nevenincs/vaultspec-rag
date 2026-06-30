@@ -61,19 +61,19 @@ _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
 _MAX_QUARANTINES_PER_START = 3
 
 # Lowercased substrings that mark a collection *load* failure in the captured
-# qdrant output. Detection only quarantines when one of these co-occurs with a
-# real on-disk collection name, so a bind/lock failure that merely mentions a
-# collection name does not trigger a quarantine (QR1/QR4).
+# qdrant output. These are failure-specific - broad operational words that also
+# appear in healthy load/recovery logging (``segment``, ``wal``, ``snapshot``,
+# ``recover``) are deliberately excluded so normal output never reads as a
+# failure. Detection only quarantines when one of these co-occurs with a real
+# on-disk collection name *on the same line* (QR1/QR4).
 _LOAD_FAILURE_MARKERS = (
     "panic",
     "corrupt",
-    "segment",
-    "recover",
     "failed to load",
     "cannot load",
     "unable to load",
-    "wal",
-    "snapshot",
+    "could not load",
+    "error loading",
 )
 
 
@@ -99,19 +99,26 @@ def _corrupt_collection_from_output(tail: str, storage_dir: Path) -> str | None:
 
     Keys on the real on-disk collection set rather than Qdrant's (version-
     dependent) message format: returns the longest on-disk collection name that
-    appears in *tail* when the tail also carries a load-failure marker, else
-    ``None``. Abstaining on no match is deliberate - guessing would risk
+    appears on a *single line* together with a load-failure marker, else
+    ``None``. Requiring the name and the marker on the same line avoids fingering
+    a collection merely logged (healthily) earlier in the buffer while an
+    unrelated, collection-less fault (corrupt ``raft_state.json``, disk-full,
+    OOM) panics later. Abstaining on no match is deliberate - guessing would risk
     quarantining a healthy index (QR1, QR4).
     """
-    if not tail.strip():
-        return None
-    if not any(marker in tail.lower() for marker in _LOAD_FAILURE_MARKERS):
+    on_disk = _list_on_disk_collections(storage_dir)
+    if not on_disk:
         return None
     # Longest-first so a short collection name that is a substring of a longer
     # one does not shadow the real, longer culprit.
-    for name in sorted(_list_on_disk_collections(storage_dir), key=len, reverse=True):
-        if name in tail:
-            return name
+    names = sorted(on_disk, key=len, reverse=True)
+    for line in tail.splitlines():
+        lowered = line.lower()
+        if not any(marker in lowered for marker in _LOAD_FAILURE_MARKERS):
+            continue
+        for name in names:
+            if name in line:
+                return name
     return None
 
 
@@ -546,11 +553,23 @@ class QdrantSupervisor:
             self.spawn()
             if self.wait_ready(timeout):
                 return
-            tail = self.recent_output_tail()
+            # Distinguish a dead child (a real load abort) from a still-alive one
+            # (a readiness timeout on a healthy-but-slow store). Only a dead child
+            # is evidence of a corrupt collection; quarantining on a timeout would
+            # kill a healthily-loading child and drop a healthy index - the
+            # false positive QR4 forbids. Capture liveness before stop().
+            child_died = not self.is_alive()
+            # Stop joins the output-drain thread, so the panic tail is fully
+            # captured here; reading it before stop() can race the final line.
             self.stop()
+            tail = self.recent_output_tail()
             culprit = (
                 _corrupt_collection_from_output(tail, self.storage_dir)
-                if auto_quarantine and quarantined < _MAX_QUARANTINES_PER_START
+                if (
+                    auto_quarantine
+                    and child_died
+                    and quarantined < _MAX_QUARANTINES_PER_START
+                )
                 else None
             )
             if culprit is None:
@@ -563,7 +582,14 @@ class QdrantSupervisor:
                     f"qdrant server on port {self.http_port} failed to become "
                     f"ready within {timeout:.0f}s; see {self.log_path}.{cause}"
                 )
-            dest = _quarantine_collection(self.storage_dir, culprit)
+            try:
+                dest = _quarantine_collection(self.storage_dir, culprit)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"qdrant could not load collection {culprit!r} and quarantining "
+                    f"it failed ({exc}); see {self.log_path}. Stop the server and "
+                    f"run `vaultspec-rag server qdrant quarantine {culprit}`."
+                ) from exc
             quarantined += 1
             logger.warning(
                 "qdrant failed to load collection %r; quarantined it to %s and "

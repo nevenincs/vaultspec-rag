@@ -111,10 +111,10 @@ class TestDetection:
         assert _list_on_disk_collections(tmp_path) == {"r0abc_vault_docs"}
 
 
-# Fake binary: read the storage path, name the first on-disk collection in a
-# panic line (so detection identifies a real culprit), then abort. It never
-# becomes ready, so the supervised start quarantines under its bound and fails.
-_FAKE_QDRANT = """
+# Fake binary that dies after naming the first on-disk collection on one panic
+# line (detection identifies a real culprit). It never becomes ready, so a
+# supervised start quarantines under its bound and then fails.
+_FAKE_CORRUPT_NAMED = """
 import os, pathlib, sys
 
 storage = pathlib.Path(os.environ["QDRANT__STORAGE__STORAGE_PATH"])
@@ -132,16 +132,32 @@ if cols:
 sys.exit(1)
 """
 
+# Fake binary that dies on a global fault naming no collection - detection must
+# abstain (QR4), so the start fails with zero quarantines.
+_FAKE_CORRUPT_UNNAMED = """
+import sys
+sys.stdout.write("thread 'main' panicked: corrupt raft_state.json; aborting\\n")
+sys.stdout.flush()
+sys.exit(1)
+"""
 
-def _fake_binary(tmp_path: Path) -> Path:
+# Fake binary that stays alive but never answers /readyz - the readiness-timeout
+# case on a healthy-but-slow store. The child is alive, so recovery must NOT run.
+_FAKE_HANGS = """
+import time
+time.sleep(120)
+"""
+
+
+def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path:
     """Write a fake qdrant 'binary' the supervisor can exec as ``[binary]``."""
-    script = tmp_path / "fake_qdrant.py"
-    script.write_text(_FAKE_QDRANT, encoding="utf-8")
+    script = tmp_path / f"{name}.py"
+    script.write_text(source, encoding="utf-8")
     if sys.platform == "win32":
-        launcher = tmp_path / "fake_qdrant.bat"
+        launcher = tmp_path / f"{name}.bat"
         launcher.write_text(f'@"{sys.executable}" "{script}"\r\n', encoding="utf-8")
         return launcher
-    launcher = tmp_path / "fake_qdrant.sh"
+    launcher = tmp_path / f"{name}.sh"
     launcher.write_text(
         f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
     )
@@ -160,7 +176,7 @@ class TestBoundedRetry:
         for i in range(_MAX_QUARANTINES_PER_START + 2):
             _make_collection(storage, f"r{i:04d}_vault_docs")
 
-        binary = _fake_binary(tmp_path)
+        binary = _fake_binary(tmp_path, _FAKE_CORRUPT_NAMED)
         sup = QdrantSupervisor(
             binary,
             http_port=8990,
@@ -179,12 +195,56 @@ class TestBoundedRetry:
         remaining = _list_on_disk_collections(storage)
         assert len(remaining) == 2  # the two beyond the bound are untouched
 
+    def test_dead_child_naming_no_collection_abstains_with_zero_quarantines(
+        self, tmp_path: Path
+    ) -> None:
+        """A global panic naming no on-disk collection quarantines nothing (QR4)."""
+        storage = tmp_path / "qdrant-server" / "storage"
+        _make_collection(storage, "r0000_vault_docs")
+        binary = _fake_binary(tmp_path, _FAKE_CORRUPT_UNNAMED, name="unnamed")
+        sup = QdrantSupervisor(
+            binary,
+            http_port=8992,
+            storage_dir=storage,
+            log_path=tmp_path / "qdrant.log",
+        )
+        try:
+            with pytest.raises(RuntimeError, match="failed to become ready"):
+                sup.start(timeout=10.0)
+        finally:
+            sup.stop()
+        assert not (storage / "quarantine").exists()
+        assert _list_on_disk_collections(storage) == {"r0000_vault_docs"}
+
+    def test_readiness_timeout_with_a_live_child_quarantines_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """A healthy-but-slow child that times out must not be read as corrupt (QR4)."""
+        storage = tmp_path / "qdrant-server" / "storage"
+        _make_collection(storage, "r0000_vault_docs")
+        binary = _fake_binary(tmp_path, _FAKE_HANGS, name="hangs")
+        sup = QdrantSupervisor(
+            binary,
+            http_port=8993,
+            storage_dir=storage,
+            log_path=tmp_path / "qdrant.log",
+        )
+        try:
+            # The child stays alive and never answers; readiness times out, but
+            # because the child is alive the store is left untouched.
+            with pytest.raises(RuntimeError, match="failed to become ready"):
+                sup.start(timeout=2.0)
+        finally:
+            sup.stop()
+        assert not (storage / "quarantine").exists()
+        assert _list_on_disk_collections(storage) == {"r0000_vault_docs"}
+
     def test_auto_quarantine_disabled_never_touches_the_store(
         self, tmp_path: Path
     ) -> None:
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
-        binary = _fake_binary(tmp_path)
+        binary = _fake_binary(tmp_path, _FAKE_CORRUPT_NAMED)
         sup = QdrantSupervisor(
             binary,
             http_port=8991,

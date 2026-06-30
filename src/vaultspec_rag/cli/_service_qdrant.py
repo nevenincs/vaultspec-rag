@@ -10,7 +10,7 @@ preview.
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 
@@ -365,12 +365,21 @@ def _perform_clean(*, keep_current: bool, json_mode: bool) -> list[str]:
         raise typer.Exit(code=1) from exc
 
 
+def _fail_quarantine(error: str, message: str, *, json_mode: bool) -> NoReturn:
+    """Emit a quarantine failure (JSON or text) and exit non-zero."""
+    if json_mode:
+        _emit_json(False, "server.qdrant.quarantine", error=error, message=message)
+    else:
+        _print_line(message)
+    raise typer.Exit(code=1)
+
+
 def _emit_quarantine_listing(collections: list[str], *, json_mode: bool) -> None:
     """Print (or emit as JSON) the shared store's collection names."""
     if json_mode:
         _emit_json(
             True,
-            "server.qdrant.quarantine.list",
+            "server.qdrant.quarantine",
             data={"collections": collections},
         )
         return
@@ -428,20 +437,12 @@ def qdrant_quarantine(
         return
 
     if collection not in collections:
-        message = (
+        _fail_quarantine(
+            "unknown_collection",
             f"Collection {collection!r} is not in the store. "
-            "Run `vaultspec-rag server qdrant quarantine` to list collections."
+            "Run `vaultspec-rag server qdrant quarantine` to list collections.",
+            json_mode=json_mode,
         )
-        if json_mode:
-            _emit_json(
-                False,
-                "server.qdrant.quarantine",
-                error="unknown_collection",
-                message=message,
-            )
-        else:
-            _print_line(message)
-        raise typer.Exit(code=1)
 
     if dry_run:
         message = f"Would quarantine collection {collection!r} from {storage}."
@@ -456,22 +457,24 @@ def qdrant_quarantine(
         return
 
     if not yes:
-        message = (
+        _fail_quarantine(
+            "confirmation_required",
             f"Refusing to quarantine {collection!r} without --yes. "
-            "Re-run with --yes (or --dry-run to preview)."
+            "Re-run with --yes (or --dry-run to preview).",
+            json_mode=json_mode,
         )
-        if json_mode:
-            _emit_json(
-                False,
-                "server.qdrant.quarantine",
-                error="confirmation_required",
-                message=message,
-            )
-        else:
-            _print_line(message)
-        raise typer.Exit(code=1)
 
-    dest = _quarantine_collection(storage, collection)
+    try:
+        dest = _quarantine_collection(storage, collection)
+    except OSError as exc:
+        _fail_quarantine(
+            "quarantine_failed",
+            f"Could not quarantine {collection!r}: {exc}. The managed server may "
+            "be running and holding the files - stop it first "
+            "(`vaultspec-rag server stop`), then retry.",
+            json_mode=json_mode,
+        )
+
     if json_mode:
         _emit_json(
             True,
