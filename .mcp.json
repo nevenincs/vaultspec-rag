@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "vaultspec-rag": {
-      "command": "uv",
-      "args": [
-        "run",
-        "vaultspec-search-mcp"
-      ]
-    },
     "vaultspec-core": {
       "command": "uv",
       "args": [
@@ -18,7 +11,6 @@
     }
   },
   "_vaultspecManaged": [
-    "vaultspec-core",
-    "vaultspec-rag"
+    "vaultspec-core"
   ]
 }

@@ -20,8 +20,9 @@ service history.
 
 ## How
 
-- Good: default `server jobs` to a bounded result set, expose `--running`, `--failed`,
-  `--job-id`, and `--since`, and make `server logs --job-id` search a bounded maximum
-  log window before returning the requested filtered tail.
+- Good: default `server jobs` to a bounded result set, expose `--state` (e.g.
+  `active`/`failed`), `--failed`, `--job-id`, and `--since`, and make
+  `server logs --job-id` search a bounded maximum log window before returning the
+  requested filtered tail.
 - Bad: render every recorded job by default or filter only the last N unfiltered log
   lines so unrelated recent noise can hide the requested job.

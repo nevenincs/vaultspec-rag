@@ -7,6 +7,7 @@ tools:
 - Grep
 - Read
 - Bash
+model: claude-sonnet-4-6
 ---
 
 # Persona: Project coordinator
