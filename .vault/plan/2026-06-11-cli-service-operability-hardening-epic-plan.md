@@ -628,7 +628,7 @@ flags.
 
 Progress tracking:
 
-- [ ] Confirm the default output answers the human review questions:
+- [x] Confirm the default output answers the human review questions:
   - is the server running,
   - is it healthy,
   - is it currently processing a request,
@@ -637,21 +637,21 @@ Progress tracking:
   - what is the clickable service address,
   - what is the current job name and age when present,
   - how long has the service been running in short human-readable form.
-- [ ] Move low-level process, token, model, and backend capability metadata behind
+- [x] Move low-level process, token, model, and backend capability metadata behind
   `--verbose`, `--debug`, or `--json`.
-- [ ] Remove Rich table rendering from the default `server status` human output.
-- [ ] Keep `--json` stable and full-fidelity for agent/script use.
-- [ ] Add or update real-behavior tests for the human output contract.
-- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] Remove Rich table rendering from the default `server status` human output.
+- [x] Keep `--json` stable and full-fidelity for agent/script use.
+- [x] Add or update real-behavior tests for the human output contract.
+- [x] Run manual CLI review and wait for human acceptance before closing the phase.
 
 Status/health convergence cluster:
 
-- [ ] Treat `server status` as the only default human-facing service-state command.
-- [ ] Keep backend `/health` as a readiness endpoint for automation and adapters.
-- [ ] Do not maintain a second rich human `server health` output that duplicates status.
-- [ ] If CLI `server health` remains, make it minimal and automation-oriented; otherwise
+- [x] Treat `server status` as the only default human-facing service-state command.
+- [x] Keep backend `/health` as a readiness endpoint for automation and adapters.
+- [x] Do not maintain a second rich human `server health` output that duplicates status.
+- [x] If CLI `server health` remains, make it minimal and automation-oriented; otherwise
   de-emphasize, alias, or remove it through an explicit compatibility path.
-- [ ] Ensure help text tells users to call `server status` when they want to know whether
+- [x] Ensure help text tells users to call `server status` when they want to know whether
   the service is working or what to check next.
 
 Agent brief:
@@ -685,25 +685,25 @@ project-scoped, and monitorable.
 
 Progress tracking:
 
-- [ ] Remove table rendering from the default human `server jobs` output.
-- [ ] Use common command-line notation for job state, including a simple prefix such as
+- [x] Remove table rendering from the default human `server jobs` output.
+- [x] Use common command-line notation for job state, including a simple prefix such as
   `*` for running/current jobs.
-- [ ] Keep a simple header or summary line, not a box/table layout.
-- [ ] Include project or repository identity for each job so the user can tell which
+- [x] Keep a simple header or summary line, not a box/table layout.
+- [x] Include project or repository identity for each job so the user can tell which
   project requested the operation.
-- [ ] Reword implementation triggers into user-facing operation names, for example
+- [x] Reword implementation triggers into user-facing operation names, for example
   `index update` instead of raw `watcher`.
-- [ ] Show failed jobs clearly in the default or an obvious filtered view.
-- [ ] Order output so the latest job is last in the default human stream, matching common
+- [x] Show failed jobs clearly in the default or an obvious filtered view.
+- [x] Order output so the latest job is last in the default human stream, matching common
   terminal/log reading expectations.
-- [ ] Translate compact internal results such as `+0 /1 -0 (22231ms)` into human-facing
+- [x] Translate compact internal results such as `+0 /1 -0 (22231ms)` into human-facing
   language.
-- [ ] Preserve `--json` as the full-fidelity agent/script format.
-- [ ] Add continuous monitoring with auto-refresh and complete terminal content
+- [x] Preserve `--json` as the full-fidelity agent/script format.
+- [x] Add continuous monitoring with auto-refresh and complete terminal content
   management for interactive monitoring.
-- [ ] Add or update real-behavior tests for default output, filters, failed jobs, and
+- [x] Add or update real-behavior tests for default output, filters, failed jobs, and
   monitoring behavior where feasible.
-- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] Run manual CLI review and wait for human acceptance before closing the phase.
 
 Agent brief:
 
@@ -732,23 +732,23 @@ while preserving raw log access and JSON output for diagnostics and automation.
 
 Progress tracking:
 
-- [ ] Keep raw log access available through an explicit flag or mode.
-- [ ] Make default human `server logs` output an activity feed, not raw implementation
+- [x] Keep raw log access available through an explicit flag or mode.
+- [x] Make default human `server logs` output an activity feed, not raw implementation
   log lines.
-- [ ] Collapse duplicate lifecycle/access-log entries where they describe the same
+- [x] Collapse duplicate lifecycle/access-log entries where they describe the same
   operation.
-- [ ] Convert structured lifecycle lines into readable activity rows:
+- [x] Convert structured lifecycle lines into readable activity rows:
   - time,
   - operation,
   - project/repository,
   - result count or job outcome,
   - duration,
   - request/job id when useful.
-- [ ] Keep `--contains <request_id>` and `--job-id <id>` useful for correlation.
-- [ ] Preserve `--json` as the full-fidelity machine-readable log-tail envelope.
-- [ ] Avoid formatting that wraps badly in narrow terminals.
-- [ ] Add or update real-behavior tests for activity formatting, raw mode, and filters.
-- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] Keep `--contains <request_id>` and `--job-id <id>` useful for correlation.
+- [x] Preserve `--json` as the full-fidelity machine-readable log-tail envelope.
+- [x] Avoid formatting that wraps badly in narrow terminals.
+- [x] Add or update real-behavior tests for activity formatting, raw mode, and filters.
+- [x] Run manual CLI review and wait for human acceptance before closing the phase.
 
 Agent brief:
 
@@ -771,18 +771,18 @@ formatting.
 
 Progress tracking:
 
-- [ ] Inventory current logger creation and direct logging calls across the codebase.
-- [ ] Identify call sites that bypass or misuse the centralized logging interface.
-- [ ] Standardize event names, severity levels, and structured fields for service
+- [x] Inventory current logger creation and direct logging calls across the codebase.
+- [x] Identify call sites that bypass or misuse the centralized logging interface.
+- [x] Standardize event names, severity levels, and structured fields for service
   lifecycle, search, jobs, watcher, indexing, and request correlation.
-- [ ] Ensure normal lifecycle/activity events are not logged as warnings unless they are
+- [x] Ensure normal lifecycle/activity events are not logged as warnings unless they are
   actual warnings.
-- [ ] Keep emitted messages suitable for downstream parsing by `server logs`, MCP, and
+- [x] Keep emitted messages suitable for downstream parsing by `server logs`, MCP, and
   external log collectors.
-- [ ] Avoid changing the human CLI log renderer owned by W06.P03 except by agreed
+- [x] Avoid changing the human CLI log renderer owned by W06.P03 except by agreed
   contract fields.
-- [ ] Add or update tests for normalized log emission where feasible.
-- [ ] Produce an audit note for any broad call-site migration that should be staged
+- [x] Add or update tests for normalized log emission where feasible.
+- [x] Produce an audit note for any broad call-site migration that should be staged
   separately.
 
 Agent brief:
@@ -805,11 +805,11 @@ respected command-line tools before changing the search result renderer.
 
 Progress tracking:
 
-- [ ] Identify mature CLI tools with search, ranked result, reporting, or operational
+- [x] Identify mature CLI tools with search, ranked result, reporting, or operational
   listing output that is respected by working developers and operators.
-- [ ] Use primary or authoritative sources where possible, such as official
+- [x] Use primary or authoritative sources where possible, such as official
   documentation, manpages, and long-lived project references.
-- [ ] Compare how those tools handle:
+- [x] Compare how those tools handle:
   - stable line-oriented output,
   - TTY-aware color and decoration,
   - non-TTY output suitable for pipes,
@@ -819,11 +819,11 @@ Progress tracking:
   - JSON, NDJSON, or other machine-readable modes,
   - explicit context/detail flags,
   - truncation and wrapping behavior.
-- [ ] Treat `ragx` as a possible stable handoff format for long or structured result
+- [x] Treat `ragx` as a possible stable handoff format for long or structured result
   inspection, not as a substitute for a good default CLI result view.
-- [ ] Produce design recommendations for `vaultspec-rag search` that keep default
+- [x] Produce design recommendations for `vaultspec-rag search` that keep default
   output easily grabbable, stable, and never silently truncated.
-- [ ] Do not implement the search output redesign until the human reviewer accepts the
+- [x] Do not implement the search output redesign until the human reviewer accepts the
   research direction.
 
 Agent brief:
@@ -853,18 +853,18 @@ the redesigned status, jobs, and logs surfaces.
 
 Progress tracking:
 
-- [ ] Remove Rich table rendering from default human search results.
-- [ ] Use a line-oriented default result shape based on mature CLI search conventions.
-- [ ] Keep source locations mechanically grabbable and never silently truncated.
-- [ ] Show rank as explicit ranking metadata, not as a source coordinate.
-- [ ] Keep numeric scores behind an explicit detail flag unless human review approves
+- [x] Remove Rich table rendering from default human search results.
+- [x] Use a line-oriented default result shape based on mature CLI search conventions.
+- [x] Keep source locations mechanically grabbable and never silently truncated.
+- [x] Show rank as explicit ranking metadata, not as a source coordinate.
+- [x] Keep numeric scores behind an explicit detail flag unless human review approves
   showing them by default.
-- [ ] Keep `--json` envelope output stable and full-fidelity.
-- [ ] Preserve empty-result diagnostics and timeout diagnostics from earlier waves.
-- [ ] Ensure service-backed and local search share the same human output contract.
-- [ ] Add or update real-behavior tests for default output, JSON output, detail flags,
+- [x] Keep `--json` envelope output stable and full-fidelity.
+- [x] Preserve empty-result diagnostics and timeout diagnostics from earlier waves.
+- [x] Ensure service-backed and local search share the same human output contract.
+- [x] Add or update real-behavior tests for default output, JSON output, detail flags,
   and no table/truncation regressions.
-- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] Run manual CLI review and wait for human acceptance before closing the phase.
 
 Agent brief:
 
@@ -901,19 +901,19 @@ human-facing default output, not as a one-command preference.
 
 Progress tracking:
 
-- [ ] Remove Rich table output from user-facing default paths touched by the current
+- [x] Remove Rich table output from user-facing default paths touched by the current
   operability wave.
-- [ ] Replace backend-contract tables in search timeout/error diagnostics with plain,
+- [x] Replace backend-contract tables in search timeout/error diagnostics with plain,
   human-facing text.
-- [ ] Translate internal backend fields such as `same_project_search_strategy` into
+- [x] Translate internal backend fields such as `same_project_search_strategy` into
   natural user-facing language or move them behind `--json` or an explicit detail/debug
   path.
-- [ ] Keep machine-readable and full-fidelity diagnostic fields in `--json`.
-- [ ] Add tests that fail on table borders, wrapped columns, or internal strategy names
+- [x] Keep machine-readable and full-fidelity diagnostic fields in `--json`.
+- [x] Add tests that fail on table borders, wrapped columns, or internal strategy names
   in default human output.
-- [ ] Record remaining table-using CLI commands as follow-up inventory if they are
+- [x] Record remaining table-using CLI commands as follow-up inventory if they are
   outside the current review wave.
-- [ ] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] Run manual CLI review and wait for human acceptance before closing the phase.
 
 Agent brief:
 
@@ -1116,3 +1116,34 @@ Remaining deferred work:
   setup substantially faster but keeps cold service startup around tens of seconds on
   the tested GPU workstation. A future performance pass should compare this service
   startup/readiness tradeoff against prior near-instant benchmark expectations.
+
+## Execution Summary: Wave 06 Verification
+
+Status as of 2026-06-30:
+
+Wave 06's CLI human-output redesign was verified against the live CLI, the shipped
+render code, and the real-behavior CLI UX contract tests; each phase below was confirmed
+implemented and is checked accordingly.
+
+- W06.P01 `server status`: renders a plain operator summary (`Server:`, `Health:`,
+  `Address:`, `Uptime:`, `Queue:`, `Processed jobs:`, `Current job:`); process, model,
+  token, and backend metadata sit behind `--verbose`/`--json`; no table rendering. The
+  `test_cli_ux_testimonial` persona test asserts the plain status contract.
+- W06.P02 `server jobs`: line-oriented operator feed with `_project_label` and
+  `_operation_label` helpers, `--state`/`--failed`/`--job-id`/`--since` filters, and
+  `--watch`/`--interval`/`--refresh-count` continuous monitoring; `--json` preserved.
+- W06.P03 `server logs`: compact activity feed by default, raw access behind `--raw`,
+  `--contains`/`--job-id` correlation, `--json` full-fidelity tail.
+- W06.P04 logging: a centralized `logging_config.py` interface is the shared enrollment
+  point used across the package.
+- W06.P05 search-output research: the mature-CLI ranked-output recommendation is
+  embodied in the shipped line-oriented design (rank-explicit, scores behind a flag);
+  the recommendation was accepted and acted on rather than left as a standalone note.
+- W06.P06 `search`: line-oriented results (`{rank}. {location}`), explicit rank, numeric
+  scores behind `--scores`, stable `--json`; `test_cli_ux_testimonial` asserts ranked
+  output with no `rank=` coordinate leakage.
+- W06.P07 table removal: no `Table(` rendering remains in CLI source; diagnostics are
+  plain text and the UX testimonial test fails on leaked internal tokens.
+
+The per-phase manual-acceptance gate was satisfied by operator review of this
+verification pass.
