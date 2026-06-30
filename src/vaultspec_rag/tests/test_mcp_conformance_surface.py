@@ -87,6 +87,13 @@ class TestNarrowedSurface:
         props = search_vault.inputSchema.get("properties", {})
         assert props["top_k"].get("default") == 10
 
+    def test_search_tools_declare_a_result_output_schema(self) -> None:
+        for tool in _tools():
+            if tool.name in {"search_vault", "search_codebase"}:
+                assert tool.outputSchema is not None, tool.name
+                props = tool.outputSchema.get("properties", {})
+                assert "results" in props
+
 
 class _EmptyBody404Handler(BaseHTTPRequestHandler):
     """A server that answers every request with a bodyless 404."""

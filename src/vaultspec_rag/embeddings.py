@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -22,6 +23,17 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
+
+# transformers materialises model weights through a background thread pool by
+# default (``spawn_materialize`` in ``core_model_loading``). On Windows that
+# parallel load intermittently faults with a native access violation mid-
+# materialisation - a torch storage race that crashes the whole process during
+# any model load (dense, sparse, or the reranker), as seen under concurrent
+# multi-root indexing and search. Deactivate the async path on Windows so
+# weights materialise single-threaded and deterministically; an explicit
+# operator-set value still wins. Linux (CI) keeps the faster parallel path.
+if sys.platform == "win32":
+    os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
 
 __all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult"]
 

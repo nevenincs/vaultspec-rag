@@ -10,6 +10,7 @@ the load profile a multi-user, multi-repo service sees.
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
@@ -40,17 +41,24 @@ class TestMultiRepoConcurrentLoad:
         embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
+        # One shared GPU lock serialises every GPU-bound operation across both
+        # repos, exactly as the single service does (service.py wires the same
+        # lock into every searcher and indexer). Without it, two roots' forward
+        # passes and lazy model loads race on the one device and crash.
+        gpu_lock = threading.Lock()
         repos: list[tuple[Path, VaultStore]] = []
         searchers: list[VaultSearcher] = []
         for i in range(2):
             root = tmp_path / f"repo{i}"
             build_synthetic_vault(root, n_docs=16, seed=300 + i)
             store = VaultStore(root)
-            VaultIndexer(root, embedding_model, store).full_index(
+            VaultIndexer(root, embedding_model, store, gpu_lock=gpu_lock).full_index(
                 reporter=NullProgressReporter()
             )
             repos.append((root, store))
-            searchers.append(VaultSearcher(root, embedding_model, store))
+            searchers.append(
+                VaultSearcher(root, embedding_model, store, gpu_lock=gpu_lock)
+            )
 
         def do_search(task: int) -> int:
             searcher = searchers[task % 2]
@@ -59,7 +67,7 @@ class TestMultiRepoConcurrentLoad:
 
         def do_reindex() -> None:
             root, store = repos[0]
-            VaultIndexer(root, embedding_model, store).full_index(
+            VaultIndexer(root, embedding_model, store, gpu_lock=gpu_lock).full_index(
                 reporter=NullProgressReporter()
             )
 

@@ -17,6 +17,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel, ConfigDict
 
 from ..serviceclient import (
     _default_service_port,
@@ -28,6 +29,22 @@ from ._mcp import mcp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+class SearchResults(BaseModel):
+    """Structured envelope returned by the search tools (MCP ``outputSchema``).
+
+    Declares the load-bearing fields so clients get a validated result schema
+    and ``structuredContent``; ``extra="allow"`` carries the daemon's evolving
+    diagnostic fields (``timing``, ``index_state``, ``empty``, error envelopes)
+    without coupling the MCP layer to the daemon's full response shape.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    results: list[dict[str, Any]] = []
+    summary: str | None = None
+
 
 _SERVICE_DOWN_MESSAGE = (
     "vaultspec-rag service is not running. Start it with `vaultspec-rag server start`."
@@ -116,7 +133,7 @@ async def search_vault(
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
-) -> dict[str, Any]:
+) -> SearchResults:
     """Search the documentation vault for relevant ADRs, plans, and research.
 
     ``intent`` selects the ranking profile: ``orientation`` (default; surfaces
@@ -144,7 +161,7 @@ async def search_vault(
             unlike_ids=unlike_ids,
         )
     )
-    return _as_envelope(result)
+    return SearchResults.model_validate(_as_envelope(result))
 
 
 @mcp.tool(title="Search codebase", annotations=_READ_ONLY)
@@ -163,7 +180,7 @@ async def search_codebase(
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
-) -> dict[str, Any]:
+) -> SearchResults:
     """Search the source codebase for relevant functions, classes, or logic."""
     port = _require_port()
     result = await _delegate(
@@ -187,7 +204,7 @@ async def search_codebase(
             unlike_ids=unlike_ids,
         )
     )
-    return _as_envelope(result)
+    return SearchResults.model_validate(_as_envelope(result))
 
 
 @mcp.tool(title="Get code file", annotations=_READ_ONLY)
