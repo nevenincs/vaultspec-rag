@@ -9,7 +9,7 @@ from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeS
     sync_provider,
 )
 
-from ..builtins import seed_builtins
+from ..builtins import seed_builtins, seed_skills
 from ._models import InstallReport
 from ._torch_flow import _run_torch_config_install
 from ._workspace import (
@@ -46,6 +46,32 @@ def _seed_rules(
         report.seeded = [
             rel for rel in bundled if not (rules_dir / rel).exists() or force or upgrade
         ]
+
+
+def _seed_skills(
+    skills_dir: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    upgrade: bool,
+) -> None:
+    if not dry_run:
+        seeded: list[str] = []
+        try:
+            seed_skills(skills_dir, force=force or upgrade, written=seeded)
+        except Exception:
+            _rollback_seeded(skills_dir, seeded, report)
+            raise
+        report.seeded.extend(seeded)
+    else:
+        from ..builtins import list_skills
+
+        bundled = list_skills()
+        report.seeded.extend(
+            rel
+            for rel in bundled
+            if not (skills_dir / rel).exists() or force or upgrade
+        )
 
 
 def _run_core_sync(
@@ -104,8 +130,9 @@ def install_run(
 
     Self-sufficient: idempotently creates any missing directories rag
     needs, seeds rag's bundled rule and MCP source files into
-    ``.vaultspec/rules/``, then invokes core's ``sync_provider`` to
-    propagate the new sources into ``.mcp.json`` and provider dirs.
+    ``.vaultspec/rules/`` and its bundled skills into ``.vaultspec/skills/``,
+    then invokes core's ``sync_provider`` to propagate the new sources into
+    ``.mcp.json`` and provider dirs.
 
     When ``configure_torch`` is True (the default), also patches the
     consumer's ``pyproject.toml`` with the canonical cu130 torch index
@@ -169,6 +196,11 @@ def install_run(
 
     rules_dir = target / ".vaultspec" / "rules"
     _seed_rules(rules_dir, report, dry_run, force, upgrade)
+
+    # Skills seed into ``.vaultspec/skills/`` (core's skill collector scans
+    # there), separate from the rules/mcps root above.
+    skills_dir = target / ".vaultspec" / "skills"
+    _seed_skills(skills_dir, report, dry_run, force, upgrade)
 
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
