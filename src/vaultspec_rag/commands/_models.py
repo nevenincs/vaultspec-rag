@@ -37,9 +37,10 @@ class InstallReport:
         action: One of ``"install"``, ``"upgrade"``, ``"dry_run"``.
         target: Resolved workspace path.
         created_dirs: Workspace-relative directories rag ensured exist.
-        seeded: Workspace-relative paths of bundled files seeded, folded flat
-            into ``.vaultspec/`` (``rules/`` / ``mcps/`` / ``skills/``) as core
-            folds its own.
+        seeded: ``(relative_path, action)`` pairs for each bundled file the seed
+            acted on, ``action`` in ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]`` -
+            the same shape core's seeder returns. Paths fold flat into
+            ``.vaultspec/`` (``rules/`` / ``mcps/`` / ``skills/``).
         sync_results: ``SyncResult`` objects returned by core's
             ``sync_provider`` (one per sync pass).
         warnings: Non-fatal warnings collected during the run.
@@ -48,7 +49,7 @@ class InstallReport:
     action: str
     target: Path
     created_dirs: list[str] = field(default_factory=list)
-    seeded: list[str] = field(default_factory=list)
+    seeded: list[tuple[str, str]] = field(default_factory=list)
     sync_results: list[Any] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
@@ -73,7 +74,7 @@ class InstallReport:
             "action": self.action,
             "target": str(self.target),
             "created_dirs": list(self.created_dirs),
-            "seeded": list(self.seeded),
+            "seeded": [[rel, action] for rel, action in self.seeded],
             "sync_added": sum(getattr(r, "added", 0) for r in self.sync_results),
             "sync_updated": sum(getattr(r, "updated", 0) for r in self.sync_results),
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),

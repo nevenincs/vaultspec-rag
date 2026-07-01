@@ -59,30 +59,38 @@ def seed_builtins(
     target_dir: Path,
     *,
     force: bool = False,
+    dry_run: bool = False,
     written: list[str] | None = None,
-) -> list[str]:
+) -> list[tuple[str, str]]:
     """Copy rag's bundled builtins into a target ``.vaultspec/`` directory.
 
     The bundled tree folds flat into ``target_dir`` exactly as core's seeder
     folds its own tree: ``rules/`` -> ``.vaultspec/rules/``, ``mcps/`` ->
     ``.vaultspec/mcps/``, ``skills/<name>/`` -> ``.vaultspec/skills/<name>/``.
-    Only copies files that do not already exist unless *force* is ``True``.
+    Files that already exist are left untouched unless *force* is ``True``; a
+    forced file whose content already matches is classified ``[UNCHANGED]`` and
+    not rewritten.
 
-    Destination containment is enforced (a member can never escape
-    ``target_dir``), writes use core's ``atomic_write`` (tmp + os.replace), and
-    per-file ``OSError`` from the write is **raised**, not swallowed: a silent
-    partial seed would leave the workspace half-installed and bypass the
-    caller's rollback path. Callers may pass a ``written`` out-list to capture
-    progress before an exception propagates, enabling targeted rollback.
+    Reporting matches ``vaultspec_core.builtins.seed_builtins``: a
+    ``(relative_path, action)`` pair per builtin acted on, ``action`` in
+    ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]``. rag additionally keeps its own
+    seed hardening that core's minimal seeder omits: destination containment (a
+    member can never escape ``target_dir``), crash-safe ``atomic_write``, a
+    **raised** per-file ``OSError`` (never a silent partial seed), and an
+    optional ``written`` out-list of the paths actually written so a caller can
+    roll back a partial seed before the error propagates.
 
     Args:
         target_dir: The ``.vaultspec/`` framework directory to populate.
-        force: Overwrite existing files.
-        written: Optional out-list; each successfully-written relative path is
-            appended before continuing to the next file.
+        force: Overwrite existing files (unchanged content stays untouched).
+        dry_run: Classify every builtin without writing - previews an upgrade.
+        written: Optional out-list of ``[ADD]``/``[UPDATE]`` relative paths
+            actually written, in order, for targeted rollback.
 
     Returns:
-        Sorted list of relative paths (forward-slash separated) written.
+        Sorted list of ``(relative_path, action)`` pairs for every builtin the
+        call acted on (or would act on, under *dry_run*). Files skipped because
+        they exist and *force* is False are omitted.
 
     Raises:
         OSError: If a destination file write fails.
@@ -91,6 +99,7 @@ def seed_builtins(
     if written is None:
         written = []
     target_resolved = target_dir.resolve()
+    results: list[tuple[str, str]] = []
     for src_file in _iter_builtin_files(src_root):
         rel = str(src_file.relative_to(src_root)).replace("\\", "/")
         dest = target_dir / rel
@@ -106,13 +115,24 @@ def seed_builtins(
                 target_resolved,
             )
             continue
-        if dest.exists() and not force:
+        exists = dest.exists()
+        if exists and not force:
             continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(dest, src_file.read_text(encoding="utf-8"))
-        written.append(rel)
-    written.sort()
-    return written
+        if not exists:
+            action = "[ADD]"
+        else:
+            try:
+                unchanged = dest.read_bytes() == src_file.read_bytes()
+            except OSError:
+                unchanged = False
+            action = "[UNCHANGED]" if unchanged else "[UPDATE]"
+        if action != "[UNCHANGED]" and not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(dest, src_file.read_text(encoding="utf-8"))
+            written.append(rel)
+        results.append((rel, action))
+    results.sort()
+    return results
 
 
 def list_builtins() -> list[str]:

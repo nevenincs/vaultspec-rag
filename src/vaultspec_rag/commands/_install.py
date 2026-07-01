@@ -41,20 +41,18 @@ def _seed_builtins(
     propagates.
     """
     if not dry_run:
+        written: list[str] = []
         try:
-            seed_builtins(vaultspec_dir, force=force or upgrade, written=report.seeded)
+            report.seeded = seed_builtins(
+                vaultspec_dir, force=force or upgrade, written=written
+            )
         except Exception:
-            _rollback_seeded(vaultspec_dir, report.seeded, report)
+            _rollback_seeded(vaultspec_dir, written, report)
             raise
     else:
-        from ..builtins import list_builtins
-
-        bundled = list_builtins()
-        report.seeded = [
-            rel
-            for rel in bundled
-            if not (vaultspec_dir / rel).exists() or force or upgrade
-        ]
+        report.seeded = seed_builtins(
+            vaultspec_dir, force=force or upgrade, dry_run=True
+        )
 
 
 def _run_core_sync(
