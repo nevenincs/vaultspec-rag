@@ -55,6 +55,43 @@ def _iter_builtin_files(root: Path) -> list[Path]:
     return files
 
 
+def _within_target(dest: Path, target_resolved: Path) -> bool:
+    """Return True when ``dest`` resolves inside ``target_resolved``.
+
+    Defense-in-depth so a bundled member can never escape the target dir.
+    Logs and returns False on a resolution failure or an out-of-target dest.
+    """
+    try:
+        dest_resolved = dest.resolve()
+    except OSError as exc:
+        logger.warning("Cannot resolve dest %s: %s", dest, exc)
+        return False
+    if not dest_resolved.is_relative_to(target_resolved):
+        logger.warning(
+            "Refusing dest outside target: %s (target=%s)",
+            dest_resolved,
+            target_resolved,
+        )
+        return False
+    return True
+
+
+def _classify_action(dest: Path, src_file: Path) -> str:
+    """Classify a builtin as ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]``.
+
+    Assumes the caller has already decided to act on ``dest`` (it does not
+    exist, or *force* is set). A read failure on the existing dest is treated
+    as changed so the file is rewritten.
+    """
+    if not dest.exists():
+        return "[ADD]"
+    try:
+        unchanged = dest.read_bytes() == src_file.read_bytes()
+    except OSError:
+        unchanged = False
+    return "[UNCHANGED]" if unchanged else "[UPDATE]"
+
+
 def seed_builtins(
     target_dir: Path,
     *,
@@ -103,29 +140,11 @@ def seed_builtins(
     for src_file in _iter_builtin_files(src_root):
         rel = str(src_file.relative_to(src_root)).replace("\\", "/")
         dest = target_dir / rel
-        try:
-            dest_resolved = dest.resolve()
-        except OSError as exc:
-            logger.warning("Cannot resolve dest %s: %s", dest, exc)
+        if not _within_target(dest, target_resolved):
             continue
-        if not dest_resolved.is_relative_to(target_resolved):
-            logger.warning(
-                "Refusing dest outside target: %s (target=%s)",
-                dest_resolved,
-                target_resolved,
-            )
+        if dest.exists() and not force:
             continue
-        exists = dest.exists()
-        if exists and not force:
-            continue
-        if not exists:
-            action = "[ADD]"
-        else:
-            try:
-                unchanged = dest.read_bytes() == src_file.read_bytes()
-            except OSError:
-                unchanged = False
-            action = "[UNCHANGED]" if unchanged else "[UPDATE]"
+        action = _classify_action(dest, src_file)
         if action != "[UNCHANGED]" and not dry_run:
             dest.parent.mkdir(parents=True, exist_ok=True)
             atomic_write(dest, src_file.read_text(encoding="utf-8"))
