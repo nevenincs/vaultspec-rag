@@ -89,32 +89,64 @@ Pass `--date` as `yyyy-mm-dd`, and pass `--tag` without the leading `#`.
 
 ## Filter noise by domain
 
-Every code chunk is classified into a *domain* from its path: `prod`, `tests`,
-`docs`, `locale`, `generated`, `vendored`, or `worktree`. By default the search
-keeps production first - it hides the duplicate and derivative trees
-(`generated`, agent `worktree` clones; clones are also skipped at index time)
-and demotes `tests`, `docs`, `locale`, and `vendored` so they sit below
-production rather than crowding it. Locale duplicates are collapsed by default.
+Every code chunk is classified into a *domain* from its path. The domain is the
+axis you use to cut noise:
 
-Steer a single search with inline query tokens (no extra flags, so they pass
-through the running service unchanged):
+| Domain      | What it covers                                                        |
+| ----------- | --------------------------------------------------------------------- |
+| `prod`      | Production source - what a search usually wants                       |
+| `tests`     | Test files and directories (`tests/`, `*_test.*`, `conftest.py`, ...) |
+| `docs`      | Documentation (`docs/`, `README*`, `*.md`/`*.rst`)                    |
+| `locale`    | Localisation tables (`locales/`, `i18n/`, `<lang>.yml`, ...)          |
+| `generated` | Machine-emitted files (`*_pb2.py`, `*.min.js`, `__generated__/`, ...) |
+| `vendored`  | Third-party trees (`vendor/`, `dist/`, `node_modules/`, ...)          |
+| `worktree`  | Agent worktree clones that duplicate the real source                  |
+
+By default the search keeps production first: it hides the duplicate and
+derivative trees (`generated` output and `worktree` clones - clones are also
+skipped at index time), demotes `tests`, `docs`, `locale`, and `vendored` so
+they sit below production rather than crowding it, and collapses locale
+duplicates. When a query still returns noise, narrow by domain rather than
+raising `--max-results` and reading past the noise.
+
+Steer a single search with inline query tokens. They ride in the query string,
+so they need no flags and pass through the running service unchanged; values are
+comma-separated and repeatable.
 
 ```
-# Drop the tests domain entirely for this search
-uv run vaultspec-rag search "retry backoff exclude:tests" --type code
+# Hide one noise domain for this search
+uv run vaultspec-rag search "retry backoff policy exclude:tests" --type code
 
-# Restrict to one domain (comma-separate or repeat for several)
-uv run vaultspec-rag search "fixture setup only:tests" --type code
+# Hide several at once (comma-separated, or repeat the token)
+uv run vaultspec-rag search "payment capture flow exclude:tests,docs,vendored" --type code
+
+# Restrict to one or more domains - e.g. find only the tests for a behaviour
+uv run vaultspec-rag search "fixture setup helpers only:tests" --type code
 
 # Re-admit a domain the profile hides or demotes by default
-uv run vaultspec-rag search "translation table include:locale" --type code
+uv run vaultspec-rag search "translation table lookup include:locale" --type code
+```
+
+Domain tokens compose with the path, category, and locale controls, so you can
+scope precisely:
+
+```
+# Production code under one subtree, with the legacy tree removed
+uv run vaultspec-rag search "auth handler exclude:tests" --type code \
+  --include-path "src/**" --exclude-path "**/legacy/**"
+
+# Bias toward tests while still showing production below them
+uv run vaultspec-rag search "encode batch" --type code --prefer tests
+
+# Keep every locale variant for a translation audit
+uv run vaultspec-rag search "greeting string include:locale" --type code --no-dedup-locales
 ```
 
 The `search_codebase` MCP tool exposes the same control as typed
 `exclude_domains` / `only_domains` / `include_domains` parameters. Set the
-per-project defaults with the `code_noise_hide_domains`,
-`code_noise_demote_domains`, and `code_noise_demote_penalty` configuration knobs
-(see the configuration guide).
+per-project defaults - which domains hide, which demote, and how hard - with the
+`code_noise_hide_domains`, `code_noise_demote_domains`, and
+`code_noise_demote_penalty` configuration knobs (see the configuration guide).
 
 ## Collapse locale duplicates
 

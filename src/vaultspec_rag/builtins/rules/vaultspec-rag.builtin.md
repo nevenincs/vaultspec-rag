@@ -27,9 +27,45 @@ vaultspec-rag search "retry policy backoff for failed webhook delivery" --type c
 vaultspec-rag search "decision on gpu_lock scope around forward pass" --type vault --doc-type adr
 ```
 
-Code filters: `--language --path --function-name --class-name --include-path GLOB`.
-Vault filters: `--doc-type --feature --date --tag`. Filters also work inline in the
-query: `type:adr lang:python func:main`.
+Code filters: `--language --path --function-name --class-name --include-path GLOB --exclude-path GLOB`. Vault filters: `--doc-type --feature --date --tag`. Filters also
+work inline in the query: `type:adr lang:python func:main`.
+
+## Cut noise from code results
+
+Every code chunk carries a domain derived from its path: `prod`, `tests`, `docs`,
+`locale`, `generated`, `vendored`, or `worktree`. Code search surfaces production first
+by default - it hides duplicate and derivative trees (`generated` output and `worktree`
+clones, which are also skipped at index time), demotes `tests`, `docs`, `locale`, and
+`vendored` below production, and collapses locale-variant duplicates to a single result.
+When a query still returns noise, narrow by domain; do not just raise `--max-results` and
+read past it.
+
+Steer one search with inline domain tokens - they ride in the query string, so they need
+no flags and pass through the running service unchanged. Values are comma-separated and
+repeatable.
+
+```
+vaultspec-rag search "retry backoff policy exclude:tests" --type code
+vaultspec-rag search "payment capture flow exclude:tests,docs" --type code
+vaultspec-rag search "fixture setup helpers only:tests" --type code
+vaultspec-rag search "translation table lookup include:locale" --type code
+```
+
+`exclude:` hides a domain for this search, `only:` restricts to the named domains, and
+`include:` re-admits a domain the profile hides or demotes by default. Path globs, the
+category bias, and the locale toggle compose with them:
+
+```
+vaultspec-rag search "auth handler" --type code --include-path "src/**" --exclude-path "**/legacy/**"
+vaultspec-rag search "encode batch" --type code --prefer production
+vaultspec-rag search "greeting string" --type code --no-dedup-locales
+```
+
+The same domain tokens work through the `search_codebase` MCP tool, which also accepts
+typed `exclude_domains` / `only_domains` / `include_domains` arguments. Change the
+per-project defaults - which domains hide, which demote, and the demote strength - through
+the `code_noise_hide_domains`, `code_noise_demote_domains`, and
+`code_noise_demote_penalty` configuration knobs.
 
 ## Run the server
 
