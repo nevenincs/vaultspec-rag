@@ -37,7 +37,9 @@ class InstallReport:
         action: One of ``"install"``, ``"upgrade"``, ``"dry_run"``.
         target: Resolved workspace path.
         created_dirs: Workspace-relative directories rag ensured exist.
-        seeded: Workspace-relative paths of bundled files seeded.
+        seeded: Workspace-relative paths of bundled files seeded, folded flat
+            into ``.vaultspec/`` (``rules/`` / ``mcps/`` / ``skills/``) as core
+            folds its own.
         sync_results: ``SyncResult`` objects returned by core's
             ``sync_provider`` (one per sync pass).
         warnings: Non-fatal warnings collected during the run.

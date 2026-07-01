@@ -5463,7 +5463,7 @@ class TestRenderUninstallReport:
         report = UninstallReport(
             action="dry_run",
             target=Path("."),
-            removed=[".vaultspec/rules/rules/vaultspec-rag.builtin.md"],
+            removed=[".vaultspec/rules/vaultspec-rag.builtin.md"],
             torch_config_action=TorchConfigAction.DRY_RUN,
             torch_direct_dep_action="dry_run",
             warnings=[

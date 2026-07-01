@@ -11,7 +11,7 @@ from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeS
     sync_provider,
 )
 
-from ..builtins import list_builtins, list_skills
+from ..builtins import list_builtins
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
@@ -24,10 +24,8 @@ def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> 
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
-    rules_dir = target / ".vaultspec" / "rules"
-    skills_dir = target / ".vaultspec" / "skills"
-    candidates = [rules_dir / rel for rel in list_builtins()]
-    candidates += [skills_dir / rel for rel in list_skills()]
+    vaultspec_dir = target / ".vaultspec"
+    candidates = [vaultspec_dir / rel for rel in list_builtins()]
     for src_file in candidates:
         if not src_file.exists():
             continue

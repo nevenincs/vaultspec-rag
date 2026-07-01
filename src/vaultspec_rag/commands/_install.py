@@ -9,7 +9,7 @@ from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeS
     sync_provider,
 )
 
-from ..builtins import seed_builtins, seed_skills
+from ..builtins import seed_builtins
 from ._models import InstallReport
 from ._torch_flow import _run_torch_config_install
 from ._workspace import (
@@ -26,52 +26,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _seed_rules(
-    rules_dir: Path,
+def _seed_builtins(
+    vaultspec_dir: Path,
     report: InstallReport,
     dry_run: bool,
     force: bool,
     upgrade: bool,
 ) -> None:
+    """Seed rag's whole bundled tree flat into ``.vaultspec/`` (core's fold).
+
+    ``seed_builtins`` folds ``rules/`` / ``mcps/`` / ``skills/`` into
+    ``.vaultspec/rules/`` / ``.vaultspec/mcps/`` / ``.vaultspec/skills/``. On a
+    write failure the partially-seeded files are rolled back before the error
+    propagates.
+    """
     if not dry_run:
         try:
-            seed_builtins(rules_dir, force=force or upgrade, written=report.seeded)
+            seed_builtins(vaultspec_dir, force=force or upgrade, written=report.seeded)
         except Exception:
-            _rollback_seeded(rules_dir, report.seeded, report)
+            _rollback_seeded(vaultspec_dir, report.seeded, report)
             raise
     else:
         from ..builtins import list_builtins
 
         bundled = list_builtins()
         report.seeded = [
-            rel for rel in bundled if not (rules_dir / rel).exists() or force or upgrade
-        ]
-
-
-def _seed_skills(
-    skills_dir: Path,
-    report: InstallReport,
-    dry_run: bool,
-    force: bool,
-    upgrade: bool,
-) -> None:
-    if not dry_run:
-        seeded: list[str] = []
-        try:
-            seed_skills(skills_dir, force=force or upgrade, written=seeded)
-        except Exception:
-            _rollback_seeded(skills_dir, seeded, report)
-            raise
-        report.seeded.extend(seeded)
-    else:
-        from ..builtins import list_skills
-
-        bundled = list_skills()
-        report.seeded.extend(
             rel
             for rel in bundled
-            if not (skills_dir / rel).exists() or force or upgrade
-        )
+            if not (vaultspec_dir / rel).exists() or force or upgrade
+        ]
 
 
 def _run_core_sync(
@@ -129,10 +112,11 @@ def install_run(
     """Install vaultspec-rag enrollment into a workspace.
 
     Self-sufficient: idempotently creates any missing directories rag
-    needs, seeds rag's bundled rule and MCP source files into
-    ``.vaultspec/rules/`` and its bundled skills into ``.vaultspec/skills/``,
-    then invokes core's ``sync_provider`` to propagate the new sources into
-    ``.mcp.json`` and provider dirs.
+    needs, seeds rag's bundled tree flat into ``.vaultspec/`` (rules into
+    ``.vaultspec/rules/``, the MCP into ``.vaultspec/mcps/``, skills into
+    ``.vaultspec/skills/`` - the same fold core uses), then invokes core's
+    ``sync_provider`` to propagate the new sources into ``.mcp.json`` and
+    provider dirs.
 
     When ``configure_torch`` is True (the default), also patches the
     consumer's ``pyproject.toml`` with the canonical cu130 torch index
@@ -194,13 +178,12 @@ def install_run(
     report = InstallReport(action=action, target=target)
     report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
 
-    rules_dir = target / ".vaultspec" / "rules"
-    _seed_rules(rules_dir, report, dry_run, force, upgrade)
-
-    # Skills seed into ``.vaultspec/skills/`` (core's skill collector scans
-    # there), separate from the rules/mcps root above.
-    skills_dir = target / ".vaultspec" / "skills"
-    _seed_skills(skills_dir, report, dry_run, force, upgrade)
+    # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does
+    # (rules/ -> .vaultspec/rules/, mcps/ -> .vaultspec/mcps/, skills/<name>/
+    # -> .vaultspec/skills/<name>/), so core's collectors and sync pick them up
+    # like any core builtin.
+    vaultspec_dir = target / ".vaultspec"
+    _seed_builtins(vaultspec_dir, report, dry_run, force, upgrade)
 
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
@@ -373,17 +356,17 @@ def _maybe_warn_hf_auth(report: InstallReport) -> None:
     )
 
 
-def _rollback_seeded(rules_dir: Path, seeded: list[str], report: InstallReport) -> None:
+def _rollback_seeded(base_dir: Path, seeded: list[str], report: InstallReport) -> None:
     """Best-effort cleanup of files seeded during a failed install.
 
     Removes only files that *this* install actually wrote (recorded in
-    ``seeded``). Never removes pre-existing files. Errors during
-    rollback are recorded as warnings - they cannot mask the original
-    install failure since the caller re-raises.
+    ``seeded``). Never removes pre-existing files. Errors during rollback are
+    recorded as warnings - they cannot mask the original install failure since
+    the caller re-raises.
     """
     for rel in seeded:
         try:
-            (rules_dir / rel).unlink(missing_ok=True)
+            (base_dir / rel).unlink(missing_ok=True)
         except OSError as exc:
             report.warnings.append(f"rollback: failed to remove {rel}: {exc}")
     report.warnings.append(

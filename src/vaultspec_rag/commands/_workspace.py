@@ -70,8 +70,7 @@ def _ensure_workspace_dirs(target: Path, *, dry_run: bool) -> list[str]:
         target / ".vault" / "data",
         target / ".vaultspec",
         target / ".vaultspec" / "rules",
-        target / ".vaultspec" / "rules" / "rules",
-        target / ".vaultspec" / "rules" / "mcps",
+        target / ".vaultspec" / "mcps",
         target / ".vaultspec" / "skills",
     ]
     created: list[str] = []
