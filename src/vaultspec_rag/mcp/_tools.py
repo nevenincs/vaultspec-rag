@@ -85,6 +85,33 @@ def _as_envelope(result: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any
     return result
 
 
+def _with_domain_tokens(
+    query: str,
+    *,
+    exclude_domains: list[str] | None,
+    only_domains: list[str] | None,
+    include_domains: list[str] | None,
+) -> str:
+    """Append exclude:/only:/include: domain tokens to a query string.
+
+    The daemon parses these inline tokens, so encoding the MCP tool's typed
+    domain params this way keeps the HTTP wire shape identical to the CLI's
+    without widening the transport signature.
+    """
+    tokens: list[str] = []
+    for prefix, values in (
+        ("exclude", exclude_domains),
+        ("only", only_domains),
+        ("include", include_domains),
+    ):
+        cleaned = [v.strip() for v in values or [] if v.strip()]
+        if cleaned:
+            tokens.append(f"{prefix}:{','.join(cleaned)}")
+    if not tokens:
+        return query
+    return f"{query} {' '.join(tokens)}".strip()
+
+
 def _require_port() -> int:
     """Return the running service port or raise the one service-down error.
 
@@ -177,18 +204,35 @@ async def search_codebase(
     class_name: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
-    dedup_locales: bool = False,
+    dedup_locales: bool | None = None,
     prefer: str | None = None,
+    exclude_domains: list[str] | None = None,
+    only_domains: list[str] | None = None,
+    include_domains: list[str] | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
-    """Search the source codebase for relevant functions, classes, or logic."""
+    """Search the source codebase for relevant functions, classes, or logic.
+
+    Noise domains (tests, docs, locale, generated, vendored, worktree clones)
+    are hidden or demoted by the project noise profile; pass ``exclude_domains``
+    / ``only_domains`` to narrow further, or ``include_domains`` to re-admit a
+    domain the profile filters by default.
+    """
     port = _require_port()
+    # Domain filters travel as inline query tokens (exclude:/only:/include:),
+    # the same wire shape the CLI uses, so the transport needs no extra params.
+    full_query = _with_domain_tokens(
+        query,
+        exclude_domains=exclude_domains,
+        only_domains=only_domains,
+        include_domains=include_domains,
+    )
     result = await _delegate(
         partial(
             _try_http_search,
-            query,
+            full_query,
             "code",
             top_k,
             port,

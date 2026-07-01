@@ -581,7 +581,7 @@ def _build_http_search_payload(
     intent: str | None,
     include_paths: list[str] | None,
     exclude_paths: list[str] | None,
-    dedup_locales: bool,
+    dedup_locales: bool | None,
     prefer: str | None,
     like_ids: list[str | int] | None,
     unlike_ids: list[str | int] | None,
@@ -611,8 +611,10 @@ def _build_http_search_payload(
             payload["include_paths"] = list(include_paths)
         if exclude_paths:
             payload["exclude_paths"] = list(exclude_paths)
-        if dedup_locales:
-            payload["dedup_locales"] = True
+        # Tri-state: only send when the caller set it explicitly, so the server
+        # resolves the configured default when it is absent.
+        if dedup_locales is not None:
+            payload["dedup_locales"] = bool(dedup_locales)
         if prefer is not None:
             payload["prefer"] = prefer
     elif search_type == "vault":
@@ -650,7 +652,7 @@ def _try_http_search(
     intent: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
-    dedup_locales: bool = False,
+    dedup_locales: bool | None = None,
     prefer: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,

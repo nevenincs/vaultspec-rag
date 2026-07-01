@@ -24,8 +24,8 @@ def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> 
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
-    rules_dir = target / ".vaultspec" / "rules"
-    candidates = [rules_dir / rel for rel in list_builtins()]
+    vaultspec_dir = target / ".vaultspec"
+    candidates = [vaultspec_dir / rel for rel in list_builtins()]
     for src_file in candidates:
         if not src_file.exists():
             continue

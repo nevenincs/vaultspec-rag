@@ -547,8 +547,8 @@ def _render_install_report(report: Any) -> None:
     if report.seeded:
         verb = "would seed" if dry_run else "seeded"
         _cli.console.print(f"{verb} {_counted(len(report.seeded), 'bundled file')}:")
-        for rel in report.seeded:
-            _cli.console.print(f"  + {rel}", markup=False, highlight=False)
+        for rel, action in report.seeded:
+            _cli.console.print(f"  {action} {rel}", markup=False, highlight=False)
     sync_added = sum(getattr(r, "added", 0) for r in report.sync_results)
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)

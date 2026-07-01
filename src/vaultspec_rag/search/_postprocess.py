@@ -14,9 +14,10 @@ All functions here are pure (no I/O, no realistic exception surface).
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from typing import TYPE_CHECKING, Literal
+
+from .._domain import classify_domain
 
 if TYPE_CHECKING:
     from ._models import SearchResult
@@ -63,15 +64,6 @@ _LOCALE_FILE_EXTS: frozenset[str] = frozenset(
 )
 _LOCALE_CODE_RE = re.compile(r"^[a-z]{2}$")
 
-# Chunk-type classifier. Order = precedence (tests > docs > prod).
-# Implemented as segment / basename / extension checks instead of
-# fnmatch globs because ``fnmatch`` lacks ``**`` and would require
-# enumerating each tree depth explicitly.
-_TESTS_DIR_NAMES: frozenset[str] = frozenset({"tests", "test", "spec", "__tests__"})
-_TESTS_BASENAME_PATTERNS: tuple[str, ...] = ("test_*", "*_test.*", "*_spec.*")
-_DOCS_DIR_NAMES: frozenset[str] = frozenset({"docs", "doc"})
-_DOCS_BASENAME_PATTERNS: tuple[str, ...] = ("readme*", "changelog*")
-_DOCS_FILE_EXTS: frozenset[str] = frozenset({"md", "rst", "adoc"})
 PREFER_CATEGORIES: tuple[str, ...] = ("prod", "tests", "docs")
 
 
@@ -121,28 +113,21 @@ def _locale_variant_key(path: str) -> str | None:
 def _classify_chunk_type(path: str) -> Literal["prod", "tests", "docs"]:
     """Classify a project-relative ``path`` for --prefer score nudging.
 
-    Precedence: ``tests`` > ``docs`` > ``prod``. A file under
-    ``tests/docs/`` is reported as ``tests`` because the user's
-    intent when running tests is the dominant signal.
+    Thin three-category projection of the shared :func:`classify_domain`
+    so ``--prefer prod|tests|docs`` and the domain noise policy stay one
+    source of truth. Every domain outside ``tests`` / ``docs`` maps to
+    ``prod`` because ``--prefer`` only distinguishes those three
+    categories; the richer domains (``locale`` / ``generated`` /
+    ``vendored`` / ``worktree``) are the noise-policy's concern, not the
+    preference nudge's.
 
     Pure function - no I/O, no realistic exception surface.
     """
-    segments = path.split("/")
-    basename = segments[-1].lower() if segments else ""
-
-    if any(seg in _TESTS_DIR_NAMES for seg in segments[:-1]):
+    domain = classify_domain(path)
+    if domain == "tests":
         return "tests"
-    if any(fnmatch.fnmatch(basename, pat) for pat in _TESTS_BASENAME_PATTERNS):
-        return "tests"
-
-    if any(seg in _DOCS_DIR_NAMES for seg in segments[:-1]):
+    if domain == "docs":
         return "docs"
-    if any(fnmatch.fnmatch(basename, pat) for pat in _DOCS_BASENAME_PATTERNS):
-        return "docs"
-    ext = basename.rsplit(".", 1)[-1] if "." in basename else ""
-    if ext in _DOCS_FILE_EXTS:
-        return "docs"
-
     return "prod"
 
 

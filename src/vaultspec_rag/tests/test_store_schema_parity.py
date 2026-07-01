@@ -152,4 +152,30 @@ def test_code_chunk_payload_matches_golden_shape() -> None:
         "locator_value_str": None,
         "locator_end_int": None,
         "locator_end_str": None,
+        "domain": "prod",
     }
+
+
+def _mk_code_chunk(path: str) -> CodeChunk:
+    return CodeChunk(
+        id=f"{path}:1-2",
+        path=path,
+        language="python",
+        content="x = 1",
+        line_start=1,
+        line_end=2,
+    )
+
+
+def test_code_chunk_payload_carries_path_derived_domain() -> None:
+    """The payload's domain is classified from the chunk path."""
+    assert _code_chunk_payload(_mk_code_chunk("src/main.py"))["domain"] == "prod"
+    assert (
+        _code_chunk_payload(_mk_code_chunk("tests/test_main.py"))["domain"] == "tests"
+    )
+    assert (
+        _code_chunk_payload(
+            _mk_code_chunk(".claude/worktrees/agent-1/src/main.py")
+        )["domain"]
+        == "worktree"
+    )

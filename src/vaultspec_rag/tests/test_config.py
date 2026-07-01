@@ -340,3 +340,64 @@ def test_local_only_wins_even_when_server_env_on() -> None:
     finally:
         _restore_server_mode_env(saved)
         reset_config()
+
+
+def test_code_noise_profile_defaults() -> None:
+    cfg = get_config()
+    assert cfg.code_noise_hide_domains == frozenset({"worktree", "generated"})
+    assert cfg.code_noise_demote_domains == frozenset(
+        {"tests", "docs", "locale", "vendored"}
+    )
+    assert cfg.code_noise_demote_penalty == pytest.approx(0.3)
+    assert cfg.dedup_locales_default is True
+
+
+def test_parse_domain_set_drops_unknown_and_prod() -> None:
+    from ..config import VaultSpecConfigWrapper as W
+
+    # ``prod`` is never noise; ``bogus`` is not a domain - both dropped.
+    assert W._parse_domain_set("tests, prod, bogus, locale") == frozenset(
+        {"tests", "locale"}
+    )
+    assert W._parse_domain_set("") == frozenset()
+    assert W._parse_domain_set(None) == frozenset()
+
+
+def test_hide_wins_over_demote() -> None:
+    prev_hide = _set_env(EnvVar.CODE_NOISE_HIDE_DOMAINS, "worktree,tests")
+    prev_demote = _set_env(EnvVar.CODE_NOISE_DEMOTE_DOMAINS, "tests,docs")
+    try:
+        reset_config()
+        cfg = get_config()
+        # ``tests`` is in both; hide takes it, so demote no longer lists it.
+        assert "tests" in cfg.code_noise_hide_domains
+        assert "tests" not in cfg.code_noise_demote_domains
+        assert cfg.code_noise_demote_domains == frozenset({"docs"})
+    finally:
+        _restore_env(EnvVar.CODE_NOISE_HIDE_DOMAINS, prev_hide)
+        _restore_env(EnvVar.CODE_NOISE_DEMOTE_DOMAINS, prev_demote)
+        reset_config()
+
+
+def test_code_noise_env_override_penalty_and_dedup() -> None:
+    prev_pen = _set_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, "0.5")
+    prev_dedup = _set_env(EnvVar.DEDUP_LOCALES_DEFAULT, "0")
+    try:
+        reset_config()
+        cfg = get_config()
+        assert cfg.code_noise_demote_penalty == pytest.approx(0.5)
+        assert cfg.dedup_locales_default is False
+    finally:
+        _restore_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, prev_pen)
+        _restore_env(EnvVar.DEDUP_LOCALES_DEFAULT, prev_dedup)
+        reset_config()
+
+
+def test_reranker_enabled_env_override() -> None:
+    prev = _set_env(EnvVar.RERANKER_ENABLED, "0")
+    try:
+        reset_config()
+        assert get_config().reranker_enabled is False
+    finally:
+        _restore_env(EnvVar.RERANKER_ENABLED, prev)
+        reset_config()

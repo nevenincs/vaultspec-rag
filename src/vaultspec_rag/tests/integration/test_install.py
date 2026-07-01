@@ -31,8 +31,11 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration]
 
 
-_RAG_RULE_REL = Path(".vaultspec") / "rules" / "rules" / "vaultspec-rag.builtin.md"
-_RAG_MCP_REL = Path(".vaultspec") / "rules" / "mcps" / "vaultspec-rag.builtin.json"
+_RAG_RULE_REL = Path(".vaultspec") / "rules" / "vaultspec-rag.builtin.md"
+_RAG_MCP_REL = Path(".vaultspec") / "mcps" / "vaultspec-rag.builtin.json"
+_RAG_SKILL_REL = (
+    Path(".vaultspec") / "skills" / "vaultspec-rag-discovery" / "SKILL.md"
+)
 
 _CONSUMER_PYPROJECT = (
     "[project]\n"
@@ -69,18 +72,24 @@ class TestFreshInstall:
         assert report.action == "install"
         assert (fresh_workspace / ".vault").is_dir()
         assert (fresh_workspace / ".vault" / "data").is_dir()
-        assert (fresh_workspace / ".vaultspec" / "rules" / "rules").is_dir()
-        assert (fresh_workspace / ".vaultspec" / "rules" / "mcps").is_dir()
+        # rag folds its builtins flat into .vaultspec/ like core (rules/, mcps/,
+        # skills/), not double-nested under .vaultspec/rules/.
+        assert (fresh_workspace / ".vaultspec" / "rules").is_dir()
+        assert (fresh_workspace / ".vaultspec" / "mcps").is_dir()
+        assert (fresh_workspace / ".vaultspec" / "skills").is_dir()
         assert "vault" in " ".join(report.created_dirs)
 
-    def test_seeds_both_bundled_files(self, fresh_workspace: Path) -> None:
+    def test_seeds_bundled_files(self, fresh_workspace: Path) -> None:
         report = install_run(path=fresh_workspace)
+        # (path, action) pairs, matching core's seeder; a fresh install adds all.
         assert sorted(report.seeded) == [
-            "mcps/vaultspec-rag.builtin.json",
-            "rules/vaultspec-rag.builtin.md",
+            ("mcps/vaultspec-rag.builtin.json", "[ADD]"),
+            ("rules/vaultspec-rag.builtin.md", "[ADD]"),
+            ("skills/vaultspec-rag-discovery/SKILL.md", "[ADD]"),
         ]
         assert (fresh_workspace / _RAG_RULE_REL).is_file()
         assert (fresh_workspace / _RAG_MCP_REL).is_file()
+        assert (fresh_workspace / _RAG_SKILL_REL).is_file()
 
     def test_propagates_mcp_via_core_sync(self, fresh_workspace: Path) -> None:
         install_run(path=fresh_workspace)
@@ -115,7 +124,8 @@ class TestIdempotentInstall:
         rule_path.write_text("MUTATED", encoding="utf-8")
 
         report = install_run(path=installed_workspace, upgrade=True)
-        assert "rules/vaultspec-rag.builtin.md" in report.seeded
+        # The mutated file is re-seeded as an [UPDATE].
+        assert ("rules/vaultspec-rag.builtin.md", "[UPDATE]") in report.seeded
         assert rule_path.read_text(encoding="utf-8") != "MUTATED"
 
     def test_force_re_seeds_existing_files(self, installed_workspace: Path) -> None:
@@ -134,7 +144,7 @@ class TestDryRunInstall:
         assert not (fresh_workspace / ".vaultspec").exists()
         # Report still lists planned work
         assert report.created_dirs
-        assert "rules/vaultspec-rag.builtin.md" in report.seeded
+        assert ("rules/vaultspec-rag.builtin.md", "[ADD]") in report.seeded
 
     def test_dry_run_does_not_invoke_sync(self, fresh_workspace: Path) -> None:
         report = install_run(path=fresh_workspace, dry_run=True)
@@ -245,19 +255,16 @@ class TestUserContentPreservation:
     ) -> None:
         # Pre-existing user-authored rule must not be touched by rag
         # uninstall - it removes only its two named files.
-        user_rule = (
-            installed_workspace / ".vaultspec" / "rules" / "rules" / "my-custom-rule.md"
-        )
+        user_rule = installed_workspace / ".vaultspec" / "rules" / "my-custom-rule.md"
         user_rule.write_text("---\nname: custom\n---\n# user rule\n", encoding="utf-8")
 
         uninstall_run(path=installed_workspace, force=True)
-        # The user rule survives uninstall (rag removes only its two named
+        # The user rule survives uninstall (rag removes only its own named
         # files). vaultspec-core's sync migrates flat custom rules under
         # rules/project/, so accept either the original or migrated location.
         migrated_rule = (
             installed_workspace
             / ".vaultspec"
-            / "rules"
             / "rules"
             / "project"
             / "my-custom-rule.md"
@@ -428,8 +435,9 @@ class TestSafetyGuards:
         # Pre-create the workspace dirs so _ensure_workspace_dirs is a
         # no-op and seed_builtins is the failure point.
         (ws / ".vault" / "data").mkdir(parents=True)
-        (ws / ".vaultspec" / "rules" / "mcps").mkdir(parents=True)
-        (ws / ".vaultspec" / "rules" / "rules").mkdir(parents=True)
+        (ws / ".vaultspec" / "mcps").mkdir(parents=True)
+        (ws / ".vaultspec" / "rules").mkdir(parents=True)
+        (ws / ".vaultspec" / "skills").mkdir(parents=True)
         # Block the rules write: make the bundled DEST path a non-empty
         # directory. With force=True the existence check is bypassed and
         # atomic_write fails on the dir replacement.
@@ -628,10 +636,10 @@ class TestSafetyGuards:
             target = tmp_path / "rules-target"
             target.mkdir()
 
-            written = _builtins.seed_builtins(target)
+            results = _builtins.seed_builtins(target)
 
             # The nested file seeded into the target, contained.
-            assert "rules/vaultspec-rag.builtin.md" in written
+            assert ("rules/vaultspec-rag.builtin.md", "[ADD]") in results
             seeded = target / "rules" / "vaultspec-rag.builtin.md"
             assert seeded.is_file()
             assert seeded.resolve().is_relative_to(target.resolve())

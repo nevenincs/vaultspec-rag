@@ -1,17 +1,19 @@
 """Bundled builtin resources deployed during ``vaultspec-rag install``.
 
-Contains the canonical rule (``rules/vaultspec-rag.builtin.md``) and MCP
-server definition (``mcps/vaultspec-rag.builtin.json``) seeded into
-``.vaultspec/rules/`` on first install. Consumed by
-:mod:`vaultspec_rag.commands` via :func:`seed_builtins` and
-:func:`list_builtins`. Uses :mod:`importlib.resources` for
+Contains rag's canonical rule (``rules/vaultspec-rag.builtin.md``), MCP server
+definition (``mcps/vaultspec-rag.builtin.json``), and bundled skills
+(``skills/<name>/SKILL.md``), seeded directly into ``.vaultspec/`` on first
+install with the same fold vaultspec-core uses: the bundled tree maps flat into
+``.vaultspec/`` (``rules/`` -> ``.vaultspec/rules/``, ``mcps/`` ->
+``.vaultspec/mcps/``, ``skills/<name>/`` -> ``.vaultspec/skills/<name>/``), so
+core's collectors and provider sync pick them up like any core builtin. Consumed
+by :mod:`vaultspec_rag.commands`. Uses :mod:`importlib.resources` for
 package-relative file access.
 
-The builtin files live as committed package data under this package,
-mirroring :mod:`vaultspec_core.builtins`: the package directory is the
-single source of truth, and the seed/list helpers walk that tree. rag
-bundles only the files it exclusively owns; the broader
-``.vaultspec/rules/`` tree is core-managed and not authored here.
+rag is a sibling of vaultspec-core and follows its seed fold. The seed path is
+crash-consistent (``atomic_write``) with a caller-driven rollback contract that
+core's minimal seeder omits; the shared ``check_outdated`` primitive mirrors
+core's upgrade-management surface.
 """
 
 from __future__ import annotations
@@ -30,22 +32,21 @@ logger = logging.getLogger(__name__)
 def _builtins_root() -> Path:
     """Return the filesystem path to the bundled builtins directory.
 
-    The builtin files ship as package data under this package, so the
-    package directory is the root in both editable and wheel installs.
-    Mirrors :func:`vaultspec_core.builtins._builtins_root`.
+    The builtin files ship as package data under this package, so the package
+    directory is the root in both editable and wheel installs. Mirrors
+    :func:`vaultspec_core.builtins._builtins_root`.
     """
     return Path(str(resources.files(__package__)))
 
 
-def _iter_builtin_files(src_root: Path) -> list[Path]:
-    """Return the bundled builtin files, skipping Python package artifacts.
+def _iter_builtin_files(root: Path) -> list[Path]:
+    """Return every bundled file under ``root``, skipping Python artifacts.
 
-    Walks the package tree like :mod:`vaultspec_core.builtins` so the
-    manifest is whatever ships under this package, never a hardcoded list
-    that can drift from the files on disk.
+    Walks the tree like :mod:`vaultspec_core.builtins` so the manifest is
+    whatever ships under the package, never a hardcoded list that can drift.
     """
     files: list[Path] = []
-    for path in sorted(src_root.rglob("*")):
+    for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         if path.name in ("__init__.py", "__pycache__") or "__pycache__" in str(path):
@@ -54,91 +55,107 @@ def _iter_builtin_files(src_root: Path) -> list[Path]:
     return files
 
 
+def _within_target(dest: Path, target_resolved: Path) -> bool:
+    """Return True when ``dest`` resolves inside ``target_resolved``.
+
+    Defense-in-depth so a bundled member can never escape the target dir.
+    Logs and returns False on a resolution failure or an out-of-target dest.
+    """
+    try:
+        dest_resolved = dest.resolve()
+    except OSError as exc:
+        logger.warning("Cannot resolve dest %s: %s", dest, exc)
+        return False
+    if not dest_resolved.is_relative_to(target_resolved):
+        logger.warning(
+            "Refusing dest outside target: %s (target=%s)",
+            dest_resolved,
+            target_resolved,
+        )
+        return False
+    return True
+
+
+def _classify_action(dest: Path, src_file: Path) -> str:
+    """Classify a builtin as ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]``.
+
+    Assumes the caller has already decided to act on ``dest`` (it does not
+    exist, or *force* is set). A read failure on the existing dest is treated
+    as changed so the file is rewritten.
+    """
+    if not dest.exists():
+        return "[ADD]"
+    try:
+        unchanged = dest.read_bytes() == src_file.read_bytes()
+    except OSError:
+        unchanged = False
+    return "[UNCHANGED]" if unchanged else "[UPDATE]"
+
+
 def seed_builtins(
-    target_rules_dir: Path,
+    target_dir: Path,
     *,
     force: bool = False,
+    dry_run: bool = False,
     written: list[str] | None = None,
-) -> list[str]:
-    """Copy bundled builtins into a target ``.vaultspec/rules/`` directory.
+) -> list[tuple[str, str]]:
+    """Copy rag's bundled builtins into a target ``.vaultspec/`` directory.
 
-    Only copies files that don't already exist unless *force* is ``True``.
-    Walks the package builtins tree like :mod:`vaultspec_core.builtins`, so
-    the seeded set is exactly the files shipped under this package.
+    The bundled tree folds flat into ``target_dir`` exactly as core's seeder
+    folds its own tree: ``rules/`` -> ``.vaultspec/rules/``, ``mcps/`` ->
+    ``.vaultspec/mcps/``, ``skills/<name>/`` -> ``.vaultspec/skills/<name>/``.
+    Files that already exist are left untouched unless *force* is ``True``; a
+    forced file whose content already matches is classified ``[UNCHANGED]`` and
+    not rewritten.
 
-    Per-file ``OSError`` is **raised**, not swallowed. Silent partial
-    seeding would leave the workspace half-installed and bypass the
-    rollback path callers rely on. Callers may pass an out-parameter
-    ``written`` list to capture progress before the exception
-    propagates, enabling targeted rollback.
+    Reporting matches ``vaultspec_core.builtins.seed_builtins``: a
+    ``(relative_path, action)`` pair per builtin acted on, ``action`` in
+    ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]``. rag additionally keeps its own
+    seed hardening that core's minimal seeder omits: destination containment (a
+    member can never escape ``target_dir``), crash-safe ``atomic_write``, a
+    **raised** per-file ``OSError`` (never a silent partial seed), and an
+    optional ``written`` out-list of the paths actually written so a caller can
+    roll back a partial seed before the error propagates.
 
     Args:
-        target_rules_dir: The ``.vaultspec/rules/`` directory to populate.
-        force: Overwrite existing files.
-        written: Optional out-list. The function appends each
-            successfully-written relative path before continuing to
-            the next file. Pass an empty list to capture progress
-            even if a later iteration raises.
+        target_dir: The ``.vaultspec/`` framework directory to populate.
+        force: Overwrite existing files (unchanged content stays untouched).
+        dry_run: Classify every builtin without writing - previews an upgrade.
+        written: Optional out-list of ``[ADD]``/``[UPDATE]`` relative paths
+            actually written, in order, for targeted rollback.
 
     Returns:
-        Sorted list of relative paths (forward-slash separated) that
-        were actually written. Same content as ``written`` if the
-        out-list was provided.
+        Sorted list of ``(relative_path, action)`` pairs for every builtin the
+        call acted on (or would act on, under *dry_run*). Files skipped because
+        they exist and *force* is False are omitted.
 
     Raises:
-        OSError: If a destination file write fails (permissions,
-            disk full, etc.).
+        OSError: If a destination file write fails.
     """
     src_root = _builtins_root()
-    target_resolved = target_rules_dir.resolve()
     if written is None:
         written = []
-
+    target_resolved = target_dir.resolve()
+    results: list[tuple[str, str]] = []
     for src_file in _iter_builtin_files(src_root):
         rel = str(src_file.relative_to(src_root)).replace("\\", "/")
-        dest = target_rules_dir / rel
-        try:
-            dest_resolved = dest.resolve()
-        except OSError as exc:
-            logger.warning("Cannot resolve dest %s: %s", dest, exc)
+        dest = target_dir / rel
+        if not _within_target(dest, target_resolved):
             continue
-        # Containment check: dest_resolved must be inside
-        # target_resolved. Path.is_relative_to is the canonical test
-        # since 3.9; rag targets 3.13.
-        if not dest_resolved.is_relative_to(target_resolved):
-            logger.warning(
-                "Refusing dest outside target: %s (target=%s)",
-                dest_resolved,
-                target_resolved,
-            )
-            continue
-
         if dest.exists() and not force:
             continue
-
-        # Per-file write failure is fatal: raise so the caller can
-        # roll back the partial state. Logging-and-continuing would
-        # leave a half-installed workspace and a "successful" report.
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        # Use core's atomic_write (tmp + os.replace) per the ADR.
-        # Both bundled files are UTF-8 text (Markdown rule + JSON
-        # MCP definition); reading and writing as text preserves
-        # content correctly. Crash consistency is the same as
-        # core's own builtin seeding pipeline.
-        atomic_write(dest, src_file.read_text(encoding="utf-8"))
-        written.append(rel)
-
-    written.sort()
-    return written
+        action = _classify_action(dest, src_file)
+        if action != "[UNCHANGED]" and not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(dest, src_file.read_text(encoding="utf-8"))
+            written.append(rel)
+        results.append((rel, action))
+    results.sort()
+    return results
 
 
 def list_builtins() -> list[str]:
-    """Return relative paths of all bundled builtin files.
-
-    Returns:
-        Sorted list of relative paths (forward-slash separated) that
-        rag owns and seeds.
-    """
+    """Return relative paths of all bundled builtin files (forward-slash)."""
     src_root = _builtins_root()
     return sorted(
         str(f.relative_to(src_root)).replace("\\", "/")
@@ -146,4 +163,29 @@ def list_builtins() -> list[str]:
     )
 
 
-__all__ = ["list_builtins", "seed_builtins"]
+def check_outdated(target_dir: Path) -> list[str]:
+    """Compare bundled builtins against a deployed ``.vaultspec/`` tree.
+
+    Mirrors :func:`vaultspec_core.builtins.check_outdated`.
+
+    Returns:
+        Relative paths (forward-slash) present in the package but missing or
+        content-different at the target.
+    """
+    src_root = _builtins_root()
+    outdated: list[str] = []
+    for src_file in _iter_builtin_files(src_root):
+        rel = str(src_file.relative_to(src_root)).replace("\\", "/")
+        dest = target_dir / rel
+        if not dest.exists():
+            outdated.append(rel)
+            continue
+        try:
+            if src_file.read_bytes() != dest.read_bytes():
+                outdated.append(rel)
+        except OSError:
+            outdated.append(rel)
+    return outdated
+
+
+__all__ = ["check_outdated", "list_builtins", "seed_builtins"]

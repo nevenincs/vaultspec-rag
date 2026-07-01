@@ -1,10 +1,12 @@
 """Maintenance guard for the shipped built-in rule (#145).
 
-The bundled rule (`.vaultspec/rules/rules/vaultspec-rag.builtin.md`) is the
-standing agent operating manual every consumer inherits. This test fails if the
-rule's load-bearing directives go missing, so a behaviour or wording change
-cannot silently leave the rule without its core guidance: use semantic search,
-run the server-bound backend, and do not manually reindex.
+The bundled rule seed (`src/vaultspec_rag/builtins/rules/vaultspec-rag.builtin.md`)
+is the standing agent operating manual every consumer inherits once it is seeded
+into `.vaultspec/rules/`. This test reads the seed source (stable regardless of
+the deployed fold) and fails if the rule's load-bearing directives go missing,
+so a behaviour or wording change cannot silently leave the rule without its core
+guidance: use semantic search, run the server-bound backend, and do not manually
+reindex.
 """
 
 from __future__ import annotations
@@ -15,7 +17,14 @@ import pytest
 
 # repo-root/src/vaultspec_rag/tests/<this file> -> parents[3] is the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_RULE_PATH = _REPO_ROOT / ".vaultspec" / "rules" / "rules" / "vaultspec-rag.builtin.md"
+_RULE_PATH = (
+    _REPO_ROOT
+    / "src"
+    / "vaultspec_rag"
+    / "builtins"
+    / "rules"
+    / "vaultspec-rag.builtin.md"
+)
 
 # Load-bearing directives the rule MUST carry. Keep this list in lockstep with
 # the rule's core mandates: semantic search is the primary use, server mode is the

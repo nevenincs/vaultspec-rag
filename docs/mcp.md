@@ -64,7 +64,7 @@ In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` ser
 A connected server publishes these tools. The search and index tools are the ones an assistant uses day to day:
 
 - `search_vault` - search the documentation vault, with the same filters as the `search` command (doc type, feature, date, tag).
-- `search_codebase` - search source code, with the code filters (language, path, symbol, include and exclude globs).
+- `search_codebase` - search source code, with the code filters (language, path, symbol, include and exclude globs) plus noise-domain control via the typed `exclude_domains` / `only_domains` / `include_domains` arguments (see [Filter noise by domain](search-and-index.md#filter-noise-by-domain)).
 - `get_code_file` - return the full content of a source file by path.
 - `get_index_status` - report index and GPU readiness.
 - `reindex_vault` / `reindex_codebase` - re-index a corpus, incrementally by default or with `clean` to rebuild.

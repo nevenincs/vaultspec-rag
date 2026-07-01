@@ -71,6 +71,11 @@ class EnvVar(StrEnum):
     VAULT_INTENT_DEFAULT = "VAULTSPEC_RAG_VAULT_INTENT_DEFAULT"
     VAULT_INTENT_RANKING_ENABLED = "VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED"
     VAULT_INTENT_TYPE_CAP = "VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP"
+    # Code-search noise profile.
+    CODE_NOISE_HIDE_DOMAINS = "VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS"
+    CODE_NOISE_DEMOTE_DOMAINS = "VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS"
+    CODE_NOISE_DEMOTE_PENALTY = "VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY"
+    DEDUP_LOCALES_DEFAULT = "VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT"
     # Reranker input token bound.
     RERANKER_MAX_LENGTH = "VAULTSPEC_RAG_RERANKER_MAX_LENGTH"
     # Worker-thread pool partitioning.
@@ -81,6 +86,7 @@ class EnvVar(StrEnum):
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
     QDRANT_QUANTIZATION = "VAULTSPEC_RAG_QDRANT_QUANTIZATION"
     SPARSE_ENABLED = "VAULTSPEC_RAG_SPARSE_ENABLED"
+    RERANKER_ENABLED = "VAULTSPEC_RAG_RERANKER_ENABLED"
     # Supervised qdrant server-mode knobs.
     QDRANT_SERVER = "VAULTSPEC_RAG_QDRANT_SERVER"
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
@@ -139,6 +145,11 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "vault_intent_default": EnvVar.VAULT_INTENT_DEFAULT,
     "vault_intent_ranking_enabled": EnvVar.VAULT_INTENT_RANKING_ENABLED,
     "vault_intent_type_cap": EnvVar.VAULT_INTENT_TYPE_CAP,
+    # Code-search noise profile.
+    "code_noise_hide_domains": EnvVar.CODE_NOISE_HIDE_DOMAINS,
+    "code_noise_demote_domains": EnvVar.CODE_NOISE_DEMOTE_DOMAINS,
+    "code_noise_demote_penalty": EnvVar.CODE_NOISE_DEMOTE_PENALTY,
+    "dedup_locales_default": EnvVar.DEDUP_LOCALES_DEFAULT,
     # Worker-thread pool partitioning.
     "search_concurrency": EnvVar.SEARCH_CONCURRENCY,
     "index_job_concurrency": EnvVar.INDEX_JOB_CONCURRENCY,
@@ -146,6 +157,7 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
     "sparse_enabled": EnvVar.SPARSE_ENABLED,
+    "reranker_enabled": EnvVar.RERANKER_ENABLED,
     # Supervised qdrant server-mode knobs.
     "qdrant_server": EnvVar.QDRANT_SERVER,
     "qdrant_port": EnvVar.QDRANT_PORT,
@@ -427,6 +439,26 @@ class VaultSpecConfigWrapper:
         # chunk's budget and pollutes results with navigation boilerplate.
         # Falls back to raw-markup chunking on any parse error.
         "html_strip": True,
+        # Code-search noise profile (search-noise-filtering ADR). Domains are
+        # the labels from ``_domain.classify_domain``. ``hide`` domains are
+        # dropped from code results by default (reversible per call with
+        # ``--include-domain``); ``demote`` domains stay visible but take a
+        # ``code_noise_demote_penalty`` score subtraction so production code
+        # ranks first. Shipped defaults hide the duplicate/derivative trees
+        # (agent worktree clones, generated output) and demote tests, docs,
+        # locale tables, and vendored third-party code. Comma-separated strings
+        # so a project config or env var can override the set.
+        "code_noise_hide_domains": "worktree,generated",
+        "code_noise_demote_domains": "tests,docs,locale,vendored",
+        # Score subtraction applied to a demoted code result (calibrated rerank
+        # scores live in [0, 1]); large enough to sink noise below production
+        # near-ties, small enough to leave a demoted hit recoverable and
+        # visible. ``0`` disables demotion.
+        "code_noise_demote_penalty": 0.3,
+        # Collapse near-duplicate locale-variant code results by default
+        # (``locales/{en,es,ca,hu}.yml`` -> one representative). Conservative:
+        # only recognised locale shapes within a tie window collapse.
+        "dedup_locales_default": True,
     }
 
     # Intent-aware vault ranking weight profiles (ADR D2/D3). Each profile maps
@@ -473,6 +505,39 @@ class VaultSpecConfigWrapper:
     def intent_weight_profiles(self) -> dict[str, dict[str, dict[str, float]]]:
         """Return the intent-aware ranking weight profiles (read-only view)."""
         return self._INTENT_WEIGHT_PROFILES
+
+    @staticmethod
+    def _parse_domain_set(raw: object) -> frozenset[str]:
+        """Parse a comma-separated domain string into a validated set.
+
+        Unknown labels are dropped (a typo cannot silently widen the noise
+        policy); ``prod`` is never a noise domain and is dropped if listed.
+        """
+        from ._domain import NOISE_DOMAINS
+
+        if not isinstance(raw, str):
+            return frozenset()
+        wanted = {tok.strip().lower() for tok in raw.split(",") if tok.strip()}
+        return frozenset(wanted & NOISE_DOMAINS)
+
+    @property
+    def code_noise_hide_domains(self) -> frozenset[str]:
+        """Domains dropped from code results by default (reversible per call)."""
+        return self._parse_domain_set(
+            self._resolve_rag_default("code_noise_hide_domains")
+        )
+
+    @property
+    def code_noise_demote_domains(self) -> frozenset[str]:
+        """Domains demoted (not hidden) in code results by default.
+
+        A domain listed in both sets is hidden, not merely demoted - hide wins -
+        so the two sets never double-act on one result.
+        """
+        demote = self._parse_domain_set(
+            self._resolve_rag_default("code_noise_demote_domains")
+        )
+        return demote - self.code_noise_hide_domains
 
     def __init__(self, base: BaseConfig) -> None:
         """Initialise the wrapper around an existing config.

@@ -252,8 +252,11 @@ def search_codebase(
     class_name: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
-    dedup_locales: bool = False,
+    dedup_locales: bool | None = None,
     prefer: str | None = None,
+    exclude_domains: list[str] | None = None,
+    only_domains: list[str] | None = None,
+    include_domains: list[str] | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
 ) -> list[SearchResult]:
@@ -299,6 +302,9 @@ def search_codebase(
         exclude_paths=exclude_paths,
         dedup_locales=dedup_locales,
         prefer=prefer,
+        exclude_domains=exclude_domains,
+        only_domains=only_domains,
+        include_domains=include_domains,
     )
     root = _resolve(root_dir)
     registry = get_registry()
@@ -319,6 +325,9 @@ def search_codebase(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            exclude_domains=exclude_domains,
+            only_domains=only_domains,
+            include_domains=include_domains,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
@@ -336,10 +345,14 @@ def search_codebase_timed(
     class_name: str | None = None,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
-    dedup_locales: bool = False,
+    dedup_locales: bool | None = None,
     prefer: str | None = None,
+    exclude_domains: list[str] | None = None,
+    only_domains: list[str] | None = None,
+    include_domains: list[str] | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
+    notes: dict[str, object] | None = None,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search codebase and return phase timings for service diagnostics."""
     from .search import validate_search_filters
@@ -355,6 +368,9 @@ def search_codebase_timed(
         exclude_paths=exclude_paths,
         dedup_locales=dedup_locales,
         prefer=prefer,
+        exclude_domains=exclude_domains,
+        only_domains=only_domains,
+        include_domains=include_domains,
     )
     root = _resolve(root_dir)
     registry = get_registry()
@@ -379,8 +395,12 @@ def search_codebase_timed(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            exclude_domains=exclude_domains,
+            only_domains=only_domains,
+            include_domains=include_domains,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            notes=notes,
         )
     timings["model_load_seconds"] = model_load_seconds
     timings["project_lease_seconds"] = project_lease_seconds

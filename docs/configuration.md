@@ -89,10 +89,15 @@ The tables in this section, together with the backend selection table, list ever
 
 ### Search and model toggles
 
-| Variable                       | Type    | Default    | Controls                                                          | CLI flag    |
-| ------------------------------ | ------- | ---------- | ----------------------------------------------------------------- | ----------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED` | boolean | `1` (true) | SPLADE sparse vectors on/off                                      | -           |
-| `VAULTSPEC_RAG_SEARCH_TIMEOUT` | integer | `300`      | Connection and read budget for service-handled searches (seconds) | `--timeout` |
+| Variable                                  | Type    | Default                      | Controls                                                          | CLI flag                                 |
+| ----------------------------------------- | ------- | ---------------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`            | boolean | `1` (true)                   | SPLADE sparse vectors on/off                                      | -                                        |
+| `VAULTSPEC_RAG_RERANKER_ENABLED`          | boolean | `1` (true)                   | CrossEncoder rerank on/off                                        | -                                        |
+| `VAULTSPEC_RAG_SEARCH_TIMEOUT`            | integer | `300`                        | Connection and read budget for service-handled searches (seconds) | `--timeout`                              |
+| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`   | string  | `worktree,generated`         | Code domains hidden from results by default                       | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS` | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                      | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY` | float   | `0.3`                        | Score subtracted from a demoted code result                       | -                                        |
+| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`     | boolean | `1` (true)                   | Collapse locale-variant code results by default                   | `--dedup-locales` / `--no-dedup-locales` |
 
 ### Automatic updates
 
@@ -119,7 +124,6 @@ These keys exist in the configuration loader but read no environment variable. S
 | `embedding_model`     | string  | `Qwen/Qwen3-Embedding-0.6B` | Dense model                    |
 | `embedding_dimension` | integer | `1024`                      | Dense vector dimension         |
 | `sparse_model`        | string  | `naver/splade-v3`           | Sparse model                   |
-| `reranker_enabled`    | boolean | `True`                      | CrossEncoder rerank on/off     |
 | `reranker_model`      | string  | `BAAI/bge-reranker-v2-m3`   | Reranker model                 |
 | `reranker_batch_size` | integer | `32`                        | Reranker batch size            |
 
@@ -146,7 +150,7 @@ To fit a smaller GPU:
 - Lower `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (default 32 each).
 - Cap `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` (default 2048) to shrink padded-attention memory.
 - Set `VAULTSPEC_RAG_QDRANT_QUANTIZATION` to `scalar` to compress the stored vectors.
-- Turn off a model to free the most memory. Set `sparse_enabled` to drop the SPLADE encoder, or `reranker_enabled` to drop the CrossEncoder. Both are config-only keys with no environment variable, so set them in the project config.
+- Turn off a model to free the most memory. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to drop the SPLADE encoder, or `VAULTSPEC_RAG_RERANKER_ENABLED=0` to drop the CrossEncoder.
 
 To speed up indexing:
 

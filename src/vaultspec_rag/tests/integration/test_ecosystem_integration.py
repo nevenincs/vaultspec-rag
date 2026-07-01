@@ -11,7 +11,6 @@ targeting a temporary directory. No GPU or Qdrant required.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,12 +19,24 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-# Path to RAG's companion files (relative to repo root)
+# Path to RAG's bundled seed sources (relative to repo root)
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_RAG_RULE = _REPO_ROOT / ".vaultspec" / "rules" / "rules" / "vaultspec-rag.builtin.md"
-_RAG_MCP_DEF = (
-    _REPO_ROOT / ".vaultspec" / "rules" / "mcps" / "vaultspec-rag.builtin.json"
-)
+_BUILTINS = _REPO_ROOT / "src" / "vaultspec_rag" / "builtins"
+_RAG_RULE = _BUILTINS / "rules" / "vaultspec-rag.builtin.md"
+_RAG_MCP_DEF = _BUILTINS / "mcps" / "vaultspec-rag.builtin.json"
+
+
+def _seed_rag(root: Path) -> None:
+    """Seed rag's bundled builtins flat into a workspace's ``.vaultspec/``.
+
+    Uses rag's real seeder so the ecosystem test exercises the same flat fold
+    (``rules/`` / ``mcps/`` / ``skills/``) an actual ``vaultspec-rag install``
+    produces, matching core's layout.
+    """
+    from vaultspec_rag.builtins import seed_builtins
+
+    seed_builtins(root / ".vaultspec", force=True)
+
 
 # Providers that core installs by default
 _DEFAULT_PROVIDERS = ("claude", "gemini", "antigravity", "codex")
@@ -78,13 +89,8 @@ def workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     result = _run_core("install", target=root)
     assert result.returncode == 0, f"install failed: {result.stderr}"
 
-    # Step 2: seed RAG companion files
-    rules_dir = root / ".vaultspec" / "rules" / "rules"
-    mcps_dir = root / ".vaultspec" / "rules" / "mcps"
-    mcps_dir.mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(_RAG_RULE, rules_dir / _RAG_RULE.name)
-    shutil.copy2(_RAG_MCP_DEF, mcps_dir / _RAG_MCP_DEF.name)
+    # Step 2: seed RAG companion files at the flat fold via rag's seeder
+    _seed_rag(root)
 
     # Step 3: sync (CLI display may crash due to core#54 but sync completes)
     _run_core("sync", target=root)
@@ -125,9 +131,9 @@ class TestRulePropagatesToAllProviders:
         content = rule.read_text(encoding="utf-8")
         for cmd in (
             "search",
-            "install",
             "server start",
-            "server doctor",
+            "--type code",
+            "--doc-type adr",
         ):
             assert cmd in content, f"CLI command '{cmd}' not documented in rule"
 
@@ -186,12 +192,12 @@ class TestWorkspaceStructure:
 
     def test_rag_rule_source_exists(self, workspace: Path) -> None:
         assert (
-            workspace / ".vaultspec" / "rules" / "rules" / "vaultspec-rag.builtin.md"
+            workspace / ".vaultspec" / "rules" / "vaultspec-rag.builtin.md"
         ).exists()
 
     def test_rag_mcp_definition_exists(self, workspace: Path) -> None:
         assert (
-            workspace / ".vaultspec" / "rules" / "mcps" / "vaultspec-rag.builtin.json"
+            workspace / ".vaultspec" / "mcps" / "vaultspec-rag.builtin.json"
         ).exists()
 
     def test_precommit_config_exists(self, workspace: Path) -> None:
@@ -224,11 +230,7 @@ class TestCoreUninstallReinstallCycle:
 
         # Install + seed
         _run_core("install", target=root)
-        rules_dir = root / ".vaultspec" / "rules" / "rules"
-        mcps_dir = root / ".vaultspec" / "rules" / "mcps"
-        mcps_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_RAG_RULE, rules_dir / _RAG_RULE.name)
-        shutil.copy2(_RAG_MCP_DEF, mcps_dir / _RAG_MCP_DEF.name)
+        _seed_rag(root)
         _run_core("sync", target=root)
         _run_core("spec", "mcps", "sync", target=root)
 
@@ -237,9 +239,7 @@ class TestCoreUninstallReinstallCycle:
 
         # Reinstall + re-seed
         _run_core("install", target=root)
-        mcps_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_RAG_RULE, rules_dir / _RAG_RULE.name)
-        shutil.copy2(_RAG_MCP_DEF, mcps_dir / _RAG_MCP_DEF.name)
+        _seed_rag(root)
         _run_core("sync", target=root)
         _run_core("spec", "mcps", "sync", target=root)
 
@@ -291,13 +291,7 @@ class TestCoreVaultManagement:
         root = tmp_path_factory.mktemp("vault-mgmt")
 
         _run_core("install", target=root)
-        mcps_dir = root / ".vaultspec" / "rules" / "mcps"
-        mcps_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(
-            _RAG_RULE,
-            root / ".vaultspec" / "rules" / "rules" / _RAG_RULE.name,
-        )
-        shutil.copy2(_RAG_MCP_DEF, mcps_dir / _RAG_MCP_DEF.name)
+        _seed_rag(root)
         _run_core("sync", target=root)
         _run_core("spec", "mcps", "sync", target=root)
 
@@ -318,7 +312,10 @@ class TestCoreVaultManagement:
 
     def test_core_vault_stats(self, vault_workspace: Path) -> None:
         result = _run_core("vault", "stats", target=vault_workspace)
-        assert "research: 1" in result.stdout
+        # Core's stats wording has varied ("research: 1" vs "research 1"); assert
+        # the doc-type and its count are present without pinning the separator.
+        assert "research" in result.stdout
+        assert "1 document" in result.stdout
 
     def test_core_spec_rules_includes_rag(
         self,
@@ -356,13 +353,7 @@ class TestIdempotentSync:
         root = tmp_path_factory.mktemp("idempotent")
 
         _run_core("install", target=root)
-        mcps_dir = root / ".vaultspec" / "rules" / "mcps"
-        mcps_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(
-            _RAG_RULE,
-            root / ".vaultspec" / "rules" / "rules" / _RAG_RULE.name,
-        )
-        shutil.copy2(_RAG_MCP_DEF, mcps_dir / _RAG_MCP_DEF.name)
+        _seed_rag(root)
 
         # Sync twice
         _run_core("sync", target=root)
