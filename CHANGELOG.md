@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.28](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.27...vaultspec-rag-v0.2.28) (2026-07-01)
+
+
+### Features
+
+* **builtins:** bundle a semantic-discovery skill and refocus the rag rule ([8c97484](https://github.com/nevenincs/vaultspec-rag/commit/8c974840514a0c32aa025a96634421b1d98d09ea))
+* **install:** report seed actions [ADD]/[UPDATE]/[UNCHANGED] like core ([9056351](https://github.com/nevenincs/vaultspec-rag/commit/905635194c8c37f45cd22cb7ddbea31a6391e43a))
+* **search:** query-time domain noise filtering, ranking, and a noise profile ([66b18bb](https://github.com/nevenincs/vaultspec-rag/commit/66b18bb14af1cdea5f5b1e1f12c9a1b0ba2a46fc))
+* **search:** query-time domain noise filtering, ranking, and a noise profile ([25f6812](https://github.com/nevenincs/vaultspec-rag/commit/25f6812e715003e6725e94d38024f3c809554bc7))
+
 ## [0.2.27](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.26...vaultspec-rag-v0.2.27) (2026-06-30)
 
 
