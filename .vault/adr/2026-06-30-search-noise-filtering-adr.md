@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#search-noise-filtering'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-03'
 related:
   - "[[2026-06-30-search-noise-filtering-research]]"
   - "[[2026-05-31-search-postprocess-adr]]"

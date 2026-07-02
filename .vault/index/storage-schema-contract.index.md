@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#storage-schema-contract'
 date: '2026-06-27'
-modified: '2026-06-27'
+modified: '2026-07-03'
 related:
   - '[[2026-06-26-storage-schema-contract-adr]]'
   - '[[2026-06-26-storage-schema-contract-research]]'
