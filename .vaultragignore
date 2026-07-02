@@ -1,0 +1,3 @@
+# README render generator: its query constants would otherwise top-hit
+# the very searches they demonstrate.
+scripts/render_readme_assets.py
