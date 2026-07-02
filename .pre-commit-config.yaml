@@ -71,7 +71,11 @@ repos:
     pass_filenames: false
   - id: spec-check
     name: Spec check
-    entry: uv run --no-sync vaultspec-core spec doctor
+    # spec doctor exits 0=ok, 1=warnings, 2=errors. Gate on errors only:
+    # warning-level provider-mirror lag is expected here because
+    # check-provider-artifacts forbids committing regenerated mirrors, so a
+    # warning-strict gate would deadlock every commit after a builtins change.
+    entry: uv run --no-sync python -c "import subprocess,sys; sys.exit(0 if subprocess.run(['uv','run','--no-sync','vaultspec-core','spec','doctor']).returncode < 2 else 1)"
     language: system
     types:
     - markdown
