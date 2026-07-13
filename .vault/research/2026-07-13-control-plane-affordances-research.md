@@ -93,8 +93,7 @@ tag.
 
 ### F8 - Existing envelope idiom to match
 
-Start's JSON contract: success `{ok: true, command: "service.start",
-data: {status, ...}}`; failure `{ok: false, command, error, message, data}`,
+Start's JSON contract: success `{ok: true, command: "service.start", data: {status, ...}}`; failure `{ok: false, command, error, message, data}`,
 suppressing all human/console output in `--json` mode (one clean envelope on
 stdout). Survey JSON already exists on the CLI via `--json`
 (`_emit_survey_json`). The stop and root-lookup additions inherit these idioms

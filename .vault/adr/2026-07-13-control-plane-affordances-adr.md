@@ -94,12 +94,10 @@ argument. All three adapters pass the parameter through to the one route -
 no adapter computes anything.
 
 **Stop envelope parity.** `server stop` gains `--json`, mirroring start's
-machinery: success envelopes `{ok: true, command: "service.stop",
-data: {status, ...}}` with statuses `stopped`, `already_stopped` (nothing to
+machinery: success envelopes `{ok: true, command: "service.stop", data: {status, ...}}` with statuses `stopped`, `already_stopped` (nothing to
 stop - the idempotent success), `cleaned` (stale discovery file removed for a
 confirmed-dead pid), and `reclaimed` (machine-singleton holder terminated);
-failure envelope `{ok: false, command, error: "identity_unconfirmed",
-message, data}` with exit 1 when a live pid's identity cannot be confirmed
+failure envelope `{ok: false, command, error: "identity_unconfirmed", message, data}` with exit 1 when a live pid's identity cannot be confirmed
 and the service is left running - in both `--json` and human mode. The
 `--port` variant emits the same envelopes.
 
