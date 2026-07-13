@@ -36,7 +36,7 @@ Expose the per-root collection prefix and namespace lookup through the one surve
 Give server stop the --json outcome envelope contract already shipped for start: one structured envelope per exit path, idempotent success statuses, and a hard failure for the identity-unconfirmed skip.
 
 - [x] `P02.S05` - Add --json to server stop with one envelope per exit path (stopped, already_stopped, cleaned, reclaimed as ok:true and identity_unconfirmed as ok:false) and make the identity-unconfirmed skip exit 1 in both human and json modes, covering the --port variant; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `P02.S06` - Assert the stop --json envelope and exit code on each exit path alongside the existing start --json matrix; `src/vaultspec_rag/tests/integration`.
+- [x] `P02.S06` - Assert the stop --json envelope and exit code on each exit path alongside the existing start --json matrix; `src/vaultspec_rag/tests/integration`.
 
 ## Description
 
