@@ -171,7 +171,14 @@ def preprocess_file(
     if cached is not None:
         return _PreprocessOutcome("ok", _chunks_from_output(cached, rel_path), None)
 
-    result = run_preprocessor(path, rule, max_emitted_bytes=prep.max_emitted_bytes)
+    result = run_preprocessor(
+        path,
+        rule,
+        max_emitted_bytes=prep.max_emitted_bytes,
+        project_root=prep.project_root,
+        server_mode=prep.server_mode,
+        unsandboxed=prep.unsandboxed,
+    )
     if result.status == "ok" and result.output is not None:
         write_cached_output(prep.cache_root, content_hash, cache_token, result.output)
         return _PreprocessOutcome(

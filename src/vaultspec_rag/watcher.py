@@ -455,6 +455,8 @@ async def _process_code_changes(
                 f"+{result.added} /{result.updated} "
                 f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
             ),
+            preprocess_skipped=result.preprocess_skipped,
+            preprocess_failures=result.preprocess_failures,
         )
         log_event(
             logger,

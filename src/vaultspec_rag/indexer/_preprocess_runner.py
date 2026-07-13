@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import logging
+import pathlib
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,6 +29,13 @@ from typing import IO, TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
 
+from ._hook_sandbox import (
+    SandboxUnavailableError,
+    curated_child_env,
+    default_popen_handle,
+    resolve_hook_sandbox,
+    stage_source,
+)
 from ._preprocess_schema import (
     PreprocOutput,
     UnsupportedSchemaVersionError,
@@ -34,8 +43,9 @@ from ._preprocess_schema import (
 )
 
 if TYPE_CHECKING:
-    import pathlib
+    from collections.abc import Sequence
 
+    from ._hook_sandbox import HookSandbox, SandboxHandle
     from ._preprocess_config import PreprocessRule
 
 logger = logging.getLogger(__name__)
@@ -71,6 +81,44 @@ class PreprocessAbortError(RuntimeError):
 
 class _PreprocessSkipError(Exception):
     """Internal: a recoverable per-file failure carrying a human reason."""
+
+
+#: Reason surfaced when server-mode containment resolves no working backend and
+#: the hook is refused rather than run unconfined (ADR D6). The file is
+#: skipped-and-surfaced; the operator can opt out with the named env knob.
+_REFUSED_REASON = (
+    "hook refused: no sandbox backend (set "
+    "VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1 to override)"
+)
+
+#: Per-worker memo of the resolved backend, keyed on the ``(server_mode,
+#: unsandboxed)`` policy inputs. ``run_preprocessor`` is called once per file
+#: inside a spawn worker, but the capability probe (AppContainer profile
+#: derivation / ``bwrap`` lookup) should happen at most once per worker.
+_backend_cache: dict[tuple[bool, bool], HookSandbox | None] = {}
+_backend_unavailable: set[tuple[bool, bool]] = set()
+
+
+def _resolve_backend(*, server_mode: bool, unsandboxed: bool) -> HookSandbox | None:
+    """Resolve (and memoize) the containment backend for this policy.
+
+    Delegates the fail-closed policy to
+    :func:`._hook_sandbox.resolve_hook_sandbox` - the single authority - and
+    caches its outcome so the probe runs once per worker. A server-mode
+    unavailability is memoized too and re-raised on every subsequent file.
+    """
+    key = (server_mode, unsandboxed)
+    if key in _backend_unavailable:
+        raise SandboxUnavailableError(_REFUSED_REASON)
+    if key in _backend_cache:
+        return _backend_cache[key]
+    try:
+        backend = resolve_hook_sandbox(server_mode=server_mode, unsandboxed=unsandboxed)
+    except SandboxUnavailableError:
+        _backend_unavailable.add(key)
+        raise
+    _backend_cache[key] = backend
+    return backend
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,34 +188,47 @@ def _substitute_path(token: str, path_str: str) -> str:
     return substituted
 
 
-def _run_bounded(
-    argv: list[str],
+def _child_env(project_root: pathlib.Path) -> dict[str, str]:
+    """Return the curated hook env with the project root on ``PYTHONPATH``.
+
+    The curated env strips every secret and ``VAULTSPEC_RAG_*`` knob (including
+    any inherited ``PYTHONPATH``). A project-local hook - whether an
+    ``entry_point`` (``module:callable``) or a ``command`` that runs
+    ``python -m project.pkg.hook`` - must still be able to import its own module
+    tree, which the sandbox read-grants via ``project_root``. Read access alone
+    is not enough: the interpreter needs the directory on ``sys.path``, so the
+    project root is placed on ``PYTHONPATH`` here. ``PYTHONPATH`` precedes the
+    stdlib and site paths, so a repo that plants a ``sitecustomize.py`` or a
+    module shadowing a stdlib name would have it imported by the child - but the
+    child is OS-sandboxed (no network, no filesystem outside the staged dir and
+    the read-granted project root), so that runs contained and cannot exfiltrate
+    or persist; it is the project's own code running against its own tree.
+    """
+    env = curated_child_env()
+    env["PYTHONPATH"] = str(project_root)
+    return env
+
+
+def _drain_and_wait(
+    handle: SandboxHandle,
     timeout_s: float | None,
     stdout_cap: int,
 ) -> tuple[int, bytes, str]:
-    """Run ``argv``, capturing stdout up to ``stdout_cap`` bytes and bounded stderr.
+    """Drain a launched child's pipes on threads, then wait with a timeout.
 
     Reads both pipes on dedicated threads (deadlock-free) but stops *storing*
     stdout past the cap, so a runaway extractor cannot spike memory before the
     emitted-size cap fires (review PREPROCESS-003). The wall-clock ``timeout_s``
-    still bounds a child that keeps producing output.
+    still bounds a child that keeps producing output. The ``handle`` is any
+    :class:`~._hook_sandbox.SandboxHandle` - a bare ``Popen`` or a
+    backend-launched contained child - so this logic is backend-agnostic.
 
     Returns ``(returncode, stdout_bytes, stderr_text)``; ``stdout_bytes`` is at
     most ``stdout_cap + 1`` so the caller can detect truncation.
 
     Raises:
-        _PreprocessSkipError: On launch failure or timeout.
+        _PreprocessSkipError: On a timeout or missing pipes.
     """
-    try:
-        proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except OSError as exc:
-        msg = f"preprocessor could not be launched: {exc}"
-        raise _PreprocessSkipError(msg) from exc
-
     captured: dict[str, bytes] = {"stdout": b"", "stderr": b""}
 
     def _drain_stdout(pipe: IO[bytes]) -> None:
@@ -185,19 +246,19 @@ def _run_bounded(
         while pipe.read(65536):
             pass
 
-    if proc.stdout is None or proc.stderr is None:  # pragma: no cover - PIPE set
-        proc.kill()
+    if handle.stdout is None or handle.stderr is None:  # pragma: no cover - PIPE set
+        handle.kill()
         msg = "preprocessor pipes unavailable"
         raise _PreprocessSkipError(msg)
-    t_out = threading.Thread(target=_drain_stdout, args=(proc.stdout,))
-    t_err = threading.Thread(target=_drain_stderr, args=(proc.stderr,))
+    t_out = threading.Thread(target=_drain_stdout, args=(handle.stdout,))
+    t_err = threading.Thread(target=_drain_stderr, args=(handle.stderr,))
     t_out.start()
     t_err.start()
     try:
-        proc.wait(timeout=timeout_s)
+        handle.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:
-        proc.kill()
-        proc.wait()
+        handle.kill()
+        handle.wait()
         t_out.join(timeout=5)
         t_err.join(timeout=5)
         msg = f"preprocessor timed out after {timeout_s}s"
@@ -205,28 +266,161 @@ def _run_bounded(
     t_out.join(timeout=5)
     t_err.join(timeout=5)
     stderr_text = captured["stderr"].decode("utf-8", errors="replace").strip()
-    return proc.returncode, captured["stdout"], stderr_text
+    returncode = handle.returncode if handle.returncode is not None else -1
+    return returncode, captured["stdout"], stderr_text
+
+
+def _run_bounded(
+    argv: list[str],
+    timeout_s: float | None,
+    stdout_cap: int,
+    *,
+    backend: HookSandbox | None,
+    scratch_dir: pathlib.Path,
+    env: dict[str, str],
+    read_paths: Sequence[pathlib.Path],
+) -> tuple[int, bytes, str]:
+    """Launch ``argv`` through the sandbox backend and drain it bounded.
+
+    When ``backend`` is ``None`` (unsandboxed opt-in, or local mode with no
+    backend) the child runs via :func:`._hook_sandbox.default_popen_handle` -
+    still with the curated env and scratch cwd, just without OS containment.
+    Otherwise the backend confines the child, granting read of ``read_paths``.
+    All output/timeout bounds are enforced identically in either case, and the
+    backend's per-launch resources are released in ``finally``.
+
+    Raises:
+        _PreprocessSkipError: On launch failure or timeout.
+    """
+    try:
+        if backend is None:
+            handle: SandboxHandle = default_popen_handle(
+                argv, cwd=scratch_dir, env=env
+            )
+        else:
+            handle = backend.launch(
+                argv, scratch_dir=scratch_dir, env=env, read_paths=read_paths
+            )
+    except OSError as exc:
+        msg = f"preprocessor could not be launched: {exc}"
+        raise _PreprocessSkipError(msg) from exc
+
+    try:
+        return _drain_and_wait(handle, timeout_s, stdout_cap)
+    finally:
+        if backend is not None:
+            backend.cleanup(handle)
 
 
 def _invoke_and_validate(
     source_path: pathlib.Path,
     rule: PreprocessRule,
     max_emitted_bytes: int,
+    *,
+    project_root: pathlib.Path,
+    server_mode: bool,
+    unsandboxed: bool,
 ) -> PreprocOutput:
-    """Run the preprocessor, parse stdout, validate, and enforce the size caps.
+    """Run the preprocessor inside its sandbox, validate, and enforce the caps.
+
+    Resolves the containment backend (fail-closed in server mode), stages the
+    source into a per-run scratch dir, rewrites the argv to point at the staged
+    copy (so the child reads the file the sandbox grants), and launches it under
+    a curated env with read access to the staged dir, the interpreter runtime,
+    and the project root.
 
     Raises:
-        _PreprocessSkipError: On any recoverable per-file failure (misconfigured
-            rule, non-zero exit, timeout, oversize stdout, non-JSON or
-            schema-invalid output, or emitted text over the cap).
+        _PreprocessSkipError: On any recoverable per-file failure (no backend in
+            server mode, misconfigured rule, non-zero exit, timeout, oversize
+            stdout, non-JSON or schema-invalid output, or emitted text over the
+            cap).
     """
-    argv = _build_argv(rule, source_path)
-    if not argv:
-        msg = "rule has neither a runnable command nor entry_point"
-        raise _PreprocessSkipError(msg)
+    try:
+        backend = _resolve_backend(server_mode=server_mode, unsandboxed=unsandboxed)
+    except SandboxUnavailableError as exc:
+        raise _PreprocessSkipError(_REFUSED_REASON) from exc
 
-    stdout_cap = max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER, _MIN_STDOUT_CAP)
-    returncode, stdout, stderr = _run_bounded(argv, rule.timeout_s, stdout_cap)
+    scratch_dir, staged = stage_source(source_path)
+    try:
+        argv = _build_argv(rule, staged)
+        if not argv:
+            msg = "rule has neither a runnable command nor entry_point"
+            raise _PreprocessSkipError(msg)
+
+        stdout_cap = max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER, _MIN_STDOUT_CAP)
+        read_paths = [
+            scratch_dir,
+            pathlib.Path(sys.base_prefix),
+            pathlib.Path(sys.prefix),
+            project_root,
+        ]
+        returncode, stdout, stderr = _run_bounded(
+            argv,
+            rule.timeout_s,
+            stdout_cap,
+            backend=backend,
+            scratch_dir=scratch_dir,
+            env=_child_env(project_root),
+            read_paths=read_paths,
+        )
+        output = _validate_output(
+            returncode, stdout, stderr, stdout_cap, max_emitted_bytes
+        )
+        return _remap_staged_paths(output, staged=staged, original=source_path)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+def _remap_staged_paths(
+    output: PreprocOutput,
+    *,
+    staged: pathlib.Path,
+    original: pathlib.Path,
+) -> PreprocOutput:
+    """Rewrite staged-scratch paths in the output back to the real source.
+
+    The hook sees the staged copy as its input (the sandbox grants only that
+    file), so a hook that echoes its argv into ``source_path`` or a unit
+    ``anchor`` emits the ephemeral scratch path. Deep links must point at the
+    real file, so every reference to the staged path is remapped to the original
+    source before the output is indexed. Both the native string and the
+    forward-slash form are replaced so an anchor built with either separator is
+    covered.
+    """
+    staged_variants = (str(staged), str(staged).replace("\\", "/"))
+    original_str = str(original)
+
+    def _fix(value: str) -> str:
+        for variant in staged_variants:
+            if variant in value:
+                value = value.replace(variant, original_str)
+        return value
+
+    updates: dict[str, object] = {"source_path": _fix(output.source_path)}
+    if output.units is not None:
+        remapped = [
+            unit.model_copy(update={"anchor": _fix(unit.anchor)})
+            if unit.anchor is not None
+            else unit
+            for unit in output.units
+        ]
+        updates["units"] = remapped
+    return output.model_copy(update=updates)
+
+
+def _validate_output(
+    returncode: int,
+    stdout: bytes,
+    stderr: str,
+    stdout_cap: int,
+    max_emitted_bytes: int,
+) -> PreprocOutput:
+    """Parse and validate captured stdout against the caps and schema.
+
+    Raises:
+        _PreprocessSkipError: On oversize stdout, non-zero exit, non-JSON or
+            schema-invalid output, or emitted text over the cap.
+    """
 
     if len(stdout) > stdout_cap:
         msg = f"preprocessor stdout exceeds {stdout_cap} bytes; skipping"
@@ -261,6 +455,9 @@ def run_preprocessor(
     rule: PreprocessRule,
     *,
     max_emitted_bytes: int,
+    project_root: pathlib.Path,
+    server_mode: bool,
+    unsandboxed: bool,
 ) -> PreprocessResult:
     """Run a command rule against one source file and resolve its disposition.
 
@@ -268,6 +465,12 @@ def run_preprocessor(
         source_path: Absolute path to the source file to preprocess.
         rule: The matched, validated command rule.
         max_emitted_bytes: The emitted-text length cap (D10).
+        project_root: The project root, granted read-only to the sandboxed hook
+            so it can read its own module tree (ADR D2).
+        server_mode: ``True`` when the resident service runs the hook, selecting
+            the fail-closed sandbox policy (ADR D6).
+        unsandboxed: ``True`` when the operator opted out of OS containment
+            (ADR D8); the child still runs under the curated env and scratch cwd.
 
     Returns:
         A :class:`PreprocessResult`. On success, ``status == "ok"`` with the
@@ -279,7 +482,14 @@ def run_preprocessor(
         PreprocessAbortError: If the rule fails and ``on_error == "fail"``.
     """
     try:
-        output = _invoke_and_validate(source_path, rule, max_emitted_bytes)
+        output = _invoke_and_validate(
+            source_path,
+            rule,
+            max_emitted_bytes,
+            project_root=project_root,
+            server_mode=server_mode,
+            unsandboxed=unsandboxed,
+        )
     except _PreprocessSkipError as exc:
         reason = str(exc)
         if rule.on_error == "fail":

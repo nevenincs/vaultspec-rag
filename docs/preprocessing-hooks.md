@@ -196,6 +196,14 @@ Files skipped by an `on_error = "skip"` rule are counted and listed on every pat
   `vaultspec-rag index --json`,
 - and a warning in the service log for every skip.
 
+For a non-interactive client of the resident service, two response fields carry the
+same visibility. A reindex job record from `/jobs` (and `vaultspec-rag server jobs --json`) carries `preprocess_skipped` and `preprocess_failures`, so the client sees
+exactly which files a hook failed to extract - including a file refused because the host
+has no sandbox backend. The `/reindex` response also includes a `preprocess` pre-flight
+block reporting whether the root ships a config, its resolved rule count, and the
+effective mode, mirroring the notice `server start` prints - so a client learns whether
+hooks will fire *before* the job runs.
+
 ## Size limits
 
 The source-size cap is relaxed for matched files (a 12 MB PDF is legitimate). The cap
@@ -207,42 +215,55 @@ environment variables.
 
 ## Security posture
 
-Preprocessors are arbitrary project code executed by the indexing service, so they run
-under trust-on-first-use: preprocessing is on by default, but a root's rules are skipped
-with a loud warning until you review and approve them. When a root defines
-`.vaultragpreprocess.toml`, review and trust its resolved command set once:
+Preprocessors are arbitrary project code executed by the indexing service, whose clients
+are non-interactive and cannot answer a consent prompt. Safety therefore comes from
+**OS-level containment, not consent**: hooks run **by default** for any root, with no
+trust step and no user interaction, because each hook child is confined by the operating
+system's own sandbox. The sandbox denies the hook everything except the one job it has:
 
-```bash
-uv run vaultspec-rag preprocess trust
-```
+- **Filesystem** - the source file is copied into a per-run scratch directory and the
+  child is granted read of only that directory (plus the interpreter runtime and the
+  project's own module tree so a project hook can import itself). It cannot read a
+  sibling repository, your home directory, or the daemon's managed state, and it can
+  write nowhere outside the scratch dir.
+- **Network** - all egress is denied, including loopback, so a hook cannot exfiltrate
+  data or reach an internal service.
+- **Secrets** - the child runs under a curated environment stripped of every
+  `VAULTSPEC_RAG_*` knob and every credential (Qdrant API key, HF/cloud tokens, Git
+  tokens), so an attacker-authored hook inherits nothing sensitive.
 
-The command prints every rule's pattern, command, timeout, and failure handling for
-review, then persists a hash of the resolved set on confirmation. Editing any rule's
-command, entry point, timeout, or failure handling changes that hash, so the root
-automatically reverts to untrusted and re-prompts - a comment-only edit does not. Drop a
-root's trust record with `vaultspec-rag preprocess untrust`, and check a root's mode,
-rule count, and trust state with `vaultspec-rag preprocess status`.
+The backend is chosen per host: a **Windows AppContainer** (default-deny by
+construction, unelevated, no dependencies), **bubblewrap** on Linux (with a
+Landlock+seccomp fallback), or **`sandbox-exec`** on macOS. `vaultspec-rag preprocess status` reports the resolved backend and whether hooks will run for a root.
 
-Two environment variables shape the tri-state mode everywhere: `VAULTSPEC_RAG_PREPROCESS=off`
-is the kill switch and wins over everything, skipping every root's rules regardless of
-trust. `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1` bypasses the trust check entirely and runs
-every root's rules unconditionally - use it only on hosts you already trust wholesale
-(CI runners, single-operator machines), since it reopens exactly the risk the trust
-check exists to gate. `server start` and `index` mirror both as `--no-preprocess` and
-`--preprocess-trust-all`. See the
-[configuration reference](configuration.md#preprocessing) for the full variable and flag
-inventory.
+**Server mode is fail-closed.** When the resident service resolves no working sandbox
+backend on its host, it **refuses** to run hooks - each matched file is skipped with a
+loud, actionable reason - rather than running them unconfined. A fail-open fallback
+would silently reopen arbitrary code execution on exactly the hosts that cannot contain
+it, so it is deliberately not offered.
+
+Two environment variables shape the mode everywhere:
+
+- `VAULTSPEC_RAG_PREPROCESS=off` is the **kill switch** and wins over everything: no
+  root's rules load, ever. Mirrored as `--no-preprocess` on `server start` and `index`.
+- `VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1` is a **dangerous escape hatch** for a
+  backend-less host: it runs hooks *without* OS containment (still under the curated env
+  and scratch cwd), reopening arbitrary file and network access to any project command.
+  It is logged loudly on every run; use it only on hosts whose repositories you fully
+  trust. Mirrored as `--preprocess-unsandboxed`. The two flags are mutually exclusive.
+
+See the [configuration reference](configuration.md#preprocessing) for the full variable
+and flag inventory.
 
 One operational note: the index tracks the preprocess configuration it was built with,
-so changing the effective mode for a root (trusting it, untrusting it, or alternating
-`--preprocess-trust-all` runs against a daemon that serves the same root in the default
+so changing the effective mode for a root (toggling `off`, or alternating
+`--preprocess-unsandboxed` runs against a daemon that serves the same root in the default
 mode) triggers an automatic rebuild on the next index run - correct, but expensive on a
-large corpus. Prefer a one-time `preprocess trust` and a single steady mode per host
-over per-run mode flags.
+large corpus. Prefer a single steady mode per host over per-run mode flags.
 
-Treat `.vaultragpreprocess.toml` as you would any executable project configuration:
-review it in code review, and don't point it at untrusted commands. Trust is a
-per-root, per-command-set decision, not a substitute for that review.
+Containment is a boundary, not a licence: still treat `.vaultragpreprocess.toml` as
+executable project configuration and review it in code review. The sandbox contains what
+a hook can do; it does not vouch for what a hook *should* do.
 
 ## Adjacent improvements
 

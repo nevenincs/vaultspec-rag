@@ -22,10 +22,13 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 
 logger = logging.getLogger(__name__)
 
-#: The tri-state document-preprocessing mode (index-drift-hardening ADR D4).
-PreprocessMode = Literal["default", "trust_all", "off"]
+#: The tri-state document-preprocessing mode (preprocess-sandbox ADR D8).
+#: ``default`` runs a root's rules under the OS sandbox; ``off`` is the kill
+#: switch; ``unsandboxed`` runs them without a sandbox (dangerous escape hatch
+#: for backend-less hosts, consumed by the sandbox runner).
+PreprocessMode = Literal["default", "off", "unsandboxed"]
 
-_VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "trust_all", "off"})
+_VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off", "unsandboxed"})
 
 
 class EnvVar(StrEnum):
@@ -37,6 +40,12 @@ class EnvVar(StrEnum):
     """
 
     RAG_ROOT = "VAULTSPEC_RAG_ROOT"
+    # Set only in the detached HTTP daemon's environment (by _service_child_env)
+    # so code running inside the resident service can distinguish itself from an
+    # interactive in-process CLI. The preprocess sandbox is fail-closed only for
+    # the daemon (non-interactive clients); this is that signal, independent of
+    # the storage backend so a --local-only daemon is still recognized.
+    SERVICE_DAEMON = "VAULTSPEC_RAG_SERVICE_DAEMON"
     DATA_DIR = "VAULTSPEC_RAG_DATA_DIR"
     QDRANT_DIR = "VAULTSPEC_RAG_QDRANT_DIR"
     INDEX_META = "VAULTSPEC_RAG_INDEX_META"
@@ -67,11 +76,11 @@ class EnvVar(StrEnum):
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
     WATCH_COOLDOWN_S = "VAULTSPEC_RAG_WATCH_COOLDOWN_S"
     # Document-preprocessing hook knobs (#185). ``PREPROCESS`` carries the
-    # tri-state kill switch (``=off``); ``PREPROCESS_TRUST_ALL`` forces the
-    # trust check off (every root's rules run). Resolved together into
-    # ``preprocess_mode``.
+    # tri-state kill switch (``=off``); ``PREPROCESS_UNSANDBOXED`` opts a
+    # backend-less host into running hooks without a sandbox (dangerous).
+    # Resolved together into ``preprocess_mode``.
     PREPROCESS = "VAULTSPEC_RAG_PREPROCESS"
-    PREPROCESS_TRUST_ALL = "VAULTSPEC_RAG_PREPROCESS_TRUST_ALL"
+    PREPROCESS_UNSANDBOXED = "VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED"
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
     # Vault document chunking knob.
@@ -431,17 +440,17 @@ class VaultSpecConfigWrapper:
         "watch_enabled": True,
         "watch_debounce_ms": 2000,
         "watch_cooldown_s": 30.0,
-        # Document-preprocessing tri-state (index-drift-hardening ADR D4).
-        # ``default`` runs a root's ``.vaultragpreprocess.toml`` rules only
-        # after they are trusted on first use (the resolved-rule-set hash
-        # matches a status-dir trust record); an untrusted root skips its
-        # rules with a loud, actionable warning. ``trust_all`` bypasses the
-        # trust check (every root runs, loudly logged); ``off`` is the kill
-        # switch (no rules ever load). Env resolution lives in the
-        # ``preprocess_mode`` property: ``VAULTSPEC_RAG_PREPROCESS=off`` forces
-        # off, ``VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1`` forces trust-all, unset
-        # means default. Security: a cloned/untrusted repo never executes its
-        # commands merely because it was indexed (untrusted-repo RCE, audit C1).
+        # Document-preprocessing tri-state (preprocess-sandbox ADR D8).
+        # ``default`` runs a root's ``.vaultragpreprocess.toml`` rules for any
+        # root - containment (the OS sandbox at the runner) is the security
+        # boundary, not per-root consent, so no trust check gates execution.
+        # ``off`` is the kill switch (no rules ever load); ``unsandboxed`` runs
+        # the rules without a sandbox, a deliberately dangerous escape hatch for
+        # a backend-less host. Env resolution lives in the ``preprocess_mode``
+        # property: ``VAULTSPEC_RAG_PREPROCESS=off`` forces off,
+        # ``VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1`` forces unsandboxed, unset
+        # means default. Security: an untrusted repo's hooks run only under a
+        # working OS sandbox or are refused (audit C1).
         "preprocess_mode": "default",
         # Document-preprocessing hook knobs (#185). The source-size cap
         # (``_MAX_FILE_SIZE``) is relaxed for files matched by a preprocess
@@ -636,36 +645,37 @@ class VaultSpecConfigWrapper:
 
     @property
     def preprocess_mode(self) -> PreprocessMode:
-        """Resolve the tri-state document-preprocessing mode (ADR D4).
+        """Resolve the tri-state document-preprocessing mode (ADR D8).
 
         Unlike the single-var knobs in ``_ENV_OVERRIDE_MAP``, the mode is
         derived from two env vars read live here so a flag forwarded into the
-        daemon env (``server start --no-preprocess`` / ``--preprocess-trust-all``)
+        daemon env (``server start --no-preprocess`` / ``--preprocess-unsandboxed``)
         takes effect without a config rebuild:
 
         - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off`` - the kill switch
           wins over everything, so an operator can always silence a root's
           rules.
-        - ``VAULTSPEC_RAG_PREPROCESS_TRUST_ALL`` truthy forces ``trust_all``.
+        - ``VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED`` truthy forces ``unsandboxed``,
+          the deliberately dangerous escape hatch for a backend-less host.
         - otherwise the base-config/CLI override, then the module default
-          (``default``, on-with-TOFU).
+          (``default``, on-under-sandbox).
 
         An unrecognised configured value degrades to ``default`` (the safe,
-        trust-gated mode) with a warning rather than raising.
+        sandboxed mode) with a warning rather than raising.
 
         Returns:
-            One of ``"default"``, ``"trust_all"``, or ``"off"``.
+            One of ``"default"``, ``"off"``, or ``"unsandboxed"``.
         """
         off_raw = os.environ.get(EnvVar.PREPROCESS.value)
         if off_raw is not None and off_raw.strip().lower() == "off":
             return "off"
-        trust_all_raw = os.environ.get(EnvVar.PREPROCESS_TRUST_ALL.value)
-        if trust_all_raw is not None and trust_all_raw.strip().lower() in (
+        unsandboxed_raw = os.environ.get(EnvVar.PREPROCESS_UNSANDBOXED.value)
+        if unsandboxed_raw is not None and unsandboxed_raw.strip().lower() in (
             "1",
             "true",
             "yes",
         ):
-            return "trust_all"
+            return "unsandboxed"
         configured = str(self._resolve_rag_default("preprocess_mode"))
         if configured not in _VALID_PREPROCESS_MODES:
             logger.warning(

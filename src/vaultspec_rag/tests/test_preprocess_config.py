@@ -1,30 +1,27 @@
-"""Unit tests for preprocess rule config loading and the TOFU trust gate (no GPU).
+"""Unit tests for preprocess rule config loading and the kill switch (no GPU).
 
 Exercises two layers over real ``.vaultragpreprocess.toml`` fixtures written to
 a tmp project root:
 
 - Rule resolution (D1/D2/D3): deterministic ordering, ignore-style matching,
   the command/entry_point constraint, and the degrade-vs-strict error policy.
-- The tri-state preprocess mode and per-root trust-on-first-use store
-  (index-drift-hardening ADR D4/D5/D6): ``off`` loads nothing, ``trust_all``
-  loads without a record, ``default`` loads only for a trusted resolved-rule-set
-  hash, the hash is stable across benign edits and changes on command edits, and
-  a corrupt store degrades to untrusted.
+- The tri-state preprocess mode (preprocess-sandbox ADR D7/D8): rules resolve
+  for any root with no trust check because the OS sandbox at the runner is the
+  security boundary, ``off`` is the kill switch, and ``unsandboxed`` runs the
+  rules without a sandbox. The trust-on-first-use store was removed here.
 
-Every test isolates ``VAULTSPEC_RAG_STATUS_DIR`` to a tmp path (the trust store
-writes there) via the autouse fixture, which also defaults the mode to
-``trust_all`` so the rule-resolution tests exercise parsing without threading
-trust plumbing. The mode/trust tests override the env explicitly.
+Every test isolates ``VAULTSPEC_RAG_STATUS_DIR`` to a tmp path via the autouse
+fixture (the managed-singleton isolation sibling) and clears the mode env vars
+so the resolved mode is the on-sandbox ``default``; the off/unsandboxed tests
+set the env explicitly.
 """
 
-import json
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from ..config import EnvVar, reset_config
-from ..indexer import _preprocess_trust
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
     PreprocessConfig,
@@ -36,20 +33,21 @@ pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture(autouse=True)
-def _isolate_status_dir_and_trust_all(  # pyright: ignore[reportUnusedFunction]
+def _isolate_status_dir_and_default_mode(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    """Isolate the trust store to a tmp status dir and default to trust-all.
+    """Isolate the status dir to a tmp path and resolve the on-sandbox default.
 
-    The trust store lives under ``status_dir``; pointing it at a per-test tmp
-    dir keeps a test from touching the real machine store. Defaulting the mode
-    to ``trust_all`` lets the rule-resolution tests load rules without recording
-    trust first; the mode/trust tests override these env vars themselves.
+    Clearing both mode env vars leaves the resolved mode at ``default``, which
+    resolves a root's rules for any root (containment is the boundary, not
+    consent), so the rule-resolution tests load rules without any trust act.
+    The off/unsandboxed tests set the env themselves.
     """
     status = tmp_path_factory.mktemp("status")
     monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(status))
-    monkeypatch.setenv(EnvVar.PREPROCESS_TRUST_ALL.value, "1")
+    monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
+    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     reset_config()
     try:
         yield
@@ -61,22 +59,8 @@ def _write_config(root: Path, body: str) -> None:
     (root / PREPROCESS_CONFIG_FILENAME).write_text(body, encoding="utf-8")
 
 
-def _default_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Switch the resolved preprocess mode to the trust-gated default."""
-    monkeypatch.delenv(EnvVar.PREPROCESS_TRUST_ALL.value, raising=False)
-    monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-    reset_config()
-
-
-def _resolved_hash(root: Path) -> str:
-    """Return the hash of a root's resolved rule set (strict bypasses the gate)."""
-    return _preprocess_trust.hash_rule_set(
-        load_preprocess_rules(root, strict=True).rules
-    )
-
-
 # --------------------------------------------------------------------------
-# Rule resolution (D1/D2/D3) - exercised under the autouse trust-all mode.
+# Rule resolution (D1/D2/D3) - exercised under the on-sandbox default mode.
 # --------------------------------------------------------------------------
 
 
@@ -330,8 +314,25 @@ def test_resolved_rule_is_picklable(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# Tri-state mode enforcement (ADR D4/D6).
+# Tri-state mode enforcement (ADR D7/D8): kill switch and unsandboxed hatch.
 # --------------------------------------------------------------------------
+
+
+def test_rules_resolve_for_any_root_with_no_trust(tmp_path: Path) -> None:
+    """default: rules resolve for any root - no trust record is consulted."""
+    _write_config(
+        tmp_path,
+        """
+        [[rule]]
+        pattern = "*.pdf"
+        command = "extract {path}"
+        """,
+    )
+    # No trust act, no status-dir sidecar - the rules still resolve because
+    # containment (the sandbox), not consent, is the security boundary.
+    config = load_preprocess_rules(tmp_path)
+    assert config.match("docs/a.pdf") is not None
+    assert [r.command for r in config.rules] == ["extract {path}"]
 
 
 def test_off_mode_yields_empty_with_debug_log(
@@ -346,7 +347,6 @@ def test_off_mode_yields_empty_with_debug_log(
         command = "extract {path}"
         """,
     )
-    monkeypatch.delenv(EnvVar.PREPROCESS_TRUST_ALL.value, raising=False)
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
     reset_config()
     with caplog.at_level("DEBUG"):
@@ -355,7 +355,25 @@ def test_off_mode_yields_empty_with_debug_log(
     assert any("'off'" in rec.message for rec in caplog.records)
 
 
-def test_off_wins_over_trust_all(
+def test_unsandboxed_mode_resolves_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """unsandboxed resolves a root's rules (the sandbox is bypassed downstream)."""
+    _write_config(
+        tmp_path,
+        """
+        [[rule]]
+        pattern = "*.pdf"
+        command = "extract {path}"
+        """,
+    )
+    monkeypatch.setenv(EnvVar.PREPROCESS_UNSANDBOXED.value, "1")
+    reset_config()
+    config = load_preprocess_rules(tmp_path)
+    assert config.match("a.pdf") is not None
+
+
+def test_off_wins_over_unsandboxed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The kill switch takes precedence when both env vars are set."""
@@ -367,77 +385,16 @@ def test_off_wins_over_trust_all(
         command = "extract {path}"
         """,
     )
-    monkeypatch.setenv(EnvVar.PREPROCESS_TRUST_ALL.value, "1")
+    monkeypatch.setenv(EnvVar.PREPROCESS_UNSANDBOXED.value, "1")
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
     reset_config()
     assert load_preprocess_rules(tmp_path).rules == []
 
 
-def test_trust_all_loads_without_record_and_warns(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """trust_all runs every root's rules without a trust record, loudly."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    # Autouse fixture already selected trust_all mode.
-    assert _preprocess_trust.read_trust(tmp_path) is None
-    with caplog.at_level("WARNING"):
-        config = load_preprocess_rules(tmp_path)
-    assert config.match("a.pdf") is not None
-    assert any("trust_all" in rec.message for rec in caplog.records)
-
-
-def test_default_untrusted_yields_empty_with_actionable_warning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """default + no trust record: rules skipped with a verb-naming warning."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    _default_mode(monkeypatch)
-    with caplog.at_level("WARNING"):
-        config = load_preprocess_rules(tmp_path)
-    assert config.rules == []
-    joined = "\n".join(rec.message for rec in caplog.records)
-    assert "preprocess trust" in joined
-    assert "1 preprocess rule" in joined
-
-
-def test_default_trusted_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """default: a matching trust record admits the resolved rules."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    _preprocess_trust.record_trust(
-        tmp_path,
-        rule_set_hash=_resolved_hash(tmp_path),
-        trusted_at="2026-07-13T00:00:00",
-    )
-    _default_mode(monkeypatch)
-    config = load_preprocess_rules(tmp_path)
-    assert config.match("docs/a.pdf") is not None
-
-
-def test_command_edit_reverts_trusted_root_to_untrusted(
+def test_strict_bypasses_off_kill_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A command change produces a new hash, so a stale record no longer matches."""
+    """strict validates the config regardless of the host's mode (off gate)."""
     _write_config(
         tmp_path,
         """
@@ -446,173 +403,8 @@ def test_command_edit_reverts_trusted_root_to_untrusted(
         command = "extract {path}"
         """,
     )
-    _preprocess_trust.record_trust(tmp_path, rule_set_hash=_resolved_hash(tmp_path))
-    _default_mode(monkeypatch)
-    assert load_preprocess_rules(tmp_path).match("a.pdf") is not None
-
-    # Edit the command: the old trust record is now stale.
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "malicious {path}"
-        """,
-    )
+    monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
     reset_config()
+    # Non-strict honours the kill switch; strict bypasses it (preprocess check).
     assert load_preprocess_rules(tmp_path).rules == []
-
-
-# --------------------------------------------------------------------------
-# Rule-set hashing (ADR D5).
-# --------------------------------------------------------------------------
-
-
-def test_hash_stable_across_benign_edits(tmp_path: Path) -> None:
-    """A comment/whitespace edit re-resolves to the same rule-set hash."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        priority = 10
-        """,
-    )
-    before = _resolved_hash(tmp_path)
-    _write_config(
-        tmp_path,
-        """
-        # a freshly added explanatory comment
-
-        [[rule]]
-        pattern   = "*.pdf"
-        command   = "extract {path}"
-        priority  = 10
-        """,
-    )
-    assert _resolved_hash(tmp_path) == before
-
-
-def test_hash_changes_on_command_edit(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    before = _resolved_hash(tmp_path)
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "different {path}"
-        """,
-    )
-    assert _resolved_hash(tmp_path) != before
-
-
-def test_hash_changes_on_options_edit(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.xlsx"
-        command = "xlsx {path}"
-
-        [rule.options]
-        sheet_limit = 5
-        """,
-    )
-    before = _resolved_hash(tmp_path)
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.xlsx"
-        command = "xlsx {path}"
-
-        [rule.options]
-        sheet_limit = 9
-        """,
-    )
-    assert _resolved_hash(tmp_path) != before
-
-
-# --------------------------------------------------------------------------
-# Trust store durability and degradation (ADR D5).
-# --------------------------------------------------------------------------
-
-
-def test_corrupt_store_degrades_to_untrusted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A corrupt trust store reads as empty (untrusted), never raises."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    # Trust the root, then clobber the store with garbage.
-    _preprocess_trust.record_trust(tmp_path, rule_set_hash=_resolved_hash(tmp_path))
-    _preprocess_trust.trust_store_path().write_text("{ not json", encoding="utf-8")
-    _default_mode(monkeypatch)
-    with caplog.at_level("WARNING"):
-        config = load_preprocess_rules(tmp_path)
-    assert config.rules == []
-    assert _preprocess_trust.load_trust_store() == {}
-
-
-def test_trust_record_round_trips_and_is_removable(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    rule_hash = _resolved_hash(tmp_path)
-    record = _preprocess_trust.record_trust(
-        tmp_path, rule_set_hash=rule_hash, trusted_at="2026-07-13T12:00:00"
-    )
-    assert record.rule_set_hash == rule_hash
-    assert record.root == str(tmp_path.resolve())
-
-    reread = _preprocess_trust.read_trust(tmp_path)
-    assert reread is not None
-    assert reread.rule_set_hash == rule_hash
-    assert reread.trusted_at == "2026-07-13T12:00:00"
-    assert _preprocess_trust.is_trusted(tmp_path, rule_hash)
-    assert not _preprocess_trust.is_trusted(tmp_path, "deadbeef")
-
-    assert _preprocess_trust.remove_trust(tmp_path) is True
-    assert _preprocess_trust.read_trust(tmp_path) is None
-    assert _preprocess_trust.remove_trust(tmp_path) is False
-
-
-def test_trust_store_isolates_under_status_dir(tmp_path: Path) -> None:
-    """The store lands under the isolated status dir, never in the repo."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    _preprocess_trust.record_trust(tmp_path, rule_set_hash=_resolved_hash(tmp_path))
-    store = _preprocess_trust.trust_store_path()
-    assert store.is_file()
-    # Never written inside the (attacker-controlled) project root.
-    assert tmp_path.resolve() not in store.resolve().parents
-    assert not (tmp_path / "preprocess-trust.json").exists()
-    payload = json.loads(store.read_text(encoding="utf-8"))
-    assert payload["version"] == 1
-    assert len(payload["roots"]) == 1
+    assert len(load_preprocess_rules(tmp_path, strict=True).rules) == 1

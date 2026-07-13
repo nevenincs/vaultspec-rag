@@ -123,7 +123,7 @@ class TestCLIIndex:
         result = _run_cli("--target", root, "index", "--type", "code", cwd=root)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Indexing summary" in result.stdout
-        assert "Codebase" in result.stdout
+        assert "Source code" in result.stdout
 
     @pytest.mark.timeout(300)
     def test_index_all_produces_both_rows(self, cli_vault: Path) -> None:
@@ -132,7 +132,7 @@ class TestCLIIndex:
         result = _run_cli("--target", root, "index", "--type", "all", cwd=root)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Vault" in result.stdout
-        assert "Codebase" in result.stdout
+        assert "Source code" in result.stdout
 
 
 @pytest.mark.subprocess_gpu
@@ -158,6 +158,7 @@ class TestCLISearch:
             root,
             "search",
             "architecture decision",
+            "--allow-fallback",
             cwd=root,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -172,6 +173,7 @@ class TestCLISearch:
             root,
             "search",
             "xyzzy99plugh42foobarbaz",
+            "--allow-fallback",
             cwd=root,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -187,6 +189,7 @@ class TestCLISearch:
             "function",
             "--type",
             "code",
+            "--allow-fallback",
             cwd=root,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"

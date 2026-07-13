@@ -16,6 +16,7 @@ import pytest
 from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._preprocess_runner import (
     PreprocessAbortError,
+    PreprocessResult,
     _build_argv,
     run_preprocessor,
 )
@@ -57,6 +58,29 @@ def test_dash_leading_path_operand_is_neutralised() -> None:
 
 
 _CAP = 1024 * 1024
+
+
+def _run(
+    source: Path,
+    rule: PreprocessRule,
+    *,
+    max_emitted_bytes: int,
+) -> PreprocessResult:
+    """Invoke the runner in local, unsandboxed mode (deterministic bounds path).
+
+    The sandboxed AppContainer path is proven separately in
+    ``test_hook_sandbox``; here we exercise the runner's timeout, exit-code,
+    JSON, and cap logic under the curated-env + staged-cwd default_popen path,
+    which is backend-agnostic.
+    """
+    return run_preprocessor(
+        source,
+        rule,
+        max_emitted_bytes=max_emitted_bytes,
+        project_root=source.parent,
+        server_mode=False,
+        unsandboxed=True,
+    )
 
 
 def _script(tmp_path: Path, body: str) -> Path:
@@ -105,7 +129,7 @@ def test_success_returns_validated_output(tmp_path: Path) -> None:
     script = _script(tmp_path, _SUCCESS_BODY)
     source = tmp_path / "doc.bin"
     source.write_bytes(b"\x00\x01binary")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=_CAP)
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.status == "ok"
     assert result.output is not None
     assert result.output.units is not None
@@ -114,11 +138,29 @@ def test_success_returns_validated_output(tmp_path: Path) -> None:
     assert result.output.units[0].locator.value == 1
 
 
+def test_staged_paths_are_remapped_to_the_real_source(tmp_path: Path) -> None:
+    # The hook echoes its input path (the staged copy) into source_path and the
+    # unit anchor. Deep links must reference the real file, not the ephemeral
+    # scratch dir, so the runner remaps staged -> original after validation.
+    script = _script(tmp_path, _SUCCESS_BODY)
+    source = tmp_path / "report.bin"
+    source.write_bytes(b"\x00\x01binary")
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
+    assert result.output is not None
+    assert result.output.source_path == str(source)
+    assert result.output.units is not None
+    anchor = result.output.units[0].anchor
+    assert anchor == f"{source}#page=1"
+    # No scratch-dir leakage in any indexed path.
+    assert "vsrag-hook-" not in result.output.source_path
+    assert anchor is not None and "vsrag-hook-" not in anchor
+
+
 def test_nonzero_exit_is_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, "import sys\nsys.exit(3)\n")
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=_CAP)
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.status == "skipped"
     assert result.reason is not None
     assert "exited 3" in result.reason
@@ -128,7 +170,7 @@ def test_bad_json_is_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, "print('this is not json')\n")
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=_CAP)
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.status == "skipped"
     assert result.reason is not None
     assert "not valid JSON" in result.reason
@@ -139,7 +181,7 @@ def test_schema_invalid_output_is_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, body)
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=_CAP)
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.status == "skipped"
 
 
@@ -147,7 +189,7 @@ def test_timeout_is_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, "import time\ntime.sleep(5)\n")
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(
+    result = _run(
         source, _rule(script, timeout_s=0.5), max_emitted_bytes=_CAP
     )
     assert result.status == "skipped"
@@ -169,7 +211,7 @@ def test_oversize_emission_is_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, body)
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=100)
+    result = _run(source, _rule(script), max_emitted_bytes=100)
     assert result.status == "skipped"
     assert result.reason is not None
     assert "exceeds cap" in result.reason
@@ -183,7 +225,7 @@ def test_oversize_stdout_is_bounded_and_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, body)
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=100)
+    result = _run(source, _rule(script), max_emitted_bytes=100)
     assert result.status == "skipped"
     assert result.reason is not None
     assert "exceeds" in result.reason
@@ -194,14 +236,14 @@ def test_on_error_fail_raises_abort(tmp_path: Path) -> None:
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
     with pytest.raises(PreprocessAbortError):
-        run_preprocessor(source, _rule(script, on_error="fail"), max_emitted_bytes=_CAP)
+        _run(source, _rule(script, on_error="fail"), max_emitted_bytes=_CAP)
 
 
 def test_on_error_passthrough_returns_passthrough(tmp_path: Path) -> None:
     script = _script(tmp_path, "import sys\nsys.exit(1)\n")
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(
+    result = _run(
         source, _rule(script, on_error="passthrough"), max_emitted_bytes=_CAP
     )
     assert result.status == "passthrough"
@@ -212,7 +254,11 @@ def test_path_with_spaces_is_passed_as_single_arg(tmp_path: Path) -> None:
     script = _script(tmp_path, _SUCCESS_BODY)
     source = tmp_path / "a doc with spaces.bin"
     source.write_bytes(b"x")
-    result = run_preprocessor(source, _rule(script), max_emitted_bytes=_CAP)
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.status == "ok"
     assert result.output is not None
-    assert result.output.source_path == str(source)
+    # The hook receives the staged copy, whose basename preserves the spaces;
+    # a single argv element (not split on the spaces) proves the path was passed
+    # intact through shlex token-wise substitution.
+    assert result.output.source_path is not None
+    assert result.output.source_path.endswith("a doc with spaces.bin")

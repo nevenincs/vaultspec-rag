@@ -1392,3 +1392,145 @@ class TestRouteMissingProjectRoot:
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
+
+
+class TestReindexPreprocessPreflight:
+    """S13: POST /reindex reports whether a root's preprocess hooks will run.
+
+    The route returns ``queued`` before the background job runs, so a
+    non-interactive client cannot otherwise tell whether the root's
+    document-preprocessing hooks will fire (preprocess-sandbox ADR D9). The
+    response now carries a ``preprocess`` pre-flight object mirroring the
+    ``server start`` operator notice.
+
+    The GPU-backed job subsystem (``start_reindex_codebase``) and the watcher
+    nudge are external to the response-shaping logic under test and are
+    exercised elsewhere; they are isolated here so the assertion runs with no
+    GPU, no Qdrant, and no model load. The pre-flight itself resolves a real
+    ``.vaultragpreprocess.toml`` - it is not stubbed.
+    """
+
+    _TOKEN = "test-token-s13"
+
+    def _make_app(self) -> Starlette:
+        from contextlib import asynccontextmanager
+
+        from starlette.applications import Starlette
+
+        from ..server._routes import ROUTES
+
+        @asynccontextmanager
+        async def _lifespan(_app: object) -> typing.AsyncGenerator[None]:
+            yield
+
+        return Starlette(routes=ROUTES, lifespan=_lifespan)
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._TOKEN}"}
+
+    @staticmethod
+    def _write_config(root: Path) -> None:
+        (root / ".vault").mkdir(parents=True)
+        (root / ".vaultragpreprocess.toml").write_text(
+            'version = 1\n\n[[rule]]\n'
+            'pattern = "*.pdf"\n'
+            'command = "extract {path}"\n'
+            'on_error = "skip"\n',
+            encoding="utf-8",
+        )
+
+    def _post_reindex(
+        self,
+        root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> dict[str, Any]:
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.jobs as jobs_mod
+        import vaultspec_rag.server as mod
+
+        def _fake_start(*_a: object, **_k: object) -> str:
+            return "job-abc"
+
+        def _fake_watch(_root: object) -> None:
+            return None
+
+        monkeypatch.setattr(jobs_mod, "start_reindex_codebase", _fake_start)
+        monkeypatch.setattr(mod, "_ensure_watcher_soon", _fake_watch)
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(self._make_app())
+            )
+            resp: httpx.Response = client.post(
+                "/reindex",
+                json={"type": "code", "project_root": str(root)},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 200
+            return cast("dict[str, Any]", resp.json())
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
+    def test_reindex_reports_hooks_will_run_under_default_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "proj"
+        self._write_config(root)
+        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
+        monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
+        reset_config()
+        try:
+            data = self._post_reindex(root, monkeypatch)
+        finally:
+            reset_config()
+        assert data["status"] == "queued"
+        pre = cast("dict[str, Any]", data["preprocess"])
+        assert pre["config_present"] is True
+        assert pre["rule_count"] == 1
+        assert pre["mode"] == "default"
+        assert pre["hooks_will_run"] is True
+
+    def test_reindex_reports_hooks_skipped_when_mode_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "proj"
+        self._write_config(root)
+        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
+        monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
+        reset_config()
+        try:
+            data = self._post_reindex(root, monkeypatch)
+        finally:
+            reset_config()
+        pre = cast("dict[str, Any]", data["preprocess"])
+        # The count is still reported (the config's own), but the kill switch
+        # means hooks will not run.
+        assert pre["config_present"] is True
+        assert pre["rule_count"] == 1
+        assert pre["mode"] == "off"
+        assert pre["hooks_will_run"] is False
+
+    def test_reindex_reports_no_config_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "proj"
+        (root / ".vault").mkdir(parents=True)
+        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
+        monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
+        reset_config()
+        try:
+            data = self._post_reindex(root, monkeypatch)
+        finally:
+            reset_config()
+        pre = cast("dict[str, Any]", data["preprocess"])
+        assert pre["config_present"] is False
+        assert pre["rule_count"] == 0
+        assert pre["hooks_will_run"] is False

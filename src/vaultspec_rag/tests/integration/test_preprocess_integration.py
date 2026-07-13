@@ -6,11 +6,13 @@ rule, indexed first-class, and found by hybrid search with its deep-link anchor;
 the scoped/incremental path routes a changed binary through the preprocessor;
 and a failing preprocessor surfaces a skip count rather than a silent gap.
 
-The tri-state/TOFU boundary is proved end-to-end here too: the ``off`` kill
-switch outranks trust-all, an untrusted root under the default mode executes
-nothing and names the trust verb, a trusted root executes and a command edit
-reverts it, and an ignore-file edit forwarded down the watcher path prunes the
-newly-ignored chunks via the config-epoch escalation.
+The sandbox boundary is proved end-to-end here too. Hooks now run BY DEFAULT for
+any root - there is no trust step - so the tests below prove that safety comes
+from OS containment, not consent: a hook runs through the local index under a
+real sandbox backend, an untrusted root's hook that tries to read a secret and
+open a socket still extracts its legitimate content while both malicious
+operations are denied inside the container, and the ``off`` kill switch skips
+hooks entirely.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from typing import TYPE_CHECKING, TypedDict
 import pytest
 
 from ...config import EnvVar, reset_config
+from ...indexer._hook_sandbox import resolve_hook_sandbox
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -42,44 +45,24 @@ pytestmark = [pytest.mark.integration]
 def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[None]:
-    """Isolate the trust store and default this module to trust-all.
+    """Isolate the managed status dir to a per-test tmp path.
 
-    The TOFU trust store lives under the managed status dir, so the dir is
-    relocated to a per-test tmp path (never the operator's real
-    ``~/.vaultspec-rag``). Extractor-behavior tests run under trust-all so
-    they exercise the real subprocess path without a per-root trust record;
-    the TOFU boundary tests below override the mode env vars themselves.
+    The status dir is relocated so no test touches the operator's real
+    ``~/.vaultspec-rag``. No trust store exists anymore: under the default mode
+    the runner resolves and runs a root's rules for any root, contained by the
+    OS sandbox, so there is no per-root consent setup to perform.
     """
     status_key = EnvVar.STATUS_DIR.value
-    trust_key = EnvVar.PREPROCESS_TRUST_ALL.value
     prev_status = os.environ.get(status_key)
-    prev_trust = os.environ.get(trust_key)
     os.environ[status_key] = str(tmp_path_factory.mktemp("preproc-status"))
-    os.environ[trust_key] = "1"
     reset_config()
     try:
         yield
     finally:
-        for key, prev in ((status_key, prev_status), (trust_key, prev_trust)):
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
-        reset_config()
-
-
-@pytest.fixture
-def _default_mode() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]  # referenced via usefixtures
-    """Drop the module's trust-all opt-in so the on-with-TOFU default applies."""
-    trust_key = EnvVar.PREPROCESS_TRUST_ALL.value
-    prev = os.environ.get(trust_key)
-    os.environ.pop(trust_key, None)
-    reset_config()
-    try:
-        yield
-    finally:
-        if prev is not None:
-            os.environ[trust_key] = prev
+        if prev_status is None:
+            os.environ.pop(status_key, None)
+        else:
+            os.environ[status_key] = prev_status
         reset_config()
 
 
@@ -144,6 +127,51 @@ def _sentinel_extractor(root: Path, sentinel: Path) -> Path:
     return script
 
 
+def _probe_extractor(root: Path, secret_path: Path) -> Path:
+    """Write an extractor that probes containment while emitting valid output.
+
+    The hook tries to read ``secret_path`` (a file outside the staged scratch
+    dir and outside the granted project root) and to open an outbound socket,
+    then encodes the outcome of each into its emitted unit text. Under a working
+    sandbox both must fail, so the indexed text carries ``SECRET_READ_BLOCKED``
+    and ``NETWORK_BLOCKED``; the legitimate corpus text is emitted regardless.
+    """
+    script = root / "probe_extractor.py"
+    script.write_text(
+        textwrap.dedent(f"""
+            import json, socket, sys
+            secret = {str(secret_path)!r}
+            try:
+                open(secret, encoding="utf-8").read()
+                secret_status = "SECRET_READ_OK"
+            except OSError:
+                secret_status = "SECRET_READ_BLOCKED"
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3)
+                sock.connect(("1.1.1.1", 80))
+                sock.close()
+                net_status = "NETWORK_OK"
+            except OSError:
+                net_status = "NETWORK_BLOCKED"
+            print(json.dumps({{
+                "schema_version": 1,
+                "preprocessor_id": "probe",
+                "preprocessor_version": "1.0",
+                "source_path": sys.argv[1],
+                "units": [{{
+                    "text": (
+                        "aurora telemetry ingestion pipeline "
+                        + secret_status + " " + net_status
+                    ),
+                }}],
+            }}))
+        """),
+        encoding="utf-8",
+    )
+    return script
+
+
 @pytest.fixture
 def preproc_project(
     rag_components: RagComponentsWithManifest,
@@ -198,6 +226,144 @@ class TestPreprocessEndToEnd:
         assert top.source_path == "report.pdf"
 
     @pytest.mark.timeout(600)
+    def test_hook_runs_contained_through_local_index(
+        self, preproc_project: _PreprocProject
+    ) -> None:
+        # The default-mode path with no trust step: a real command hook runs
+        # through the local index under a resolved sandbox backend, its unit is
+        # indexed and searchable, and the deep-link anchor references the real
+        # source - never the ephemeral ``vsrag-hook-`` scratch dir the child
+        # actually saw (the staged-path remap is what closes that leak).
+        from ... import VaultSearcher
+
+        backend = resolve_hook_sandbox(server_mode=False, unsandboxed=False)
+        assert backend is not None, "no hook sandbox backend resolved on this host"
+        if sys.platform == "win32":
+            assert backend.name == "windows-appcontainer"
+
+        result = preproc_project["code_indexer"].full_index(
+            reporter=NullProgressReporter()
+        )
+        assert result.preprocess_skipped == 0
+
+        searcher = VaultSearcher(
+            preproc_project["root"],
+            preproc_project["model"],
+            preproc_project["store"],
+        )
+        results = searcher.search_codebase(
+            "regional sales territory breakdown", top_k=5
+        )
+        top = next((r for r in results if r.preprocessor_id == "fake-pdf"), None)
+        assert top is not None, "contained hook's unit not indexed"
+        assert top.anchor is not None
+        assert "vsrag-hook-" not in top.anchor, "scratch path leaked into the anchor"
+        assert "vsrag-hook-" not in (top.source_path or "")
+
+    @pytest.mark.timeout(600)
+    def test_untrusted_repo_hook_is_contained_not_refused(
+        self,
+        rag_components: RagComponentsWithManifest,
+        tmp_path: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        # The whole point of the new model: a root that ships a hook and has NO
+        # trust record still runs (rules resolve for any root) and is contained.
+        # No interaction, still safe. The hook tries to steal a secret that
+        # lives OUTSIDE the granted project root and to reach the network; the
+        # legitimate content still extracts and indexes, while the sandbox
+        # denies both malicious operations (proven from the indexed report).
+        from ... import CodebaseIndexer, VaultSearcher, VaultStore
+
+        model = rag_components["model"]
+
+        backend = resolve_hook_sandbox(server_mode=False, unsandboxed=False)
+        assert backend is not None, (
+            "containment cannot be proven without a sandbox backend on this host"
+        )
+
+        # The secret sits in a sibling dir, never under the project root the
+        # sandbox read-grants, so a contained child must not be able to open it.
+        secret_dir = tmp_path_factory.mktemp("secret-outside-root")
+        secret = secret_dir / "api_key.txt"
+        secret.write_text("SUPER-SECRET-TOKEN", encoding="utf-8")
+
+        _write_config(
+            tmp_path,
+            f'[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(_probe_extractor(tmp_path, secret))}'''\n"
+            'on_error = "skip"\n',
+        )
+        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            result = indexer.full_index(reporter=NullProgressReporter())
+            # The hook ran (no trust step blocked it) and was not refused.
+            assert result.preprocess_skipped == 0
+
+            searcher = VaultSearcher(tmp_path, model, store)
+            results = searcher.search_codebase(
+                "aurora telemetry ingestion pipeline", top_k=5
+            )
+            unit = next((r for r in results if r.preprocessor_id == "probe"), None)
+            assert unit is not None, "contained hook's legitimate content not indexed"
+            assert unit.rerank_text is not None
+            assert "SECRET_READ_BLOCKED" in unit.rerank_text, (
+                "sandbox failed to deny the out-of-tree secret read"
+            )
+            assert "NETWORK_BLOCKED" in unit.rerank_text, (
+                "sandbox failed to deny outbound network egress"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(600)
+    def test_off_kill_switch_skips_hooks(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
+        # VAULTSPEC_RAG_PREPROCESS=off is the kill switch: a repo that ships a
+        # command rule executes nothing (a sentinel the command would create
+        # stays absent) and the binary source is not indexed as a preprocessed
+        # unit.
+        from ... import CodebaseIndexer, VaultSearcher, VaultStore
+
+        model = rag_components["model"]
+        sentinel = tmp_path / "EXECUTED.flag"
+        _write_config(
+            tmp_path,
+            f'[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(_sentinel_extractor(tmp_path, sentinel))}'''\n"
+            'on_error = "skip"\n',
+        )
+        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+
+        key = EnvVar.PREPROCESS.value
+        prev = os.environ.get(key)
+        os.environ[key] = "off"
+        reset_config()
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            indexer.full_index(reporter=NullProgressReporter())
+            assert not sentinel.exists(), (
+                "preprocess command executed under the off kill switch"
+            )
+            searcher = VaultSearcher(tmp_path, model, store)
+            results = searcher.search_codebase("sentinel extractor output", top_k=5)
+            assert not any(r.preprocessor_id == "sentinel" for r in results), (
+                "binary source was preprocessed despite the off kill switch"
+            )
+        finally:
+            store.close()
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+            reset_config()
+
+    @pytest.mark.timeout(600)
     def test_incremental_routes_changed_binary_through_preprocessor(
         self, preproc_project: _PreprocProject
     ) -> None:
@@ -237,134 +403,6 @@ class TestPreprocessEndToEnd:
             result = indexer.full_index(reporter=NullProgressReporter())
             assert result.preprocess_skipped == 1
             assert any("broken.pdf" in f for f in result.preprocess_failures)
-        finally:
-            store.close()
-
-    @pytest.mark.timeout(600)
-    def test_off_mode_outranks_trust_all_and_executes_nothing(
-        self, rag_components: RagComponentsWithManifest, tmp_path: Path
-    ) -> None:
-        # C1 (end-to-end RCE proof, kill-switch tier): with
-        # VAULTSPEC_RAG_PREPROCESS=off, indexing a repo that ships a command
-        # rule must NOT execute the command even though the module fixture
-        # sets trust-all - off wins over everything. A sentinel the command
-        # would create stays absent.
-        from ... import CodebaseIndexer, VaultStore
-
-        model = rag_components["model"]
-        sentinel = tmp_path / "EXECUTED.flag"
-        _write_config(
-            tmp_path,
-            f'[[rule]]\npattern = "*.pdf"\n'
-            f"command = '''{_command(_sentinel_extractor(tmp_path, sentinel))}'''\n"
-            'on_error = "skip"\n',
-        )
-        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
-
-        key = EnvVar.PREPROCESS.value
-        prev = os.environ.get(key)
-        os.environ[key] = "off"
-        reset_config()
-        store = VaultStore(tmp_path)
-        try:
-            indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
-            assert not sentinel.exists(), (
-                "preprocess command executed under the off kill switch"
-            )
-        finally:
-            store.close()
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
-            reset_config()
-
-    @pytest.mark.timeout(600)
-    @pytest.mark.usefixtures("_default_mode")
-    def test_untrusted_default_executes_nothing_and_names_trust_verb(
-        self,
-        rag_components: RagComponentsWithManifest,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        # C1 (end-to-end RCE proof, TOFU tier): under the default mode with no
-        # trust record, indexing a repo that ships a command rule executes
-        # nothing, and the skip warning names the remediation verb.
-        from ... import CodebaseIndexer, VaultStore
-
-        model = rag_components["model"]
-        sentinel = tmp_path / "EXECUTED.flag"
-        _write_config(
-            tmp_path,
-            f'[[rule]]\npattern = "*.pdf"\n'
-            f"command = '''{_command(_sentinel_extractor(tmp_path, sentinel))}'''\n"
-            'on_error = "skip"\n',
-        )
-        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
-
-        store = VaultStore(tmp_path)
-        try:
-            indexer = CodebaseIndexer(tmp_path, model, store)
-            with caplog.at_level("WARNING"):
-                indexer.full_index(reporter=NullProgressReporter())
-            assert not sentinel.exists(), (
-                "untrusted preprocess command executed (TOFU gate not closed)"
-            )
-            assert any("preprocess trust" in r.message for r in caplog.records), (
-                "untrusted skip warning does not name the trust verb"
-            )
-        finally:
-            store.close()
-
-    @pytest.mark.timeout(600)
-    @pytest.mark.usefixtures("_default_mode")
-    def test_trusted_root_executes_and_command_edit_reverts_trust(
-        self, rag_components: RagComponentsWithManifest, tmp_path: Path
-    ) -> None:
-        # TOFU round trip: trusting the resolved rule set lets the command run
-        # under the default mode; editing the command reverts the root to
-        # untrusted automatically (the trust hash no longer matches).
-        from ... import CodebaseIndexer, VaultStore
-        from ...indexer._preprocess_config import load_preprocess_rules
-        from ...indexer._preprocess_trust import hash_rule_set, record_trust
-
-        model = rag_components["model"]
-        first = tmp_path / "FIRST.flag"
-        second = tmp_path / "SECOND.flag"
-        _write_config(
-            tmp_path,
-            f'[[rule]]\npattern = "*.pdf"\n'
-            f"command = '''{_command(_sentinel_extractor(tmp_path, first))}'''\n"
-            'on_error = "skip"\n',
-        )
-        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
-
-        rules = load_preprocess_rules(tmp_path, strict=True).rules
-        record_trust(
-            tmp_path,
-            rule_set_hash=hash_rule_set(rules),
-            trusted_at="2026-07-13T00:00:00Z",
-        )
-
-        store = VaultStore(tmp_path)
-        try:
-            indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
-            assert first.exists(), "trusted preprocess command did not execute"
-
-            # A different command re-resolves to a different hash: the stored
-            # trust record no longer matches, so nothing may execute.
-            _write_config(
-                tmp_path,
-                f'[[rule]]\npattern = "*.pdf"\n'
-                f"command = '''{_command(_sentinel_extractor(tmp_path, second))}'''\n"
-                'on_error = "skip"\n',
-            )
-            indexer.full_index(clean=True, reporter=NullProgressReporter())
-            assert not second.exists(), (
-                "edited (re-untrusted) preprocess command executed"
-            )
         finally:
             store.close()
 

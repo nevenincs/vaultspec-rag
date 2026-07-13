@@ -571,6 +571,45 @@ class TestDropTable:
         finally:
             store.close()
 
+    def test_drop_table_then_recreate_does_not_resurrect_points(
+        self, tmp_path: Path
+    ) -> None:
+        """Dropping a populated collection then recreating must yield count 0.
+
+        Guards the qdrant-client local-mode bug where delete_collection left the
+        collection's sqlite handle open, rmtree silently failed on Windows, and a
+        same-name create_collection resurrected the deleted points.
+        """
+        from ..store import VaultDocument, VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=4)
+        try:
+            store.upsert_documents(
+                [
+                    VaultDocument(
+                        id="doc-1",
+                        path="doc-1.md",
+                        doc_type="research",
+                        feature="demo",
+                        date="2026-07-13",
+                        tags=["#research", "#demo"],
+                        related=[],
+                        title="Doc 1",
+                        content="hello world",
+                        vector=[0.1, 0.2, 0.3, 0.4],
+                    )
+                ]
+            )
+            assert store.count() == 1
+
+            store.drop_table()
+            assert not store.client.collection_exists(store.TABLE_NAME)
+
+            store.ensure_table()
+            assert store.count() == 0
+        finally:
+            store.close()
+
     def test_drop_code_table_removes_codebase_collection(self, tmp_path: Path) -> None:
         """drop_code_table() deletes the codebase_docs collection and resets state."""
         from ..store import VaultStore

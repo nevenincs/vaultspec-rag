@@ -126,6 +126,11 @@ def record_start(
         "finished_at": None,
         "result": None,
         "progress": None,
+        # Document-preprocessing outcome, surfaced through /jobs so a
+        # non-interactive client sees which files failed extraction rather than
+        # only a summary count (preprocess-sandbox ADR D9). Populated at finish.
+        "preprocess_skipped": 0,
+        "preprocess_failures": [],
         "initiator": {
             "kind": initiator_kind or trigger,
             "command": command or f"{trigger}_{source}_index",
@@ -204,6 +209,8 @@ def record_finish(
     result: str | None = None,
     error: str | None = None,
     phase: Phase | None = None,
+    preprocess_skipped: int = 0,
+    preprocess_failures: list[str] | None = None,
 ) -> None:
     """Mark the record with *record_id* finished, in place.
 
@@ -218,6 +225,12 @@ def record_finish(
         error: Optional error summary; its presence flips the phase to
             ``"error"`` if *phase* is not explicitly provided.
         phase: Optional explicit target phase (e.g. ``"cancelled"``).
+        preprocess_skipped: Count of files a document-preprocessing rule
+            skipped this run, threaded onto the record so /jobs can surface it
+            (preprocess-sandbox ADR D9).
+        preprocess_failures: ``"rel_path: reason"`` per skipped file, threaded
+            onto the record so a client sees which files failed extraction and
+            why - not just a count.
     """
     finished_at = time.time()
     if phase is not None:
@@ -243,6 +256,8 @@ def record_finish(
                 record["phase"] = target_phase
                 record["finished_at"] = finished_at
                 record["result"] = summary
+                record["preprocess_skipped"] = preprocess_skipped
+                record["preprocess_failures"] = list(preprocess_failures or [])
                 resources = record.get("resources")
                 if isinstance(resources, dict):
                     resources = cast("dict[str, object]", resources)
@@ -282,6 +297,9 @@ def snapshot() -> list[dict[str, object]]:
             prog = record.get("progress")
             if isinstance(prog, dict):
                 item["progress"] = dict(cast("dict[str, object]", prog))
+            failures = record.get("preprocess_failures")
+            if isinstance(failures, list):
+                item["preprocess_failures"] = list(cast("list[object]", failures))
             initiator = record.get("initiator")
             if isinstance(initiator, dict):
                 item["initiator"] = dict(cast("dict[str, object]", initiator))
@@ -442,6 +460,8 @@ def start_reindex_codebase(
                                 f"-{result.removed} ({result.duration_ms}ms)"
                                 f"{skipped_suffix}"
                             ),
+                            preprocess_skipped=result.preprocess_skipped,
+                            preprocess_failures=result.preprocess_failures,
                         )
                 except Exception as exc:
                     record_finish(job_id, error=str(exc))

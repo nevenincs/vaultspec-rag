@@ -337,7 +337,7 @@ def _service_child_env(
     watch_cooldown_s: float | None = None,
     qdrant: bool | None = None,
     local_only: bool | None = None,
-    preprocess_mode: Literal["off", "trust_all"] | None = None,
+    preprocess_mode: Literal["off", "unsandboxed"] | None = None,
 ) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
@@ -360,10 +360,11 @@ def _service_child_env(
         local_only: Tri-state local-backend opt-out; ``None`` leaves it
             unset so an operator-set ``VAULTSPEC_RAG_LOCAL_ONLY`` survives.
         preprocess_mode: ``"off"`` forwards ``VAULTSPEC_RAG_PREPROCESS=off``,
-            ``"trust_all"`` forwards ``VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1``;
-            each clears the opposing var so the forwarded flag is
-            authoritative over an inherited one. ``None`` leaves both unset so
-            an operator-set preprocess env survives.
+            ``"unsandboxed"`` forwards
+            ``VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1``; each clears the
+            opposing var so the forwarded flag is authoritative over an
+            inherited one. ``None`` leaves both unset so an operator-set
+            preprocess env survives.
 
     Returns:
         The child-process environment mapping.
@@ -374,6 +375,10 @@ def _service_child_env(
     # but is case-insensitive for lookups.
     _excluded = str(EnvVar.RAG_ROOT).upper()
     env = {k: v for k, v in os.environ.items() if k.upper() != _excluded}
+    # Mark this as the resident daemon so its indexer resolves server_mode from
+    # a real signal (not the storage backend), keeping the preprocess sandbox
+    # fail-closed even for a --local-only daemon serving non-interactive clients.
+    env[EnvVar.SERVICE_DAEMON.value] = "1"
     if watch is not None:
         env[EnvVar.WATCH_ENABLED.value] = "1" if watch else "0"
     if watch_debounce_ms is not None:
@@ -386,9 +391,9 @@ def _service_child_env(
         env[EnvVar.LOCAL_ONLY.value] = "1" if local_only else "0"
     if preprocess_mode == "off":
         env[EnvVar.PREPROCESS.value] = "off"
-        env.pop(EnvVar.PREPROCESS_TRUST_ALL.value, None)
-    elif preprocess_mode == "trust_all":
-        env[EnvVar.PREPROCESS_TRUST_ALL.value] = "1"
+        env.pop(EnvVar.PREPROCESS_UNSANDBOXED.value, None)
+    elif preprocess_mode == "unsandboxed":
+        env[EnvVar.PREPROCESS_UNSANDBOXED.value] = "1"
         env.pop(EnvVar.PREPROCESS.value, None)
     return env
 
@@ -508,7 +513,7 @@ def _spawn_service(
     watch_cooldown_s: float | None = None,
     qdrant: bool | None = None,
     local_only: bool | None = None,
-    preprocess_mode: Literal["off", "trust_all"] | None = None,
+    preprocess_mode: Literal["off", "unsandboxed"] | None = None,
 ) -> int:
     """Spawn the RAG service as a detached background process.
 
@@ -520,7 +525,7 @@ def _spawn_service(
         watch_cooldown_s: Optional cooldown override forwarded to the env.
         qdrant: Optional qdrant server-mode toggle forwarded to the env.
         local_only: Optional local-backend opt-out forwarded to the env.
-        preprocess_mode: Optional preprocess tri-state (``off``/``trust_all``)
+        preprocess_mode: Optional preprocess tri-state (``off``/``unsandboxed``)
             forwarded to the env.
 
     Returns:

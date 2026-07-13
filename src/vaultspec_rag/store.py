@@ -706,12 +706,42 @@ class VaultStore:
             )
         logger.info("Created collection '%s' at %s", name, self.db_path)
 
+    def _delete_collection_hard(self, name: str) -> None:
+        """Delete a collection so a same-name recreate cannot resurrect points.
+
+        In local mode qdrant-client's ``delete_collection`` pops the in-memory
+        collection and calls ``shutil.rmtree(..., ignore_errors=True)`` but never
+        closes the collection's sqlite handle first. On Windows the still-open
+        handle makes ``rmtree`` fail silently (WinError 32): ``storage.sqlite``
+        survives, and a same-name ``create_collection`` re-reads it and brings
+        the deleted points back. The public client exposes no close-before-delete
+        path, so we reach the private ``QdrantLocal.collections`` map to close the
+        handle before deleting, then assert the on-disk directory is gone so any
+        future regression fails loudly instead of resurrecting data. Server mode
+        is a remote HTTP delete and needs none of this.
+        """
+        with _suppress_local_qdrant_warnings():
+            if not self._server_mode:
+                local = getattr(self.client, "_client", None)
+                collection = getattr(local, "collections", {}).get(name)
+                if collection is not None:
+                    collection.close()
+            self.client.delete_collection(name)
+        if not self._server_mode:
+            import pathlib as _pathlib
+
+            collection_dir = _pathlib.Path(self.db_path) / "collection" / name
+            if collection_dir.exists():
+                raise RuntimeError(
+                    f"local collection directory survived delete_collection: "
+                    f"{collection_dir}; same-name recreate would resurrect points"
+                )
+
     def drop_table(self) -> None:
         """Drop the vault_docs collection if it exists."""
         with self._lifecycle_lock, self._point_lock(self.TABLE_NAME):
             if self.client.collection_exists(self.TABLE_NAME):
-                with _suppress_local_qdrant_warnings():
-                    self.client.delete_collection(self.TABLE_NAME)
+                self._delete_collection_hard(self.TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.TABLE_NAME)
             self._vault_ensured = False
 
@@ -719,8 +749,7 @@ class VaultStore:
         """Drop the codebase_docs collection if it exists."""
         with self._lifecycle_lock, self._point_lock(self.CODE_TABLE_NAME):
             if self.client.collection_exists(self.CODE_TABLE_NAME):
-                with _suppress_local_qdrant_warnings():
-                    self.client.delete_collection(self.CODE_TABLE_NAME)
+                self._delete_collection_hard(self.CODE_TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
             self._code_ensured = False
 
