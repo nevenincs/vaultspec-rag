@@ -70,6 +70,40 @@ to open mutable map index on gridstore: os error 3") on this machine, also
 failing main's untouched `test_multi_project_search_isolation`. Out of this
 feature's scope; needs its own investigation.
 
+### daemon-reindex-root-cause | resolved | qdrant gridstore breaks on Windows storage paths over ~105 characters
+
+Root-caused by an A/B repro against the same pinned qdrant 1.18.2 binary
+and identical collection schema: `create_collection` succeeds with a
+storage dir of 100 characters and fails with the gridstore "os error 3" at
+110 - the internal `collections/<name>/segments/<uuid>/...` layout crosses
+the classic MAX_PATH boundary, and `LongPathsEnabled=1` does not help (the
+engine's file handling ignores it). Deep pytest tmp paths (~95-115 chars)
+cross the cliff; the real machine dir (~48 chars) does not, which is why
+the resident service has 256 finished jobs and zero failures. Fix: the
+integration `_service_env` helper now places the isolated qdrant storage
+under a short unique temp dir (~56 chars) with teardown cleanup, and the
+supervisor logs a legible warning on Windows when the storage dir exceeds
+90 characters so a real operator with a deep
+`VAULTSPEC_RAG_QDRANT_STORAGE_DIR` sees the cause at spawn instead of
+opaque 500s on first index. Follow-up candidate: test whether a newer
+qdrant pin fixes the engine-side limit (RocksDB is removed upstream from
+1.17, so gridstore is unavoidable).
+
+### daemon-reindex-disk-full | resolved | a second cause was stacked under the path cliff: the dev box disk was full
+
+After the path fix the failure changed shape ("Failed to create storage
+for mmap sparse vectors: failed to set length of file") - `C:` was down to
+677MB free out of 1TB, and each qdrant collection create preallocates
+roughly half a GB of mmaps. The diagnostic repro runs themselves had eaten
+about 4.4GB of temp storage; deleting that debris plus stale pytest tmp
+recovered to ~5.3GB free and both tests pass. Because a test that holds
+its daemon open past `_service_env`'s exit leaves its storage locked at
+teardown (rmtree silently leaves ~0.5-1GB behind), the helper now sweeps
+stale leftovers under the short storage base on entry, so leaks self-heal
+on the next run instead of accumulating on an already-tight disk. The
+operator should still free space on `C:` - ~5GB headroom is one integration
+run away from failing again.
+
 ## Recommendations
 
 - Apply the two medium and two low fixes in a follow-up commit (all
