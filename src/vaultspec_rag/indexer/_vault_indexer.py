@@ -22,6 +22,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
 )
 
 from ..logging_config import log_event
+from . import _config_epoch
 from ._streaming import _stream_encode_and_upsert_vault
 from ._vault_prep import IndexResult, prepare_document
 
@@ -46,6 +47,13 @@ _VAULT_POINT_SCHEMA = "2"
 #: Reserved key carrying the layout version inside the hash-metadata
 #: sidecar. Never collides with document ids (which are relative paths).
 _SCHEMA_KEY = "__vault_point_schema__"
+
+#: Reserved key carrying the content epoch over ``vault_chunk_chars``. A
+#: mismatch means the chunk boundary changed, so every document re-chunks
+#: with unchanged bytes and the stored vectors are stale - the same drift
+#: class as ``html_strip`` on the code side. Begins with ``__`` so
+#: ``_load_meta`` strips it from document-id set arithmetic.
+_CONTENT_EPOCH_KEY = "__vault_content_epoch__"
 
 
 class VaultIndexer:
@@ -400,6 +408,13 @@ class VaultIndexer:
         if self._needs_layout_rebuild():
             logger.info(
                 "Vault point layout changed; running a one-time clean "
+                "rebuild of the vault collection",
+            )
+            return self._full_index_locked(clean=True, reporter=reporter)
+
+        if self._needs_content_rebuild():
+            logger.info(
+                "Vault chunk boundary changed; running a one-time clean "
                 "rebuild of the vault collection",
             )
             return self._full_index_locked(clean=True, reporter=reporter)
@@ -801,13 +816,38 @@ class VaultIndexer:
             )
             return False
 
+    def _current_vault_content_epoch(self) -> str:
+        """Compute the content epoch over the current ``vault_chunk_chars``."""
+        from ..config import get_config
+
+        return _config_epoch.vault_content_epoch(
+            vault_chunk_chars=int(get_config().vault_chunk_chars),
+        )
+
+    def _needs_content_rebuild(self) -> bool:
+        """Return True when the stored chunk boundary differs from the current.
+
+        Detection compares the stored content epoch against the current
+        ``vault_chunk_chars``; a mismatch means the chunk boundary changed, so
+        every document must re-chunk (a clean rebuild) even though its bytes are
+        unchanged. A sidecar predating this key (or no sidecar) is not forced to
+        rebuild - the epoch is simply stamped on the next successful write, so an
+        existing install is not clean-rebuilt merely for upgrading.
+        """
+        raw = self._read_meta_raw()
+        stored = raw.get(_CONTENT_EPOCH_KEY)
+        if stored is None:
+            return False
+        return stored != self._current_vault_content_epoch()
+
     def _write_meta(self, meta: dict[str, str]) -> None:
         """Write content-hash metadata to the sidecar JSON file.
 
         Uses an atomic write (write-to-temp + os.replace) so a crash mid-write
         never leaves the metadata file in a corrupt state. The current
-        point-layout version is stamped into the file under a reserved
-        key so later runs can detect layout changes.
+        point-layout version and the content epoch over ``vault_chunk_chars``
+        are stamped under reserved keys so later runs can detect layout and
+        chunk-boundary changes.
 
         Args:
             meta: Mapping of document stem to blake2b hex digest.
@@ -818,7 +858,11 @@ class VaultIndexer:
         """
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
-        stamped = {**meta, _SCHEMA_KEY: _VAULT_POINT_SCHEMA}
+        stamped = {
+            **meta,
+            _SCHEMA_KEY: _VAULT_POINT_SCHEMA,
+            _CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
+        }
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 

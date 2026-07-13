@@ -33,9 +33,7 @@ pytestmark = [pytest.mark.integration]
 
 _RAG_RULE_REL = Path(".vaultspec") / "rules" / "vaultspec-rag.builtin.md"
 _RAG_MCP_REL = Path(".vaultspec") / "mcps" / "vaultspec-rag.builtin.json"
-_RAG_SKILL_REL = (
-    Path(".vaultspec") / "skills" / "vaultspec-rag-discovery" / "SKILL.md"
-)
+_RAG_SKILL_REL = Path(".vaultspec") / "skills" / "vaultspec-rag-discovery" / "SKILL.md"
 
 _CONSUMER_PYPROJECT = (
     "[project]\n"

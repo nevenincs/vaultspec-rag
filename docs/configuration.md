@@ -109,10 +109,12 @@ The tables in this section, together with the backend selection table, list ever
 
 ### Preprocessing
 
-| Variable                                     | Type    | Default    | Controls                                                          | CLI flag |
-| -------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` | Cap on text a preprocess hook may emit per file in bytes (10 MiB) | -        |
-| `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true) | Strip tags from `.html` to plain text before chunking             | -        |
+| Variable                                     | Type    | Default    | Controls                                                          | CLI flag                 |
+| -------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- | ------------------------ |
+| `VAULTSPEC_RAG_PREPROCESS`                   | string  | unset      | `off` disables all preprocessing; wins over everything            | `--no-preprocess`        |
+| `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL`         | boolean | unset      | Run every root's rules without a trust check                      | `--preprocess-trust-all` |
+| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` | Cap on text a preprocess hook may emit per file in bytes (10 MiB) | -                        |
+| `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true) | Strip tags from `.html` to plain text before chunking             | -                        |
 
 ## Config-only keys
 

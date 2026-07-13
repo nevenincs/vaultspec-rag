@@ -202,14 +202,25 @@ def load_preprocess_rules(
     :class:`PreprocessConfigError` on the first defect and backs the
     ``preprocess check`` CLI verb.
 
+    After resolution, the non-strict path enforces the tri-state preprocess
+    mode and trust-on-first-use gate (index-drift-hardening ADR D4/D6): ``off``
+    returns zero rules; ``trust_all`` returns the rules with a loud warning that
+    trust checking is bypassed; ``default`` returns the rules only when the
+    resolved-rule-set hash matches this root's trust record, else zero rules
+    plus a loud, actionable warning naming the ``preprocess trust`` verb. The
+    loader and the spawn worker never prompt - trust is granted only via the
+    CLI. ``strict=True`` bypasses this gate so ``preprocess check`` validates
+    the config regardless of trust.
+
     Args:
         root_dir: The project root to resolve the config from.
         strict: When ``True``, raise on any parse or rule defect instead of
-            warning and degrading.
+            warning and degrading, and bypass the mode/trust gate.
 
     Returns:
         A :class:`PreprocessConfig`; empty when the file is absent, malformed
-        (non-strict), or carries no valid rules.
+        (non-strict), carries no valid rules, or is gated off by the mode/trust
+        enforcement.
 
     Raises:
         PreprocessConfigError: Only when ``strict`` is ``True`` and the config
@@ -217,23 +228,6 @@ def load_preprocess_rules(
     """
     config_file = root_dir / PREPROCESS_CONFIG_FILENAME
     if not config_file.is_file():
-        return PreprocessConfig([])
-
-    # Security gate (untrusted-repo RCE): a project-supplied config runs
-    # project-defined commands, so it is inert unless the operator has explicitly
-    # opted this host in. Default off, so cloning/indexing/watching an untrusted
-    # repo never executes its preprocess commands.
-    from ..config import get_config
-
-    if not get_config().preprocess_enabled:
-        logger.warning(
-            "%s present at %s but preprocessing is disabled; its rules are "
-            "ignored. Set VAULTSPEC_RAG_PREPROCESS_ENABLED=1 to enable - only "
-            "for projects whose preprocess commands you trust, as they run with "
-            "your privileges.",
-            PREPROCESS_CONFIG_FILENAME,
-            config_file,
-        )
         return PreprocessConfig([])
 
     data: dict[str, object]
@@ -282,7 +276,84 @@ def load_preprocess_rules(
         rule = _resolve_rule(raw_rule, order, strict=strict)
         if rule is not None:
             rules.append(rule)
-    return PreprocessConfig(rules)
+    resolved = PreprocessConfig(rules)
+
+    # Strict mode backs the ``preprocess check`` CLI verb: it validates the
+    # config file itself and must report defects regardless of the host's
+    # preprocess mode or a root's trust state, so it never passes through the
+    # tri-state/TOFU gate.
+    if strict:
+        return resolved
+
+    return _enforce_preprocess_mode(root_dir, resolved, config_file)
+
+
+def _enforce_preprocess_mode(
+    root_dir: pathlib.Path,
+    config: PreprocessConfig,
+    config_file: pathlib.Path,
+) -> PreprocessConfig:
+    """Apply the tri-state mode and TOFU gate to a resolved config (ADR D6).
+
+    The trust check runs project-defined commands only after an operator has
+    trusted this root's exact resolved rule set (untrusted-repo RCE, audit C1).
+    An empty config needs no gating and is returned as-is. The imports are
+    function-local so the module stays cheap to import from the spawn worker.
+
+    Args:
+        root_dir: The project root, used to key the trust store.
+        config: The resolved rules (empty when the file carried none).
+        config_file: The config path, for actionable log messages.
+
+    Returns:
+        ``config`` when the mode/trust gate admits it, else an empty
+        :class:`PreprocessConfig`.
+    """
+    if not config:
+        return config
+
+    from ..config import get_config
+    from . import _preprocess_trust
+
+    mode = get_config().preprocess_mode
+    if mode == "off":
+        logger.debug(
+            "%s at %s defines %d rule(s) but preprocess_mode is 'off'; "
+            "skipping all rules",
+            PREPROCESS_CONFIG_FILENAME,
+            config_file,
+            len(config.rules),
+        )
+        return PreprocessConfig([])
+
+    if mode == "trust_all":
+        logger.warning(
+            "preprocess_mode is 'trust_all': running %d rule(s) from %s WITHOUT "
+            "a trust check - every root's preprocess commands execute with your "
+            "privileges. Unset VAULTSPEC_RAG_PREPROCESS_TRUST_ALL to restore "
+            "per-root trust-on-first-use.",
+            len(config.rules),
+            config_file,
+        )
+        return config
+
+    # default: trust-on-first-use. Re-hash the resolved set at every load so a
+    # changed rule set reverts to untrusted (no trust/execution TOCTOU).
+    rule_set_hash = _preprocess_trust.hash_rule_set(config.rules)
+    if _preprocess_trust.is_trusted(root_dir, rule_set_hash):
+        return config
+
+    logger.warning(
+        "%s at %s defines %d preprocess rule(s) but this root is not trusted; "
+        "its rules are skipped and no files are preprocessed. Review the "
+        "commands and trust this root with `vaultspec-rag preprocess trust %s` "
+        "(they run with your privileges).",
+        PREPROCESS_CONFIG_FILENAME,
+        config_file,
+        len(config.rules),
+        root_dir,
+    )
+    return PreprocessConfig([])
 
 
 class _RuleRejectedError(Exception):

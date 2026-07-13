@@ -39,6 +39,9 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 - [preprocess list](#preprocess-list)
 - [preprocess check](#preprocess-check)
 - [preprocess run-one](#preprocess-run-one)
+- [preprocess trust](#preprocess-trust)
+- [preprocess untrust](#preprocess-untrust)
+- [preprocess status](#preprocess-status)
 - [Get help](#get-help)
 
 ## Conventions
@@ -70,13 +73,13 @@ The `test`, `server`, `install`, and `uninstall` commands skip workspace resolut
 
 These codes are consistent across commands.
 
-| Code | Meaning                                                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Success.                                                                                                                                                                      |
+| Code | Meaning                                                                                                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success.                                                                                                                                                                    |
 | `1`  | A generic failure such as a GPU or torch error, a busy local index, an unreachable `--port` without `--allow-fallback`, a service-reported error, or a failed install step. |
-| `2`  | A usage error such as an invalid argument, filter, or flag combination.                                                                                                       |
-| `3`  | Service stopped. No `service.json` was found for the targeted service.                                                                                                       |
-| `4`  | Service crashed or divergent. `service.json` is present but a signal contradicts it (dead PID, reused PID, silent port, or stale heartbeat).                                 |
+| `2`  | A usage error such as an invalid argument, filter, or flag combination.                                                                                                     |
+| `3`  | Service stopped. No `service.json` was found for the targeted service.                                                                                                      |
+| `4`  | Service crashed or divergent. `service.json` is present but a signal contradicts it (dead PID, reused PID, silent port, or stale heartbeat).                                |
 
 Per-command exit lines below note the codes each command can return.
 
@@ -90,22 +93,24 @@ Arguments: none.
 
 Options:
 
-| Flag               | Type               | Default | Description                                                                                                                        |
-| ------------------ | ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `--type`           | `vault\|code\|all` | `all`   | What to index. `--rebuild` scopes to this type.                                                                                    |
-| `--rebuild`        | flag               | off     | Delete the selected index data before rebuilding. Requires an explicit `--type`; a bare `index --rebuild` is rejected.             |
-| `--dry-run`        | flag               | off     | List the source-code files that would be indexed without indexing them. Valid only with `--type code` or the default `--type all`. |
-| `--dry-run-limit`  | integer            | `50`    | Maximum file paths shown in human dry-run output. JSON output always lists all paths. Negative values are rejected.                |
-| `--model`          | text               | unset   | Override the embedding model name.                                                                                                 |
-| `--exclude`        | text               | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                  |
-| `--port`           | integer            | unset   | Delegate to a running service on this port.                                                                                        |
-| `--allow-fallback` | flag               | off     | Index in-process when the targeted service is unreachable instead of failing.                                                      |
-| `--verbose`        | flag               | off     | Show model-loading and progress output for in-process indexing.                                                                    |
-| `--json`           | flag               | off     | Emit one JSON envelope to stdout.                                                                                                  |
+| Flag                     | Type               | Default | Description                                                                                                                                                                                                                  |
+| ------------------------ | ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--type`                 | `vault\|code\|all` | `all`   | What to index. `--rebuild` scopes to this type.                                                                                                                                                                              |
+| `--rebuild`              | flag               | off     | Delete the selected index data before rebuilding. Requires an explicit `--type`; a bare `index --rebuild` is rejected.                                                                                                       |
+| `--dry-run`              | flag               | off     | List the source-code files that would be indexed without indexing them. Valid only with `--type code` or the default `--type all`.                                                                                           |
+| `--dry-run-limit`        | integer            | `50`    | Maximum file paths shown in human dry-run output. JSON output always lists all paths. Negative values are rejected.                                                                                                          |
+| `--model`                | text               | unset   | Override the embedding model name.                                                                                                                                                                                           |
+| `--exclude`              | text               | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                                                                                                            |
+| `--port`                 | integer            | unset   | Delegate to a running service on this port.                                                                                                                                                                                  |
+| `--allow-fallback`       | flag               | off     | Index in-process when the targeted service is unreachable instead of failing.                                                                                                                                                |
+| `--no-preprocess`        | flag               | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with. Mutually exclusive with `--preprocess-trust-all`. |
+| `--preprocess-trust-all` | flag               | off     | For an in-process run, run every root's preprocess rules without a trust check (`VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1`). No effect when delegating to a running service. Mutually exclusive with `--no-preprocess`.          |
+| `--verbose`              | flag               | off     | Show model-loading and progress output for in-process indexing.                                                                                                                                                              |
+| `--json`                 | flag               | off     | Emit one JSON envelope to stdout.                                                                                                                                                                                            |
 
 With `--port` unset, the command auto-detects a running service and delegates with fallback. Service delegation queues an async reindex job and prints `Check progress with: vaultspec-rag server jobs`. In-process indexing is incremental unless `--rebuild` is set.
 
-Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable `--port` without `--allow-fallback`; `2` for `rebuild_requires_explicit_type`, `dry_run_requires_code`, or `invalid_dry_run_limit`. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable `--port` without `--allow-fallback`; `2` for `rebuild_requires_explicit_type`, `dry_run_requires_code`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
 
 ## clean
 
@@ -265,19 +270,21 @@ Arguments: none.
 
 Options:
 
-| Flag                         | Type    | Default                           | Description                                                                                                                                                    |
-| ---------------------------- | ------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--port`                     | integer | `8766` (env `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                                                                                                 |
-| `--updates` / `--no-updates` | flag    | unset                             | Enable or disable automatic index updates when files change. Unset leaves the current setting unchanged.                                                       |
-| `--update-delay-ms`          | integer | unset (`2000`)                    | Debounce before indexing a burst of file changes, in milliseconds.                                                                                             |
-| `--repeat-update-delay-s`    | float   | unset (`30`)                      | Minimum wait before automatically updating a project again, in seconds.                                                                                        |
-| `--local-only`               | flag    | off                               | Use the on-disk store and skip the Qdrant child.                                                                                                               |
-| `--qdrant` / `--no-qdrant`   | flag    | unset                             | Opt in to or out of the managed Qdrant server. Server mode is the default, so `--qdrant` on its own has no effect. Unset leaves the current setting unchanged. |
-| `--qdrant-auto-provision`    | flag    | off                               | Download the managed Qdrant server if it is missing instead of printing the install command.                                                                   |
+| Flag                         | Type    | Default                           | Description                                                                                                                                                       |
+| ---------------------------- | ------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--port`                     | integer | `8766` (env `VAULTSPEC_RAG_PORT`) | TCP port for the HTTP service.                                                                                                                                    |
+| `--updates` / `--no-updates` | flag    | unset                             | Enable or disable automatic index updates when files change. Unset leaves the current setting unchanged.                                                          |
+| `--update-delay-ms`          | integer | unset (`2000`)                    | Debounce before indexing a burst of file changes, in milliseconds.                                                                                                |
+| `--repeat-update-delay-s`    | float   | unset (`30`)                      | Minimum wait before automatically updating a project again, in seconds.                                                                                           |
+| `--local-only`               | flag    | off                               | Use the on-disk store and skip the Qdrant child.                                                                                                                  |
+| `--qdrant` / `--no-qdrant`   | flag    | unset                             | Opt in to or out of the managed Qdrant server. Server mode is the default, so `--qdrant` on its own has no effect. Unset leaves the current setting unchanged.    |
+| `--qdrant-auto-provision`    | flag    | off                               | Download the managed Qdrant server if it is missing instead of printing the install command.                                                                      |
+| `--no-preprocess`            | flag    | off                               | Kill switch: the daemon loads no preprocess rules for any root (`VAULTSPEC_RAG_PREPROCESS=off`). Mutually exclusive with `--preprocess-trust-all`.                |
+| `--preprocess-trust-all`     | flag    | off                               | The daemon runs every root's preprocess rules without a per-root trust check (`VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1`). Mutually exclusive with `--no-preprocess`. |
 
 The daemon inherits configuration only through the environment, so each set flag is translated to its `VAULTSPEC_RAG_*` variable on the child process before spawn.
 
-Exit/JSON: `0` once the service is ready; `1` on a failure to start or a health-check timeout. A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`.
+Exit/JSON: `0` once the service is ready; `1` on a failure to start, a health-check timeout, or `--no-preprocess` combined with `--preprocess-trust-all` (`preprocess_flags_conflict`). A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines an untrusted or off preprocess config, the command also prints a remediation notice naming `preprocess trust`.
 
 ## server stop
 
@@ -614,6 +621,55 @@ Arguments:
 | Name   | Required | Description                                      |
 | ------ | -------- | ------------------------------------------------ |
 | `path` | yes      | The file to trial-run the matching rule against. |
+
+Options:
+
+| Flag     | Type | Default | Description                       |
+| -------- | ---- | ------- | --------------------------------- |
+| `--json` | flag | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
+
+## preprocess trust
+
+`vaultspec-rag preprocess trust`
+
+Review this root's resolved preprocess command set and trust it so its rules run in the default mode (trust-on-first-use). Prints every rule's pattern, command, timeout, and failure handling, then persists a hash of the resolved set on confirmation. Editing any rule's command, entry point, timeout, or failure handling reverts the root to untrusted.
+
+Arguments: none.
+
+Options:
+
+| Flag          | Type | Default | Description                                                                                      |
+| ------------- | ---- | ------- | ------------------------------------------------------------------------------------------------ |
+| `--yes`, `-y` | flag | off     | Persist the trust record without the confirmation prompt.                                        |
+| `--json`      | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`, since a prompt cannot interrupt JSON output. |
+
+Exit/JSON: `0` on success; `1` when there are no rules to trust, the config is invalid, or the confirmation prompt is declined or cancelled; `2` when `--json` is set without `--yes` (`json_requires_yes`). With `--json`, the result is one envelope on stdout.
+
+## preprocess untrust
+
+`vaultspec-rag preprocess untrust`
+
+Remove this root's preprocess trust record so its rules stop running until re-trusted.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type | Default | Description                       |
+| -------- | ---- | ------- | --------------------------------- |
+| `--json` | flag | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success, whether or not a trust record existed. With `--json`, the result is one envelope on stdout.
+
+## preprocess status
+
+`vaultspec-rag preprocess status`
+
+Report the preprocess mode, config presence, resolved-rule-set hash, and this root's trust state.
+
+Arguments: none.
 
 Options:
 

@@ -11,7 +11,7 @@ import logging
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal, cast
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     VaultSpecConfig as BaseConfig,
@@ -21,6 +21,11 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 )
 
 logger = logging.getLogger(__name__)
+
+#: The tri-state document-preprocessing mode (index-drift-hardening ADR D4).
+PreprocessMode = Literal["default", "trust_all", "off"]
+
+_VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "trust_all", "off"})
 
 
 class EnvVar(StrEnum):
@@ -61,8 +66,12 @@ class EnvVar(StrEnum):
     WATCH_ENABLED = "VAULTSPEC_RAG_WATCH_ENABLED"
     WATCH_DEBOUNCE_MS = "VAULTSPEC_RAG_WATCH_DEBOUNCE_MS"
     WATCH_COOLDOWN_S = "VAULTSPEC_RAG_WATCH_COOLDOWN_S"
-    # Document-preprocessing hook knobs (#185).
-    PREPROCESS_ENABLED = "VAULTSPEC_RAG_PREPROCESS_ENABLED"
+    # Document-preprocessing hook knobs (#185). ``PREPROCESS`` carries the
+    # tri-state kill switch (``=off``); ``PREPROCESS_TRUST_ALL`` forces the
+    # trust check off (every root's rules run). Resolved together into
+    # ``preprocess_mode``.
+    PREPROCESS = "VAULTSPEC_RAG_PREPROCESS"
+    PREPROCESS_TRUST_ALL = "VAULTSPEC_RAG_PREPROCESS_TRUST_ALL"
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
     # Vault document chunking knob.
@@ -134,8 +143,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
     "watch_cooldown_s": EnvVar.WATCH_COOLDOWN_S,
-    # Document-preprocessing hook knobs (#185).
-    "preprocess_enabled": EnvVar.PREPROCESS_ENABLED,
+    # Document-preprocessing hook knobs (#185). ``preprocess_mode`` is
+    # resolved from two env vars with precedence in a dedicated property, so
+    # it is deliberately absent from this single-var override map.
     "preprocess_max_emitted_bytes": EnvVar.PREPROCESS_MAX_EMITTED_BYTES,
     "html_strip": EnvVar.HTML_STRIP,
     # Vault chunking + reranker input knobs.
@@ -421,13 +431,18 @@ class VaultSpecConfigWrapper:
         "watch_enabled": True,
         "watch_debounce_ms": 2000,
         "watch_cooldown_s": 30.0,
-        # Document-preprocessing executes project-defined commands, so it is
-        # OFF by default: a cloned/untrusted repo's ``.vaultragpreprocess.toml``
-        # must never run code merely because the project was indexed or watched.
-        # Operators opt in per host via ``VAULTSPEC_RAG_PREPROCESS_ENABLED=1``
-        # once they trust the project's preprocess commands (security: untrusted
-        # -repo arbitrary code execution).
-        "preprocess_enabled": False,
+        # Document-preprocessing tri-state (index-drift-hardening ADR D4).
+        # ``default`` runs a root's ``.vaultragpreprocess.toml`` rules only
+        # after they are trusted on first use (the resolved-rule-set hash
+        # matches a status-dir trust record); an untrusted root skips its
+        # rules with a loud, actionable warning. ``trust_all`` bypasses the
+        # trust check (every root runs, loudly logged); ``off`` is the kill
+        # switch (no rules ever load). Env resolution lives in the
+        # ``preprocess_mode`` property: ``VAULTSPEC_RAG_PREPROCESS=off`` forces
+        # off, ``VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1`` forces trust-all, unset
+        # means default. Security: a cloned/untrusted repo never executes its
+        # commands merely because it was indexed (untrusted-repo RCE, audit C1).
+        "preprocess_mode": "default",
         # Document-preprocessing hook knobs (#185). The source-size cap
         # (``_MAX_FILE_SIZE``) is relaxed for files matched by a preprocess
         # rule; this cap instead bounds the *emitted* text a preprocessor
@@ -618,6 +633,47 @@ class VaultSpecConfigWrapper:
             per-project on-disk store should be used.
         """
         return bool(self.qdrant_server) and not bool(self.local_only)
+
+    @property
+    def preprocess_mode(self) -> PreprocessMode:
+        """Resolve the tri-state document-preprocessing mode (ADR D4).
+
+        Unlike the single-var knobs in ``_ENV_OVERRIDE_MAP``, the mode is
+        derived from two env vars read live here so a flag forwarded into the
+        daemon env (``server start --no-preprocess`` / ``--preprocess-trust-all``)
+        takes effect without a config rebuild:
+
+        - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off`` - the kill switch
+          wins over everything, so an operator can always silence a root's
+          rules.
+        - ``VAULTSPEC_RAG_PREPROCESS_TRUST_ALL`` truthy forces ``trust_all``.
+        - otherwise the base-config/CLI override, then the module default
+          (``default``, on-with-TOFU).
+
+        An unrecognised configured value degrades to ``default`` (the safe,
+        trust-gated mode) with a warning rather than raising.
+
+        Returns:
+            One of ``"default"``, ``"trust_all"``, or ``"off"``.
+        """
+        off_raw = os.environ.get(EnvVar.PREPROCESS.value)
+        if off_raw is not None and off_raw.strip().lower() == "off":
+            return "off"
+        trust_all_raw = os.environ.get(EnvVar.PREPROCESS_TRUST_ALL.value)
+        if trust_all_raw is not None and trust_all_raw.strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return "trust_all"
+        configured = str(self._resolve_rag_default("preprocess_mode"))
+        if configured not in _VALID_PREPROCESS_MODES:
+            logger.warning(
+                "unrecognised preprocess_mode %r; falling back to 'default'",
+                configured,
+            )
+            return "default"
+        return cast("PreprocessMode", configured)
 
     def __getattr__(self, name: str) -> Any:
         """Return a config attribute, checking env overrides then defaults.

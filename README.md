@@ -110,6 +110,18 @@ uv run vaultspec-rag search "gpu section wrapping the reranker predict forward p
 
 For the full filter set (path globs, document type, feature, date), see [search and index](docs/search-and-index.md).
 
+### Preprocessing hooks
+
+A root's `.vaultragpreprocess.toml` can shell out to convert PDFs, spreadsheets, and other non-text formats into indexable text. Preprocessing is on by default, but a new root's rules are trust-on-first-use: the first index run skips them with a loud warning until you review the resolved command set and approve it:
+
+```bash
+uv run vaultspec-rag preprocess trust
+```
+
+Editing any rule's command reverts the root to untrusted, so a changed command set always re-prompts. `preprocess status` reports the mode, rule count, and trust state for a root; `preprocess untrust` drops a root's trust record. Set `VAULTSPEC_RAG_PREPROCESS=off` to disable preprocessing everywhere, or `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1` to bypass trust checks on hosts you already trust wholesale (CI, single-operator machines) - both are mirrored as `--no-preprocess` and `--preprocess-trust-all` on `server start` and `index`. Edits to `.gitignore`, `.vaultragignore`, or `.vaultragpreprocess.toml` are detected automatically: the next index run - including the watcher's - reconciles or rebuilds as needed, with no manual reindex required.
+
+See [preprocessing hooks](docs/preprocessing-hooks.md) for the full rule syntax and supported formats.
+
 ## Documentation
 
 ### Getting started

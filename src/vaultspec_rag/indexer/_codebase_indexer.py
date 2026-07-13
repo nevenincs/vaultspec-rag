@@ -24,10 +24,10 @@ from concurrent.futures import (
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ..logging_config import log_event
-from . import _chunk_worker
+from . import _chunk_worker, _config_epoch
 from ._chunking import (
     _MAX_FILE_SIZE,
     LANGUAGE_MAP,
@@ -77,6 +77,31 @@ _CODE_EMBED_SCHEMA = "2"
 #: Reserved key carrying the format version inside the hash-metadata
 #: sidecar. Never collides with relative file paths.
 _EMBED_SCHEMA_KEY = "__code_embed_schema__"
+
+#: Reserved sidecar keys carrying the two-tier config epoch. Both begin
+#: with ``__`` so ``_load_meta`` strips them from file-path set arithmetic.
+#: The membership epoch tracks which files are indexed (ignore + preprocess
+#: patterns); the content epoch tracks how their bytes become chunks
+#: (preprocess invocation fields and ``html_strip``).
+_MEMBERSHIP_EPOCH_KEY = "__code_membership_epoch__"
+_CONTENT_EPOCH_KEY = "__code_content_epoch__"
+
+
+class _ScanInputs(NamedTuple):
+    """Ignore specs and preprocess config resolved in one pass.
+
+    The compiled specs (for the scan) and the raw pattern lists (for the
+    config epoch) come from a single ``.gitignore`` rglob, so the scoped
+    watcher path computes the epoch and scans without a second tree walk.
+    ``vaultragignore_patterns`` are the file-only patterns; CLI ``--exclude``
+    entries live in ``rag_spec`` but are kept out of the epoch inputs.
+    """
+
+    git_spec: pathspec.GitIgnoreSpec
+    rag_spec: pathspec.GitIgnoreSpec | None
+    gitignore_patterns: list[str]
+    vaultragignore_patterns: list[str]
+    preprocess_config: PreprocessConfig
 
 
 class CodebaseIndexer:
@@ -135,6 +160,12 @@ class CodebaseIndexer:
         # files a preprocess rule skipped, surfaced in the run's IndexResult.
         self._prep_ctx: PreprocessContext | None = None
         self._prep_skips: list[str] = []
+        # Config epochs for the current run (D1-D3). Set at the start of each
+        # locked run from the same resolved inputs the scan uses, then stamped
+        # by ``_write_meta``; ``None`` means "not yet resolved this run" and the
+        # writer recomputes them as a fallback.
+        self._membership_epoch: str | None = None
+        self._content_epoch: str | None = None
 
     @staticmethod
     def _get_language(path: pathlib.Path) -> str:
@@ -150,19 +181,15 @@ class CodebaseIndexer:
         entry = LANGUAGE_MAP.get(path.suffix.lower())
         return entry[0] if entry else "text"
 
-    def _build_gitignore_spec(self) -> pathspec.GitIgnoreSpec:
-        """Build a pathspec from hardcoded exclusions and ``.gitignore`` files.
+    def _collect_gitignore_patterns(self) -> list[str]:
+        """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
-        Collects patterns from all ``.gitignore`` files in the project
-        tree, prefixing each pattern by the file's relative directory
-        so that patterns work correctly from the project root.
-
-        Returns:
-            A compiled ``GitIgnoreSpec`` covering hardcoded dirs and
-            all ``.gitignore`` entries.
+        Walks all ``.gitignore`` files in the project tree (the single tree
+        walk on any index run), prefixing each pattern by the file's relative
+        directory so nested patterns resolve from the project root. Returns the
+        raw pattern list so both the compiled spec and the membership epoch can
+        be built from one traversal.
         """
-        import pathspec
-
         from ..config import get_config
 
         cfg = get_config()
@@ -187,8 +214,18 @@ class CodebaseIndexer:
                 continue
             rel_dir = gitignore.parent.relative_to(self.root_dir)
             self._process_gitignore_lines(lines, rel_dir, patterns)
+        return patterns
 
-        return pathspec.GitIgnoreSpec.from_lines(patterns)
+    def _build_gitignore_spec(self) -> pathspec.GitIgnoreSpec:
+        """Build a pathspec from hardcoded exclusions and ``.gitignore`` files.
+
+        Returns:
+            A compiled ``GitIgnoreSpec`` covering hardcoded dirs and
+            all ``.gitignore`` entries.
+        """
+        import pathspec
+
+        return pathspec.GitIgnoreSpec.from_lines(self._collect_gitignore_patterns())
 
     def _process_gitignore_lines(
         self,
@@ -212,19 +249,13 @@ class CodebaseIndexer:
                 else:
                     patterns.append(f"{prefix}/{stripped.lstrip('/')}")
 
-    def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
-        """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns.
+    def _collect_vaultragignore_patterns(self) -> list[str]:
+        """Collect the root ``.vaultragignore`` patterns (excluding ``--exclude``).
 
-        Reads patterns from the ``.vaultragignore`` file at the project
-        root (if it exists) and merges any ``extra_excludes`` passed via
-        the constructor.  Returns ``None`` when no patterns are present.
-
-        Returns:
-            A compiled ``GitIgnoreSpec``, or ``None`` if there are no
-            patterns to apply.
+        CLI ``--exclude`` entries are deliberately omitted: they are ephemeral
+        and non-persisting, so folding them into the membership epoch would make
+        it thrash between an ad-hoc CLI run and the resident service.
         """
-        import pathspec
-
         patterns: list[str] = []
         ignore_file = self.root_dir / ".vaultragignore"
         if ignore_file.is_file():
@@ -241,10 +272,117 @@ class CodebaseIndexer:
                     ignore_file,
                     exc,
                 )
-        patterns.extend(self._extra_excludes)
+        return patterns
+
+    def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
+        """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns.
+
+        Reads patterns from the ``.vaultragignore`` file at the project
+        root (if it exists) and merges any ``extra_excludes`` passed via
+        the constructor.  Returns ``None`` when no patterns are present.
+
+        Returns:
+            A compiled ``GitIgnoreSpec``, or ``None`` if there are no
+            patterns to apply.
+        """
+        import pathspec
+
+        patterns = [*self._collect_vaultragignore_patterns(), *self._extra_excludes]
         if not patterns:
             return None
         return pathspec.GitIgnoreSpec.from_lines(patterns)
+
+    def _resolve_scan_inputs(self) -> _ScanInputs:
+        """Resolve ignore specs and preprocess config in a single tree walk.
+
+        The compiled specs drive the scan; the raw pattern lists and the
+        preprocess config drive the membership/content epochs. Sharing one
+        ``.gitignore`` rglob keeps the scoped path free of a second traversal.
+        """
+        import pathspec
+
+        git_patterns = self._collect_gitignore_patterns()
+        rag_patterns = self._collect_vaultragignore_patterns()
+        prep_config = self._build_preprocess_rules()
+
+        git_spec = pathspec.GitIgnoreSpec.from_lines(git_patterns)
+        extra_excludes: list[str] = getattr(self, "_extra_excludes", None) or []
+        rag_all = [*rag_patterns, *extra_excludes]
+        rag_spec = pathspec.GitIgnoreSpec.from_lines(rag_all) if rag_all else None
+        return _ScanInputs(
+            git_spec=git_spec,
+            rag_spec=rag_spec,
+            gitignore_patterns=git_patterns,
+            vaultragignore_patterns=rag_patterns,
+            preprocess_config=prep_config,
+        )
+
+    def _compute_code_epochs(self, inputs: _ScanInputs) -> tuple[str, str]:
+        """Compute the (membership, content) epoch pair from resolved inputs."""
+        from ..config import get_config
+
+        cfg = get_config()
+        rules = inputs.preprocess_config.rules
+        membership = _config_epoch.code_membership_epoch(
+            gitignore_patterns=inputs.gitignore_patterns,
+            vaultragignore_patterns=inputs.vaultragignore_patterns,
+            preprocess_rules=rules,
+        )
+        content = _config_epoch.code_content_epoch(
+            preprocess_rules=rules,
+            html_strip=bool(cfg.html_strip),
+            max_emitted_bytes=int(cfg.preprocess_max_emitted_bytes),
+        )
+        return membership, content
+
+    def _classify_config_drift(self, membership: str, content: str) -> str:
+        """Classify config drift against the stored epochs.
+
+        Returns ``"clean"`` (content drift - clean rebuild), ``"unscoped"``
+        (membership drift or a legacy sidecar missing the keys - force the
+        unscoped incremental), or ``"ok"`` (no drift, or a fresh index with no
+        sidecar to compare against). Content drift outranks membership drift
+        because the clean rebuild subsumes the membership reconcile.
+        """
+        raw = self._read_meta_raw()
+        if not raw:
+            return "ok"
+        stored_membership = raw.get(_MEMBERSHIP_EPOCH_KEY)
+        stored_content = raw.get(_CONTENT_EPOCH_KEY)
+        if stored_membership is None or stored_content is None:
+            return "unscoped"
+        if stored_content != content:
+            return "clean"
+        if stored_membership != membership:
+            return "unscoped"
+        return "ok"
+
+    def _config_drift_dispatch(
+        self, changed_paths: Iterable[pathlib.Path] | None
+    ) -> tuple[_ScanInputs, Iterable[pathlib.Path] | None, bool]:
+        """Resolve inputs, stamp the run's epochs, and classify config drift.
+
+        Runs once at the incremental entry (D2): the ignore specs and
+        preprocess config are resolved a single time and returned so the scan
+        reuses them without a second tree walk. Returns the resolved inputs,
+        the possibly-nulled ``changed_paths`` (a membership mismatch, or a
+        legacy sidecar missing the keys, forces the unscoped incremental), and
+        whether a content mismatch requires a clean rebuild.
+        """
+        inputs = self._resolve_scan_inputs()
+        membership, content = self._compute_code_epochs(inputs)
+        self._membership_epoch = membership
+        self._content_epoch = content
+        drift = self._classify_config_drift(membership, content)
+        if drift == "clean":
+            return inputs, changed_paths, True
+        if drift == "unscoped" and changed_paths is not None:
+            logger.info(
+                "Codebase membership config changed; forcing an unscoped "
+                "incremental reconcile of the code collection",
+            )
+            changed_paths = None
+        return inputs, changed_paths, False
 
     def _build_preprocess_rules(self) -> PreprocessConfig:
         """Resolve ``.vaultragpreprocess.toml`` into compiled preprocess rules.
@@ -319,7 +457,7 @@ class CodebaseIndexer:
             reason = result.preprocess_reason or "preprocessor skipped the file"
             self._prep_skips.append(f"{rel}: {reason}")
 
-    def _scan_codebase(self) -> list[pathlib.Path]:
+    def _scan_codebase(self, inputs: _ScanInputs | None = None) -> list[pathlib.Path]:
         """Scan codebase for supported source files.
 
         Walks the project tree using ``os.walk``, pruning directories
@@ -329,14 +467,21 @@ class CodebaseIndexer:
         ``.vaultragignore`` can never un-ignore ``.gitignore`` entries.
         Skips binary files and files exceeding ``_MAX_FILE_SIZE``.
 
+        Args:
+            inputs: Pre-resolved ignore specs. When ``None`` the specs are
+                built here; callers that already resolved them (to compute the
+                config epoch) pass them in to avoid a second tree walk.
+
         Returns:
             List of absolute paths to indexable source files.
 
         Raises:
             OSError: If the root directory cannot be traversed.
         """
-        git_spec = self._build_gitignore_spec()
-        rag_spec = self._build_vaultragignore_spec()
+        if inputs is None:
+            inputs = self._resolve_scan_inputs()
+        git_spec = inputs.git_spec
+        rag_spec = inputs.rag_spec
 
         def _is_excluded(rel_path: str) -> bool:
             if git_spec.match_file(rel_path):
@@ -1065,8 +1210,14 @@ class CodebaseIndexer:
         slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run()
 
+        # Resolve the ignore specs and preprocess config once, then reuse them
+        # for both the scan and the config-epoch stamp so a full rebuild walks
+        # the tree a single time (D3).
+        inputs = self._resolve_scan_inputs()
+        self._membership_epoch, self._content_epoch = self._compute_code_epochs(inputs)
+
         reporter.phase_start("scan codebase", None)
-        paths = self._scan_codebase()
+        paths = self._scan_codebase(inputs)
         reporter.phase_end()
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
@@ -1254,10 +1405,21 @@ class CodebaseIndexer:
             )
             return self._full_index_locked(clean=True, reporter=reporter)
 
+        inputs, changed_paths, escalate_clean = self._config_drift_dispatch(
+            changed_paths
+        )
+        if escalate_clean:
+            logger.info(
+                "Codebase content-shaping config changed; running a "
+                "one-time clean rebuild of the code collection",
+            )
+            return self._full_index_locked(clean=True, reporter=reporter)
+
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
                 reporter=reporter,
+                inputs=inputs,
             )
 
         from ..config import get_config
@@ -1269,7 +1431,7 @@ class CodebaseIndexer:
         prev_meta = self._load_meta()
 
         reporter.phase_start("scan codebase", None)
-        current_paths = self._scan_codebase()
+        current_paths = self._scan_codebase(inputs)
         current_files: dict[str, pathlib.Path] = {
             str(p.relative_to(self.root_dir)).replace("\\", "/"): p
             for p in current_paths
@@ -1356,9 +1518,12 @@ class CodebaseIndexer:
         changed_paths: Iterable[pathlib.Path],
         prev_meta: dict[str, str],
         reporter: ProgressReporter,
+        inputs: _ScanInputs | None = None,
     ) -> tuple[dict[str, pathlib.Path], set[str]]:
-        git_spec = self._build_gitignore_spec()
-        rag_spec = self._build_vaultragignore_spec()
+        if inputs is None:
+            inputs = self._resolve_scan_inputs()
+        git_spec = inputs.git_spec
+        rag_spec = inputs.rag_spec
 
         def _is_excluded(rel_path: str) -> bool:
             if git_spec.match_file(rel_path):
@@ -1433,6 +1598,7 @@ class CodebaseIndexer:
         *,
         changed_paths: Iterable[pathlib.Path],
         reporter: ProgressReporter,
+        inputs: _ScanInputs | None = None,
     ) -> IndexResult:
         """Reconcile only ``changed_paths`` against the code index (#151).
 
@@ -1458,7 +1624,7 @@ class CodebaseIndexer:
         prev_meta = self._load_meta()
 
         to_hash, delete_files = self._scan_changed_paths(
-            changed_paths, prev_meta, reporter
+            changed_paths, prev_meta, reporter, inputs
         )
         changed_hashes = self._hash_changed_paths(to_hash, reporter)
 
@@ -1581,9 +1747,21 @@ class CodebaseIndexer:
             OSError: If the metadata directory cannot be created or the
                 file cannot be written.
         """
+        membership = getattr(self, "_membership_epoch", None)
+        content = getattr(self, "_content_epoch", None)
+        if (membership is None or content is None) and getattr(
+            self, "root_dir", None
+        ) is not None:
+            # Fallback for a direct call that did not resolve inputs this run;
+            # recompute from the current config so the epochs are still stamped.
+            membership, content = self._compute_code_epochs(self._resolve_scan_inputs())
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {**meta, _EMBED_SCHEMA_KEY: _CODE_EMBED_SCHEMA}
+        if membership is not None:
+            stamped[_MEMBERSHIP_EPOCH_KEY] = membership
+        if content is not None:
+            stamped[_CONTENT_EPOCH_KEY] = content
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
