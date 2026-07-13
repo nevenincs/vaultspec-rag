@@ -100,25 +100,26 @@ def _require_yes_for_json(command: str, json_mode: bool, yes: bool) -> None:
 # -- survey -----------------------------------------------------------------
 
 
-def _emit_survey_json(surveys: list[NamespaceSurvey]) -> None:
-    _emit_json(
-        True,
-        _SURVEY_CMD,
-        data={
-            "namespaces": [
-                {
-                    "prefix": s.prefix,
-                    "root": s.root,
-                    "status": s.status,
-                    "collections": s.collections,
-                    "points": s.points,
-                    "footprint_bytes": s.footprint_bytes,
-                }
-                for s in surveys
-            ],
-            "total": len(surveys),
-        },
-    )
+def _emit_survey_json(
+    surveys: list[NamespaceSurvey], queried_root: dict[str, str] | None = None
+) -> None:
+    data: dict[str, object] = {
+        "namespaces": [
+            {
+                "prefix": s.prefix,
+                "root": s.root,
+                "status": s.status,
+                "collections": s.collections,
+                "points": s.points,
+                "footprint_bytes": s.footprint_bytes,
+            }
+            for s in surveys
+        ],
+        "total": len(surveys),
+    }
+    if queried_root is not None:
+        data["queried_root"] = queried_root
+    _emit_json(True, _SURVEY_CMD, data=data)
 
 
 def _print_survey(surveys: list[NamespaceSurvey]) -> None:
@@ -143,7 +144,9 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         )
 
 
-def _survey_from_service() -> list[NamespaceSurvey] | None:
+def _survey_from_service(
+    root: str | None = None,
+) -> tuple[list[NamespaceSurvey], dict[str, str] | None] | None:
     """Fetch the survey from a running service, or ``None`` if it is down.
 
     The survey is the one read-only storage surface the service owns
@@ -152,12 +155,15 @@ def _survey_from_service() -> list[NamespaceSurvey] | None:
     A refused connection returns ``None`` so the caller falls back to the
     CLI-direct path; a live-but-error response (e.g. a non-server-mode 409)
     also returns ``None`` so the direct path renders the proper message.
+    With ``root``, the route narrows to that root's namespace and its
+    ``queried_root`` (the service-computed prefix) is returned alongside.
     """
     from ..serviceclient import _try_http_admin
     from ..storage_survey import NamespaceSurvey
     from ._service_status import _default_service_port
 
-    result = _try_http_admin("get_storage_survey", {}, _default_service_port())
+    args: dict[str, object] = {"root": root} if root else {}
+    result = _try_http_admin("get_storage_survey", args, _default_service_port())
     if not result or result.get("ok") is False:
         return None
     raw = result.get("namespaces")
@@ -168,7 +174,7 @@ def _survey_from_service() -> list[NamespaceSurvey] | None:
         if not isinstance(item, dict):
             continue
         entry = cast("dict[str, object]", item)
-        root = entry.get("root")
+        entry_root = entry.get("root")
         collections = entry.get("collections")
         names = (
             [str(c) for c in cast("list[object]", collections)]
@@ -178,14 +184,22 @@ def _survey_from_service() -> list[NamespaceSurvey] | None:
         surveys.append(
             NamespaceSurvey(
                 prefix=str(entry.get("prefix", "")),
-                root=root if isinstance(root, str) else None,
+                root=entry_root if isinstance(entry_root, str) else None,
                 status=str(entry.get("status", "")),
                 collections=names,
                 points=int(cast("int", entry.get("points", 0) or 0)),
                 footprint_bytes=int(cast("int", entry.get("footprint_bytes", 0) or 0)),
             )
         )
-    return surveys
+    raw_queried = result.get("queried_root")
+    queried_root: dict[str, str] | None = None
+    if isinstance(raw_queried, dict):
+        queried = cast("dict[str, object]", raw_queried)
+        queried_root = {
+            "root": str(queried.get("root", "")),
+            "prefix": str(queried.get("prefix", "")),
+        }
+    return surveys, queried_root
 
 
 @server_storage_app.command(
@@ -202,6 +216,14 @@ def storage_survey(
     unknown_only: bool = typer.Option(
         False, "--unknown", help="Show only unattributable (unknown) namespaces."
     ),
+    root: str | None = typer.Option(
+        None,
+        "--root",
+        help=(
+            "Narrow to one root's namespace and report its authoritative "
+            "collection prefix (works even for a root not yet indexed)."
+        ),
+    ),
 ) -> None:
     """Survey the managed server's per-root index namespaces.
 
@@ -209,9 +231,14 @@ def storage_survey(
     ``/storage/survey`` route so operator, CLI, and MCP share one
     classification. When no service answers, the CLI opens its own client to
     the managed server directly (the same path the destructive verbs use).
+    With ``--root``, both paths resolve the root through the one
+    ``root_collection_prefix`` derivation and report it as ``queried_root``.
     """
-    surveys = _survey_from_service()
-    if surveys is None:
+    queried_root: dict[str, str] | None = None
+    fetched = _survey_from_service(root)
+    if fetched is not None:
+        surveys, queried_root = fetched
+    else:
         from ..storage_ops import gather_survey, server_storage_collections_dir
 
         surveys = _run_storage_op(
@@ -219,13 +246,29 @@ def storage_survey(
             json_mode,
             lambda c: gather_survey(c, server_storage_collections_dir()),
         )
+        if root is not None:
+            import pathlib
+
+            from ..store import root_collection_prefix
+
+            prefix = root_collection_prefix(root)
+            queried_root = {
+                "root": str(pathlib.Path(root).resolve()),
+                "prefix": prefix,
+            }
+            surveys = [s for s in surveys if s.prefix == prefix]
     if orphaned_only:
         surveys = [s for s in surveys if s.status == "orphaned"]
     if unknown_only:
         surveys = [s for s in surveys if s.status == "unknown"]
     if json_mode:
-        _emit_survey_json(surveys)
+        _emit_survey_json(surveys, queried_root)
     else:
+        if queried_root is not None:
+            typer.echo(
+                f"Queried root: {queried_root['root']}  "
+                f"prefix: {queried_root['prefix']}"
+            )
         _print_survey(surveys)
 
 
