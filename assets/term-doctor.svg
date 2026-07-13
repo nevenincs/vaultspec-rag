@@ -19,83 +19,83 @@
         font-weight: 700;
     }
 
-    .terminal-581954778-matrix {
+    .terminal-2920672504-matrix {
         font-family: Fira Code, monospace;
         font-size: 20px;
         line-height: 24.4px;
         font-variant-east-asian: full-width;
     }
 
-    .terminal-581954778-title {
+    .terminal-2920672504-title {
         font-size: 18px;
         font-weight: bold;
         font-family: arial;
     }
 
-    .terminal-581954778-r1 { fill: #f2ece4 }
+    .terminal-2920672504-r1 { fill: #1e1b18 }
     </style>
 
     <defs>
-    <clipPath id="terminal-581954778-clip-terminal">
+    <clipPath id="terminal-2920672504-clip-terminal">
       <rect x="0" y="0" width="1219.0" height="291.79999999999995" />
     </clipPath>
-    <clipPath id="terminal-581954778-line-0">
+    <clipPath id="terminal-2920672504-line-0">
     <rect x="0" y="1.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-1">
+<clipPath id="terminal-2920672504-line-1">
     <rect x="0" y="25.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-2">
+<clipPath id="terminal-2920672504-line-2">
     <rect x="0" y="50.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-3">
+<clipPath id="terminal-2920672504-line-3">
     <rect x="0" y="74.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-4">
+<clipPath id="terminal-2920672504-line-4">
     <rect x="0" y="99.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-5">
+<clipPath id="terminal-2920672504-line-5">
     <rect x="0" y="123.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-6">
+<clipPath id="terminal-2920672504-line-6">
     <rect x="0" y="147.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-7">
+<clipPath id="terminal-2920672504-line-7">
     <rect x="0" y="172.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-8">
+<clipPath id="terminal-2920672504-line-8">
     <rect x="0" y="196.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-9">
+<clipPath id="terminal-2920672504-line-9">
     <rect x="0" y="221.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-581954778-line-10">
+<clipPath id="terminal-2920672504-line-10">
     <rect x="0" y="245.5" width="1220" height="24.65"/>
             </clipPath>
     </defs>
 
-    <rect fill="#1e1b18" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="340.8" rx="8"/><text class="terminal-581954778-title" fill="#f2ece4" text-anchor="middle" x="618" y="27">vaultspec-rag&#160;server&#160;doctor</text>
+    <rect fill="#faf7f2" stroke="rgba(30,27,24,0.22)" stroke-width="1" x="1" y="1" width="1236" height="340.8" rx="8"/><text class="terminal-2920672504-title" fill="#1e1b18" text-anchor="middle" x="618" y="27">vaultspec-rag&#160;server&#160;doctor</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>
             <circle cx="44" cy="0" r="7" fill="#28c840"/>
             </g>
         
-    <g transform="translate(9, 41)" clip-path="url(#terminal-581954778-clip-terminal)">
+    <g transform="translate(9, 41)" clip-path="url(#terminal-2920672504-clip-terminal)">
     
-    <g class="terminal-581954778-matrix">
-    <text class="terminal-581954778-r1" x="0" y="20" textLength="207.4" clip-path="url(#terminal-581954778-line-0)">Service&#160;readiness</text><text class="terminal-581954778-r1" x="1220" y="20" textLength="12.2" clip-path="url(#terminal-581954778-line-0)">
-</text><text class="terminal-581954778-r1" x="0" y="44.4" textLength="183" clip-path="url(#terminal-581954778-line-1)">Backend:&#160;server</text><text class="terminal-581954778-r1" x="1220" y="44.4" textLength="12.2" clip-path="url(#terminal-581954778-line-1)">
-</text><text class="terminal-581954778-r1" x="0" y="68.8" textLength="353.8" clip-path="url(#terminal-581954778-line-2)">Readiness:&#160;ready&#160;for&#160;requests</text><text class="terminal-581954778-r1" x="1220" y="68.8" textLength="12.2" clip-path="url(#terminal-581954778-line-2)">
-</text><text class="terminal-581954778-r1" x="0" y="93.2" textLength="158.6" clip-path="url(#terminal-581954778-line-3)">Live&#160;service:</text><text class="terminal-581954778-r1" x="1220" y="93.2" textLength="12.2" clip-path="url(#terminal-581954778-line-3)">
-</text><text class="terminal-581954778-r1" x="0" y="117.6" textLength="329.4" clip-path="url(#terminal-581954778-line-4)">&#160;&#160;status:&#160;running&#160;(running)</text><text class="terminal-581954778-r1" x="1220" y="117.6" textLength="12.2" clip-path="url(#terminal-581954778-line-4)">
-</text><text class="terminal-581954778-r1" x="0" y="142" textLength="341.6" clip-path="url(#terminal-581954778-line-5)">&#160;&#160;process:&#160;pid&#160;74468&#160;(alive)</text><text class="terminal-581954778-r1" x="1220" y="142" textLength="12.2" clip-path="url(#terminal-581954778-line-5)">
-</text><text class="terminal-581954778-r1" x="0" y="166.4" textLength="390.4" clip-path="url(#terminal-581954778-line-6)">&#160;&#160;network:&#160;port&#160;8766&#160;(listening)</text><text class="terminal-581954778-r1" x="1220" y="166.4" textLength="12.2" clip-path="url(#terminal-581954778-line-6)">
-</text><text class="terminal-581954778-r1" x="0" y="190.8" textLength="231.8" clip-path="url(#terminal-581954778-line-7)">&#160;&#160;heartbeat:&#160;5s&#160;ago</text><text class="terminal-581954778-r1" x="1220" y="190.8" textLength="12.2" clip-path="url(#terminal-581954778-line-7)">
-</text><text class="terminal-581954778-r1" x="0" y="215.2" textLength="353.8" clip-path="url(#terminal-581954778-line-8)">Installed&#160;dependencies:&#160;ready</text><text class="terminal-581954778-r1" x="1220" y="215.2" textLength="12.2" clip-path="url(#terminal-581954778-line-8)">
-</text><text class="terminal-581954778-r1" x="0" y="239.6" textLength="780.8" clip-path="url(#terminal-581954778-line-9)">&#160;&#160;torch:&#160;ready&#160;-&#160;CUDA&#160;available&#160;on&#160;NVIDIA&#160;GeForce&#160;RTX&#160;4080&#160;SUPER</text><text class="terminal-581954778-r1" x="1220" y="239.6" textLength="12.2" clip-path="url(#terminal-581954778-line-9)">
-</text><text class="terminal-581954778-r1" x="0" y="264" textLength="683.2" clip-path="url(#terminal-581954778-line-10)">&#160;&#160;models:&#160;ready&#160;-&#160;all&#160;3&#160;model&#160;repos&#160;present&#160;in&#160;the&#160;cache</text><text class="terminal-581954778-r1" x="1220" y="264" textLength="12.2" clip-path="url(#terminal-581954778-line-10)">
-</text><text class="terminal-581954778-r1" x="0" y="288.4" textLength="695.4" clip-path="url(#terminal-581954778-line-11)">&#160;&#160;qdrant:&#160;ready&#160;-&#160;qdrant&#160;binary&#160;resolves&#160;from&#160;provisioned</text><text class="terminal-581954778-r1" x="1220" y="288.4" textLength="12.2" clip-path="url(#terminal-581954778-line-11)">
+    <g class="terminal-2920672504-matrix">
+    <text class="terminal-2920672504-r1" x="0" y="20" textLength="207.4" clip-path="url(#terminal-2920672504-line-0)">Service&#160;readiness</text><text class="terminal-2920672504-r1" x="1220" y="20" textLength="12.2" clip-path="url(#terminal-2920672504-line-0)">
+</text><text class="terminal-2920672504-r1" x="0" y="44.4" textLength="183" clip-path="url(#terminal-2920672504-line-1)">Backend:&#160;server</text><text class="terminal-2920672504-r1" x="1220" y="44.4" textLength="12.2" clip-path="url(#terminal-2920672504-line-1)">
+</text><text class="terminal-2920672504-r1" x="0" y="68.8" textLength="353.8" clip-path="url(#terminal-2920672504-line-2)">Readiness:&#160;ready&#160;for&#160;requests</text><text class="terminal-2920672504-r1" x="1220" y="68.8" textLength="12.2" clip-path="url(#terminal-2920672504-line-2)">
+</text><text class="terminal-2920672504-r1" x="0" y="93.2" textLength="158.6" clip-path="url(#terminal-2920672504-line-3)">Live&#160;service:</text><text class="terminal-2920672504-r1" x="1220" y="93.2" textLength="12.2" clip-path="url(#terminal-2920672504-line-3)">
+</text><text class="terminal-2920672504-r1" x="0" y="117.6" textLength="329.4" clip-path="url(#terminal-2920672504-line-4)">&#160;&#160;status:&#160;running&#160;(running)</text><text class="terminal-2920672504-r1" x="1220" y="117.6" textLength="12.2" clip-path="url(#terminal-2920672504-line-4)">
+</text><text class="terminal-2920672504-r1" x="0" y="142" textLength="353.8" clip-path="url(#terminal-2920672504-line-5)">&#160;&#160;process:&#160;pid&#160;106160&#160;(alive)</text><text class="terminal-2920672504-r1" x="1220" y="142" textLength="12.2" clip-path="url(#terminal-2920672504-line-5)">
+</text><text class="terminal-2920672504-r1" x="0" y="166.4" textLength="390.4" clip-path="url(#terminal-2920672504-line-6)">&#160;&#160;network:&#160;port&#160;8766&#160;(listening)</text><text class="terminal-2920672504-r1" x="1220" y="166.4" textLength="12.2" clip-path="url(#terminal-2920672504-line-6)">
+</text><text class="terminal-2920672504-r1" x="0" y="190.8" textLength="231.8" clip-path="url(#terminal-2920672504-line-7)">&#160;&#160;heartbeat:&#160;2s&#160;ago</text><text class="terminal-2920672504-r1" x="1220" y="190.8" textLength="12.2" clip-path="url(#terminal-2920672504-line-7)">
+</text><text class="terminal-2920672504-r1" x="0" y="215.2" textLength="353.8" clip-path="url(#terminal-2920672504-line-8)">Installed&#160;dependencies:&#160;ready</text><text class="terminal-2920672504-r1" x="1220" y="215.2" textLength="12.2" clip-path="url(#terminal-2920672504-line-8)">
+</text><text class="terminal-2920672504-r1" x="0" y="239.6" textLength="780.8" clip-path="url(#terminal-2920672504-line-9)">&#160;&#160;torch:&#160;ready&#160;-&#160;CUDA&#160;available&#160;on&#160;NVIDIA&#160;GeForce&#160;RTX&#160;4080&#160;SUPER</text><text class="terminal-2920672504-r1" x="1220" y="239.6" textLength="12.2" clip-path="url(#terminal-2920672504-line-9)">
+</text><text class="terminal-2920672504-r1" x="0" y="264" textLength="683.2" clip-path="url(#terminal-2920672504-line-10)">&#160;&#160;models:&#160;ready&#160;-&#160;all&#160;3&#160;model&#160;repos&#160;present&#160;in&#160;the&#160;cache</text><text class="terminal-2920672504-r1" x="1220" y="264" textLength="12.2" clip-path="url(#terminal-2920672504-line-10)">
+</text><text class="terminal-2920672504-r1" x="0" y="288.4" textLength="695.4" clip-path="url(#terminal-2920672504-line-11)">&#160;&#160;qdrant:&#160;ready&#160;-&#160;qdrant&#160;binary&#160;resolves&#160;from&#160;provisioned</text><text class="terminal-2920672504-r1" x="1220" y="288.4" textLength="12.2" clip-path="url(#terminal-2920672504-line-11)">
 </text>
     </g>
     </g>
