@@ -838,18 +838,30 @@ def _clamp_survey_limit(raw: str | None) -> int:
     return min(value, _STORAGE_SURVEY_MAX_LIMIT)
 
 
-def _gather_storage_survey(status_filter: str | None, limit: int) -> dict[str, Any]:
+def _gather_storage_survey(
+    status_filter: str | None, limit: int, root: str | None = None
+) -> dict[str, Any]:
     """Run the read-only storage survey and shape it as a bounded response.
 
     Opens a short-lived client to the managed server, classifies every
     per-root namespace through the persisted manifest, applies the optional
-    status filter, and truncates to the clamped limit. Pure storage IO,
-    never touches the GPU.
+    status and root filters, and truncates to the clamped limit. Pure
+    storage IO, never touches the GPU.
+
+    With ``root``, the namespace list is narrowed to the root's own prefix
+    and the response carries a top-level ``queried_root`` object holding the
+    authoritative computed prefix - derived through the one real
+    ``root_collection_prefix`` derivation, so consumers never recompute the
+    hash. An unindexed root still gets its prefix, with an empty namespace
+    list.
     """
+    import pathlib
+
     from qdrant_client import QdrantClient
 
     from ..config import get_config
     from ..storage_ops import gather_survey, server_storage_collections_dir
+    from ..store import root_collection_prefix
 
     cfg = get_config()
     url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
@@ -860,9 +872,17 @@ def _gather_storage_survey(status_filter: str | None, limit: int) -> dict[str, A
         client.close()
     if status_filter:
         surveys = [s for s in surveys if s.status == status_filter]
+    queried_root: dict[str, str] | None = None
+    if root is not None:
+        prefix = root_collection_prefix(root)
+        queried_root = {
+            "root": str(pathlib.Path(root).resolve()),
+            "prefix": prefix,
+        }
+        surveys = [s for s in surveys if s.prefix == prefix]
     total = len(surveys)
     bounded = surveys[:limit]
-    return {
+    payload: dict[str, Any] = {
         "namespaces": [
             {
                 "prefix": s.prefix,
@@ -878,6 +898,9 @@ def _gather_storage_survey(status_filter: str | None, limit: int) -> dict[str, A
         "total": total,
         "limit": limit,
     }
+    if queried_root is not None:
+        payload["queried_root"] = queried_root
+    return payload
 
 
 async def storage_survey_route(request: Request) -> JSONResponse:
@@ -885,8 +908,10 @@ async def storage_survey_route(request: Request) -> JSONResponse:
 
     Server-mode only (the local store has a single namespace and nothing to
     reconcile). Token-gated like every other monitoring route. The optional
-    ``?status=`` narrows to one classification and ``?limit=`` bounds the
-    window; the default is biased to the actionable states first.
+    ``?status=`` narrows to one classification, ``?limit=`` bounds the
+    window, and ``?root=`` narrows to one root's namespace while returning
+    that root's authoritative collection prefix as ``queried_root``; the
+    default is biased to the actionable states first.
     """
     denied = require_token(request)
     if denied is not None:
@@ -918,9 +943,19 @@ async def storage_survey_route(request: Request) -> JSONResponse:
             status_code=400,
         )
     limit = _clamp_survey_limit(request.query_params.get("limit"))
+    raw_root = request.query_params.get("root")
+    if raw_root is not None and not raw_root.strip():
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "bad_request",
+                "message": "root must be a non-empty path.",
+            },
+            status_code=400,
+        )
 
     def _run() -> dict[str, Any]:
-        return _gather_storage_survey(raw_status, limit)
+        return _gather_storage_survey(raw_status, limit, raw_root)
 
     result = await _run_in_thread(_run)
     return JSONResponse(result)
