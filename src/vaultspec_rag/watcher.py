@@ -20,6 +20,7 @@ from watchfiles import (
 
 from . import jobs as _jobs
 from .concurrency import get_index_limiter
+from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .logging_config import log_event
 
 if TYPE_CHECKING:
@@ -61,6 +62,23 @@ _CODE_EXTENSIONS = frozenset(
         ".xml",
         ".xsd",
         ".properties",
+        # Non-vault markdown is indexed as code (LANGUAGE_MAP has .md); vault
+        # classification wins first in the change filter, so only markdown
+        # outside .vault/ arrives here.
+        ".md",
+    }
+)
+
+# Index-shaping control files. An edit to one of these changes index
+# membership without changing any indexed file's bytes, so it must reach the
+# indexer as an ordinary changed path: the config-epoch check inside the
+# incremental entry detects the drift and self-escalates. The watcher does no
+# drift classification of its own.
+_CONFIG_FILENAMES = frozenset(
+    {
+        ".gitignore",
+        ".vaultragignore",
+        PREPROCESS_CONFIG_FILENAME,
     }
 )
 
@@ -129,6 +147,8 @@ def _is_code_change(
     except ValueError as exc:
         logger.debug("watcher code-path: %s not under root %s: %s", path, root_dir, exc)
         return False
+    if path.name in _CONFIG_FILENAMES:
+        return True
     if path.suffix in _CODE_EXTENSIONS:
         return True
     if preprocess_config is not None:
@@ -198,10 +218,13 @@ async def watch_and_reindex(
 
     pending_vault: set[Path] = set()
     pending_code: set[Path] = set()
-    # Resolved once at watcher start so a watched change to a preprocessable
-    # file (e.g. a .pdf) routes through the same debounce/cooldown machinery
-    # (#185, D8). A rule added mid-session is picked up on the next restart.
-    preprocess_config = code_indexer.preprocess_config()
+    # Resolved at watcher start so a watched change to a preprocessable file
+    # (e.g. a .pdf) routes through the same debounce/cooldown machinery, and
+    # re-resolved whenever the root preprocess config itself changes so a rule
+    # added mid-session admits its target files without a restart. Held in a
+    # single-slot list because the change filter closes over it and must see
+    # the refreshed config after a reload.
+    prep_config: list[PreprocessConfig] = [code_indexer.preprocess_config()]
 
     try:
         async for changes in awatch(
@@ -212,7 +235,7 @@ async def watch_and_reindex(
             stop_event=stop_event,
             watch_filter=lambda _change, path: (
                 _is_vault_change(Path(path), vault_dir)
-                or _is_code_change(Path(path), root_dir, vault_dir, preprocess_config)
+                or _is_code_change(Path(path), root_dir, vault_dir, prep_config[0])
             ),
         ):
             # ``changes`` is empty on an idle tick (yield_on_timeout): the loop
@@ -222,9 +245,21 @@ async def watch_and_reindex(
             for change_type, path_str in changes:
                 path = Path(path_str)
                 if change_type in (Change.added, Change.modified, Change.deleted):
+                    if (
+                        path.name == PREPROCESS_CONFIG_FILENAME
+                        and path.parent == root_dir
+                    ):
+                        prep_config[0] = code_indexer.preprocess_config()
+                        log_event(
+                            logger,
+                            "service.watcher",
+                            "preprocess_config_reloaded",
+                            root=root_dir,
+                            rules=len(prep_config[0].rules),
+                        )
                     if _is_vault_change(path, vault_dir):
                         pending_vault.add(path)
-                    elif _is_code_change(path, root_dir, vault_dir, preprocess_config):
+                    elif _is_code_change(path, root_dir, vault_dir, prep_config[0]):
                         pending_code.add(path)
 
             now = time.monotonic()

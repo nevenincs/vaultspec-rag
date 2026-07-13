@@ -207,11 +207,42 @@ environment variables.
 
 ## Security posture
 
-Preprocessors are arbitrary project code executed by the indexing service. They run
-**only** when declared in the project-root `.vaultragpreprocess.toml`, the same trust
-model as the project's own code and build scripts. Treat `.vaultragpreprocess.toml` as you
-would any executable project configuration. Review it in code review, and don't point it at
-untrusted commands.
+Preprocessors are arbitrary project code executed by the indexing service, so they run
+under trust-on-first-use: preprocessing is on by default, but a root's rules are skipped
+with a loud warning until you review and approve them. When a root defines
+`.vaultragpreprocess.toml`, review and trust its resolved command set once:
+
+```bash
+uv run vaultspec-rag preprocess trust
+```
+
+The command prints every rule's pattern, command, timeout, and failure handling for
+review, then persists a hash of the resolved set on confirmation. Editing any rule's
+command, entry point, timeout, or failure handling changes that hash, so the root
+automatically reverts to untrusted and re-prompts - a comment-only edit does not. Drop a
+root's trust record with `vaultspec-rag preprocess untrust`, and check a root's mode,
+rule count, and trust state with `vaultspec-rag preprocess status`.
+
+Two environment variables shape the tri-state mode everywhere: `VAULTSPEC_RAG_PREPROCESS=off`
+is the kill switch and wins over everything, skipping every root's rules regardless of
+trust. `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1` bypasses the trust check entirely and runs
+every root's rules unconditionally - use it only on hosts you already trust wholesale
+(CI runners, single-operator machines), since it reopens exactly the risk the trust
+check exists to gate. `server start` and `index` mirror both as `--no-preprocess` and
+`--preprocess-trust-all`. See the
+[configuration reference](configuration.md#preprocessing) for the full variable and flag
+inventory.
+
+One operational note: the index tracks the preprocess configuration it was built with,
+so changing the effective mode for a root (trusting it, untrusting it, or alternating
+`--preprocess-trust-all` runs against a daemon that serves the same root in the default
+mode) triggers an automatic rebuild on the next index run - correct, but expensive on a
+large corpus. Prefer a one-time `preprocess trust` and a single steady mode per host
+over per-run mode flags.
+
+Treat `.vaultragpreprocess.toml` as you would any executable project configuration:
+review it in code review, and don't point it at untrusted commands. Trust is a
+per-root, per-command-set decision, not a substitute for that review.
 
 ## Adjacent improvements
 

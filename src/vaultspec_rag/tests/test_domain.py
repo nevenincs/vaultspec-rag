@@ -75,9 +75,7 @@ class TestClassifyDomain:
         assert classify_domain("config/settings.yaml") == "prod"
 
     def test_windows_separators_normalise(self):
-        assert (
-            classify_domain(r".claude\worktrees\agent-1\src\x.py") == "worktree"
-        )
+        assert classify_domain(r".claude\worktrees\agent-1\src\x.py") == "worktree"
         assert classify_domain(r"tests\test_store.py") == "tests"
 
     def test_every_label_is_declared(self):

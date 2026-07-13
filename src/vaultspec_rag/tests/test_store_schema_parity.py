@@ -174,8 +174,8 @@ def test_code_chunk_payload_carries_path_derived_domain() -> None:
         _code_chunk_payload(_mk_code_chunk("tests/test_main.py"))["domain"] == "tests"
     )
     assert (
-        _code_chunk_payload(
-            _mk_code_chunk(".claude/worktrees/agent-1/src/main.py")
-        )["domain"]
+        _code_chunk_payload(_mk_code_chunk(".claude/worktrees/agent-1/src/main.py"))[
+            "domain"
+        ]
         == "worktree"
     )

@@ -5,6 +5,12 @@ Real GPU + real Qdrant + a real subprocess preprocessor. A binary ``.pdf``
 rule, indexed first-class, and found by hybrid search with its deep-link anchor;
 the scoped/incremental path routes a changed binary through the preprocessor;
 and a failing preprocessor surfaces a skip count rather than a silent gap.
+
+The tri-state/TOFU boundary is proved end-to-end here too: the ``off`` kill
+switch outranks trust-all, an untrusted root under the default mode executes
+nothing and names the trust verb, a trusted root executes and a command edit
+reverts it, and an ignore-file edit forwarded down the watcher path prunes the
+newly-ignored chunks via the config-epoch escalation.
 """
 
 from __future__ import annotations
@@ -33,20 +39,47 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture(autouse=True)
-def _enable_preprocess() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Preprocessing is OFF by default (untrusted-repo RCE gate); these
-    end-to-end tests opt in to exercise the real extractor path."""
-    key = EnvVar.PREPROCESS_ENABLED.value
-    prev = os.environ.get(key)
-    os.environ[key] = "1"
+def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Isolate the trust store and default this module to trust-all.
+
+    The TOFU trust store lives under the managed status dir, so the dir is
+    relocated to a per-test tmp path (never the operator's real
+    ``~/.vaultspec-rag``). Extractor-behavior tests run under trust-all so
+    they exercise the real subprocess path without a per-root trust record;
+    the TOFU boundary tests below override the mode env vars themselves.
+    """
+    status_key = EnvVar.STATUS_DIR.value
+    trust_key = EnvVar.PREPROCESS_TRUST_ALL.value
+    prev_status = os.environ.get(status_key)
+    prev_trust = os.environ.get(trust_key)
+    os.environ[status_key] = str(tmp_path_factory.mktemp("preproc-status"))
+    os.environ[trust_key] = "1"
     reset_config()
     try:
         yield
     finally:
-        if prev is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = prev
+        for key, prev in ((status_key, prev_status), (trust_key, prev_trust)):
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        reset_config()
+
+
+@pytest.fixture
+def _default_mode() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]  # referenced via usefixtures
+    """Drop the module's trust-all opt-in so the on-with-TOFU default applies."""
+    trust_key = EnvVar.PREPROCESS_TRUST_ALL.value
+    prev = os.environ.get(trust_key)
+    os.environ.pop(trust_key, None)
+    reset_config()
+    try:
+        yield
+    finally:
+        if prev is not None:
+            os.environ[trust_key] = prev
         reset_config()
 
 
@@ -87,6 +120,28 @@ def _command(script: Path) -> str:
 
 def _write_config(root: Path, rules: str) -> None:
     (root / ".vaultragpreprocess.toml").write_text(rules, encoding="utf-8")
+
+
+def _sentinel_extractor(root: Path, sentinel: Path) -> Path:
+    """Write an extractor that proves execution by creating ``sentinel``.
+
+    Emits a valid single-unit output so an (unexpectedly) executed run also
+    indexes cleanly rather than masking itself as a skip.
+    """
+    script = root / f"extract_{sentinel.stem.lower()}.py"
+    script.write_text(
+        textwrap.dedent(f"""
+            import json, pathlib, sys
+            pathlib.Path({str(sentinel)!r}).write_text("executed")
+            print(json.dumps({{
+                "schema_version": 1, "preprocessor_id": "sentinel",
+                "preprocessor_version": "1.0", "source_path": sys.argv[1],
+                "units": [{{"text": "sentinel extractor output"}}],
+            }}))
+        """),
+        encoding="utf-8",
+    )
+    return script
 
 
 @pytest.fixture
@@ -186,46 +241,36 @@ class TestPreprocessEndToEnd:
             store.close()
 
     @pytest.mark.timeout(600)
-    def test_disabled_gate_does_not_execute_command_on_index(
+    def test_off_mode_outranks_trust_all_and_executes_nothing(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        # C1 (end-to-end RCE proof): with preprocessing OFF (the default),
-        # indexing a repo that ships a command rule must NOT execute the
-        # command. A sentinel the command would create stays absent.
+        # C1 (end-to-end RCE proof, kill-switch tier): with
+        # VAULTSPEC_RAG_PREPROCESS=off, indexing a repo that ships a command
+        # rule must NOT execute the command even though the module fixture
+        # sets trust-all - off wins over everything. A sentinel the command
+        # would create stays absent.
         from ... import CodebaseIndexer, VaultStore
 
         model = rag_components["model"]
         sentinel = tmp_path / "EXECUTED.flag"
-        script = tmp_path / "rce.py"
-        script.write_text(
-            textwrap.dedent(f"""
-                import json, pathlib, sys
-                pathlib.Path({str(sentinel)!r}).write_text("pwned")
-                print(json.dumps({{
-                    "schema_version": 1, "preprocessor_id": "x",
-                    "preprocessor_version": "1.0", "source_path": sys.argv[1],
-                    "text": "should not run",
-                }}))
-            """),
-            encoding="utf-8",
-        )
         _write_config(
             tmp_path,
-            f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
+            f'[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(_sentinel_extractor(tmp_path, sentinel))}'''\n"
             'on_error = "skip"\n',
         )
         (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
 
-        key = EnvVar.PREPROCESS_ENABLED.value
+        key = EnvVar.PREPROCESS.value
         prev = os.environ.get(key)
-        os.environ.pop(key, None)  # gate OFF (overrides the autouse opt-in)
+        os.environ[key] = "off"
         reset_config()
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
             indexer.full_index(reporter=NullProgressReporter())
             assert not sentinel.exists(), (
-                "preprocess command executed while disabled (RCE not closed)"
+                "preprocess command executed under the off kill switch"
             )
         finally:
             store.close()
@@ -234,6 +279,136 @@ class TestPreprocessEndToEnd:
             else:
                 os.environ[key] = prev
             reset_config()
+
+    @pytest.mark.timeout(600)
+    @pytest.mark.usefixtures("_default_mode")
+    def test_untrusted_default_executes_nothing_and_names_trust_verb(
+        self,
+        rag_components: RagComponentsWithManifest,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # C1 (end-to-end RCE proof, TOFU tier): under the default mode with no
+        # trust record, indexing a repo that ships a command rule executes
+        # nothing, and the skip warning names the remediation verb.
+        from ... import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+        sentinel = tmp_path / "EXECUTED.flag"
+        _write_config(
+            tmp_path,
+            f'[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(_sentinel_extractor(tmp_path, sentinel))}'''\n"
+            'on_error = "skip"\n',
+        )
+        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            with caplog.at_level("WARNING"):
+                indexer.full_index(reporter=NullProgressReporter())
+            assert not sentinel.exists(), (
+                "untrusted preprocess command executed (TOFU gate not closed)"
+            )
+            assert any("preprocess trust" in r.message for r in caplog.records), (
+                "untrusted skip warning does not name the trust verb"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(600)
+    @pytest.mark.usefixtures("_default_mode")
+    def test_trusted_root_executes_and_command_edit_reverts_trust(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
+        # TOFU round trip: trusting the resolved rule set lets the command run
+        # under the default mode; editing the command reverts the root to
+        # untrusted automatically (the trust hash no longer matches).
+        from ... import CodebaseIndexer, VaultStore
+        from ...indexer._preprocess_config import load_preprocess_rules
+        from ...indexer._preprocess_trust import hash_rule_set, record_trust
+
+        model = rag_components["model"]
+        first = tmp_path / "FIRST.flag"
+        second = tmp_path / "SECOND.flag"
+        _write_config(
+            tmp_path,
+            f'[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(_sentinel_extractor(tmp_path, first))}'''\n"
+            'on_error = "skip"\n',
+        )
+        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+
+        rules = load_preprocess_rules(tmp_path, strict=True).rules
+        record_trust(
+            tmp_path,
+            rule_set_hash=hash_rule_set(rules),
+            trusted_at="2026-07-13T00:00:00Z",
+        )
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            indexer.full_index(reporter=NullProgressReporter())
+            assert first.exists(), "trusted preprocess command did not execute"
+
+            # A different command re-resolves to a different hash: the stored
+            # trust record no longer matches, so nothing may execute.
+            _write_config(
+                tmp_path,
+                f'[[rule]]\npattern = "*.pdf"\n'
+                f"command = '''{_command(_sentinel_extractor(tmp_path, second))}'''\n"
+                'on_error = "skip"\n',
+            )
+            indexer.full_index(clean=True, reporter=NullProgressReporter())
+            assert not second.exists(), (
+                "edited (re-untrusted) preprocess command executed"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(600)
+    def test_ignore_edit_prunes_stale_chunks_down_the_watcher_path(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
+        # The consumer-reported drift scenario, end to end: index two source
+        # files, then newly ignore one via .vaultragignore and forward ONLY the
+        # ignore file down the scoped path (exactly what the watcher does).
+        # The membership-epoch check must force the unscoped reconcile and
+        # prune the newly-ignored file's chunks.
+        from ... import CodebaseIndexer, VaultStore
+
+        model = rag_components["model"]
+        (tmp_path / "keep.py").write_text(
+            "def keep_me():\n    return 'retained module'\n", encoding="utf-8"
+        )
+        (tmp_path / "drop.py").write_text(
+            "def drop_me():\n    return 'stale module'\n", encoding="utf-8"
+        )
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, model, store)
+            indexer.full_index(reporter=NullProgressReporter())
+            assert store.get_code_ids_by_paths({"drop.py"}), (
+                "precondition: drop.py must be indexed before the ignore edit"
+            )
+
+            ignore = tmp_path / ".vaultragignore"
+            ignore.write_text("drop.py\n", encoding="utf-8")
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(), changed_paths=[ignore]
+            )
+            assert result.removed >= 1
+            assert not store.get_code_ids_by_paths({"drop.py"}), (
+                "newly-ignored file's chunks were not pruned"
+            )
+            assert store.get_code_ids_by_paths({"keep.py"}), (
+                "unrelated file's chunks were dropped by the reconcile"
+            )
+        finally:
+            store.close()
 
     @pytest.mark.timeout(600)
     def test_passthrough_indexes_raw_text(

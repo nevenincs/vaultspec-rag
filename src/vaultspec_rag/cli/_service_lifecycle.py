@@ -8,17 +8,15 @@ import re
 import sys
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from pathlib import Path
+from typing import Annotated, Any, Literal, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 from ..config import EnvVar, get_config
-from ._app import server_app
+from ._app import _global_target, server_app
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
 from ._http_search import _try_http_admin
@@ -308,6 +306,87 @@ def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
     )
 
 
+def _resolve_preprocess_forward(
+    *,
+    no_preprocess: bool,
+    preprocess_trust_all: bool,
+    json_mode: bool,
+) -> Literal["off", "trust_all"] | None:
+    """Resolve the two preprocess flags into the value forwarded to the daemon.
+
+    The flags are mutually exclusive (ADR D7); passing both is a hard start
+    failure. ``--no-preprocess`` forwards ``off`` and ``--preprocess-trust-all``
+    forwards ``trust_all``; neither leaves the daemon inheriting the operator's
+    preprocess env untouched.
+    """
+    if no_preprocess and preprocess_trust_all:
+        raise _fail_start(
+            json_mode,
+            error="preprocess_flags_conflict",
+            message="Service start failed",
+            human_lines=(
+                "--no-preprocess and --preprocess-trust-all cannot be combined.",
+                "Pass at most one.",
+            ),
+        )
+    if no_preprocess:
+        return "off"
+    if preprocess_trust_all:
+        return "trust_all"
+    return None
+
+
+def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
+    """Print a best-effort notice about the target root's preprocess trust state.
+
+    Operator visibility (ADR D8): when the resolved root defines preprocess
+    rules, say whether they will run under the effective mode and, when they
+    will not, name the remediation verb. Never raises - a missing or invalid
+    config simply yields no notice. Imports are function-local so this stays off
+    the module import path (the CLI service-control surface stays torch-free).
+    """
+    from ..indexer._preprocess_config import (
+        PREPROCESS_CONFIG_FILENAME,
+        PreprocessConfigError,
+        load_preprocess_rules,
+    )
+
+    if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
+        return
+    try:
+        config = load_preprocess_rules(root, strict=True)
+    except PreprocessConfigError:
+        return
+    rules = config.rules
+    if not rules:
+        return
+    count = len(rules)
+    word = "rule" if count == 1 else "rules"
+    if effective_mode == "off":
+        _print_lifecycle_lines(
+            f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
+        )
+        return
+    if effective_mode == "trust_all":
+        _print_lifecycle_lines(
+            f"Preprocess: {count} {word} at {root} will run WITHOUT a trust check "
+            "(trust-all mode)."
+        )
+        return
+
+    from ..indexer._preprocess_trust import hash_rule_set, is_trusted
+
+    if is_trusted(root, hash_rule_set(rules)):
+        _print_lifecycle_lines(
+            f"Preprocess: {count} trusted {word} at {root} will run."
+        )
+        return
+    _print_lifecycle_lines(
+        f"Preprocess: {count} {word} at {root} are not trusted and will be skipped.",
+        f"Trust them with: vaultspec-rag preprocess trust {root}",
+    )
+
+
 @server_app.command(
     "start",
     help=(
@@ -317,6 +396,7 @@ def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
     ),
 )
 def service_start(
+    ctx: typer.Context,
     port: Annotated[
         int,
         typer.Option(
@@ -385,6 +465,30 @@ def service_start(
             ),
         ),
     ] = False,
+    no_preprocess: Annotated[
+        bool,
+        typer.Option(
+            "--no-preprocess",
+            help=(
+                "Kill switch: the service loads no document-preprocessing rules "
+                "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). Mutually "
+                "exclusive with --preprocess-trust-all."
+            ),
+        ),
+    ] = False,
+    preprocess_trust_all: Annotated[
+        bool,
+        typer.Option(
+            "--preprocess-trust-all",
+            help=(
+                "Run every root's preprocess rules without the per-root "
+                "trust-on-first-use check (forwards "
+                "VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1). Every root's commands "
+                "execute with your privileges. Mutually exclusive with "
+                "--no-preprocess."
+            ),
+        ),
+    ] = False,
     json_mode: Annotated[
         bool,
         typer.Option(
@@ -399,6 +503,11 @@ def service_start(
     ] = False,
 ) -> None:
     """Start the background search service."""
+    preprocess_forward = _resolve_preprocess_forward(
+        no_preprocess=no_preprocess,
+        preprocess_trust_all=preprocess_trust_all,
+        json_mode=json_mode,
+    )
     # Idempotent check FIRST: a healthy owned service already running is a
     # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
     # so the friendly path is no longer shadowed by the port-guard exit 1 - a
@@ -469,6 +578,15 @@ def service_start(
     if not local_only and qdrant is not False:
         _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
 
+    # Operator visibility for the target root's preprocess trust state (ADR D8).
+    # Best-effort and human-only so the --json envelope stays a single document.
+    if not json_mode:
+        effective_mode = preprocess_forward or get_config().preprocess_mode
+        _print_preprocess_start_notice(
+            _global_target(ctx) or Path.cwd(),
+            effective_mode,
+        )
+
     log_path = _log_file()
     _preflight_daemon_cuda(_resolve_daemon_interpreter(), json_mode=json_mode)
     t0 = time.perf_counter()
@@ -481,6 +599,7 @@ def service_start(
             watch_cooldown_s=repeat_update_delay_s,
             qdrant=qdrant,
             local_only=local_only,
+            preprocess_mode=preprocess_forward,
         )
     except DaemonBreakawayError as exc:
         # The launching shell's Job Object denied detachment, so a daemon

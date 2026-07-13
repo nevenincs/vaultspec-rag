@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import vaultspec_rag.cli as _cli
 
@@ -337,17 +337,19 @@ def _service_child_env(
     watch_cooldown_s: float | None = None,
     qdrant: bool | None = None,
     local_only: bool | None = None,
+    preprocess_mode: Literal["off", "trust_all"] | None = None,
 ) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
     The daemon inherits configuration only through the environment (it
     parses no argv beyond ``--port``), so watcher flags passed to
     ``service start`` are translated into ``VAULTSPEC_RAG_WATCH*`` here,
-    the qdrant server-mode flag into ``VAULTSPEC_RAG_QDRANT_SERVER``, and
-    the local-only opt-out into ``VAULTSPEC_RAG_LOCAL_ONLY`` so the
-    daemon's ``effective_server_mode()`` resolves the on-disk store.
-    A flag left unset (``None``) is not written, so an operator-set env
-    var of the same name survives untouched.
+    the qdrant server-mode flag into ``VAULTSPEC_RAG_QDRANT_SERVER``, the
+    local-only opt-out into ``VAULTSPEC_RAG_LOCAL_ONLY`` so the daemon's
+    ``effective_server_mode()`` resolves the on-disk store, and the
+    preprocess mode into the tri-state env vars the daemon's
+    ``preprocess_mode`` property reads. A flag left unset (``None``) is not
+    written, so an operator-set env var of the same name survives untouched.
 
     Args:
         watch: Tri-state watcher toggle; ``None`` leaves it unset.
@@ -357,6 +359,11 @@ def _service_child_env(
             unset.
         local_only: Tri-state local-backend opt-out; ``None`` leaves it
             unset so an operator-set ``VAULTSPEC_RAG_LOCAL_ONLY`` survives.
+        preprocess_mode: ``"off"`` forwards ``VAULTSPEC_RAG_PREPROCESS=off``,
+            ``"trust_all"`` forwards ``VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1``;
+            each clears the opposing var so the forwarded flag is
+            authoritative over an inherited one. ``None`` leaves both unset so
+            an operator-set preprocess env survives.
 
     Returns:
         The child-process environment mapping.
@@ -377,6 +384,12 @@ def _service_child_env(
         env[EnvVar.QDRANT_SERVER.value] = "1" if qdrant else "0"
     if local_only is not None:
         env[EnvVar.LOCAL_ONLY.value] = "1" if local_only else "0"
+    if preprocess_mode == "off":
+        env[EnvVar.PREPROCESS.value] = "off"
+        env.pop(EnvVar.PREPROCESS_TRUST_ALL.value, None)
+    elif preprocess_mode == "trust_all":
+        env[EnvVar.PREPROCESS_TRUST_ALL.value] = "1"
+        env.pop(EnvVar.PREPROCESS.value, None)
     return env
 
 
@@ -495,6 +508,7 @@ def _spawn_service(
     watch_cooldown_s: float | None = None,
     qdrant: bool | None = None,
     local_only: bool | None = None,
+    preprocess_mode: Literal["off", "trust_all"] | None = None,
 ) -> int:
     """Spawn the RAG service as a detached background process.
 
@@ -506,6 +520,8 @@ def _spawn_service(
         watch_cooldown_s: Optional cooldown override forwarded to the env.
         qdrant: Optional qdrant server-mode toggle forwarded to the env.
         local_only: Optional local-backend opt-out forwarded to the env.
+        preprocess_mode: Optional preprocess tri-state (``off``/``trust_all``)
+            forwarded to the env.
 
     Returns:
         PID of the spawned process.
@@ -519,6 +535,7 @@ def _spawn_service(
         watch_cooldown_s=watch_cooldown_s,
         qdrant=qdrant,
         local_only=local_only,
+        preprocess_mode=preprocess_mode,
     )
     # Owner-only log, refusing a pre-planted symlink at the path where the
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
