@@ -853,7 +853,8 @@ def _gather_storage_survey(
     authoritative computed prefix - derived through the one real
     ``root_collection_prefix`` derivation, so consumers never recompute the
     hash. An unindexed root still gets its prefix, with an empty namespace
-    list.
+    list. ``total`` always counts the post-filter namespaces, so under a
+    root (or status) filter it is not the server-wide count.
     """
     import pathlib
 
