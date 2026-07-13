@@ -11,8 +11,10 @@ from __future__ import annotations
 import os
 import shutil
 import socket
+import tempfile
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
@@ -24,7 +26,6 @@ from ...config import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
-    from pathlib import Path
 
 __all__ = [
     "_get_ephemeral_port",
@@ -165,10 +166,28 @@ def _service_env(
     # Isolate the machine-global Qdrant storage too: the machine-scoped service
     # lock is co-located with it, so without this a test daemon would acquire
     # the real machine lock and collide with a real service or a sibling test.
+    #
+    # The isolated storage lives under a SHORT unique temp dir, never under the
+    # deep pytest tmp path: qdrant's gridstore fails every collection create
+    # ("The system cannot find the path specified. (os error 3)") on Windows
+    # once the storage dir exceeds ~105 characters, because the internal
+    # collections/<name>/segments/<uuid>/... layout then crosses the classic
+    # MAX_PATH boundary regardless of the LongPathsEnabled registry setting.
     storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    short_storage_root: Path | None = None
     if storage_key not in (env_overrides or {}):
         saved[storage_key] = os.environ.get(storage_key)
-        os.environ[storage_key] = str(tmp_path / "qdrant-storage")
+        short_base = Path(tempfile.gettempdir()) / "vsrq"
+        short_base.mkdir(exist_ok=True)
+        # Sweep leftovers from earlier runs first: when a test holds its
+        # daemon open past this context manager's exit (finalizer ordering),
+        # the qdrant child still locks its storage at our teardown and the
+        # rmtree below silently leaves ~0.5-1GB of preallocated mmaps behind.
+        # A live sibling's storage stays locked and survives the sweep.
+        for stale in short_base.iterdir():
+            shutil.rmtree(stale, ignore_errors=True)
+        short_storage_root = Path(tempfile.mkdtemp(dir=short_base))
+        os.environ[storage_key] = str(short_storage_root / "storage")
 
     # Isolate the Qdrant port off the shared machine default (8765): once the
     # binary is mirrored, a server-mode test daemon spawns a real Qdrant child,
@@ -203,3 +222,8 @@ def _service_env(
                 os.environ[k] = prev
         reset_config()  # pyright: ignore[reportMissingTypeStubs]
         reset_rag_config()
+        # The daemon (and its qdrant child, killed with it via the job
+        # object) is already terminated by the caller's finalizer, which
+        # pytest runs before this generator resumes; best-effort removal.
+        if short_storage_root is not None:
+            shutil.rmtree(short_storage_root, ignore_errors=True)

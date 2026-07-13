@@ -383,6 +383,22 @@ class QdrantSupervisor:
         """
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
+        # On Windows, qdrant's gridstore fails every collection create with
+        # "The system cannot find the path specified. (os error 3)" once the
+        # storage dir exceeds ~105 characters: the internal
+        # collections/<name>/segments/<uuid>/... layout crosses the classic
+        # MAX_PATH boundary regardless of the LongPathsEnabled setting. The
+        # server itself starts and reports ready, so without this warning the
+        # operator only sees opaque 500s on first index.
+        if sys.platform == "win32" and len(str(self.storage_dir)) > 90:
+            logger.warning(
+                "qdrant storage dir is %d characters (%s); on Windows, paths "
+                "over ~105 characters make every collection create fail with "
+                "'os error 3' inside qdrant's storage engine. Relocate "
+                "VAULTSPEC_RAG_QDRANT_STORAGE_DIR to a shorter path.",
+                len(str(self.storage_dir)),
+                self.storage_dir,
+            )
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
         if self.log_path is not None:
