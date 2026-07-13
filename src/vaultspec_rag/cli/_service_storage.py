@@ -115,6 +115,7 @@ def _emit_survey_json(
             }
             for s in surveys
         ],
+        "returned": len(surveys),
         "total": len(surveys),
     }
     if queried_root is not None:
@@ -204,7 +205,10 @@ def _survey_from_service(
 
 @server_storage_app.command(
     "survey",
-    help="List stored RAG namespaces classified as live, orphaned, or unknown.",
+    help=(
+        "List stored RAG namespaces classified as live, orphaned, or unknown; "
+        "--root looks up one root's collection prefix and namespace."
+    ),
 )
 def storage_survey(
     json_mode: bool = typer.Option(
@@ -234,6 +238,13 @@ def storage_survey(
     With ``--root``, both paths resolve the root through the one
     ``root_collection_prefix`` derivation and report it as ``queried_root``.
     """
+    if root is not None:
+        import pathlib
+
+        # Resolve against the operator's cwd BEFORE dispatch: the daemon would
+        # otherwise resolve a relative path against its own inherited cwd,
+        # silently disagreeing with the CLI-direct fallback.
+        root = str(pathlib.Path(root).resolve())
     queried_root: dict[str, str] | None = None
     fetched = _survey_from_service(root)
     if fetched is not None:
