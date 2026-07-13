@@ -71,13 +71,22 @@ async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
 async def survey_storage(
     status: str | None = None,
     limit: int | None = None,
+    root: str | None = None,
 ) -> dict[str, Any]:
-    """Survey stored RAG index namespaces (live / orphaned / unknown)."""
+    """Survey stored RAG index namespaces (live / orphaned / unknown).
+
+    With ``root``, the survey narrows to that root's namespace and the
+    response carries ``queried_root`` with the authoritative collection
+    prefix computed by the service - callers never derive the hash
+    themselves.
+    """
     args: dict[str, Any] = {}
     if status:
         args["status"] = status
     if limit is not None:
         args["limit"] = limit
+    if root:
+        args["root"] = root
     return await _admin("get_storage_survey", args)
 
 

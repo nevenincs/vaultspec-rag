@@ -27,7 +27,7 @@ related:
 Expose the per-root collection prefix and namespace lookup through the one survey surface: route, transport, CLI, and MCP all pass a root parameter to GET /storage/survey, which computes the authoritative prefix server-side.
 
 - [x] `P01.S01` - Extend the storage survey route to accept an optional root query parameter, resolve it through root_collection_prefix, narrow the namespace list to the matching prefix, and add the top-level queried_root object (present only when root is passed, returned even for unindexed roots); `src/vaultspec_rag/server/_routes.py`.
-- [ ] `P01.S02` - Admit root into the survey transport params and thread the optional root argument through the MCP survey client and the get_storage_survey tool surface; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [x] `P01.S02` - Admit root into the survey transport params and thread the optional root argument through the MCP survey client and the get_storage_survey tool surface; `src/vaultspec_rag/serviceclient/_transport.py`.
 - [ ] `P01.S03` - Add --root to server storage survey, pass it through both the service-first and CLI-direct paths, and render queried_root in human and --json output; `src/vaultspec_rag/cli/_service_storage.py`.
 - [ ] `P01.S04` - Cover the root-scoped lookup end to end: indexed root returns prefix plus populated namespaces, unindexed root returns prefix plus empty list, and the CLI and MCP adapters pass the parameter through; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
 
