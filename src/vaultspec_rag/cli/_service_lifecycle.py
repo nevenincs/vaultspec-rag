@@ -658,7 +658,61 @@ def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
     return serving_pid, token
 
 
-def _stop_service_on_port(port: int) -> None:
+_STOP_COMMAND = "service.stop"
+
+
+def _stop_success(
+    json_mode: bool,
+    *,
+    status: str,
+    human_title: str,
+    human_lines: tuple[str, ...] = (),
+    **data: object,
+) -> None:
+    """Emit a successful stop outcome (``stopped`` / ``already_stopped`` / ...).
+
+    In ``--json`` mode emits one ``{ok, command, data:{status, ...}}`` envelope;
+    otherwise the bespoke human lines. The caller returns after this (exit 0).
+    An already-stopped service is a success so a supervising broker treats the
+    idempotent case as satisfied rather than as a fault.
+    """
+    if json_mode:
+        _emit_json(True, _STOP_COMMAND, data={"status": status, **data})
+    else:
+        _print_lifecycle_lines(human_title, *human_lines)
+
+
+def _fail_stop(
+    json_mode: bool,
+    *,
+    error: str,
+    message: str,
+    human_lines: tuple[str, ...],
+    next_actions: tuple[str, ...] = (),
+    **data: object,
+) -> typer.Exit:
+    """Render a failed stop outcome and RETURN the ``typer.Exit`` to raise.
+
+    A stop that leaves the service running did not do its job, so it exits 1
+    in BOTH human and ``--json`` modes - a broker or script must never read a
+    skipped stop as success. Mirrors ``_fail_start``.
+    """
+    if json_mode:
+        _emit_json(
+            False,
+            _STOP_COMMAND,
+            error=error,
+            message=message,
+            data=dict(data) or None,
+        )
+    else:
+        _print_lifecycle_lines(message, *human_lines)
+        if next_actions:
+            _print_lifecycle_next_actions(*next_actions)
+    return typer.Exit(code=1)
+
+
+def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
     """Stop the service answering on *port*, status-file independent.
 
     Targets the running instance the operator named with ``--port`` even when
@@ -668,22 +722,29 @@ def _stop_service_on_port(port: int) -> None:
     """
     resolved = _service_pid_on_port(port)
     if resolved is None:
-        _print_lifecycle_lines(
-            "Service is not running.",
-            f"No service is answering on http://127.0.0.1:{port}.",
+        _stop_success(
+            json_mode,
+            status="already_stopped",
+            human_title="Service is not running.",
+            human_lines=(f"No service is answering on http://127.0.0.1:{port}.",),
+            port=port,
         )
         return
     pid, token = resolved
     if not _cli._is_our_service(pid, port=port, expected_token=token):
-        _print_lifecycle_lines(
-            "Service stop skipped",
-            f"A process is answering on port {port} but its identity could not "
-            "be confirmed as a vaultspec-rag service; it was left running.",
+        raise _fail_stop(
+            json_mode,
+            error="identity_unconfirmed",
+            message="Service stop skipped",
+            human_lines=(
+                f"A process is answering on port {port} but its identity could "
+                "not be confirmed as a vaultspec-rag service; it was left "
+                "running.",
+            ),
+            next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+            pid=pid,
+            port=port,
         )
-        _print_lifecycle_next_actions(
-            f"vaultspec-rag server status --port {port} --verbose",
-        )
-        return
 
     _terminate_and_confirm(pid)
 
@@ -693,7 +754,14 @@ def _stop_service_on_port(port: int) -> None:
     status = _read_service_status()
     if status is not None and int(status.get("port", 0)) == port:
         _status_file().unlink(missing_ok=True)
-    _print_lifecycle_lines("Service stopped", _process_line(pid))
+    _stop_success(
+        json_mode,
+        status="stopped",
+        human_title="Service stopped",
+        human_lines=(_process_line(pid),),
+        pid=pid,
+        port=port,
+    )
 
 
 @server_app.command("stop", help="Stop the background search service.")
@@ -710,6 +778,19 @@ def service_stop(
             ),
         ),
     ] = None,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one machine-readable outcome envelope instead of human "
+                "text. An already-stopped service is the success "
+                "`already_stopped` (exit 0); a stop that leaves the service "
+                "running (unconfirmed identity) is `identity_unconfirmed` "
+                "(exit 1) in both output modes."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Stop the background search service.
 
@@ -722,9 +803,14 @@ def service_stop(
     With ``--port`` the running instance on that port is targeted directly via
     its ``/health`` identity, so a non-default-port service whose status file is
     missing or divergent (research F7) is still stoppable.
+
+    Exit codes: 0 for every satisfied outcome (``stopped``, ``already_stopped``,
+    ``cleaned``, ``reclaimed``); 1 when the stop is skipped because a live
+    recorded process could not be confirmed as ours - the one outcome that
+    leaves a service running.
     """
     if port is not None:
-        _stop_service_on_port(port)
+        _stop_service_on_port(port, json_mode)
         return
 
     status = _read_service_status()
@@ -736,16 +822,26 @@ def service_stop(
         # singleton that would otherwise deadlock `server start`.
         reclaimed = _reclaim_machine_singleton()
         if reclaimed is not None:
-            _print_lifecycle_lines(
-                "Service stopped",
-                f"Reclaimed the resident machine service (pid {reclaimed}); it "
-                "held the singleton lock without a discoverable status file.",
+            _stop_success(
+                json_mode,
+                status="reclaimed",
+                human_title="Service stopped",
+                human_lines=(
+                    f"Reclaimed the resident machine service (pid {reclaimed}); "
+                    "it held the singleton lock without a discoverable status "
+                    "file.",
+                ),
+                pid=reclaimed,
             )
             return
         # No reclaimable holder. We do NOT probe the port: on the shared default
         # port another project's healthy service would otherwise be misreported
         # as this config's orphan.
-        _cli.console.print("Service is not running.")
+        _stop_success(
+            json_mode,
+            status="already_stopped",
+            human_title="Service is not running.",
+        )
         return
 
     pid = int(status["pid"])
@@ -759,24 +855,37 @@ def service_stop(
         # both mis-report a live daemon as gone and break discovery (#204).
         if _should_unlink_discovery_file(_cli._is_pid_alive(pid)):
             _status_file().unlink(missing_ok=True)
-            _print_lifecycle_lines(
-                "Service status cleaned",
-                f"Recorded process {pid} is no longer running.",
+            _stop_success(
+                json_mode,
+                status="cleaned",
+                human_title="Service status cleaned",
+                human_lines=(f"Recorded process {pid} is no longer running.",),
+                pid=pid,
             )
             return
-        _print_lifecycle_lines(
-            "Service stop skipped",
-            f"Recorded process {pid} is alive but its identity could not be "
-            "confirmed; the discovery file was left in place.",
+        raise _fail_stop(
+            json_mode,
+            error="identity_unconfirmed",
+            message="Service stop skipped",
+            human_lines=(
+                f"Recorded process {pid} is alive but its identity could not "
+                "be confirmed; the discovery file was left in place.",
+            ),
+            next_actions=("vaultspec-rag server status --verbose",),
+            pid=pid,
+            port=port,
         )
-        _print_lifecycle_next_actions(
-            "vaultspec-rag server status --verbose",
-        )
-        return
 
     _terminate_and_confirm(pid)
     _status_file().unlink(missing_ok=True)
-    _print_lifecycle_lines("Service stopped", _process_line(pid))
+    _stop_success(
+        json_mode,
+        status="stopped",
+        human_title="Service stopped",
+        human_lines=(_process_line(pid),),
+        pid=pid,
+        port=port,
+    )
 
 
 def _compute_token_match(
