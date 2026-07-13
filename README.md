@@ -1,21 +1,24 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="vaultspec-rag logo" width="150" />
+<img src="assets/logo.svg" alt="vaultspec-rag family logo" width="150" />
 
 # vaultspec-rag
 
-**Semantic search for a vaultspec-core workspace - find decisions and code by meaning.**
+**The semantic retrieval layer for finding decisions and code by meaning.**
 
-[![CI](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
-[![PyPI version](https://img.shields.io/pypi/v/vaultspec-rag.svg)](https://pypi.org/project/vaultspec-rag/)
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-[![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)](https://github.com/nevenincs/vaultspec-rag/releases)
+[![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=for-the-badge&label=build&logo=githubactions&logoColor=white&labelColor=1b1a16)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
+[![release](https://img.shields.io/pypi/v/vaultspec-rag?style=for-the-badge&label=release&logo=pypi&logoColor=white&labelColor=1b1a16&color=8A72B5)](https://pypi.org/project/vaultspec-rag/)
+[![runtime](https://img.shields.io/badge/runtime-Python%203.13%2B%20%7C%20CUDA-3F9AA6?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=1b1a16)](#requirements)
+[![license](https://img.shields.io/github/license/nevenincs/vaultspec-rag?style=for-the-badge&label=license&logo=opensourceinitiative&logoColor=white&labelColor=1b1a16&color=B3823C)](./LICENSE)
 
-[Quickstart](#quickstart) ·
-[Searching by meaning](#searching-by-meaning) ·
+[![cli](https://img.shields.io/badge/cli-bundled-B5703F?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=1b1a16)](./docs/cli.md)
+[![mcp](https://img.shields.io/badge/mcp-bundled-B05A6B?style=for-the-badge&logo=modelcontextprotocol&logoColor=white&labelColor=1b1a16)](./docs/mcp.md)
+
+[Get started](#quickstart) ·
+[Product](#searching-by-meaning) ·
 [Documentation](#documentation) ·
-[The family](#the-vaultspec-family)
+[Family](#the-vaultspec-family) ·
+[Support](#support-and-help)
 
 </div>
 
@@ -137,11 +140,12 @@ For the full filter set (path globs, document type, feature, date), see [search 
 
 ## The vaultspec family
 
-vaultspec-rag is the retrieval layer of the vaultspec family - a set of tools built around one shared vault:
+The family has three focused responsibilities: vaultspec-core governs the workflow and
+vault; vaultspec-rag retrieves decisions and code by meaning; and vaultspec-dashboard is
+the visual workspace that aggregates those views.
 
-- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - the hub: the `Research → Decide → Plan → Code → Review` pipeline, the git-tracked Markdown vault, and the CLI that drives them.
-- vaultspec-dashboard - a visual companion for vault health, decision graphs, and search activity. In development.
-- vaultspec-a2a - agent-to-agent orchestration across your coding agents. Early.
+- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - the governed `Research → Decide (ADRs) → Plan → Execute → Verify` workflow, git-tracked Markdown vault, CLI, and MCP server.
+- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - the visual workspace for exploring the vault, source tree, document graph, workflow state, and semantic search.
 
 ## Support and help
 
