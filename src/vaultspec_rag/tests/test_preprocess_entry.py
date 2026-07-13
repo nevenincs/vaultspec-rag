@@ -17,7 +17,7 @@ import pytest
 
 from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._preprocess_entry import main, resolve_entry_point
-from ..indexer._preprocess_runner import run_preprocessor
+from ..indexer._preprocess_runner import PreprocessResult, run_preprocessor
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -106,13 +106,34 @@ def test_main_bad_ref_returns_nonzero() -> None:
     assert main(["nope:nothing", "docs/a.pdf"]) == 3
 
 
-@pytest.mark.usefixtures("entry_modpath")
-def test_run_preprocessor_entry_point_ok(tmp_path: Path) -> None:
+def _entry_run(
+    source: Path,
+    ref: str,
+    *,
+    project_root: Path,
+    on_error: OnError = "skip",
+) -> PreprocessResult:
+    """Invoke the runner on an entry_point rule in local, unsandboxed mode.
+
+    The curated child env carries no inherited ``PYTHONPATH``; the runner puts
+    ``project_root`` on it so a project-local entry_point module resolves, which
+    is the whole point of the read grant. The extractor module the fixture
+    writes lives under ``project_root``, so the child imports it there.
+    """
+    return run_preprocessor(
+        source,
+        _entry_rule(ref, on_error=on_error),
+        max_emitted_bytes=1024 * 1024,
+        project_root=project_root,
+        server_mode=False,
+        unsandboxed=True,
+    )
+
+
+def test_run_preprocessor_entry_point_ok(entry_modpath: Path, tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01binary")
-    result = run_preprocessor(
-        source, _entry_rule("extractor_mod:extract"), max_emitted_bytes=1024 * 1024
-    )
+    result = _entry_run(source, "extractor_mod:extract", project_root=entry_modpath)
     assert result.status == "ok"
     assert result.output is not None
     assert result.output.preprocessor_id == "entry-fake"
@@ -121,13 +142,12 @@ def test_run_preprocessor_entry_point_ok(tmp_path: Path) -> None:
     assert result.output.units[0].locator.value == 1
 
 
-@pytest.mark.usefixtures("entry_modpath")
-def test_run_preprocessor_entry_point_raises_is_skipped(tmp_path: Path) -> None:
+def test_run_preprocessor_entry_point_raises_is_skipped(
+    entry_modpath: Path, tmp_path: Path
+) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"x")
-    result = run_preprocessor(
-        source, _entry_rule("extractor_mod:boom"), max_emitted_bytes=1024 * 1024
-    )
+    result = _entry_run(source, "extractor_mod:boom", project_root=entry_modpath)
     assert result.status == "skipped"
     assert result.reason is not None
 
@@ -135,7 +155,5 @@ def test_run_preprocessor_entry_point_raises_is_skipped(tmp_path: Path) -> None:
 def test_run_preprocessor_entry_point_unresolvable_is_skipped(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"x")
-    result = run_preprocessor(
-        source, _entry_rule("missing_module_xyz:fn"), max_emitted_bytes=1024 * 1024
-    )
+    result = _entry_run(source, "missing_module_xyz:fn", project_root=tmp_path)
     assert result.status == "skipped"

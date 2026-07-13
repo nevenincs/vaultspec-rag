@@ -181,6 +181,39 @@ class TestJobsLifecycle:
         ids = [r["id"] for r in snapshot()]
         assert ids.index(id2) < ids.index(id1)
 
+    def test_started_record_defaults_preprocess_fields(self) -> None:
+        job_id = record_start("code", "tool")
+        record = {r["id"]: r for r in snapshot()}[job_id]
+        assert record["preprocess_skipped"] == 0
+        assert record["preprocess_failures"] == []
+
+    def test_record_finish_surfaces_preprocess_failures(self) -> None:
+        job_id = record_start("code", "tool")
+        failures = ["docs/a.pdf: extractor timeout", "docs/b.xls: exit 1"]
+        record_finish(
+            job_id,
+            result="+0 /0 -0 (5ms) ~2",
+            preprocess_skipped=2,
+            preprocess_failures=failures,
+        )
+        record = {r["id"]: r for r in snapshot()}[job_id]
+        assert record["preprocess_skipped"] == 2
+        assert record["preprocess_failures"] == failures
+
+    def test_serialized_preprocess_failures_are_copied(self) -> None:
+        job_id = record_start("code", "tool")
+        failures = ["docs/a.pdf: timeout"]
+        record_finish(job_id, preprocess_failures=failures)
+        serialized = {r["id"]: r for r in snapshot()}[job_id]
+        surfaced = serialized["preprocess_failures"]
+        assert surfaced == failures
+        # The snapshot is a defensive copy: mutating it must not touch live
+        # registry state, nor the caller's list survive into the record.
+        assert isinstance(surfaced, list)
+        cast("list[str]", surfaced).append("docs/c.pdf: injected")
+        again = {r["id"]: r for r in snapshot()}[job_id]
+        assert again["preprocess_failures"] == failures
+
     def test_job_events_preserve_job_id_and_phase_fields(
         self,
         caplog: pytest.LogCaptureFixture,

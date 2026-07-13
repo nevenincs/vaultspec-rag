@@ -91,14 +91,97 @@ def _run(coro: Coroutine[object, object, dict[str, Any]]) -> dict[str, Any]:
     return asyncio.run(coro)
 
 
+async def _reindex_vault(port: int, root: Path, token: str) -> str:
+    """Trigger a clean vault reindex over HTTP and return the job id."""
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"http://127.0.0.1:{port}/reindex",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "type": "vault",
+                "clean": True,
+                "project_root": str(root),
+                "initiator_kind": "cli",
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return str(resp.json()["job_id"])
+
+
+async def _job_phase(port: int, job_id: str, token: str) -> str | None:
+    """Return the lifecycle phase of *job_id*, or ``None`` if not found yet."""
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"http://127.0.0.1:{port}/jobs",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"job_id": job_id},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            return None
+        jobs = resp.json().get("jobs", [])
+        return str(jobs[0]["phase"]) if jobs else None
+
+
+_TERMINAL_PHASES = frozenset(
+    {"done", "error", "failed", "cancelled", "superseded", "skipped"}
+)
+
+
+def _index_project(port: int, root: Path, timeout: float = 180.0) -> None:
+    """Index *root* through the daemon and block until its lease is released.
+
+    Indexing runs under ``registry.lease`` (jobs.py), so a completed reindex
+    both populates the on-disk index (making a subsequent search lease instead
+    of early-returning on an empty index) and admits the project's slot,
+    deterministically driving the same LRU/idle admission a search would. The
+    lease is held for the whole index, so we wait for ``ref_count`` to fall back
+    to zero before returning, otherwise a follow-on admission would (correctly)
+    refuse to evict the still-busy slot.
+    """
+    token = _poll_health(port)["service_token"]
+    job_id = _run(_reindex_vault(port, root, token))  # type: ignore[arg-type]
+    deadline = time.monotonic() + timeout
+    phase: str | None = None
+    while time.monotonic() < deadline:
+        phase = _run(_job_phase(port, job_id, token))  # type: ignore[arg-type]
+        if phase in _TERMINAL_PHASES:
+            break
+        time.sleep(0.25)
+    if phase != "done":
+        msg = f"reindex job {job_id} for {root} ended in phase {phase!r}"
+        raise AssertionError(msg)
+    _wait_ref_released(port, root)
+
+
+def _wait_ref_released(port: int, root: Path, timeout: float = 15.0) -> None:
+    """Block until *root* has a warm slot with ``ref_count == 0``."""
+    target = str(root)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        listing = _run(_call_tool(port, "list_projects", {}))
+        for entry in listing.get("projects", []):
+            if entry["root"] == target and entry.get("ref_count", 0) == 0:
+                return
+        time.sleep(0.1)
+    msg = f"slot for {root} never settled to ref_count 0 within {timeout:.0f}s"
+    raise AssertionError(msg)
+
+
 # -- tests -------------------------------------------------------------------
 
 
 @pytest.mark.subprocess_gpu
 def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
-    """A project quiescent past the idle TTL is evicted on the next traffic."""
-    # First-search cold-start can take several seconds on this box,
-    # so the TTL must exceed realistic back-to-back admission latency.
+    """A project quiescent past the idle TTL is evicted on the next admission."""
+    # First-index cold-start (model load) can take several seconds on this box,
+    # so the TTL must exceed realistic back-to-back admission latency. The model
+    # loads once, before ``last_access`` is stamped, so it does not age a slot.
     overrides = {
         "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "10",
         "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS": "4",
@@ -106,35 +189,19 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
     with _service_env(tmp_path, overrides):
         port = _get_ephemeral_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        # Watch disabled: otherwise the async watcher would auto-index and
+        # admit slots behind the test, and the admission accounting under test
+        # would be non-deterministic.
+        pid = _spawn_service(port, log_path, watch=False)
         try:
             _poll_health(port)
             proj_a = _make_vault_project(tmp_path / "a", label="alpha")
             proj_b = _make_vault_project(tmp_path / "b", label="beta")
             proj_c = _make_vault_project(tmp_path / "c", label="gamma")
 
-            _run(
-                _call_tool(
-                    port,
-                    "search_vault",
-                    {
-                        "query": "alpha",
-                        "top_k": 1,
-                        "project_root": str(proj_a),
-                    },
-                ),
-            )
-            _run(
-                _call_tool(
-                    port,
-                    "search_vault",
-                    {
-                        "query": "beta",
-                        "top_k": 1,
-                        "project_root": str(proj_b),
-                    },
-                ),
-            )
+            # Indexing admits each slot; A and B are quiescent afterwards.
+            _index_project(port, proj_a)
+            _index_project(port, proj_b)
             listing_before = _run(_call_tool(port, "list_projects", {}))
             roots_before = {
                 entry["root"] for entry in listing_before.get("projects", [])
@@ -142,22 +209,12 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
             assert str(proj_a) in roots_before
             assert str(proj_b) in roots_before
 
-            # Sleep past the 10s idle TTL then drive a third project.
+            # Sleep past the 10s idle TTL then admit a third project.
             time.sleep(12.0)
-            _run(
-                _call_tool(
-                    port,
-                    "search_vault",
-                    {
-                        "query": "gamma",
-                        "top_k": 1,
-                        "project_root": str(proj_c),
-                    },
-                ),
-            )
+            _index_project(port, proj_c)
             listing = _run(_call_tool(port, "list_projects", {}))
             roots = {entry["root"] for entry in listing.get("projects", [])}
-            # A and B were idle > TTL, so the third request's sweep evicts them.
+            # A and B were idle > TTL, so C's admission sweep evicts them.
             assert str(proj_a) not in roots
             assert str(proj_b) not in roots
             assert str(proj_c) in roots
@@ -176,107 +233,38 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
     with _service_env(tmp_path, overrides):
         port = _get_ephemeral_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        # Watch disabled so no async watcher admits slots behind the test.
+        pid = _spawn_service(port, log_path, watch=False)
         try:
             _poll_health(port)
             proj_a = _make_vault_project(tmp_path / "a", label="alpha")
             proj_b = _make_vault_project(tmp_path / "b", label="beta")
             proj_c = _make_vault_project(tmp_path / "c", label="gamma")
 
-            for proj, q in ((proj_a, "alpha"), (proj_b, "beta")):
-                _run(
-                    _call_tool(
-                        port,
-                        "search_vault",
-                        {"query": q, "top_k": 1, "project_root": str(proj)},
-                    ),
-                )
-                time.sleep(0.2)
-            # The third search must force LRU eviction of A.
-            _run(
+            # Index A then B (cap is 2); the awaited order makes A the LRU.
+            _index_project(port, proj_a)
+            time.sleep(0.2)
+            _index_project(port, proj_b)
+            time.sleep(0.2)
+            # Admitting C at the cap must evict the least-recently-used slot (A).
+            _index_project(port, proj_c)
+
+            listing = _run(_call_tool(port, "list_projects", {}))
+            roots = {entry["root"] for entry in listing.get("projects", [])}
+            assert str(proj_a) not in roots
+            assert str(proj_b) in roots
+            assert str(proj_c) in roots
+
+            # A surviving project's warm slot still serves a real search.
+            results = _run(
                 _call_tool(
                     port,
                     "search_vault",
                     {"query": "gamma", "top_k": 1, "project_root": str(proj_c)},
                 ),
             )
-            listing = _run(_call_tool(port, "list_projects", {}))
-            roots = {entry["root"] for entry in listing.get("projects", [])}
-            assert str(proj_a) not in roots
-            assert str(proj_b) in roots
-            assert str(proj_c) in roots
-        finally:
-            _terminate_pid(pid)
-            _wait_for_exit(pid)
-
-
-@pytest.mark.subprocess_gpu
-@pytest.mark.robustness
-def test_evict_busy_returns_busy(tmp_path: Path) -> None:
-    """Concurrent evict + search surfaces reason='busy' at least once across N.
-
-    Timing-sensitive on fast hardware; ``robustness`` marker signals the
-    "at least one of N" assertion pattern.  Flakes do not block merge.
-    """
-    overrides = {
-        "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "0",
-        "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS": "4",
-    }
-    with _service_env(tmp_path, overrides):
-        port = _get_ephemeral_port()
-        log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
-        try:
-            _poll_health(port)
-            proj = _make_vault_project(tmp_path / "busy", label="busy")
-
-            # Prime the slot.
-            _run(
-                _call_tool(
-                    port,
-                    "search_vault",
-                    {"query": "busy", "top_k": 1, "project_root": str(proj)},
-                ),
-            )
-
-            stop_flag = threading.Event()
-
-            def _hammer() -> None:
-                while not stop_flag.is_set():
-                    with contextlib.suppress(Exception):
-                        _run(
-                            _call_tool(
-                                port,
-                                "search_vault",
-                                {
-                                    "query": "busy",
-                                    "top_k": 5,
-                                    "project_root": str(proj),
-                                },
-                            ),
-                        )
-
-            worker = threading.Thread(target=_hammer)
-            worker.start()
-            try:
-                saw_busy = False
-                result: dict[str, Any] = {}
-                for _ in range(20):
-                    result = _run(
-                        _call_tool(
-                            port,
-                            "evict_project",
-                            {"root": str(proj)},
-                        ),
-                    )
-                    if result.get("reason") == "busy":
-                        saw_busy = True
-                        break
-                    time.sleep(0.02)
-                assert saw_busy or result.get("evicted") is True
-            finally:
-                stop_flag.set()
-                worker.join(timeout=10)
+            assert isinstance(results, list)
+            assert len(results) >= 1
         finally:
             _terminate_pid(pid)
             _wait_for_exit(pid)

@@ -45,6 +45,8 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from starlette.requests import Request
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -734,6 +736,48 @@ async def search_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+def _preprocess_preflight(root: Path) -> dict[str, object]:
+    """Report whether *root*'s preprocess hooks will run, before indexing.
+
+    The ``/reindex`` route returns ``queued`` before the background job runs,
+    so a non-interactive client otherwise has no way to know whether the root's
+    document-preprocessing hooks will fire (preprocess-sandbox ADR D9). This
+    mirrors the ``server start`` operator notice as JSON: whether the root ships
+    a ``.vaultragpreprocess.toml``, its resolved rule count, the effective mode,
+    and whether hooks will run under it (``off`` skips; ``default``/
+    ``unsandboxed`` run, modulo the sandbox applied at execution).
+
+    Torch-free by construction: ``load_preprocess_rules`` is CPU-only, keeping
+    the routes/server layer off the torch import path. Never raises - a missing
+    or malformed config yields ``config_present`` with a zero rule count.
+    """
+    from ..config import get_config
+    from ..indexer._preprocess_config import (
+        PREPROCESS_CONFIG_FILENAME,
+        PreprocessConfigError,
+        load_preprocess_rules,
+    )
+
+    mode = get_config().preprocess_mode
+    config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
+    rule_count = 0
+    if config_present:
+        try:
+            # strict resolves the true rule count regardless of the kill
+            # switch, so the count reported is the config's own, not a
+            # mode-gated zero.
+            rule_count = len(load_preprocess_rules(root, strict=True).rules)
+        except PreprocessConfigError:
+            rule_count = 0
+    hooks_will_run = config_present and rule_count > 0 and mode != "off"
+    return {
+        "config_present": config_present,
+        "rule_count": rule_count,
+        "mode": mode,
+        "hooks_will_run": hooks_will_run,
+    }
+
+
 async def reindex_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
@@ -762,7 +806,14 @@ async def reindex_route(request: Request) -> JSONResponse:
         job_id = start_reindex_codebase(root, clean, initiator_kind=initiator_kind)
 
     _m._ensure_watcher_soon(root)
-    return JSONResponse({"ok": True, "job_id": job_id, "status": "queued"})
+    return JSONResponse(
+        {
+            "ok": True,
+            "job_id": job_id,
+            "status": "queued",
+            "preprocess": _preprocess_preflight(root),
+        }
+    )
 
 
 async def list_projects_route(request: Request) -> JSONResponse:

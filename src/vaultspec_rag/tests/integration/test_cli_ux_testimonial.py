@@ -120,7 +120,7 @@ def _assert_status_output_is_plain(observations: list[_Observation]) -> None:
     status_out = observations[2].output
     assert "Compute:" in status_out
     assert "Index data:" in status_out
-    assert "Source code chunks:" in status_out
+    assert "Source code sections:" in status_out
     assert "GPU:" not in status_out
     assert "Search data:" not in status_out
     assert "Index storage:" not in status_out
@@ -261,6 +261,7 @@ class TestSearchPowerUser:
                     "code",
                     "--language",
                     "python",
+                    "--allow-fallback",
                 ],
                 capture_output=True,
                 text=True,

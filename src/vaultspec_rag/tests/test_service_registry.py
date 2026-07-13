@@ -770,6 +770,33 @@ class TestLeaseApi:
         finally:
             reg.close_all()
 
+    def test_try_evict_reports_busy_while_leased(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """try_evict refuses a leased slot and succeeds once the lease drops.
+
+        Deterministic replacement for the timing-flaky daemon-level
+        ``test_evict_busy_returns_busy``: a real lease pins ``ref_count`` above
+        zero for the duration of the ``with`` block, so the busy branch of
+        try_evict is exercised without racing a background search.
+        """
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        try:
+            with reg.lease(root):
+                evicted, reason = reg.try_evict(root)
+                assert evicted is False
+                assert reason == "busy"
+            # Lease released - the same evict now tears the slot down.
+            evicted, reason = reg.try_evict(root)
+            assert evicted is True
+            assert reason == "forced"
+            assert root not in reg._projects
+        finally:
+            reg.close_all()
+
     def test_lru_full_raises(
         self,
         embedding_model: EmbeddingModel,

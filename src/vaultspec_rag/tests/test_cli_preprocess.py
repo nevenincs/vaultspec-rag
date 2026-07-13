@@ -1,11 +1,12 @@
 """Unit tests for the ``preprocess`` CLI verb group (no GPU).
 
 Exercises the inspection verbs (``list`` / ``check`` / ``run-one``, D13) plus the
-trust-on-first-use surface (``trust`` / ``untrust`` / ``status`` and the
-``server start`` mode flags, index-drift-hardening ADR D7/D8) over a real tmp
-workspace with a real ``.vaultragpreprocess.toml`` and a real extractor script
-(no mocks). The trust store is isolated to a per-test status dir via
-``VAULTSPEC_RAG_STATUS_DIR`` because that is where the sidecar is written.
+amended ``status`` surface and the ``server start`` / ``index`` mode flags
+(preprocess-sandbox ADR D8) over a real tmp workspace with a real
+``.vaultragpreprocess.toml`` and a real extractor script (no mocks). The
+trust-on-first-use surface (the ``trust`` / ``untrust`` verbs and the trust
+store) was removed: rules resolve for any root, gated only by the ``off`` kill
+switch and (at the runner) the OS sandbox.
 """
 
 from __future__ import annotations
@@ -39,14 +40,13 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    """Isolate the trust store and default the mode for the inspection verbs.
+    """Isolate the status dir and resolve the on-sandbox default mode.
 
-    The trust store writes under the managed status dir, so it is isolated to a
-    per-test tmp path (``managed-singleton-paths-isolate-storage-dir-in-tests``
-    sibling). ``trust_all`` is the default here so ``list`` / ``run-one`` see a
-    root's rules without a per-root trust act - the tri-state equivalent of the
-    removed enable knob. Tests that exercise the default (TOFU) or off modes call
-    :func:`_default_mode` / :func:`_off_mode` to override.
+    The managed status dir is isolated to a per-test tmp path
+    (``managed-singleton-paths-isolate-storage-dir-in-tests`` sibling). Clearing
+    both mode env vars leaves the resolved mode at ``default``, so ``list`` /
+    ``run-one`` see a root's rules for any root - no per-root trust act. The
+    off-mode tests call :func:`_off_mode` to override.
     """
     status_dir = tmp_path / "status"
     status_dir.mkdir()
@@ -54,12 +54,12 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
     # mutate os.environ in-process by design (the short-lived CLI contract),
     # and monkeypatch does not track mutations made by the command under test,
     # so teardown must force-restore both keys or an ``off`` set by one test
-    # leaks into every later module (off wins over trust_all).
-    mode_keys = (EnvVar.PREPROCESS.value, EnvVar.PREPROCESS_TRUST_ALL.value)
+    # leaks into every later module (off wins over the default).
+    mode_keys = (EnvVar.PREPROCESS.value, EnvVar.PREPROCESS_UNSANDBOXED.value)
     snapshot = {key: os.environ.get(key) for key in mode_keys}
     monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(status_dir))
-    monkeypatch.setenv(EnvVar.PREPROCESS_TRUST_ALL.value, "1")
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
+    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     reset_config()
     try:
         yield
@@ -72,16 +72,9 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
         reset_config()
 
 
-def _default_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Switch the current test to the default (trust-on-first-use) mode."""
-    monkeypatch.delenv(EnvVar.PREPROCESS_TRUST_ALL.value, raising=False)
-    monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-    reset_config()
-
-
 def _off_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch the current test to the off (kill-switch) mode."""
-    monkeypatch.delenv(EnvVar.PREPROCESS_TRUST_ALL.value, raising=False)
+    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
     reset_config()
 
@@ -154,8 +147,6 @@ def _human_fields(output: str) -> dict[str, str]:
         ["preprocess", "list", "--help"],
         ["preprocess", "check", "--help"],
         ["preprocess", "run-one", "--help"],
-        ["preprocess", "trust", "--help"],
-        ["preprocess", "untrust", "--help"],
         ["preprocess", "status", "--help"],
     ],
 )
@@ -167,6 +158,13 @@ def test_preprocess_json_help_uses_script_language(argv: list[str]) -> None:
     assert "non-zero" not in result.output.lower()
     if argv[:2] == ["preprocess", "check"]:
         assert "report configuration problems" in result.output
+
+
+def test_trust_verbs_are_removed() -> None:
+    # The trust/untrust verbs were deleted (ADR D7); no such subcommands exist.
+    for verb in ("trust", "untrust"):
+        result = runner.invoke(app, ["preprocess", verb, "--help"])
+        assert result.exit_code != 0
 
 
 def test_list_empty(tmp_path: Path) -> None:
@@ -285,19 +283,12 @@ def test_run_one_matches_and_runs(tmp_path: Path) -> None:
     assert data["output"]["preprocessor_id"] == "fake"
 
 
-def test_run_one_human_output_uses_plain_result_language(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     _config_with_rule(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
-    # Trusted default mode: the loader runs the rules without the trust-all
-    # warning that would otherwise pollute the field-exact human output.
-    _default_mode(monkeypatch)
-    trust = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust", "--yes", "--json"]
-    )
-    assert trust.exit_code == 0, trust.output
+    # Default mode resolves the rules for any root - no trust act is needed, and
+    # no warning pollutes the field-exact human output.
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
     )
@@ -311,15 +302,43 @@ def test_run_one_human_output_uses_plain_result_language(
     }
 
 
-# --- trust-on-first-use: status ------------------------------------------------
-
-
-def test_status_untrusted_default_mode(
+def test_run_one_gated_off_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _workspace(tmp_path)
     _config_with_rule(root)
-    _default_mode(monkeypatch)
+    (root / "report.pdf").write_bytes(b"\x00\x01binary")
+    _off_mode(monkeypatch)
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Preprocessing is off" in result.output
+
+
+def test_run_one_gated_off_json_reports_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _workspace(tmp_path)
+    _config_with_rule(root)
+    (root / "report.pdf").write_bytes(b"\x00\x01binary")
+    _off_mode(monkeypatch)
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    data = _json(result.output)["data"]
+    assert data["matched"] is False
+    assert data["gated"] is True
+    assert data["mode"] == "off"
+
+
+# --- status --------------------------------------------------------------------
+
+
+def test_status_default_mode_reports_sandbox_and_would_run(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    _config_with_rule(root)
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
@@ -327,18 +346,17 @@ def test_status_untrusted_default_mode(
     data = _json(result.output)["data"]
     assert data["mode"] == "default"
     assert data["config_present"] is True
+    assert data["config_valid"] is True
     assert data["rule_count"] == 1
-    assert data["rule_set_hash"]
-    assert data["trust_record_present"] is False
-    assert data["trust_state"] == "absent"
-    assert data["would_run"] is False
+    assert data["sandbox_backend"]
+    assert data["would_run"] is True
+    # The removed trust surface must not resurface in the envelope.
+    assert "trust_state" not in data
+    assert "rule_set_hash" not in data
 
 
-def test_status_no_config_is_not_applicable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_no_config_reports_no_rules(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
-    _default_mode(monkeypatch)
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
@@ -346,7 +364,6 @@ def test_status_no_config_is_not_applicable(
     data = _json(result.output)["data"]
     assert data["config_present"] is False
     assert data["rule_count"] == 0
-    assert data["trust_state"] == "not_applicable"
     assert data["would_run"] is False
 
 
@@ -366,193 +383,14 @@ def test_status_off_mode_reports_off(
     assert data["would_run"] is False
 
 
-# --- trust-on-first-use: trust -------------------------------------------------
-
-
-def test_trust_yes_persists_and_status_matches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_human_output_reports_sandbox_line(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     _config_with_rule(root)
-    _default_mode(monkeypatch)
-
-    trust = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust", "--yes", "--json"]
-    )
-    assert trust.exit_code == 0, trust.output
-    tdata = _json(trust.output)["data"]
-    assert tdata["trusted"] is True
-    assert tdata["rule_count"] == 1
-    assert tdata["rule_set_hash"]
-    assert tdata["trusted_at"]
-    assert tdata["commands"][0]["pattern"] == "*.pdf"
-
-    status = runner.invoke(
-        app, ["--target", str(root), "preprocess", "status", "--json"]
-    )
-    assert status.exit_code == 0, status.output
-    sdata = _json(status.output)["data"]
-    assert sdata["trust_state"] == "match"
-    assert sdata["trusted_hash"] == tdata["rule_set_hash"]
-    assert sdata["would_run"] is True
-
-
-def test_trust_confirm_accepts_via_prompt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    _default_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust"], input="y\n"
-    )
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "status"])
     assert result.exit_code == 0, result.output
-    assert "Trusted 1 preprocess rule(s)" in result.output
-    # The reviewable command set is printed before the prompt.
-    assert "Files: *.pdf" in result.output
-    assert "run with your privileges" in result.output
-
-
-def test_trust_confirm_declined_does_not_persist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    _default_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust"], input="n\n"
-    )
-    assert result.exit_code == 1
-    assert "Trust cancelled." in result.output
-    status = runner.invoke(
-        app, ["--target", str(root), "preprocess", "status", "--json"]
-    )
-    assert _json(status.output)["data"]["trust_state"] == "absent"
-
-
-def test_trust_refuses_when_no_rules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _default_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust", "--yes", "--json"]
-    )
-    assert result.exit_code == 1
-    envelope = _json(result.output)
-    assert envelope["ok"] is False
-    assert envelope["error"] == "no-rules"
-
-
-def test_trust_json_requires_yes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    _default_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust", "--json"]
-    )
-    assert result.exit_code == 2
-    assert _json(result.output)["error"] == "json_requires_yes"
-
-
-def test_trust_then_run_one_executes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    (root / "report.pdf").write_bytes(b"\x00\x01binary")
-    _default_mode(monkeypatch)
-
-    # Untrusted: run-one reports the gated state with the trust remediation.
-    gated = runner.invoke(
-        app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
-    )
-    assert gated.exit_code == 0, gated.output
-    gdata = _json(gated.output)["data"]
-    assert gdata["matched"] is False
-    assert gdata["gated"] is True
-    assert gdata["mode"] == "default"
-
-    trust = runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust", "--yes", "--json"]
-    )
-    assert trust.exit_code == 0, trust.output
-
-    # Trusted: the same file now preprocesses.
-    ran = runner.invoke(
-        app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
-    )
-    assert ran.exit_code == 0, ran.output
-    rdata = _json(ran.output)["data"]
-    assert rdata["matched"] is True
-    assert rdata["status"] == "ok"
-
-
-def test_run_one_gated_human_message_names_trust_verb(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    (root / "report.pdf").write_bytes(b"\x00\x01binary")
-    _default_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
-    )
-    assert result.exit_code == 0, result.output
-    assert "not trusted" in result.output
-    assert "preprocess trust" in result.output
-
-
-def test_run_one_gated_off_message(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    (root / "report.pdf").write_bytes(b"\x00\x01binary")
-    _off_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
-    )
-    assert result.exit_code == 0, result.output
-    assert "Preprocessing is off" in result.output
-
-
-# --- trust-on-first-use: untrust -----------------------------------------------
-
-
-def test_untrust_removes_existing_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    _default_mode(monkeypatch)
-    runner.invoke(
-        app, ["--target", str(root), "preprocess", "trust", "--yes", "--json"]
-    )
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "untrust", "--json"]
-    )
-    assert result.exit_code == 0, result.output
-    assert _json(result.output)["data"]["removed"] is True
-    status = runner.invoke(
-        app, ["--target", str(root), "preprocess", "status", "--json"]
-    )
-    assert _json(status.output)["data"]["trust_state"] == "absent"
-
-
-def test_untrust_when_absent_reports_false(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _workspace(tmp_path)
-    _config_with_rule(root)
-    _default_mode(monkeypatch)
-    result = runner.invoke(
-        app, ["--target", str(root), "preprocess", "untrust", "--json"]
-    )
-    assert result.exit_code == 0, result.output
-    assert _json(result.output)["data"]["removed"] is False
+    assert "Preprocess mode: default" in result.output
+    assert "Sandbox:" in result.output
+    assert "Rules: 1" in result.output
 
 
 # --- server start mode flags ---------------------------------------------------
@@ -561,7 +399,7 @@ def test_untrust_when_absent_reports_false(
 def test_server_start_preprocess_flags_conflict() -> None:
     result = runner.invoke(
         app,
-        ["server", "start", "--no-preprocess", "--preprocess-trust-all", "--json"],
+        ["server", "start", "--no-preprocess", "--preprocess-unsandboxed", "--json"],
     )
     assert result.exit_code == 1
     envelope = _json(result.output)
@@ -572,22 +410,22 @@ def test_server_start_preprocess_flags_conflict() -> None:
 def test_child_env_forwards_no_preprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # An inherited trust-all must be overridden by the forwarded off flag.
-    monkeypatch.setenv(EnvVar.PREPROCESS_TRUST_ALL.value, "1")
+    # An inherited unsandboxed must be overridden by the forwarded off flag.
+    monkeypatch.setenv(EnvVar.PREPROCESS_UNSANDBOXED.value, "1")
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
     env = _service_child_env(preprocess_mode="off")
     assert env[EnvVar.PREPROCESS.value] == "off"
-    assert EnvVar.PREPROCESS_TRUST_ALL.value not in env
+    assert EnvVar.PREPROCESS_UNSANDBOXED.value not in env
 
 
-def test_child_env_forwards_trust_all(
+def test_child_env_forwards_unsandboxed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # An inherited off must be overridden by the forwarded trust-all flag.
+    # An inherited off must be overridden by the forwarded unsandboxed flag.
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-    monkeypatch.delenv(EnvVar.PREPROCESS_TRUST_ALL.value, raising=False)
-    env = _service_child_env(preprocess_mode="trust_all")
-    assert env[EnvVar.PREPROCESS_TRUST_ALL.value] == "1"
+    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
+    env = _service_child_env(preprocess_mode="unsandboxed")
+    assert env[EnvVar.PREPROCESS_UNSANDBOXED.value] == "1"
     assert EnvVar.PREPROCESS.value not in env
 
 
@@ -596,7 +434,7 @@ def test_child_env_leaves_operator_preprocess_env_untouched(
 ) -> None:
     # No flag: an operator-set preprocess env survives into the daemon.
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-    monkeypatch.delenv(EnvVar.PREPROCESS_TRUST_ALL.value, raising=False)
+    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     env = _service_child_env(preprocess_mode=None)
     assert env[EnvVar.PREPROCESS.value] == "off"
 
@@ -606,6 +444,14 @@ def test_removed_enable_knob_is_gone() -> None:
     # so no code path can read or write VAULTSPEC_RAG_PREPROCESS_ENABLED.
     assert not hasattr(EnvVar, "PREPROCESS_ENABLED")
     assert all(member.value != "VAULTSPEC_RAG_PREPROCESS_ENABLED" for member in EnvVar)
+
+
+def test_removed_trust_all_knob_is_gone() -> None:
+    # The retired trust-all knob must not resurface (ADR D8).
+    assert not hasattr(EnvVar, "PREPROCESS_TRUST_ALL")
+    assert all(
+        member.value != "VAULTSPEC_RAG_PREPROCESS_TRUST_ALL" for member in EnvVar
+    )
 
 
 # --- index verb mode flags -----------------------------------------------------
@@ -622,7 +468,7 @@ def test_index_preprocess_flags_conflict(tmp_path: Path) -> None:
             "--type",
             "code",
             "--no-preprocess",
-            "--preprocess-trust-all",
+            "--preprocess-unsandboxed",
             "--json",
         ],
     )
@@ -658,14 +504,14 @@ def test_index_preprocess_flag_warns_when_service_targeted(tmp_path: Path) -> No
 def test_apply_preprocess_env_off_selects_off_mode() -> None:
     _apply_preprocess_env("off")
     assert os.environ[EnvVar.PREPROCESS.value] == "off"
-    assert EnvVar.PREPROCESS_TRUST_ALL.value not in os.environ
+    assert EnvVar.PREPROCESS_UNSANDBOXED.value not in os.environ
     reset_config()
     assert get_config().preprocess_mode == "off"
 
 
-def test_apply_preprocess_env_trust_all_selects_trust_all_mode() -> None:
-    _apply_preprocess_env("trust_all")
-    assert os.environ[EnvVar.PREPROCESS_TRUST_ALL.value] == "1"
+def test_apply_preprocess_env_unsandboxed_selects_unsandboxed_mode() -> None:
+    _apply_preprocess_env("unsandboxed")
+    assert os.environ[EnvVar.PREPROCESS_UNSANDBOXED.value] == "1"
     assert EnvVar.PREPROCESS.value not in os.environ
     reset_config()
-    assert get_config().preprocess_mode == "trust_all"
+    assert get_config().preprocess_mode == "unsandboxed"

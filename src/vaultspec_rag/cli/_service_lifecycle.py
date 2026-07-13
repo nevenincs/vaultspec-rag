@@ -309,41 +309,43 @@ def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
 def _resolve_preprocess_forward(
     *,
     no_preprocess: bool,
-    preprocess_trust_all: bool,
+    preprocess_unsandboxed: bool,
     json_mode: bool,
-) -> Literal["off", "trust_all"] | None:
+) -> Literal["off", "unsandboxed"] | None:
     """Resolve the two preprocess flags into the value forwarded to the daemon.
 
-    The flags are mutually exclusive (ADR D7); passing both is a hard start
-    failure. ``--no-preprocess`` forwards ``off`` and ``--preprocess-trust-all``
-    forwards ``trust_all``; neither leaves the daemon inheriting the operator's
+    The flags are mutually exclusive (ADR D8); passing both is a hard start
+    failure. ``--no-preprocess`` forwards ``off`` and ``--preprocess-unsandboxed``
+    forwards ``unsandboxed``; neither leaves the daemon inheriting the operator's
     preprocess env untouched.
     """
-    if no_preprocess and preprocess_trust_all:
+    if no_preprocess and preprocess_unsandboxed:
         raise _fail_start(
             json_mode,
             error="preprocess_flags_conflict",
             message="Service start failed",
             human_lines=(
-                "--no-preprocess and --preprocess-trust-all cannot be combined.",
+                "--no-preprocess and --preprocess-unsandboxed cannot be combined.",
                 "Pass at most one.",
             ),
         )
     if no_preprocess:
         return "off"
-    if preprocess_trust_all:
-        return "trust_all"
+    if preprocess_unsandboxed:
+        return "unsandboxed"
     return None
 
 
 def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
-    """Print a best-effort notice about the target root's preprocess trust state.
+    """Print a best-effort notice about the target root's preprocess rules.
 
     Operator visibility (ADR D8): when the resolved root defines preprocess
-    rules, say whether they will run under the effective mode and, when they
-    will not, name the remediation verb. Never raises - a missing or invalid
-    config simply yields no notice. Imports are function-local so this stays off
-    the module import path (the CLI service-control surface stays torch-free).
+    rules, say whether they will run under the effective mode. Rules run for any
+    root under the sandbox; the ``off`` kill switch skips them and
+    ``unsandboxed`` runs them without containment. Never raises - a missing or
+    invalid config simply yields no notice. Imports are function-local so this
+    stays off the module import path (the CLI service-control surface stays
+    torch-free).
     """
     from ..indexer._preprocess_config import (
         PREPROCESS_CONFIG_FILENAME,
@@ -367,23 +369,14 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
             f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
         )
         return
-    if effective_mode == "trust_all":
+    if effective_mode == "unsandboxed":
         _print_lifecycle_lines(
-            f"Preprocess: {count} {word} at {root} will run WITHOUT a trust check "
-            "(trust-all mode)."
-        )
-        return
-
-    from ..indexer._preprocess_trust import hash_rule_set, is_trusted
-
-    if is_trusted(root, hash_rule_set(rules)):
-        _print_lifecycle_lines(
-            f"Preprocess: {count} trusted {word} at {root} will run."
+            f"Preprocess: {count} {word} at {root} will run WITHOUT a sandbox "
+            "(unsandboxed mode)."
         )
         return
     _print_lifecycle_lines(
-        f"Preprocess: {count} {word} at {root} are not trusted and will be skipped.",
-        f"Trust them with: vaultspec-rag preprocess trust {root}",
+        f"Preprocess: {count} {word} at {root} will run under the sandbox."
     )
 
 
@@ -472,20 +465,19 @@ def service_start(
             help=(
                 "Kill switch: the service loads no document-preprocessing rules "
                 "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). Mutually "
-                "exclusive with --preprocess-trust-all."
+                "exclusive with --preprocess-unsandboxed."
             ),
         ),
     ] = False,
-    preprocess_trust_all: Annotated[
+    preprocess_unsandboxed: Annotated[
         bool,
         typer.Option(
-            "--preprocess-trust-all",
+            "--preprocess-unsandboxed",
             help=(
-                "Run every root's preprocess rules without the per-root "
-                "trust-on-first-use check (forwards "
-                "VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1). Every root's commands "
-                "execute with your privileges. Mutually exclusive with "
-                "--no-preprocess."
+                "Run every root's preprocess rules without a sandbox (forwards "
+                "VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1). Dangerous escape hatch "
+                "for a backend-less host; every root's commands execute with "
+                "your privileges. Mutually exclusive with --no-preprocess."
             ),
         ),
     ] = False,
@@ -505,7 +497,7 @@ def service_start(
     """Start the background search service."""
     preprocess_forward = _resolve_preprocess_forward(
         no_preprocess=no_preprocess,
-        preprocess_trust_all=preprocess_trust_all,
+        preprocess_unsandboxed=preprocess_unsandboxed,
         json_mode=json_mode,
     )
     # Idempotent check FIRST: a healthy owned service already running is a

@@ -31,19 +31,19 @@ from ._service_status import _default_service_port
 def _resolve_index_preprocess(
     *,
     no_preprocess: bool,
-    preprocess_trust_all: bool,
+    preprocess_unsandboxed: bool,
     json_mode: bool,
-) -> Literal["off", "trust_all"] | None:
-    """Resolve the two preprocess flags for an in-process index run (ADR D7).
+) -> Literal["off", "unsandboxed"] | None:
+    """Resolve the two preprocess flags for an in-process index run (ADR D8).
 
     The flags are mutually exclusive - matching ``server start`` - so passing
     both is a usage error. ``--no-preprocess`` selects ``off`` and
-    ``--preprocess-trust-all`` selects ``trust_all``; neither leaves the run on
-    the operator's ambient preprocess mode.
+    ``--preprocess-unsandboxed`` selects ``unsandboxed``; neither leaves the run
+    on the operator's ambient preprocess mode.
     """
-    if no_preprocess and preprocess_trust_all:
+    if no_preprocess and preprocess_unsandboxed:
         message = (
-            "--no-preprocess and --preprocess-trust-all cannot be combined; "
+            "--no-preprocess and --preprocess-unsandboxed cannot be combined; "
             "pass at most one."
         )
         if json_mode:
@@ -52,13 +52,13 @@ def _resolve_index_preprocess(
         raise typer.Exit(code=2)
     if no_preprocess:
         return "off"
-    if preprocess_trust_all:
-        return "trust_all"
+    if preprocess_unsandboxed:
+        return "unsandboxed"
     return None
 
 
 def _warn_preprocess_flag_ignored_when_delegating(
-    mode: Literal["off", "trust_all"],
+    mode: Literal["off", "unsandboxed"],
     json_mode: bool,
 ) -> None:
     """Warn loudly that a preprocess flag does not apply to a delegated run.
@@ -70,7 +70,7 @@ def _warn_preprocess_flag_ignored_when_delegating(
     D7). Emitted through the logger (so it survives ``--json`` on stderr) and,
     in human mode, printed as a visible ``Warning:`` line.
     """
-    server_flag = "--no-preprocess" if mode == "off" else "--preprocess-trust-all"
+    server_flag = "--no-preprocess" if mode == "off" else "--preprocess-unsandboxed"
     message = (
         f"{server_flag} does not apply to a delegated index run: the running "
         "service preprocesses under the mode it was started with, and this run "
@@ -81,7 +81,7 @@ def _warn_preprocess_flag_ignored_when_delegating(
         _cli.console.print(f"Warning: {message}", markup=False, highlight=False)
 
 
-def _apply_preprocess_env(mode: Literal["off", "trust_all"]) -> None:
+def _apply_preprocess_env(mode: Literal["off", "unsandboxed"]) -> None:
     """Set the tri-state preprocess env for the in-process run about to begin.
 
     The ``preprocess_mode`` config property reads these env vars live, so
@@ -91,9 +91,9 @@ def _apply_preprocess_env(mode: Literal["off", "trust_all"]) -> None:
     """
     if mode == "off":
         os.environ[EnvVar.PREPROCESS.value] = "off"
-        os.environ.pop(EnvVar.PREPROCESS_TRUST_ALL.value, None)
+        os.environ.pop(EnvVar.PREPROCESS_UNSANDBOXED.value, None)
     else:
-        os.environ[EnvVar.PREPROCESS_TRUST_ALL.value] = "1"
+        os.environ[EnvVar.PREPROCESS_UNSANDBOXED.value] = "1"
         os.environ.pop(EnvVar.PREPROCESS.value, None)
 
 
@@ -510,20 +510,20 @@ def handle_index(
                 "Load no document-preprocessing rules for this in-process index "
                 "run (VAULTSPEC_RAG_PREPROCESS=off). Applies to in-process "
                 "indexing only; a running service uses the preprocess mode it "
-                "was started with. Mutually exclusive with --preprocess-trust-all."
+                "was started with. Mutually exclusive with --preprocess-unsandboxed."
             ),
         ),
     ] = False,
-    preprocess_trust_all: Annotated[
+    preprocess_unsandboxed: Annotated[
         bool,
         typer.Option(
-            "--preprocess-trust-all",
+            "--preprocess-unsandboxed",
             help=(
-                "Run every root's preprocess rules for this in-process index run "
-                "without the per-root trust check "
-                "(VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1). Applies to in-process "
-                "indexing only; a running service uses the preprocess mode it "
-                "was started with. Mutually exclusive with --no-preprocess."
+                "Run this in-process index run's preprocess rules without a "
+                "sandbox (VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1). Dangerous; "
+                "for backend-less hosts. Applies to in-process indexing only; a "
+                "running service uses the preprocess mode it was started with. "
+                "Mutually exclusive with --no-preprocess."
             ),
         ),
     ] = False,
@@ -550,7 +550,7 @@ def handle_index(
 
     preprocess_forward = _resolve_index_preprocess(
         no_preprocess=no_preprocess,
-        preprocess_trust_all=preprocess_trust_all,
+        preprocess_unsandboxed=preprocess_unsandboxed,
         json_mode=json_mode,
     )
 

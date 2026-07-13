@@ -183,11 +183,21 @@ class PreprocessContext:
         config: The resolved per-root preprocess rules.
         cache_root: The preprocess output cache root.
         max_emitted_bytes: The emitted-text length cap (D10).
+        project_root: The project root; granted read-only to the sandboxed hook
+            so a ``command``/``entry_point`` that imports its own module tree can
+            read it (preprocess-sandbox ADR D2).
+        server_mode: ``True`` when the resident service runs the hook, selecting
+            the fail-closed sandbox policy (ADR D6).
+        unsandboxed: ``True`` when the operator opted out of OS containment via
+            ``VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED`` (ADR D8).
     """
 
     config: PreprocessConfig
     cache_root: pathlib.Path
     max_emitted_bytes: int
+    project_root: pathlib.Path
+    server_mode: bool
+    unsandboxed: bool
 
 
 def load_preprocess_rules(
@@ -202,25 +212,23 @@ def load_preprocess_rules(
     :class:`PreprocessConfigError` on the first defect and backs the
     ``preprocess check`` CLI verb.
 
-    After resolution, the non-strict path enforces the tri-state preprocess
-    mode and trust-on-first-use gate (index-drift-hardening ADR D4/D6): ``off``
-    returns zero rules; ``trust_all`` returns the rules with a loud warning that
-    trust checking is bypassed; ``default`` returns the rules only when the
-    resolved-rule-set hash matches this root's trust record, else zero rules
-    plus a loud, actionable warning naming the ``preprocess trust`` verb. The
-    loader and the spawn worker never prompt - trust is granted only via the
-    CLI. ``strict=True`` bypasses this gate so ``preprocess check`` validates
-    the config regardless of trust.
+    After resolution, the non-strict path enforces only the tri-state
+    preprocess kill switch (preprocess-sandbox ADR D7/D8): ``off`` returns zero
+    rules; ``default`` and ``unsandboxed`` return the resolved rules for any
+    root, because containment - the OS sandbox at the runner - is the security
+    boundary, not per-root consent, so no trust check gates execution.
+    ``strict=True`` bypasses even the kill switch so ``preprocess check``
+    validates the config regardless of the host's mode.
 
     Args:
         root_dir: The project root to resolve the config from.
         strict: When ``True``, raise on any parse or rule defect instead of
-            warning and degrading, and bypass the mode/trust gate.
+            warning and degrading, and bypass the mode gate.
 
     Returns:
         A :class:`PreprocessConfig`; empty when the file is absent, malformed
-        (non-strict), carries no valid rules, or is gated off by the mode/trust
-        enforcement.
+        (non-strict), carries no valid rules, or is gated off by the ``off``
+        kill switch.
 
     Raises:
         PreprocessConfigError: Only when ``strict`` is ``True`` and the config
@@ -280,43 +288,39 @@ def load_preprocess_rules(
 
     # Strict mode backs the ``preprocess check`` CLI verb: it validates the
     # config file itself and must report defects regardless of the host's
-    # preprocess mode or a root's trust state, so it never passes through the
-    # tri-state/TOFU gate.
+    # preprocess mode, so it never passes through the kill-switch gate.
     if strict:
         return resolved
 
-    return _enforce_preprocess_mode(root_dir, resolved, config_file)
+    return _enforce_preprocess_mode(resolved, config_file)
 
 
 def _enforce_preprocess_mode(
-    root_dir: pathlib.Path,
     config: PreprocessConfig,
     config_file: pathlib.Path,
 ) -> PreprocessConfig:
-    """Apply the tri-state mode and TOFU gate to a resolved config (ADR D6).
+    """Apply the ``off`` kill switch to a resolved config (ADR D7/D8).
 
-    The trust check runs project-defined commands only after an operator has
-    trusted this root's exact resolved rule set (untrusted-repo RCE, audit C1).
-    An empty config needs no gating and is returned as-is. The imports are
-    function-local so the module stays cheap to import from the spawn worker.
+    Rules resolve for any root: the OS sandbox at the runner is the security
+    boundary, not per-root consent, so no trust check gates execution here. The
+    sole gate the loader still applies is the ``off`` kill switch. An empty
+    config needs no gating and is returned as-is. The import is function-local
+    so the module stays cheap to import from the spawn worker.
 
     Args:
-        root_dir: The project root, used to key the trust store.
         config: The resolved rules (empty when the file carried none).
         config_file: The config path, for actionable log messages.
 
     Returns:
-        ``config`` when the mode/trust gate admits it, else an empty
+        ``config`` when preprocessing is not switched off, else an empty
         :class:`PreprocessConfig`.
     """
     if not config:
         return config
 
     from ..config import get_config
-    from . import _preprocess_trust
 
-    mode = get_config().preprocess_mode
-    if mode == "off":
+    if get_config().preprocess_mode == "off":
         logger.debug(
             "%s at %s defines %d rule(s) but preprocess_mode is 'off'; "
             "skipping all rules",
@@ -326,34 +330,7 @@ def _enforce_preprocess_mode(
         )
         return PreprocessConfig([])
 
-    if mode == "trust_all":
-        logger.warning(
-            "preprocess_mode is 'trust_all': running %d rule(s) from %s WITHOUT "
-            "a trust check - every root's preprocess commands execute with your "
-            "privileges. Unset VAULTSPEC_RAG_PREPROCESS_TRUST_ALL to restore "
-            "per-root trust-on-first-use.",
-            len(config.rules),
-            config_file,
-        )
-        return config
-
-    # default: trust-on-first-use. Re-hash the resolved set at every load so a
-    # changed rule set reverts to untrusted (no trust/execution TOCTOU).
-    rule_set_hash = _preprocess_trust.hash_rule_set(config.rules)
-    if _preprocess_trust.is_trusted(root_dir, rule_set_hash):
-        return config
-
-    logger.warning(
-        "%s at %s defines %d preprocess rule(s) but this root is not trusted; "
-        "its rules are skipped and no files are preprocessed. Review the "
-        "commands and trust this root with `vaultspec-rag preprocess trust %s` "
-        "(they run with your privileges).",
-        PREPROCESS_CONFIG_FILENAME,
-        config_file,
-        len(config.rules),
-        root_dir,
-    )
-    return PreprocessConfig([])
+    return config
 
 
 class _RuleRejectedError(Exception):
