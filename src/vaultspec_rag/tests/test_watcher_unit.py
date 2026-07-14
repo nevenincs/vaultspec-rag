@@ -5,8 +5,9 @@ control files must be admitted as ordinary code changes so the indexer-side
 config-epoch check can observe the drift and self-escalate; non-vault markdown
 must be admitted because the chunker's language map indexes it. A file whose
 extension is unsupported but matched by a resolved preprocess rule must also be
-admitted, and - since the trust store was removed (preprocess-sandbox ADR
-D7/D9) - that resolution now happens for any root with no trust record.
+admitted, and - since a root's preprocess config is repo-authored code
+(preprocess-sandbox-removal ADR) - that resolution happens for any root with no
+trust record.
 """
 
 from collections.abc import Iterator
@@ -37,9 +38,9 @@ def _default_preprocess_mode(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    """Resolve the on-sandbox ``default`` mode with an isolated status dir.
+    """Resolve the ``default`` mode with an isolated status dir.
 
-    Clearing both mode env vars leaves the resolved preprocess mode at
+    Clearing the mode env var leaves the resolved preprocess mode at
     ``default``, which resolves a root's rules with no trust act - the
     condition the S11 regression asserts. The status dir is isolated per the
     managed-singleton rule.
@@ -47,7 +48,6 @@ def _default_preprocess_mode(  # pyright: ignore[reportUnusedFunction]
     status = tmp_path_factory.mktemp("watcher_status")
     monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(status))
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     reset_config()
     try:
         yield

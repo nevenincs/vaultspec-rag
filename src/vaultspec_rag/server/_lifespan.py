@@ -315,6 +315,12 @@ async def _start_components() -> list[asyncio.Task[None]]:
     tasks = [heartbeat_task]
     if get_config().effective_server_mode() and bool(get_config().storage_autoprune):
         tasks.append(asyncio.create_task(_m._maintenance_loop()))
+    # Survey snapshot warmer: server-mode only, but deliberately NOT gated on
+    # the autoprune knob - the /storage/survey route serves from the snapshot
+    # regardless of whether scheduled reclamation is enabled. One-shot and
+    # read-only; a failure leaves the route on its fresh-compute fallback.
+    if get_config().effective_server_mode():
+        tasks.append(asyncio.create_task(_m._survey_warmup_task()))
 
     return tasks
 

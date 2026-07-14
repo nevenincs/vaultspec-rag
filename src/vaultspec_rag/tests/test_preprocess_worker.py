@@ -65,8 +65,6 @@ def _context(tmp_path: Path, pattern: str = "*.pdf") -> PreprocessContext:
         cache_root=preprocess_cache_dir(tmp_path),
         max_emitted_bytes=1024 * 1024,
         project_root=tmp_path,
-        server_mode=False,
-        unsandboxed=True,
     )
 
 
@@ -77,8 +75,8 @@ def test_chunk_file_produces_preproc_chunks(tmp_path: Path) -> None:
     chunks = _chunk_worker.chunk_file(source, tmp_path, prep)
     assert len(chunks) == 2
     assert chunks[0].content == "first page body"
-    # The hook reads the staged copy (same basename) under the sandbox, so the
-    # anchor it echoes ends with the staged file's name, not the original path.
+    # The hook reads the original source path, so the anchor it echoes ends with
+    # the real file's name.
     assert chunks[0].anchor is not None
     assert chunks[0].anchor.endswith("report.pdf#page=1")
     assert chunks[0].locator_kind == "page"

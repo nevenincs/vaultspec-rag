@@ -1399,7 +1399,7 @@ class TestReindexPreprocessPreflight:
 
     The route returns ``queued`` before the background job runs, so a
     non-interactive client cannot otherwise tell whether the root's
-    document-preprocessing hooks will fire (preprocess-sandbox ADR D9). The
+    document-preprocessing hooks will fire (preprocess-hooks ADR D9). The
     response now carries a ``preprocess`` pre-flight object mirroring the
     ``server start`` operator notice.
 
@@ -1432,7 +1432,7 @@ class TestReindexPreprocessPreflight:
     def _write_config(root: Path) -> None:
         (root / ".vault").mkdir(parents=True)
         (root / ".vaultragpreprocess.toml").write_text(
-            'version = 1\n\n[[rule]]\n'
+            "version = 1\n\n[[rule]]\n"
             'pattern = "*.pdf"\n'
             'command = "extract {path}"\n'
             'on_error = "skip"\n',
@@ -1462,9 +1462,7 @@ class TestReindexPreprocessPreflight:
         mod._http_mode = True
         mod._SERVICE_TOKEN = self._TOKEN
         try:
-            client: httpx.Client = cast(
-                "httpx.Client", TestClient(self._make_app())
-            )
+            client: httpx.Client = cast("httpx.Client", TestClient(self._make_app()))
             resp: httpx.Response = client.post(
                 "/reindex",
                 json={"type": "code", "project_root": str(root)},
@@ -1483,7 +1481,6 @@ class TestReindexPreprocessPreflight:
         self._write_config(root)
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
         monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-        monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
         reset_config()
         try:
             data = self._post_reindex(root, monkeypatch)
@@ -1503,7 +1500,6 @@ class TestReindexPreprocessPreflight:
         self._write_config(root)
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
         monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-        monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
         reset_config()
         try:
             data = self._post_reindex(root, monkeypatch)
@@ -1524,7 +1520,6 @@ class TestReindexPreprocessPreflight:
         (root / ".vault").mkdir(parents=True)
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
         monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-        monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
         reset_config()
         try:
             data = self._post_reindex(root, monkeypatch)

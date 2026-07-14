@@ -418,23 +418,14 @@ class CodebaseIndexer:
         config = self._build_preprocess_rules()
         if not config:
             return None
-        import os
-
-        from ..config import EnvVar, get_config
+        from ..config import get_config
 
         cfg = get_config()
-        # Fail-closed applies to the resident daemon serving non-interactive
-        # clients, identified by the marker its own env carries - NOT by the
-        # storage backend, which would misclassify a --local-only daemon as an
-        # interactive CLI and let its hooks run unsandboxed.
-        server_mode = bool(os.environ.get(EnvVar.SERVICE_DAEMON.value))
         return PreprocessContext(
             config=config,
             cache_root=preprocess_cache_dir(self._data_root),
             max_emitted_bytes=int(cfg.preprocess_max_emitted_bytes),
             project_root=self.root_dir,
-            server_mode=server_mode,
-            unsandboxed=cfg.preprocess_mode == "unsandboxed",
         )
 
     def _begin_preprocess_run(self) -> None:

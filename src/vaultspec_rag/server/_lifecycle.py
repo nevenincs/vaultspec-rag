@@ -16,7 +16,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from ..storage_ops import MaintenanceResult
 
 __all__ = [
     "_heartbeat_loop",
@@ -29,6 +32,8 @@ __all__ = [
     "_resolve_log_path",
     "_status_file_path",
     "_storage_maintenance_tick_sync",
+    "_storage_survey_warm_sync",
+    "_survey_warmup_task",
     "_unlink_status_file_silently",
 ]
 
@@ -340,10 +345,11 @@ def _storage_maintenance_tick_sync() -> None:
     )
     url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
     client = QdrantClient(url=url)
+    now = datetime.now(UTC)
     try:
         result = run_maintenance_cycle(
             client,
-            now=datetime.now(UTC),
+            now=now,
             policy=policy,
             storage_dir=collections_dir if collections_dir.is_dir() else None,
             snapshots_dir=snapshots_dir,
@@ -354,6 +360,8 @@ def _storage_maintenance_tick_sync() -> None:
         raise
     finally:
         client.close()
+
+    _publish_survey_from_cycle(result, now.isoformat())
 
     import shutil
 
@@ -421,6 +429,85 @@ def _storage_maintenance_tick_sync() -> None:
 # under a few collections' worth of headroom is one index away from
 # opaque server-side write failures.
 _DISK_FREE_WARN_BYTES = 10 * 1024**3
+
+
+def _publish_survey_from_cycle(result: MaintenanceResult, now_iso: str) -> None:
+    """Publish a maintenance cycle's survey as the daemon's snapshot.
+
+    Makes the ``/storage/survey`` route O(1) instead of re-walking every
+    collection footprint. Prefixes the cycle just removed are dropped so the
+    snapshot never advertises a namespace that no longer exists.
+    """
+    from ._state import publish_survey_snapshot
+
+    reclaimed_prefixes = {
+        d.prefix
+        for d in result.decisions
+        if d.action in ("removed", "archived_removed")
+    }
+    publish_survey_snapshot(
+        [s for s in result.surveys if s.prefix not in reclaimed_prefixes],
+        computed_at=now_iso,
+    )
+
+
+def _storage_survey_warm_sync() -> None:
+    """Gather one read-only survey and publish it as the snapshot.
+
+    Runs once shortly after startup so the survey route is warm from the
+    daemon's first minutes instead of waiting a full maintenance interval
+    (whose first run is deliberately delayed). Pure storage IO: no grace
+    stamps advance, nothing is reclaimed, the GPU is never touched. Skips
+    silently outside server mode.
+    """
+    from qdrant_client import QdrantClient
+
+    from ..config import get_config
+    from ..storage_ops import gather_survey, server_storage_collections_dir
+
+    cfg = get_config()
+    if not cfg.effective_server_mode():
+        return
+    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    client = QdrantClient(url=url)
+    try:
+        surveys = gather_survey(client, server_storage_collections_dir())
+    finally:
+        client.close()
+    from datetime import UTC, datetime
+
+    from ._state import publish_survey_snapshot
+
+    publish_survey_snapshot(surveys, computed_at=datetime.now(UTC).isoformat())
+
+
+# Small startup delay before the one-shot survey warmup: lets the supervised
+# qdrant child finish settling and keeps the walk off the critical startup
+# path, while still warming the cache long before the first maintenance
+# interval elapses.
+_SURVEY_WARMUP_DELAY_SECONDS = 5.0
+
+
+async def _survey_warmup_task() -> None:
+    """One-shot startup warmer for the survey snapshot; crash-proof."""
+    try:
+        await asyncio.sleep(_SURVEY_WARMUP_DELAY_SECONDS)
+        from ._state import survey_snapshot
+
+        # The warmer only fills a cold slot: if a fresh route call or an
+        # early maintenance cycle already published, keep that snapshot.
+        if survey_snapshot() is None:
+            await asyncio.to_thread(_m._storage_survey_warm_sync)
+    except asyncio.CancelledError:
+        return
+    except Exception:  # warmup is best-effort; the route falls back to fresh
+        log_event(
+            logger,
+            "service.maintenance",
+            "survey_warmup_failed",
+            severity=logging.WARNING,
+            exc_info=True,
+        )
 
 
 async def _maintenance_loop() -> None:

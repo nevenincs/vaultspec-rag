@@ -66,20 +66,16 @@ def _run(
     *,
     max_emitted_bytes: int,
 ) -> PreprocessResult:
-    """Invoke the runner in local, unsandboxed mode (deterministic bounds path).
+    """Invoke the runner directly against the original source path.
 
-    The sandboxed AppContainer path is proven separately in
-    ``test_hook_sandbox``; here we exercise the runner's timeout, exit-code,
-    JSON, and cap logic under the curated-env + staged-cwd default_popen path,
-    which is backend-agnostic.
+    The hook runs as a bounded, curated subprocess grandchild with the project
+    root as cwd; here we exercise its timeout, exit-code, JSON, and cap logic.
     """
     return run_preprocessor(
         source,
         rule,
         max_emitted_bytes=max_emitted_bytes,
         project_root=source.parent,
-        server_mode=False,
-        unsandboxed=True,
     )
 
 
@@ -138,10 +134,35 @@ def test_success_returns_validated_output(tmp_path: Path) -> None:
     assert result.output.units[0].locator.value == 1
 
 
-def test_staged_paths_are_remapped_to_the_real_source(tmp_path: Path) -> None:
-    # The hook echoes its input path (the staged copy) into source_path and the
-    # unit anchor. Deep links must reference the real file, not the ephemeral
-    # scratch dir, so the runner remaps staged -> original after validation.
+_CWD_PROBE_BODY = """
+    import json, os
+    print(json.dumps({
+        "schema_version": 1,
+        "preprocessor_id": "cwd-probe",
+        "preprocessor_version": "1.0",
+        "source_path": os.getcwd(),
+        "text": "",
+    }))
+"""
+
+
+def test_hook_runs_with_the_project_root_as_cwd(tmp_path: Path) -> None:
+    # Project-launcher hook commands (uv run, npm exec, make) resolve their
+    # project from the cwd, so the child runs with the project root as its
+    # working directory - the same directory a hook author validates from with
+    # preprocess run-one.
+    script = _script(tmp_path, _CWD_PROBE_BODY)
+    source = tmp_path / "doc.bin"
+    source.write_bytes(b"x")
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
+    assert result.output is not None
+    assert Path(result.output.source_path or "") == tmp_path
+
+
+def test_hook_receives_the_original_source_path(tmp_path: Path) -> None:
+    # With staging removed the hook is handed the ORIGINAL source path as its
+    # argv operand and echoes it into source_path and the unit anchor, so deep
+    # links reference the real file directly - no scratch copy, no remap.
     script = _script(tmp_path, _SUCCESS_BODY)
     source = tmp_path / "report.bin"
     source.write_bytes(b"\x00\x01binary")
@@ -189,9 +210,7 @@ def test_timeout_is_skipped(tmp_path: Path) -> None:
     script = _script(tmp_path, "import time\ntime.sleep(5)\n")
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = _run(
-        source, _rule(script, timeout_s=0.5), max_emitted_bytes=_CAP
-    )
+    result = _run(source, _rule(script, timeout_s=0.5), max_emitted_bytes=_CAP)
     assert result.status == "skipped"
     assert result.reason is not None
     assert "timed out" in result.reason
@@ -243,9 +262,7 @@ def test_on_error_passthrough_returns_passthrough(tmp_path: Path) -> None:
     script = _script(tmp_path, "import sys\nsys.exit(1)\n")
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
-    result = _run(
-        source, _rule(script, on_error="passthrough"), max_emitted_bytes=_CAP
-    )
+    result = _run(source, _rule(script, on_error="passthrough"), max_emitted_bytes=_CAP)
     assert result.status == "passthrough"
     assert result.output is None
 
@@ -257,8 +274,8 @@ def test_path_with_spaces_is_passed_as_single_arg(tmp_path: Path) -> None:
     result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.status == "ok"
     assert result.output is not None
-    # The hook receives the staged copy, whose basename preserves the spaces;
-    # a single argv element (not split on the spaces) proves the path was passed
-    # intact through shlex token-wise substitution.
+    # A single argv element (not split on the spaces) proves the path was passed
+    # intact through shlex token-wise substitution; the hook echoes the full
+    # original path back.
     assert result.output.source_path is not None
-    assert result.output.source_path.endswith("a doc with spaces.bin")
+    assert result.output.source_path == str(source)

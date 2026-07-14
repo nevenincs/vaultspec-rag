@@ -176,8 +176,6 @@ def preprocess_file(
         rule,
         max_emitted_bytes=prep.max_emitted_bytes,
         project_root=prep.project_root,
-        server_mode=prep.server_mode,
-        unsandboxed=prep.unsandboxed,
     )
     if result.status == "ok" and result.output is not None:
         write_cached_output(prep.cache_root, content_hash, cache_token, result.output)

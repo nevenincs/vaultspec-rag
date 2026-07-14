@@ -1,12 +1,11 @@
 """Unit tests for the ``preprocess`` CLI verb group (no GPU).
 
 Exercises the inspection verbs (``list`` / ``check`` / ``run-one``, D13) plus the
-amended ``status`` surface and the ``server start`` / ``index`` mode flags
-(preprocess-sandbox ADR D8) over a real tmp workspace with a real
-``.vaultragpreprocess.toml`` and a real extractor script (no mocks). The
-trust-on-first-use surface (the ``trust`` / ``untrust`` verbs and the trust
-store) was removed: rules resolve for any root, gated only by the ``off`` kill
-switch and (at the runner) the OS sandbox.
+amended ``status`` surface and the ``server start`` / ``index`` ``--no-preprocess``
+flag over a real tmp workspace with a real ``.vaultragpreprocess.toml`` and a real
+extractor script (no mocks). The OS sandbox and its ``--preprocess-unsandboxed``
+escape hatch were removed (preprocess-sandbox-removal ADR): rules resolve for any
+root and run directly, gated only by the ``off`` kill switch.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..cli._index import _apply_preprocess_env
+from ..cli._index import _apply_preprocess_off_env
 from ..cli._process import _service_child_env
 from ..config import EnvVar, get_config, reset_config
 
@@ -40,26 +39,24 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    """Isolate the status dir and resolve the on-sandbox default mode.
+    """Isolate the status dir and resolve the ``default`` mode.
 
     The managed status dir is isolated to a per-test tmp path
     (``managed-singleton-paths-isolate-storage-dir-in-tests`` sibling). Clearing
-    both mode env vars leaves the resolved mode at ``default``, so ``list`` /
+    the mode env var leaves the resolved mode at ``default``, so ``list`` /
     ``run-one`` see a root's rules for any root - no per-root trust act. The
     off-mode tests call :func:`_off_mode` to override.
     """
     status_dir = tmp_path / "status"
     status_dir.mkdir()
-    # Snapshot the mode keys before the test: the index/server-start flags
-    # mutate os.environ in-process by design (the short-lived CLI contract),
-    # and monkeypatch does not track mutations made by the command under test,
-    # so teardown must force-restore both keys or an ``off`` set by one test
-    # leaks into every later module (off wins over the default).
-    mode_keys = (EnvVar.PREPROCESS.value, EnvVar.PREPROCESS_UNSANDBOXED.value)
-    snapshot = {key: os.environ.get(key) for key in mode_keys}
+    # Snapshot the mode key before the test: the index/server-start flag mutates
+    # os.environ in-process by design (the short-lived CLI contract), and
+    # monkeypatch does not track mutations made by the command under test, so
+    # teardown must force-restore the key or an ``off`` set by one test leaks
+    # into every later module (off wins over the default).
+    snapshot = {EnvVar.PREPROCESS.value: os.environ.get(EnvVar.PREPROCESS.value)}
     monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(status_dir))
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     reset_config()
     try:
         yield
@@ -74,7 +71,6 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
 
 def _off_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch the current test to the off (kill-switch) mode."""
-    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
     reset_config()
 
@@ -336,7 +332,7 @@ def test_run_one_gated_off_json_reports_mode(
 # --- status --------------------------------------------------------------------
 
 
-def test_status_default_mode_reports_sandbox_and_would_run(tmp_path: Path) -> None:
+def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(
@@ -348,9 +344,9 @@ def test_status_default_mode_reports_sandbox_and_would_run(tmp_path: Path) -> No
     assert data["config_present"] is True
     assert data["config_valid"] is True
     assert data["rule_count"] == 1
-    assert data["sandbox_backend"]
     assert data["would_run"] is True
-    # The removed trust surface must not resurface in the envelope.
+    # The removed sandbox and trust surfaces must not resurface in the envelope.
+    assert "sandbox_backend" not in data
     assert "trust_state" not in data
     assert "rule_set_hash" not in data
 
@@ -383,50 +379,38 @@ def test_status_off_mode_reports_off(
     assert data["would_run"] is False
 
 
-def test_status_human_output_reports_sandbox_line(tmp_path: Path) -> None:
+def test_status_human_output_reports_direct_execution(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "status"])
     assert result.exit_code == 0, result.output
     assert "Preprocess mode: default" in result.output
-    assert "Sandbox:" in result.output
     assert "Rules: 1" in result.output
+    # The effect line now states direct execution, not a sandbox backend.
+    assert "run directly" in result.output
+    assert "Sandbox:" not in result.output
 
 
 # --- server start mode flags ---------------------------------------------------
 
 
-def test_server_start_preprocess_flags_conflict() -> None:
+def test_server_start_rejects_removed_unsandboxed_flag() -> None:
+    # The --preprocess-unsandboxed escape hatch was removed; the parser must
+    # reject it as an unknown option rather than accept it.
     result = runner.invoke(
         app,
-        ["server", "start", "--no-preprocess", "--preprocess-unsandboxed", "--json"],
+        ["server", "start", "--preprocess-unsandboxed", "--json"],
     )
-    assert result.exit_code == 1
-    envelope = _json(result.output)
-    assert envelope["ok"] is False
-    assert envelope["error"] == "preprocess_flags_conflict"
+    assert result.exit_code == 2
 
 
 def test_child_env_forwards_no_preprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # An inherited unsandboxed must be overridden by the forwarded off flag.
-    monkeypatch.setenv(EnvVar.PREPROCESS_UNSANDBOXED.value, "1")
+    # The forwarded off flag sets the kill switch in the daemon env.
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
     env = _service_child_env(preprocess_mode="off")
     assert env[EnvVar.PREPROCESS.value] == "off"
-    assert EnvVar.PREPROCESS_UNSANDBOXED.value not in env
-
-
-def test_child_env_forwards_unsandboxed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # An inherited off must be overridden by the forwarded unsandboxed flag.
-    monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
-    env = _service_child_env(preprocess_mode="unsandboxed")
-    assert env[EnvVar.PREPROCESS_UNSANDBOXED.value] == "1"
-    assert EnvVar.PREPROCESS.value not in env
 
 
 def test_child_env_leaves_operator_preprocess_env_untouched(
@@ -434,7 +418,6 @@ def test_child_env_leaves_operator_preprocess_env_untouched(
 ) -> None:
     # No flag: an operator-set preprocess env survives into the daemon.
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     env = _service_child_env(preprocess_mode=None)
     assert env[EnvVar.PREPROCESS.value] == "off"
 
@@ -457,7 +440,9 @@ def test_removed_trust_all_knob_is_gone() -> None:
 # --- index verb mode flags -----------------------------------------------------
 
 
-def test_index_preprocess_flags_conflict(tmp_path: Path) -> None:
+def test_index_rejects_removed_unsandboxed_flag(tmp_path: Path) -> None:
+    # The --preprocess-unsandboxed escape hatch was removed from `index`; the
+    # parser must reject it as an unknown option.
     root = _workspace(tmp_path)
     result = runner.invoke(
         app,
@@ -467,15 +452,11 @@ def test_index_preprocess_flags_conflict(tmp_path: Path) -> None:
             "index",
             "--type",
             "code",
-            "--no-preprocess",
             "--preprocess-unsandboxed",
             "--json",
         ],
     )
     assert result.exit_code == 2
-    envelope = _json(result.output)
-    assert envelope["ok"] is False
-    assert envelope["error"] == "preprocess_flags_conflict"
 
 
 def test_index_preprocess_flag_warns_when_service_targeted(tmp_path: Path) -> None:
@@ -501,17 +482,8 @@ def test_index_preprocess_flag_warns_when_service_targeted(tmp_path: Path) -> No
     assert "does not apply to a delegated index run" in result.output
 
 
-def test_apply_preprocess_env_off_selects_off_mode() -> None:
-    _apply_preprocess_env("off")
+def test_apply_preprocess_off_env_selects_off_mode() -> None:
+    _apply_preprocess_off_env()
     assert os.environ[EnvVar.PREPROCESS.value] == "off"
-    assert EnvVar.PREPROCESS_UNSANDBOXED.value not in os.environ
     reset_config()
     assert get_config().preprocess_mode == "off"
-
-
-def test_apply_preprocess_env_unsandboxed_selects_unsandboxed_mode() -> None:
-    _apply_preprocess_env("unsandboxed")
-    assert os.environ[EnvVar.PREPROCESS_UNSANDBOXED.value] == "1"
-    assert EnvVar.PREPROCESS.value not in os.environ
-    reset_config()
-    assert get_config().preprocess_mode == "unsandboxed"

@@ -1,17 +1,16 @@
 """``preprocess`` command group: inspect, validate, and trial rules.
 
-Implements the operator surface decided in the ``preprocess-hooks`` ADR (D13)
-and amended by the ``preprocess-sandbox`` ADR (D8), which removed the
-trust-on-first-use surface: hooks are gated only by the ``off`` kill switch and
-(at the runner) the OS sandbox, so per-root trust no longer exists.
+Implements the operator surface decided in the ``preprocess-hooks`` ADR (D13),
+as amended by the ``preprocess-sandbox-removal`` ADR: hooks are gated only by
+the ``off`` kill switch. A root's preprocess config is repo-authored code and
+runs directly with the operator's privileges.
 
 - ``preprocess list``    - show the resolved rules for the project root.
 - ``preprocess check``   - validate ``.vaultragpreprocess.toml`` and report
   configuration problems.
 - ``preprocess run-one`` - run the matching rule against one file and print the
   validated output, for authoring/debugging. No indexing side effect.
-- ``preprocess status``  - report the mode, config presence, rule count, and the
-  resolved sandbox backend.
+- ``preprocess status``  - report the mode, config presence, and rule count.
 
 All honour the shared script-facing ``--json`` output.
 """
@@ -35,11 +34,6 @@ from ..indexer._preprocess_config import (
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
 from ._app import CLIState, preprocess_app
 from ._render import _emit_json, _emit_json_error_and_exit
-
-#: Placeholder reported by ``preprocess status`` until the sandbox backend
-#: probe lands (preprocess-sandbox ADR D3/D6, sibling workstream). The status
-#: verb reports the resolved backend once ``_hook_sandbox`` is wired.
-_SANDBOX_BACKEND_UNWIRED = "not yet wired"
 
 
 def _root(ctx: typer.Context) -> Path:
@@ -237,8 +231,6 @@ def handle_preprocess_run_one(
             rule,
             max_emitted_bytes=max_bytes,
             project_root=root,
-            server_mode=False,
-            unsandboxed=get_config().preprocess_mode == "unsandboxed",
         )
     except PreprocessAbortError as exc:
         if json_mode:
@@ -323,26 +315,16 @@ def _gated_run_one_message(rule_count: int) -> str:
     )
 
 
-def _sandbox_backend() -> str:
-    """Return the resolved sandbox backend name for ``preprocess status``.
-
-    The sandbox backend probe (preprocess-sandbox ADR D3/D6) lands in a sibling
-    workstream as ``_hook_sandbox``. Until it is present, report the unwired
-    placeholder so ``status`` never invents a backend that does not exist.
-    """
-    return _SANDBOX_BACKEND_UNWIRED
-
-
 def _would_run(mode: PreprocessMode, rule_count: int) -> bool:
     """Return whether a root's rules would run under the resolved mode.
 
-    Rules run for any root except under the ``off`` kill switch (containment,
-    not consent, is the boundary). A root with no rules never runs anything.
+    Rules run for any root except under the ``off`` kill switch. A root with no
+    rules never runs anything.
     """
     return rule_count > 0 and mode != "off"
 
 
-def _status_effect_line(mode: PreprocessMode, rule_count: int, backend: str) -> str:
+def _status_effect_line(mode: PreprocessMode, rule_count: int) -> str:
     """Return the human effect/remediation line for ``preprocess status``."""
     if rule_count == 0:
         return "No preprocess rules are configured for this root."
@@ -351,21 +333,15 @@ def _status_effect_line(mode: PreprocessMode, rule_count: int, backend: str) -> 
             "Preprocessing is off (VAULTSPEC_RAG_PREPROCESS=off); rules are "
             "skipped. Unset it to run them."
         )
-    if mode == "unsandboxed":
-        return (
-            "Rules run WITHOUT a sandbox "
-            "(VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED); their commands execute "
-            "with your privileges."
-        )
-    return f"This root's rules run under the sandbox backend: {backend}."
+    return (
+        "This root's rules run directly; their commands execute with your "
+        "privileges."
+    )
 
 
 @preprocess_app.command(
     "status",
-    help=(
-        "Report the preprocess mode, config presence, rule count, and the "
-        "resolved sandbox backend."
-    ),
+    help="Report the preprocess mode, config presence, and rule count.",
 )
 def handle_preprocess_status(
     ctx: typer.Context,
@@ -374,7 +350,7 @@ def handle_preprocess_status(
         typer.Option("--json", help="Emit JSON for scripts instead of human text."),
     ] = False,
 ) -> None:
-    """Report the tri-state mode and the resolved sandbox backend (ADR D8)."""
+    """Report the preprocess mode and the root's rule configuration."""
     root = _root(ctx)
     mode = get_config().preprocess_mode
     config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
@@ -389,7 +365,6 @@ def handle_preprocess_status(
         else:
             rule_count = len(config.rules)
 
-    backend = _sandbox_backend()
     effective = _would_run(mode, rule_count)
 
     if json_mode:
@@ -402,7 +377,6 @@ def handle_preprocess_status(
                 "config_present": config_present,
                 "config_valid": config_valid,
                 "rule_count": rule_count,
-                "sandbox_backend": backend,
                 "would_run": effective,
             },
         )
@@ -416,9 +390,8 @@ def handle_preprocess_status(
         highlight=False,
     )
     _cli.console.print(f"Rules: {rule_count}", markup=False, highlight=False)
-    _cli.console.print(f"Sandbox: {backend}", markup=False, highlight=False)
     _cli.console.print(
-        f"Effect: {_status_effect_line(mode, rule_count, backend)}",
+        f"Effect: {_status_effect_line(mode, rule_count)}",
         markup=False,
         highlight=False,
     )

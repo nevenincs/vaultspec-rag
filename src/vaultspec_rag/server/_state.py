@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "_SENSITIVE_DIRS",
     "_SENSITIVE_PATTERNS",
     "_SERVICE_TOKEN",
+    "SurveySnapshot",
     "_http_mode",
     "_registry",
     "_shutdown_hooks_installed",
@@ -46,15 +48,20 @@ __all__ = [
     "_watcher_tasks",
     "incr",
     "observe",
+    "publish_survey_snapshot",
     "render_prometheus",
     "reset_metrics",
+    "survey_snapshot",
 ]
 
 from ..registry import get_registry
 
 if TYPE_CHECKING:
     import asyncio
+    from collections.abc import Sequence
     from pathlib import Path
+
+    from ..storage_survey import NamespaceSurvey
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -105,6 +112,58 @@ _SENSITIVE_DIRS: tuple[str, ...] = (
 # Shutdown bookkeeping; reassigned by _record_shutdown / lifespan.
 _shutdown_hooks_installed: bool = False
 _shutdown_recorded: bool = False
+
+
+# --------------------------------------------------------------------------- #
+# Storage-survey snapshot cache.                                              #
+# --------------------------------------------------------------------------- #
+#
+# The full storage survey walks every collection's on-disk footprint, so it
+# is O(namespaces) and was measured at ~15s on a store with ~100 namespaces.
+# The scheduled maintenance cycle already pays that cost every interval; it
+# publishes its classified result here so ``/storage/survey`` can answer from
+# the snapshot in O(1). Writers hand over a fully built, immutable snapshot
+# in a single reference assignment (atomic in CPython), so readers never see
+# a partially built value; staleness is surfaced to consumers through
+# ``computed_at`` and remedied by the route's ``?fresh=true`` recompute.
+
+
+@dataclass(frozen=True)
+class SurveySnapshot:
+    """One immutable, fully classified storage survey with its wall-clock stamp.
+
+    Attributes:
+        surveys: The classified namespace records, in survey order.
+        computed_at: ISO-8601 UTC timestamp of when the survey ran.
+    """
+
+    surveys: tuple[NamespaceSurvey, ...]
+    computed_at: str
+
+
+_survey_snapshot: SurveySnapshot | None = None
+
+
+def publish_survey_snapshot(
+    surveys: Sequence[NamespaceSurvey], computed_at: str
+) -> None:
+    """Publish a freshly computed survey as the current snapshot.
+
+    Called by the maintenance tick, the startup warmer, and the route's
+    fresh path. The tuple copy plus single assignment is the atomic swap;
+    no lock is required for readers.
+
+    Args:
+        surveys: The classified namespace records just gathered.
+        computed_at: ISO-8601 UTC timestamp of the gather.
+    """
+    global _survey_snapshot
+    _survey_snapshot = SurveySnapshot(tuple(surveys), computed_at)
+
+
+def survey_snapshot() -> SurveySnapshot | None:
+    """Return the current survey snapshot, or ``None`` before the first publish."""
+    return _survey_snapshot
 
 
 # --------------------------------------------------------------------------- #

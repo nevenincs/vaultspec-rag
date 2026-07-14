@@ -324,43 +324,12 @@ def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
     )
 
 
-def _resolve_preprocess_forward(
-    *,
-    no_preprocess: bool,
-    preprocess_unsandboxed: bool,
-    json_mode: bool,
-) -> Literal["off", "unsandboxed"] | None:
-    """Resolve the two preprocess flags into the value forwarded to the daemon.
-
-    The flags are mutually exclusive (ADR D8); passing both is a hard start
-    failure. ``--no-preprocess`` forwards ``off`` and ``--preprocess-unsandboxed``
-    forwards ``unsandboxed``; neither leaves the daemon inheriting the operator's
-    preprocess env untouched.
-    """
-    if no_preprocess and preprocess_unsandboxed:
-        raise _fail_start(
-            json_mode,
-            error="preprocess_flags_conflict",
-            message="Service start failed",
-            human_lines=(
-                "--no-preprocess and --preprocess-unsandboxed cannot be combined.",
-                "Pass at most one.",
-            ),
-        )
-    if no_preprocess:
-        return "off"
-    if preprocess_unsandboxed:
-        return "unsandboxed"
-    return None
-
-
 def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
     """Print a best-effort notice about the target root's preprocess rules.
 
-    Operator visibility (ADR D8): when the resolved root defines preprocess
-    rules, say whether they will run under the effective mode. Rules run for any
-    root under the sandbox; the ``off`` kill switch skips them and
-    ``unsandboxed`` runs them without containment. Never raises - a missing or
+    Operator visibility: when the resolved root defines preprocess rules, say
+    whether they will run under the effective mode. Rules run directly for any
+    root; the ``off`` kill switch skips them. Never raises - a missing or
     invalid config simply yields no notice. Imports are function-local so this
     stays off the module import path (the CLI service-control surface stays
     torch-free).
@@ -387,14 +356,9 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
             f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
         )
         return
-    if effective_mode == "unsandboxed":
-        _print_lifecycle_lines(
-            f"Preprocess: {count} {word} at {root} will run WITHOUT a sandbox "
-            "(unsandboxed mode)."
-        )
-        return
     _print_lifecycle_lines(
-        f"Preprocess: {count} {word} at {root} will run under the sandbox."
+        f"Preprocess: {count} {word} at {root} will run; their commands "
+        "execute with the service's privileges."
     )
 
 
@@ -542,20 +506,7 @@ def service_start(
             "--no-preprocess",
             help=(
                 "Kill switch: the service loads no document-preprocessing rules "
-                "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). Mutually "
-                "exclusive with --preprocess-unsandboxed."
-            ),
-        ),
-    ] = False,
-    preprocess_unsandboxed: Annotated[
-        bool,
-        typer.Option(
-            "--preprocess-unsandboxed",
-            help=(
-                "Run every root's preprocess rules without a sandbox (forwards "
-                "VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1). Dangerous escape hatch "
-                "for a backend-less host; every root's commands execute with "
-                "your privileges. Mutually exclusive with --no-preprocess."
+                "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off)."
             ),
         ),
     ] = False,
@@ -573,11 +524,7 @@ def service_start(
     ] = False,
 ) -> None:
     """Start the background search service."""
-    preprocess_forward = _resolve_preprocess_forward(
-        no_preprocess=no_preprocess,
-        preprocess_unsandboxed=preprocess_unsandboxed,
-        json_mode=json_mode,
-    )
+    preprocess_forward: Literal["off"] | None = "off" if no_preprocess else None
     # Idempotent check FIRST: a healthy owned service already running is a
     # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
     # so the friendly path is no longer shadowed by the port-guard exit 1 - a
@@ -604,7 +551,7 @@ def service_start(
     if not local_only and qdrant is not False:
         _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
 
-    # Operator visibility for the target root's preprocess trust state (ADR D8).
+    # Operator visibility for the target root's preprocess rules.
     # Best-effort and human-only so the --json envelope stays a single document.
     if not json_mode:
         effective_mode = preprocess_forward or get_config().preprocess_mode

@@ -126,7 +126,6 @@ The daemon's scheduled storage-maintenance cycle - see the [storage and maintena
 | Variable                                     | Type    | Default    | Controls                                                          | CLI flag                   |
 | -------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- | -------------------------- |
 | `VAULTSPEC_RAG_PREPROCESS`                   | string  | unset      | `off` disables all preprocessing; wins over everything            | `--no-preprocess`          |
-| `VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED`       | boolean | unset      | Run hooks without OS containment (dangerous; backend-less hosts)  | `--preprocess-unsandboxed` |
 | `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` | Cap on text a preprocess hook may emit per file in bytes (10 MiB) | -                          |
 | `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true) | Strip tags from `.html` to plain text before chunking             | -                          |
 

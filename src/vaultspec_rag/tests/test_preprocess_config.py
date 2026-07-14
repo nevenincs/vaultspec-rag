@@ -5,15 +5,14 @@ a tmp project root:
 
 - Rule resolution (D1/D2/D3): deterministic ordering, ignore-style matching,
   the command/entry_point constraint, and the degrade-vs-strict error policy.
-- The tri-state preprocess mode (preprocess-sandbox ADR D7/D8): rules resolve
-  for any root with no trust check because the OS sandbox at the runner is the
-  security boundary, ``off`` is the kill switch, and ``unsandboxed`` runs the
-  rules without a sandbox. The trust-on-first-use store was removed here.
+- The two-state preprocess mode (preprocess-sandbox-removal ADR D4/D10): rules
+  resolve for any root with no trust check because a root's preprocess config is
+  repo-authored code that runs with the operator's privileges, and ``off`` is
+  the sole kill switch.
 
 Every test isolates ``VAULTSPEC_RAG_STATUS_DIR`` to a tmp path via the autouse
-fixture (the managed-singleton isolation sibling) and clears the mode env vars
-so the resolved mode is the on-sandbox ``default``; the off/unsandboxed tests
-set the env explicitly.
+fixture (the managed-singleton isolation sibling) and clears the mode env var so
+the resolved mode is ``default``; the off tests set the env explicitly.
 """
 
 from collections.abc import Iterator
@@ -37,17 +36,16 @@ def _isolate_status_dir_and_default_mode(  # pyright: ignore[reportUnusedFunctio
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    """Isolate the status dir to a tmp path and resolve the on-sandbox default.
+    """Isolate the status dir to a tmp path and resolve the ``default`` mode.
 
-    Clearing both mode env vars leaves the resolved mode at ``default``, which
-    resolves a root's rules for any root (containment is the boundary, not
-    consent), so the rule-resolution tests load rules without any trust act.
-    The off/unsandboxed tests set the env themselves.
+    Clearing the mode env var leaves the resolved mode at ``default``, which
+    resolves a root's rules for any root (a root's preprocess config is
+    repo-authored code, not gated by consent), so the rule-resolution tests load
+    rules without any trust act. The off tests set the env themselves.
     """
     status = tmp_path_factory.mktemp("status")
     monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(status))
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-    monkeypatch.delenv(EnvVar.PREPROCESS_UNSANDBOXED.value, raising=False)
     reset_config()
     try:
         yield
@@ -60,7 +58,7 @@ def _write_config(root: Path, body: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Rule resolution (D1/D2/D3) - exercised under the on-sandbox default mode.
+# Rule resolution (D1/D2/D3) - exercised under the ``default`` mode.
 # --------------------------------------------------------------------------
 
 
@@ -314,7 +312,7 @@ def test_resolved_rule_is_picklable(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# Tri-state mode enforcement (ADR D7/D8): kill switch and unsandboxed hatch.
+# Two-state mode enforcement (ADR D4/D10): default runs, off is the kill switch.
 # --------------------------------------------------------------------------
 
 
@@ -328,8 +326,8 @@ def test_rules_resolve_for_any_root_with_no_trust(tmp_path: Path) -> None:
         command = "extract {path}"
         """,
     )
-    # No trust act, no status-dir sidecar - the rules still resolve because
-    # containment (the sandbox), not consent, is the security boundary.
+    # No trust act, no status-dir sidecar - the rules still resolve because a
+    # root's preprocess config is repo-authored code, not gated by consent.
     config = load_preprocess_rules(tmp_path)
     assert config.match("docs/a.pdf") is not None
     assert [r.command for r in config.rules] == ["extract {path}"]
@@ -353,42 +351,6 @@ def test_off_mode_yields_empty_with_debug_log(
         config = load_preprocess_rules(tmp_path)
     assert config.rules == []
     assert any("'off'" in rec.message for rec in caplog.records)
-
-
-def test_unsandboxed_mode_resolves_rules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """unsandboxed resolves a root's rules (the sandbox is bypassed downstream)."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    monkeypatch.setenv(EnvVar.PREPROCESS_UNSANDBOXED.value, "1")
-    reset_config()
-    config = load_preprocess_rules(tmp_path)
-    assert config.match("a.pdf") is not None
-
-
-def test_off_wins_over_unsandboxed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The kill switch takes precedence when both env vars are set."""
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        pattern = "*.pdf"
-        command = "extract {path}"
-        """,
-    )
-    monkeypatch.setenv(EnvVar.PREPROCESS_UNSANDBOXED.value, "1")
-    monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-    reset_config()
-    assert load_preprocess_rules(tmp_path).rules == []
 
 
 def test_strict_bypasses_off_kill_switch(
