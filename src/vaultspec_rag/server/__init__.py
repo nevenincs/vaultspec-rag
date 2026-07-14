@@ -58,6 +58,8 @@ from ._lifecycle import (
     _resolve_log_path,
     _status_file_path,
     _storage_maintenance_tick_sync,
+    _storage_survey_warm_sync,
+    _survey_warmup_task,
     _unlink_status_file_silently,
 )
 from ._lifespan import health_handler, service_lifespan
@@ -80,6 +82,7 @@ from ._state import (
     _SENSITIVE_DIRS,
     _SENSITIVE_PATTERNS,
     _SERVICE_TOKEN,
+    SurveySnapshot,
     _http_mode,
     _registry,
     _shutdown_hooks_installed,
@@ -90,8 +93,10 @@ from ._state import (
     _watcher_tasks,
     incr,
     observe,
+    publish_survey_snapshot,
     render_prometheus,
     reset_metrics,
+    survey_snapshot,
 )
 from ._utils import (
     ProjectRootRequiredError,
@@ -125,6 +130,7 @@ __all__ = [
     "ProjectRootRequiredError",
     "SearchResponse",
     "SearchResultItem",
+    "SurveySnapshot",
     "_clamp_top_k",
     "_default_root",
     "_ensure_watcher",
@@ -150,6 +156,8 @@ __all__ = [
     "_stop_all_watchers",
     "_stop_watcher",
     "_storage_maintenance_tick_sync",
+    "_storage_survey_warm_sync",
+    "_survey_warmup_task",
     "_unlink_status_file_silently",
     "_validate_query",
     "_validate_vault_root",
@@ -160,9 +168,11 @@ __all__ = [
     "incr",
     "main",
     "observe",
+    "publish_survey_snapshot",
     "render_prometheus",
     "reset_metrics",
     "service_lifespan",
+    "survey_snapshot",
 ]
 
 

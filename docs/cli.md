@@ -104,8 +104,7 @@ Options:
 | `--exclude`                | text               | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                                                                                                                                                         |
 | `--port`                   | integer            | unset   | Delegate to a running service on this port.                                                                                                                                                                                                                               |
 | `--allow-fallback`         | flag               | off     | Index in-process when the targeted service is unreachable instead of failing.                                                                                                                                                                                             |
-| `--no-preprocess`          | flag               | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with. Mutually exclusive with `--preprocess-unsandboxed`.                                            |
-| `--preprocess-unsandboxed` | flag               | off     | For an in-process run, run preprocess hooks without OS containment (`VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1`); a dangerous escape hatch for backend-less hosts, logged loudly. No effect when delegating to a running service. Mutually exclusive with `--no-preprocess`. |
+| `--no-preprocess`          | flag               | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with.                                                                                               |
 | `--verbose`                | flag               | off     | Show model-loading and progress output for in-process indexing.                                                                                                                                                                                                           |
 | `--json`                   | flag               | off     | Emit one JSON envelope to stdout.                                                                                                                                                                                                                                         |
 
@@ -280,13 +279,12 @@ Options:
 | `--local-only`               | flag    | off                               | Use the on-disk store and skip the Qdrant child.                                                                                                                                                                            |
 | `--qdrant` / `--no-qdrant`   | flag    | unset                             | Opt in to or out of the managed Qdrant server. Server mode is the default, so `--qdrant` on its own has no effect. Unset leaves the current setting unchanged.                                                              |
 | `--qdrant-auto-provision`    | flag    | off                               | Download the managed Qdrant server if it is missing instead of printing the install command.                                                                                                                                |
-| `--no-preprocess`            | flag    | off                               | Kill switch: the daemon loads no preprocess rules for any root (`VAULTSPEC_RAG_PREPROCESS=off`). Mutually exclusive with `--preprocess-unsandboxed`.                                                                        |
-| `--preprocess-unsandboxed`   | flag    | off                               | The daemon runs every root's preprocess hooks without OS containment (`VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1`); a dangerous escape hatch for backend-less hosts, logged loudly. Mutually exclusive with `--no-preprocess`. |
+| `--no-preprocess`            | flag    | off                               | Kill switch: the daemon loads no preprocess rules for any root (`VAULTSPEC_RAG_PREPROCESS=off`).                                                                                                                            |
 | `--json`                     | flag    | off                               | Emit one machine-readable outcome envelope per exit path. An already-running owned service is the success `already_running` (exit `0`) so a supervising broker attaches instead of treating it as a fault.                  |
 
 The daemon inherits configuration only through the environment, so each set flag is translated to its `VAULTSPEC_RAG_*` variable on the child process before spawn.
 
-Exit/JSON: `0` once the service is ready; `1` on a failure to start, a health-check timeout, or `--no-preprocess` combined with `--preprocess-unsandboxed` (`preprocess_flags_conflict`). A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines preprocess rules, the command prints a notice stating whether they will run under the sandbox, be skipped (mode is `off`), or run without containment (`unsandboxed`).
+Exit/JSON: `0` once the service is ready; `1` on a failure to start or a health-check timeout. A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines preprocess rules, the command prints a notice stating whether they will run or be skipped (mode is `off`).
 
 ## server stop
 
@@ -298,10 +296,10 @@ Arguments: none.
 
 Options:
 
-| Flag     | Type    | Default | Description                                                                                                                                                     |
-| -------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flag     | Type    | Default | Description                                                                                                                                                    |
+| -------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--port` | integer | unset   | Stop the service answering on this port, resolving its identity from `/health` instead of the status file (for a non-default port or a divergent status file). |
-| `--json` | flag    | off     | Emit one machine-readable outcome envelope per exit path.                                                                                                        |
+| `--json` | flag    | off     | Emit one machine-readable outcome envelope per exit path.                                                                                                      |
 
 Exit/JSON: `0` for every satisfied outcome - `stopped`, `already_stopped` (nothing to stop; the idempotent success), `cleaned` (a stale status file for a confirmed-dead PID was removed), and `reclaimed` (a lock holder without a status file was terminated); `1` for `identity_unconfirmed`, the one failure - a live recorded process whose identity could not be confirmed is left running, in both output modes.
 
@@ -589,18 +587,19 @@ Exit/JSON: `0` on success or an empty preview; `1` when a preview lists targets 
 
 `vaultspec-rag server storage survey`
 
-List every namespace stored in the managed Qdrant server, classified as `live` (its source root exists), `orphaned` (its recorded root is gone), `unknown` (unattributable), or `unverifiable` (its volume or share is offline), with per-namespace point counts and on-disk footprint. Service-first: a running daemon answers from its `/storage/survey` route so the CLI, MCP, and operator see one classification; without a daemon the CLI opens its own client to the managed server. See the [storage and maintenance guide](storage-maintenance.md) for the classification model.
+List every namespace stored in the managed Qdrant server, classified as `live` (its source root exists), `orphaned` (its recorded root is gone), `unknown` (unattributable), or `unverifiable` (its volume or share is offline), with per-namespace point counts and on-disk footprint. Service-first: a running daemon answers from its `/storage/survey` route so the CLI, MCP, and operator see one classification; without a daemon the CLI opens its own client to the managed server. A running daemon answers from its cached survey snapshot (refreshed at startup and by every maintenance cycle), so the call is fast at any namespace count; the response's `computed_at` and `source` fields report the snapshot's age, and `--fresh` forces a recompute. See the [storage and maintenance guide](storage-maintenance.md) for the classification model.
 
 Arguments: none.
 
 Options:
 
 | Flag         | Type | Default | Description                                                                                                                  |
-| ------------ | ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `--orphaned` | flag | off     | Show only orphaned namespaces (prune candidates).                                                                              |
-| `--unknown`  | flag | off     | Show only unattributable namespaces.                                                                                           |
+| ------------ | ---- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--orphaned` | flag | off     | Show only orphaned namespaces (prune candidates).                                                                            |
+| `--unknown`  | flag | off     | Show only unattributable namespaces.                                                                                         |
 | `--root`     | text | unset   | Narrow to one root's namespace and report its authoritative collection prefix as `queried_root` (works for unindexed roots). |
-| `--json`     | flag | off     | Emit one JSON envelope to stdout.                                                                                              |
+| `--fresh`    | flag | off     | Force the daemon to recompute the survey instead of answering from its cached snapshot (slower; walks every namespace).      |
+| `--json`     | flag | off     | Emit one JSON envelope to stdout.                                                                                            |
 
 Exit/JSON: `0` on success; `2` when server mode is off (`server_mode_required`); `3` when neither a daemon nor the managed server answers (`service_not_running`).
 
@@ -614,32 +613,35 @@ Arguments: none.
 
 Options:
 
-| Flag        | Type | Default | Description                                                        |
-| ----------- | ---- | ------- | -------------------------------------------------------------------- |
-| `--dry-run` | flag | off     | Preview the exact target namespaces without deleting anything.      |
-| `--yes`     | flag | off     | Apply the prune. Without it the command prints the preview.         |
+| Flag        | Type | Default | Description                                                                            |
+| ----------- | ---- | ------- | -------------------------------------------------------------------------------------- |
+| `--dry-run` | flag | off     | Preview the exact target namespaces without deleting anything.                         |
+| `--yes`     | flag | off     | Apply the prune. Without it the command prints the preview.                            |
 | `--json`    | flag | off     | Emit one JSON envelope to stdout. Requires `--yes` (no prompt may corrupt the stream). |
 
 Exit/JSON: `0` on success; `2` when server mode is off or `--json` lacks `--yes`; `3` when the managed server is unreachable.
 
 ## server storage delete
 
-`vaultspec-rag server storage delete PREFIX`
+`vaultspec-rag server storage delete PREFIX` or `vaultspec-rag server storage delete --root PATH`
 
-Delete one named namespace (every collection sharing its `r{hash}_` prefix) and forget its manifest entry. Only a canonical `r` + 12 hex + `_` prefix is ever accepted, and an unattributable (`unknown`) prefix is refused unless `--allow-unknown` is set.
+Delete one named namespace (every collection sharing its `r{hash}_` prefix) and forget its manifest entry. The namespace is addressed either by its prefix or by `--root`, which resolves the path and derives the prefix through the same normalization indexing uses - the sanctioned per-root teardown for test harnesses and consumers that never learned the hash. Only a canonical `r` + 12 hex + `_` prefix is ever accepted, and an unattributable (`unknown`) prefix is refused unless `--allow-unknown` is set.
 
-Arguments: `PREFIX` - the namespace prefix to delete.
+Deletion is idempotent in both addressing forms: a namespace that does not exist reports `already_absent` and exits `0` in both human and `--json` modes, so a teardown script can run unconditionally. (Earlier development builds reported this case as `status: skipped` with `reason: no_such_namespace`; scripts should match `already_absent`.)
+
+Arguments: `PREFIX` - the namespace prefix to delete. Exactly one of `PREFIX` or `--root` must be given.
 
 Options:
 
-| Flag              | Type | Default | Description                                                              |
-| ----------------- | ---- | ------- | --------------------------------------------------------------------------- |
-| `--dry-run`       | flag | off     | Preview without deleting.                                                  |
-| `--yes`, `-y`     | flag | off     | Apply the deletion.                                                        |
-| `--allow-unknown` | flag | off     | Permit deleting a prefix the manifest cannot attribute to a root (dangerous). |
-| `--json`          | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`.                        |
+| Flag              | Type | Default | Description                                                                                                                             |
+| ----------------- | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--root`          | text | unset   | Address the namespace by its source root path instead of the prefix; the resolved root and derived prefix are echoed as `queried_root`. |
+| `--dry-run`       | flag | off     | Preview without deleting.                                                                                                               |
+| `--yes`, `-y`     | flag | off     | Apply the deletion.                                                                                                                     |
+| `--allow-unknown` | flag | off     | Permit deleting a prefix the manifest cannot attribute to a root (dangerous).                                                           |
+| `--json`          | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`.                                                                                     |
 
-Exit/JSON: `0` on success or a skipped target; `1` when a non-dry-run preview finds a target but `--yes` was not given; `2` when server mode is off or `--json` lacks `--yes`; `3` when the managed server is unreachable.
+Exit/JSON: `0` on success, an `already_absent` no-op, or a skipped target; `1` when a non-dry-run preview finds a target but `--yes` was not given; `2` when server mode is off, both/neither of `PREFIX` and `--root` were given, or `--json` lacks `--yes`; `3` when the managed server is unreachable.
 
 ## preprocess list
 
@@ -697,7 +699,7 @@ Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
 
 `vaultspec-rag preprocess status`
 
-Report the preprocess mode, config presence, rule count, and the resolved OS sandbox backend for this root, plus whether hooks would run here. There is no trust state - hooks run for any root, contained by the sandbox.
+Report the preprocess mode, config presence, and rule count for this root, plus whether hooks would run here. There is no trust state and no OS containment - a root's rules run directly, executing with your privileges, for any root except under the `off` kill switch.
 
 Arguments: none.
 
@@ -707,7 +709,7 @@ Options:
 | -------- | ---- | ------- | --------------------------------- |
 | `--json` | flag | off     | Emit one JSON envelope to stdout. |
 
-Human output lists the `mode` (`default`, `off`, or `unsandboxed`), whether a config is present and valid, the rule count, the resolved `Sandbox` backend (e.g. `windows-appcontainer`), and an `Effect` line summarising whether hooks will run. The `--json` envelope carries `mode`, `root`, `config_present`, `config_valid`, `rule_count`, `sandbox_backend`, and `would_run`.
+Human output lists the `mode` (`default` or `off`), whether a config is present and valid, the rule count, and an `Effect` line summarising whether hooks will run. The `--json` envelope carries `mode`, `root`, `config_present`, `config_valid`, `rule_count`, and `would_run`.
 
 Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
 

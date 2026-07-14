@@ -49,6 +49,8 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
+    from ..storage_survey import NamespaceSurvey
+
 logger = logging.getLogger("vaultspec_rag.server")
 
 _BAD_REQUEST_MISSING_ROOT = JSONResponse(
@@ -744,8 +746,7 @@ def _preprocess_preflight(root: Path) -> dict[str, object]:
     document-preprocessing hooks will fire (preprocess-sandbox ADR D9). This
     mirrors the ``server start`` operator notice as JSON: whether the root ships
     a ``.vaultragpreprocess.toml``, its resolved rule count, the effective mode,
-    and whether hooks will run under it (``off`` skips; ``default``/
-    ``unsandboxed`` run, modulo the sandbox applied at execution).
+    and whether hooks will run under it (``off`` skips; ``default`` runs).
 
     Torch-free by construction: ``load_preprocess_rules`` is CPU-only, keeping
     the routes/server layer off the torch import path. Never raises - a missing
@@ -889,15 +890,44 @@ def _clamp_survey_limit(raw: str | None) -> int:
     return min(value, _STORAGE_SURVEY_MAX_LIMIT)
 
 
-def _gather_storage_survey(
-    status_filter: str | None, limit: int, root: str | None = None
-) -> dict[str, Any]:
-    """Run the read-only storage survey and shape it as a bounded response.
+def _fetch_surveys() -> list[NamespaceSurvey]:
+    """Run the full read-only storage survey against the managed server.
 
-    Opens a short-lived client to the managed server, classifies every
-    per-root namespace through the persisted manifest, applies the optional
-    status and root filters, and truncates to the clamped limit. Pure
-    storage IO, never touches the GPU.
+    Opens a short-lived client, classifies every per-root namespace through
+    the persisted manifest, and returns the classified records. Pure storage
+    IO, never touches the GPU. This is the O(namespaces) footprint walk; the
+    route prefers the daemon-held snapshot and only calls this on
+    ``?fresh=true`` or a cold cache.
+    """
+    from qdrant_client import QdrantClient
+
+    from ..config import get_config
+    from ..storage_ops import gather_survey, server_storage_collections_dir
+
+    cfg = get_config()
+    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    client = QdrantClient(url=url)
+    try:
+        return gather_survey(client, server_storage_collections_dir())
+    finally:
+        client.close()
+
+
+def _shape_survey_payload(
+    surveys: list[NamespaceSurvey],
+    status_filter: str | None,
+    limit: int,
+    root: str | None,
+    *,
+    computed_at: str,
+    source: str,
+) -> dict[str, Any]:
+    """Shape a classified survey as the bounded route response.
+
+    Applies the optional status and root filters, truncates to the clamped
+    limit, and stamps freshness metadata: ``computed_at`` is when the
+    underlying survey ran, ``source`` is ``"cache"`` (daemon snapshot) or
+    ``"fresh"`` (computed for this request).
 
     With ``root``, the namespace list is narrowed to the root's own prefix
     and the response carries a top-level ``queried_root`` object holding the
@@ -909,19 +939,8 @@ def _gather_storage_survey(
     """
     import pathlib
 
-    from qdrant_client import QdrantClient
-
-    from ..config import get_config
-    from ..storage_ops import gather_survey, server_storage_collections_dir
     from ..store import root_collection_prefix
 
-    cfg = get_config()
-    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
-    client = QdrantClient(url=url)
-    try:
-        surveys = gather_survey(client, server_storage_collections_dir())
-    finally:
-        client.close()
     if status_filter:
         surveys = [s for s in surveys if s.status == status_filter]
     queried_root: dict[str, str] | None = None
@@ -949,10 +968,50 @@ def _gather_storage_survey(
         "returned": len(bounded),
         "total": total,
         "limit": limit,
+        "computed_at": computed_at,
+        "source": source,
     }
     if queried_root is not None:
         payload["queried_root"] = queried_root
     return payload
+
+
+def _gather_storage_survey(
+    status_filter: str | None,
+    limit: int,
+    root: str | None = None,
+    *,
+    fresh: bool = False,
+) -> dict[str, Any]:
+    """Answer the survey from the daemon snapshot, or compute and publish.
+
+    The daemon-held snapshot (published by the startup warmer, every
+    maintenance cycle, and every fresh compute here) makes the common path
+    O(1) at any namespace count. ``fresh=True`` - or a cold snapshot -
+    triggers the full walk, whose result is published so subsequent callers
+    are served from cache again.
+    """
+    from datetime import UTC, datetime
+
+    from ._state import publish_survey_snapshot, survey_snapshot
+
+    if not fresh:
+        snapshot = survey_snapshot()
+        if snapshot is not None:
+            return _shape_survey_payload(
+                list(snapshot.surveys),
+                status_filter,
+                limit,
+                root,
+                computed_at=snapshot.computed_at,
+                source="cache",
+            )
+    surveys = _fetch_surveys()
+    computed_at = datetime.now(UTC).isoformat()
+    publish_survey_snapshot(surveys, computed_at=computed_at)
+    return _shape_survey_payload(
+        surveys, status_filter, limit, root, computed_at=computed_at, source="fresh"
+    )
 
 
 async def storage_survey_route(request: Request) -> JSONResponse:
@@ -964,6 +1023,11 @@ async def storage_survey_route(request: Request) -> JSONResponse:
     window, and ``?root=`` narrows to one root's namespace while returning
     that root's authoritative collection prefix as ``queried_root``; the
     default is biased to the actionable states first.
+
+    The default answer comes from the daemon-held survey snapshot (published
+    at startup, by every maintenance cycle, and by every fresh compute), so
+    the route is O(1) at any namespace count; ``computed_at``/``source``
+    surface the snapshot's age and ``?fresh=true`` forces a recompute.
     """
     denied = require_token(request)
     if denied is not None:
@@ -1005,9 +1069,11 @@ async def storage_survey_route(request: Request) -> JSONResponse:
             },
             status_code=400,
         )
+    raw_fresh = request.query_params.get("fresh")
+    fresh = raw_fresh is not None and raw_fresh.strip().lower() in ("1", "true", "yes")
 
     def _run() -> dict[str, Any]:
-        return _gather_storage_survey(raw_status, limit, raw_root)
+        return _gather_storage_survey(raw_status, limit, raw_root, fresh=fresh)
 
     result = await _run_in_thread(_run)
     return JSONResponse(result)

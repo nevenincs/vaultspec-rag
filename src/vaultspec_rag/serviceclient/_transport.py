@@ -302,7 +302,7 @@ def _jobs_route_path(args: dict[str, Any]) -> str:
     return url_path
 
 
-_STORAGE_SURVEY_PARAMS = {"status", "limit", "root"}
+_STORAGE_SURVEY_PARAMS = {"status", "limit", "root", "fresh"}
 
 
 def _storage_survey_route_path(args: dict[str, Any]) -> str:

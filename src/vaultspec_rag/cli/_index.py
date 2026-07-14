@@ -28,73 +28,33 @@ from ._render import (
 from ._service_status import _default_service_port
 
 
-def _resolve_index_preprocess(
-    *,
-    no_preprocess: bool,
-    preprocess_unsandboxed: bool,
-    json_mode: bool,
-) -> Literal["off", "unsandboxed"] | None:
-    """Resolve the two preprocess flags for an in-process index run (ADR D8).
+def _warn_preprocess_flag_ignored_when_delegating(json_mode: bool) -> None:
+    """Warn loudly that --no-preprocess does not apply to a delegated run.
 
-    The flags are mutually exclusive - matching ``server start`` - so passing
-    both is a usage error. ``--no-preprocess`` selects ``off`` and
-    ``--preprocess-unsandboxed`` selects ``unsandboxed``; neither leaves the run
-    on the operator's ambient preprocess mode.
-    """
-    if no_preprocess and preprocess_unsandboxed:
-        message = (
-            "--no-preprocess and --preprocess-unsandboxed cannot be combined; "
-            "pass at most one."
-        )
-        if json_mode:
-            _emit_json_error_and_exit("index", "preprocess_flags_conflict", message, 2)
-        _cli.console.print(f"Error: {message}", markup=False, highlight=False)
-        raise typer.Exit(code=2)
-    if no_preprocess:
-        return "off"
-    if preprocess_unsandboxed:
-        return "unsandboxed"
-    return None
-
-
-def _warn_preprocess_flag_ignored_when_delegating(
-    mode: Literal["off", "unsandboxed"],
-    json_mode: bool,
-) -> None:
-    """Warn loudly that a preprocess flag does not apply to a delegated run.
-
-    The two flags only shape an in-process run: when the CLI delegates to a
+    The flag only shapes an in-process run: when the CLI delegates to a
     running service, that service preprocesses under the mode it was started
     with and cannot be overridden per request. The run still proceeds, so this
     warns loudly rather than silently accepting a flag it cannot honour (ADR
     D7). Emitted through the logger (so it survives ``--json`` on stderr) and,
     in human mode, printed as a visible ``Warning:`` line.
     """
-    server_flag = "--no-preprocess" if mode == "off" else "--preprocess-unsandboxed"
     message = (
-        f"{server_flag} does not apply to a delegated index run: the running "
+        "--no-preprocess does not apply to a delegated index run: the running "
         "service preprocesses under the mode it was started with, and this run "
-        f"uses that mode. Start the service with {server_flag} to change it."
+        "uses that mode. Start the service with --no-preprocess to change it."
     )
     logger.warning("%s", message)
     if not json_mode:
         _cli.console.print(f"Warning: {message}", markup=False, highlight=False)
 
 
-def _apply_preprocess_env(mode: Literal["off", "unsandboxed"]) -> None:
-    """Set the tri-state preprocess env for the in-process run about to begin.
+def _apply_preprocess_off_env() -> None:
+    """Set the preprocess kill-switch env for the in-process run about to begin.
 
-    The ``preprocess_mode`` config property reads these env vars live, so
-    setting them here (before indexing) takes effect without a config rebuild.
-    Each flag clears the opposing var so it is authoritative over an inherited
-    one, mirroring the daemon-env forwarding in ``_service_child_env``.
+    The ``preprocess_mode`` config property reads the env var live, so setting
+    it here (before indexing) takes effect without a config rebuild.
     """
-    if mode == "off":
-        os.environ[EnvVar.PREPROCESS.value] = "off"
-        os.environ.pop(EnvVar.PREPROCESS_UNSANDBOXED.value, None)
-    else:
-        os.environ[EnvVar.PREPROCESS_UNSANDBOXED.value] = "1"
-        os.environ.pop(EnvVar.PREPROCESS.value, None)
+    os.environ[EnvVar.PREPROCESS.value] = "off"
 
 
 def _index_route_label(via: str) -> str:
@@ -510,20 +470,7 @@ def handle_index(
                 "Load no document-preprocessing rules for this in-process index "
                 "run (VAULTSPEC_RAG_PREPROCESS=off). Applies to in-process "
                 "indexing only; a running service uses the preprocess mode it "
-                "was started with. Mutually exclusive with --preprocess-unsandboxed."
-            ),
-        ),
-    ] = False,
-    preprocess_unsandboxed: Annotated[
-        bool,
-        typer.Option(
-            "--preprocess-unsandboxed",
-            help=(
-                "Run this in-process index run's preprocess rules without a "
-                "sandbox (VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1). Dangerous; "
-                "for backend-less hosts. Applies to in-process indexing only; a "
-                "running service uses the preprocess mode it was started with. "
-                "Mutually exclusive with --no-preprocess."
+                "was started with."
             ),
         ),
     ] = False,
@@ -548,12 +495,6 @@ def handle_index(
     state: CLIState = ctx.obj
     target = state.target
 
-    preprocess_forward = _resolve_index_preprocess(
-        no_preprocess=no_preprocess,
-        preprocess_unsandboxed=preprocess_unsandboxed,
-        json_mode=json_mode,
-    )
-
     if dry_run:
         _handle_dry_run(index_type, json_mode, target, exclude, dry_run_limit)
         return
@@ -571,8 +512,8 @@ def handle_index(
     # handle this index (an explicit or auto-detected port), the daemon
     # preprocesses under its own start-time mode, so warn loudly that the flag
     # does not apply rather than silently accepting it - the run still proceeds.
-    if preprocess_forward is not None and port is not None:
-        _warn_preprocess_flag_ignored_when_delegating(preprocess_forward, json_mode)
+    if no_preprocess and port is not None:
+        _warn_preprocess_flag_ignored_when_delegating(json_mode)
 
     if port is not None and _try_service_delegation(
         port, exclude, json_mode, index_type, rebuild, target, allow_fallback
@@ -581,8 +522,8 @@ def handle_index(
 
     # In-process path: apply the forwarded preprocess mode to the env before
     # indexing begins (the config property reads it live).
-    if preprocess_forward is not None:
-        _apply_preprocess_env(preprocess_forward)
+    if no_preprocess:
+        _apply_preprocess_off_env()
 
     _try_in_process_indexing(index_type, rebuild, model, exclude, target, json_mode)
 

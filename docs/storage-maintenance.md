@@ -44,6 +44,8 @@ uv run vaultspec-rag server storage survey
 
 Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
 
+A running daemon answers from a cached survey snapshot rather than re-measuring every namespace per call, so the survey stays fast (sub-second) no matter how many namespaces the store holds. The snapshot is computed shortly after startup and refreshed by every maintenance cycle; the response carries `computed_at` (when the underlying survey ran) and `source` (`cache` or `fresh`) so a consumer can see exactly how old the data is. Survey data is therefore eventually-consistent, up to one maintenance interval behind. When you need up-to-the-second truth - for example immediately after indexing or deleting a namespace - pass `--fresh` (HTTP: `?fresh=true`), which recomputes the survey and reseeds the cache.
+
 To look up a single root - which namespace and collection prefix belong to it - pass `--root`:
 
 ```
@@ -108,6 +110,14 @@ uv run vaultspec-rag server storage delete r0123456789ab_ --yes
 ```
 
 `delete` refuses a prefix the manifest cannot attribute to a root unless you pass `--allow-unknown`. The sensible order is survey, then prune, and delete only when you must remove one namespace the prune would not.
+
+You can also address a namespace by its root path instead of its prefix - the sanctioned teardown for test harnesses and consumers that register throwaway roots against the resident service:
+
+```
+uv run vaultspec-rag server storage delete --root C:\Temp\my-throwaway-root --yes --json
+```
+
+The path is resolved and hashed exactly as indexing does, so it removes precisely the namespace that root's indexing created. Deletion is idempotent: an already-absent namespace reports `already_absent` and exits `0`, so a teardown hook can run unconditionally. A harness that instead simply deletes its temp roots is also fine - the automatic reclamation above removes the leftover namespaces once their grace window passes.
 
 Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
 

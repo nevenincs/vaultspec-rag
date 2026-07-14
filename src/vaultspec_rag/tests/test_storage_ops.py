@@ -250,3 +250,113 @@ class TestSweepArchive:
         assert not (archive / "a.snapshot").exists()
         assert (archive / "b.snapshot").exists()
         assert (archive / "c.snapshot").exists()
+
+
+@pytest.fixture
+def cold_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start each snapshot test from a cold (unpublished) slot."""
+    from ..server import _state
+
+    monkeypatch.setattr(_state, "_survey_snapshot", None)
+
+
+@pytest.mark.usefixtures("cold_snapshot")
+class TestSurveySnapshot:
+    """The daemon-held snapshot slot: publish, read, replace."""
+
+    def test_cold_slot_reads_none(self) -> None:
+        from ..server._state import survey_snapshot
+
+        assert survey_snapshot() is None
+
+    def test_publish_then_read_roundtrip(self) -> None:
+        from ..server._state import publish_survey_snapshot, survey_snapshot
+
+        publish_survey_snapshot([_survey("r" + "a" * 12 + "_")], computed_at="t1")
+        snapshot = survey_snapshot()
+        assert snapshot is not None
+        assert snapshot.computed_at == "t1"
+        assert [s.prefix for s in snapshot.surveys] == ["r" + "a" * 12 + "_"]
+
+    def test_republish_replaces_whole_snapshot(self) -> None:
+        from ..server._state import publish_survey_snapshot, survey_snapshot
+
+        publish_survey_snapshot([_survey("r" + "a" * 12 + "_")], computed_at="t1")
+        publish_survey_snapshot(
+            [_survey("r" + "b" * 12 + "_"), _survey("r" + "c" * 12 + "_")],
+            computed_at="t2",
+        )
+        snapshot = survey_snapshot()
+        assert snapshot is not None
+        assert snapshot.computed_at == "t2"
+        assert len(snapshot.surveys) == 2
+
+
+@pytest.mark.usefixtures("cold_snapshot")
+class TestGatherStorageSurveyCached:
+    """The route helper answers from the snapshot and only walks on demand."""
+
+    def _publish(self, surveys: list[NamespaceSurvey], computed_at: str) -> None:
+        from ..server._state import publish_survey_snapshot
+
+        publish_survey_snapshot(surveys, computed_at=computed_at)
+
+    def test_cached_answer_never_opens_a_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..server import _routes
+
+        def _fail() -> list[NamespaceSurvey]:
+            raise AssertionError("cache hit must not walk the store")
+
+        monkeypatch.setattr(_routes, "_fetch_surveys", _fail)
+        self._publish([_survey("r" + "a" * 12 + "_", status="live")], computed_at="t1")
+        payload = _routes._gather_storage_survey(None, 200)
+        assert payload["source"] == "cache"
+        assert payload["computed_at"] == "t1"
+        assert payload["returned"] == 1
+
+    def test_filters_and_limit_apply_to_the_cached_list(self) -> None:
+        from ..server import _routes
+
+        self._publish(
+            [
+                _survey("r" + "a" * 12 + "_", status="orphaned"),
+                _survey("r" + "b" * 12 + "_", status="orphaned"),
+                _survey("r" + "c" * 12 + "_", status="live"),
+            ],
+            computed_at="t1",
+        )
+        payload = _routes._gather_storage_survey("orphaned", 1)
+        assert payload["total"] == 2
+        assert payload["returned"] == 1
+        assert payload["namespaces"][0]["status"] == "orphaned"
+
+    def test_fresh_recomputes_and_publishes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..server import _routes
+        from ..server._state import survey_snapshot
+
+        self._publish([_survey("r" + "a" * 12 + "_")], computed_at="t1")
+        fetched = [_survey("r" + "b" * 12 + "_", status="live")]
+        monkeypatch.setattr(_routes, "_fetch_surveys", lambda: fetched)
+        payload = _routes._gather_storage_survey(None, 200, fresh=True)
+        assert payload["source"] == "fresh"
+        assert payload["namespaces"][0]["prefix"] == "r" + "b" * 12 + "_"
+        snapshot = survey_snapshot()
+        assert snapshot is not None
+        assert snapshot.computed_at == payload["computed_at"]
+        assert [s.prefix for s in snapshot.surveys] == ["r" + "b" * 12 + "_"]
+
+    def test_cold_cache_falls_back_to_fresh_compute(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..server import _routes
+
+        monkeypatch.setattr(
+            _routes, "_fetch_surveys", lambda: [_survey("r" + "d" * 12 + "_")]
+        )
+        payload = _routes._gather_storage_survey(None, 200)
+        assert payload["source"] == "fresh"
+        assert payload["returned"] == 1

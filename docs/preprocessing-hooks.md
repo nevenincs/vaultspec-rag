@@ -198,8 +198,7 @@ Files skipped by an `on_error = "skip"` rule are counted and listed on every pat
 
 For a non-interactive client of the resident service, two response fields carry the
 same visibility. A reindex job record from `/jobs` (and `vaultspec-rag server jobs --json`) carries `preprocess_skipped` and `preprocess_failures`, so the client sees
-exactly which files a hook failed to extract - including a file refused because the host
-has no sandbox backend. The `/reindex` response also includes a `preprocess` pre-flight
+exactly which files a hook failed to extract. The `/reindex` response also includes a `preprocess` pre-flight
 block reporting whether the root ships a config, its resolved rule count, and the
 effective mode, mirroring the notice `server start` prints - so a client learns whether
 hooks will fire *before* the job runs.
@@ -215,55 +214,43 @@ environment variables.
 
 ## Security posture
 
-Preprocessors are arbitrary project code executed by the indexing service, whose clients
-are non-interactive and cannot answer a consent prompt. Safety therefore comes from
-**OS-level containment, not consent**: hooks run **by default** for any root, with no
-trust step and no user interaction, because each hook child is confined by the operating
-system's own sandbox. The sandbox denies the hook everything except the one job it has:
+A root's `.vaultragpreprocess.toml` **is code execution with your privileges**. When you
+index a repository, its preprocess rules run as arbitrary local commands under the account
+running the service - the same trust class as running that repo's `make`, `npm install`,
+or any of its build scripts. The rule is simple and load-bearing: **do not index a
+repository you would not build.** Indexing a repo is an act of trust in that repo, so its
+hooks run **by default**, with no consent prompt and no OS containment between a
+`/reindex` call and the hook running.
 
-- **Filesystem** - the source file is copied into a per-run scratch directory and the
-  child is granted read of only that directory (plus the interpreter runtime and the
-  project's own module tree so a project hook can import itself). It cannot read a
-  sibling repository, your home directory, or the daemon's managed state, and it can
-  write nowhere outside the scratch dir.
-- **Network** - all egress is denied, including loopback, so a hook cannot exfiltrate
-  data or reach an internal service.
+Because the hook runs with your privileges, its filesystem and network access are those of
+the account running the service. It can read and write what you can, and reach the network
+as you can. Treat `.vaultragpreprocess.toml` as executable project configuration and review
+it exactly as you would a build script or a CI job before running it.
+
+Two bounds still apply to every hook, and they earn their place at near-zero cost rather
+than as a security boundary:
+
 - **Secrets** - the child runs under a curated environment stripped of every
   `VAULTSPEC_RAG_*` knob and every credential (Qdrant API key, HF/cloud tokens, Git
-  tokens), so an attacker-authored hook inherits nothing sensitive.
+  tokens), so a hook inherits none of the daemon's secrets.
+- **Process, time, and output bounds** - the hook runs out-of-process (a subprocess
+  grandchild, which also keeps it off the GPU worker), with the project root as its
+  working directory (so `uv run`, `npm exec`, and other project launchers resolve the
+  project exactly as they do when you validate a rule with `preprocess run-one`), a
+  wall-clock `timeout_s`, and stdout/stderr caps, so a misbehaving extractor is bounded
+  in time and output rather than left to run away.
 
-The backend is chosen per host: a **Windows AppContainer** (default-deny by
-construction, unelevated, no dependencies), **bubblewrap** on Linux (with a
-Landlock+seccomp fallback), or **`sandbox-exec`** on macOS. `vaultspec-rag preprocess status` reports the resolved backend and whether hooks will run for a root.
+`vaultspec-rag preprocess status` reports whether a root ships a config, its resolved rule
+count, and the effective mode.
 
-**Server mode is fail-closed.** When the resident service resolves no working sandbox
-backend on its host, it **refuses** to run hooks - each matched file is skipped with a
-loud, actionable reason - rather than running them unconfined. A fail-open fallback
-would silently reopen arbitrary code execution on exactly the hosts that cannot contain
-it, so it is deliberately not offered.
+`VAULTSPEC_RAG_PREPROCESS=off` is the **kill switch** and wins over everything: no root's
+rules load, ever. Mirrored as `--no-preprocess` on `server start` and `index`. See the
+[configuration reference](configuration.md#preprocessing) for the full variable and flag
+inventory.
 
-Two environment variables shape the mode everywhere:
-
-- `VAULTSPEC_RAG_PREPROCESS=off` is the **kill switch** and wins over everything: no
-  root's rules load, ever. Mirrored as `--no-preprocess` on `server start` and `index`.
-- `VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1` is a **dangerous escape hatch** for a
-  backend-less host: it runs hooks *without* OS containment (still under the curated env
-  and scratch cwd), reopening arbitrary file and network access to any project command.
-  It is logged loudly on every run; use it only on hosts whose repositories you fully
-  trust. Mirrored as `--preprocess-unsandboxed`. The two flags are mutually exclusive.
-
-See the [configuration reference](configuration.md#preprocessing) for the full variable
-and flag inventory.
-
-One operational note: the index tracks the preprocess configuration it was built with,
-so changing the effective mode for a root (toggling `off`, or alternating
-`--preprocess-unsandboxed` runs against a daemon that serves the same root in the default
-mode) triggers an automatic rebuild on the next index run - correct, but expensive on a
-large corpus. Prefer a single steady mode per host over per-run mode flags.
-
-Containment is a boundary, not a licence: still treat `.vaultragpreprocess.toml` as
-executable project configuration and review it in code review. The sandbox contains what
-a hook can do; it does not vouch for what a hook *should* do.
+One operational note: the index tracks the preprocess configuration it was built with, so
+changing the effective mode for a root (toggling `off`) triggers an automatic rebuild on
+the next index run - correct, but expensive on a large corpus.
 
 ## Adjacent improvements
 
