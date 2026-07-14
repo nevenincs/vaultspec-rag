@@ -564,20 +564,21 @@ def test_watcher_alias_removed_from_user_facing_cli() -> None:
 
 
 def test_cli_mcp_control_parity() -> None:
-    # Every backend watcher-control capability must remain available, while
-    # the CLI exposes it with human-facing "updates" language.
+    # The MCP surface is deliberately narrowed to the five search/read/reindex
+    # tools (mcp-search-scope ADR); watcher control lives on the CLI, exposed
+    # with human-facing "updates" language.
     import asyncio
 
     from ..mcp import mcp
 
-    tools = [t.name for t in asyncio.run(mcp.list_tools())]
-    for tool in (
-        "get_watcher_state",
-        "start_watcher",
-        "stop_watcher",
-        "reconfigure_watcher",
-    ):
-        assert tool in tools
+    tools = sorted(t.name for t in asyncio.run(mcp.list_tools()))
+    assert tools == [
+        "get_code_file",
+        "reindex_codebase",
+        "reindex_vault",
+        "search_codebase",
+        "search_vault",
+    ]
     help_result = runner.invoke(app, ["server", "updates", "--help"])
     assert help_result.exit_code == 0
     assert _help_command_names(help_result.stdout) == [

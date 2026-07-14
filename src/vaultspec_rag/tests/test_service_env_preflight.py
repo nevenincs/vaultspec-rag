@@ -172,11 +172,18 @@ class TestRemediationCommands:
         assert "--reinstall" in cmd
         assert cmd.endswith("torch")
 
-    def test_durable_command_carries_the_cu130_index_url(self) -> None:
+    def test_durable_command_pins_a_cu130_wheel_via_with(self) -> None:
+        from vaultspec_rag.torch_config import TORCH_TOOL_PIN_VERSION
+
         cmd = durable_tool_install_command()
         assert CU130_INDEX_URL in cmd
         assert "uv tool install" in cmd
         assert "vaultspec-rag[mcp]" in cmd
+        # --index is NOT recorded in uv tool receipts (verified on uv 0.11.x),
+        # so the durable form must be the --with direct wheel URL.
+        assert "--with" in cmd
+        assert "--index" not in cmd
+        assert f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-cp313-cp313-" in cmd
 
 
 class TestEphemeralEnvWarning:

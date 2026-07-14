@@ -124,14 +124,24 @@ def gpu_escape_hatch_command(interpreter: str) -> str:
 def durable_tool_install_command() -> str:
     """The receipt-carrying tool reinstall that keeps CUDA across upgrades.
 
-    uv records ``--index`` in the tool receipt and re-applies it on every
-    ``uv tool upgrade``, so torch keeps resolving from the cu130 index. The
-    service must be stopped first: a forced reinstall while it runs fails
-    mid-removal on the locked Scripts dir.
+    uv records ``--with`` requirements (including a PEP 508 direct wheel URL)
+    in the tool receipt and re-applies them on every ``uv tool upgrade``, so
+    torch keeps resolving to the cu130 wheel. ``--index`` is NOT recorded by
+    current uv (verified on 0.11.x: the receipt carried no index options and
+    an upgrade re-resolved torch to the CPU wheel), so the direct URL is the
+    only re-resolution-proof pin. The service must be stopped first: a forced
+    reinstall while it runs fails mid-removal on the locked Scripts dir.
     """
-    from ..torch_config import CU130_INDEX_URL
+    import sys
 
-    return f'uv tool install --force "vaultspec-rag[mcp]" --index {CU130_INDEX_URL}'
+    from ..torch_config import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
+
+    platform_tag = "win_amd64" if sys.platform == "win32" else "manylinux_2_28_x86_64"
+    wheel = (
+        f"{CU130_INDEX_URL}/torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130"
+        f"-cp313-cp313-{platform_tag}.whl"
+    )
+    return f'uv tool install --force "vaultspec-rag[mcp]" --with "torch @ {wheel}"'
 
 
 def _cpu_only_message() -> str:
