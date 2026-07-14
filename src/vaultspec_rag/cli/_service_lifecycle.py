@@ -728,7 +728,9 @@ def _initiator_fields() -> dict[str, str]:
     Carries the terminating process' own pid, command line, and cwd so "who
     stopped the machine service" is answerable from one shutdown record rather
     than only naming the terminated pid. The command line is bounded so a long
-    argv cannot bloat the audit line or the envelope.
+    argv cannot bloat the audit line or the envelope. The argv is logged
+    verbatim, which constrains future stop flags: none may ever carry a
+    secret without revisiting this field.
     """
     cmd = " ".join(sys.argv)
     if len(cmd) > 300:

@@ -107,9 +107,11 @@ def record_start(
     """Append a new ``running`` activity record and return its stable id.
 
     Args:
-        source: ``"vault"`` or ``"code"`` - the corpus being (re)indexed.
-        trigger: ``"tool"`` (a reindex MCP tool call) or ``"watcher"``
-            (the filesystem watcher reindex loop).
+        source: ``"vault"`` or ``"code"`` (the corpus being (re)indexed),
+            or ``"maintenance"`` (the scheduled storage-maintenance cycle).
+        trigger: ``"tool"`` (a reindex MCP tool call), ``"watcher"`` (the
+            filesystem watcher reindex loop), or ``"schedule"`` (the
+            daemon's periodic maintenance task).
         project_root: Optional workspace root the job acts on.
         command: Optional service-domain command name.
         initiator_kind: Optional caller identity, e.g. CLI, MCP, or watcher.

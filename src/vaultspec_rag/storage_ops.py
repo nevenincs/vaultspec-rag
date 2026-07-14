@@ -432,6 +432,21 @@ class ReclaimDecision:
     footprint_bytes: int = 0
 
 
+def _prefix_has_points(client: QdrantClient, prefix: str) -> bool:
+    """Return True when any collection of *prefix* currently holds points."""
+    for collection in client.get_collections().collections:
+        if not collection.name.startswith(prefix):
+            continue
+        try:
+            if int(client.count(collection_name=collection.name).count) > 0:
+                return True
+        except (OSError, RuntimeError):
+            # An uncountable collection is treated as point-bearing: the
+            # conservative answer defers the drop.
+            return True
+    return False
+
+
 def _parse_iso(ts: str) -> datetime | None:
     """Parse an ISO-8601 timestamp; naive values are assumed UTC."""
     if not ts:
@@ -725,6 +740,23 @@ def run_maintenance_cycle(
                         "failed",
                         decision.tier,
                         reason=f"archive_failed: {exc}",
+                        points=decision.points,
+                        footprint_bytes=decision.footprint_bytes,
+                    )
+                )
+                continue
+        else:
+            # The empty tier has no archive, so re-count immediately before
+            # the drop: a reindex of a just-restored root racing this cycle
+            # (survey-to-drop TOCTOU) defers the prefix to the next cycle
+            # instead of destroying fresh points.
+            if _prefix_has_points(client, decision.prefix):
+                applied.append(
+                    ReclaimDecision(
+                        decision.prefix,
+                        "deferred",
+                        decision.tier,
+                        reason="points_appeared_since_survey",
                         points=decision.points,
                         footprint_bytes=decision.footprint_bytes,
                     )
