@@ -672,7 +672,10 @@ def _try_in_process_indexing(
                 "total": c_res.total,
                 "duration_ms": c_res.duration_ms,
                 # Preprocess-hook coverage (#185, D11): never let a skipped
-                # file be silently absent from the index report.
+                # file be silently absent from the index report, and surface
+                # the rule-fed count so a working pipeline is positively
+                # visible.
+                "preprocess_ok": c_res.preprocess_ok,
                 "preprocess_skipped": c_res.preprocess_skipped,
                 "preprocess_failures": c_res.preprocess_failures,
             }

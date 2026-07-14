@@ -132,7 +132,10 @@ def record_start(
         "progress": None,
         # Document-preprocessing outcome, surfaced through /jobs so a
         # non-interactive client sees which files failed extraction rather than
-        # only a summary count (preprocess-sandbox ADR D9). Populated at finish.
+        # only a summary count (preprocess-sandbox ADR D9), and how many files
+        # rules actually fed, so a missing rule-fed corpus is diagnosable from
+        # the job record alone. Populated at finish.
+        "preprocess_ok": 0,
         "preprocess_skipped": 0,
         "preprocess_failures": [],
         "initiator": {
@@ -213,6 +216,7 @@ def record_finish(
     result: str | None = None,
     error: str | None = None,
     phase: Phase | None = None,
+    preprocess_ok: int = 0,
     preprocess_skipped: int = 0,
     preprocess_failures: list[str] | None = None,
 ) -> None:
@@ -229,6 +233,9 @@ def record_finish(
         error: Optional error summary; its presence flips the phase to
             ``"error"`` if *phase* is not explicitly provided.
         phase: Optional explicit target phase (e.g. ``"cancelled"``).
+        preprocess_ok: Count of files a document-preprocessing rule fed into
+            the index this run, threaded onto the record so a working
+            preprocess pipeline is positively visible through /jobs.
         preprocess_skipped: Count of files a document-preprocessing rule
             skipped this run, threaded onto the record so /jobs can surface it
             (preprocess-sandbox ADR D9).
@@ -260,6 +267,7 @@ def record_finish(
                 record["phase"] = target_phase
                 record["finished_at"] = finished_at
                 record["result"] = summary
+                record["preprocess_ok"] = preprocess_ok
                 record["preprocess_skipped"] = preprocess_skipped
                 record["preprocess_failures"] = list(preprocess_failures or [])
                 resources = record.get("resources")
@@ -464,6 +472,7 @@ def start_reindex_codebase(
                                 f"-{result.removed} ({result.duration_ms}ms)"
                                 f"{skipped_suffix}"
                             ),
+                            preprocess_ok=result.preprocess_ok,
                             preprocess_skipped=result.preprocess_skipped,
                             preprocess_failures=result.preprocess_failures,
                         )

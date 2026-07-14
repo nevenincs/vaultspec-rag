@@ -196,6 +196,15 @@ Files skipped by an `on_error = "skip"` rule are counted and listed on every pat
   `vaultspec-rag index --json`,
 - and a warning in the service log for every skip.
 
+Success is just as visible. Extractors run in worker subprocesses whose own logging
+never reaches the service log, so the indexer counts every rule-fed file and surfaces
+the tally where the skips already live: `IndexResult.preprocess_ok`, the
+`preprocess_ok` field in `vaultspec-rag index --json` and on the reindex job record,
+and the `preprocess_rules` / `preprocess_ok` fields on the service log's
+`service.index completed` event. A run whose rules matched nothing reports
+`preprocess_ok=0` there — the discriminating signal when rule-fed content seems to be
+missing from the index.
+
 For a non-interactive client of the resident service, two response fields carry the
 same visibility. A reindex job record from `/jobs` (and `vaultspec-rag server jobs --json`) carries `preprocess_skipped` and `preprocess_failures`, so the client sees
 exactly which files a hook failed to extract - including a file refused because the host

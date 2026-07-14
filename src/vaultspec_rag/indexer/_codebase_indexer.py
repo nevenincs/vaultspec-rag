@@ -157,9 +157,11 @@ class CodebaseIndexer:
         # start of each full/incremental run; the writer lock serialises runs
         # so instance-scoped state is safe. ``_prep_ctx`` is the context handed
         # to chunk workers; ``_prep_skips`` accumulates "rel_path: reason" for
-        # files a preprocess rule skipped, surfaced in the run's IndexResult.
+        # files a preprocess rule skipped and ``_prep_ok`` counts rule-fed
+        # files, both surfaced in the run's IndexResult.
         self._prep_ctx: PreprocessContext | None = None
         self._prep_skips: list[str] = []
+        self._prep_ok: int = 0
         # Config epochs for the current run (D1-D3). Set at the start of each
         # locked run from the same resolved inputs the scan uses, then stamped
         # by ``_write_meta``; ``None`` means "not yet resolved this run" and the
@@ -441,25 +443,42 @@ class CodebaseIndexer:
         """Reset per-run preprocess state at the start of a full/incremental run."""
         self._prep_ctx = self._resolve_preprocess_context()
         self._prep_skips = []
+        self._prep_ok = 0
+
+    def _prep_rule_count(self) -> int:
+        """Return the number of preprocess rules active for the current run."""
+        prep = self._prep_ctx
+        return len(prep.config.rules) if prep is not None else 0
 
     def _record_preprocess_result(self, res: FileChunkResult | None) -> None:
-        """Accumulate a worker result's preprocess skip for failure visibility (D11)."""
-        if res is not None and res.preprocess_status == "skipped":
+        """Accumulate a worker result's preprocess disposition (D11).
+
+        Workers run in spawn subprocesses whose logging never reaches the
+        owning process, so both outcomes are tallied here: skips for failure
+        visibility, successes so a working pipeline is positively observable.
+        """
+        if res is None:
+            return
+        if res.preprocess_status == "ok":
+            self._prep_ok += 1
+        elif res.preprocess_status == "skipped":
             reason = res.preprocess_reason or "preprocessor skipped the file"
             self._prep_skips.append(f"{res.rel_path}: {reason}")
 
-    def _record_scoped_skip(
+    def _record_scoped_preprocess(
         self,
         path: pathlib.Path,
         result: _chunk_worker.ScopedChunkResult,
     ) -> None:
-        """Accumulate a scoped-path preprocess skip for failure visibility (D11).
+        """Accumulate a scoped-path preprocess disposition (D11).
 
-        The scoped/incremental path (used by the watcher) reports skips here so
-        coverage gaps are surfaced on every path, not just the full index
-        (review VIS-001).
+        The scoped/incremental path (used by the watcher) reports here so
+        coverage gaps and rule-fed successes are surfaced on every path, not
+        just the full index (review VIS-001).
         """
-        if result.preprocess_status == "skipped":
+        if result.preprocess_status == "ok":
+            self._prep_ok += 1
+        elif result.preprocess_status == "skipped":
             try:
                 rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
             except ValueError:
@@ -701,7 +720,7 @@ class CodebaseIndexer:
                     try:
                         res = future.result()
                         all_chunks.extend(res.chunks)
-                        self._record_scoped_skip(futures[future], res)
+                        self._record_scoped_preprocess(futures[future], res)
                     except BrokenProcessPool:
                         # Pool-level fatal - propagate rather than mis-record
                         # it as a single-file failure.
@@ -748,7 +767,7 @@ class CodebaseIndexer:
             try:
                 res = _chunk_worker.chunk_file_with_status(p, self.root_dir, prep)
                 all_chunks.extend(res.chunks)
-                self._record_scoped_skip(p, res)
+                self._record_scoped_preprocess(p, res)
             except Exception:
                 logger.warning("Failed to chunk %s", p, exc_info=True)
             reporter.advance()
@@ -1183,6 +1202,8 @@ class CodebaseIndexer:
                 removed=result.removed,
                 duration_ms=result.duration_ms,
                 files=result.files,
+                preprocess_rules=self._prep_rule_count(),
+                preprocess_ok=result.preprocess_ok,
                 preprocess_skipped=result.preprocess_skipped,
             )
             return result
@@ -1313,6 +1334,7 @@ class CodebaseIndexer:
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(paths),
+            preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
         )
@@ -1380,6 +1402,8 @@ class CodebaseIndexer:
                 removed=result.removed,
                 duration_ms=result.duration_ms,
                 files=result.files,
+                preprocess_rules=self._prep_rule_count(),
+                preprocess_ok=result.preprocess_ok,
                 preprocess_skipped=result.preprocess_skipped,
             )
             return result
@@ -1519,6 +1543,7 @@ class CodebaseIndexer:
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(to_index),
+            preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
         )
@@ -1700,6 +1725,7 @@ class CodebaseIndexer:
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(to_index),
+            preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
         )
