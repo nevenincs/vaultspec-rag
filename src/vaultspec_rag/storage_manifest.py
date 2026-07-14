@@ -343,6 +343,14 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
     skipped when no stamp changed. The caller supplies the clock so this
     layer keeps its no-clock-dependency convention.
 
+    Concurrency: this is the manifest's second cross-process writer (the
+    indexer's ``record_root`` is the first) under the file's whole-file
+    last-writer-wins contract. The race is delete-safe by construction: a
+    stamp lost to a concurrent ``record_root`` (which writes the field
+    empty) restarts the grace window - protection can only be EXTENDED,
+    never shortened - and a clobbered entry demotes its namespace to
+    ``unknown``, which automation never touches.
+
     Args:
         statuses: Mapping of collection prefix to its survey status.
         now_iso: ISO-8601 timestamp to stamp on newly orphaned entries.
