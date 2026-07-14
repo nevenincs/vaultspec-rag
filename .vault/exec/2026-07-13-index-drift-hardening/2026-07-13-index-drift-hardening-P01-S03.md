@@ -9,7 +9,7 @@ related:
   - "[[2026-07-13-index-drift-hardening-plan]]"
 ---
 
-# Mirror the content epoch over vault_chunk_chars beside _needs_layout_rebuild with clean-rebuild escalation and epoch stamping on successful writes
+# Mirror the content epoch over vault_chunk_chars beside \_needs_layout_rebuild with clean-rebuild escalation and epoch stamping on successful writes
 
 ## Scope
 

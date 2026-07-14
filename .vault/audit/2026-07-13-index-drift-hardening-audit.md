@@ -148,8 +148,7 @@ alone, in related subsets, and in the full suite on a quiet machine).
   fixed pre-merge.
 - Queue the four LOW follow-ups above as candidates for a later hygiene pass;
   none blocks merge.
-- Promote the audit-C1 codification candidate `preprocess-config-is-code-
-  execution` once this design holds a cycle: the TOFU half the original fix
+- Promote the audit-C1 codification candidate `preprocess-config-is-code- execution` once this design holds a cycle: the TOFU half the original fix
   never shipped now exists and is enforced.
 - Consider a future ADR amendment enumerating `preprocess_max_emitted_bytes`
   in D1's content-epoch input list, superseding the gap this audit closed.

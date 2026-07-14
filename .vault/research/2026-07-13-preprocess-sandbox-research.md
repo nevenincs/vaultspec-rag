@@ -61,16 +61,16 @@ entire environment and working directory. The timeout and stdout/stderr caps bou
 wall-clock and captured-output memory - nothing about what the child does. Severity
 ranked:
 
-| # | Threat | Bounded today | Severity |
-| --- | --- | --- | --- |
-| T1 | Secret exfiltration via env inheritance (child inherits `VAULTSPEC_RAG_QDRANT_API_KEY`, any HF/AWS/OpenAI/proxy tokens in the daemon env) | no | Critical |
-| T2 | Arbitrary RCE with daemon-user privileges (that is the hook's nature) | no | Critical |
-| T3 | Trust-store forgery - the child can write `~/.vaultspec-rag/preprocess-trust.json` to self-trust, or corrupt `service.json`/the storage manifest | no | Critical |
-| T4 | Filesystem read (`~/.ssh`, browser cookies, `%APPDATA%`, other roots' source) | no | High |
-| T5 | Network egress / C2 / exfiltration - no restriction | no | High |
-| T6 | Filesystem write outside the repo (persistence, ransomware, config tampering) | no | High |
-| T7 | Detached grandchildren outliving the timeout (kill reaps only the direct child) | no | High |
-| T8-T11 | Registry writes, disk fill, memory/fork-bomb, CPU burn | no / partial | Medium-Low |
+| #      | Threat                                                                                                                                           | Bounded today | Severity   |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | ---------- |
+| T1     | Secret exfiltration via env inheritance (child inherits `VAULTSPEC_RAG_QDRANT_API_KEY`, any HF/AWS/OpenAI/proxy tokens in the daemon env)        | no            | Critical   |
+| T2     | Arbitrary RCE with daemon-user privileges (that is the hook's nature)                                                                            | no            | Critical   |
+| T3     | Trust-store forgery - the child can write `~/.vaultspec-rag/preprocess-trust.json` to self-trust, or corrupt `service.json`/the storage manifest | no            | Critical   |
+| T4     | Filesystem read (`~/.ssh`, browser cookies, `%APPDATA%`, other roots' source)                                                                    | no            | High       |
+| T5     | Network egress / C2 / exfiltration - no restriction                                                                                              | no            | High       |
+| T6     | Filesystem write outside the repo (persistence, ransomware, config tampering)                                                                    | no            | High       |
+| T7     | Detached grandchildren outliving the timeout (kill reaps only the direct child)                                                                  | no            | High       |
+| T8-T11 | Registry writes, disk fill, memory/fork-bomb, CPU burn                                                                                           | no / partial  | Medium-Low |
 
 T1 and T3 are the sharpest and the cheapest to close (curate the child env, keep the
 status dir out of it). T3's target vanishes entirely if the trust store is deleted.

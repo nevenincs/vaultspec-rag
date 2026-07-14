@@ -101,7 +101,7 @@ macOS-only, operator-controlled paths, so low real exposure.
 
 The re-review flagged that if wrapping the read pipes as file objects raised
 after the child was created, the process, thread, job, and read-pipe handles
-would leak because no handle object existed for ``cleanup`` to release. Fixed:
+would leak because no handle object existed for `cleanup` to release. Fixed:
 the post-create steps are guarded so a failure terminates the child and closes
 every handle before re-raising. The attribute-list build was also extracted to a
 helper that deletes its partial list on failure.

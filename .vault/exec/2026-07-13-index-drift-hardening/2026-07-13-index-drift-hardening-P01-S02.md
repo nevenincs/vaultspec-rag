@@ -9,7 +9,7 @@ related:
   - "[[2026-07-13-index-drift-hardening-plan]]"
 ---
 
-# Stamp membership and content epoch keys in _write_meta, strip them in _load_meta, and check both in _incremental_index_locked before scoped dispatch: content mismatch escalates to _full_index_locked(clean=True), membership mismatch forces the unscoped incremental, legacy sidecars without the keys trigger one unscoped reconcile
+# Stamp membership and content epoch keys in \_write_meta, strip them in \_load_meta, and check both in \_incremental_index_locked before scoped dispatch: content mismatch escalates to \_full_index_locked(clean=True), membership mismatch forces the unscoped incremental, legacy sidecars without the keys trigger one unscoped reconcile
 
 ## Scope
 

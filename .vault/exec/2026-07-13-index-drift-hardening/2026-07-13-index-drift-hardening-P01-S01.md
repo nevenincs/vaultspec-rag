@@ -21,8 +21,7 @@ related:
   `json`) so it stays importable from the CPU-only spawn chunk-worker chain
   without loading torch.
 - Provide a private `_digest` helper that canonicalizes any payload with
-  `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-  default=str)` and hashes it with blake2b, so a semantically-identical payload
+  `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)` and hashes it with blake2b, so a semantically-identical payload
   always yields the same digest and TOML option values JSON cannot represent
   degrade to their string form rather than raising.
 - Expose `code_membership_epoch` over the resolved gitignore patterns

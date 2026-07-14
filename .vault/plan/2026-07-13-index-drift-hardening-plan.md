@@ -17,8 +17,8 @@ related:
 Add the two-tier per-root config epoch (ADR D1-D3) to both indexers so membership drift forces an unscoped incremental and content drift forces a clean rebuild, self-escalating at every incremental entry.
 
 - [x] `P01.S01` - Create the CPU-only config-epoch module: canonical serialization plus blake2b hashing of membership inputs (vaultragignore patterns, nested-gitignore signal, preprocess rule patterns) and content inputs (preprocess invocation fields, html_strip, and vault_chunk_chars for the vault tier), stdlib-only so the spawn worker import chain stays torch-free; `src/vaultspec_rag/indexer/_config_epoch.py`.
-- [x] `P01.S02` - Stamp membership and content epoch keys in _write_meta, strip them in _load_meta, and check both in _incremental_index_locked before scoped dispatch: content mismatch escalates to _full_index_locked(clean=True), membership mismatch forces the unscoped incremental, legacy sidecars without the keys trigger one unscoped reconcile; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [x] `P01.S03` - Mirror the content epoch over vault_chunk_chars beside _needs_layout_rebuild with clean-rebuild escalation and epoch stamping on successful writes; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P01.S02` - Stamp membership and content epoch keys in \_write_meta, strip them in \_load_meta, and check both in \_incremental_index_locked before scoped dispatch: content mismatch escalates to \_full_index_locked(clean=True), membership mismatch forces the unscoped incremental, legacy sidecars without the keys trigger one unscoped reconcile; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S03` - Mirror the content epoch over vault_chunk_chars beside \_needs_layout_rebuild with clean-rebuild escalation and epoch stamping on successful writes; `src/vaultspec_rag/indexer/_vault_indexer.py`.
 - [x] `P01.S04` - Unit-test the drift-class escalation matrix over real tmp roots: newly-ignored prune, newly-admitted pickup, preprocess pattern change forcing unscoped, html_strip and command change forcing clean rebuild, legacy sidecar unscoped-once, and scoped-path epoch cost staying rglob-free; `src/vaultspec_rag/tests/test_config_epoch.py`.
 
 ### Phase `P02` - Preprocess tri-state mode and TOFU trust store
@@ -36,7 +36,7 @@ Expose the tri-state and trust flow through the CLI and server start (ADR D7-D8)
 
 - [x] `P03.S09` - Add trust, untrust, and status verbs to the preprocess group: trust prints the resolved command set and confirms (auto-accept with --yes) then persists the record, untrust removes it, status reports mode, hash, and per-root trust state, all with --json envelopes; `src/vaultspec_rag/cli/_preprocess.py`.
 - [x] `P03.S10` - Add --no-preprocess and --preprocess-trust-all to server start and the index/reindex verbs, forward the mode into the daemon env like --local-only, and print the untrusted-config notice with the remediation verb at server start; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [x] `P03.S11` - Cover the new verbs and flags: trust confirm and --yes flows, untrust, status JSON envelope, flag-to-env forwarding, and the reworked _enable_preprocess fixtures across the CLI test modules; `src/vaultspec_rag/tests/test_cli_preprocess.py`.
+- [x] `P03.S11` - Cover the new verbs and flags: trust confirm and --yes flows, untrust, status JSON envelope, flag-to-env forwarding, and the reworked \_enable_preprocess fixtures across the CLI test modules; `src/vaultspec_rag/tests/test_cli_preprocess.py`.
 
 ### Phase `P04` - Watcher fixes, integration proof, docs
 
