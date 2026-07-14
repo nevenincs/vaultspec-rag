@@ -131,11 +131,11 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # supported embedded-reuse contract requires the lock be freed the moment
     # startup fails, so a subsequent in-process acquire succeeds.
     try:
-        heartbeat_task = await _start_components()
+        periodic_tasks = await _start_components()
         try:
             yield
         finally:
-            await _shutdown_components(heartbeat_task)
+            await _shutdown_components(periodic_tasks)
     except BaseException:
         # The post-yield ``finally`` releases the lock on a clean run; this
         # branch covers the pre-yield startup failure (and a cancelled startup)
@@ -145,8 +145,8 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         raise
 
 
-async def _start_components() -> asyncio.Task[None]:
-    """Run the pre-yield startup: qdrant, models, hooks, heartbeat.
+async def _start_components() -> list[asyncio.Task[None]]:
+    """Run the pre-yield startup: qdrant, models, hooks, periodic tasks.
 
     Factored out of :func:`service_lifespan` so the machine-lock
     release-on-failure guard wraps the whole startup body without nesting the
@@ -154,8 +154,9 @@ async def _start_components() -> asyncio.Task[None]:
     caller, which releases the held machine lock before re-raising.
 
     Returns:
-        The running heartbeat task, handed back so the post-yield shutdown can
-        cancel and await it.
+        The running periodic tasks (heartbeat, plus storage maintenance when
+        scheduled), handed back so the post-yield shutdown can cancel and
+        await them.
     """
     t_total = time.perf_counter()
 
@@ -262,23 +263,35 @@ async def _start_components() -> asyncio.Task[None]:
             exc_info=True,
         )
 
-    return heartbeat_task
+    # Scheduled storage maintenance: server-mode only and knob-gated at
+    # task creation (the tick re-checks both cheaply, so a config flip is
+    # honoured without a restart either way). The loop itself delays one
+    # full interval before the first cycle - a fresh daemon serves before
+    # it sweeps.
+    tasks = [heartbeat_task]
+    if get_config().effective_server_mode() and bool(get_config().storage_autoprune):
+        tasks.append(asyncio.create_task(_m._maintenance_loop()))
+
+    return tasks
 
 
-async def _shutdown_components(heartbeat_task: asyncio.Task[None]) -> None:
+async def _shutdown_components(tasks: list[asyncio.Task[None]]) -> None:
     """Tear down the daemon's data components and release the machine lock.
 
-    Mirrors :func:`_start_components`: cancels the heartbeat, stops watchers
-    before stores and stores before the qdrant child, then releases the machine
-    singleton last so the slot is free for the next service only after this one
-    has fully torn down its GPU and Qdrant.
+    Mirrors :func:`_start_components`: cancels the periodic tasks (heartbeat
+    and, when scheduled, storage maintenance), stops watchers before stores
+    and stores before the qdrant child, then releases the machine singleton
+    last so the slot is free for the next service only after this one has
+    fully torn down its GPU and Qdrant.
     """
     from .. import qdrant_runtime as _qr
     from ..config import EnvVar
 
-    heartbeat_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, Exception):
-        await heartbeat_task
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
     # Shutdown ordering: watchers BEFORE stores (so no
     # incremental_index() runs against a closed store), stores
     # BEFORE the qdrant child (so clients release their server
