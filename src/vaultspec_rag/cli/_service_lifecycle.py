@@ -45,9 +45,11 @@ from ._service_jobs import (
     _stale_progress_label,
 )
 from ._service_status import (
+    SERVICE_PHASE_WARMING,
     _default_service_port,
     _log_file,
     _read_service_status,
+    _service_phase,
     _status_file,
     _update_service_metadata,
     _update_service_token,
@@ -429,13 +431,21 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
 
     machine_holder = machine_lock_live_holder()
     if machine_holder:
+        warming = _service_phase(_read_service_status()) == SERVICE_PHASE_WARMING
+        owner_line = (
+            f"A vaultspec-rag service already owns this machine "
+            f"(pid {machine_holder}) and is warming up (loading models); "
+            "it will serve shortly."
+            if warming
+            else f"A vaultspec-rag service already owns this machine "
+            f"(pid {machine_holder})."
+        )
         raise _fail_start(
             json_mode,
             error="machine_owned",
             message="Service start failed",
             human_lines=(
-                f"A vaultspec-rag service already owns this machine "
-                f"(pid {machine_holder}).",
+                owner_line,
                 "One service owns the machine's GPU and managed Qdrant; a second "
                 "resident service is not supported.",
             ),
@@ -444,6 +454,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
                 "vaultspec-rag server stop",
             ),
             holder_pid=machine_holder,
+            **({"holder_phase": "warming"} if warming else {}),
         )
 
 
@@ -1132,6 +1143,8 @@ def _compute_state(
     pid_is_ours: bool,
     port_listening: bool,
     heartbeat_stale: bool,
+    *,
+    phase: str | None = None,
 ) -> tuple[str, str, int]:
     if not pid_alive:
         # Confirmed dead: the only state in which the discovery file may be
@@ -1150,6 +1163,12 @@ def _compute_state(
             "crashed (PID reused by unrelated process)",
             4,
         )
+    # A live daemon that stamped ``warming`` holds the machine lock but is
+    # still loading models: the silent port and the not-yet-started heartbeat
+    # are expected, not crash signals. Checked before both so a warming daemon
+    # never renders as crashed. An absent phase keeps the pre-phase semantics.
+    if phase == SERVICE_PHASE_WARMING:
+        return "warming", "warming (loading models, not yet serving)", 5
     if not port_listening:
         return "crashed_port_silent", "crashed (port silent)", 4
     if heartbeat_stale:
@@ -1184,7 +1203,11 @@ def _evaluate_service_signals(
 
     token_match = _compute_token_match(expected_token, pid_alive, port_listening, port)
     state, state_label, exit_code = _compute_state(
-        pid_alive, pid_is_ours, port_listening, heartbeat_stale
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_stale,
+        phase=_service_phase(status),
     )
 
     return (
@@ -1564,6 +1587,8 @@ def _status_next_action(
     port_arg = f" --port {port}" if port is not None else ""
     if state == "stopped":
         return f"vaultspec-rag server start{port_arg}"
+    if state == "warming":
+        return f"vaultspec-rag server status{port_arg}  (models loading; retry shortly)"
     if state != "running":
         return f"vaultspec-rag server logs --limit 80{port_arg}"
     if not isinstance(health, dict) or health.get("status") != "ready":
@@ -1896,11 +1921,18 @@ def _render_port_only_status(
 def _explicit_port_state(
     port_listening: bool,
     health: dict[str, object] | None,
+    *,
+    phase: str | None = None,
+    pid_alive: bool = False,
 ) -> tuple[str, str, int, bool]:
     if isinstance(health, dict) and health.get("status") == "ready":
         return "running", "running", 0, False
     if port_listening:
         return "unreachable", "unreachable", 4, False
+    # Silent port + a live daemon that stamped ``warming``: report the warmup
+    # window instead of a contradictory "stopped" (the machine lock is held).
+    if phase == SERVICE_PHASE_WARMING and pid_alive:
+        return "warming", "warming (loading models, not yet serving)", 5, False
     return "stopped", "stopped", 3, False
 
 
@@ -1938,6 +1970,8 @@ def _render_explicit_port_status(
     state, state_label, exit_code, heartbeat_stale = _explicit_port_state(
         port_listening,
         health,
+        phase=_service_phase(status),
+        pid_alive=pid_alive,
     )
     token_match = _status_response_token_match(expected_token, health)
     operational = _status_operational_summary(
