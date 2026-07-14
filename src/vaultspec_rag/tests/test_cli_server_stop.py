@@ -22,8 +22,13 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from ..cli import app
-from ..cli._service_lifecycle import _fail_stop, _stop_success
+from ..cli import _log_file, app
+from ..cli._service_lifecycle import (
+    _fail_stop,
+    _initiator_fields,
+    _stop_success,
+    _terminate_and_confirm,
+)
 from ..config import EnvVar, reset_config
 
 if TYPE_CHECKING:
@@ -176,6 +181,11 @@ class TestStopLiveOutcomes:
         assert env["ok"] is True
         assert env["data"]["status"] == "cleaned"
         assert env["data"]["pid"] == dead_pid
+        # `cleaned` removes stale discovery state without terminating anything,
+        # so it carries no initiator attribution.
+        assert "initiator_pid" not in env["data"]
+        assert "initiator_cmd" not in env["data"]
+        assert "initiator_cwd" not in env["data"]
 
     @pytest.mark.usefixtures("_isolated_singleton")
     def test_live_unconfirmed_pid_is_identity_unconfirmed(self) -> None:
@@ -210,3 +220,64 @@ class TestStopLiveOutcomes:
         finally:
             child.kill()
             child.wait(timeout=10)
+
+
+class TestShutdownAttribution:
+    """The initiator identity carried on terminating stops (pid, cmd, cwd)."""
+
+    def test_initiator_fields_shape(self) -> None:
+        fields = _initiator_fields()
+        assert fields["initiator_pid"] == str(os.getpid())
+        cmd = fields["initiator_cmd"]
+        assert cmd
+        assert "pytest" in cmd.lower() or "python" in cmd.lower()
+        assert len(cmd) <= 300
+        assert os.path.isdir(fields["initiator_cwd"])
+        assert fields["initiator_cwd"] == os.getcwd()
+
+    def test_stopped_envelope_carries_initiator_fields(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The terminating outcomes pass **_initiator_fields() into the envelope;
+        # assert the fields land in `data` through the real helper.
+        _stop_success(
+            True,
+            status="stopped",
+            human_title="Service stopped",
+            human_lines=("Process ID: 7",),
+            pid=7,
+            port=8766,
+            **_initiator_fields(),
+        )
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["status"] == "stopped"
+        assert data["initiator_pid"] == str(os.getpid())
+        assert data["initiator_cmd"]
+        assert data["initiator_cwd"] == os.getcwd()
+
+    @pytest.mark.usefixtures("_isolated_singleton")
+    def test_terminate_writes_initiator_attribution_to_log(self) -> None:
+        # Terminate a real non-python child (a python child would be confirmed
+        # ours by the tokenless fallback, and CTRL_BREAK on a shared Windows
+        # process group would kill the test run) and read the isolated log the
+        # CLI-side shutdown line is written to.
+        log_path = _log_file()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            child = subprocess.Popen(
+                ["cmd.exe", "/c", "ping -n 60 127.0.0.1 >nul"],
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            child = subprocess.Popen(["sleep", "60"])
+        try:
+            _terminate_and_confirm(child.pid)
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+        content = log_path.read_text(encoding="utf-8")
+        assert "reason=cli_terminate" in content
+        assert f"pid={child.pid}" in content
+        assert f"initiator_pid={os.getpid()}" in content
+        assert "initiator_cmd=" in content
+        assert f"initiator_cwd={os.getcwd()}" in content
