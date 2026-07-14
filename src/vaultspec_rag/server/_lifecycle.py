@@ -23,10 +23,12 @@ __all__ = [
     "_heartbeat_tick_sync",
     "_install_daemon_shutdown_hooks",
     "_lifecycle_log",
+    "_maintenance_loop",
     "_qdrant_liveness_tick",
     "_record_shutdown",
     "_resolve_log_path",
     "_status_file_path",
+    "_storage_maintenance_tick_sync",
     "_unlink_status_file_silently",
 ]
 
@@ -274,6 +276,146 @@ async def _heartbeat_loop() -> None:
                 logger,
                 "service.lifecycle",
                 "heartbeat_failed",
+                severity=logging.WARNING,
+                exc_info=True,
+            )
+
+
+def _maintenance_paths() -> tuple[Path, Path, Path] | None:
+    """Resolve ``(collections, snapshots, archive)`` dirs, or ``None``.
+
+    All three derive from the configured qdrant storage dir so the tick
+    operates on exactly the tree the supervised server owns. ``None``
+    when the storage dir is not configured (nothing to maintain).
+    """
+    from ..config import get_config
+
+    raw = getattr(get_config(), "qdrant_storage_dir", None)
+    if not raw:
+        return None
+    storage = Path(str(raw)).expanduser()
+    return (
+        storage / "collections",
+        storage.parent / "snapshots",
+        storage.parent / "archive",
+    )
+
+
+def _storage_maintenance_tick_sync() -> None:
+    """Run one scheduled storage-maintenance cycle (pure storage IO).
+
+    Read/drop only: surveys the store, advances the persisted grace
+    clocks, reclaims time-confirmed dangling namespaces under the stacked
+    safety gates, bounds the archive tree, and emits one rollup line with
+    a disk-free warning. Never touches the GPU or the search path, and no
+    code reachable from here may enter a service stop/terminate/reclaim
+    flow. Skips silently when server mode is off (a local-only store has
+    a single namespace and no manifest to maintain).
+    """
+    from datetime import UTC, datetime
+
+    from qdrant_client import QdrantClient
+
+    from ..config import get_config
+    from ..storage_ops import ReclaimPolicy, run_maintenance_cycle
+
+    cfg = get_config()
+    if not cfg.effective_server_mode() or not bool(cfg.storage_autoprune):
+        return
+    paths = _maintenance_paths()
+    if paths is None:
+        return
+    collections_dir, snapshots_dir, archive_dir = paths
+    policy = ReclaimPolicy(
+        grace_hours=float(cfg.storage_autoprune_grace_hours),
+        grace_hours_data=float(cfg.storage_autoprune_grace_hours_data),
+        max_per_cycle=int(cfg.storage_autoprune_max_per_cycle),
+        archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
+        archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
+    )
+    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    client = QdrantClient(url=url)
+    try:
+        result = run_maintenance_cycle(
+            client,
+            now=datetime.now(UTC),
+            policy=policy,
+            storage_dir=collections_dir if collections_dir.is_dir() else None,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+        )
+    finally:
+        client.close()
+
+    import shutil
+
+    try:
+        disk_free = shutil.disk_usage(str(collections_dir.parent)).free
+    except OSError:
+        disk_free = -1
+    removed = [
+        d.prefix
+        for d in result.decisions
+        if d.action in ("removed", "archived_removed")
+    ]
+    failed = [d.prefix for d in result.decisions if d.action == "failed"]
+    log_event(
+        logger,
+        "service.maintenance",
+        "cycle",
+        severity=logging.WARNING
+        if failed or 0 <= disk_free < _DISK_FREE_WARN_BYTES
+        else logging.INFO,
+        removed=len(removed),
+        failed=len(failed),
+        pending_grace=result.pending_grace,
+        reclaimed_bytes=result.reclaimed_bytes,
+        dangling_bytes=result.dangling_bytes,
+        archived=len(result.archived),
+        swept=len(result.swept),
+        disk_free_bytes=disk_free,
+        namespaces=json.dumps(result.namespace_counts, sort_keys=True),
+    )
+    if 0 <= disk_free < _DISK_FREE_WARN_BYTES:
+        log_event(
+            logger,
+            "service.maintenance",
+            "disk_low",
+            severity=logging.WARNING,
+            disk_free_bytes=disk_free,
+            threshold_bytes=_DISK_FREE_WARN_BYTES,
+        )
+
+
+# Warn threshold for free disk on the volume holding the qdrant storage
+# tree: one collection pair preallocates ~2.1GB of mmaps, so anything
+# under a few collections' worth of headroom is one index away from
+# opaque server-side write failures.
+_DISK_FREE_WARN_BYTES = 10 * 1024**3
+
+
+async def _maintenance_loop() -> None:
+    """Hourly storage-maintenance task; cancelled in the lifespan finally.
+
+    Mirrors ``_heartbeat_loop``'s crash-proof shape: the first run is
+    delayed one full interval (a freshly started daemon serves before it
+    sweeps) and no exception may escape - a failed cycle logs and the
+    next tick retries.
+    """
+    from ..config import get_config
+
+    while True:
+        try:
+            minutes = float(get_config().storage_autoprune_interval_minutes)
+            await asyncio.sleep(max(1.0, minutes * 60.0))
+            await asyncio.to_thread(_m._storage_maintenance_tick_sync)
+        except asyncio.CancelledError:
+            return
+        except Exception:  # maintenance must never crash the service
+            log_event(
+                logger,
+                "service.maintenance",
+                "cycle_failed",
                 severity=logging.WARNING,
                 exc_info=True,
             )
