@@ -17,6 +17,7 @@ nothing - the dependency reporter and the live signals are both read-only.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, cast
 
 import typer
@@ -26,6 +27,11 @@ import vaultspec_rag.cli as _cli
 from ..api import get_readiness
 from ._app import server_app
 from ._render import _emit_json
+
+#: The distribution name rag's own doctor rows read from the shared per-package
+#: ``.vaultspec/workspace.json`` map, so a mixed workspace's ``vaultspec-core``
+#: sibling entry is never mistaken for rag's own.
+_RAG_PACKAGE = "vaultspec-rag"
 
 
 @server_app.command(
@@ -55,6 +61,7 @@ def service_doctor(
     """
     report = get_readiness()
     service = _live_service_axis()
+    mode = _mode_floor_axis(Path.cwd())
     overall_ready, status = _overall_readiness(report, service)
     if json_output:
         envelope = {
@@ -64,18 +71,40 @@ def service_doctor(
             "dependencies_ready": bool(report.get("ready")),
             "dependencies": report.get("dependencies"),
             "service": service,
+            "mode": mode,
         }
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
-    # Exit non-zero ONLY when a daemon is expected (a discovery file exists) but
-    # is not live - the actionable dead-daemon signal scripts branch on. A
-    # pre-install / no-daemon run keeps exit 0 even when dependencies are not yet
-    # ready, preserving the informational pre-install contract (callers that ran
-    # `doctor` as a non-gating probe relied on exit 0). The ``ready`` field and
-    # the JSON ``ok`` still report the honest verdict regardless of exit code.
-    if service.get("present") and not service.get("live"):
-        raise typer.Exit(code=1)
+        _render_mode_floor_axis(mode)
+    raise typer.Exit(code=_doctor_exit_code(service, mode))
+
+
+def _doctor_exit_code(
+    service: dict[str, object],
+    mode: dict[str, object] | None,
+) -> int:
+    """Fold the daemon and provisioning axes into an exit code, error over warn.
+
+    Mirrors core's ``spec doctor`` weighting for the shared per-package axis: a
+    ``vaultspec-rag`` entry running below its declared floor is an error, a
+    declared-vs-observed mode mismatch is a warning. Combined with the existing
+    dead-daemon signal (a daemon expected but not live is a warning), the highest
+    severity wins: ``2`` for any error, ``1`` for any warning, ``0`` otherwise.
+
+    A pre-install / no-daemon run with no committed rag declaration keeps exit 0
+    even when dependencies are not yet ready, preserving the informational
+    pre-install contract callers relied on; only an actionable divergence
+    (below-floor error, mode mismatch, or dead daemon) lifts the exit code.
+    """
+    dead_daemon = bool(service.get("present")) and not service.get("live")
+    below_floor = mode is not None and mode.get("version_floor") == "below"
+    mismatch = mode is not None and mode.get("mode_mismatch") == "mismatch"
+    if below_floor:
+        return 2
+    if dead_daemon or mismatch:
+        return 1
+    return 0
 
 
 def _live_service_axis() -> dict[str, object]:
@@ -159,6 +188,60 @@ def _overall_readiness(
     return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
 
 
+def _mode_floor_axis(target: Path) -> dict[str, object] | None:
+    """Compute rag's provisioning mode-and-floor axis, read-only.
+
+    Reports the ``vaultspec-rag`` entry in the shared per-package
+    ``.vaultspec/workspace.json`` map through the same core collectors core's own
+    ``spec doctor`` uses, keyed to ``vaultspec-rag`` so a sibling
+    ``vaultspec-core`` entry is never read as rag's own: the declared mode, the
+    mode-mismatch signal (whether rag's ``.mcp.json`` launch shape matches its
+    declaration), and the version-floor signal (whether the running
+    vaultspec-core is at or above rag's declared minimum).
+
+    Returns ``None`` when no rag entry is declared - a pre-install workspace, or a
+    directory that is not a vaultspec workspace at all - so the axis stays silent
+    rather than inventing a row, preserving the informational pre-install
+    contract. Any collector failure is swallowed to ``None``: the doctor mutates
+    nothing and never crashes on a probe, matching the live-service axis.
+
+    Args:
+        target: Workspace root directory whose ``.vaultspec/workspace.json`` is
+            read.
+
+    Returns:
+        A labelled block with ``declared_mode``, ``mode_mismatch``,
+        ``version_floor``, ``version_floor_running``, and
+        ``version_floor_minimum``, or ``None`` when no rag entry is declared.
+    """
+    try:
+        from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
+            collect_mode_mismatch_state,
+            collect_version_floor_state,
+        )
+        from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+            read_package_declaration,
+        )
+
+        declaration = read_package_declaration(target, _RAG_PACKAGE)
+        if declaration is None:
+            return None
+        mode_mismatch = collect_mode_mismatch_state(target, package=_RAG_PACKAGE)
+        floor, running, minimum = collect_version_floor_state(
+            target, package=_RAG_PACKAGE
+        )
+    except Exception:
+        return None
+    return {
+        "package": _RAG_PACKAGE,
+        "declared_mode": declaration.install_mode.value,
+        "mode_mismatch": mode_mismatch.value,
+        "version_floor": floor.value,
+        "version_floor_running": running,
+        "version_floor_minimum": minimum,
+    }
+
+
 def _render_readiness(
     report: dict[str, object],
     service: dict[str, object],
@@ -180,6 +263,39 @@ def _render_readiness(
     )
     _render_live_service_axis(service)
     _render_dependency_axis(report)
+
+
+def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
+    """Render rag's provisioning mode-and-floor axis, clearly labelled.
+
+    Silent when no rag entry is declared (``mode is None``), matching the JSON
+    envelope's omission, so a pre-install run shows no provisioning block.
+    """
+    if mode is None:
+        return
+    _cli.console.print("Provisioning (vaultspec-rag):", markup=False, highlight=False)
+    _cli.console.print(
+        f"  declared mode: {mode.get('declared_mode', '?')}",
+        markup=False,
+        highlight=False,
+    )
+    if mode.get("mode_mismatch") == "mismatch":
+        detail = "mismatch - .mcp.json launch shape disagrees with the declared mode"
+    elif mode.get("mode_mismatch") == "unknown":
+        detail = "unknown - no mode declared"
+    else:
+        detail = "ok - artifacts match the declared mode"
+    _cli.console.print(f"  install mode: {detail}", markup=False, highlight=False)
+    if mode.get("version_floor") == "below":
+        _cli.console.print(
+            f"  version floor: error - running {mode.get('version_floor_running')} "
+            f"is below the declared floor {mode.get('version_floor_minimum')}; "
+            f"upgrade with uv tool upgrade vaultspec-rag",
+            markup=False,
+            highlight=False,
+        )
+    else:
+        _cli.console.print("  version floor: ok", markup=False, highlight=False)
 
 
 def _overall_label(overall_ready: bool, status: str) -> str:
