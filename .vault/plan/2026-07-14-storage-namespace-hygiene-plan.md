@@ -10,27 +10,37 @@ related:
   - '[[2026-07-14-storage-namespace-hygiene-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `storage-namespace-hygiene` plan
 
 ### Phase `P01` - Survey snapshot cache
 
 Publish the maintenance survey into daemon state, warm it at startup, and serve the route O(1) with freshness metadata
 
-- [ ] `P01.S01` - Add the survey snapshot slot: classified survey list plus computed_at, atomic reference swap, thread-safe accessor; `src/vaultspec_rag/server/_state.py`.
-- [ ] `P01.S02` - Publish the maintenance cycle's survey into the snapshot slot and add the one-shot startup warmer (survey-only, read-only); `src/vaultspec_rag/server/_lifecycle.py`.
-- [ ] `P01.S03` - Wire the warmer task into lifespan startup and shutdown alongside the maintenance task; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `P01.S04` - Serve the storage survey route from the snapshot with filters applied to the cached list, add computed_at and source envelope fields, and implement the fresh=true recompute-and-publish path; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `P01.S05` - Pass a --fresh flag through the CLI survey verb and the transport query builder in serviceclient/\_transport.py; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `P01.S06` - Unit-test snapshot swap semantics, cached-list filtering, and freshness metadata alongside the routes tests; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P01.S01` - Add the survey snapshot slot: classified survey list plus computed_at, atomic reference swap, thread-safe accessor; `src/vaultspec_rag/server/_state.py`.
+- [x] `P01.S02` - Publish the maintenance cycle's survey into the snapshot slot and add the one-shot startup warmer (survey-only, read-only); `src/vaultspec_rag/server/_lifecycle.py`.
+- [x] `P01.S03` - Wire the warmer task into lifespan startup and shutdown alongside the maintenance task; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P01.S04` - Serve the storage survey route from the snapshot with filters applied to the cached list, add computed_at and source envelope fields, and implement the fresh=true recompute-and-publish path; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P01.S05` - Pass a --fresh flag through the CLI survey verb and the transport query builder in serviceclient/\_transport.py; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `P01.S06` - Unit-test snapshot swap semantics, cached-list filtering, and freshness metadata alongside the routes tests; `src/vaultspec_rag/tests/test_storage_ops.py`.
 - [ ] `P01.S07` - Integration-test the live daemon serving the cached survey after warmup and recomputing on fresh=true; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
 
 ### Phase `P02` - Per-root teardown and docs
 
 Root-addressed idempotent namespace delete on the existing CLI verb, plus documentation of teardown and survey freshness
 
-- [ ] `P02.S08` - Add --root to the storage delete verb: normalize the root exactly as registration does, resolve via root_collection_prefix, dispatch through delete_prefix, and make an absent namespace an idempotent exit-0 already_absent success in both human and json modes with resolved prefix and queried root in the envelope; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `P02.S09` - Test the delete --root matrix: resolution parity with registration, removed, already_absent exit 0, unknown refusal, and json envelope shape; `src/vaultspec_rag/tests/test_storage_safety.py`.
-- [ ] `P02.S10` - Document delete --root harness-teardown recipe and the survey freshness semantics across docs/cli.md and docs/storage-maintenance.md; `docs/cli.md`.
+- [x] `P02.S08` - Add --root to the storage delete verb: normalize the root exactly as registration does, resolve via root_collection_prefix, dispatch through delete_prefix, and make an absent namespace an idempotent exit-0 already_absent success in both human and json modes with resolved prefix and queried root in the envelope; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `P02.S09` - Test the delete --root matrix: resolution parity with registration, removed, already_absent exit 0, unknown refusal, and json envelope shape; `src/vaultspec_rag/tests/test_storage_adversarial.py`.
+- [x] `P02.S10` - Document delete --root harness-teardown recipe and the survey freshness semantics across docs/cli.md and docs/storage-maintenance.md; `docs/cli.md`.
 
 ## Description
 

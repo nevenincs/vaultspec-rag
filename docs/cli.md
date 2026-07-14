@@ -629,7 +629,7 @@ Exit/JSON: `0` on success; `2` when server mode is off or `--json` lacks `--yes`
 
 Delete one named namespace (every collection sharing its `r{hash}_` prefix) and forget its manifest entry. The namespace is addressed either by its prefix or by `--root`, which resolves the path and derives the prefix through the same normalization indexing uses - the sanctioned per-root teardown for test harnesses and consumers that never learned the hash. Only a canonical `r` + 12 hex + `_` prefix is ever accepted, and an unattributable (`unknown`) prefix is refused unless `--allow-unknown` is set.
 
-Deletion is idempotent: a namespace that does not exist reports `already_absent` and exits `0` in both human and `--json` modes, so a teardown script can run unconditionally.
+Deletion is idempotent in both addressing forms: a namespace that does not exist reports `already_absent` and exits `0` in both human and `--json` modes, so a teardown script can run unconditionally. (Earlier development builds reported this case as `status: skipped` with `reason: no_such_namespace`; scripts should match `already_absent`.)
 
 Arguments: `PREFIX` - the namespace prefix to delete. Exactly one of `PREFIX` or `--root` must be given.
 
