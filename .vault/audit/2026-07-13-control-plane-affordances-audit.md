@@ -10,6 +10,7 @@ promoted_to:
   - 'rule:broker-facing-cli-outcomes-are-structured-and-idempotent'
 modified: '2026-07-14'
 ---
+
 # `control-plane-affordances` audit: `execution review of the survey root lookup and stop --json`
 
 ## Scope
