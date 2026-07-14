@@ -746,8 +746,7 @@ def _preprocess_preflight(root: Path) -> dict[str, object]:
     document-preprocessing hooks will fire (preprocess-sandbox ADR D9). This
     mirrors the ``server start`` operator notice as JSON: whether the root ships
     a ``.vaultragpreprocess.toml``, its resolved rule count, the effective mode,
-    and whether hooks will run under it (``off`` skips; ``default``/
-    ``unsandboxed`` run, modulo the sandbox applied at execution).
+    and whether hooks will run under it (``off`` skips; ``default`` runs).
 
     Torch-free by construction: ``load_preprocess_rules`` is CPU-only, keeping
     the routes/server layer off the torch import path. Never raises - a missing
