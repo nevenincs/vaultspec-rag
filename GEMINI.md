@@ -4,6 +4,85 @@
 You MUST respect these rules at all times:
 
 ---
+name: automated-destruction-requires-time-confirmed-danglingness
+trigger: always_on
+---
+
+# Automated destruction requires time-confirmed danglingness
+
+## Rule
+
+Automated deletion of indexed data requires classification AND a persisted
+continuous grace window - a single-scan "root path does not exist"
+observation is never sufficient. Data-bearing namespaces additionally
+require a recoverable archive to have succeeded before destruction, and
+`unknown`/`unverifiable` namespaces are never auto-touched.
+
+## Why
+
+A valid root can transiently not-exist: an unplugged drive, an offline
+share, a directory mid-rename, a worktree being re-created. The manual
+prune has a human as the confirmation; the scheduled auto-prune
+(`2026-07-14-storage-autoprune-safety-adr`) replaces that human with time -
+`first_seen_orphaned` persists in the storage manifest across daemon
+restarts, any live or unverifiable observation resets it to zero, so
+protection can only ever be extended by races, never shortened. The
+empty/data tier split matches the measured waste profile: the 167.9GB
+reclaimed on 2026-07-13 was entirely zero-point namespaces.
+
+## How
+
+- **Good:** `evaluate_reclaim` in `src/vaultspec_rag/storage_ops.py` -
+  orphaned-only input, per-tier grace windows (24h empty / 168h data),
+  riskless-empty-first under a per-cycle cap; `archive_prefix` raises on
+  any snapshot failure so `delete_prefix` is never reached for unarchived
+  data; the empty tier re-counts points immediately before the drop.
+- **Bad:** dropping a namespace because one survey said its root was
+  missing; destroying a point-bearing namespace after a failed archive;
+  resetting grace clocks on daemon restart; auto-deleting anything the
+  manifest cannot attribute.
+
+---
+name: broker-facing-cli-outcomes-are-structured-and-idempotent
+trigger: always_on
+---
+
+# Broker-facing CLI outcomes are structured and idempotent
+
+## Rule
+
+A lifecycle CLI verb a broker drives (`server start`, `server stop`) must, in
+`--json` mode, emit exactly ONE structured envelope on every exit path -
+success and each failure - and treat an already-satisfied request as a success
+(exit 0 with an `already_*` status), never a non-zero fault a broker would
+misread as a gateway error. An outcome that leaves the requested state
+unachieved (a stop that leaves the service running) is a failure and exits
+non-zero in BOTH human and json modes.
+
+## Why
+
+The `2026-06-27-rag-broker-affordances-adr` shipped `server start --json`
+after a supervising broker misread "already running" as an opaque 502; the
+`2026-07-13-control-plane-affordances-adr` completed the sibling
+`server stop --json`. The candidate held through both execution cycles: a
+broker can speculatively start (attach on `already_running`) and stop
+(no-op on `already_stopped`), and the one genuine stop failure
+(`identity_unconfirmed`, service left running) is a visible exit 1 instead
+of a silent success.
+
+## How
+
+- **Good:** `_start_success`/`_fail_start` and `_stop_success`/`_fail_stop`
+  in `src/vaultspec_rag/cli/_service_lifecycle.py` - every terminal branch
+  converges on exactly one helper; `{ok, command, data:{status,...}}` on
+  success, `{ok:false, command, error, message, data}` on failure.
+- **Good:** `server stop` with nothing to stop emits `already_stopped`
+  (exit 0); terminating outcomes carry initiator attribution fields.
+- **Bad:** printing human text on a `--json` path, emitting zero or two
+  envelopes on any exit, or exiting 0 from a stop that skipped a live
+  unconfirmed process.
+
+---
 name: gpu-consumer-single-thread
 trigger: always_on
 ---
@@ -341,6 +420,100 @@ because scan helpers re-enter them.
   collection lock.
 
 ---
+name: storage-maintenance-is-lifecycle-inert
+trigger: always_on
+---
+
+# Storage maintenance is lifecycle-inert
+
+## Rule
+
+No storage-maintenance code path - survey, prune, delete, or the scheduled
+auto-prune - may reach a service stop, terminate, or machine-singleton
+reclaim helper. Maintenance is read/drop only, and the import graph is
+regression-tested: nothing reachable from the maintenance modules may import
+`vaultspec_rag.cli`.
+
+## Why
+
+The `2026-07-13` prune incident trace showed how a storage command that
+shares a process and config surface with the lifecycle verbs pattern-matches
+to "the prune killed the service" the moment anything terminates a daemon in
+the same window - and a maintenance actor that genuinely could reach a
+terminate flow would turn a routine reclamation into an outage. The
+`2026-07-14-storage-autoprune-safety-adr` made inertness a hard invariant
+when reclamation moved inside the daemon on a schedule.
+
+## How
+
+- **Good:** `TestStorageMaintenanceIsLifecycleInert` in
+  `src/vaultspec_rag/tests/test_adr_regression.py` - a fresh-interpreter
+  import of `storage_manifest`, `storage_ops`, and `server._lifecycle`
+  asserts no `vaultspec_rag.cli.*` module loads, and a source scan asserts
+  none of them names `_terminate_and_confirm`, `_reclaim_machine_singleton`,
+  `_stop_service_on_port`, or `_terminate_pid`.
+- **Bad:** importing a CLI lifecycle helper (even function-locally) from
+  `storage_ops.py` or the maintenance tick, or adding a "restart the
+  service if degraded" branch to a maintenance cycle.
+
+---
+name: torch-loads-through-centralized-gpu-gate
+trigger: always_on
+---
+
+# Torch loads through one centralized GPU gate
+
+## Rule
+
+Every local-mode path that needs torch for compute must obtain it through the single
+centralized loader `vaultspec_rag._gpu.load_torch()` - which imports torch, asserts a
+CUDA device, and raises hard on a CPU-only build - never a naked `import torch`; service
+call paths (the `mcp/` server, the `serviceclient/` client, and the CLI service-control
+commands) must stay torch-import-free; and if the installer provisions torch at all it
+must be the cu130 GPU build, never a CPU wheel accepted silently.
+
+## Why
+
+vaultspec-rag is GPU-only and never runs inference on CPU. The `2026-06-30` torch
+hardening found the hard CUDA gate duplicated across four sites (embeddings, the service
+reranker, the searcher reranker, and CLI warmup), each re-implementing
+`if not torch.cuda.is_available(): raise` - three with a copy-pasted message - so the
+"who, when, and how torch loads" was uncontrolled and a CPU-only build could only be
+caught wherever someone remembered to check. The same work found the installer reporting
+`PyTorch configuration: already configured` from pyproject text while the active
+interpreter carried a CPU-only torch wheel (a bare `uv tool` / `pip install` resolves
+torch from PyPI because the cu130 pin is workspace-scoped and absent from published wheel
+metadata, and `--torch-backend` is `uv pip`-only). Centralizing the load and probing the
+real wheel is what makes the GPU-only contract enforceable and legible rather than
+silently violated.
+
+## How
+
+- **Good:** a compute site calls `torch = load_torch()` and uses the returned module;
+  `load_torch()` raises `RuntimeError` (CPU-only or no GPU) or `ImportError` (absent) so
+  the failure is hard and loud, with one canonical message.
+- **Good:** read-only probes that must tolerate a CPU-only or torch-absent host (the
+  `/health` and `/metrics` reporters, readiness diagnosis, the memory probe) keep their
+  own guarded function-local import and report `cuda=False` rather than raise - they are
+  the deliberate exception and do not call `load_torch()`.
+- **Good:** the installer probes the active interpreter's wheel
+  (`warn_if_active_torch_not_gpu`) and, when torch was meant to be provisioned, warns
+  loudly on a CPU-only or absent wheel with topology-aware remediation; an explicit
+  torch opt-out is respected silently.
+- **Bad:** a naked module-scope `import torch`, or a fresh inline
+  `if not torch.cuda.is_available(): raise` on a compute path instead of routing through
+  `load_torch()`.
+- **Bad:** importing torch (or `sentence_transformers`) anywhere reachable from a service
+  call path, or reporting install success over a CPU-only torch wheel.
+
+## Source
+
+The `2026-06-30` torch import-discipline and install-provisioning audits and the
+GPU-only mandate they served. Sibling rules `index-workers-stay-cpu-only` (torch imports
+stay function-local so spawn workers never initialise CUDA) and
+`gpu-consumer-single-thread`.
+
+---
 name: vaultspec-cli.builtin
 trigger: always_on
 ---
@@ -497,63 +670,66 @@ name: vaultspec-rag.builtin
 trigger: always_on
 ---
 
-# vaultspec-rag — semantic search
+# vaultspec-rag — semantic search for code and decisions
 
-Use semantic search for codebase discovery and implementation discovery. When you need
-to find where or how something is done and don't know the exact name, search by meaning
-instead of grepping keywords or guessing identifiers.
+Discover by MEANING when you do not know the exact name, instead of grepping keywords or
+guessing identifiers. vaultspec-rag does two jobs: find the CODE, and find the DECISIONS -
+the ADRs (architecture decision records) that govern it.
 
-## Write good queries
+Server mode is the default backend. If a search reports the service is down, start it with
+`uvx vaultspec-rag server start` (small or offline projects opt into the on-disk local
+backend with `--local-only`). The running service auto-reindexes on file changes.
+DO NOT manually reindex during normal work.
 
-The index is hybrid: dense embeddings match meaning, sparse vectors match exact terms,
-and a cross-encoder reranks the top hits. A good query feeds both halves. So:
+## Discover code by meaning
 
-- Describe the concept or behavior in a short phrase - this drives the dense, semantic
-  half.
-- In that same phrase, name the concrete domain nouns the target code or docs would use
-  - these drive the sparse, exact-match half. A query of pure natural language leaves
-    the sparse half nothing to match.
-- One concept per query. Narrow with filters; don't paste bare keywords or a guessed
-  function name.
+`--type code` searches source by meaning. Phrase the query as a short behaviour plus the
+concrete domain nouns the target code would use: the behaviour drives semantic matching, the
+nouns drive exact matching, so a bare keyword or pure prose finds less than both together.
 
 ```
-vaultspec-rag search "file lock acquired around incremental index write" --type code
-vaultspec-rag search "retry policy backoff for failed webhook delivery" --type code --language python
-vaultspec-rag search "decision on gpu_lock scope around forward pass" --type vault --doc-type adr
+uvx vaultspec-rag search "retry backoff around failed webhook delivery" --type code
 ```
 
-Code filters: `--language --path --function-name --class-name --include-path GLOB`.
-Vault filters: `--doc-type --feature --date --tag`. Filters also work inline in the
-query: `type:adr lang:python func:main`.
+## Discover architecture decisions
 
-## Run the server
-
-If the server is not running, start it:
+When you need the WHY - the rationale, constraints, or decision behind code - search the
+vault's ADRs, not the source. `--type vault --doc-type adr` returns the governing records.
 
 ```
-vaultspec-rag server start
+uvx vaultspec-rag search "decision on gpu lock scope around the forward pass" --type vault --doc-type adr
 ```
 
-Server mode is the default backend: `server start` supervises the managed Qdrant
-server and loads the GPU models. The server is the only workable backend at codebase
-scale - local mode is orders of magnitude slower - so it is the assumed default, not an
-opt-in. Provision the binary and models once with `vaultspec-rag install` (it fetches
-torch, the models, and the Qdrant binary by default).
+`--doc-type` also accepts `audit`, `plan`, `reference`, `research`, and `exec` (comma-separate
+to union several).
 
-Local mode is a first-class explicit opt-out for small projects, CI, or air-gapped
-hosts: `vaultspec-rag server start --local-only` (or `VAULTSPEC_RAG_LOCAL_ONLY=1`, or
-`vaultspec-rag install --local-only` which persists the choice). It uses the on-disk
-store and needs no server binary.
+## Cut noise with filters
 
-Check dependency readiness any time with `vaultspec-rag server doctor` (`--json` for the
-machine-readable snapshot): it reports torch CUDA, model presence, and the Qdrant binary
-and supervised-server state.
+Semantic search competes production code against its own noise - overlapping tests, parallel
+locale files, generated and vendored trees, worktree clones. Code search is production-biased
+by default: it hides duplicate/derivative domains (`generated`, `worktree`) and demotes
+`tests`, `docs`, `locale`, and `vendored` beneath production. When noise still crowds a page,
+narrow by DOMAIN rather than raising `--max-results`. The domains are `prod`, `tests`, `docs`,
+`locale`, `generated`, `vendored`, `worktree`.
 
-The running service auto-reindexes on file changes - DO NOT manually reindex during
-normal work.
+Steer with inline query tokens (comma-separated, repeatable):
 
-The same search is available through MCP as the `search_vault` and `search_codebase`
-tools.
+```
+uvx vaultspec-rag search "fixture setup helpers exclude:tests" --type code
+uvx vaultspec-rag search "auth token validation only:prod" --type code
+uvx vaultspec-rag search "translation table lookup include:locale" --type code
+```
+
+`exclude:` hides a domain, `only:` keeps just the named domains, and `include:` re-admits a
+domain the default profile hides or demotes. Compose with path and category filters:
+
+```
+uvx vaultspec-rag search "request handler" --type code --include-path "src/**" --exclude-path "**/legacy/**"
+uvx vaultspec-rag search "encode batch" --type code --prefer production
+```
+
+The full option set is `uvx vaultspec-rag search --help`. The same search is available through
+MCP as the `search_codebase` and `search_vault` tools.
 
 ---
 name: vaultspec.builtin
