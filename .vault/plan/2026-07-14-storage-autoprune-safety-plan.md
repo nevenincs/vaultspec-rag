@@ -38,7 +38,7 @@ Schedule the hourly maintenance cycle inside the daemon lifespan, report every c
 - [x] `P02.S05` - Add the maintenance cycle function (survey, grace bookkeeping, capped two-tier reclamation, archive retention, one-line health rollup with disk-free warning) and the crash-proof _maintenance_loop task mirroring _heartbeat_loop; `src/vaultspec_rag/server/_lifecycle.py`.
 - [x] `P02.S06` - Start and cancel the maintenance task in the daemon lifespan, delayed one interval after startup and gated on server mode plus the storage_autoprune knob; `src/vaultspec_rag/server/_lifespan.py`.
 - [x] `P02.S07` - Register each cycle in the jobs registry with source maintenance and trigger schedule, and export the rollup gauges (disk free, namespace counts by status, dangling bytes, pending-grace counts) through /metrics and server status; `src/vaultspec_rag/jobs.py`.
-- [ ] `P02.S08` - Prove lifecycle inertness with an import-graph regression test asserting no module reachable from the maintenance cycle imports the stop, terminate, or machine-singleton reclaim helpers; `src/vaultspec_rag/tests/test_adr_regression.py`.
+- [x] `P02.S08` - Prove lifecycle inertness with an import-graph regression test asserting no module reachable from the maintenance cycle imports the stop, terminate, or machine-singleton reclaim helpers; `src/vaultspec_rag/tests/test_adr_regression.py`.
 - [ ] `P02.S09` - Exercise the maintenance cycle end to end against a live service with a short interval: an aged empty orphan is reclaimed, a fresh orphan waits, a reappearing root resets its clock, and the cycle appears in server jobs; `src/vaultspec_rag/tests/integration/test_storage_maintenance.py`.
 
 ### Phase `P03` - Shutdown attribution

@@ -424,3 +424,62 @@ class TestAtomicMetaWrite:
             "CodebaseIndexer._write_meta must use os.replace() for atomic writes; "
             "direct write_text() risks corrupt metadata on crash (Task #43)"
         )
+
+
+class TestStorageMaintenanceIsLifecycleInert:
+    """Storage maintenance must never reach a stop/terminate/reclaim flow.
+
+    A maintenance actor that can terminate the service turns a routine
+    reclamation into an outage. Two guards: the maintenance import graph
+    must not pull in the CLI lifecycle module at all (fresh interpreter -
+    the in-process ``sys.modules`` is polluted by other tests), and the
+    maintenance sources must not name the terminate helpers.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    _IMPORT_CHECK = """
+import sys
+
+import vaultspec_rag.storage_manifest  # noqa: F401
+import vaultspec_rag.storage_ops  # noqa: F401
+import vaultspec_rag.server._lifecycle  # noqa: F401
+
+loaded = sorted(
+    m for m in sys.modules
+    if m == "vaultspec_rag.cli" or m.startswith("vaultspec_rag.cli.")
+)
+assert not loaded, loaded
+"""
+
+    def test_maintenance_import_graph_excludes_cli_lifecycle(self):
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            [sys.executable, "-c", self._IMPORT_CHECK],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    def test_maintenance_sources_never_name_terminate_helpers(self):
+        import inspect
+
+        from .. import storage_manifest, storage_ops
+        from ..server import _lifecycle
+
+        forbidden = (
+            "_terminate_and_confirm",
+            "_reclaim_machine_singleton",
+            "_stop_service_on_port",
+            "_terminate_pid",
+        )
+        for module in (storage_ops, storage_manifest, _lifecycle):
+            src = inspect.getsource(module)
+            hits = [name for name in forbidden if name in src]
+            assert not hits, (
+                f"{module.__name__} references lifecycle terminate helpers "
+                f"{hits}; storage maintenance is read/drop only"
+            )
