@@ -59,4 +59,4 @@ The warmup, cache, and recompute paths are exercised against a real daemon end t
 
 ## Notes
 
-Run deferred while the parallel session held the GPU; results recorded in the phase summary and audit.
+Run was deferred until the parallel session released the GPU (card was at 15.5/16.3 GB). Full module then passed: 11/11 in 409s, including the pre-existing envelope/root-lookup tests.
