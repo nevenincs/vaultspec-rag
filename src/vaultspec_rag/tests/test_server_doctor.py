@@ -20,9 +20,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
+from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
+)
+from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+    PackageDeclaration,
+    write_package_declaration,
+)
 
 from ..api import get_readiness
 from ..cli import app
+from ..commands import install_run
 from ..config import EnvVar, reset_config
 
 if TYPE_CHECKING:
@@ -32,6 +40,28 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+_PROJECT_WITH_RAG = (
+    "[project]\n"
+    'name = "demo-consumer"\n'
+    'version = "0.1.0"\n'
+    'dependencies = ["vaultspec-rag"]\n'
+)
+
+
+def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
+    """Build a real rag-provisioned workspace (no network, no provisioning)."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "pyproject.toml").write_text(_PROJECT_WITH_RAG, encoding="utf-8", newline="")
+    install_run(
+        path=ws,
+        mode=mode,
+        provision=False,
+        configure_torch=False,
+        install_mcp=False,
+    )
+    return ws
 
 
 @pytest.fixture()
@@ -104,3 +134,112 @@ def test_doctor_human_render_labels_both_axes(
     assert "Installed dependencies:" in result.output
     for name in ("torch", "models", "qdrant"):
         assert name in result.output
+
+
+def test_doctor_omits_mode_axis_when_no_rag_declaration(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A directory with no committed rag entry surfaces no provisioning axis."""
+    _ = isolated_status_dir
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    monkeypatch.chdir(bare)
+
+    result = runner.invoke(app, ["server", "doctor", "--json"])
+
+    data = json.loads(result.stdout)["data"]
+    assert data["mode"] is None
+    # No declaration and no daemon keeps the informational exit-0 contract.
+    assert result.exit_code == 0
+
+
+def test_doctor_reports_clean_rag_mode_and_floor(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cleanly provisioned rag workspace reads mode ok, floor ok, exit 0."""
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    monkeypatch.chdir(ws)
+
+    result = runner.invoke(app, ["server", "doctor", "--json"])
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode is not None
+    assert mode["package"] == "vaultspec-rag"
+    assert mode["declared_mode"] == "tool"
+    assert mode["mode_mismatch"] == "clean"
+    assert mode["version_floor"] == "ok"
+    assert result.exit_code == 0
+
+
+def test_doctor_weights_below_floor_as_error(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rag entry whose floor outranks the running core exits 2 (error)."""
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    # Declare a floor the running vaultspec-core cannot satisfy, leaving the
+    # mode axis clean so the exit code reflects only the floor error.
+    write_package_declaration(
+        ws,
+        "vaultspec-rag",
+        PackageDeclaration(install_mode=InstallMode.TOOL, minimum_version="99.0.0"),
+    )
+    monkeypatch.chdir(ws)
+
+    result = runner.invoke(app, ["server", "doctor", "--json"])
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode["version_floor"] == "below"
+    assert mode["version_floor_minimum"] == "99.0.0"
+    assert result.exit_code == 2
+
+
+def test_doctor_weights_mode_mismatch_as_warning(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rag entry whose deployed launch disagrees with its mode exits 1 (warn)."""
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    # Rewrite rag's deployed .mcp.json entry to the dependency launch shape while
+    # the declaration still names tool mode, so the artifact disagrees with the
+    # declared mode.
+    mcp_path = ws / ".mcp.json"
+    raw = json.loads(mcp_path.read_text(encoding="utf-8"))
+    raw["mcpServers"]["vaultspec-rag"] = {
+        "command": "uv",
+        "args": ["run", "python", "-m", "vaultspec_rag.server"],
+    }
+    mcp_path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.chdir(ws)
+
+    result = runner.invoke(app, ["server", "doctor", "--json"])
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode["mode_mismatch"] == "mismatch"
+    assert mode["version_floor"] == "ok"
+    assert result.exit_code == 1
+
+
+def test_doctor_human_render_labels_mode_axis(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The human render surfaces a labelled provisioning block for rag."""
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    monkeypatch.chdir(ws)
+
+    result = runner.invoke(app, ["server", "doctor"])
+
+    assert "Provisioning (vaultspec-rag):" in result.output
+    assert "declared mode: tool" in result.output
