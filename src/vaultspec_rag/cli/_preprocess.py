@@ -161,6 +161,48 @@ def handle_preprocess_check(
     _cli.console.print(f"Preprocess config is valid: {count} {rule_word}.")
 
 
+def _report_preprocess_no_match(
+    root: Path,
+    config: PreprocessConfig,
+    rel: str,
+    *,
+    json_mode: bool,
+) -> None:
+    """Report that no preprocess rule matched *rel*, honoring the off kill switch.
+
+    The non-strict load applied the ``off`` kill switch, so an empty config can
+    mean "rules exist but are switched off" rather than "no rule matches this
+    file". Surface the actionable off notice instead of a misleading no-match
+    line. Extracted from :func:`handle_preprocess_run_one` so its match path
+    reads without the nested gated/json branches.
+    """
+    gate = _gated_rule_state(root, config)
+    if gate is not None:
+        if json_mode:
+            _emit_json(
+                True,
+                "preprocess run-one",
+                data={
+                    "matched": False,
+                    "path": rel,
+                    "gated": True,
+                    "mode": "off",
+                    "rule_count": gate,
+                },
+            )
+            return
+        _cli.console.print(
+            _gated_run_one_message(gate),
+            markup=False,
+            highlight=False,
+        )
+        return
+    if json_mode:
+        _emit_json(True, "preprocess run-one", data={"matched": False, "path": rel})
+        return
+    _cli.console.print(f"No preprocess rule matches: {rel}.")
+
+
 @preprocess_app.command(
     "run-one", help="Run the matching rule against one file (no indexing)."
 )
@@ -185,7 +227,7 @@ def handle_preprocess_run_one(
         rel = str(path).replace("\\", "/")
     rule = config.match(rel)
     if rule is None:
-        _report_run_one_no_match(root, config, rel, json_mode)
+        _report_preprocess_no_match(root, config, rel, json_mode=json_mode)
         return
 
     max_bytes = int(get_config().preprocess_max_emitted_bytes)
@@ -241,43 +283,6 @@ def handle_preprocess_run_one(
             f"Preprocessor: {output.preprocessor_id} {output.preprocessor_version}"
         )
         _cli.console.print(f"Output: {content}")
-
-
-def _report_run_one_no_match(
-    root: Path, config: PreprocessConfig, rel: str, json_mode: bool
-) -> None:
-    """Report a run-one miss, distinguishing the gated (switched-off) case.
-
-    The non-strict load applied the ``off`` kill switch, so an empty config
-    can mean "rules exist but are switched off" rather than "no rule matches
-    this file". Surface the actionable off notice instead of a misleading
-    no-match line.
-    """
-    gate = _gated_rule_state(root, config)
-    if gate is not None:
-        if json_mode:
-            _emit_json(
-                True,
-                "preprocess run-one",
-                data={
-                    "matched": False,
-                    "path": rel,
-                    "gated": True,
-                    "mode": "off",
-                    "rule_count": gate,
-                },
-            )
-            return
-        _cli.console.print(
-            _gated_run_one_message(gate),
-            markup=False,
-            highlight=False,
-        )
-        return
-    if json_mode:
-        _emit_json(True, "preprocess run-one", data={"matched": False, "path": rel})
-        return
-    _cli.console.print(f"No preprocess rule matches: {rel}.")
 
 
 def _gated_rule_state(root: Path, nonstrict_config: PreprocessConfig) -> int | None:
