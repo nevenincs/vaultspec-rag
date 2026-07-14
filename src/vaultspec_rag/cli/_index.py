@@ -495,7 +495,6 @@ def handle_index(
     state: CLIState = ctx.obj
     target = state.target
 
-
     if dry_run:
         _handle_dry_run(index_type, json_mode, target, exclude, dry_run_limit)
         return
