@@ -110,6 +110,20 @@ class EnvVar(StrEnum):
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
     QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
     QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    # Scheduled storage maintenance (auto-prune) knobs.
+    STORAGE_AUTOPRUNE = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE"
+    STORAGE_AUTOPRUNE_INTERVAL_MINUTES = (
+        "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES"
+    )
+    STORAGE_AUTOPRUNE_GRACE_HOURS = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS"
+    STORAGE_AUTOPRUNE_GRACE_HOURS_DATA = (
+        "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA"
+    )
+    STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS = (
+        "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS"
+    )
+    STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB"
+    STORAGE_AUTOPRUNE_MAX_PER_CYCLE = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE"
     # First-class local-backend opt-out. When set truthy it selects the
     # on-disk store regardless of the server-mode default.
     LOCAL_ONLY = "VAULTSPEC_RAG_LOCAL_ONLY"
@@ -182,6 +196,16 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_port": EnvVar.QDRANT_PORT,
     "qdrant_binary": EnvVar.QDRANT_BINARY,
     "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
+    # Scheduled storage maintenance (auto-prune) knobs.
+    "storage_autoprune": EnvVar.STORAGE_AUTOPRUNE,
+    "storage_autoprune_interval_minutes": EnvVar.STORAGE_AUTOPRUNE_INTERVAL_MINUTES,
+    "storage_autoprune_grace_hours": EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS,
+    "storage_autoprune_grace_hours_data": EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_DATA,
+    "storage_autoprune_archive_retention_days": (
+        EnvVar.STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS
+    ),
+    "storage_autoprune_archive_max_gb": EnvVar.STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB,
+    "storage_autoprune_max_per_cycle": EnvVar.STORAGE_AUTOPRUNE_MAX_PER_CYCLE,
     # First-class local-backend opt-out knob.
     "local_only": EnvVar.LOCAL_ONLY,
 }
@@ -327,6 +351,21 @@ class VaultSpecConfigWrapper:
         "qdrant_port": 8765,
         "qdrant_binary": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
+        # Scheduled storage maintenance (auto-prune). The daemon's hourly
+        # maintenance tick reclaims time-confirmed dangling namespaces:
+        # empty (zero-point) orphans after a continuous grace window,
+        # point-bearing orphans after a longer window and only once a
+        # snapshot archive succeeded. Grace clocks persist in the storage
+        # manifest, unknown/unverifiable namespaces are never auto-touched,
+        # and per-cycle reclaims are capped. The archive tree is bounded by
+        # age and total size.
+        "storage_autoprune": True,
+        "storage_autoprune_interval_minutes": 60,
+        "storage_autoprune_grace_hours": 24.0,
+        "storage_autoprune_grace_hours_data": 168.0,
+        "storage_autoprune_archive_retention_days": 30.0,
+        "storage_autoprune_archive_max_gb": 20.0,
+        "storage_autoprune_max_per_cycle": 16,
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",
