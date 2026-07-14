@@ -104,8 +104,7 @@ Options:
 | `--exclude`                | text               | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                                                                                                                                                         |
 | `--port`                   | integer            | unset   | Delegate to a running service on this port.                                                                                                                                                                                                                               |
 | `--allow-fallback`         | flag               | off     | Index in-process when the targeted service is unreachable instead of failing.                                                                                                                                                                                             |
-| `--no-preprocess`          | flag               | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with. Mutually exclusive with `--preprocess-unsandboxed`.                                            |
-| `--preprocess-unsandboxed` | flag               | off     | For an in-process run, run preprocess hooks without OS containment (`VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1`); a dangerous escape hatch for backend-less hosts, logged loudly. No effect when delegating to a running service. Mutually exclusive with `--no-preprocess`. |
+| `--no-preprocess`          | flag               | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with.                                                                                               |
 | `--verbose`                | flag               | off     | Show model-loading and progress output for in-process indexing.                                                                                                                                                                                                           |
 | `--json`                   | flag               | off     | Emit one JSON envelope to stdout.                                                                                                                                                                                                                                         |
 
@@ -280,13 +279,12 @@ Options:
 | `--local-only`               | flag    | off                               | Use the on-disk store and skip the Qdrant child.                                                                                                                                                                            |
 | `--qdrant` / `--no-qdrant`   | flag    | unset                             | Opt in to or out of the managed Qdrant server. Server mode is the default, so `--qdrant` on its own has no effect. Unset leaves the current setting unchanged.                                                              |
 | `--qdrant-auto-provision`    | flag    | off                               | Download the managed Qdrant server if it is missing instead of printing the install command.                                                                                                                                |
-| `--no-preprocess`            | flag    | off                               | Kill switch: the daemon loads no preprocess rules for any root (`VAULTSPEC_RAG_PREPROCESS=off`). Mutually exclusive with `--preprocess-unsandboxed`.                                                                        |
-| `--preprocess-unsandboxed`   | flag    | off                               | The daemon runs every root's preprocess hooks without OS containment (`VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED=1`); a dangerous escape hatch for backend-less hosts, logged loudly. Mutually exclusive with `--no-preprocess`. |
+| `--no-preprocess`            | flag    | off                               | Kill switch: the daemon loads no preprocess rules for any root (`VAULTSPEC_RAG_PREPROCESS=off`).                                                                                                                            |
 | `--json`                     | flag    | off                               | Emit one machine-readable outcome envelope per exit path. An already-running owned service is the success `already_running` (exit `0`) so a supervising broker attaches instead of treating it as a fault.                  |
 
 The daemon inherits configuration only through the environment, so each set flag is translated to its `VAULTSPEC_RAG_*` variable on the child process before spawn.
 
-Exit/JSON: `0` once the service is ready; `1` on a failure to start, a health-check timeout, or `--no-preprocess` combined with `--preprocess-unsandboxed` (`preprocess_flags_conflict`). A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines preprocess rules, the command prints a notice stating whether they will run under the sandbox, be skipped (mode is `off`), or run without containment (`unsandboxed`).
+Exit/JSON: `0` once the service is ready; `1` on a failure to start or a health-check timeout. A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines preprocess rules, the command prints a notice stating whether they will run or be skipped (mode is `off`).
 
 ## server stop
 
@@ -701,7 +699,7 @@ Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
 
 `vaultspec-rag preprocess status`
 
-Report the preprocess mode, config presence, rule count, and the resolved OS sandbox backend for this root, plus whether hooks would run here. There is no trust state - hooks run for any root, contained by the sandbox.
+Report the preprocess mode, config presence, and rule count for this root, plus whether hooks would run here. There is no trust state and no OS containment - a root's rules run directly, executing with your privileges, for any root except under the `off` kill switch.
 
 Arguments: none.
 
@@ -711,7 +709,7 @@ Options:
 | -------- | ---- | ------- | --------------------------------- |
 | `--json` | flag | off     | Emit one JSON envelope to stdout. |
 
-Human output lists the `mode` (`default`, `off`, or `unsandboxed`), whether a config is present and valid, the rule count, the resolved `Sandbox` backend (e.g. `windows-appcontainer`), and an `Effect` line summarising whether hooks will run. The `--json` envelope carries `mode`, `root`, `config_present`, `config_valid`, `rule_count`, `sandbox_backend`, and `would_run`.
+Human output lists the `mode` (`default` or `off`), whether a config is present and valid, the rule count, and an `Effect` line summarising whether hooks will run. The `--json` envelope carries `mode`, `root`, `config_present`, `config_valid`, `rule_count`, and `would_run`.
 
 Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
 
