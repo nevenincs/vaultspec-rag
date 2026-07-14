@@ -53,9 +53,11 @@ from ._lifecycle import (
     _heartbeat_tick_sync,
     _install_daemon_shutdown_hooks,
     _lifecycle_log,
+    _maintenance_loop,
     _record_shutdown,
     _resolve_log_path,
     _status_file_path,
+    _storage_maintenance_tick_sync,
     _unlink_status_file_silently,
 )
 from ._lifespan import health_handler, service_lifespan
@@ -135,6 +137,7 @@ __all__ = [
     "_jobs",
     "_lifecycle_log",
     "_local_store_locked_error_dict",
+    "_maintenance_loop",
     "_record_shutdown",
     "_registry",
     "_registry_full_error_dict",
@@ -146,6 +149,7 @@ __all__ = [
     "_status_file_path",
     "_stop_all_watchers",
     "_stop_watcher",
+    "_storage_maintenance_tick_sync",
     "_unlink_status_file_silently",
     "_validate_query",
     "_validate_vault_root",
