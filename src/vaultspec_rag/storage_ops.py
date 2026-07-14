@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -42,14 +43,21 @@ _CANONICAL_PREFIX_RE = re.compile(r"^r[0-9a-f]{12}_$")
 
 __all__ = [
     "DeleteResult",
+    "MaintenanceResult",
     "MigrateResult",
     "PruneResult",
+    "ReclaimDecision",
+    "ReclaimPolicy",
+    "archive_prefix",
     "collection_footprints",
     "delete_prefix",
+    "evaluate_reclaim",
     "gather_survey",
     "migrate_collections",
     "prune_orphaned",
+    "run_maintenance_cycle",
     "server_storage_collections_dir",
+    "sweep_archive",
 ]
 
 
@@ -371,3 +379,401 @@ def migrate_collections(
         reason = None if copied == expected else f"count_mismatch:{copied}!={expected}"
         results.append(MigrateResult(source, target, status, copied, reason))
     return results
+
+
+# -- scheduled reclamation ----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReclaimPolicy:
+    """Safety policy for time-confirmed automated reclamation.
+
+    Attributes:
+        grace_hours: Continuous-orphan hours before an EMPTY (zero-point)
+            namespace may be reclaimed.
+        grace_hours_data: Continuous-orphan hours before a POINT-BEARING
+            namespace may be archived and reclaimed. Deliberately longer:
+            a namespace with points is semantic data.
+        max_per_cycle: Hard cap on reclaims per cycle; the remainder waits.
+        archive_retention_days: Age past which archived snapshots are
+            deleted by the retention sweep.
+        archive_max_bytes: Total-byte cap for the archive dir; the sweep
+            evicts oldest archives first until under it.
+    """
+
+    grace_hours: float = 24.0
+    grace_hours_data: float = 168.0
+    max_per_cycle: int = 16
+    archive_retention_days: float = 30.0
+    archive_max_bytes: int = 20 * 1024**3
+
+
+@dataclass(frozen=True)
+class ReclaimDecision:
+    """One namespace's outcome in a reclamation evaluation or cycle.
+
+    Attributes:
+        prefix: The namespace prefix.
+        action: ``reclaim_empty`` / ``reclaim_data`` (eligible now),
+            ``pending`` (grace window still running), ``deferred``
+            (eligible but over the per-cycle cap), ``removed`` /
+            ``archived_removed`` (cycle applied it), or ``failed``.
+        tier: ``empty`` or ``data``.
+        reason: Detail for pending/deferred/failed outcomes, else ``None``.
+        points: Point count across the prefix's collections.
+        footprint_bytes: On-disk footprint of the prefix.
+    """
+
+    prefix: str
+    action: str
+    tier: str
+    reason: str | None = None
+    points: int = 0
+    footprint_bytes: int = 0
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp; naive values are assumed UTC."""
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def evaluate_reclaim(
+    surveys: list[NamespaceSurvey],
+    stamps: dict[str, str],
+    *,
+    now: datetime,
+    policy: ReclaimPolicy,
+) -> list[ReclaimDecision]:
+    """Decide, per orphaned namespace, whether reclamation may act NOW.
+
+    Safety gates stacked per prefix: only ``orphaned`` survey entries are
+    considered (``unknown``/``unverifiable``/``live`` never appear in the
+    output); a missing or unparsable grace stamp means the window has just
+    started (``pending``); the window length is tiered by whether the
+    namespace holds points; and eligible prefixes beyond
+    ``policy.max_per_cycle`` are ``deferred`` to the next cycle. Empty
+    namespaces are ordered before point-bearing ones so the riskless tier
+    always reclaims first under a tight cap.
+
+    Args:
+        surveys: Classified namespaces from :func:`gather_survey`.
+        stamps: Prefix to ``first_seen_orphaned`` mapping (from
+            ``update_orphan_stamps``).
+        now: The evaluation clock (timezone-aware).
+        policy: The active :class:`ReclaimPolicy`.
+
+    Returns:
+        One :class:`ReclaimDecision` per orphaned namespace.
+    """
+    decisions: list[ReclaimDecision] = []
+    eligible: list[ReclaimDecision] = []
+    orphaned = sorted(
+        (s for s in surveys if s.status == "orphaned"),
+        key=lambda s: (s.points > 0, s.prefix),
+    )
+    for survey in orphaned:
+        tier = "empty" if survey.points == 0 else "data"
+        window_hours = (
+            policy.grace_hours if tier == "empty" else policy.grace_hours_data
+        )
+        first_seen = _parse_iso(stamps.get(survey.prefix, ""))
+        if first_seen is None:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "pending",
+                    tier,
+                    reason="grace_started",
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+            continue
+        age_hours = (now - first_seen).total_seconds() / 3600.0
+        if age_hours < window_hours:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "pending",
+                    tier,
+                    reason=f"grace_remaining_h={window_hours - age_hours:.1f}",
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+            continue
+        action = "reclaim_empty" if tier == "empty" else "reclaim_data"
+        decision = ReclaimDecision(
+            survey.prefix,
+            action,
+            tier,
+            points=survey.points,
+            footprint_bytes=survey.footprint_bytes,
+        )
+        if len(eligible) < policy.max_per_cycle:
+            eligible.append(decision)
+            decisions.append(decision)
+        else:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "deferred",
+                    tier,
+                    reason="over_cycle_cap",
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+    return decisions
+
+
+def archive_prefix(
+    client: QdrantClient,
+    prefix: str,
+    *,
+    snapshots_dir: Path,
+    archive_dir: Path,
+) -> list[Path]:
+    """Snapshot every collection of ``prefix`` into the archive dir.
+
+    Creates a server-side snapshot per collection (``wait=True``), then
+    moves the snapshot file from the server's snapshots tree into
+    ``archive_dir/{prefix}/``. Any failure raises so the caller can refuse
+    the subsequent drop - a point-bearing namespace is never destroyed
+    without its archive completing first.
+
+    Args:
+        client: Qdrant client for the managed server.
+        prefix: The namespace prefix to archive.
+        snapshots_dir: The server's snapshots tree (where qdrant writes).
+        archive_dir: The bounded archive destination.
+
+    Returns:
+        The archived snapshot paths.
+    """
+    targets = [
+        c.name
+        for c in client.get_collections().collections
+        if c.name.startswith(prefix)
+    ]
+    dest_dir = archive_dir / prefix.rstrip("_")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    archived: list[Path] = []
+    for name in targets:
+        description = client.create_snapshot(collection_name=name, wait=True)
+        if description is None or not description.name:
+            raise RuntimeError(f"snapshot creation returned no name for {name}")
+        source = snapshots_dir / name / description.name
+        if not source.is_file():
+            raise RuntimeError(f"snapshot file not found: {source}")
+        dest = dest_dir / description.name
+        os.replace(source, dest)
+        archived.append(dest)
+    return archived
+
+
+def sweep_archive(
+    archive_dir: Path,
+    *,
+    now: datetime,
+    retention_days: float,
+    max_total_bytes: int,
+) -> list[Path]:
+    """Delete expired archives, then evict oldest-first past the byte cap.
+
+    Args:
+        archive_dir: The archive tree to bound. Missing dir is a no-op.
+        now: The evaluation clock (timezone-aware).
+        retention_days: Age past which an archive file is deleted.
+        max_total_bytes: Total-byte cap after age-based deletion.
+
+    Returns:
+        The deleted archive paths.
+    """
+    if not archive_dir.is_dir():
+        return []
+    files: list[tuple[float, int, Path]] = []
+    for path in archive_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        files.append((stat.st_mtime, stat.st_size, path))
+    deleted: list[Path] = []
+    cutoff = now.timestamp() - retention_days * 86400.0
+    kept: list[tuple[float, int, Path]] = []
+    for mtime, size, path in files:
+        if mtime < cutoff:
+            try:
+                path.unlink()
+                deleted.append(path)
+            except OSError:
+                kept.append((mtime, size, path))
+        else:
+            kept.append((mtime, size, path))
+    total = sum(size for _, size, _ in kept)
+    for _mtime, size, path in sorted(kept, key=lambda item: item[0]):
+        if total <= max_total_bytes:
+            break
+        try:
+            path.unlink()
+            deleted.append(path)
+            total -= size
+        except OSError:
+            continue
+    return deleted
+
+
+@dataclass(frozen=True)
+class MaintenanceResult:
+    """Outcome of one scheduled maintenance cycle.
+
+    Attributes:
+        decisions: Every orphaned namespace's decision this cycle.
+        reclaimed_bytes: Footprint of the namespaces actually removed.
+        archived: Snapshot files written for point-bearing reclaims.
+        swept: Archive files removed by the retention sweep.
+        namespace_counts: Survey status to count, for the health rollup.
+        pending_grace: Orphans still inside their grace window.
+        dangling_bytes: Total footprint of all currently orphaned
+            namespaces (reclaimed or not), for the health rollup.
+    """
+
+    decisions: list[ReclaimDecision]
+    reclaimed_bytes: int
+    archived: list[Path]
+    swept: list[Path]
+    namespace_counts: dict[str, int]
+    pending_grace: int
+    dangling_bytes: int
+
+
+def run_maintenance_cycle(
+    client: QdrantClient,
+    *,
+    now: datetime,
+    policy: ReclaimPolicy,
+    storage_dir: Path | None,
+    snapshots_dir: Path,
+    archive_dir: Path,
+    dry_run: bool = False,
+) -> MaintenanceResult:
+    """Run one scheduled reclamation cycle end to end.
+
+    Survey, advance the persisted grace clocks, evaluate the stacked
+    safety gates, then apply: empty orphans past grace are dropped;
+    point-bearing orphans past their longer grace are archived first and
+    dropped only when every snapshot succeeded; the archive retention
+    sweep bounds the archive tree. All destruction reuses
+    :func:`delete_prefix` - one implementation shared with the operator
+    CLI. Never touches ``unknown``, ``unverifiable``, or ``live``
+    namespaces, and never touches the GPU.
+
+    Args:
+        client: Qdrant client for the managed server.
+        now: The cycle clock (timezone-aware).
+        policy: The active :class:`ReclaimPolicy`.
+        storage_dir: The server ``collections`` dir for footprints.
+        snapshots_dir: The server's snapshots tree.
+        archive_dir: The bounded archive destination.
+        dry_run: When True, evaluate and report but mutate nothing
+            (grace stamps are still advanced - observation is not
+            destruction).
+
+    Returns:
+        A :class:`MaintenanceResult` for the jobs registry and rollup.
+    """
+    from .storage_manifest import update_orphan_stamps
+
+    surveys = gather_survey(client, storage_dir)
+    stamps = update_orphan_stamps(
+        {s.prefix: s.status for s in surveys},
+        now_iso=now.isoformat(),
+    )
+    decisions = evaluate_reclaim(surveys, stamps, now=now, policy=policy)
+    applied: list[ReclaimDecision] = []
+    archived: list[Path] = []
+    reclaimed = 0
+    for decision in decisions:
+        if decision.action not in ("reclaim_empty", "reclaim_data") or dry_run:
+            applied.append(decision)
+            continue
+        if decision.action == "reclaim_data":
+            try:
+                archived.extend(
+                    archive_prefix(
+                        client,
+                        decision.prefix,
+                        snapshots_dir=snapshots_dir,
+                        archive_dir=archive_dir,
+                    )
+                )
+            except (OSError, RuntimeError) as exc:
+                applied.append(
+                    ReclaimDecision(
+                        decision.prefix,
+                        "failed",
+                        decision.tier,
+                        reason=f"archive_failed: {exc}",
+                        points=decision.points,
+                        footprint_bytes=decision.footprint_bytes,
+                    )
+                )
+                continue
+        result = delete_prefix(client, decision.prefix, dry_run=False)
+        if result.status == "removed":
+            reclaimed += decision.footprint_bytes
+            applied.append(
+                ReclaimDecision(
+                    decision.prefix,
+                    "removed" if decision.tier == "empty" else "archived_removed",
+                    decision.tier,
+                    points=decision.points,
+                    footprint_bytes=decision.footprint_bytes,
+                )
+            )
+        else:
+            applied.append(
+                ReclaimDecision(
+                    decision.prefix,
+                    "failed",
+                    decision.tier,
+                    reason=result.reason or result.status,
+                    points=decision.points,
+                    footprint_bytes=decision.footprint_bytes,
+                )
+            )
+    swept = (
+        []
+        if dry_run
+        else sweep_archive(
+            archive_dir,
+            now=now,
+            retention_days=policy.archive_retention_days,
+            max_total_bytes=policy.archive_max_bytes,
+        )
+    )
+    counts: dict[str, int] = {}
+    for survey in surveys:
+        counts[survey.status] = counts.get(survey.status, 0) + 1
+    return MaintenanceResult(
+        decisions=applied,
+        reclaimed_bytes=reclaimed,
+        archived=archived,
+        swept=swept,
+        namespace_counts=counts,
+        pending_grace=sum(1 for d in applied if d.action == "pending"),
+        dangling_bytes=sum(
+            s.footprint_bytes for s in surveys if s.status == "orphaned"
+        ),
+    )
