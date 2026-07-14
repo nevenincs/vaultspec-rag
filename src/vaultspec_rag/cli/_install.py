@@ -6,6 +6,9 @@ from typing import Annotated, Any
 import click
 import typer
 from typer.core import TyperCommand
+from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
+)
 
 import vaultspec_rag.cli as _cli
 
@@ -88,6 +91,20 @@ def handle_install(
         typer.Option(
             "--skip",
             help="Skip a component (repeatable).",
+        ),
+    ] = None,
+    mode: Annotated[
+        InstallMode | None,
+        typer.Option(
+            "--mode",
+            help=(
+                "Provisioning mode: 'tool' (default, launched via uvx), "
+                "'dependency' (a runtime project dependency resolved through the "
+                "project's own venv, ships in built distributions), or 'dev' "
+                "(the default dev dependency group; renders like dependency but "
+                "does not ship in built distributions). Auto-detected from "
+                "pyproject.toml when omitted."
+            ),
         ),
     ] = None,
     configure_torch: Annotated[
@@ -268,6 +285,7 @@ def handle_install(
             provision_skip=provision_skip,
             torch_group=torch_group,
             install_mcp=install_mcp,
+            mode=mode,
         )
     except Exception as exc:
         _cli.console.print(

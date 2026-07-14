@@ -1,0 +1,185 @@
+"""Provisioning-mode resolution and persistence for rag's install flow.
+
+Vaultspec-rag adopts the three-placement mode model (``tool`` / ``dependency``
+/ ``dev``) that vaultspec-core owns, calling into core's ``workspace_mode``
+module with ``package="vaultspec-rag"`` rather than reimplementing precedence,
+detection, or the shared per-package ``.vaultspec/workspace.json`` declaration.
+This module is the thin rag-side seam that threads that shared machinery through
+rag's own install path: it resolves rag's mode through core's Q5 precedence
+chain, persists rag's own entry in the shared declaration without disturbing
+core's sibling entry, and re-renders rag's MCP server entry to its own declared
+mode's launch shape.
+
+Everything mode-related routes through a single core comparator. Detection,
+precedence, the leak advisory predicate, and the launch renderer all live in
+core; this module only names ``vaultspec-rag`` as the package the shared
+machinery operates on, so rag and core cannot drift on what a mode means.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
+)
+from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+    ModeProvenance,
+    PackageDeclaration,
+    ResolvedMode,
+    read_package_declaration,
+    resolve_install_mode,
+    resolve_install_mode_with_provenance,
+    write_package_declaration,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+#: The distribution name rag declares its own entry under in the shared
+#: per-package ``.vaultspec/workspace.json`` map. Passed as the ``package``
+#: argument to every core ``workspace_mode`` call so rag resolves, persists, and
+#: renders its own entry and never core's sibling entry.
+RAG_DISTRIBUTION_NAME = "vaultspec-rag"
+
+#: The runnable module rag's MCP server launches as ``python -m``. Matches the
+#: ``_vaultspec_mode_module`` token in rag's mode-neutral MCP builtin so the
+#: observed-shape matcher and the renderer reconstruct the same launch.
+RAG_MCP_MODULE = "vaultspec_rag.server"
+
+
+def resolve_rag_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode:
+    """Resolve rag's provisioning mode through core's Q5 precedence chain.
+
+    The fresh-``install`` resolver: it defers entirely to core's
+    :func:`~vaultspec_core.core.workspace_mode.resolve_install_mode_with_provenance`
+    with ``package="vaultspec-rag"``, so an explicit ``--mode`` flag, rag's own
+    persisted declaration, ``pyproject.toml`` detection for the rag
+    distribution, and the tool-mode default all apply in the same order core
+    uses for its own package. The returned provenance drives the leak advisory
+    at the moment of choice.
+
+    Args:
+        target: Workspace root directory.
+        explicit: The mode requested via ``--mode``, or ``None``.
+
+    Returns:
+        The resolved mode paired with its provenance.
+
+    Raises:
+        VaultSpecError: Propagated from core when *explicit* names an
+            impossible combination (dependency/dev mode with no
+            ``pyproject.toml``) or a persisted declaration is malformed.
+    """
+    return resolve_install_mode_with_provenance(
+        target, explicit=explicit, package=RAG_DISTRIBUTION_NAME
+    )
+
+
+def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode:
+    """Infer rag's provisioning mode for an ``install --upgrade`` (ADR Q6).
+
+    Mirrors core's ``_infer_upgrade_mode`` precedence exactly, substituting
+    rag's own deployed artifact for core's: an explicit ``--mode`` flag wins
+    (and is validated for impossible combinations), an already-persisted rag
+    declaration wins next so a second upgrade is idempotent, and a legacy
+    workspace with neither has its mode inferred from its own deployed state.
+    Rag has no pre-commit hook to read, so its deployed-state signal is the
+    observed shape of its own ``.mcp.json`` server entry
+    (:func:`~vaultspec_core.core.diagnosis.collectors._observed_mcp_mode` for
+    ``vaultspec-rag``): dependency mode only when that launch is
+    ``uv run``-shaped *and* the target's ``pyproject.toml`` lists
+    ``vaultspec-rag``; tool mode in every other case.
+
+    Reading the observed shape through core's shared collector keeps rag's
+    migration and any diagnosis in agreement on what a deployed launch shape
+    means, honouring the ADR's single-comparator constraint.
+
+    Args:
+        target: Workspace root directory.
+        explicit: The mode requested via ``--mode``, or ``None``.
+
+    Returns:
+        The inferred mode paired with its provenance.
+
+    Raises:
+        VaultSpecError: Propagated from core when *explicit* names an
+            impossible combination or a persisted declaration is malformed.
+    """
+    from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
+        _observed_mcp_mode,
+    )
+
+    if explicit is not None:
+        return resolve_install_mode_with_provenance(
+            target, explicit=explicit, package=RAG_DISTRIBUTION_NAME
+        )
+    if read_package_declaration(target, RAG_DISTRIBUTION_NAME) is not None:
+        return resolve_install_mode_with_provenance(
+            target, explicit=None, package=RAG_DISTRIBUTION_NAME
+        )
+
+    detected = resolve_install_mode(
+        target, explicit=None, package=RAG_DISTRIBUTION_NAME
+    )
+    observed = _observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
+    if detected is InstallMode.DEPENDENCY and observed is InstallMode.DEPENDENCY:
+        return ResolvedMode(InstallMode.DEPENDENCY, ModeProvenance.INFERRED)
+    return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)
+
+
+def persist_rag_mode(target: Path, mode: InstallMode) -> None:
+    """Write rag's committed mode entry, preserving its floor and any siblings.
+
+    Reads and writes only ``vaultspec-rag``'s own entry in the shared
+    per-package map through core's
+    :func:`~vaultspec_core.core.workspace_mode.write_package_declaration`, whose
+    read-modify-write under the advisory lock leaves every sibling entry (a
+    ``vaultspec-core`` declaration provisioned into the same workspace) untouched.
+    A per-package ``minimum_version`` floor a prior run recorded is read back and
+    preserved, since the provisioning mode and the floor are independent axes of
+    the same entry.
+
+    Args:
+        target: Workspace root directory.
+        mode: The resolved provisioning mode to persist for ``vaultspec-rag``.
+    """
+    existing = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
+    floor = existing.minimum_version if existing is not None else None
+    write_package_declaration(
+        target,
+        RAG_DISTRIBUTION_NAME,
+        PackageDeclaration(install_mode=mode, minimum_version=floor),
+    )
+
+
+def render_rag_mcp_entry(mode: InstallMode) -> None:
+    """Re-render only rag's managed MCP entry to *mode*'s launch shape.
+
+    Core's ``sync_provider`` renders every collected MCP definition at a single
+    sync-wide mode - the mode resolved for ``vaultspec-core`` - so a fresh sync
+    leaves rag's ``.mcp.json`` entry carrying core's render mode, not rag's own.
+    This closes that gap by re-running core's
+    :func:`~vaultspec_core.core.mcps.mcp_sync` at rag's resolved *mode* while
+    scoping the write to rag's own managed entry via ``force_managed``: any
+    sibling ``vaultspec-core`` entry that differs from *mode* is skipped and left
+    exactly as core's own sync wrote it, so a mixed configuration (core in one
+    mode, rag in another) renders each package's entry at its own mode. The
+    re-render must run after core's context is established (the sync pass) and
+    is a no-op when rag's entry already matches *mode*.
+
+    The returned sync statistics are intentionally discarded: the only surface
+    this touches is rag's own entry, and a benign "sibling entry differs" skip
+    on the ``vaultspec-core`` entry is expected, not an install warning.
+
+    Args:
+        mode: The provisioning mode whose launch shape rag's entry should carry.
+    """
+    from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+        mcp_sync,
+    )
+
+    mcp_sync(mode=mode, force_managed=frozenset({RAG_DISTRIBUTION_NAME}))

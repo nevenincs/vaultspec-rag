@@ -8,8 +8,18 @@ from typing import TYPE_CHECKING
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
+from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+    DEPENDENCY_LEAK_ADVISORY,
+    newly_establishes_dependency,
+)
 
 from ..builtins import seed_builtins
+from ._mode import (
+    infer_rag_upgrade_mode,
+    persist_rag_mode,
+    render_rag_mcp_entry,
+    resolve_rag_mode,
+)
 from ._models import InstallReport
 from ._torch_flow import _run_torch_config_install
 from ._workspace import (
@@ -20,6 +30,10 @@ from ._workspace import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+        InstallMode,
+    )
 
     from ._models import ConfirmFn
 
@@ -106,6 +120,7 @@ def install_run(
     provision_skip: set[str] | None = None,
     torch_group: str | None = None,
     install_mcp: bool = False,
+    mode: InstallMode | None = None,
 ) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
@@ -163,6 +178,16 @@ def install_run(
             consumer does not leak torch into its published runtime
             requirements. ``None`` (the default) preserves the historic
             project-deps placement byte-for-byte.
+        mode: The provisioning mode requested via ``--mode``
+            (``tool`` / ``dependency`` / ``dev``), or ``None`` to fall through
+            to rag's persisted declaration, ``pyproject.toml`` detection, and
+            the tool-mode default in turn. Resolved through core's shared
+            ``workspace_mode`` precedence with ``package="vaultspec-rag"``,
+            persisted into rag's own entry in the shared
+            ``.vaultspec/workspace.json`` without disturbing a sibling
+            ``vaultspec-core`` entry, and used to render rag's MCP launch shape.
+            An explicit ``dependency`` or ``dev`` request with no
+            ``pyproject.toml`` raises rather than silently falling back.
 
     Returns:
         :class:`InstallReport` with the structured result, including the
@@ -176,6 +201,19 @@ def install_run(
     report = InstallReport(action=action, target=target)
     report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
 
+    # Resolve rag's provisioning mode through core's shared precedence chain
+    # before seeding, so an impossible explicit request (dependency/dev mode
+    # with no pyproject.toml) raises a loud, typed refusal here rather than
+    # after files have been seeded. The upgrade path re-infers from rag's own
+    # deployed MCP shape; a fresh install resolves at provision time. The
+    # provenance rides along so the dependency-leak advisory fires only when
+    # this run is the one electing dependency mode, not on a persisted read.
+    resolved = (
+        infer_rag_upgrade_mode(target, mode)
+        if upgrade
+        else resolve_rag_mode(target, mode)
+    )
+
     # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does
     # (rules/ -> .vaultspec/rules/, mcps/ -> .vaultspec/mcps/, skills/<name>/
     # -> .vaultspec/skills/<name>/), so core's collectors and sync pick them up
@@ -188,6 +226,25 @@ def install_run(
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
     _run_core_sync(target, report, dry_run, force, skip)
+
+    # Persist rag's own entry in the shared per-package declaration and correct
+    # its MCP launch to its own resolved mode. Core's sync above renders every
+    # collected MCP definition at a single sync-wide mode (core's), so it wrote
+    # rag's entry in core's render shape; the re-render here rewrites only rag's
+    # managed entry to rag's own mode while leaving a sibling vaultspec-core
+    # entry exactly as core's sync wrote it. Gated on a real run with core in
+    # scope, since the re-render needs the runtime context core's sync
+    # establishes and there is otherwise no seeded rag entry to correct.
+    if not dry_run and "core" not in skip:
+        persist_rag_mode(target, resolved.mode)
+        render_rag_mcp_entry(resolved.mode)
+
+    # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
+    # D3): fires only when this run newly elects the full-leak dependency
+    # placement for rag, so a persisted-declaration workspace is not nagged on
+    # every subsequent install.
+    if newly_establishes_dependency(resolved):
+        report.warnings.append(DEPENDENCY_LEAK_ADVISORY)
 
     _run_torch_config_install(
         target=target,
