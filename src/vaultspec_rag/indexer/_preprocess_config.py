@@ -183,21 +183,15 @@ class PreprocessContext:
         config: The resolved per-root preprocess rules.
         cache_root: The preprocess output cache root.
         max_emitted_bytes: The emitted-text length cap (D10).
-        project_root: The project root; granted read-only to the sandboxed hook
-            so a ``command``/``entry_point`` that imports its own module tree can
-            read it (preprocess-sandbox ADR D2).
-        server_mode: ``True`` when the resident service runs the hook, selecting
-            the fail-closed sandbox policy (ADR D6).
-        unsandboxed: ``True`` when the operator opted out of OS containment via
-            ``VAULTSPEC_RAG_PREPROCESS_UNSANDBOXED`` (ADR D8).
+        project_root: The project root; placed on the hook child's
+            ``PYTHONPATH`` so a ``command``/``entry_point`` that imports its own
+            module tree can do so.
     """
 
     config: PreprocessConfig
     cache_root: pathlib.Path
     max_emitted_bytes: int
     project_root: pathlib.Path
-    server_mode: bool
-    unsandboxed: bool
 
 
 def load_preprocess_rules(
@@ -212,11 +206,10 @@ def load_preprocess_rules(
     :class:`PreprocessConfigError` on the first defect and backs the
     ``preprocess check`` CLI verb.
 
-    After resolution, the non-strict path enforces only the tri-state
-    preprocess kill switch (preprocess-sandbox ADR D7/D8): ``off`` returns zero
-    rules; ``default`` and ``unsandboxed`` return the resolved rules for any
-    root, because containment - the OS sandbox at the runner - is the security
-    boundary, not per-root consent, so no trust check gates execution.
+    After resolution, the non-strict path enforces only the preprocess kill
+    switch: ``off`` returns zero rules; ``default`` returns the resolved rules
+    for any root - a root's preprocess config is repo-authored code and runs
+    with the operator's privileges, so no trust check gates execution.
     ``strict=True`` bypasses even the kill switch so ``preprocess check``
     validates the config regardless of the host's mode.
 
@@ -299,11 +292,12 @@ def _enforce_preprocess_mode(
     config: PreprocessConfig,
     config_file: pathlib.Path,
 ) -> PreprocessConfig:
-    """Apply the ``off`` kill switch to a resolved config (ADR D7/D8).
+    """Apply the ``off`` kill switch to a resolved config.
 
-    Rules resolve for any root: the OS sandbox at the runner is the security
-    boundary, not per-root consent, so no trust check gates execution here. The
-    sole gate the loader still applies is the ``off`` kill switch. An empty
+    Rules resolve for any root: a root's preprocess config is repo-authored
+    code running with the operator's privileges, so no trust check gates
+    execution here. The sole gate the loader applies is the ``off`` kill
+    switch. An empty
     config needs no gating and is returned as-is. The import is function-local
     so the module stays cheap to import from the spawn worker.
 
