@@ -22,7 +22,7 @@ import sys
 import textwrap
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 import pytest
 
@@ -87,9 +87,9 @@ def _drain(handle: SandboxHandle, timeout: float = 90.0) -> tuple[int, bytes, by
     """Drain both pipes on threads, then wait; return (rc, stdout, stderr)."""
     captured: dict[str, bytes] = {"out": b"", "err": b""}
 
-    def _read(pipe: object, key: str) -> None:
+    def _read(pipe: IO[bytes] | None, key: str) -> None:
         assert pipe is not None
-        captured[key] = pipe.read()  # type: ignore[attr-defined]
+        captured[key] = pipe.read()
 
     t_out = threading.Thread(target=_read, args=(handle.stdout, "out"))
     t_err = threading.Thread(target=_read, args=(handle.stderr, "err"))
@@ -191,8 +191,7 @@ def test_appcontainer_contains_real_child(
         backend.cleanup(handle)
 
     detail = (
-        f"rc={rc} out={out.decode(errors='replace')} "
-        f"err={err.decode(errors='replace')}"
+        f"rc={rc} out={out.decode(errors='replace')} err={err.decode(errors='replace')}"
     )
     assert rc == 0, detail
     verdict = json.loads(out.decode())
@@ -291,8 +290,7 @@ def test_bubblewrap_contains_real_child(tmp_path: pathlib.Path) -> None:
         backend.cleanup(handle)
 
     detail = (
-        f"rc={rc} out={out.decode(errors='replace')} "
-        f"err={err.decode(errors='replace')}"
+        f"rc={rc} out={out.decode(errors='replace')} err={err.decode(errors='replace')}"
     )
     assert rc == 0, detail
     verdict = json.loads(out.decode())
