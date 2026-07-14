@@ -10,41 +10,31 @@ related:
   - '[[2026-07-13-preprocess-sandbox-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `preprocess-sandbox-removal` plan
 
 ### Phase `P01` - Core sandbox removal
 
 Delete the OS containment layer (backends, probe, staging, fail-closed policy) and rewire the runner to a direct bounded subprocess launch, per ADR D1-D3, D5, D7-D8.
 
-- [ ] `P01.S01` - Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, _probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol; `src/vaultspec_rag/indexer/_hook_sandbox.py`.
-- [ ] `P01.S02` - Delete the Windows AppContainer backend module (profile derivation, icacls grants, Job Object wrap, pipe plumbing); `src/vaultspec_rag/indexer/_hook_sandbox_windows.py`.
-- [ ] `P01.S03` - Delete the POSIX bwrap/seatbelt backend module; `src/vaultspec_rag/indexer/_hook_sandbox_posix.py`.
-- [ ] `P01.S04` - Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, _remap_staged_paths, the _REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
-- [ ] `P01.S05` - Drop the server_mode/unsandboxed threading from preprocess_file and its callers, keeping the cache consult/write path unchanged; `src/vaultspec_rag/indexer/_chunk_worker.py`.
-- [ ] `P01.S06` - Drop the sandbox-policy fields from the preprocess context construction and any backend mentions; `src/vaultspec_rag/indexer/_preprocess_config.py`.
-- [ ] `P01.S07` - Update _resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing); `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S01` - Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, _probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol; `src/vaultspec_rag/indexer/_hook_sandbox.py`.
+- [x] `P01.S02` - Delete the Windows AppContainer backend module (profile derivation, icacls grants, Job Object wrap, pipe plumbing); `src/vaultspec_rag/indexer/_hook_sandbox_windows.py`.
+- [x] `P01.S03` - Delete the POSIX bwrap/seatbelt backend module; `src/vaultspec_rag/indexer/_hook_sandbox_posix.py`.
+- [x] `P01.S04` - Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, _remap_staged_paths, the _REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
+- [x] `P01.S05` - Drop the server_mode/unsandboxed threading from preprocess_file and its callers, keeping the cache consult/write path unchanged; `src/vaultspec_rag/indexer/_chunk_worker.py`.
+- [x] `P01.S06` - Drop the sandbox-policy fields from the preprocess context construction and any backend mentions; `src/vaultspec_rag/indexer/_preprocess_config.py`.
+- [x] `P01.S07` - Update _resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing); `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P02` - Control-surface collapse
 
 Collapse the preprocess tri-state to on/off, remove the UNSANDBOXED env knob and CLI flags, and update every adapter that reports or forwards sandbox state, per ADR D4 and D10.
 
-- [ ] `P02.S08` - Collapse PreprocessMode to a two-state on/off by removing the unsandboxed literal, the PREPROCESS_UNSANDBOXED EnvVar, and the unsandboxed arm of the preprocess_mode property, keeping PREPROCESS=off as the kill switch; `src/vaultspec_rag/config.py`.
-- [ ] `P02.S09` - Remove the --preprocess-unsandboxed flag and its mutual-exclusion validation from the index command; `src/vaultspec_rag/cli/_index.py`.
-- [ ] `P02.S10` - Remove the --preprocess-unsandboxed flag and env forwarding from server start, keeping --no-preprocess; `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [ ] `P02.S11` - Update the preprocess status verb to report direct execution and the two-state mode instead of the resolved sandbox backend; `src/vaultspec_rag/cli/_preprocess.py`.
-- [ ] `P02.S12` - Drop UNSANDBOXED from the daemon child-env forwarding allow-list; `src/vaultspec_rag/cli/_process.py`.
-- [ ] `P02.S13` - Remove sandbox-state fields from job records and the /jobs and preprocess reporting surfaces; `src/vaultspec_rag/jobs.py`.
-- [ ] `P02.S14` - Remove sandbox-backend reporting from the server routes preprocess pre-flight; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P02.S08` - Collapse PreprocessMode to a two-state on/off by removing the unsandboxed literal, the PREPROCESS_UNSANDBOXED EnvVar, and the unsandboxed arm of the preprocess_mode property, keeping PREPROCESS=off as the kill switch; `src/vaultspec_rag/config.py`.
+- [x] `P02.S09` - Remove the --preprocess-unsandboxed flag and its mutual-exclusion validation from the index command; `src/vaultspec_rag/cli/_index.py`.
+- [x] `P02.S10` - Remove the --preprocess-unsandboxed flag and env forwarding from server start, keeping --no-preprocess; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P02.S11` - Update the preprocess status verb to report direct execution and the two-state mode instead of the resolved sandbox backend; `src/vaultspec_rag/cli/_preprocess.py`.
+- [x] `P02.S12` - Drop UNSANDBOXED from the daemon child-env forwarding allow-list; `src/vaultspec_rag/cli/_process.py`.
+- [x] `P02.S13` - Remove sandbox-state fields from job records and the /jobs and preprocess reporting surfaces; `src/vaultspec_rag/jobs.py`.
+- [x] `P02.S14` - Remove sandbox-backend reporting from the server routes preprocess pre-flight; `src/vaultspec_rag/server/_routes.py`.
 
 ### Phase `P03` - Tests, docs, and verification
 

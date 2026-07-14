@@ -1,0 +1,29 @@
+---
+tags:
+  - '#exec'
+  - '#preprocess-sandbox-removal'
+date: '2026-07-14'
+modified: '2026-07-14'
+step_id: 'S10'
+related:
+  - "[[2026-07-14-preprocess-sandbox-removal-plan]]"
+---
+
+# Remove the --preprocess-unsandboxed flag and env forwarding from server start, keeping --no-preprocess
+
+## Scope
+
+- `src/vaultspec_rag/cli/_service_lifecycle.py`
+
+## Description
+
+- Remove `--preprocess-unsandboxed` and `_resolve_preprocess_forward` from `server start`; `preprocess_forward` is now derived inline from `--no-preprocess`.
+- Update the start notice: rules run directly with the service's privileges.
+
+## Outcome
+
+`server start --no-preprocess` unchanged; unsandboxed flag gone.
+
+## Notes
+
+None.
