@@ -612,8 +612,34 @@ def service_start(
         ) from exc
     _write_service_status(pid, port)
 
-    # Poll health with exponential backoff. The live spinner writes to the
-    # console, so it is suppressed in --json mode (one clean envelope on stdout).
+    _await_service_ready(pid, port, log_path, json_mode=json_mode, t0=t0)
+
+
+def _await_service_ready(
+    pid: int,
+    port: int,
+    log_path: Path,
+    *,
+    json_mode: bool,
+    t0: float,
+) -> None:
+    """Poll the spawned daemon's health until it is ready, or fail/time out.
+
+    Extracted from :func:`service_start` so the guard sequence and the health
+    wait each read as one unit. Emits the terminal outcome itself: the success
+    envelope on readiness, a typed failure if the process dies, and a timeout
+    failure if it never reports ready within the deadline. Health is polled with
+    exponential backoff; the live spinner is suppressed in ``--json`` mode so a
+    single clean envelope reaches stdout.
+
+    Args:
+        pid: The spawned daemon process id.
+        port: The port the daemon was started on.
+        log_path: The daemon log file, surfaced in failure output.
+        json_mode: Whether to emit a machine-readable outcome envelope.
+        t0: The ``time.perf_counter`` reading taken just before the spawn, for
+            the reported startup duration.
+    """
     delay = 0.1
     deadline = 300.0
     elapsed = 0.0
