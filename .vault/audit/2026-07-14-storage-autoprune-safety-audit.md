@@ -1,14 +1,16 @@
 ---
 tags:
-  - '#audit'
-  - '#storage-autoprune-safety'
+  - "#audit"
+  - "#storage-autoprune-safety"
 date: '2026-07-14'
-modified: '2026-07-14'
 related:
-  - '[[2026-07-14-storage-autoprune-safety-adr]]'
-  - '[[2026-07-14-storage-autoprune-safety-plan]]'
+  - "[[2026-07-14-storage-autoprune-safety-adr]]"
+  - "[[2026-07-14-storage-autoprune-safety-plan]]"
+promoted_to:
+  - 'rule:storage-maintenance-is-lifecycle-inert'
+  - 'rule:automated-destruction-requires-time-confirmed-danglingness'
+modified: '2026-07-14'
 ---
-
 # `storage-autoprune-safety` audit: `execution review of the scheduled auto-prune and attribution`
 
 ## Scope
