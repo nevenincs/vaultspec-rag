@@ -32,7 +32,7 @@ Publish the maintenance survey into daemon state, warm it at startup, and serve 
 - [x] `P01.S04` - Serve the storage survey route from the snapshot with filters applied to the cached list, add computed_at and source envelope fields, and implement the fresh=true recompute-and-publish path; `src/vaultspec_rag/server/_routes.py`.
 - [x] `P01.S05` - Pass a --fresh flag through the CLI survey verb and the transport query builder in serviceclient/\_transport.py; `src/vaultspec_rag/cli/_service_storage.py`.
 - [x] `P01.S06` - Unit-test snapshot swap semantics, cached-list filtering, and freshness metadata alongside the routes tests; `src/vaultspec_rag/tests/test_storage_ops.py`.
-- [ ] `P01.S07` - Integration-test the live daemon serving the cached survey after warmup and recomputing on fresh=true; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
+- [x] `P01.S07` - Integration-test the live daemon serving the cached survey after warmup and recomputing on fresh=true; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
 
 ### Phase `P02` - Per-root teardown and docs
 

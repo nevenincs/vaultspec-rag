@@ -298,10 +298,10 @@ Arguments: none.
 
 Options:
 
-| Flag     | Type    | Default | Description                                                                                                                                                     |
-| -------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flag     | Type    | Default | Description                                                                                                                                                    |
+| -------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--port` | integer | unset   | Stop the service answering on this port, resolving its identity from `/health` instead of the status file (for a non-default port or a divergent status file). |
-| `--json` | flag    | off     | Emit one machine-readable outcome envelope per exit path.                                                                                                        |
+| `--json` | flag    | off     | Emit one machine-readable outcome envelope per exit path.                                                                                                      |
 
 Exit/JSON: `0` for every satisfied outcome - `stopped`, `already_stopped` (nothing to stop; the idempotent success), `cleaned` (a stale status file for a confirmed-dead PID was removed), and `reclaimed` (a lock holder without a status file was terminated); `1` for `identity_unconfirmed`, the one failure - a live recorded process whose identity could not be confirmed is left running, in both output modes.
 
@@ -596,12 +596,12 @@ Arguments: none.
 Options:
 
 | Flag         | Type | Default | Description                                                                                                                  |
-| ------------ | ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `--orphaned` | flag | off     | Show only orphaned namespaces (prune candidates).                                                                              |
-| `--unknown`  | flag | off     | Show only unattributable namespaces.                                                                                           |
+| ------------ | ---- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--orphaned` | flag | off     | Show only orphaned namespaces (prune candidates).                                                                            |
+| `--unknown`  | flag | off     | Show only unattributable namespaces.                                                                                         |
 | `--root`     | text | unset   | Narrow to one root's namespace and report its authoritative collection prefix as `queried_root` (works for unindexed roots). |
-| `--fresh`    | flag | off     | Force the daemon to recompute the survey instead of answering from its cached snapshot (slower; walks every namespace).       |
-| `--json`     | flag | off     | Emit one JSON envelope to stdout.                                                                                              |
+| `--fresh`    | flag | off     | Force the daemon to recompute the survey instead of answering from its cached snapshot (slower; walks every namespace).      |
+| `--json`     | flag | off     | Emit one JSON envelope to stdout.                                                                                            |
 
 Exit/JSON: `0` on success; `2` when server mode is off (`server_mode_required`); `3` when neither a daemon nor the managed server answers (`service_not_running`).
 
@@ -615,10 +615,10 @@ Arguments: none.
 
 Options:
 
-| Flag        | Type | Default | Description                                                        |
-| ----------- | ---- | ------- | -------------------------------------------------------------------- |
-| `--dry-run` | flag | off     | Preview the exact target namespaces without deleting anything.      |
-| `--yes`     | flag | off     | Apply the prune. Without it the command prints the preview.         |
+| Flag        | Type | Default | Description                                                                            |
+| ----------- | ---- | ------- | -------------------------------------------------------------------------------------- |
+| `--dry-run` | flag | off     | Preview the exact target namespaces without deleting anything.                         |
+| `--yes`     | flag | off     | Apply the prune. Without it the command prints the preview.                            |
 | `--json`    | flag | off     | Emit one JSON envelope to stdout. Requires `--yes` (no prompt may corrupt the stream). |
 
 Exit/JSON: `0` on success; `2` when server mode is off or `--json` lacks `--yes`; `3` when the managed server is unreachable.
@@ -635,13 +635,13 @@ Arguments: `PREFIX` - the namespace prefix to delete. Exactly one of `PREFIX` or
 
 Options:
 
-| Flag              | Type | Default | Description                                                              |
-| ----------------- | ---- | ------- | --------------------------------------------------------------------------- |
+| Flag              | Type | Default | Description                                                                                                                             |
+| ----------------- | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `--root`          | text | unset   | Address the namespace by its source root path instead of the prefix; the resolved root and derived prefix are echoed as `queried_root`. |
-| `--dry-run`       | flag | off     | Preview without deleting.                                                  |
-| `--yes`, `-y`     | flag | off     | Apply the deletion.                                                        |
-| `--allow-unknown` | flag | off     | Permit deleting a prefix the manifest cannot attribute to a root (dangerous). |
-| `--json`          | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`.                        |
+| `--dry-run`       | flag | off     | Preview without deleting.                                                                                                               |
+| `--yes`, `-y`     | flag | off     | Apply the deletion.                                                                                                                     |
+| `--allow-unknown` | flag | off     | Permit deleting a prefix the manifest cannot attribute to a root (dangerous).                                                           |
+| `--json`          | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`.                                                                                     |
 
 Exit/JSON: `0` on success, an `already_absent` no-op, or a skipped target; `1` when a non-dry-run preview finds a target but `--yes` was not given; `2` when server mode is off, both/neither of `PREFIX` and `--root` were given, or `--json` lacks `--yes`; `3` when the managed server is unreachable.
 
