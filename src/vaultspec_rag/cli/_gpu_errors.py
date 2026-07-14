@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import typer
@@ -11,17 +12,126 @@ import vaultspec_rag.cli as _cli
 from ._core import logger
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from typing import NoReturn
 
     from ..torch_config import TorchDiagnosis
 
 __all__ = [
+    "RuntimeEnvKind",
     "_cpu_only_message",
     "_handle_gpu_error",
     "_no_gpu_message",
     "_no_torch_message",
+    "classify_interpreter_env",
+    "classify_runtime_env",
+    "durable_tool_install_command",
+    "gpu_escape_hatch_command",
     "warn_if_active_torch_not_gpu",
 ]
+
+
+class RuntimeEnvKind(StrEnum):
+    """Classification of the environment a python prefix belongs to.
+
+    Drives which torch remediation is offered: a ``uv tool`` env can only be
+    repaired in place (the project-scoped cu130 pin never reaches it), a uvx
+    ephemeral cache env is almost never the environment the operator thinks
+    they are running, and a project venv is served by ``vaultspec-rag install``.
+    """
+
+    UV_TOOL = "uv-tool"
+    UVX_EPHEMERAL = "uvx-ephemeral"
+    PROJECT_VENV = "project-venv"
+    OTHER = "other"
+
+    @property
+    def label(self) -> str:
+        """Human-readable form used beside interpreter paths in messages."""
+        return {
+            RuntimeEnvKind.UV_TOOL: "uv tool install",
+            RuntimeEnvKind.UVX_EPHEMERAL: (
+                "uvx ephemeral cache env - NOT the installed tool"
+            ),
+            RuntimeEnvKind.PROJECT_VENV: "project venv",
+            RuntimeEnvKind.OTHER: "unrecognized env",
+        }[self]
+
+
+def classify_runtime_env(prefix: str | Path | None = None) -> RuntimeEnvKind:
+    """Classify the environment rooted at ``prefix`` (default: the running one).
+
+    Pure path logic - never shells out to ``uv`` (this runs on the ``server
+    start`` path). The uvx ephemeral cache is positively identified by the
+    ``archive-v0`` component of the uv cache layout (or a ``UV_CACHE_DIR``
+    ancestor); the installed-tool shape is the prefix sitting directly inside a
+    ``tools`` directory (or a ``UV_TOOL_DIR`` ancestor); a ``.venv``/``venv``
+    prefix is a project venv. Misclassification degrades only which remediation
+    hint is printed, never correctness.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    resolved = Path(prefix if prefix is not None else sys.prefix).resolve()
+    parts = {part.lower() for part in resolved.parts}
+    cache_dir = os.environ.get("UV_CACHE_DIR", "")
+    if "archive-v0" in parts or (
+        cache_dir and resolved.is_relative_to(Path(cache_dir).resolve())
+    ):
+        return RuntimeEnvKind.UVX_EPHEMERAL
+    tool_dir = os.environ.get("UV_TOOL_DIR", "")
+    if tool_dir and resolved.is_relative_to(Path(tool_dir).resolve()):
+        return RuntimeEnvKind.UV_TOOL
+    if resolved.parent.name.lower() == "tools":
+        return RuntimeEnvKind.UV_TOOL
+    if resolved.name.lower() in {".venv", "venv"}:
+        return RuntimeEnvKind.PROJECT_VENV
+    return RuntimeEnvKind.OTHER
+
+
+def classify_interpreter_env(interpreter: str | Path) -> RuntimeEnvKind:
+    """Classify the environment that owns ``interpreter`` (a python binary).
+
+    Walks up from the binary to its env root (the parent of ``Scripts``/
+    ``bin``) and classifies that root, so the daemon interpreter resolved by
+    the start pre-flight gets the same classification as a running prefix.
+    """
+    from pathlib import Path
+
+    binary = Path(interpreter).resolve()
+    if binary.parent.name.lower() in {"scripts", "bin"}:
+        return classify_runtime_env(binary.parent.parent)
+    return classify_runtime_env(binary.parent)
+
+
+def gpu_escape_hatch_command(interpreter: str) -> str:
+    """The in-place GPU-wheel repair for ``interpreter``.
+
+    Works on any env kind but is undone by the next tool-env re-resolution
+    (``--torch-backend`` is ``uv pip``-only); pair it with
+    :func:`durable_tool_install_command` on tool envs.
+    """
+    from ..torch_config import CU130_INDEX_URL
+
+    backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
+    return (
+        f'uv pip install --python "{interpreter}" '
+        f"--reinstall --torch-backend={backend} torch"
+    )
+
+
+def durable_tool_install_command() -> str:
+    """The receipt-carrying tool reinstall that keeps CUDA across upgrades.
+
+    uv records ``--index`` in the tool receipt and re-applies it on every
+    ``uv tool upgrade``, so torch keeps resolving from the cu130 index. The
+    service must be stopped first: a forced reinstall while it runs fails
+    mid-removal on the locked Scripts dir.
+    """
+    from ..torch_config import CU130_INDEX_URL
+
+    return f'uv tool install --force "vaultspec-rag[mcp]" --index {CU130_INDEX_URL}'
 
 
 def _cpu_only_message() -> str:
@@ -73,20 +183,6 @@ def _no_gpu_message() -> str:
         "A GPU visible to the host is not automatically visible inside "
         "the container/VM."
     )
-
-
-def _running_in_uv_tool_env() -> bool:
-    """Best-effort: is the active interpreter a ``uv tool`` install?
-
-    uv tool environments live at ``<uv-data>/tools/<tool-name>/``, so the
-    running interpreter's prefix sits directly inside a ``tools`` directory.
-    Used only to tailor the remediation hint; a false negative just falls back
-    to the workspace copy.
-    """
-    import sys
-    from pathlib import Path
-
-    return Path(sys.prefix).resolve().parent.name.lower() == "tools"
 
 
 def _active_torch_diagnosis() -> TorchDiagnosis:
@@ -145,17 +241,29 @@ def warn_if_active_torch_not_gpu() -> None:
         _cli.console.print("\n".join(lines), markup=False, highlight=False)
         return
 
-    if _running_in_uv_tool_env():
+    kind = classify_runtime_env()
+    if kind is RuntimeEnvKind.UV_TOOL:
         lines += [
             "",
             "  This vaultspec-rag is a `uv tool` install. The cu130 GPU pin is "
             "project-scoped and does not reach `uv tool` / `pip` installs "
-            "(`--torch-backend` is `uv pip`-only).",
-            "  Supported GPU path - install into a uv project instead:",
-            "    uv add vaultspec-rag && uv run vaultspec-rag install && uv sync",
-            "  Escape hatch - force the GPU wheel into this tool environment:",
-            f'    uv pip install --python "{sys.executable}" '
-            "--reinstall --torch-backend=cu130 torch",
+            "(`--torch-backend` is `uv pip`-only), so every `uv tool upgrade` "
+            "re-resolves torch to the CPU wheel.",
+            "  Repair this environment now (undone by the next upgrade):",
+            f"    {gpu_escape_hatch_command(sys.executable)}",
+            "  Make upgrades keep the GPU wheel (stop the service first):",
+            f"    {durable_tool_install_command()}",
+        ]
+    elif kind is RuntimeEnvKind.UVX_EPHEMERAL:
+        lines += [
+            "",
+            "  This interpreter is a uvx EPHEMERAL cache environment "
+            f"({sys.prefix}) - not the installed tool. uvx silently falls "
+            "back to it when the installed tool env is broken or the request "
+            "does not match it.",
+            "  Reinstall the tool with the service stopped (the Scripts lock "
+            "during a forced reinstall is the running service itself):",
+            f"    {durable_tool_install_command()}",
         ]
     else:
         lines += [
