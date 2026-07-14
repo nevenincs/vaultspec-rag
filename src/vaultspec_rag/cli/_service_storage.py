@@ -146,7 +146,7 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
 
 
 def _survey_from_service(
-    root: str | None = None,
+    root: str | None = None, fresh: bool = False
 ) -> tuple[list[NamespaceSurvey], dict[str, str] | None] | None:
     """Fetch the survey from a running service, or ``None`` if it is down.
 
@@ -164,6 +164,8 @@ def _survey_from_service(
     from ._service_status import _default_service_port
 
     args: dict[str, object] = {"root": root} if root else {}
+    if fresh:
+        args["fresh"] = "true"
     result = _try_http_admin("get_storage_survey", args, _default_service_port())
     if not result or result.get("ok") is False:
         return None
@@ -228,6 +230,14 @@ def storage_survey(
             "collection prefix (works even for a root not yet indexed)."
         ),
     ),
+    fresh: bool = typer.Option(
+        False,
+        "--fresh",
+        help=(
+            "Force the service to recompute the survey instead of answering "
+            "from its cached snapshot (slower; walks every namespace)."
+        ),
+    ),
 ) -> None:
     """Survey the managed server's per-root index namespaces.
 
@@ -246,7 +256,9 @@ def storage_survey(
         # silently disagreeing with the CLI-direct fallback.
         root = str(pathlib.Path(root).resolve())
     queried_root: dict[str, str] | None = None
-    fetched = _survey_from_service(root)
+    # The CLI-direct fallback below always computes live, so --fresh only
+    # needs to reach the service path.
+    fetched = _survey_from_service(root, fresh=fresh)
     if fetched is not None:
         surveys, queried_root = fetched
     else:
@@ -286,20 +298,29 @@ def storage_survey(
 # -- delete -----------------------------------------------------------------
 
 
-def _render_delete(result: DeleteResult, json_mode: bool) -> None:
+def _render_delete(
+    result: DeleteResult,
+    json_mode: bool,
+    queried_root: dict[str, str] | None = None,
+) -> None:
     if json_mode:
-        _emit_json(
-            True,
-            _DELETE_CMD,
-            data={
-                "prefix": result.prefix,
-                "status": result.status,
-                "collections": result.collections,
-                "reason": result.reason,
-            },
-        )
+        data: dict[str, object] = {
+            "prefix": result.prefix,
+            "status": result.status,
+            "collections": result.collections,
+            "reason": result.reason,
+        }
+        if queried_root is not None:
+            data["queried_root"] = queried_root
+        _emit_json(True, _DELETE_CMD, data=data)
         return
-    if result.status == "skipped":
+    if queried_root is not None:
+        typer.echo(
+            f"Queried root: {queried_root['root']}  prefix: {queried_root['prefix']}"
+        )
+    if result.status == "already_absent":
+        typer.echo(f"Namespace {result.prefix} already absent; nothing to delete.")
+    elif result.status == "skipped":
         typer.echo(f"Skipped {result.prefix}: {result.reason}")
     elif result.status == "would_remove":
         typer.echo(
@@ -314,11 +335,22 @@ def _render_delete(result: DeleteResult, json_mode: bool) -> None:
 
 @server_storage_app.command(
     "delete",
-    help="Delete one named RAG namespace (its r{hash}_ prefix).",
+    help=(
+        "Delete one named RAG namespace, addressed by its r{hash}_ prefix "
+        "or by --root (the sanctioned per-root teardown for harnesses)."
+    ),
 )
 def storage_delete(
-    prefix: str = typer.Argument(
-        ..., help="The namespace prefix to delete (r{hash}_)."
+    prefix: str | None = typer.Argument(
+        None, help="The namespace prefix to delete (r{hash}_)."
+    ),
+    root: str | None = typer.Option(
+        None,
+        "--root",
+        help=(
+            "Address the namespace by its source root path instead of the "
+            "prefix; an already-absent namespace is a success (exit 0)."
+        ),
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply the deletion."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without deleting."),
@@ -329,19 +361,52 @@ def storage_delete(
         help="Permit deleting a prefix the manifest cannot attribute (dangerous).",
     ),
 ) -> None:
-    """Delete a single per-root namespace from the managed server."""
+    """Delete a single per-root namespace from the managed server.
+
+    ``--root`` resolves the path against the operator's cwd and derives the
+    prefix through the one real ``root_collection_prefix`` derivation - the
+    same normalization registration uses - so a test harness can tear down
+    exactly the namespace it registered without knowing the hash. A vanished
+    namespace reports ``already_absent`` and exits 0 in both modes, making
+    teardown idempotent.
+    """
+    import dataclasses
+
     from ..storage_ops import delete_prefix
 
+    if (prefix is None) == (root is None):
+        _emit_or_echo_error(
+            _DELETE_CMD,
+            "bad_request",
+            "Provide exactly one of the prefix argument or --root.",
+            2,
+            json_mode=json_mode,
+        )
+    queried_root: dict[str, str] | None = None
+    if root is not None:
+        import pathlib
+
+        from ..store import root_collection_prefix
+
+        resolved = str(pathlib.Path(root).resolve())
+        prefix = root_collection_prefix(resolved)
+        queried_root = {"root": resolved, "prefix": prefix}
+    target = cast("str", prefix)
     _require_yes_for_json(_DELETE_CMD, json_mode, yes)
     preview = dry_run or not yes
     result = _run_storage_op(
         _DELETE_CMD,
         json_mode,
         lambda c: delete_prefix(
-            c, prefix, dry_run=preview, allow_unknown=allow_unknown
+            c, target, dry_run=preview, allow_unknown=allow_unknown
         ),
     )
-    _render_delete(result, json_mode)
+    if result.status == "skipped" and result.reason == "no_such_namespace":
+        # Idempotent teardown: the requested end state (namespace gone)
+        # already holds, so this is a success, not a fault a broker or
+        # harness should retry.
+        result = dataclasses.replace(result, status="already_absent", reason=None)
+    _render_delete(result, json_mode, queried_root)
     # A non-dry preview that found a target exits non-zero to signal "not applied".
     if not dry_run and not yes and result.status == "would_remove":
         raise typer.Exit(1)
