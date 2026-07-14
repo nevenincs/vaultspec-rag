@@ -6,6 +6,7 @@ date: '2026-07-14'
 modified: '2026-07-14'
 related:
   - "[[2026-07-13-control-plane-affordances-audit]]"
+  - "[[2026-07-13-storage-autoprune-safety-research]]"
 ---
 
 # `qdrant-long-paths` adr: `verbatim storage paths make Windows path length a non-issue` | (**status:** `accepted`)

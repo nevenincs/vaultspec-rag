@@ -380,6 +380,57 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
     )
 
 
+def _guard_start_preconditions(port: int, json_mode: bool) -> None:
+    """Fail fast on a taken port or an owned machine, one envelope each.
+
+    Port-level guard: prevents concurrent start races. A foreign process
+    holding the port (NOT our service, which the caller's idempotent check
+    already handled) is a genuine failure. Machine-level guard: one resident
+    service per machine - it owns the single GPU and the single managed
+    Qdrant; a live holder on ANY port or status dir refuses a second daemon,
+    while a stale lock from a dead holder is reclaimed by the daemon's own
+    acquire. The machine check catches a second instance that a port-scoped
+    check (different --port / status dir) misses.
+    """
+    if not _port_is_available(port):
+        raise _fail_start(
+            json_mode,
+            error="port_in_use",
+            message="Service start failed",
+            human_lines=(
+                f"Port {port} is already in use.",
+                "Another process is already using this service address.",
+            ),
+            next_actions=(
+                f"vaultspec-rag server status --port {port}",
+                f"vaultspec-rag server jobs --state active --port {port}",
+                "vaultspec-rag server start --port <free-port>",
+            ),
+            port=port,
+        )
+
+    from .._machine_lock import machine_lock_live_holder
+
+    machine_holder = machine_lock_live_holder()
+    if machine_holder:
+        raise _fail_start(
+            json_mode,
+            error="machine_owned",
+            message="Service start failed",
+            human_lines=(
+                f"A vaultspec-rag service already owns this machine "
+                f"(pid {machine_holder}).",
+                "One service owns the machine's GPU and managed Qdrant; a second "
+                "resident service is not supported.",
+            ),
+            next_actions=(
+                "vaultspec-rag server status",
+                "vaultspec-rag server stop",
+            ),
+            holder_pid=machine_holder,
+        )
+
+
 @server_app.command(
     "start",
     help=(
@@ -517,51 +568,7 @@ def service_start(
         )
         return
 
-    # Port-level guard: prevents concurrent start races (ADR D1). A foreign
-    # process holding the port (NOT our service, which the idempotent check above
-    # already handled) is a genuine failure.
-    if not _port_is_available(port):
-        raise _fail_start(
-            json_mode,
-            error="port_in_use",
-            message="Service start failed",
-            human_lines=(
-                f"Port {port} is already in use.",
-                "Another process is already using this service address.",
-            ),
-            next_actions=(
-                f"vaultspec-rag server status --port {port}",
-                f"vaultspec-rag server jobs --state active --port {port}",
-                "vaultspec-rag server start --port <free-port>",
-            ),
-            port=port,
-        )
-
-    # Machine-level guard (ADR D1 / P3): one resident service per machine - it
-    # owns the single GPU and the single managed Qdrant. A live holder on ANY
-    # port or status dir refuses a second daemon; a stale lock from a dead
-    # holder is reclaimed by the daemon's own acquire. This catches a second
-    # instance that a port-scoped check (different --port / status dir) misses.
-    from .._machine_lock import machine_lock_live_holder
-
-    machine_holder = machine_lock_live_holder()
-    if machine_holder:
-        raise _fail_start(
-            json_mode,
-            error="machine_owned",
-            message="Service start failed",
-            human_lines=(
-                f"A vaultspec-rag service already owns this machine "
-                f"(pid {machine_holder}).",
-                "One service owns the machine's GPU and managed Qdrant; a second "
-                "resident service is not supported.",
-            ),
-            next_actions=(
-                "vaultspec-rag server status",
-                "vaultspec-rag server stop",
-            ),
-            holder_pid=machine_holder,
-        )
+    _guard_start_preconditions(port, json_mode)
 
     # Server mode is the default backend, so the qdrant-binary guard runs
     # by default. --local-only (and an explicit --no-qdrant) select the
@@ -611,9 +618,20 @@ def service_start(
             detail=str(exc),
         ) from exc
     _write_service_status(pid, port)
+    _await_service_ready(pid, port, log_path, t0, json_mode)
 
-    # Poll health with exponential backoff. The live spinner writes to the
-    # console, so it is suppressed in --json mode (one clean envelope on stdout).
+
+def _await_service_ready(
+    pid: int, port: int, log_path: Path, t0: float, json_mode: bool
+) -> None:
+    """Poll the spawned daemon to readiness and emit the start outcome.
+
+    Exponential-backoff health polling with a live spinner that is
+    suppressed in ``--json`` mode (one clean envelope on stdout). A daemon
+    death mid-startup fails with the log tail as the cause; readiness
+    persists the health token and metadata into ``service.json`` and emits
+    the ``started`` success; the 300s deadline fails as ``start_timeout``.
+    """
     delay = 0.1
     deadline = 300.0
     elapsed = 0.0
