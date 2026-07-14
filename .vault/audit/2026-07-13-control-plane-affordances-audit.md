@@ -10,6 +10,7 @@ promoted_to:
   - 'rule:broker-facing-cli-outcomes-are-structured-and-idempotent'
 modified: '2026-07-14'
 ---
+
 # `control-plane-affordances` audit: `execution review of the survey root lookup and stop --json`
 
 ## Scope
@@ -89,6 +90,19 @@ supervisor logs a legible warning on Windows when the storage dir exceeds
 opaque 500s on first index. Follow-up candidate: test whether a newer
 qdrant pin fixes the engine-side limit (RocksDB is removed upstream from
 1.17, so gridstore is unavoidable).
+
+### qdrant-pin-followup | resolved | no newer qdrant exists; the pin stays at 1.18.2
+
+Investigated 2026-07-14: 1.18.2 is the latest stable upstream release
+(releases page, the releases API, and the tag list all agree; nothing
+newer including prereleases), so no pin bump is available. Gridstore is
+the 1.18-era storage engine (RocksDB removal completed in that line) and
+its deep on-disk layout is what crosses MAX_PATH; no upstream issue
+matches this exact long-path signature (the nearest Windows
+collection-create issues are unrelated). The >90-character supervisor
+warning remains the durable mitigation. Optional next steps surfaced to
+the operator: file a minimal upstream repro issue, or harden the warning
+into enforcing a short managed storage root on Windows.
 
 ### daemon-reindex-disk-full | resolved | a second cause was stacked under the path cliff: the dev box disk was full
 
