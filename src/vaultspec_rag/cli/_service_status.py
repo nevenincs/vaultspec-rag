@@ -26,6 +26,8 @@ import vaultspec_rag.cli as _cli
 from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
+    SERVICE_PHASE_RUNNING,
+    SERVICE_PHASE_WARMING,
     _default_service_port,
     _discovery_timestamp,
     _read_service_status,
@@ -38,16 +40,27 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "SERVICE_PHASE_RUNNING",
+    "SERVICE_PHASE_WARMING",
     "_append_lifecycle_shutdown_log",
     "_default_service_port",
     "_log_file",
     "_read_service_status",
+    "_service_phase",
     "_status_dir",
     "_status_file",
     "_update_service_metadata",
     "_update_service_token",
     "_write_service_status",
 ]
+
+
+def _service_phase(status: dict[str, Any] | None) -> str | None:
+    """Return the daemon-stamped lifecycle phase from a status dict, if any."""
+    if not isinstance(status, dict):
+        return None
+    phase = status.get("phase")
+    return phase if isinstance(phase, str) and phase else None
 
 
 def _log_file() -> Path:
