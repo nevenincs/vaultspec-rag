@@ -45,7 +45,7 @@ Schedule the hourly maintenance cycle inside the daemon lifespan, report every c
 
 Make every service termination answerable from one log line by carrying initiator identity on the audit event and stop envelopes.
 
-- [ ] `P03.S10` - Carry initiator identity (pid, argv command line, cwd) on the cli_terminate audit event and in the stop and stop-port envelope data; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P03.S10` - Carry initiator identity (pid, argv command line, cwd) on the cli_terminate audit event and in the stop and stop-port envelope data; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [ ] `P03.S11` - Assert the attribution fields appear in the shutdown log line and the stop --json envelopes across the stop exit paths; `src/vaultspec_rag/tests/test_cli_server_stop.py`.
 
 ## Description

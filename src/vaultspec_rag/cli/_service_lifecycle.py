@@ -722,8 +722,26 @@ def _reclaim_machine_singleton() -> int | None:
     return None
 
 
+def _initiator_fields() -> dict[str, str]:
+    """Return the identity of the process performing the stop, for attribution.
+
+    Carries the terminating process' own pid, command line, and cwd so "who
+    stopped the machine service" is answerable from one shutdown record rather
+    than only naming the terminated pid. The command line is bounded so a long
+    argv cannot bloat the audit line or the envelope.
+    """
+    cmd = " ".join(sys.argv)
+    if len(cmd) > 300:
+        cmd = f"{cmd[:297]}..."
+    return {
+        "initiator_pid": str(os.getpid()),
+        "initiator_cmd": cmd,
+        "initiator_cwd": os.getcwd(),
+    }
+
+
 def _terminate_and_confirm(pid: int) -> None:
-    """Terminate *pid*, wait briefly, and emit the platform shutdown trail."""
+    """Terminate *pid*, wait briefly, and emit the shutdown audit trail."""
     _cli._terminate_pid(pid)
 
     # Wait briefly for process to exit
@@ -732,19 +750,18 @@ def _terminate_and_confirm(pid: int) -> None:
             break
         time.sleep(0.1)
 
-    if sys.platform == "win32":
-        # On Windows, os.kill(SIGTERM) is TerminateProcess so the
-        # daemon's atexit handler and lifespan ``finally`` never
-        # fire. POSIX flows through uvicorn's signal handler →
-        # lifespan finally → ``_record_shutdown("clean")`` which
-        # emits ``service.lifecycle event=shutdown reason=clean``.
-        # The CLI parent emits a mirror line here so Windows
-        # operators get the same audit trail.
-        _cli._append_lifecycle_shutdown_log(
-            "cli_terminate",
-            pid=pid,
-            platform="win32",
-        )
+    # On Windows, os.kill(SIGTERM) is TerminateProcess so the daemon's atexit
+    # handler and lifespan ``finally`` never fire; the CLI parent emits this
+    # mirror line so Windows operators get the audit trail. POSIX flows through
+    # uvicorn's signal handler → lifespan finally → ``_record_shutdown("clean")``
+    # and logs its own clean shutdown, but the CLI-side initiator attribution is
+    # valuable on every platform, so the line is emitted unconditionally.
+    _cli._append_lifecycle_shutdown_log(
+        "cli_terminate",
+        pid=pid,
+        platform=sys.platform,
+        **_initiator_fields(),
+    )
 
 
 def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
@@ -872,6 +889,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
         human_lines=(_process_line(pid),),
         pid=pid,
         port=port,
+        **_initiator_fields(),
     )
 
 
@@ -943,6 +961,7 @@ def service_stop(
                     "file.",
                 ),
                 pid=reclaimed,
+                **_initiator_fields(),
             )
             return
         # No reclaimable holder. We do NOT probe the port: on the shared default
@@ -996,6 +1015,7 @@ def service_stop(
         human_lines=(_process_line(pid),),
         pid=pid,
         port=port,
+        **_initiator_fields(),
     )
 
 
