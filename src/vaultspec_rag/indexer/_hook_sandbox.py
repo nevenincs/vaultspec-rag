@@ -77,7 +77,6 @@ def default_popen_handle(
     *,
     cwd: pathlib.Path,
     env: dict[str, str],
-    creationflags: int = 0,
 ) -> subprocess.Popen[bytes]:
     """Launch a hook child with the curated env and scratch cwd.
 
@@ -90,5 +89,4 @@ def default_popen_handle(
         stderr=subprocess.PIPE,
         cwd=str(cwd),
         env=env,
-        creationflags=creationflags,
     )

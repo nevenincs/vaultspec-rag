@@ -10,16 +10,6 @@ related:
   - '[[2026-07-13-preprocess-sandbox-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `preprocess-sandbox-removal` plan
 
 ### Phase `P01` - Core sandbox removal
@@ -50,12 +40,12 @@ Collapse the preprocess tri-state to on/off, remove the UNSANDBOXED env knob and
 
 Rewrite the test surface for direct execution semantics, update operator docs to the trust-based framing, and verify the full suite plus an end-to-end preprocess index run, per ADR D6 and D9.
 
-- [ ] `P03.S15` - Replace the OS-containment test suite with direct-launch tests covering curated env, scratch cwd, timeout kill, and cap enforcement; `src/vaultspec_rag/tests/test_hook_sandbox.py`.
-- [ ] `P03.S16` - Update runner tests: drop backend/staging/refusal cases, assert original-path invocation and preserved bounds/dispositions; `src/vaultspec_rag/tests/test_preprocess_runner.py`.
-- [ ] `P03.S17` - Update worker, config, entry, CLI, server, watcher, and integration tests for the two-state mode and removed flags; `src/vaultspec_rag/tests/`.
+- [x] `P03.S15` - Replace the OS-containment test suite with direct-launch tests covering curated env, scratch cwd, timeout kill, and cap enforcement; `src/vaultspec_rag/tests/test_hook_sandbox.py`.
+- [x] `P03.S16` - Update runner tests: drop backend/staging/refusal cases, assert original-path invocation and preserved bounds/dispositions; `src/vaultspec_rag/tests/test_preprocess_runner.py`.
+- [x] `P03.S17` - Update worker, config, entry, CLI, server, watcher, and integration tests for the two-state mode and removed flags; `src/vaultspec_rag/tests/`.
 - [x] `P03.S18` - Update operator docs to the trust-based framing that preprocess config is code execution with operator privileges, removing sandbox/unsandboxed knob references; `docs/preprocessing-hooks.md`.
 - [x] `P03.S19` - Sweep remaining sandbox mentions from README, cli, and configuration docs; `docs/`.
-- [ ] `P03.S20` - Run the full unit suite, lints (ruff, ty, basedpyright), and an end-to-end preprocess index benchmark on a rule-matched corpus to confirm the per-file cost returns to the process-spawn baseline; `src/vaultspec_rag/`.
+- [x] `P03.S20` - Run the full unit suite, lints (ruff, ty, basedpyright), and an end-to-end preprocess index benchmark on a rule-matched corpus to confirm the per-file cost returns to the process-spawn baseline; `src/vaultspec_rag/`.
 
 ## Description
 
