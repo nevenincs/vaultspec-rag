@@ -618,19 +618,33 @@ def service_start(
             detail=str(exc),
         ) from exc
     _write_service_status(pid, port)
-    _await_service_ready(pid, port, log_path, t0, json_mode)
+    _await_service_ready(pid, port, log_path, json_mode=json_mode, t0=t0)
 
 
 def _await_service_ready(
-    pid: int, port: int, log_path: Path, t0: float, json_mode: bool
+    pid: int,
+    port: int,
+    log_path: Path,
+    *,
+    json_mode: bool,
+    t0: float,
 ) -> None:
-    """Poll the spawned daemon to readiness and emit the start outcome.
+    """Poll the spawned daemon's health until it is ready, or fail/time out.
 
-    Exponential-backoff health polling with a live spinner that is
-    suppressed in ``--json`` mode (one clean envelope on stdout). A daemon
-    death mid-startup fails with the log tail as the cause; readiness
-    persists the health token and metadata into ``service.json`` and emits
-    the ``started`` success; the 300s deadline fails as ``start_timeout``.
+    Extracted from :func:`service_start` so the guard sequence and the health
+    wait each read as one unit. Emits the terminal outcome itself: the success
+    envelope on readiness, a typed failure if the process dies, and a timeout
+    failure if it never reports ready within the deadline. Health is polled with
+    exponential backoff; the live spinner is suppressed in ``--json`` mode so a
+    single clean envelope reaches stdout.
+
+    Args:
+        pid: The spawned daemon process id.
+        port: The port the daemon was started on.
+        log_path: The daemon log file, surfaced in failure output.
+        json_mode: Whether to emit a machine-readable outcome envelope.
+        t0: The ``time.perf_counter`` reading taken just before the spawn, for
+            the reported startup duration.
     """
     delay = 0.1
     deadline = 300.0
