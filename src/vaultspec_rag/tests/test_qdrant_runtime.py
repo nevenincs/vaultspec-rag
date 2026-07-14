@@ -447,3 +447,48 @@ class TestConfigKnobs:
                 else:
                     os.environ[var.value] = prev
             reset_config()
+
+
+class TestQdrantChildPath:
+    """Extended-length path rendering for the qdrant child's environment."""
+
+    def test_drive_path_gets_the_verbatim_prefix_on_windows(
+        self, tmp_path: Path
+    ) -> None:
+        import sys
+
+        from ..qdrant_runtime._supervise import _qdrant_child_path
+
+        rendered = _qdrant_child_path(tmp_path / "storage")
+        if sys.platform == "win32":
+            assert rendered.startswith("\\\\?\\")
+            assert rendered.endswith("storage")
+            # Verbatim form must carry an absolute, resolved path.
+            assert ":" in rendered
+        else:
+            assert rendered == str(tmp_path / "storage")
+
+    def test_already_prefixed_path_is_unchanged(self) -> None:
+        import sys
+
+        from ..qdrant_runtime._supervise import _qdrant_child_path
+
+        already = Path(r"\\?\C:\short\storage")
+        rendered = _qdrant_child_path(already)
+        if sys.platform == "win32":
+            assert rendered == r"\\?\C:\short\storage"
+        else:
+            # Non-Windows platforms pass every path through untouched.
+            assert rendered == str(already)
+
+    def test_unc_path_gets_the_unc_verbatim_form(self) -> None:
+        import sys
+
+        from ..qdrant_runtime._supervise import _qdrant_child_path
+
+        unc = Path(r"\\server\share\qdrant\storage")
+        rendered = _qdrant_child_path(unc)
+        if sys.platform == "win32":
+            assert rendered.startswith(r"\\?\UNC\server\share")
+        else:
+            assert rendered == str(unc)
