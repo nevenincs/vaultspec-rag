@@ -29,7 +29,7 @@ Give the storage domain the time-confirmed danglingness contract: manifest first
 - [x] `P01.S01` - Add the first_seen_orphaned field to ManifestEntry with lenient load of pre-upgrade manifests, plus stamp/clear helpers that persist the grace clock across daemon restarts and reset it when a root reappears; `src/vaultspec_rag/storage_manifest.py`.
 - [x] `P01.S02` - Add grace-window evaluation and two-tier reclamation eligibility (empty orphans past grace_hours and point-bearing orphans past grace_hours_data) plus the per-collection snapshot-archive helper and the byte-capped, age-capped archive retention sweep; `src/vaultspec_rag/storage_ops.py`.
 - [x] `P01.S03` - Add the storage_autoprune knobs (enabled, interval_minutes, grace_hours, grace_hours_data, archive_retention_days, max_per_cycle) following the existing env and config-file naming; `src/vaultspec_rag/config.py`.
-- [ ] `P01.S04` - Cover the grace bookkeeping and eligibility gates with unit tests: stamping, restart persistence, reappearance reset, empty-vs-data tiering, cap enforcement, and archive retention; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P01.S04` - Cover the grace bookkeeping and eligibility gates with unit tests: stamping, restart persistence, reappearance reset, empty-vs-data tiering, cap enforcement, and archive retention; `src/vaultspec_rag/tests/test_storage_ops.py`.
 
 ### Phase `P02` - In-daemon maintenance loop
 
