@@ -6005,3 +6005,100 @@ class TestAutoDelegation:
         )
         assert len(called) == 1
         assert called[0] == ("reindex_vault", 8766)
+
+
+class TestWarmingStatusState:
+    """The daemon-stamped ``phase`` field turns the warmup window into a
+    distinct ``warming`` state (exit 5) instead of "stopped"/"crashed".
+
+    Pure-function coverage: the state computers and the phase reader are
+    exercised directly (a live-and-ours pid cannot be faked without mocks).
+    """
+
+    def test_service_phase_reads_the_field(self):
+        from vaultspec_rag.cli._service_status import _service_phase
+
+        assert _service_phase({"phase": "warming"}) == "warming"
+        assert _service_phase({"phase": "running"}) == "running"
+
+    def test_service_phase_absent_or_invalid_is_none(self):
+        from vaultspec_rag.cli._service_status import _service_phase
+
+        assert _service_phase(None) is None
+        assert _service_phase({}) is None
+        assert _service_phase({"phase": ""}) is None
+        assert _service_phase({"phase": 7}) is None
+
+    def test_compute_state_warming_beats_port_and_heartbeat_signals(self):
+        from vaultspec_rag.cli._service_lifecycle import _compute_state
+
+        state, label, exit_code = _compute_state(
+            True, True, False, True, phase="warming"
+        )
+        assert state == "warming"
+        assert "warming" in label
+        assert exit_code == 5
+
+    def test_compute_state_absent_phase_keeps_crashed_semantics(self):
+        from vaultspec_rag.cli._service_lifecycle import _compute_state
+
+        state, _label, exit_code = _compute_state(True, True, False, True)
+        assert state == "crashed_port_silent"
+        assert exit_code == 4
+
+    def test_compute_state_dead_pid_wins_over_warming(self):
+        from vaultspec_rag.cli._service_lifecycle import _compute_state
+
+        state, _label, exit_code = _compute_state(
+            False, False, False, True, phase="warming"
+        )
+        assert state == "crashed_pid_dead"
+        assert exit_code == 4
+
+    def test_explicit_port_state_warming_needs_a_live_pid(self):
+        from vaultspec_rag.cli._service_lifecycle import _explicit_port_state
+
+        warming = _explicit_port_state(False, None, phase="warming", pid_alive=True)
+        assert warming[0] == "warming"
+        assert warming[2] == 5
+        dead = _explicit_port_state(False, None, phase="warming", pid_alive=False)
+        assert dead[0] == "stopped"
+        assert dead[2] == 3
+
+    def test_explicit_port_state_absent_phase_is_unchanged(self):
+        from vaultspec_rag.cli._service_lifecycle import _explicit_port_state
+
+        assert _explicit_port_state(False, None)[0] == "stopped"
+        assert _explicit_port_state(True, None)[0] == "unreachable"
+        assert _explicit_port_state(True, {"status": "ready"})[0] == "running"
+
+    def test_next_action_for_warming_says_retry(self):
+        from vaultspec_rag.cli._service_lifecycle import _status_next_action
+
+        action = _status_next_action("warming", None, {})
+        assert "server status" in action
+        assert "retry" in action
+
+    def test_daemon_phase_stamp_merges_and_skips_absent(self, tmp_path: Path):
+        import json
+
+        from vaultspec_rag.server._lifespan import _stamp_service_phase
+
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            # Absent file: the stamp is skipped, nothing is created.
+            _stamp_service_phase("warming")
+            sf = tmp_path / "service.json"
+            assert not sf.exists()
+
+            _write_service_status(pid=4242, port=8766)
+            _stamp_service_phase("warming")
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            assert data["phase"] == "warming"
+            assert data["pid"] == 4242
+
+            _stamp_service_phase("running")
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            assert data["phase"] == "running"
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
