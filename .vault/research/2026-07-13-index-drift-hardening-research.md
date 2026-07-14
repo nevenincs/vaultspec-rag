@@ -93,15 +93,15 @@ Verified set arithmetic in the unscoped incremental (`_codebase_indexer.py:1298-
 newly-ignored ones. So unscoped incremental reconciles *membership* drift fully, but is
 blind to *content-output* drift on unchanged bytes (it keys off byte hashes).
 
-| Drift class | Bytes change? | Unscoped fixes? | Required escalation |
-| --- | --- | --- | --- |
-| Newly-ignored file | no | yes | unscoped incremental |
-| Newly-admitted file (pattern removed) | no | yes | unscoped incremental |
-| Preprocess membership (pattern add/remove) | no | yes | unscoped incremental |
-| Preprocess output (command/options change) | no | no | clean rebuild |
-| `html_strip` flip over indexed `.html` | no | no | clean rebuild |
-| `vault_chunk_chars` change | no | no | clean rebuild (vault) |
-| Embed input format | n/a | n/a | clean rebuild (existing) |
+| Drift class                                | Bytes change? | Unscoped fixes? | Required escalation      |
+| ------------------------------------------ | ------------- | --------------- | ------------------------ |
+| Newly-ignored file                         | no            | yes             | unscoped incremental     |
+| Newly-admitted file (pattern removed)      | no            | yes             | unscoped incremental     |
+| Preprocess membership (pattern add/remove) | no            | yes             | unscoped incremental     |
+| Preprocess output (command/options change) | no            | no              | clean rebuild            |
+| `html_strip` flip over indexed `.html`     | no            | no              | clean rebuild            |
+| `vault_chunk_chars` change                 | no            | no              | clean rebuild (vault)    |
+| Embed input format                         | n/a           | n/a             | clean rebuild (existing) |
 
 #### A4. Where the check must live
 
@@ -191,11 +191,11 @@ Parity precedent is `local_only`: `EnvVar.LOCAL_ONLY` (`config.py:97`) +
 (`_service_lifecycle.py:355-365`) forwarded into the daemon env
 (`_process.py:378-379`).
 
-| State | Env | CLI flag | Behavior |
-| --- | --- | --- | --- |
-| Default: on with TOFU | unset | none | Rules load only when the resolved-set hash matches a trust record; untrusted skips with loud warning (daemon) or one-time confirm (CLI) |
-| Force-on: trust-all | `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1` | `--preprocess-trust-all` | Every root's rules run, no trust check, loudly logged |
-| Force-off: kill switch | `VAULTSPEC_RAG_PREPROCESS=off` | `--no-preprocess` | No rules ever load |
+| State                  | Env                                    | CLI flag                 | Behavior                                                                                                                                |
+| ---------------------- | -------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Default: on with TOFU  | unset                                  | none                     | Rules load only when the resolved-set hash matches a trust record; untrusted skips with loud warning (daemon) or one-time confirm (CLI) |
+| Force-on: trust-all    | `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL=1` | `--preprocess-trust-all` | Every root's rules run, no trust check, loudly logged                                                                                   |
+| Force-off: kill switch | `VAULTSPEC_RAG_PREPROCESS=off`         | `--no-preprocess`        | No rules ever load                                                                                                                      |
 
 Trust records are per-root state and stay out of `config.py` (scalar knobs only);
 only the mode scalar is config. New CLI verbs extend the existing `preprocess` group
@@ -253,8 +253,8 @@ Adopt both halves as one feature:
    the unscoped incremental; content-epoch mismatch (preprocess invocation fields,
    `html_strip`; `vault_chunk_chars` on the vault side) forces a clean rebuild. Epoch
    computation must stay cheap to preserve the scoped-reindex O(change) win.
-2. **Preprocess on by default under TOFU** with the tri-state control surface, status-
+1. **Preprocess on by default under TOFU** with the tri-state control surface, status-
    dir trust store, CLI trust verbs, loud skip warnings on daemon paths, and the
    back-compat aliases above.
-3. Targeted watcher fixes the epoch cannot provide: re-resolve `preprocess_config` on
+1. Targeted watcher fixes the epoch cannot provide: re-resolve `preprocess_config` on
    a `.vaultragpreprocess.toml` change; add `.md` to the watcher code-extension set.

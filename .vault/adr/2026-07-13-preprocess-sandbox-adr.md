@@ -42,7 +42,7 @@ load-bearing choices (full OS containment; delete the trust store).
   that must reject it).
 - The trust store lives in the status dir, which an unsandboxed hook can currently write
   - it can forge its own trust record. Deleting the store removes that target and the
-  now-purposeless consent surface.
+    now-purposeless consent surface.
 - Process isolation (preprocess-hooks ADR D6/D9) was chosen for CPU/CUDA safety, never
   as a security boundary; the sandbox layers on top of it, it does not replace it.
 

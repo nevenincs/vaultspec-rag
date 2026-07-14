@@ -9,7 +9,7 @@ related:
   - "[[2026-07-13-index-drift-hardening-plan]]"
 ---
 
-# Cover the new verbs and flags: trust confirm and --yes flows, untrust, status JSON envelope, flag-to-env forwarding, and the reworked _enable_preprocess fixtures across the CLI test modules
+# Cover the new verbs and flags: trust confirm and --yes flows, untrust, status JSON envelope, flag-to-env forwarding, and the reworked \_enable_preprocess fixtures across the CLI test modules
 
 ## Scope
 
