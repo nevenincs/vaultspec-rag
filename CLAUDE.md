@@ -3,6 +3,8 @@
 
 You MUST respect these rules at all times:
 
+@.claude/rules/automated-destruction-requires-time-confirmed-danglingness.md
+@.claude/rules/broker-facing-cli-outcomes-are-structured-and-idempotent.md
 @.claude/rules/gpu-consumer-single-thread.md
 @.claude/rules/gpu-lock-wraps-forward-passes-only.md
 @.claude/rules/index-workers-stay-cpu-only.md
@@ -12,6 +14,8 @@ You MUST respect these rules at all times:
 @.claude/rules/rerankers-score-real-content.md
 @.claude/rules/service-domain-owns-operability.md
 @.claude/rules/storage-locks-are-backend-aware.md
+@.claude/rules/storage-maintenance-is-lifecycle-inert.md
+@.claude/rules/torch-loads-through-centralized-gpu-gate.md
 @.claude/rules/vaultspec-cli.builtin.md
 @.claude/rules/vaultspec-discovery.builtin.md
 @.claude/rules/vaultspec-rag.builtin.md
