@@ -215,11 +215,13 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
         ``version_floor_minimum``, or ``None`` when no rag entry is declared.
     """
     try:
-        from vaultspec_core.core.diagnosis.collectors import (
+        from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
             collect_mode_mismatch_state,
             collect_version_floor_state,
         )
-        from vaultspec_core.core.workspace_mode import read_package_declaration
+        from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+            read_package_declaration,
+        )
 
         declaration = read_package_declaration(target, _RAG_PACKAGE)
         if declaration is None:

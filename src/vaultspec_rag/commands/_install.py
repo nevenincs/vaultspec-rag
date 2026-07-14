@@ -140,10 +140,10 @@ def _persist_mode_and_detect_flip(
     if dry_run or "core" in skip:
         return False
     from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
-        _observed_mcp_mode,
+        observed_mcp_mode,
     )
 
-    observed = _observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
+    observed = observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
     mcp_mode_flipped = observed is not None and observed != mode
     persist_rag_mode(target, mode)
     return mcp_mode_flipped

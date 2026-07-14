@@ -89,7 +89,7 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     workspace with neither has its mode inferred from its own deployed state.
     Rag has no pre-commit hook to read, so its deployed-state signal is the
     observed shape of its own ``.mcp.json`` server entry
-    (:func:`~vaultspec_core.core.diagnosis.collectors._observed_mcp_mode` for
+    (:func:`~vaultspec_core.core.diagnosis.collectors.observed_mcp_mode` for
     ``vaultspec-rag``): dependency mode only when that launch is
     ``uv run``-shaped *and* the target's ``pyproject.toml`` lists
     ``vaultspec-rag``; tool mode in every other case.
@@ -110,7 +110,7 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
             impossible combination or a persisted declaration is malformed.
     """
     from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
-        _observed_mcp_mode,
+        observed_mcp_mode,
     )
 
     if explicit is not None:
@@ -125,7 +125,7 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     detected = resolve_install_mode(
         target, explicit=None, package=RAG_DISTRIBUTION_NAME
     )
-    observed = _observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
+    observed = observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
     if detected is InstallMode.DEPENDENCY and observed is InstallMode.DEPENDENCY:
         return ResolvedMode(InstallMode.DEPENDENCY, ModeProvenance.INFERRED)
     return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)

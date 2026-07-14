@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 from importlib.resources import files
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
@@ -123,7 +123,7 @@ def _rag_mcp_entry(ws: Path) -> dict[str, object]:
     raw = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
     entry = raw["mcpServers"][RAG_DISTRIBUTION_NAME]
     assert isinstance(entry, dict)
-    return entry
+    return cast("dict[str, object]", entry)
 
 
 @pytest.mark.parametrize(
