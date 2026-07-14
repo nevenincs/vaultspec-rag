@@ -26,7 +26,7 @@ One caveat on scope: this all applies to the shared server-mode store. A `--loca
 
 Creating a namespace preallocates roughly 2 GB of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GB, all holding zero documents.
 
-The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it.
+The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it. Any location works, including deeply nested ones - on Windows the service hands the storage engine extended-length paths, so the classic 260-character path limit does not constrain where the store lives.
 
 ## Inspect what is stored
 
