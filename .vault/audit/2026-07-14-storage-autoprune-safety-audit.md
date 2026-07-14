@@ -11,6 +11,7 @@ promoted_to:
   - 'rule:automated-destruction-requires-time-confirmed-danglingness'
 modified: '2026-07-14'
 ---
+
 # `storage-autoprune-safety` audit: `execution review of the scheduled auto-prune and attribution`
 
 ## Scope
