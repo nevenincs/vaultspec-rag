@@ -133,7 +133,8 @@ Error:
 
 Scripts gate on two signals: the process exit code and the `error` string. The
 exit codes are `0` success, `1` generic failure, `2` usage error, `3` service
-stopped, and `4` service crashed or divergent. The `error` field carries a stable
+stopped, `4` service crashed or divergent, and `5` service warming (models
+loading, not yet serving - retry shortly). The `error` field carries a stable
 string code such as `port_unreachable`, `local_store_locked`, or `stopped`, which
 is what the `case` branch above keys on. The [CLI reference](cli.md) is the
 authoritative per-command list of exit codes and error strings.

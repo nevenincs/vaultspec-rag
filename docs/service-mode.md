@@ -88,7 +88,7 @@ To check the running service, run:
 uv run vaultspec-rag server status
 ```
 
-`status` shows whether the server is up, its address, the Python environment running the service (its `Service env:` line - see [The service runs in your Python environment](#the-service-runs-in-your-python-environment)), uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, and `4` crashed or divergent. "Divergent" means the status file disagrees with the live process. For example, the file names a process ID that is no longer alive. If `status` reports crashed or divergent, see the [troubleshooting](#troubleshooting) section.
+`status` shows whether the server is up, its address, the Python environment running the service (its `Service env:` line - see [The service runs in your Python environment](#the-service-runs-in-your-python-environment)), uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, `4` crashed or divergent, and `5` warming (the daemon holds the machine lock and is loading models; retry shortly). "Divergent" means the status file disagrees with the live process. For example, the file names a process ID that is no longer alive. If `status` reports crashed or divergent, see the [troubleshooting](#troubleshooting) section.
 
 Both commands accept `--json`, and `status` accepts `--verbose` for extra detail. For the full meaning of every field and exit code, see the [CLI reference](cli.md).
 

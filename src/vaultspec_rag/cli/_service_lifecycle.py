@@ -1924,14 +1924,16 @@ def _explicit_port_state(
     *,
     phase: str | None = None,
     pid_alive: bool = False,
+    pid_is_ours: bool = False,
 ) -> tuple[str, str, int, bool]:
     if isinstance(health, dict) and health.get("status") == "ready":
         return "running", "running", 0, False
     if port_listening:
         return "unreachable", "unreachable", 4, False
-    # Silent port + a live daemon that stamped ``warming``: report the warmup
-    # window instead of a contradictory "stopped" (the machine lock is held).
-    if phase == SERVICE_PHASE_WARMING and pid_alive:
+    # Silent port + a live, identity-confirmed daemon that stamped ``warming``:
+    # report the warmup window instead of a contradictory "stopped" (the
+    # machine lock is held). A reused pid must not resurrect a stale stamp.
+    if phase == SERVICE_PHASE_WARMING and pid_alive and pid_is_ours:
         return "warming", "warming (loading models, not yet serving)", 5, False
     return "stopped", "stopped", 3, False
 
@@ -1972,6 +1974,7 @@ def _render_explicit_port_status(
         health,
         phase=_service_phase(status),
         pid_alive=pid_alive,
+        pid_is_ours=pid_is_ours,
     )
     token_match = _status_response_token_match(expected_token, health)
     operational = _status_operational_summary(
@@ -2054,7 +2057,8 @@ def service_status(
             "--json",
             help=(
                 "Emit JSON for scripts instead of human text. Preserves exit "
-                "codes 0 (running), 3 (stopped), and 4 (crashed or divergent)."
+                "codes 0 (running), 3 (stopped), 4 (crashed or divergent), "
+                "and 5 (warming: models loading, not yet serving)."
             ),
         ),
     ] = False,
@@ -2083,6 +2087,9 @@ def service_status(
       - 4: ``divergent`` or ``crashed-*`` (file present but at least
         one signal contradicts the others). Lets scripts branch on
         "known-bad state" without parsing the prose.
+      - 5: ``warming`` (a live daemon holds the machine lock and is
+        loading models; it is not yet accepting connections). Retry
+        shortly rather than treating it as crashed.
     """
     status = _read_service_status()
 
