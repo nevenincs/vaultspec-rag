@@ -119,15 +119,21 @@ class _SecurityAttributes(ctypes.Structure):
     ]
 
 
-def _kernel32() -> ctypes.WinDLL:
+def _kernel32() -> ctypes.CDLL:
+    if sys.platform != "win32":
+        raise RuntimeError("the AppContainer hook sandbox is win32-only")
     return ctypes.WinDLL("kernel32", use_last_error=True)
 
 
-def _userenv() -> ctypes.WinDLL:
+def _userenv() -> ctypes.CDLL:
+    if sys.platform != "win32":
+        raise RuntimeError("the AppContainer hook sandbox is win32-only")
     return ctypes.WinDLL("userenv", use_last_error=True)
 
 
-def _advapi32() -> ctypes.WinDLL:
+def _advapi32() -> ctypes.CDLL:
+    if sys.platform != "win32":
+        raise RuntimeError("the AppContainer hook sandbox is win32-only")
     return ctypes.WinDLL("advapi32", use_last_error=True)
 
 
@@ -181,9 +187,7 @@ def _derive_appcontainer_sid() -> tuple[ctypes.c_void_p, str]:
 _GRANTED: set[tuple[str, str]] = set()
 
 
-def _grant_appcontainer_read(
-    path: pathlib.Path, sid_str: str, *, cache: bool
-) -> None:
+def _grant_appcontainer_read(path: pathlib.Path, sid_str: str, *, cache: bool) -> None:
     """Grant the AppContainer SID read+execute on ``path`` via icacls.
 
     Uses the ``*<SID>`` form so no name resolution is needed; object- and
@@ -367,6 +371,8 @@ class AppContainerSandbox:
         env: dict[str, str],
         read_paths: Sequence[pathlib.Path],
     ) -> SandboxHandle:
+        if sys.platform != "win32":
+            raise RuntimeError("the AppContainer hook sandbox is win32-only")
         kernel32 = _kernel32()
 
         # The scratch dir is fresh per launch, so grant it every time; the
@@ -488,10 +494,17 @@ class AppContainerSandbox:
             ]
 
         class _Io(ctypes.Structure):
-            _fields_ = [(n, ctypes.c_uint64) for n in (
-                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
-            )]
+            _fields_ = [
+                (n, ctypes.c_uint64)
+                for n in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
 
         class _Ext(ctypes.Structure):
             _fields_ = [
@@ -506,8 +519,10 @@ class AppContainerSandbox:
         info = _Ext()
         info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         kernel32.SetInformationJobObject(
-            job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-            ctypes.byref(info), ctypes.sizeof(info),
+            job,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
         )
         if not kernel32.AssignProcessToJobObject(job, h_process):
             logger.warning("AssignProcessToJobObject failed; hook tree guard disabled")
@@ -544,6 +559,8 @@ def _fdopen_read(handle: wintypes.HANDLE) -> IO[bytes]:
     transfers ownership of the OS handle to the returned fd, so the file object's
     ``close`` releases it - the caller must not also ``CloseHandle`` it.
     """
+    if sys.platform != "win32":
+        raise RuntimeError("the AppContainer hook sandbox is win32-only")
     import msvcrt
 
     raw = cast("int", handle.value)
