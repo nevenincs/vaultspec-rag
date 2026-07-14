@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 SERVICE_DISCOVERY_SCHEMA = "vaultspec.rag.service"
 SERVICE_DISCOVERY_VERSION = 1
 
+#: Daemon-stamped lifecycle phase vocabulary for the optional ``phase`` field
+#: of ``service.json``. The daemon (and only the daemon) stamps ``warming``
+#: after it acquires the machine lock and ``running`` when it starts serving;
+#: the CLI parent's spawn-time write carries no phase. An absent field keeps
+#: pre-phase semantics (older daemons, or the stamp racing ahead of the
+#: parent's write), so readers treat ``None`` as "unknown", never as warming.
+#: Lives here (not in ``cli._service_status``) because the writing daemon must
+#: stay free of ``vaultspec_rag.cli`` imports.
+SERVICE_PHASE_WARMING = "warming"
+SERVICE_PHASE_RUNNING = "running"
+
 #: Fallback staleness window when a discovery payload omits ``stale_after_s``
 #: (a pre-upgrade pointer). Mirrors ``server._HEARTBEAT_STALENESS_SECONDS``; the
 #: payload's own ``stale_after_s`` is preferred when present so the threshold
@@ -33,6 +44,8 @@ _HEARTBEAT_STALENESS_FALLBACK_SECONDS = 60
 __all__ = [
     "SERVICE_DISCOVERY_SCHEMA",
     "SERVICE_DISCOVERY_VERSION",
+    "SERVICE_PHASE_RUNNING",
+    "SERVICE_PHASE_WARMING",
     "_default_service_port",
     "_discovery_timestamp",
     "_machine_service_resolution",
