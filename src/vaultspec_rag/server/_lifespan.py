@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -50,6 +50,43 @@ def _claim_machine_singleton() -> None:
             "machine; one resident service owns the GPU and the managed Qdrant. "
             "Stop it first, or run on a dedicated machine."
         )
+
+
+def _stamp_service_phase(phase: str) -> None:
+    """Merge the daemon's lifecycle phase into ``service.json`` (best-effort).
+
+    Only the daemon stamps phases: ``warming`` once the machine lock is held
+    (models not yet loaded, port not yet serving) and ``running`` when uvicorn
+    is about to accept connections. Closes the status gap where a warming
+    daemon holds the machine lock but ``server status`` reads "stopped"/
+    "crashed (port silent)". The CLI parent writes ``service.json`` right
+    after spawn; if this stamp races ahead of that write the merge is skipped
+    and status falls back to the phase-less rendering. Never raises. Reads the
+    path via ``serviceclient`` (the daemon stays free of ``vaultspec_rag.cli``
+    imports).
+    """
+    import json
+
+    from ..serviceclient._discovery import _status_file
+
+    path = _status_file()
+    if not path.exists():
+        logger.debug("phase stamp %r skipped: service.json absent", phase)
+        return
+    try:
+        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("phase stamp %r read failed: %s", phase, exc, exc_info=True)
+        return
+    if data.get("phase") == phase:
+        return
+    data["phase"] = phase
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    except OSError as exc:
+        logger.debug("phase stamp %r write failed: %s", phase, exc, exc_info=True)
 
 
 def _reconcile_storage_manifest() -> None:
@@ -123,6 +160,12 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # CLI pre-check is advisory; this acquire wins or loses atomically).
     _claim_machine_singleton()
 
+    # Lock held but not yet serving: stamp the sidecar so ``server status``
+    # reports "warming" instead of a contradictory "stopped" while models load.
+    from ..serviceclient._discovery import SERVICE_PHASE_RUNNING, SERVICE_PHASE_WARMING
+
+    _stamp_service_phase(SERVICE_PHASE_WARMING)
+
     # Once the lock is held, every startup step up to ``yield`` runs under a
     # release-on-failure guard. The shipping daemon's crash-safe lock self-heals
     # via OS release on process exit, but a pre-yield startup failure (qdrant
@@ -132,6 +175,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # startup fails, so a subsequent in-process acquire succeeds.
     try:
         periodic_tasks = await _start_components()
+        _stamp_service_phase(SERVICE_PHASE_RUNNING)
         try:
             yield
         finally:
