@@ -42,7 +42,7 @@ uv run vaultspec-rag server storage survey
   live     r45b56789f389_     12408 pts      3.4GB  Y:\code\my-project
 ```
 
-`--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
+Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
 
 To look up a single root - which namespace and collection prefix belong to it - pass `--root`:
 
@@ -113,7 +113,7 @@ Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
 
 ## Observe maintenance
 
-Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage maintenance cycle` with a result summary like `removed=2 failed=0 pending=5 reclaimed_bytes=4508876800`. Every cycle also writes one structured `service.maintenance` log line with the same counts plus archive activity and free disk, and logs an explicit `disk_low` warning when the store's volume drops under 10 GB free - only a few namespaces of headroom.
+Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage maintenance cycle` with a result summary like `removed=2 failed=0 pending=5 reclaimed_bytes=4508876800`. Every cycle also writes one structured `service.maintenance` log line with the same counts plus archive activity and free disk, and logs an explicit `disk_low` warning when the store's volume drops under 10 GB free - only a few namespaces of headroom, so treat the warning as a prompt to prune or add capacity.
 
 The token-gated `/metrics` route exports the rollup in Prometheus text format. All names carry the `vaultspec_rag_` prefix:
 
