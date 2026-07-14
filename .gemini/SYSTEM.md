@@ -9,6 +9,7 @@
 - **vaultspec-documentation**: Write one polished user-facing document through a structured pipeline. Use to create or rewrite a README, guide, or feature doc.
 - **vaultspec-execute**: Execute an approved implementation plan, dispatching agent personas per step. Use when a plan document is ready to build.
 - **vaultspec-projectmanager**: Coordinate GitHub Projects: triage issues, track milestones, provision worktrees, manage releases. Use for project management outside the pipeline.
+- **vaultspec-rag-discovery**: Semantic codebase and architecture-decision discovery with vaultspec-rag - find code and the ADRs that govern it by meaning, then narrow with advanced filters and noise controls. Use to locate where or how something is done, or the decision behind it, instead of guessing identifiers or sweeping with keyword/grep search.
 - **vaultspec-research**: Explore an unfamiliar problem and weigh options before committing. Use when unsure how to approach a complex feature, refactor, or bug.
 - **vaultspec-team**: Start a multi-agent coding team for a hard challenge. Use when a problem is too large for a single agent.
 - **vaultspec-write**: Write an implementation plan of waves, phases, and steps. Use only after an ADR is approved.
