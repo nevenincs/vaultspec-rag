@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-07-13'
+modified: '2026-07-14'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'

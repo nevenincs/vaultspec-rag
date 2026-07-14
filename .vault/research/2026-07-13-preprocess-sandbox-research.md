@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#preprocess-sandbox'
 date: '2026-07-13'
-modified: '2026-07-13'
+modified: '2026-07-14'
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-06-10-preprocess-hooks-adr]]'
