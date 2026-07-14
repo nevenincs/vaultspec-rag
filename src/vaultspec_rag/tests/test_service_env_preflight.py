@@ -17,8 +17,20 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from ..cli._gpu_errors import (
+    RuntimeEnvKind,
+    classify_interpreter_env,
+    classify_runtime_env,
+    durable_tool_install_command,
+    gpu_escape_hatch_command,
+)
 from ..cli._process import _probe_daemon_cuda
-from ..cli._service_lifecycle import _status_env_label, _tail_daemon_log
+from ..cli._service_lifecycle import (
+    _ephemeral_env_warning,
+    _status_env_label,
+    _tail_daemon_log,
+)
+from ..torch_config import CU130_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
 
@@ -87,3 +99,104 @@ def test_status_env_label_reads_the_executable() -> None:
 def test_status_env_label_missing_is_explicit() -> None:
     assert _status_env_label(None) == "not reported by service"
     assert _status_env_label({}) == "not reported by service"
+
+
+class TestRuntimeEnvClassifier:
+    """Pure-path env classification: tool env, uvx ephemeral, project venv."""
+
+    def test_uv_tool_env_windows_shape(self, tmp_path: Path) -> None:
+        prefix = tmp_path / "AppData" / "Roaming" / "uv" / "tools" / "vaultspec-rag"
+        prefix.mkdir(parents=True)
+        assert classify_runtime_env(prefix) is RuntimeEnvKind.UV_TOOL
+
+    def test_uvx_ephemeral_archive_v0_shape(self, tmp_path: Path) -> None:
+        prefix = tmp_path / "uv" / "cache" / "archive-v0" / "AbC123xyz"
+        prefix.mkdir(parents=True)
+        assert classify_runtime_env(prefix) is RuntimeEnvKind.UVX_EPHEMERAL
+
+    def test_uv_tool_dir_override_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tool_root = tmp_path / "custom-tool-root"
+        prefix = tool_root / "vaultspec-rag"
+        prefix.mkdir(parents=True)
+        monkeypatch.setenv("UV_TOOL_DIR", str(tool_root))
+        assert classify_runtime_env(prefix) is RuntimeEnvKind.UV_TOOL
+
+    def test_uv_cache_dir_override_marks_ephemeral(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache_root = tmp_path / "custom-cache"
+        prefix = cache_root / "someenv"
+        prefix.mkdir(parents=True)
+        monkeypatch.setenv("UV_CACHE_DIR", str(cache_root))
+        assert classify_runtime_env(prefix) is RuntimeEnvKind.UVX_EPHEMERAL
+
+    def test_project_venv_shape(self, tmp_path: Path) -> None:
+        prefix = tmp_path / "myproject" / ".venv"
+        prefix.mkdir(parents=True)
+        assert classify_runtime_env(prefix) is RuntimeEnvKind.PROJECT_VENV
+
+    def test_unrecognized_is_other(self, tmp_path: Path) -> None:
+        prefix = tmp_path / "somewhere" / "python-3.13"
+        prefix.mkdir(parents=True)
+        assert classify_runtime_env(prefix) is RuntimeEnvKind.OTHER
+
+    def test_interpreter_classification_walks_to_env_root(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "uv" / "tools" / "vaultspec-rag" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        assert classify_interpreter_env(interpreter) is RuntimeEnvKind.UV_TOOL
+
+    def test_interpreter_classification_posix_bin(self, tmp_path: Path) -> None:
+        bin_dir = tmp_path / "cache" / "archive-v0" / "aBcDeF" / "bin"
+        bin_dir.mkdir(parents=True)
+        interpreter = bin_dir / "python"
+        interpreter.touch()
+        assert classify_interpreter_env(interpreter) is RuntimeEnvKind.UVX_EPHEMERAL
+
+    def test_every_kind_has_a_label(self) -> None:
+        for kind in RuntimeEnvKind:
+            assert kind.label
+
+
+class TestRemediationCommands:
+    """The two remediation strings derive from the one cu130 constant surface."""
+
+    def test_escape_hatch_targets_the_interpreter_and_cu130_backend(self) -> None:
+        cmd = gpu_escape_hatch_command(r"C:\envs\tool\Scripts\python.exe")
+        assert '--python "C:\\envs\\tool\\Scripts\\python.exe"' in cmd
+        backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
+        assert f"--torch-backend={backend}" in cmd
+        assert "--reinstall" in cmd
+        assert cmd.endswith("torch")
+
+    def test_durable_command_carries_the_cu130_index_url(self) -> None:
+        cmd = durable_tool_install_command()
+        assert CU130_INDEX_URL in cmd
+        assert "uv tool install" in cmd
+        assert "vaultspec-rag[mcp]" in cmd
+
+
+class TestEphemeralEnvWarning:
+    """server start's uvx-ephemeral warning fires only for the cache env."""
+
+    def test_warns_for_an_ephemeral_interpreter(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "cache" / "archive-v0" / "xYz987" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        lines = _ephemeral_env_warning(str(interpreter))
+        joined = "\n".join(lines)
+        assert "EPHEMERAL" in joined
+        assert "not the installed tool" in joined
+        assert durable_tool_install_command() in joined
+        assert str(interpreter) in joined
+
+    def test_silent_for_a_tool_env_interpreter(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "uv" / "tools" / "vaultspec-rag" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        assert _ephemeral_env_warning(str(interpreter)) == ()
