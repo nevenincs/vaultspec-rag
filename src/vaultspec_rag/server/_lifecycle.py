@@ -333,6 +333,11 @@ def _storage_maintenance_tick_sync() -> None:
         archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
         archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
     )
+    from .. import jobs as _jobs_registry
+
+    job_id = _jobs_registry.record_start(
+        "maintenance", "schedule", command="storage_maintenance"
+    )
     url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
     client = QdrantClient(url=url)
     try:
@@ -344,6 +349,9 @@ def _storage_maintenance_tick_sync() -> None:
             snapshots_dir=snapshots_dir,
             archive_dir=archive_dir,
         )
+    except BaseException as exc:
+        _jobs_registry.record_finish(job_id, error=str(exc))
+        raise
     finally:
         client.close()
 
@@ -359,6 +367,27 @@ def _storage_maintenance_tick_sync() -> None:
         if d.action in ("removed", "archived_removed")
     ]
     failed = [d.prefix for d in result.decisions if d.action == "failed"]
+    from ._state import incr, observe
+
+    incr("maintenance_cycles_total")
+    incr("maintenance_reclaims_total", len(removed))
+    observe("maintenance_disk_free_bytes", float(max(disk_free, 0)))
+    observe("maintenance_dangling_bytes", float(result.dangling_bytes))
+    observe("maintenance_pending_grace", float(result.pending_grace))
+    observe(
+        "maintenance_orphaned_namespaces",
+        float(result.namespace_counts.get("orphaned", 0)),
+    )
+    observe("maintenance_last_reclaimed_bytes", float(result.reclaimed_bytes))
+    summary = (
+        f"removed={len(removed)} failed={len(failed)} "
+        f"pending={result.pending_grace} reclaimed_bytes={result.reclaimed_bytes}"
+    )
+    _jobs_registry.record_finish(
+        job_id,
+        result=summary,
+        phase="error" if failed else "done",
+    )
     log_event(
         logger,
         "service.maintenance",

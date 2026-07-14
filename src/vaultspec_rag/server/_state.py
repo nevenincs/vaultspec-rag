@@ -127,12 +127,21 @@ _metrics_lock = threading.Lock()
 _counters: dict[str, int] = {
     "search_total": 0,
     "reindex_total": 0,
+    "maintenance_cycles_total": 0,
+    "maintenance_reclaims_total": 0,
 }
 
 # Last-observed operation durations (seconds), as point-in-time gauges.
+# The ``maintenance_*`` gauges are the scheduled storage-maintenance
+# rollup: refreshed once per cycle by the tick, never by a collector.
 _gauges: dict[str, float] = {
     "search_last_duration_seconds": 0.0,
     "reindex_last_duration_seconds": 0.0,
+    "maintenance_disk_free_bytes": 0.0,
+    "maintenance_dangling_bytes": 0.0,
+    "maintenance_pending_grace": 0.0,
+    "maintenance_orphaned_namespaces": 0.0,
+    "maintenance_last_reclaimed_bytes": 0.0,
 }
 
 
