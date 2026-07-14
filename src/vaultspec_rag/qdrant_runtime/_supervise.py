@@ -77,6 +77,32 @@ _LOAD_FAILURE_MARKERS = (
 )
 
 
+def _qdrant_child_path(path: Path) -> str:
+    """Render a storage path for the qdrant child's environment.
+
+    On Windows the path is converted to extended-length form
+    (``\\\\?\\C:\\...``, or ``\\\\?\\UNC\\server\\share\\...`` for UNC): the
+    engine's on-disk ``collections/<name>/segments/<uuid>/...`` layout
+    otherwise crosses the classic 260-character MAX_PATH once the storage
+    root exceeds ~105 characters, and every collection create fails with
+    "os error 3" - the ``LongPathsEnabled`` registry setting does not help.
+    Extended-length paths bypass that limit entirely (verified against the
+    pinned binary: plain paths fail at 140/200 characters, verbatim paths
+    succeed). Verbatim form disables Win32 normalization, so the path is
+    absolute-resolved first. Non-Windows platforms and already-prefixed
+    paths pass through unchanged. Python-side bookkeeping keeps using the
+    plain path; only the child's env sees this form.
+    """
+    if sys.platform != "win32":
+        return str(path)
+    resolved = os.path.abspath(str(path))
+    if resolved.startswith("\\\\?\\"):
+        return resolved
+    if resolved.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + resolved[2:]
+    return "\\\\?\\" + resolved
+
+
 def _list_on_disk_collections(storage_dir: Path) -> set[str]:
     """Return the names of the collection directories in *storage_dir*.
 
@@ -365,8 +391,8 @@ class QdrantSupervisor:
                 "QDRANT__SERVICE__HOST": "127.0.0.1",
                 "QDRANT__SERVICE__HTTP_PORT": str(self.http_port),
                 "QDRANT__SERVICE__GRPC_PORT": str(self.grpc_port),
-                "QDRANT__STORAGE__STORAGE_PATH": str(self.storage_dir),
-                "QDRANT__STORAGE__SNAPSHOTS_PATH": str(
+                "QDRANT__STORAGE__STORAGE_PATH": _qdrant_child_path(self.storage_dir),
+                "QDRANT__STORAGE__SNAPSHOTS_PATH": _qdrant_child_path(
                     self.storage_dir.parent / "snapshots"
                 ),
                 "QDRANT__TELEMETRY_DISABLED": "true",
@@ -383,22 +409,6 @@ class QdrantSupervisor:
         """
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
-        # On Windows, qdrant's gridstore fails every collection create with
-        # "The system cannot find the path specified. (os error 3)" once the
-        # storage dir exceeds ~105 characters: the internal
-        # collections/<name>/segments/<uuid>/... layout crosses the classic
-        # MAX_PATH boundary regardless of the LongPathsEnabled setting. The
-        # server itself starts and reports ready, so without this warning the
-        # operator only sees opaque 500s on first index.
-        if sys.platform == "win32" and len(str(self.storage_dir)) > 90:
-            logger.warning(
-                "qdrant storage dir is %d characters (%s); on Windows, paths "
-                "over ~105 characters make every collection create fail with "
-                "'os error 3' inside qdrant's storage engine. Relocate "
-                "VAULTSPEC_RAG_QDRANT_STORAGE_DIR to a shorter path.",
-                len(str(self.storage_dir)),
-                self.storage_dir,
-            )
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
         if self.log_path is not None:
