@@ -53,6 +53,24 @@ The PyTorch step prompts before it edits `pyproject.toml`. For non-interactive i
 
 Read the per-dependency outcome report using the shared sync vocabulary: `created` (downloaded), `updated`, `unchanged` (already present), `skipped`, and `failed`. The run is idempotent, so re-running a satisfied dependency reports `unchanged` with no network call.
 
+## Choose a provisioning mode
+
+The `install` command records how vaultspec-rag is placed in your workspace and, from that, how its integration server is launched. Pass `--mode` to choose one of three placements:
+
+```bash
+uv run vaultspec-rag install --mode tool
+```
+
+- `tool` is the standalone placement. The integration server launches through an ephemeral `uvx` invocation, independent of any project environment. This is the default when your project does not depend on vaultspec-rag.
+- `dependency` is for a project that lists vaultspec-rag in its runtime dependencies. The server launches through `uv run` inside the project environment. A runtime dependency ships with your project's published distribution.
+- `dev` is for a project that keeps vaultspec-rag in its default development dependency group. It launches exactly like `dependency` but records that the placement is development-only and will not ship with a published distribution.
+
+With no `--mode` flag, the placement is detected from your `pyproject.toml`: a runtime dependency resolves to `dependency`, a default dev-group entry resolves to `dev`, and anything else falls through to the `tool` default. An explicit `--mode dependency` or `--mode dev` with no `pyproject.toml` to declare against is refused rather than guessed.
+
+The chosen placement is committed to `.vaultspec/workspace.json`, a per-package declaration shared with vaultspec-core. Each package records its own mode there, so a workspace that installs vaultspec-core in one placement and vaultspec-rag in another keeps both choices side by side without one overwriting the other.
+
+The `--mode` placement is independent of the `--local-only` backend choice covered below: `--mode` selects where vaultspec-rag lives and how its server launches, while `--local-only` selects the storage backend. You can combine any mode with or without `--local-only`.
+
 ## Pull the GPU build
 
 The install is not complete until you run `uv sync`. The `install` command records the cu130 PyTorch source in `pyproject.toml` but does not download PyTorch. Until you sync, you have a CPU-only environment that cannot run searches:
@@ -91,6 +109,8 @@ uv run vaultspec-rag server doctor
 ```
 
 A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode, the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode, an absent binary is reported ready because no server is needed. Add `--json` for a machine-readable envelope.
+
+When a workspace has a committed provisioning mode, `server doctor` also reports a `Provisioning (vaultspec-rag)` block naming the declared mode, whether the deployed integration server matches it, and whether the running vaultspec-core meets the version floor your declaration requires. A deployed server that no longer matches the declared mode is a warning; a vaultspec-core below the required floor is an error. Re-run `install --mode` (or `install --upgrade`) to bring the deployed launch back into line.
 
 Check the project's index location and compute device:
 

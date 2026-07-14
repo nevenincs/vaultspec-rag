@@ -8,19 +8,19 @@ One caveat on scope: this all applies to the shared server-mode store. A `--loca
 
 ## Vocabulary
 
-| Term              | Meaning                                                                                                                                              |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| root              | A project directory that has been indexed.                                                                                                           |
-| collection prefix | `r` + 12 hex characters + `_`, derived from a one-way hash of the resolved root path. It cannot be reversed to the path.                             |
-| namespace         | All collections in the store sharing one root's prefix (typically a vault collection and a codebase collection).                                     |
-| live              | The namespace's recorded root directory exists.                                                                                                      |
-| orphaned          | The recorded root is gone, and its drive or share is reachable - a true deletion.                                                                    |
-| unknown           | The store holds the namespace, but no root can be attributed to it. Never touched automatically.                                                     |
-| unverifiable      | The root's volume or network share is offline, so existence cannot be checked. Never touched automatically.                                          |
-| dangling data     | Namespaces whose source root no longer exists. They occupy disk but can never serve a useful search.                                                 |
+| Term              | Meaning                                                                                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| root              | A project directory that has been indexed.                                                                                                          |
+| collection prefix | `r` + 12 hex characters + `_`, derived from a one-way hash of the resolved root path. It cannot be reversed to the path.                            |
+| namespace         | All collections in the store sharing one root's prefix (typically a vault collection and a codebase collection).                                    |
+| live              | The namespace's recorded root directory exists.                                                                                                     |
+| orphaned          | The recorded root is gone, and its drive or share is reachable - a true deletion.                                                                   |
+| unknown           | The store holds the namespace, but no root can be attributed to it. Never touched automatically.                                                    |
+| unverifiable      | The root's volume or network share is offline, so existence cannot be checked. Never touched automatically.                                         |
+| dangling data     | Namespaces whose source root no longer exists. They occupy disk but can never serve a useful search.                                                |
 | grace window      | The continuous time a root must stay orphaned before automatic reclamation may act. The clock survives restarts and resets when the root reappears. |
-| maintenance cycle | One scheduled pass of the service's storage maintenance: classify, advance grace clocks, reclaim, sweep archives, report.                            |
-| snapshot archive  | A recoverable copy of a data-bearing namespace's collections, written immediately before automatic reclamation drops them.                           |
+| maintenance cycle | One scheduled pass of the service's storage maintenance: classify, advance grace clocks, reclaim, sweep archives, report.                           |
+| snapshot archive  | A recoverable copy of a data-bearing namespace's collections, written immediately before automatic reclamation drops them.                          |
 
 ## Why disk usage grows
 
@@ -117,15 +117,15 @@ Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage 
 
 The token-gated `/metrics` route exports the rollup in Prometheus text format. All names carry the `vaultspec_rag_` prefix:
 
-| Metric                            | Type    | Meaning                                            |
-| --------------------------------- | ------- | ---------------------------------------------------- |
-| `maintenance_cycles_total`        | counter | Cycles run since service start                      |
-| `maintenance_reclaims_total`      | counter | Namespaces reclaimed since service start            |
-| `maintenance_disk_free_bytes`     | gauge   | Free disk on the store's volume at the last cycle   |
-| `maintenance_dangling_bytes`      | gauge   | Total footprint of currently orphaned namespaces    |
-| `maintenance_pending_grace`       | gauge   | Orphans still inside their grace window             |
-| `maintenance_orphaned_namespaces` | gauge   | Orphaned namespace count at the last cycle          |
-| `maintenance_last_reclaimed_bytes`| gauge   | Bytes reclaimed by the last cycle                   |
+| Metric                             | Type    | Meaning                                           |
+| ---------------------------------- | ------- | ------------------------------------------------- |
+| `maintenance_cycles_total`         | counter | Cycles run since service start                    |
+| `maintenance_reclaims_total`       | counter | Namespaces reclaimed since service start          |
+| `maintenance_disk_free_bytes`      | gauge   | Free disk on the store's volume at the last cycle |
+| `maintenance_dangling_bytes`       | gauge   | Total footprint of currently orphaned namespaces  |
+| `maintenance_pending_grace`        | gauge   | Orphans still inside their grace window           |
+| `maintenance_orphaned_namespaces`  | gauge   | Orphaned namespace count at the last cycle        |
+| `maintenance_last_reclaimed_bytes` | gauge   | Bytes reclaimed by the last cycle                 |
 
 Tuning the schedule, grace windows, cap, and archive bounds is covered by the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 

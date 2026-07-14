@@ -8,8 +8,19 @@ from typing import TYPE_CHECKING
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
+from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+    dependency_leak_advisory,
+    newly_establishes_dependency,
+)
 
 from ..builtins import seed_builtins
+from ._mode import (
+    RAG_DISTRIBUTION_NAME,
+    infer_rag_upgrade_mode,
+    migrate_rag_mcp_entry,
+    persist_rag_mode,
+    resolve_rag_mode,
+)
 from ._models import InstallReport
 from ._torch_flow import _run_torch_config_install
 from ._workspace import (
@@ -20,6 +31,10 @@ from ._workspace import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+        InstallMode,
+    )
 
     from ._models import ConfirmFn
 
@@ -90,6 +105,50 @@ def _run_core_sync(
                 )
 
 
+def _persist_mode_and_detect_flip(
+    target: Path,
+    mode: InstallMode,
+    *,
+    dry_run: bool,
+    skip: set[str],
+) -> bool:
+    """Persist rag's mode before the sync and report whether it flips the launch.
+
+    From the 0.1.39 floor core's sync renders each companion MCP definition at
+    its own declaring package's committed mode, so writing rag's entry *before*
+    the sync lets the sync render rag's ``.mcp.json`` launch in rag's own shape
+    natively for the fresh and same-mode cases. The write reads and rewrites only
+    rag's own entry under the advisory lock, leaving a sibling ``vaultspec-core``
+    entry untouched, and needs only the target path, not core's runtime context.
+
+    Rag's deployed launch shape is captured here, before the sync overwrites it,
+    so an ``install --upgrade`` that flips rag's mode is detectable: the returned
+    flag drives the post-sync force-managed seam that migrates a stale managed
+    entry the plain sync's force-gate would otherwise skip. A dry run or a
+    core-skipped run neither persists nor flips.
+
+    Args:
+        target: Workspace root directory.
+        mode: Rag's resolved provisioning mode to persist.
+        dry_run: When ``True``, neither persist nor detect (no writes on a preview).
+        skip: Sync skip tokens; a ``"core"`` skip disables both.
+
+    Returns:
+        ``True`` when rag's deployed launch shape diverges from *mode* and must
+        be force-migrated after the sync; ``False`` otherwise.
+    """
+    if dry_run or "core" in skip:
+        return False
+    from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
+        observed_mcp_mode,
+    )
+
+    observed = observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
+    mcp_mode_flipped = observed is not None and observed != mode
+    persist_rag_mode(target, mode)
+    return mcp_mode_flipped
+
+
 def install_run(
     path: Path | None = None,
     *,
@@ -106,6 +165,7 @@ def install_run(
     provision_skip: set[str] | None = None,
     torch_group: str | None = None,
     install_mcp: bool = False,
+    mode: InstallMode | None = None,
 ) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
@@ -163,6 +223,16 @@ def install_run(
             consumer does not leak torch into its published runtime
             requirements. ``None`` (the default) preserves the historic
             project-deps placement byte-for-byte.
+        mode: The provisioning mode requested via ``--mode``
+            (``tool`` / ``dependency`` / ``dev``), or ``None`` to fall through
+            to rag's persisted declaration, ``pyproject.toml`` detection, and
+            the tool-mode default in turn. Resolved through core's shared
+            ``workspace_mode`` precedence with ``package="vaultspec-rag"``,
+            persisted into rag's own entry in the shared
+            ``.vaultspec/workspace.json`` without disturbing a sibling
+            ``vaultspec-core`` entry, and used to render rag's MCP launch shape.
+            An explicit ``dependency`` or ``dev`` request with no
+            ``pyproject.toml`` raises rather than silently falling back.
 
     Returns:
         :class:`InstallReport` with the structured result, including the
@@ -176,6 +246,19 @@ def install_run(
     report = InstallReport(action=action, target=target)
     report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
 
+    # Resolve rag's provisioning mode through core's shared precedence chain
+    # before seeding, so an impossible explicit request (dependency/dev mode
+    # with no pyproject.toml) raises a loud, typed refusal here rather than
+    # after files have been seeded. The upgrade path re-infers from rag's own
+    # deployed MCP shape; a fresh install resolves at provision time. The
+    # provenance rides along so the dependency-leak advisory fires only when
+    # this run is the one electing dependency mode, not on a persisted read.
+    resolved = (
+        infer_rag_upgrade_mode(target, mode)
+        if upgrade
+        else resolve_rag_mode(target, mode)
+    )
+
     # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does
     # (rules/ -> .vaultspec/rules/, mcps/ -> .vaultspec/mcps/, skills/<name>/
     # -> .vaultspec/skills/<name>/), so core's collectors and sync pick them up
@@ -183,11 +266,35 @@ def install_run(
     vaultspec_dir = target / ".vaultspec"
     _seed_builtins(vaultspec_dir, report, dry_run, force, upgrade)
 
+    # Persist rag's own entry in the shared per-package declaration BEFORE core's
+    # sync runs, and capture whether this run flips rag's deployed launch shape.
+    mcp_mode_flipped = _persist_mode_and_detect_flip(
+        target, resolved.mode, dry_run=dry_run, skip=skip
+    )
+
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
     _run_core_sync(target, report, dry_run, force, skip)
+
+    # Mode-flip seam, the analogue of core's own force-managed pass: a plain
+    # (non-forced) sync's force-gate skips an already-managed rag entry whose
+    # deployed launch shape diverges from the newly-resolved mode, so an upgrade
+    # that flips rag's mode would leave the stale shape in place. Force just
+    # rag's own managed entry into the new mode. Skipped on a fresh install
+    # (nothing deployed to flip), when --force already rewrote every entry, or
+    # when the mode did not flip - the common case the native sync already
+    # handled above.
+    if mcp_mode_flipped and not force and not dry_run and "core" not in skip:
+        migrate_rag_mcp_entry(resolved.mode)
+
+    # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
+    # D3): fires only when this run newly elects the full-leak dependency
+    # placement for rag, so a persisted-declaration workspace is not nagged on
+    # every subsequent install.
+    if newly_establishes_dependency(resolved):
+        report.warnings.append(dependency_leak_advisory(RAG_DISTRIBUTION_NAME))
 
     _run_torch_config_install(
         target=target,
