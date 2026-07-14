@@ -43,10 +43,12 @@ __all__ = [
     "start_reindex_vault",
 ]
 
-# Source of an activity: the documentation vault or the source codebase.
-Source = Literal["vault", "code"]
-# What initiated the activity: a reindex tool call or the filesystem watcher.
-Trigger = Literal["tool", "watcher"]
+# Source of an activity: the documentation vault, the source codebase, or
+# the service's own scheduled storage maintenance.
+Source = Literal["vault", "code", "maintenance"]
+# What initiated the activity: a reindex tool call, the filesystem watcher,
+# or the daemon's periodic schedule.
+Trigger = Literal["tool", "watcher", "schedule"]
 # Lifecycle phase of a record.
 Phase = Literal[
     "running", "done", "error", "failed", "cancelled", "superseded", "skipped"
