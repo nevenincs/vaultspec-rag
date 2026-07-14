@@ -1,0 +1,138 @@
+# Storage and maintenance
+
+vaultspec-rag keeps semantic search indexes so agents and operators can search your projects by meaning instead of by exact keyword. In server mode, the default, one background service per machine owns a single managed vector store, and every project you index - each one a *root* - lives inside that one store. This guide covers how to inspect what that store holds, how the service reclaims dead data on its own, how to restore an index from an archive, how to prune space by hand, and how to watch maintenance as it runs.
+
+Everything here needs the background service running. Start it with `uv run vaultspec-rag server start`. If you haven't set the service up yet, work through [getting started](getting-started.md) first, then [run the background service](service-mode.md) for the full startup and configuration walkthrough.
+
+One caveat on scope: this all applies to the shared server-mode store. A `--local-only` store is private to a single project and carries none of this machinery, so the commands here don't apply to it.
+
+## Vocabulary
+
+| Term              | Meaning                                                                                                                                              |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| root              | A project directory that has been indexed.                                                                                                           |
+| collection prefix | `r` + 12 hex characters + `_`, derived from a one-way hash of the resolved root path. It cannot be reversed to the path.                             |
+| namespace         | All collections in the store sharing one root's prefix (typically a vault collection and a codebase collection).                                     |
+| live              | The namespace's recorded root directory exists.                                                                                                      |
+| orphaned          | The recorded root is gone, and its drive or share is reachable - a true deletion.                                                                    |
+| unknown           | The store holds the namespace, but no root can be attributed to it. Never touched automatically.                                                     |
+| unverifiable      | The root's volume or network share is offline, so existence cannot be checked. Never touched automatically.                                          |
+| dangling data     | Namespaces whose source root no longer exists. They occupy disk but can never serve a useful search.                                                 |
+| grace window      | The continuous time a root must stay orphaned before automatic reclamation may act. The clock survives restarts and resets when the root reappears. |
+| maintenance cycle | One scheduled pass of the service's storage maintenance: classify, advance grace clocks, reclaim, sweep archives, report.                            |
+| snapshot archive  | A recoverable copy of a data-bearing namespace's collections, written immediately before automatic reclamation drops them.                           |
+
+## Why disk usage grows
+
+Creating a namespace preallocates roughly 2 GB of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GB, all holding zero documents.
+
+The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it.
+
+## Inspect what is stored
+
+List every namespace with its classification, document count, footprint, and attributed root:
+
+```
+uv run vaultspec-rag server storage survey
+```
+
+```
+144 namespaces  (orphaned=79 unknown=0 unverifiable=0 live=65)  300.8GB on disk
+  orphaned r02c5d80096c3_         0 pts      2.1GB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV
+  live     r45b56789f389_     12408 pts      3.4GB  Y:\code\my-project
+```
+
+`--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
+
+To look up a single root - which namespace and collection prefix belong to it - pass `--root`:
+
+```
+uv run vaultspec-rag server storage survey --root Y:\code\my-project
+```
+
+The output leads with `Queried root: <resolved path>  prefix: r..._`, and the same lookup is available as `queried_root` in `--json` output. This works even for a root that has never been indexed: the service computes the authoritative prefix, so an external consumer never has to reimplement the hash.
+
+The full flag and exit-code table is in the [CLI reference](cli.md#server-storage-survey).
+
+## Automatic reclamation
+
+The running service reclaims confirmed-dangling namespaces on its own: a maintenance cycle runs every 60 minutes by default, with the first cycle one interval after startup. Set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE=0` to disable it.
+
+A namespace is only ever reclaimed automatically when all of the following hold:
+
+- it is attributed to a known root,
+- that root is classified `orphaned` - gone, on a reachable volume,
+- and it has been orphaned continuously for its full grace window. The clock is persisted, so restarting the service does not reset it; the root reappearing resets it to zero instantly.
+
+Reclamation is tiered. A namespace holding zero documents is dropped after 24 hours of continuous orphan-hood. A namespace holding data waits 7 days, then each of its collections is written to a snapshot archive, and the namespace is dropped only if every snapshot succeeded - a failed archive always cancels the drop.
+
+The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
+
+The interval, both grace windows, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
+
+## Archives and how to restore them
+
+Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 20 GB; both bounds are configurable.
+
+The simplest restore is usually to reindex: the index is derived data, so if the root itself still exists (or came back from your own backup), indexing it rebuilds everything. To recover the archived index directly instead, use Qdrant's snapshot recovery against the managed server:
+
+```python
+from qdrant_client import QdrantClient
+
+client = QdrantClient(url="http://127.0.0.1:8765")
+client.recover_snapshot(
+    collection_name="r0123456789ab_vault_docs",
+    location="file:///C:/Users/me/.vaultspec-rag/qdrant-server/archive/r0123456789ab/r0123456789ab_vault_docs-....snapshot",
+)
+```
+
+The snapshot path must be readable by the Qdrant server process, which it is on the machine that wrote it.
+
+## Reclaim space manually
+
+Manual pruning removes every orphaned namespace immediately - no grace window applies, because the operator running the command is the confirmation. Preview first, then apply:
+
+```
+uv run vaultspec-rag server storage prune --dry-run
+uv run vaultspec-rag server storage prune --yes
+```
+
+```
+Reclaimed 79 orphaned namespaces (167.9GB); 0 unknown left untouched.
+```
+
+Prune targets only `orphaned` namespaces; `unknown` and `unverifiable` are never touched. To remove one specific namespace, name its prefix:
+
+```
+uv run vaultspec-rag server storage delete r0123456789ab_ --yes
+```
+
+`delete` refuses a prefix the manifest cannot attribute to a root unless you pass `--allow-unknown`. The sensible order is survey, then prune, and delete only when you must remove one namespace the prune would not.
+
+Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
+
+## Observe maintenance
+
+Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage maintenance cycle` with a result summary like `removed=2 failed=0 pending=5 reclaimed_bytes=4508876800`. Every cycle also writes one structured `service.maintenance` log line with the same counts plus archive activity and free disk, and logs an explicit `disk_low` warning when the store's volume drops under 10 GB free - only a few namespaces of headroom.
+
+The token-gated `/metrics` route exports the rollup in Prometheus text format. All names carry the `vaultspec_rag_` prefix:
+
+| Metric                            | Type    | Meaning                                            |
+| --------------------------------- | ------- | ---------------------------------------------------- |
+| `maintenance_cycles_total`        | counter | Cycles run since service start                      |
+| `maintenance_reclaims_total`      | counter | Namespaces reclaimed since service start            |
+| `maintenance_disk_free_bytes`     | gauge   | Free disk on the store's volume at the last cycle   |
+| `maintenance_dangling_bytes`      | gauge   | Total footprint of currently orphaned namespaces    |
+| `maintenance_pending_grace`       | gauge   | Orphans still inside their grace window             |
+| `maintenance_orphaned_namespaces` | gauge   | Orphaned namespace count at the last cycle          |
+| `maintenance_last_reclaimed_bytes`| gauge   | Bytes reclaimed by the last cycle                   |
+
+Tuning the schedule, grace windows, cap, and archive bounds is covered by the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
+
+## Where to go next
+
+- [CLI reference](cli.md) - full flag and exit-code tables for `server storage survey`, `server storage prune`, `server storage delete`, and `server stop`.
+- [Configuration](configuration.md) - every tunable, including the storage maintenance knobs.
+- [Storage backends](backends.md) - the server-first backend model and the managed Qdrant server.
+- [Run the background service](service-mode.md) - service lifecycle, status, jobs, and logs.
+- Support: open an issue at [github.com/nevenincs/vaultspec-rag/issues](https://github.com/nevenincs/vaultspec-rag/issues).
