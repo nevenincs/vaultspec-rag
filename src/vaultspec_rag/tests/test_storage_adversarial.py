@@ -11,13 +11,25 @@ unknown or live) lives in the integration suite.
 
 from __future__ import annotations
 
+import json
+from typing import TYPE_CHECKING
+
 import pytest
 import typer
+from typer.testing import CliRunner
 
+from ..cli import app
 from ..cli._service_storage import _emit_or_echo_error, _require_yes_for_json
+from ..storage_ops import DeleteResult
 from ..storage_safety import StorageSafetyError, resolve_within
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
 pytestmark = [pytest.mark.unit]
+
+runner = CliRunner()
 
 
 @pytest.mark.parametrize(
@@ -56,3 +68,140 @@ def test_traversal_escape_is_rejected(tmp_path: object) -> None:
     base.mkdir()
     with pytest.raises(StorageSafetyError):
         resolve_within(base / ".." / ".." / "etc", base)
+
+
+class TestDeleteRootAddressing:
+    """``server storage delete --root``: resolution parity and idempotency.
+
+    The client and server-mode gate are bypassed (``_run_storage_op`` calls
+    the operation directly) so these tests exercise only the verb's
+    addressing, outcome mapping, and envelope - the real ``delete_prefix``
+    gates have their own coverage.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _bypass_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ..cli import _service_storage
+
+        def _direct(
+            _command: str, _json_mode: bool, fn: Callable[[None], DeleteResult]
+        ) -> DeleteResult:
+            return fn(None)
+
+        monkeypatch.setattr(_service_storage, "_run_storage_op", _direct)
+
+    def _record_delete(
+        self, monkeypatch: pytest.MonkeyPatch, result_status: str, reason: str | None
+    ) -> list[str]:
+        from .. import storage_ops
+
+        seen: list[str] = []
+
+        def _fake(_client: object, prefix: str, **_kwargs: object) -> DeleteResult:
+            seen.append(prefix)
+            return DeleteResult(prefix, result_status, reason=reason)
+
+        monkeypatch.setattr(storage_ops, "delete_prefix", _fake)
+        return seen
+
+    def test_both_prefix_and_root_are_rejected(self) -> None:
+        result = runner.invoke(
+            app,
+            ["server", "storage", "delete", "rdeadbeef0000_", "--root", ".", "-y"],
+        )
+        assert result.exit_code == 2
+
+    def test_neither_prefix_nor_root_is_rejected_as_json_envelope(self) -> None:
+        result = runner.invoke(app, ["server", "storage", "delete", "--json", "--yes"])
+        assert result.exit_code == 2
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["error"] == "bad_request"
+
+    def test_root_resolves_exactly_like_registration(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ..store import root_collection_prefix
+
+        seen = self._record_delete(monkeypatch, "removed", None)
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "storage",
+                "delete",
+                "--root",
+                str(tmp_path),
+                "--yes",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen == [root_collection_prefix(tmp_path)]
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is True
+        assert envelope["data"]["queried_root"]["prefix"] == seen[0]
+
+    def test_absent_namespace_is_an_idempotent_success(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._record_delete(monkeypatch, "skipped", "no_such_namespace")
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "storage",
+                "delete",
+                "--root",
+                str(tmp_path),
+                "--yes",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is True
+        assert envelope["data"]["status"] == "already_absent"
+        assert envelope["data"]["reason"] is None
+
+    def test_absent_namespace_exits_zero_in_human_mode_too(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._record_delete(monkeypatch, "skipped", "no_such_namespace")
+        result = runner.invoke(
+            app, ["server", "storage", "delete", "--root", str(tmp_path), "--yes"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "already absent" in result.output
+
+    def test_unknown_namespace_refusal_is_preserved(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._record_delete(monkeypatch, "skipped", "unknown_namespace")
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "storage",
+                "delete",
+                "--root",
+                str(tmp_path),
+                "--yes",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope["data"]["status"] == "skipped"
+        assert envelope["data"]["reason"] == "unknown_namespace"
+
+    def test_prefix_form_is_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen = self._record_delete(monkeypatch, "removed", None)
+        result = runner.invoke(
+            app,
+            ["server", "storage", "delete", "rdeadbeef0000_", "--yes", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen == ["rdeadbeef0000_"]
+        envelope = json.loads(result.output)
+        assert "queried_root" not in envelope["data"]

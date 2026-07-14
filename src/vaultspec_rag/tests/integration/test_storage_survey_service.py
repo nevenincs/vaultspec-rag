@@ -26,10 +26,11 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.subprocess_gpu]
 
 
-def _survey_root_call(port: int, root: Path) -> dict[str, Any]:
+def _survey_root_call(port: int, root: Path, *, fresh: bool = False) -> dict[str, Any]:
     """Query the survey route scoped to *root* and return the envelope."""
     quoted = urllib.parse.quote(str(root))
-    result = _do_http_call(port, f"/storage/survey?root={quoted}", None)
+    suffix = "&fresh=true" if fresh else ""
+    result = _do_http_call(port, f"/storage/survey?root={quoted}{suffix}", None)
     assert result is not None
     return result
 
@@ -181,7 +182,9 @@ def test_storage_survey_root_lookup_indexed_root(
     assert isinstance(job_id, str)
     _wait_for_job(port, job_id)
 
-    result = _survey_root_call(port, root)
+    # fresh=true: the just-indexed namespace must be visible immediately,
+    # not after the snapshot's next scheduled refresh.
+    result = _survey_root_call(port, root, fresh=True)
     raw_queried = result.get("queried_root")
     assert isinstance(raw_queried, dict)
     queried = cast("dict[str, object]", raw_queried)
@@ -193,3 +196,57 @@ def test_storage_survey_root_lookup_indexed_root(
     )
     namespaces = cast("list[dict[str, object]]", raw_namespaces)
     assert all(ns.get("prefix") == prefix for ns in namespaces)
+
+
+@pytest.mark.usefixtures("live_service")
+def test_storage_survey_reports_freshness_metadata(
+    live_service: tuple[int, Path],
+) -> None:
+    """Every survey answer carries ``computed_at`` and ``source``."""
+    port, _status_dir = live_service
+    result = _do_http_call(port, "/storage/survey", None)
+    assert result is not None
+    assert result.get("source") in ("cache", "fresh")
+    computed_at = result.get("computed_at")
+    assert isinstance(computed_at, str) and computed_at
+
+
+@pytest.mark.usefixtures("live_service")
+def test_storage_survey_serves_cache_after_warmup(
+    live_service: tuple[int, Path],
+) -> None:
+    """The startup warmer fills the snapshot, then the route answers O(1).
+
+    Polls past the warmup delay; once the snapshot is warm, consecutive
+    plain calls are cache-served with a stable ``computed_at``.
+    """
+    port, _status_dir = live_service
+    deadline = time.monotonic() + 60.0
+    result: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        result = _do_http_call(port, "/storage/survey", None)
+        if result is not None and result.get("source") == "cache":
+            break
+        time.sleep(0.5)
+    assert result is not None and result.get("source") == "cache", (
+        f"snapshot never warmed: {result}"
+    )
+    again = _do_http_call(port, "/storage/survey", None)
+    assert again is not None
+    assert again.get("source") == "cache"
+    assert again.get("computed_at") == result.get("computed_at")
+
+
+@pytest.mark.usefixtures("live_service")
+def test_storage_survey_fresh_recomputes_and_reseeds_cache(
+    live_service: tuple[int, Path],
+) -> None:
+    """``?fresh=true`` recomputes and its result becomes the new snapshot."""
+    port, _status_dir = live_service
+    fresh = _do_http_call(port, "/storage/survey?fresh=true", None)
+    assert fresh is not None
+    assert fresh.get("source") == "fresh"
+    cached = _do_http_call(port, "/storage/survey", None)
+    assert cached is not None
+    assert cached.get("source") == "cache"
+    assert cached.get("computed_at") == fresh.get("computed_at")

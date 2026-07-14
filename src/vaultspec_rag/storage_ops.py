@@ -662,6 +662,9 @@ class MaintenanceResult:
         pending_grace: Orphans still inside their grace window.
         dangling_bytes: Total footprint of all currently orphaned
             namespaces (reclaimed or not), for the health rollup.
+        surveys: The full classified survey the cycle ran on, handed back
+            so the daemon can publish it as the survey snapshot instead of
+            paying the footprint walk twice.
     """
 
     decisions: list[ReclaimDecision]
@@ -671,6 +674,7 @@ class MaintenanceResult:
     namespace_counts: dict[str, int]
     pending_grace: int
     dangling_bytes: int
+    surveys: list[NamespaceSurvey] = field(default_factory=list)
 
 
 def run_maintenance_cycle(
@@ -808,4 +812,5 @@ def run_maintenance_cycle(
         dangling_bytes=sum(
             s.footprint_bytes for s in surveys if s.status == "orphaned"
         ),
+        surveys=surveys,
     )
