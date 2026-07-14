@@ -6,13 +6,12 @@ rule, indexed first-class, and found by hybrid search with its deep-link anchor;
 the scoped/incremental path routes a changed binary through the preprocessor;
 and a failing preprocessor surfaces a skip count rather than a silent gap.
 
-The sandbox boundary is proved end-to-end here too. Hooks now run BY DEFAULT for
-any root - there is no trust step - so the tests below prove that safety comes
-from OS containment, not consent: a hook runs through the local index under a
-real sandbox backend, an untrusted root's hook that tries to read a secret and
-open a socket still extracts its legitimate content while both malicious
-operations are denied inside the container, and the ``off`` kill switch skips
-hooks entirely.
+Hooks run BY DEFAULT for any root - there is no trust step and no OS containment
+(preprocess-sandbox-removal ADR): a root's preprocess config is repo-authored
+code that runs directly with the operator's privileges. The tests below prove
+the direct-execution path end to end: a hook runs through the local index, its
+unit is indexed and searchable with a deep-link anchor to the real source, and
+the ``off`` kill switch skips hooks entirely.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from typing import TYPE_CHECKING, TypedDict
 import pytest
 
 from ...config import EnvVar, reset_config
-from ...indexer._hook_sandbox import resolve_hook_sandbox
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -49,8 +47,8 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
 
     The status dir is relocated so no test touches the operator's real
     ``~/.vaultspec-rag``. No trust store exists anymore: under the default mode
-    the runner resolves and runs a root's rules for any root, contained by the
-    OS sandbox, so there is no per-root consent setup to perform.
+    the runner resolves and runs a root's rules for any root directly, so there
+    is no per-root consent setup to perform.
     """
     status_key = EnvVar.STATUS_DIR.value
     prev_status = os.environ.get(status_key)
@@ -127,51 +125,6 @@ def _sentinel_extractor(root: Path, sentinel: Path) -> Path:
     return script
 
 
-def _probe_extractor(root: Path, secret_path: Path) -> Path:
-    """Write an extractor that probes containment while emitting valid output.
-
-    The hook tries to read ``secret_path`` (a file outside the staged scratch
-    dir and outside the granted project root) and to open an outbound socket,
-    then encodes the outcome of each into its emitted unit text. Under a working
-    sandbox both must fail, so the indexed text carries ``SECRET_READ_BLOCKED``
-    and ``NETWORK_BLOCKED``; the legitimate corpus text is emitted regardless.
-    """
-    script = root / "probe_extractor.py"
-    script.write_text(
-        textwrap.dedent(f"""
-            import json, socket, sys
-            secret = {str(secret_path)!r}
-            try:
-                open(secret, encoding="utf-8").read()
-                secret_status = "SECRET_READ_OK"
-            except OSError:
-                secret_status = "SECRET_READ_BLOCKED"
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(3)
-                sock.connect(("1.1.1.1", 80))
-                sock.close()
-                net_status = "NETWORK_OK"
-            except OSError:
-                net_status = "NETWORK_BLOCKED"
-            print(json.dumps({{
-                "schema_version": 1,
-                "preprocessor_id": "probe",
-                "preprocessor_version": "1.0",
-                "source_path": sys.argv[1],
-                "units": [{{
-                    "text": (
-                        "aurora telemetry ingestion pipeline "
-                        + secret_status + " " + net_status
-                    ),
-                }}],
-            }}))
-        """),
-        encoding="utf-8",
-    )
-    return script
-
-
 @pytest.fixture
 def preproc_project(
     rag_components: RagComponentsWithManifest,
@@ -226,20 +179,15 @@ class TestPreprocessEndToEnd:
         assert top.source_path == "report.pdf"
 
     @pytest.mark.timeout(600)
-    def test_hook_runs_contained_through_local_index(
+    def test_hook_runs_directly_through_local_index(
         self, preproc_project: _PreprocProject
     ) -> None:
-        # The default-mode path with no trust step: a real command hook runs
-        # through the local index under a resolved sandbox backend, its unit is
+        # The default-mode path with no trust step and no containment: a real
+        # command hook runs directly through the local index, its unit is
         # indexed and searchable, and the deep-link anchor references the real
-        # source - never the ephemeral ``vsrag-hook-`` scratch dir the child
-        # actually saw (the staged-path remap is what closes that leak).
+        # source - never the ephemeral ``vsrag-hook-`` scratch cwd the child
+        # ran in, because the hook reads the original source path directly.
         from ... import VaultSearcher
-
-        backend = resolve_hook_sandbox(server_mode=False, unsandboxed=False)
-        assert backend is not None, "no hook sandbox backend resolved on this host"
-        if sys.platform == "win32":
-            assert backend.name == "windows-appcontainer"
 
         result = preproc_project["code_indexer"].full_index(
             reporter=NullProgressReporter()
@@ -255,69 +203,10 @@ class TestPreprocessEndToEnd:
             "regional sales territory breakdown", top_k=5
         )
         top = next((r for r in results if r.preprocessor_id == "fake-pdf"), None)
-        assert top is not None, "contained hook's unit not indexed"
+        assert top is not None, "hook's unit not indexed"
         assert top.anchor is not None
         assert "vsrag-hook-" not in top.anchor, "scratch path leaked into the anchor"
         assert "vsrag-hook-" not in (top.source_path or "")
-
-    @pytest.mark.timeout(600)
-    def test_untrusted_repo_hook_is_contained_not_refused(
-        self,
-        rag_components: RagComponentsWithManifest,
-        tmp_path: Path,
-        tmp_path_factory: pytest.TempPathFactory,
-    ) -> None:
-        # The whole point of the new model: a root that ships a hook and has NO
-        # trust record still runs (rules resolve for any root) and is contained.
-        # No interaction, still safe. The hook tries to steal a secret that
-        # lives OUTSIDE the granted project root and to reach the network; the
-        # legitimate content still extracts and indexes, while the sandbox
-        # denies both malicious operations (proven from the indexed report).
-        from ... import CodebaseIndexer, VaultSearcher, VaultStore
-
-        model = rag_components["model"]
-
-        backend = resolve_hook_sandbox(server_mode=False, unsandboxed=False)
-        assert backend is not None, (
-            "containment cannot be proven without a sandbox backend on this host"
-        )
-
-        # The secret sits in a sibling dir, never under the project root the
-        # sandbox read-grants, so a contained child must not be able to open it.
-        secret_dir = tmp_path_factory.mktemp("secret-outside-root")
-        secret = secret_dir / "api_key.txt"
-        secret.write_text("SUPER-SECRET-TOKEN", encoding="utf-8")
-
-        _write_config(
-            tmp_path,
-            f'[[rule]]\npattern = "*.pdf"\n'
-            f"command = '''{_command(_probe_extractor(tmp_path, secret))}'''\n"
-            'on_error = "skip"\n',
-        )
-        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
-
-        store = VaultStore(tmp_path)
-        try:
-            indexer = CodebaseIndexer(tmp_path, model, store)
-            result = indexer.full_index(reporter=NullProgressReporter())
-            # The hook ran (no trust step blocked it) and was not refused.
-            assert result.preprocess_skipped == 0
-
-            searcher = VaultSearcher(tmp_path, model, store)
-            results = searcher.search_codebase(
-                "aurora telemetry ingestion pipeline", top_k=5
-            )
-            unit = next((r for r in results if r.preprocessor_id == "probe"), None)
-            assert unit is not None, "contained hook's legitimate content not indexed"
-            assert unit.rerank_text is not None
-            assert "SECRET_READ_BLOCKED" in unit.rerank_text, (
-                "sandbox failed to deny the out-of-tree secret read"
-            )
-            assert "NETWORK_BLOCKED" in unit.rerank_text, (
-                "sandbox failed to deny outbound network egress"
-            )
-        finally:
-            store.close()
 
     @pytest.mark.timeout(600)
     def test_off_kill_switch_skips_hooks(

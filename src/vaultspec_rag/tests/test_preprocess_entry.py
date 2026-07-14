@@ -113,20 +113,18 @@ def _entry_run(
     project_root: Path,
     on_error: OnError = "skip",
 ) -> PreprocessResult:
-    """Invoke the runner on an entry_point rule in local, unsandboxed mode.
+    """Invoke the runner on an entry_point rule directly.
 
     The curated child env carries no inherited ``PYTHONPATH``; the runner puts
-    ``project_root`` on it so a project-local entry_point module resolves, which
-    is the whole point of the read grant. The extractor module the fixture
-    writes lives under ``project_root``, so the child imports it there.
+    ``project_root`` on it so a project-local entry_point module resolves. The
+    extractor module the fixture writes lives under ``project_root``, so the
+    child imports it there.
     """
     return run_preprocessor(
         source,
         _entry_rule(ref, on_error=on_error),
         max_emitted_bytes=1024 * 1024,
         project_root=project_root,
-        server_mode=False,
-        unsandboxed=True,
     )
 
 
