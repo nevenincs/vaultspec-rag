@@ -157,6 +157,10 @@ The token plus loopback binding is a monitoring gate, not an authentication boun
 
 Installing, inspecting, and cleaning the managed Qdrant server is covered separately. Use `server qdrant install`, `server qdrant status`, and `server qdrant clean`; see the [backends guide](backends.md) for the workflow.
 
+## Storage stays healthy on its own
+
+Once running, the service maintains its own storage: an hourly maintenance cycle reclaims namespaces whose source roots are confirmed gone, archives data-bearing ones first, and reports disk health. Each cycle appears in `server jobs` and the `/metrics` gauges. The full model - what qualifies as reclaimable, the grace windows, the archives, and manual pruning - lives in the [storage and maintenance guide](storage-maintenance.md).
+
 ## Stop the service
 
 To stop the service gracefully, run:
@@ -165,7 +169,7 @@ To stop the service gracefully, run:
 uv run vaultspec-rag server stop
 ```
 
-Shutdown removes the status file and stops the Qdrant child last, so the vector store stays reachable until the service itself is down.
+Shutdown removes the status file and stops the Qdrant child last, so the vector store stays reachable until the service itself is down. `server stop --json` emits one outcome envelope per exit path for scripting (see the [CLI reference](cli.md#server-stop)), and every termination writes a shutdown audit line naming the initiating process, so "who stopped the service" is always answerable from the log.
 
 ## Troubleshooting
 
