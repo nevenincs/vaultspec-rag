@@ -30,8 +30,21 @@ uv add vaultspec-rag
 To install it as a standalone tool instead, run:
 
 ```bash
-uv tool install vaultspec-rag
+uv tool install "vaultspec-rag[mcp]" --index https://download.pytorch.org/whl/cu130
 ```
+
+The `--index` flag matters: it is recorded in the tool receipt, and `uv tool upgrade` re-applies it on every upgrade, so torch keeps resolving from the GPU (cu130) index. Without it, every upgrade or forced reinstall re-resolves torch from PyPI and silently replaces the GPU build with a CPU-only wheel that the service refuses to start with. The project-scoped pin that `vaultspec-rag install` writes into `pyproject.toml` never reaches tool environments, and uv's `--torch-backend` selector is `uv pip`-only.
+
+If a tool environment has already lost its GPU torch, repair it in place (this is undone by the next upgrade; the `--index` reinstall above is the durable fix):
+
+```bash
+uv pip install --python "<tool-env python>" --reinstall --torch-backend=cu130 torch
+```
+
+Two tool-lifecycle warnings:
+
+- Stop the service before `uv tool install --force` or an upgrade that replaces the environment. The running service's executable holds the tool's `Scripts` directory, so a forced reinstall fails half-way ("Access is denied") and leaves the environment broken.
+- After such a partial failure, `uvx vaultspec-rag` can silently fall back to a cached ephemeral environment (a `uv` cache path containing `archive-v0`) instead of the installed tool. `server start` warns loudly when it detects this; reinstall the tool with the service stopped to recover.
 
 The commands in this guide use the `uv run` prefix, which runs the command-line interface (CLI) inside the project's environment. If you installed the standalone tool, drop the prefix and call `vaultspec-rag` directly.
 

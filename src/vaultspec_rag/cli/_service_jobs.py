@@ -523,6 +523,14 @@ def _render_jobs_feed(
         markup=False,
         highlight=False,
     )
+    # Scripted consumers must use the structured envelope: this human summary
+    # always contains the literal words "active"/"waiting", so grepping it for
+    # job states self-deadlocks (a waiter that greps "active" always matches).
+    _cli.console.print(
+        "Scripting: use --json (this summary always contains the word 'active')",
+        markup=False,
+        highlight=False,
+    )
     if filter_text:
         _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
     if monitoring:
@@ -1085,7 +1093,14 @@ def service_jobs(
     ] = None,
     json_mode: Annotated[
         bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
+        typer.Option(
+            "--json",
+            help=(
+                "Emit JSON for scripts instead of human text. Always use this "
+                "for scripted waits: the human summary line unconditionally "
+                "contains the words 'active' and 'waiting'."
+            ),
+        ),
     ] = False,
     watch: Annotated[
         bool,

@@ -58,6 +58,15 @@ uv sync
 
 `install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. `uv sync` then pulls in that GPU build. The models total a few gigabytes, so the first download takes several minutes, but it runs only once.
 
+To install as a standalone tool instead, carry the GPU index in the tool receipt so `uv tool upgrade` keeps the CUDA build (a bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade):
+
+```bash
+uv tool install "vaultspec-rag[mcp]" --index https://download.pytorch.org/whl/cu130
+uvx vaultspec-rag install
+```
+
+See the [installation guide](docs/installation.md) for tool-environment repair and upgrade caveats.
+
 ### Index and search
 
 1. Start the server:
