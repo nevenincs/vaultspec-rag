@@ -41,16 +41,14 @@ This research grounds the fixes in (1) uv tool-environment mechanics (external) 
   table recording `--index` entries and `--with` packages/constraints; upgrade
   re-consults them (astral-sh/uv issue 11929 demonstrates the shape and the
   re-application, and the tools docs state upgrades respect install-time constraints).
-  Therefore `uv tool install "vaultspec-rag[mcp]" --index
-  https://download.pytorch.org/whl/cu130` yields upgrades that keep CUDA torch. This is
+  Therefore `uv tool install "vaultspec-rag[mcp]" --index https://download.pytorch.org/whl/cu130` yields upgrades that keep CUDA torch. This is
   the durable fix vector.
 - **U2 - A bare `--index` is a blunt instrument; a `--with` direct-URL is sharper.**
   A recorded `--index` becomes the highest-priority index for ALL packages (workable
   because the pytorch index serves only torch/vision/audio, PyPI stays as fallback),
   and `explicit=true` + `[tool.uv.sources]` pins cannot be expressed through the tool
   CLI (sources are project-file-only). The index-independent alternative is a PEP 508
-  direct reference: `--with "torch @
-  https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"`,
+  direct reference: `--with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"`,
   fully recorded and re-applied, and it sidesteps a known Windows `--index` breakage
   for the pytorch index (astral-sh/uv issue 11532). Cost: the URL hard-pins version,
   python ABI, and platform.
@@ -106,8 +104,7 @@ so `/health` is unreachable exactly while the lock says "owned").
   `tools`. `vaultspec-rag install` patches the *project* pyproject
   (`commands/_torch_flow.py`) and then calls `warn_if_active_torch_not_gpu()`
   (`cli/_install.py` 312-315); on a CPU-only tool env that prints (`_gpu_errors.py`
-  112-167) the exact working command: `uv pip install --python "{sys.executable}"
-  --reinstall --torch-backend=cu130 torch`. The cu130 pin is the project-scoped
+  112-167) the exact working command: `uv pip install --python "{sys.executable}" --reinstall --torch-backend=cu130 torch`. The cu130 pin is the project-scoped
   `[tool.uv.sources]` + `[[tool.uv.index]] pytorch-cu130` pair, absent from published
   wheel metadata - so any bare tool-env resolve pulls CPU torch from PyPI (matches
   U3/U6).
@@ -119,11 +116,9 @@ so `/health` is unreachable exactly while the lock says "owned").
   line - exactly the manual comparison the reporter had to make.
 - **F4 - The warming gap is the lifespan ordering.** In
   `src/vaultspec_rag/server/_lifespan.py`: `acquire_machine_lock()` first (124), then
-  qdrant + model warmup (134), and only then `yield` to uvicorn (136). `server
-  start`'s guard reads `machine_lock_live_holder()` (`_service_lifecycle.py` 412-431:
+  qdrant + model warmup (134), and only then `yield` to uvicorn (136). `server start`'s guard reads `machine_lock_live_holder()` (`_service_lifecycle.py` 412-431:
   "A vaultspec-rag service already owns this machine (pid {holder}).") - fires during
-  warmup. `server status --port` classifies via `_explicit_port_state(port_listening,
-  health)` (`_service_lifecycle.py` 1840-1848): health ready means running, port
+  warmup. `server status --port` classifies via `_explicit_port_state(port_listening, health)` (`_service_lifecycle.py` 1840-1848): health ready means running, port
   listening means unreachable, **else "stopped" (exit 3)** - and during warmup the
   port is not accepting, so status says stopped while start says owned. No warming
   state exists anywhere (grep finds only `warmup`, never `warming`).
@@ -169,10 +164,8 @@ non-envelope shape and discoverability.
   upgrade).
 - **O2 - Single-step remediation (fixes R1's indirection).** `_preflight_daemon_cuda`
   already knows the interpreter and can classify the env (F2/F3 helpers): print the
-  exact working `uv pip install --python "{interpreter}" --reinstall
-  --torch-backend=cu130 torch` command directly in the refusal instead of routing
-  through `vaultspec-rag install`. Optionally an explicit `vaultspec-rag install
-  --repair-env` (or `server doctor --fix-torch`) that *runs* the escape hatch against
+  exact working `uv pip install --python "{interpreter}" --reinstall --torch-backend=cu130 torch` command directly in the refusal instead of routing
+  through `vaultspec-rag install`. Optionally an explicit `vaultspec-rag install --repair-env` (or `server doctor --fix-torch`) that *runs* the escape hatch against
   the resolved interpreter after confirmation.
 - **O3 - Classify the runtime env and warn on ephemeral (fixes R2 diagnosis).** Add
   an env classifier (installed-tool / uvx-ephemeral / project-venv / other) keyed on
@@ -192,8 +185,7 @@ non-envelope shape and discoverability.
   interacts with readiness semantics; the sidecar phase is the bounded option.
   `_explicit_port_state` then renders lock-held + sidecar-warming as "warming (pid,
   since)" instead of "stopped", and exits with a distinct code.
-- **O6 - Jobs envelope + discoverability (fixes UX-b residual).** Align `server jobs
-  --json` with the `{ok, command, data:{...}}` lifecycle envelope shape per
+- **O6 - Jobs envelope + discoverability (fixes UX-b residual).** Align `server jobs --json` with the `{ok, command, data:{...}}` lifecycle envelope shape per
   `broker-facing-cli-outcomes-are-structured-and-idempotent`, and mention `--json` in
   the human summary/help so script authors find it instead of grepping "active".
 

@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-tool-env-gpu-continuity-plan]]"
 ---
 
-# Add a pure-path runtime env classifier (installed-tool, uvx-ephemeral, project-venv, other) keyed on sys.prefix vs UV_TOOL_DIR and UV_CACHE_DIR shapes including archive-v0, with _running_in_uv_tool_env delegating to it, plus a single constant-derived helper producing the escape-hatch command for a given interpreter and the durable receipt-carrying uv tool install command
+# Add a pure-path runtime env classifier (installed-tool, uvx-ephemeral, project-venv, other) keyed on sys.prefix vs UV_TOOL_DIR and UV_CACHE_DIR shapes including archive-v0, with \_running_in_uv_tool_env delegating to it, plus a single constant-derived helper producing the escape-hatch command for a given interpreter and the durable receipt-carrying uv tool install command
 
 ## Scope
 

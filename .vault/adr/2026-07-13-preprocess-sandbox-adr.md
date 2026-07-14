@@ -11,6 +11,7 @@ related:
 superseded_by: '2026-07-14-preprocess-sandbox-removal-adr'
 modified: '2026-07-14'
 ---
+
 # `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `superseded`)
 
 ## Problem Statement

@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-preprocess-sandbox-removal-plan]]"
 ---
 
-# Update _resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing)
+# Update \_resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing)
 
 ## Scope
 

@@ -50,16 +50,14 @@ already exists but is underdiscoverable). Grounded in
 ## Considered options
 
 - **O-A1 (chosen) - canonical receipt-carrying install command via `--index`.**
-  Document and emit `uv tool install "vaultspec-rag[mcp]" --index
-  https://download.pytorch.org/whl/cu130` as the canonical tool install; the receipt
+  Document and emit `uv tool install "vaultspec-rag[mcp]" --index https://download.pytorch.org/whl/cu130` as the canonical tool install; the receipt
   re-applies it on every upgrade and the torch version floats with the release.
 - **O-A2 - `--with` direct-URL wheel pin as canonical.** Rejected as primary: it
   hard-pins torch version, python ABI, and platform, going stale on every torch or
   python bump; kept as the documented fallback because it sidesteps the Windows
   pytorch `--index` breakage (uv issue 11532) if that surfaces on `uv tool`.
 - **O-B1 (chosen) - exact-command remediation in the refusal itself.** The CPU-wheel
-  refusal prints the immediate repair (`uv pip install --python "{interpreter}"
-  --reinstall --torch-backend=cu130 torch`) plus the durable receipt fix (O-A1),
+  refusal prints the immediate repair (`uv pip install --python "{interpreter}" --reinstall --torch-backend=cu130 torch`) plus the durable receipt fix (O-A1),
   env-classified; `vaultspec-rag install` stops being the advertised remediation on
   non-project envs.
 - **O-B2 - an active `install --repair-env` that runs the escape hatch.** Deferred:

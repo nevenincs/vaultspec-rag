@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-tool-env-gpu-continuity-plan]]"
 ---
 
-# Extend the _preflight_daemon_cuda refusal to print the env classification label beside the Service interpreter path and the exact escape-hatch plus durable-fix commands for the resolved interpreter, dropping the vaultspec-rag install next-action on non-project envs
+# Extend the \_preflight_daemon_cuda refusal to print the env classification label beside the Service interpreter path and the exact escape-hatch plus durable-fix commands for the resolved interpreter, dropping the vaultspec-rag install next-action on non-project envs
 
 ## Scope
 
