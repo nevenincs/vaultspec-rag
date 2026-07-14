@@ -360,7 +360,9 @@ class VaultSpecConfigWrapper:
         # and per-cycle reclaims are capped. The archive tree is bounded by
         # age and total size.
         "storage_autoprune": True,
-        "storage_autoprune_interval_minutes": 60,
+        # Float, not int: fractional minutes are the test seam for
+        # seconds-scale cadences, and env coercion is default-type-driven.
+        "storage_autoprune_interval_minutes": 60.0,
         "storage_autoprune_grace_hours": 24.0,
         "storage_autoprune_grace_hours_data": 168.0,
         "storage_autoprune_archive_retention_days": 30.0,

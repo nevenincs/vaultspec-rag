@@ -448,6 +448,11 @@ async def _maintenance_loop() -> None:
                 severity=logging.WARNING,
                 exc_info=True,
             )
+            # A failure BEFORE the interval sleep (e.g. a config coercion
+            # error) would otherwise recur instantly with no await point,
+            # pinning the event loop and starving every request handler.
+            # Back off a full minute so the loop always yields.
+            await asyncio.sleep(60.0)
 
 
 def _record_shutdown(reason: str, **kv: object) -> None:
