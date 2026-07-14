@@ -48,6 +48,7 @@ __all__ = [
     "remove_prefix",
     "remove_root",
     "reverse_map",
+    "update_orphan_stamps",
 ]
 
 # Filename of the manifest inside the managed service (``status_dir``)
@@ -87,12 +88,19 @@ class ManifestEntry:
         backend: ``"server"`` or ``"local"``.
         last_indexed: ISO-8601 timestamp of the most recent index, or the
             empty string when never stamped.
+        first_seen_orphaned: ISO-8601 timestamp of the first survey that
+            observed the root ``orphaned``, or the empty string when the
+            root is (or has returned to being) live/unverifiable. This is
+            the persisted grace clock: automated reclamation may only act
+            once the stamp is old enough, a daemon restart must not reset
+            it, and a reappearing root must.
     """
 
     prefix: str
     root: str
     backend: str
     last_indexed: str = ""
+    first_seen_orphaned: str = ""
 
 
 def _status_dir_path() -> Path:
@@ -158,6 +166,10 @@ def load_manifest() -> dict[str, ManifestEntry]:
             root=root,
             backend=str(record.get("backend", "")),
             last_indexed=str(record.get("last_indexed", "")),
+            # Lenient: pre-upgrade manifests lack the field; absent means
+            # "never observed orphaned", so the first reclaim can happen no
+            # earlier than one full grace window after upgrade.
+            first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
         )
     return entries
 
@@ -173,6 +185,7 @@ def _write_manifest(entries: dict[str, ManifestEntry]) -> Path:
                 "root": entry.root,
                 "backend": entry.backend,
                 "last_indexed": entry.last_indexed,
+                "first_seen_orphaned": entry.first_seen_orphaned,
             }
             for entry in entries.values()
         },
@@ -313,6 +326,65 @@ def classify_root(entry: ManifestEntry) -> str:
     except OSError:
         return "unverifiable"
     return "orphaned"
+
+
+def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str, str]:
+    """Advance the persisted grace clocks from one survey's classifications.
+
+    For every manifest entry whose prefix appears in ``statuses``: a newly
+    observed ``orphaned`` root gets ``first_seen_orphaned`` stamped with
+    ``now_iso`` (an existing stamp is preserved - the clock measures
+    CONTINUOUS orphan-hood, and a daemon restart must not reset it); any
+    other observation (``live``, ``unverifiable``) clears the stamp, so a
+    reappearing or merely unreachable root restarts its grace window from
+    zero. Prefixes absent from ``statuses`` are left untouched.
+
+    One atomic read-modify-write under the process lock; the disk write is
+    skipped when no stamp changed. The caller supplies the clock so this
+    layer keeps its no-clock-dependency convention.
+
+    Args:
+        statuses: Mapping of collection prefix to its survey status.
+        now_iso: ISO-8601 timestamp to stamp on newly orphaned entries.
+
+    Returns:
+        Mapping of prefix to its ``first_seen_orphaned`` value after the
+        update (empty string when clear), for every prefix in ``statuses``
+        that has a manifest entry.
+    """
+    stamps: dict[str, str] = {}
+    with _LOCK:
+        entries = load_manifest()
+        changed = False
+        for prefix, status in statuses.items():
+            entry = entries.get(prefix)
+            if entry is None:
+                continue
+            if status == "orphaned":
+                if not entry.first_seen_orphaned:
+                    entry = ManifestEntry(
+                        prefix=entry.prefix,
+                        root=entry.root,
+                        backend=entry.backend,
+                        last_indexed=entry.last_indexed,
+                        first_seen_orphaned=now_iso,
+                    )
+                    entries[prefix] = entry
+                    changed = True
+            elif entry.first_seen_orphaned:
+                entry = ManifestEntry(
+                    prefix=entry.prefix,
+                    root=entry.root,
+                    backend=entry.backend,
+                    last_indexed=entry.last_indexed,
+                    first_seen_orphaned="",
+                )
+                entries[prefix] = entry
+                changed = True
+            stamps[prefix] = entry.first_seen_orphaned
+        if changed:
+            _write_manifest(entries)
+    return stamps
 
 
 def rekey_prefix(
