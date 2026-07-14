@@ -6055,15 +6055,24 @@ class TestWarmingStatusState:
         assert state == "crashed_pid_dead"
         assert exit_code == 4
 
-    def test_explicit_port_state_warming_needs_a_live_pid(self):
+    def test_explicit_port_state_warming_needs_a_live_owned_pid(self):
         from vaultspec_rag.cli._service_lifecycle import _explicit_port_state
 
-        warming = _explicit_port_state(False, None, phase="warming", pid_alive=True)
+        warming = _explicit_port_state(
+            False, None, phase="warming", pid_alive=True, pid_is_ours=True
+        )
         assert warming[0] == "warming"
         assert warming[2] == 5
-        dead = _explicit_port_state(False, None, phase="warming", pid_alive=False)
+        dead = _explicit_port_state(
+            False, None, phase="warming", pid_alive=False, pid_is_ours=False
+        )
         assert dead[0] == "stopped"
         assert dead[2] == 3
+        reused = _explicit_port_state(
+            False, None, phase="warming", pid_alive=True, pid_is_ours=False
+        )
+        assert reused[0] == "stopped"
+        assert reused[2] == 3
 
     def test_explicit_port_state_absent_phase_is_unchanged(self):
         from vaultspec_rag.cli._service_lifecycle import _explicit_port_state
