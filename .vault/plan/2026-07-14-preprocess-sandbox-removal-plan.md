@@ -46,6 +46,7 @@ Rewrite the test surface for direct execution semantics, update operator docs to
 - [x] `P03.S18` - Update operator docs to the trust-based framing that preprocess config is code execution with operator privileges, removing sandbox/unsandboxed knob references; `docs/preprocessing-hooks.md`.
 - [x] `P03.S19` - Sweep remaining sandbox mentions from README, cli, and configuration docs; `docs/`.
 - [x] `P03.S20` - Run the full unit suite, lints (ruff, ty, basedpyright), and an end-to-end preprocess index benchmark on a rule-matched corpus to confirm the per-file cost returns to the process-spawn baseline; `src/vaultspec_rag/`.
+- [x] `P03.S21` - Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the aeat validation failure; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
 
 ## Description
 
