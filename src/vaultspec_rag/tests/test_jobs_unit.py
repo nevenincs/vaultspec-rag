@@ -240,3 +240,30 @@ class TestJobsLifecycle:
             and "phase=done" in message
             for message in messages
         )
+
+
+class TestJobsHumanSummarySignpost:
+    """The human jobs feed routes scripted consumers to --json: its summary
+    unconditionally contains the words "active" and "waiting", so grepping it
+    for job states self-deadlocks."""
+
+    def test_summary_carries_the_json_signpost(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_jobs import _render_jobs_feed
+
+        _render_jobs_feed({"total": 0, "returned": 0}, [], port=8766)
+        out = capsys.readouterr().out
+        assert "0 active, 0 waiting" in out
+        assert "--json" in out
+        assert "Scripting:" in out
+
+    def test_json_help_warns_about_the_summary_words(self) -> None:
+        import re
+
+        from ..cli._service_jobs import service_jobs
+
+        source = inspect.getsource(service_jobs)
+        match = re.search(r'"--json",\s*help=\(([^)]*)\)', source)
+        assert match is not None
+        assert "scripted waits" in match.group(1)
