@@ -1,14 +1,15 @@
 ---
 tags:
-  - '#audit'
-  - '#control-plane-affordances'
+  - "#audit"
+  - "#control-plane-affordances"
 date: '2026-07-13'
-modified: '2026-07-13'
 related:
-  - '[[2026-07-13-control-plane-affordances-adr]]'
-  - '[[2026-07-13-control-plane-affordances-plan]]'
+  - "[[2026-07-13-control-plane-affordances-adr]]"
+  - "[[2026-07-13-control-plane-affordances-plan]]"
+promoted_to:
+  - 'rule:broker-facing-cli-outcomes-are-structured-and-idempotent'
+modified: '2026-07-14'
 ---
-
 # `control-plane-affordances` audit: `execution review of the survey root lookup and stop --json`
 
 ## Scope
