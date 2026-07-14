@@ -18,7 +18,13 @@ import vaultspec_rag.cli as _cli
 from ..config import EnvVar, get_config
 from ._app import _global_target, server_app
 from ._core import logger
-from ._gpu_errors import _handle_gpu_error
+from ._gpu_errors import (
+    RuntimeEnvKind,
+    _handle_gpu_error,
+    classify_interpreter_env,
+    durable_tool_install_command,
+    gpu_escape_hatch_command,
+)
 from ._http_search import _try_http_admin
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
@@ -281,22 +287,32 @@ def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
         return
     blocking, reason = cuda_probe
     if blocking:
+        kind = classify_interpreter_env(interpreter)
+        if kind is RuntimeEnvKind.PROJECT_VENV:
+            next_actions = (
+                "Install/repair GPU torch in the service environment: "
+                "vaultspec-rag install, then uv sync --reinstall-package torch",
+                "Confirm the GPU is visible: nvidia-smi",
+            )
+        else:
+            next_actions = (
+                "Repair this environment now (undone by the next tool "
+                f"upgrade): {gpu_escape_hatch_command(interpreter)}",
+                "Make upgrades keep the GPU wheel (stop the service first): "
+                f"{durable_tool_install_command()}",
+                "Confirm the GPU is visible: nvidia-smi",
+            )
         raise _fail_start(
             json_mode,
             error="service_env_no_gpu",
             message="Service start failed",
             human_lines=(
-                f"Service interpreter: {interpreter}",
+                f"Service interpreter: {interpreter} ({kind.label})",
                 f"That environment cannot run the GPU-only service: {reason}.",
                 "The service runs in the environment that launches it and does "
                 "not provision its own python.",
-                "Provision GPU (cu130) torch into that environment, then retry.",
             ),
-            next_actions=(
-                "Install/repair GPU torch in the service environment: "
-                "vaultspec-rag install, then uv sync",
-                "Confirm the GPU is visible: nvidia-smi",
-            ),
+            next_actions=next_actions,
             detail=reason,
         )
     logger.warning(
@@ -587,7 +603,11 @@ def service_start(
         )
 
     log_path = _log_file()
-    _preflight_daemon_cuda(_resolve_daemon_interpreter(), json_mode=json_mode)
+    interpreter = _resolve_daemon_interpreter()
+    env_warnings = _ephemeral_env_warning(interpreter)
+    if env_warnings and not json_mode:
+        _print_lifecycle_lines(*env_warnings)
+    _preflight_daemon_cuda(interpreter, json_mode=json_mode)
     t0 = time.perf_counter()
     try:
         pid = _spawn_service(
@@ -618,7 +638,38 @@ def service_start(
             detail=str(exc),
         ) from exc
     _write_service_status(pid, port)
-    _await_service_ready(pid, port, log_path, json_mode=json_mode, t0=t0)
+    _await_service_ready(
+        pid,
+        port,
+        log_path,
+        json_mode=json_mode,
+        t0=t0,
+        env_warnings=env_warnings,
+    )
+
+
+def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
+    """Warning lines when the daemon interpreter is a uvx ephemeral cache env.
+
+    A uvx run silently falls back to a cached ephemeral environment when the
+    installed tool env is broken (e.g. a forced reinstall failed mid-removal
+    because the running service held the Scripts dir) or the request does not
+    match the installed spec. Nothing else distinguishes that env from the
+    installed tool, so the start surface names it loudly. Returns ``()`` for
+    every other environment kind.
+    """
+    if classify_interpreter_env(interpreter) is not RuntimeEnvKind.UVX_EPHEMERAL:
+        return ()
+    return (
+        "WARNING: the service interpreter is a uvx EPHEMERAL cache "
+        "environment - not the installed tool:",
+        f"  {interpreter}",
+        "uvx falls back to a cached environment when the installed tool env "
+        "is broken or the request does not match it.",
+        "Reinstall the tool with the service stopped (the Scripts lock during "
+        "a forced reinstall is the running service itself):",
+        f"  {durable_tool_install_command()}",
+    )
 
 
 def _await_service_ready(
@@ -628,6 +679,7 @@ def _await_service_ready(
     *,
     json_mode: bool,
     t0: float,
+    env_warnings: tuple[str, ...] = (),
 ) -> None:
     """Poll the spawned daemon's health until it is ready, or fail/time out.
 
@@ -689,6 +741,9 @@ def _await_service_ready(
                 pid = _health_service_pid(health, pid)
                 _update_service_metadata(_status_metadata_from_health(health, pid=pid))
                 startup_s = time.perf_counter() - t0
+                extra: dict[str, object] = (
+                    {"warnings": list(env_warnings)} if env_warnings else {}
+                )
                 _start_success(
                     json_mode,
                     status="started",
@@ -703,6 +758,7 @@ def _await_service_ready(
                     port=port,
                     startup_s=round(startup_s, 1),
                     log=str(log_path),
+                    **extra,
                 )
                 return
 
