@@ -228,6 +228,8 @@ def _operation_label(job: dict[str, object]) -> str:
     command = ""
     if isinstance(initiator, dict):
         command = str(cast("dict[str, object]", initiator).get("command") or "")
+    if source == "maintenance":
+        return "storage maintenance cycle"
     if trigger == "watcher":
         return f"{source} index update"
     if command.startswith("reindex_"):
