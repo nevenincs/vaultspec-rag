@@ -234,6 +234,11 @@ target-version = "py313"
 
 [tool.ty.environment]
 python-version = "3.13"
+# "all" makes no platform assumptions, so the win32-only sandbox/job-object
+# modules and the posix-only signal paths both resolve on every checking
+# host - CI's Linux ty otherwise rejects ctypes.WinDLL and a win32 host
+# would reject signal.SIGKILL.
+python-platform = "all"
 root = [".", "src"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on

@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-07-13'
+modified: '2026-07-14'
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-07-13-index-drift-hardening-plan]]'

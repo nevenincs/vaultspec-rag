@@ -87,7 +87,7 @@ async def _call_tool(
         return {}
 
 
-def _run(coro: Coroutine[object, object, dict[str, Any]]) -> dict[str, Any]:
+def _run[T](coro: Coroutine[object, object, T]) -> T:
     return asyncio.run(coro)
 
 
@@ -145,11 +145,11 @@ def _index_project(port: int, root: Path, timeout: float = 180.0) -> None:
     refuse to evict the still-busy slot.
     """
     token = _poll_health(port)["service_token"]
-    job_id = _run(_reindex_vault(port, root, token))  # type: ignore[arg-type]
+    job_id = _run(_reindex_vault(port, root, token))
     deadline = time.monotonic() + timeout
     phase: str | None = None
     while time.monotonic() < deadline:
-        phase = _run(_job_phase(port, job_id, token))  # type: ignore[arg-type]
+        phase = _run(_job_phase(port, job_id, token))
         if phase in _TERMINAL_PHASES:
             break
         time.sleep(0.25)

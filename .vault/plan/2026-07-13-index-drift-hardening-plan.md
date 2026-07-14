@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-07-13'
+modified: '2026-07-14'
 tier: L2
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'

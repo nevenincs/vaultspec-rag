@@ -3333,12 +3333,18 @@ class TestWinShutdownLog:
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
-    def test_service_stop_skips_log_on_posix(
+    def test_service_stop_logs_attribution_on_posix(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """POSIX path keeps the daemon-side lifecycle finally as source of truth."""
+        """POSIX stops also write the CLI-side attribution line.
+
+        The daemon's own lifecycle ``finally`` remains its source of truth
+        for the clean-shutdown event, but the CLI-side ``cli_terminate``
+        audit line carries the initiator identity on every platform so
+        "who stopped the service" is answerable from one record.
+        """
         from .. import cli
 
         status_dir = tmp_path / "status"
@@ -3367,10 +3373,14 @@ class TestWinShutdownLog:
             assert f"Process ID: {os.getpid()}" in result.output
             assert "PID:" not in result.output
 
-            # No CLI-emitted line on POSIX.
-            assert not log_path.exists(), (
-                "POSIX must rely on the daemon's own shutdown log line"
+            assert log_path.exists(), (
+                "every platform's stop must write the attribution audit line"
             )
+            line = log_path.read_text(encoding="utf-8")
+            assert "cli_terminate" in line
+            assert "initiator_pid" in line
+            assert "initiator_cmd" in line
+            assert "initiator_cwd" in line
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
