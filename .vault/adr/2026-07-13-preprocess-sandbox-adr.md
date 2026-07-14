@@ -1,17 +1,17 @@
 ---
 tags:
-  - '#adr'
-  - '#preprocess-sandbox'
+  - "#adr"
+  - "#preprocess-sandbox"
 date: '2026-07-13'
-modified: '2026-07-14'
 related:
-  - '[[2026-07-13-preprocess-sandbox-research]]'
-  - '[[2026-07-13-index-drift-hardening-adr]]'
-  - '[[2026-06-10-preprocess-hooks-adr]]'
-  - '[[2026-06-19-destructive-ops-security-audit]]'
+  - "[[2026-07-13-preprocess-sandbox-research]]"
+  - "[[2026-07-13-index-drift-hardening-adr]]"
+  - "[[2026-06-10-preprocess-hooks-adr]]"
+  - "[[2026-06-19-destructive-ops-security-audit]]"
+superseded_by: '2026-07-14-preprocess-sandbox-removal-adr'
+modified: '2026-07-14'
 ---
-
-# `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `accepted`)
+# `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `superseded`)
 
 ## Problem Statement
 
