@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-preprocess-sandbox-removal-plan]]"
 ---
 
-# Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, _probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol
+# Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, \_probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol
 
 ## Scope
 

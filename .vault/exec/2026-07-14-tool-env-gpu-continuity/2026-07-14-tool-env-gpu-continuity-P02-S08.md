@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-tool-env-gpu-continuity-plan]]"
 ---
 
-# Add a warming branch to _explicit_port_state and the port-only renderer (pid and since rendering, distinct exit code) and make the already-owns-this-machine start message say warming when the sidecar phase says so
+# Add a warming branch to \_explicit_port_state and the port-only renderer (pid and since rendering, distinct exit code) and make the already-owns-this-machine start message say warming when the sidecar phase says so
 
 ## Scope
 

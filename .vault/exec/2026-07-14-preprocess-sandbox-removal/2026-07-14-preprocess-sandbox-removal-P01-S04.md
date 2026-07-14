@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-preprocess-sandbox-removal-plan]]"
 ---
 
-# Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, _remap_staged_paths, the _REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene
+# Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, \_remap_staged_paths, the \_REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene
 
 ## Scope
 

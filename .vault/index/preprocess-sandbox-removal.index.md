@@ -45,13 +45,13 @@ Auto-generated index of all documents tagged with `#preprocess-sandbox-removal`.
 
 ### exec
 
-- `2026-07-14-preprocess-sandbox-removal-P01-S01` - Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, _probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol
+- `2026-07-14-preprocess-sandbox-removal-P01-S01` - Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, \_probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol
 - `2026-07-14-preprocess-sandbox-removal-P01-S02` - Delete the Windows AppContainer backend module (profile derivation, icacls grants, Job Object wrap, pipe plumbing)
 - `2026-07-14-preprocess-sandbox-removal-P01-S03` - Delete the POSIX bwrap/seatbelt backend module
-- `2026-07-14-preprocess-sandbox-removal-P01-S04` - Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, _remap_staged_paths, the _REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene
+- `2026-07-14-preprocess-sandbox-removal-P01-S04` - Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, \_remap_staged_paths, the \_REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene
 - `2026-07-14-preprocess-sandbox-removal-P01-S05` - Drop the server_mode/unsandboxed threading from preprocess_file and its callers, keeping the cache consult/write path unchanged
 - `2026-07-14-preprocess-sandbox-removal-P01-S06` - Drop the sandbox-policy fields from the preprocess context construction and any backend mentions
-- `2026-07-14-preprocess-sandbox-removal-P01-S07` - Update _resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing)
+- `2026-07-14-preprocess-sandbox-removal-P01-S07` - Update \_resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing)
 - `2026-07-14-preprocess-sandbox-removal-P01-summary` - `preprocess-sandbox-removal` `P01` summary
 - `2026-07-14-preprocess-sandbox-removal-P02-S08` - Collapse PreprocessMode to a two-state on/off by removing the unsandboxed literal, the PREPROCESS_UNSANDBOXED EnvVar, and the unsandboxed arm of the preprocess_mode property, keeping PREPROCESS=off as the kill switch
 - `2026-07-14-preprocess-sandbox-removal-P02-S09` - Remove the --preprocess-unsandboxed flag and its mutual-exclusion validation from the index command

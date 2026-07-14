@@ -16,13 +16,13 @@ related:
 
 Delete the OS containment layer (backends, probe, staging, fail-closed policy) and rewire the runner to a direct bounded subprocess launch, per ADR D1-D3, D5, D7-D8.
 
-- [x] `P01.S01` - Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, _probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol; `src/vaultspec_rag/indexer/_hook_sandbox.py`.
+- [x] `P01.S01` - Rewrite the sandbox module to a direct-launch helper: keep curated_child_env and default_popen_handle, delete resolve_hook_sandbox, \_probe_backend, stage_source, SandboxUnavailableError, and the HookSandbox protocol; `src/vaultspec_rag/indexer/_hook_sandbox.py`.
 - [x] `P01.S02` - Delete the Windows AppContainer backend module (profile derivation, icacls grants, Job Object wrap, pipe plumbing); `src/vaultspec_rag/indexer/_hook_sandbox_windows.py`.
 - [x] `P01.S03` - Delete the POSIX bwrap/seatbelt backend module; `src/vaultspec_rag/indexer/_hook_sandbox_posix.py`.
-- [x] `P01.S04` - Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, _remap_staged_paths, the _REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
+- [x] `P01.S04` - Rewire run_preprocessor to launch the hook directly against the original source path with a fresh scratch cwd, dropping backend resolution/memos, staging, \_remap_staged_paths, the \_REFUSED_REASON policy, and the server_mode/unsandboxed parameters while keeping timeout, stdout/stderr caps, schema validation, the emitted cap, on_error dispositions, and argv hygiene; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
 - [x] `P01.S05` - Drop the server_mode/unsandboxed threading from preprocess_file and its callers, keeping the cache consult/write path unchanged; `src/vaultspec_rag/indexer/_chunk_worker.py`.
 - [x] `P01.S06` - Drop the sandbox-policy fields from the preprocess context construction and any backend mentions; `src/vaultspec_rag/indexer/_preprocess_config.py`.
-- [x] `P01.S07` - Update _resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing); `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S07` - Update \_resolve_preprocess_context to the two-state mode (no server_mode/unsandboxed plumbing); `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P02` - Control-surface collapse
 

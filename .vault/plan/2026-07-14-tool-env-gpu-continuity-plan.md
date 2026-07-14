@@ -16,9 +16,9 @@ related:
 
 Give every GPU-refusal surface an environment-aware, copy-paste remediation: classify the runtime env (installed-tool, uvx-ephemeral, project-venv, other), derive the escape-hatch and durable receipt-install command strings from one constant surface, and rewrite the CPU-wheel refusal and installer warning to emit them (ADR A/B/C).
 
-- [x] `P01.S01` - Add a pure-path runtime env classifier (installed-tool, uvx-ephemeral, project-venv, other) keyed on sys.prefix vs UV_TOOL_DIR and UV_CACHE_DIR shapes including archive-v0, with _running_in_uv_tool_env delegating to it, plus a single constant-derived helper producing the escape-hatch command for a given interpreter and the durable receipt-carrying uv tool install command; `src/vaultspec_rag/cli/_gpu_errors.py`.
+- [x] `P01.S01` - Add a pure-path runtime env classifier (installed-tool, uvx-ephemeral, project-venv, other) keyed on sys.prefix vs UV_TOOL_DIR and UV_CACHE_DIR shapes including archive-v0, with \_running_in_uv_tool_env delegating to it, plus a single constant-derived helper producing the escape-hatch command for a given interpreter and the durable receipt-carrying uv tool install command; `src/vaultspec_rag/cli/_gpu_errors.py`.
 - [x] `P01.S02` - Rewrite the CPU-only messaging in warn_if_active_torch_not_gpu to emit the immediate escape hatch plus the durable receipt fix selected by env classification, sourcing both strings from the new helper; `src/vaultspec_rag/cli/_gpu_errors.py`.
-- [x] `P01.S03` - Extend the _preflight_daemon_cuda refusal to print the env classification label beside the Service interpreter path and the exact escape-hatch plus durable-fix commands for the resolved interpreter, dropping the vaultspec-rag install next-action on non-project envs; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P01.S03` - Extend the \_preflight_daemon_cuda refusal to print the env classification label beside the Service interpreter path and the exact escape-hatch plus durable-fix commands for the resolved interpreter, dropping the vaultspec-rag install next-action on non-project envs; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P01.S04` - Add a prominent uvx-ephemeral warning to server start, as human text plus a warnings field inside the json success envelope (never stray text), naming the installed-tool path and the stop-the-service-before-forced-reinstall guidance; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P01.S05` - Add classifier truth-table tests (tools dir, archive-v0 cache, project venv, env-var overrides, Windows path shapes), refusal-message content tests, and a single-source test asserting the remediation strings derive from the cu130 constants; `src/vaultspec_rag/tests/test_service_env_preflight.py`.
 
@@ -28,7 +28,7 @@ Close the lock-held-but-not-serving gap: the daemon stamps a warming-then-runnin
 
 - [x] `P02.S06` - Add an optional phase field to the service status sidecar schema with writer and reader back-compat treating an absent phase as today's semantics; `src/vaultspec_rag/cli/_service_status.py`.
 - [x] `P02.S07` - Stamp phase warming into the status sidecar after machine-lock acquisition and before component warmup, and phase running at the lifespan yield, written by the daemon process only; `src/vaultspec_rag/server/_lifespan.py`.
-- [x] `P02.S08` - Add a warming branch to _explicit_port_state and the port-only renderer (pid and since rendering, distinct exit code) and make the already-owns-this-machine start message say warming when the sidecar phase says so; `src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P02.S08` - Add a warming branch to \_explicit_port_state and the port-only renderer (pid and since rendering, distinct exit code) and make the already-owns-this-machine start message say warming when the sidecar phase says so; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P02.S09` - Add status-state fixtures asserting warming rendering, the distinct exit code, and absent-phase back-compat alongside the existing stopped and unreachable cases; `src/vaultspec_rag/tests/test_cli.py`.
 
 ### Phase `P03` - Jobs signposting and documentation
