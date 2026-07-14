@@ -41,8 +41,8 @@ from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs
     render_mcp_definition_for_mode,
 )
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
-    DEPENDENCY_LEAK_ADVISORY,
     PackageDeclaration,
+    dependency_leak_advisory,
     read_package_declaration,
     write_package_declaration,
 )
@@ -60,6 +60,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+#: The leak advisory rag emits names rag's own distribution, not core's, so the
+#: text is package-correct on a companion install (install-parity W02.P07).
+_RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 
 # The concrete launch shapes each rendered mode produces for rag, derived from
 # the install-parity ADR's Implementation section: dependency-rendered modes
@@ -254,6 +258,30 @@ def test_upgrade_keeps_persisted_mode_when_no_flag(tmp_path: Path) -> None:
     assert _rag_mcp_entry(ws)["command"] == _TOOL_LAUNCH[0]
 
 
+def test_upgrade_flipping_rag_mode_migrates_managed_entry_without_force(
+    tmp_path: Path,
+) -> None:
+    """A non-forced upgrade that flips rag's mode re-shapes its managed entry.
+
+    The force-managed seam: a plain sync's force-gate would skip the already
+    managed rag ``.mcp.json`` entry still carrying the old tool launch, leaving
+    the deployed shape stale. The flip-detected migration must overwrite just
+    rag's own entry into the new dependency shape.
+    """
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    _install(ws, mode=InstallMode.TOOL)
+    assert _rag_mcp_entry(ws)["command"] == _TOOL_LAUNCH[0]
+
+    _install(ws, mode=InstallMode.DEPENDENCY, upgrade=True)
+
+    decl = read_package_declaration(ws, RAG_DISTRIBUTION_NAME)
+    assert decl is not None
+    assert decl.install_mode is InstallMode.DEPENDENCY
+    entry = _rag_mcp_entry(ws)
+    assert entry["command"] == _DEP_LAUNCH[0]
+    assert entry["args"] == _DEP_LAUNCH[1]
+
+
 def test_infer_upgrade_mode_explicit_wins(tmp_path: Path) -> None:
     """An explicit flag on upgrade outranks any deployed evidence."""
     ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
@@ -344,7 +372,9 @@ def test_advisory_fires_when_run_newly_elects_dependency(tmp_path: Path) -> None
 
     report = _install(ws, mode=InstallMode.DEPENDENCY)
 
-    assert DEPENDENCY_LEAK_ADVISORY in report.warnings
+    assert _RAG_LEAK_ADVISORY in report.warnings
+    # The advisory names rag, not core, on a companion dependency election.
+    assert RAG_DISTRIBUTION_NAME in _RAG_LEAK_ADVISORY
 
 
 def test_advisory_silent_on_persisted_dependency_read(tmp_path: Path) -> None:
@@ -354,7 +384,7 @@ def test_advisory_silent_on_persisted_dependency_read(tmp_path: Path) -> None:
 
     report = _install(ws)
 
-    assert DEPENDENCY_LEAK_ADVISORY not in report.warnings
+    assert _RAG_LEAK_ADVISORY not in report.warnings
 
 
 def test_advisory_silent_for_tool_mode(tmp_path: Path) -> None:
@@ -363,7 +393,7 @@ def test_advisory_silent_for_tool_mode(tmp_path: Path) -> None:
 
     report = _install(ws, mode=InstallMode.TOOL)
 
-    assert DEPENDENCY_LEAK_ADVISORY not in report.warnings
+    assert _RAG_LEAK_ADVISORY not in report.warnings
 
 
 def test_local_only_marker_is_orthogonal_to_mode_declaration(

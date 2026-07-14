@@ -156,20 +156,24 @@ def persist_rag_mode(target: Path, mode: InstallMode) -> None:
     )
 
 
-def render_rag_mcp_entry(mode: InstallMode) -> None:
-    """Re-render only rag's managed MCP entry to *mode*'s launch shape.
+def migrate_rag_mcp_entry(mode: InstallMode) -> None:
+    """Force rag's already-managed MCP entry into *mode*'s launch shape.
 
-    Core's ``sync_provider`` renders every collected MCP definition at a single
-    sync-wide mode - the mode resolved for ``vaultspec-core`` - so a fresh sync
-    leaves rag's ``.mcp.json`` entry carrying core's render mode, not rag's own.
-    This closes that gap by re-running core's
+    The mode-flip seam, the direct analogue of core's own force-managed pass in
+    ``commands.py``. From the ``0.1.39`` floor core's ``sync_provider`` renders
+    every companion MCP definition at *its own* declaring package's committed
+    mode (rag's entry names ``vaultspec-rag`` through the ``_vaultspec_mode_package``
+    token), so a fresh install and a same-mode re-install already write rag's
+    ``.mcp.json`` entry in rag's own shape natively - no re-render needed. The one
+    gap the native sync leaves is an ``install --upgrade`` that *flips* rag's
+    mode without ``--force``: the plain sync's force-gate skips the
+    already-managed rag entry still carrying the old mode's launch shape. This
+    closes that gap by re-running core's
     :func:`~vaultspec_core.core.mcps.mcp_sync` at rag's resolved *mode* while
-    scoping the write to rag's own managed entry via ``force_managed``: any
-    sibling ``vaultspec-core`` entry that differs from *mode* is skipped and left
-    exactly as core's own sync wrote it, so a mixed configuration (core in one
-    mode, rag in another) renders each package's entry at its own mode. The
-    re-render must run after core's context is established (the sync pass) and
-    is a no-op when rag's entry already matches *mode*.
+    scoping the overwrite to rag's own managed entry via ``force_managed``, so
+    any sibling ``vaultspec-core`` entry that differs is left exactly as core's
+    own sync wrote it. It must run after core's context is established (the sync
+    pass) and is a no-op when rag's entry already matches *mode*.
 
     The returned sync statistics are intentionally discarded: the only surface
     this touches is rag's own entry, and a benign "sibling entry differs" skip
