@@ -68,8 +68,8 @@ def _run(
 ) -> PreprocessResult:
     """Invoke the runner directly against the original source path.
 
-    The hook runs as a bounded, curated subprocess grandchild with a fresh
-    scratch cwd; here we exercise its timeout, exit-code, JSON, and cap logic.
+    The hook runs as a bounded, curated subprocess grandchild with the project
+    root as cwd; here we exercise its timeout, exit-code, JSON, and cap logic.
     """
     return run_preprocessor(
         source,
@@ -134,33 +134,29 @@ def test_success_returns_validated_output(tmp_path: Path) -> None:
     assert result.output.units[0].locator.value == 1
 
 
-_SCRATCH_PROBE_BODY = """
+_CWD_PROBE_BODY = """
     import json, os
     print(json.dumps({
         "schema_version": 1,
         "preprocessor_id": "cwd-probe",
         "preprocessor_version": "1.0",
         "source_path": os.getcwd(),
-        "text": json.dumps(sorted(os.listdir(os.getcwd()))),
+        "text": "",
     }))
 """
 
 
-def test_hook_runs_in_fresh_empty_scratch_cwd_that_is_cleaned(tmp_path: Path) -> None:
-    # The child cwd is a fresh mkdtemp scratch dir (not the repo, not the source
-    # dir): empty at launch and removed in a finally once the run completes.
-    script = _script(tmp_path, _SCRATCH_PROBE_BODY)
+def test_hook_runs_with_the_project_root_as_cwd(tmp_path: Path) -> None:
+    # Project-launcher hook commands (uv run, npm exec, make) resolve their
+    # project from the cwd, so the child runs with the project root as its
+    # working directory - the same directory a hook author validates from with
+    # preprocess run-one.
+    script = _script(tmp_path, _CWD_PROBE_BODY)
     source = tmp_path / "doc.bin"
     source.write_bytes(b"x")
     result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.output is not None
-    scratch = Path(result.output.source_path or "")
-    assert scratch != source.parent
-    assert scratch.name.startswith("vsrag-hook-")
-    # Empty at launch: the listing the child reported carries no entries.
-    assert result.output.text == "[]"
-    # Removed after the run.
-    assert not scratch.exists()
+    assert Path(result.output.source_path or "") == tmp_path
 
 
 def test_hook_receives_the_original_source_path(tmp_path: Path) -> None:

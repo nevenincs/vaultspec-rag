@@ -16,20 +16,17 @@ metacharacters cannot inject.
 The hook runs directly with the operator's privileges: a root's preprocess
 config is repo-authored code, the same trust class as building that repo
 (preprocess-sandbox-removal ADR). The child still gets a curated, secret-free
-environment and a fresh scratch cwd, and every output/timeout bound below
-applies unchanged.
+environment and runs with the project root as its cwd, and every
+output/timeout bound below applies unchanged.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import pathlib
 import shlex
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal
@@ -44,6 +41,8 @@ from ._preprocess_schema import (
 )
 
 if TYPE_CHECKING:
+    import pathlib
+
     from ._preprocess_config import PreprocessRule
 
 logger = logging.getLogger(__name__)
@@ -226,19 +225,19 @@ def _run_bounded(
     timeout_s: float | None,
     stdout_cap: int,
     *,
-    scratch_dir: pathlib.Path,
+    cwd: pathlib.Path,
     env: dict[str, str],
 ) -> tuple[int, bytes, str]:
     """Launch ``argv`` directly and drain it bounded.
 
-    The child runs with the curated env and the fresh ``scratch_dir`` as its
-    cwd. All output/timeout bounds are enforced by :func:`_drain_and_wait`.
+    The child runs with the curated env and ``cwd`` as its working directory.
+    All output/timeout bounds are enforced by :func:`_drain_and_wait`.
 
     Raises:
         _PreprocessSkipError: On launch failure or timeout.
     """
     try:
-        handle = default_popen_handle(argv, cwd=scratch_dir, env=env)
+        handle = default_popen_handle(argv, cwd=cwd, env=env)
     except OSError as exc:
         msg = f"preprocessor could not be launched: {exc}"
         raise _PreprocessSkipError(msg) from exc
@@ -255,9 +254,12 @@ def _invoke_and_validate(
 ) -> PreprocOutput:
     """Run the preprocessor, validate its output, and enforce the caps.
 
-    The hook reads the original source path directly and runs with a fresh
-    empty scratch directory as its cwd (removed in a ``finally``), so a hook
-    that writes relative paths never pollutes the repo.
+    The hook reads the original source path directly and runs with the project
+    root as its cwd - the same working directory hook authors use when they
+    validate a rule with ``preprocess run-one``. Project-launcher commands
+    (``uv run``, ``npm exec``, ``make``) resolve their project from the cwd, so
+    any other directory silently breaks them; a hook that writes into the repo
+    is the project's own doing under the trust model.
 
     Raises:
         _PreprocessSkipError: On any recoverable per-file failure
@@ -269,21 +271,15 @@ def _invoke_and_validate(
         msg = "rule has neither a runnable command nor entry_point"
         raise _PreprocessSkipError(msg)
 
-    scratch_dir = pathlib.Path(tempfile.mkdtemp(prefix="vsrag-hook-"))
-    try:
-        stdout_cap = max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER, _MIN_STDOUT_CAP)
-        returncode, stdout, stderr = _run_bounded(
-            argv,
-            rule.timeout_s,
-            stdout_cap,
-            scratch_dir=scratch_dir,
-            env=_child_env(project_root),
-        )
-        return _validate_output(
-            returncode, stdout, stderr, stdout_cap, max_emitted_bytes
-        )
-    finally:
-        shutil.rmtree(scratch_dir, ignore_errors=True)
+    stdout_cap = max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER, _MIN_STDOUT_CAP)
+    returncode, stdout, stderr = _run_bounded(
+        argv,
+        rule.timeout_s,
+        stdout_cap,
+        cwd=project_root,
+        env=_child_env(project_root),
+    )
+    return _validate_output(returncode, stdout, stderr, stdout_cap, max_emitted_bytes)
 
 
 def _validate_output(

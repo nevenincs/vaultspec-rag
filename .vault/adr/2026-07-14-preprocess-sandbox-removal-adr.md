@@ -133,10 +133,14 @@ that launch is deleted. The decision set:
   keeps daemon tokens out of the hook child even though the child is otherwise
   uncontained. `PYTHONPATH=project_root` injection stays so `entry_point`/project-local
   hooks import their own module tree.
-- **D8 - Set the child cwd to a fresh empty scratch dir.** With staging gone, the child
-  still runs with cwd set to a fresh empty temp directory (kept, cheap - one `mkdtemp`
-  and a `finally` `rmtree`), giving hooks a writable temp cwd without polluting the repo,
-  while reading the original source path passed as an argv operand. No source copy
+- **D8 (amended in execution) - Set the child cwd to the project root.** The first
+  execution pass kept a fresh scratch temp dir as the cwd; the aeat validation run then
+  showed all 531 hook invocations failing, because project-launcher commands (`uv run`,
+  `npm exec`, `make`) resolve their project from the cwd and the pre-sandbox runner -
+  the contract hooks were authored and validated against with `preprocess run-one` -
+  inherited a repo cwd. The child therefore runs with the project root as its working
+  directory, reading the original source path passed as an argv operand. A hook that
+  writes into the repo is the project's own doing under the trust model. No source copy
   occurs.
 - **D9 - Keep the output cache and the incremental hash gate.** The content-hash
   `_preprocess_cache` (keyed on `source_hash | command | schema_version`) and the blake2b

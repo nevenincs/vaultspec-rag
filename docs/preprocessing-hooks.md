@@ -234,9 +234,11 @@ than as a security boundary:
   `VAULTSPEC_RAG_*` knob and every credential (Qdrant API key, HF/cloud tokens, Git
   tokens), so a hook inherits none of the daemon's secrets.
 - **Process, time, and output bounds** - the hook runs out-of-process (a subprocess
-  grandchild, which also keeps it off the GPU worker), with a fresh empty scratch
-  directory as its working directory, a wall-clock `timeout_s`, and stdout/stderr caps, so
-  a misbehaving extractor is bounded in time and output rather than left to run away.
+  grandchild, which also keeps it off the GPU worker), with the project root as its
+  working directory (so `uv run`, `npm exec`, and other project launchers resolve the
+  project exactly as they do when you validate a rule with `preprocess run-one`), a
+  wall-clock `timeout_s`, and stdout/stderr caps, so a misbehaving extractor is bounded
+  in time and output rather than left to run away.
 
 `vaultspec-rag preprocess status` reports whether a root ships a config, its resolved rule
 count, and the effective mode.
