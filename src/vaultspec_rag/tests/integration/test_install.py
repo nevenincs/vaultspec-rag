@@ -53,6 +53,15 @@ def _read_codex_mcp(target: Path) -> dict[str, Any]:
     return raw["mcp_servers"]
 
 
+def _workspace_file_bytes(target: Path) -> dict[str, bytes]:
+    """Capture every real workspace file for byte-inert preview assertions."""
+    return {
+        path.relative_to(target).as_posix(): path.read_bytes()
+        for path in target.rglob("*")
+        if path.is_file()
+    }
+
+
 def _install(target: Path, **overrides: Any) -> Any:
     """Run a network-free dual-provider install with MCP intent enabled."""
     if not read_manifest(target):
@@ -205,6 +214,100 @@ class TestDryRunInstall:
         providers = report.to_dict()["sync_providers"]
         assert providers["claude"]["updated"] == 1
         assert providers["codex"]["updated"] == 1
+
+    def test_fresh_mcp_dry_run_reports_native_additions_without_writing(
+        self, fresh_workspace: Path
+    ) -> None:
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        report = _install(fresh_workspace, dry_run=True)
+
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"]["added"] == 1
+        assert providers["codex"]["added"] == 1
+        assert providers["claude"]["items"] == [["vaultspec-rag", "[ADD]"]]
+        assert providers["codex"]["items"] == [["vaultspec-rag", "[ADD]"]]
+
+    def test_no_mcp_dry_run_reports_native_prunes_without_writing(
+        self, installed_workspace: Path
+    ) -> None:
+        before = _workspace_file_bytes(installed_workspace)
+        locks_before = sorted(installed_workspace.rglob("*.lock"))
+
+        report = _install(
+            installed_workspace,
+            dry_run=True,
+            install_mcp=False,
+        )
+
+        assert _workspace_file_bytes(installed_workspace) == before
+        assert sorted(installed_workspace.rglob("*.lock")) == locks_before
+        assert ("mcps/vaultspec-rag.builtin.json", "[REMOVE]") in report.seeded
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"]["pruned"] == 1
+        assert providers["codex"]["pruned"] == 1
+        assert providers["claude"]["items"] == [["vaultspec-rag", "[DELETE]"]]
+        assert providers["codex"]["items"] == [["vaultspec-rag", "[DELETE]"]]
+
+    def test_cli_dry_run_json_reports_desired_provider_plan_without_writing(
+        self, tmp_path: Path
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        runner = CliRunner()
+        fresh_workspace = tmp_path / "fresh"
+        fresh_workspace.mkdir()
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        fresh_before = _workspace_file_bytes(fresh_workspace)
+        add_result = runner.invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(fresh_workspace),
+                "--dry-run",
+                "--no-provision",
+                "--no-torch-config",
+                "--mcp",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+        assert add_result.exit_code == 0, add_result.output
+        add_report = json.loads(add_result.output)
+        assert add_report["sync_providers"]["claude"]["added"] == 1
+        assert add_report["sync_providers"]["codex"]["added"] == 1
+        assert _workspace_file_bytes(fresh_workspace) == fresh_before
+
+        installed_workspace = tmp_path / "installed"
+        installed_workspace.mkdir()
+        _install(installed_workspace)
+        installed_before = _workspace_file_bytes(installed_workspace)
+        remove_result = runner.invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(installed_workspace),
+                "--dry-run",
+                "--no-provision",
+                "--no-torch-config",
+                "--no-mcp",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+        assert remove_result.exit_code == 0, remove_result.output
+        remove_report = json.loads(remove_result.output)
+        assert remove_report["sync_providers"]["claude"]["pruned"] == 1
+        assert remove_report["sync_providers"]["codex"]["pruned"] == 1
+        assert _workspace_file_bytes(installed_workspace) == installed_before
 
 
 class TestUninstallSafety:

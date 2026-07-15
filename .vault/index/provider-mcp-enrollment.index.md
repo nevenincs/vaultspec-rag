@@ -20,6 +20,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S12]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S13]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S14]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S15]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -56,6 +57,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S12` - Raise the Core minimum and refresh the lock after the fixed Core release is published
 - `2026-07-15-provider-mcp-enrollment-P03-S13` - Verify wheel metadata console entry point canonical builtin Core floor and installed-package acceptance
 - `2026-07-15-provider-mcp-enrollment-P03-S14` - Run formal code review and record release-readiness findings
+- `2026-07-15-provider-mcp-enrollment-P03-S15` - Implement accurate non-mutating MCP source-overlay previews and real-file API/CLI regressions
 
 ### plan
 

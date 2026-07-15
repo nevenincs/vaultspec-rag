@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tomlkit.exceptions import ParseError
@@ -34,7 +38,7 @@ from ._workspace import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Iterator
 
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         InstallMode,
@@ -106,6 +110,46 @@ def _reconcile_mcp_extra(
     report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
 
 
+@contextmanager
+def _mcp_preview_projection(
+    target: Path,
+    *,
+    install_mcp: bool,
+    force: bool,
+    upgrade: bool,
+) -> Iterator[Path]:
+    """Project the requested MCP source state away from the real workspace.
+
+    Core 0.1.44 accepts a target workspace for dry-run reconciliation but does not
+    accept an in-memory source override.  A minimal temporary projection lets Core
+    plan from the exact source intent while leaving the real workspace, ownership
+    sidecar, provider files, and lock paths untouched.
+    """
+    with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-preview-") as raw:
+        projection = Path(raw) / "workspace"
+        projection.mkdir()
+
+        source_vaultspec = target / ".vaultspec"
+        projected_vaultspec = projection / ".vaultspec"
+        if source_vaultspec.exists():
+            shutil.copytree(source_vaultspec, projected_vaultspec)
+
+        for relative in (Path(".mcp.json"), Path(".codex") / "config.toml"):
+            source = target / relative
+            if not source.exists():
+                continue
+            destination = projection / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+
+        seed_builtins(projected_vaultspec, force=force or upgrade)
+        if not install_mcp:
+            for relative in list_builtins():
+                if relative.startswith("mcps/"):
+                    (projected_vaultspec / relative).unlink(missing_ok=True)
+        yield projection
+
+
 def _run_core_sync(
     target: Path,
     report: InstallReport,
@@ -113,6 +157,9 @@ def _run_core_sync(
     force: bool,
     skip: set[str],
     mode: InstallMode,
+    *,
+    install_mcp: bool,
+    upgrade: bool,
 ) -> None:
     if "core" in skip:
         return
@@ -139,22 +186,37 @@ def _run_core_sync(
                 )
     if "mcp" in skip:
         return
-    try:
-        result = mcp_sync(
-            dry_run=dry_run,
-            force=force,
-            prune=True,
-            mode=mode,
-            provider="all",
-            scope="project",
-            target_dir=target,
-        )
-    except Exception as exc:
-        logger.error("project MCP sync failed during install: %s", exc)
-        report.warnings.append(f"project MCP sync failed: {exc}")
-    else:
-        report.sync_results.append(result)
-        report.mcp_sync_results.append(result)
+
+    @contextmanager
+    def sync_target() -> Iterator[Path]:
+        if dry_run:
+            with _mcp_preview_projection(
+                target,
+                install_mcp=install_mcp,
+                force=force,
+                upgrade=upgrade,
+            ) as projection:
+                yield projection
+        else:
+            yield target
+
+    with sync_target() as mcp_target:
+        try:
+            result = mcp_sync(
+                dry_run=dry_run,
+                force=force,
+                prune=True,
+                mode=mode,
+                provider="all",
+                scope="project",
+                target_dir=mcp_target,
+            )
+        except Exception as exc:
+            logger.error("project MCP sync failed during install: %s", exc)
+            report.warnings.append(f"project MCP sync failed: {exc}")
+        else:
+            report.sync_results.append(result)
+            report.mcp_sync_results.append(result)
 
 
 def _persist_mode_and_detect_flip(
@@ -336,7 +398,16 @@ def install_run(
     # (instead of in _resolve_target) so the manifest write is paired
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
-    _run_core_sync(target, report, dry_run, force, skip, resolved.mode)
+    _run_core_sync(
+        target,
+        report,
+        dry_run,
+        force,
+        skip,
+        resolved.mode,
+        install_mcp=install_mcp,
+        upgrade=upgrade,
+    )
 
     # Mode-flip seam, the analogue of core's own force-managed pass: a plain
     # (non-forced) sync's force-gate skips an already-managed rag entry whose
