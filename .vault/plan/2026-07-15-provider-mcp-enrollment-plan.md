@@ -35,7 +35,7 @@ Make --mcp and --no-mcp reconcile the canonical source and optional dependency a
 Verify provider-native behavior, package metadata, installed artifacts, and the dependent release with real workspaces and host CLIs.
 
 - [ ] `P03.S09` - Add real-behavior mode and enrollment tests for both provider-native targets; `src/vaultspec_rag/tests/test_install_mode.py`.
-- [ ] `P03.S10` - Add real-behavior dependency-placement tests for existing runtime and dev declarations; `src/vaultspec_rag/tests/test_install_mcp_extra.py`.
+- [x] `P03.S10` - Add real-behavior dependency-placement tests for existing runtime and dev declarations; `src/vaultspec_rag/tests/test_install_mcp_extra.py`.
 - [ ] `P03.S11` - Add end-to-end install dry-run drift upgrade uninstall and host CLI acceptance coverage; `src/vaultspec_rag/tests/integration/test_install.py`.
 - [ ] `P03.S12` - Raise the Core minimum and refresh the lock after the fixed Core release is published; `pyproject.toml and uv.lock`.
 - [ ] `P03.S13` - Verify wheel metadata console entry point canonical builtin Core floor and installed-package acceptance; `src/vaultspec_rag/tests/test_packaging_metadata.py and tests/smoke_check.py`.
