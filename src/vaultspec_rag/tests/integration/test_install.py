@@ -68,6 +68,15 @@ def _workspace_file_bytes(target: Path) -> dict[str, bytes]:
     }
 
 
+def _workspace_inventory(target: Path) -> dict[str, tuple[str, bytes]]:
+    return {
+        path.relative_to(target).as_posix(): (
+            ("file", path.read_bytes()) if path.is_file() else ("directory", b"")
+        )
+        for path in target.rglob("*")
+    }
+
+
 def _install(target: Path, **overrides: Any) -> Any:
     """Run a network-free dual-provider install with MCP intent enabled."""
     if not read_manifest(target):
@@ -845,6 +854,93 @@ class TestDryRunInstall:
         assert declaration is not None
         assert declaration.install_mode is InstallMode.DEPENDENCY
 
+    @pytest.mark.parametrize("preexisting_locks", [False, True])
+    def test_fresh_mode_write_failure_restores_exact_intent_inventory(
+        self, fresh_workspace: Path, preexisting_locks: bool
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        (fresh_workspace / ".vault" / "data").mkdir(parents=True)
+        for name in ("mcps", "rules", "skills"):
+            (fresh_workspace / ".vaultspec" / name).mkdir(parents=True, exist_ok=True)
+        workspace = fresh_workspace / ".vaultspec" / "workspace.json"
+        if preexisting_locks:
+            pyproject.with_suffix(".toml.lock").write_bytes(b"project-lock\x00")
+            workspace.with_suffix(".json.lock").write_bytes(b"workspace-lock\x00")
+        write_blocker = workspace.with_suffix(workspace.suffix + f".{os.getpid()}.tmp")
+        write_blocker.mkdir()
+        before = _workspace_inventory(fresh_workspace)
+
+        report = _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+
+        assert report.mcp_extra_action == "error"
+        assert report.mcp_sync_failed
+        assert not report.seeded
+        assert not report.sync_results
+        assert _workspace_inventory(fresh_workspace) == before
+        assert not workspace.exists()
+
+    @pytest.mark.parametrize("existing_source", [False, True])
+    def test_mcp_source_write_failure_rolls_back_full_intent_transaction(
+        self, fresh_workspace: Path, existing_source: bool
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        (fresh_workspace / ".vault" / "data").mkdir(parents=True)
+        for name in ("mcps", "rules", "skills"):
+            (fresh_workspace / ".vaultspec" / name).mkdir(parents=True, exist_ok=True)
+        source = fresh_workspace / _RAG_MCP_REL
+        if existing_source:
+            source.write_bytes(b'{"operator": "preserve exact bytes"}\n')
+        source.with_suffix(source.suffix + f".{os.getpid()}.tmp").mkdir()
+        pyproject.with_suffix(".toml.lock").write_bytes(b"project-lock\x00")
+        workspace = fresh_workspace / ".vaultspec" / "workspace.json"
+        workspace.with_suffix(".json.lock").write_bytes(b"workspace-lock\x00")
+        before = _workspace_inventory(fresh_workspace)
+
+        report = install_run(
+            path=fresh_workspace,
+            install_mcp=True,
+            configure_torch=True,
+            assume_yes=True,
+            provision=False,
+            force=True,
+            mode=InstallMode.DEPENDENCY,
+        )
+
+        assert report.mcp_extra_action == "error"
+        assert report.mcp_sync_failed
+        assert report.torch_config_action == "error"
+        assert not report.seeded
+        assert not report.sync_results
+        assert _workspace_inventory(fresh_workspace) == before
+        assert not workspace.exists()
+        if not existing_source:
+            from typer.testing import CliRunner
+
+            from ...cli import app
+
+            result = CliRunner().invoke(
+                app,
+                [
+                    "install",
+                    "--target",
+                    str(fresh_workspace),
+                    "--force",
+                    "--mode",
+                    "dependency",
+                    "--mcp",
+                    "--no-torch-config",
+                    "--no-provision",
+                    "--json",
+                ],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 2, result.output
+            assert _workspace_inventory(fresh_workspace) == before
+
     @pytest.mark.parametrize(
         ("content", "initial_mode", "target_mode", "target_location"),
         [
@@ -1396,8 +1492,6 @@ class TestSafetyGuards:
         entry has already been seeded successfully. Rollback must
         unlink the mcps file.
         """
-        import pytest as _pytest
-
         ws = tmp_path / "workspace"
         ws.mkdir()
         # Pre-create the workspace dirs so _ensure_workspace_dirs is a
@@ -1412,10 +1506,11 @@ class TestSafetyGuards:
         (ws / _RAG_RULE_REL).mkdir()
         (ws / _RAG_RULE_REL / "sentinel").write_text("x", encoding="utf-8")
 
-        with _pytest.raises(OSError):
-            install_run(path=ws, force=True)
+        report = install_run(path=ws, force=True)
 
         # The mcps file was written but must have been rolled back.
+        assert report.mcp_sync_failed
+        assert report.mcp_extra_action == "error"
         assert not (ws / _RAG_MCP_REL).exists()
         # The rules "file" is still a non-empty directory (we never
         # wrote a file there); rollback only unlinks paths it

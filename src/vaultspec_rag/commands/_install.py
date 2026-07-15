@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from tomlkit.exceptions import ParseError
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
-)
-from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeStubs]
-    atomic_write,
 )
 from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
@@ -114,26 +111,23 @@ def _reconcile_mcp_extra(
     *,
     enabled: bool,
     dry_run: bool,
-    record_torch_parse_error: bool = False,
+    record_torch_inspect_error: bool = False,
 ) -> bool:
     try:
+        pyproject = target / "pyproject.toml"
+        if pyproject.exists():
+            pyproject.read_text(encoding="utf-8")
         result = reconcile_mcp_extra(
-            target / "pyproject.toml", mode=mode, enabled=enabled, dry_run=dry_run
+            pyproject, mode=mode, enabled=enabled, dry_run=dry_run
         )
-    except ParseError as exc:
-        report.mcp_extra_action = "error"
-        message = f"MCP extra inspect failed: {exc}"
-        report.warnings.append(message)
-        report.mcp_errors.append(message)
-        if record_torch_parse_error:
-            report.torch_config_action = TorchConfigAction.ERROR
-            report.warnings.append(f"torch-config inspect failed: {exc}")
-        return False
     except Exception as exc:
         report.mcp_extra_action = "error"
         message = f"MCP extra inspect failed: {exc}"
         report.warnings.append(message)
         report.mcp_errors.append(message)
+        if record_torch_inspect_error:
+            report.torch_config_action = TorchConfigAction.ERROR
+            report.warnings.append(f"torch-config inspect failed: {exc}")
         return False
     report.mcp_extra_action = result.action
     report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
@@ -154,7 +148,12 @@ def _restore_file_snapshot(path: Path, snapshot: bytes | None) -> None:
     if path.exists() and path.read_bytes() == snapshot:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, snapshot.decode("utf-8"))
+    temporary = path.with_suffix(path.suffix + f".{os.getpid()}.rollback.tmp")
+    try:
+        temporary.write_bytes(snapshot)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _rollback_file_snapshots(snapshots: dict[Path, bytes | None]) -> list[str]:
@@ -168,6 +167,34 @@ def _rollback_file_snapshots(snapshots: dict[Path, bytes | None]) -> list[str]:
     return errors
 
 
+def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
+    pyproject = target / "pyproject.toml"
+    workspace = target / ".vaultspec" / "workspace.json"
+    transactional = [
+        pyproject,
+        pyproject.with_suffix(pyproject.suffix + ".lock"),
+        workspace,
+        workspace.with_suffix(workspace.suffix + ".lock"),
+    ]
+    transactional.extend(
+        target / ".vaultspec" / relative
+        for relative in list_builtins()
+        if relative.startswith("mcps/")
+    )
+    return tuple(dict.fromkeys(transactional))
+
+
+def _record_torch_transaction_error(
+    report: InstallReport, exc: Exception, *, configure_torch: bool
+) -> None:
+    if not configure_torch or report.torch_config_action is TorchConfigAction.ERROR:
+        return
+    report.torch_config_action = TorchConfigAction.ERROR
+    report.warnings.append(
+        f"torch-config blocked by MCP intent transaction failure: {exc}"
+    )
+
+
 def _commit_mcp_placement_and_mode(
     target: Path,
     report: InstallReport,
@@ -175,21 +202,21 @@ def _commit_mcp_placement_and_mode(
     *,
     enabled: bool,
     persist_mode: bool,
+    force: bool,
+    upgrade: bool,
+    configure_torch: bool,
 ) -> bool:
-    """Commit dependency placement and package mode as one guarded transition."""
-    pyproject = target / "pyproject.toml"
-    workspace = target / ".vaultspec" / "workspace.json"
-    snapshots = {
-        pyproject: _file_snapshot(pyproject),
-        workspace: _file_snapshot(workspace),
-    }
+    """Commit placement, package mode, and builtin intent as one transition."""
+    snapshots: dict[Path, bytes | None] = {}
     try:
+        snapshots = {path: _file_snapshot(path) for path in _mcp_intent_paths(target)}
         if not _reconcile_mcp_extra(
             target,
             report,
             mode,
             enabled=enabled,
             dry_run=False,
+            record_torch_inspect_error=configure_torch,
         ):
             rollback_errors = _rollback_file_snapshots(snapshots)
             if rollback_errors:
@@ -201,13 +228,22 @@ def _commit_mcp_placement_and_mode(
             return False
         if persist_mode:
             persist_rag_mode(target, mode)
+        _seed_builtins(
+            target / ".vaultspec",
+            report,
+            False,
+            force,
+            upgrade,
+            enabled,
+        )
     except Exception as exc:
         rollback_errors = _rollback_file_snapshots(snapshots)
         report.mcp_extra_action = "error"
-        message = f"MCP placement/mode transaction failed: {exc}"
+        message = f"MCP intent transaction failed: {exc}"
         if message not in report.mcp_errors:
             report.mcp_errors.append(message)
         report.warnings.append(message)
+        _record_torch_transaction_error(report, exc, configure_torch=configure_torch)
         if rollback_errors:
             rollback_message = "MCP transaction rollback failed: " + "; ".join(
                 rollback_errors
@@ -422,7 +458,7 @@ def _prepare_mcp_transition(
         mode,
         enabled=install_mcp,
         dry_run=True,
-        record_torch_parse_error=configure_torch,
+        record_torch_inspect_error=configure_torch,
     ):
         return False, False
 
@@ -438,14 +474,7 @@ def _prepare_mcp_transition(
         if "core" not in skip:
             persist_rag_mode(target, mode)
         return True, False
-    committed = _commit_mcp_placement_and_mode(
-        target,
-        report,
-        mode,
-        enabled=install_mcp,
-        persist_mode="core" not in skip,
-    )
-    return committed, mode_flipped if committed else False
+    return True, mode_flipped
 
 
 def install_run(
@@ -566,9 +595,7 @@ def install_run(
 
     # Placement is the first MCP transition boundary. A conflict or inspection
     # failure stops the operation before source, package mode, provider config,
-    # ownership, or lock state can change. Real execution repeats the already-
-    # successful preview and commits placement plus mode as one rollback-guarded
-    # transaction.
+    # ownership, or lock state can change.
     transition_ready, mcp_mode_flipped = _prepare_mcp_transition(
         target,
         report,
@@ -582,18 +609,33 @@ def install_run(
     if not transition_ready:
         return report
 
-    # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does.
-    # MCP skips filter that source prefix before classification, so simultaneous
-    # --mcp/--no-mcp intent and upgrade reseeding cannot touch it.
-    _seed_builtins(
-        vaultspec_dir,
-        report,
-        dry_run,
-        force,
-        upgrade,
-        install_mcp,
-        skip_mcp="mcp" in skip,
-    )
+    # Real native-MCP intent commits placement, ownership, mode, canonical
+    # source, and their persistent lock files under one exact-byte rollback.
+    # Dry-runs and MCP-skipped calls retain the non-mutating/source-protected
+    # seeding path.
+    if not dry_run and "mcp" not in skip:
+        committed = _commit_mcp_placement_and_mode(
+            target,
+            report,
+            resolved.mode,
+            enabled=install_mcp,
+            persist_mode="core" not in skip,
+            force=force,
+            upgrade=upgrade,
+            configure_torch=configure_torch,
+        )
+        if not committed:
+            return report
+    else:
+        _seed_builtins(
+            vaultspec_dir,
+            report,
+            dry_run,
+            force,
+            upgrade,
+            install_mcp,
+            skip_mcp="mcp" in skip,
+        )
 
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
