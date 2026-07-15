@@ -705,3 +705,70 @@ findings**. Primary builtin topology restoration is correct on the covered paths
 its predictable scratch file can corrupt an unrelated symlink target and delete the
 operator's link. Merge and publication remain held pending scratch-node-safe
 remediation, a fresh independent audit, and completion of every release gate.
+
+## S40 final verification
+
+### mcp-reindex-initiator-attribution | high | Real MCP reindex requests are recorded as CLI work
+
+Commit `07e4084` closes the S38 rollback-scratch data-loss path on its focused
+surface. Rollback now creates a random same-directory file exclusively with
+`mkstemp`, writes only through the returned descriptor, flushes and fsyncs the
+payload, restores the captured mode, publishes with `os.replace`, and cleans up
+only the exact node created by the active restore. The high-risk install surface
+passed 208 tests before this independent review, including regular, live-symlink,
+and broken-symlink collisions for regular-file and symlink snapshot restoration.
+
+The fresh exact release inventory exposed a separate production attribution defect.
+The real MCP `reindex_vault` tool delegates through `_try_http_reindex`, but that
+shared transport unconditionally sends `initiator_kind="cli"`. A real isolated
+service test invokes the MCP tool, waits for the resulting job, and observes
+`initiator.kind == "cli"` instead of `"mcp"`. The selector fails identically when
+run alone, so this is not order leakage. It makes operator job history and service
+diagnostics misidentify MCP-originated work and is release-blocking.
+
+Recommendation: carry initiator identity at the actual caller boundary. MCP tools
+must submit `mcp`, CLI callers must submit `cli`, and the service route must retain
+that value. Prove the distinction through the real transport and service API without
+mocks, patches, or global service state.
+
+### service-release-gate-drift | medium | The exact service inventory is red and its daemon baseline is not deterministic
+
+The same clean `test_service_jobs.py` run completed with 56 passes and five failures.
+Four rendering assertions expect text or line placement that no longer matches the
+current CLI behavior: `No matching jobs.` versus `No jobs matched these filters.`,
+the filter line versus the scripting advisory at header position eight, and
+`There are no active or waiting jobs.` versus `There are no active jobs.`. Each
+selector fails identically in isolation.
+
+A detached disposable `origin/main` worktree at `874f0fe` reproduced all four
+rendering mismatches with the same actual output. The feature branch does not modify
+the service-jobs tests, the service-jobs renderer, the MCP tool, the service transport,
+or the integration fixture/helper. The base daemon selector did not produce a terminal
+result within 300 seconds, while the feature target terminated and exposed the
+attribution mismatch. This proves the rendering drift is pre-existing and also shows
+that the real-service test boundary is not yet deterministic enough for an exact
+release gate. Being pre-existing does not waive a red release inventory.
+
+Recommendation: establish the authoritative current rendering contract from code,
+help, user documentation, and history. Change production only where that contract is
+wrong; otherwise update the stale behavior assertions. Isolate and clean up every
+daemon-owned status, storage, port, lock, and child process so the real MCP selector
+terminates deterministically on both the feature target and the baseline.
+
+Fresh verification evidence: collection reported exactly 1,820 selected tests out of
+2,174, with 354 deselected rather than the historical 337 because 17 additional
+integration-marked cases are present. The three sorted top-level batches passed
+811, 309, and 490 tests. The isolated Qdrant/singleton group passed 22 tests. The first
+deterministic service batch passed one test, yielding 1,633 credited passes. The
+61-test service-jobs file then reported 56 passes and the five failures above; because
+the file is red, none of its tests is credited to the exact aggregate. The remaining
+service files, the 54-test remainder, static checks, Vaultspec checks, build, wheel,
+and real-host acceptance were stopped after the release target was invalidated; none
+is waived.
+
+S40 verdict: **FAIL — not release-ready; one unresolved HIGH and one unresolved
+MEDIUM finding, with no CRITICAL findings**. Rollback scratch restoration is corrected,
+but MCP work is misattributed, the service release inventory is deterministically red,
+and baseline daemon execution is not deterministic. Merge and publication remain held
+pending S41 remediation and a fresh S42 review that restarts all 1,820 selected tests
+from zero and completes every unwaived gate.
