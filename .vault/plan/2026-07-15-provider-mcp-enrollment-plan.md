@@ -59,7 +59,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S31` - Restore malformed-project error reporting and prove successful mode declarations; `src/vaultspec_rag/commands/_install.py, mode and torch contract tests, and isolated real CLI gates`.
 - [x] `P03.S32` - Perform final independent malformed-project and transaction audit with release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and complete segmented repository gates`.
 - [x] `P03.S33` - Make native MCP intent writes transactional and generalize malformed-project diagnostics; `src/vaultspec_rag/commands/_install.py and real install transaction tests`.
-- [ ] `P03.S34` - Perform fresh transaction review and complete exact segmented release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the full selected test inventory`.
+- [x] `P03.S34` - Perform fresh transaction review and complete exact segmented release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the full selected test inventory`.
 
 ## Description
 

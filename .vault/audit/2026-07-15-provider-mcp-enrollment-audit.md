@@ -579,3 +579,46 @@ rollback omits fresh lock state. Unreadable project metadata still loses request
 torch-config failure attribution. A later builtin write failure leaves placement and
 mode committed. Hold merge and publication until remediation and another independent
 audit are complete.
+
+## S34 final verification
+
+### forced-builtin-rollback-data-loss | high | A later seed failure deletes a pre-existing repaired rule
+
+Commit `93341ab` closes all three S32 findings on their targeted paths. Fresh and
+pre-existing project and workspace locks participate in the intent snapshot; source
+addition and repair failures restore the exact prior MCP source, placement provenance,
+package declaration, project bytes, and locks; invalid UTF-8 and a genuine filesystem
+read blocker produce both MCP and torch-config errors; and the CLI fails with exit 2.
+The complete high-risk install, placement, mode, torch-config, Qdrant, and native-host
+selection passed 235 tests.
+
+The broadened transaction still exposes a separate data-loss path during forced builtin
+repair. `_mcp_intent_paths` snapshots only project metadata, persistent locks, and MCP
+source destinations. `seed_builtins` records every file it writes, including an existing
+rule overwritten under `force` or `upgrade`. If a later skill destination presents a
+genuine filesystem blocker, `_rollback_seeded` unlinks the repaired rule, and the outer
+transaction cannot restore it because the rule was never snapshotted.
+
+An independent real temporary-workspace probe wrote distinct pre-existing bytes to the
+RAG rule, placed a non-empty directory at the later skill destination, and invoked a
+forced MCP install. The operation correctly returned structured MCP failure and restored
+the MCP intent surfaces, but the pre-existing rule no longer existed. This is
+release-blocking user-data loss. The transaction must snapshot every builtin destination
+that forced seeding may overwrite, restore exact bytes for pre-existing files, remove
+only transaction-created files, and prove both rule and skill failure orderings with
+real filesystem blockers.
+
+Verification evidence: the complete high-risk selection passed 235 tests, including
+both installed host CLIs and isolated Qdrant runtime and CLI behavior. The first exact
+non-integration segment passed 811 tests with 4 deselected and no failures. Ruff lint
+passed. The remaining segmented aggregate, static, Vaultspec, diff, and wheel gates were
+stopped when the release owner accepted the genuine HIGH finding and invalidated the
+target; their absence is not waived and a fresh audit must rerun them after remediation.
+No mock, fake, stub, patch, monkeypatch, skip, or xfail was used in the independent
+reproduction.
+
+S34 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. S33 restores the previously missing intent and lock rollback boundaries, but
+a forced repair followed by a later builtin write failure deletes exact pre-existing
+rule bytes. Merge and publication remain held pending remediation and a new independent
+review with the complete release gates.
