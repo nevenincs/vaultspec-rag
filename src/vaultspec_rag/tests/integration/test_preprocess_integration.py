@@ -162,6 +162,7 @@ class TestPreprocessEndToEnd:
         result = preproc_project["code_indexer"].full_index(
             reporter=NullProgressReporter()
         )
+        assert result.preprocess_ok == 1
         assert result.preprocess_skipped == 0
         assert preproc_project["store"].count_code() >= 2  # two units
 
@@ -192,6 +193,7 @@ class TestPreprocessEndToEnd:
         result = preproc_project["code_indexer"].full_index(
             reporter=NullProgressReporter()
         )
+        assert result.preprocess_ok == 1
         assert result.preprocess_skipped == 0
 
         searcher = VaultSearcher(
@@ -267,6 +269,7 @@ class TestPreprocessEndToEnd:
         result = indexer.incremental_index(
             reporter=NullProgressReporter(), changed_paths=[new_pdf]
         )
+        assert result.preprocess_ok == 1
         assert result.added > 0
         assert store.count_code() > before
 
@@ -290,6 +293,7 @@ class TestPreprocessEndToEnd:
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
             result = indexer.full_index(reporter=NullProgressReporter())
+            assert result.preprocess_ok == 0
             assert result.preprocess_skipped == 1
             assert any("broken.pdf" in f for f in result.preprocess_failures)
         finally:
@@ -444,6 +448,7 @@ class TestPreprocessEndToEnd:
             result = indexer.incremental_index(
                 reporter=NullProgressReporter(), changed_paths=[broken]
             )
+            assert result.preprocess_ok == 0
             assert result.preprocess_skipped == 1
             assert any("broken.pdf" in f for f in result.preprocess_failures)
         finally:

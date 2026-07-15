@@ -63,6 +63,11 @@ class IndexResult:
         duration_ms: Wall-clock time for the operation in milliseconds.
         device: Compute device used for embeddings (e.g. ``"cuda"``).
         files: Number of files processed (for codebase indexing).
+        preprocess_ok: Number of files a document-preprocessing rule fed into
+            the index this run (fresh runs and cache hits alike), surfaced so
+            a working preprocess pipeline is positively observable and rule-fed
+            content silently absent from the index is distinguishable from
+            "no rules matched".
         preprocess_skipped: Number of files a document-preprocessing rule
             skipped this run (``on_error=skip``), surfaced so coverage gaps are
             never silent (#185, D11).
@@ -76,6 +81,7 @@ class IndexResult:
     duration_ms: int
     device: str
     files: int = 0
+    preprocess_ok: int = 0
     preprocess_skipped: int = 0
     preprocess_failures: list[str] = field(default_factory=list)
 

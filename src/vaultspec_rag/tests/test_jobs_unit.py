@@ -184,6 +184,7 @@ class TestJobsLifecycle:
     def test_started_record_defaults_preprocess_fields(self) -> None:
         job_id = record_start("code", "tool")
         record = {r["id"]: r for r in snapshot()}[job_id]
+        assert record["preprocess_ok"] == 0
         assert record["preprocess_skipped"] == 0
         assert record["preprocess_failures"] == []
 
@@ -193,10 +194,12 @@ class TestJobsLifecycle:
         record_finish(
             job_id,
             result="+0 /0 -0 (5ms) ~2",
+            preprocess_ok=3,
             preprocess_skipped=2,
             preprocess_failures=failures,
         )
         record = {r["id"]: r for r in snapshot()}[job_id]
+        assert record["preprocess_ok"] == 3
         assert record["preprocess_skipped"] == 2
         assert record["preprocess_failures"] == failures
 
