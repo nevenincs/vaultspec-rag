@@ -310,6 +310,104 @@ class TestDryRunInstall:
         assert _workspace_file_bytes(installed_workspace) == installed_before
 
 
+class TestProviderFailureContract:
+    def test_api_report_preserves_top_level_ownership_error(
+        self, fresh_workspace: Path
+    ) -> None:
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership.write_text("{not-json", encoding="utf-8")
+
+        report = _install(fresh_workspace)
+        data = report.to_dict()
+
+        assert report.mcp_sync_failed
+        assert data["mcp_failed"] is True
+        assert data["mcp_errors"]
+        assert data["sync_providers"] == {}
+        assert "ownership" in " ".join(data["mcp_errors"]).lower()
+
+    def test_install_cli_exits_nonzero_and_reports_provider_error(
+        self, fresh_workspace: Path
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        write_manifest(fresh_workspace, {"codex"})
+        codex_config = fresh_workspace / ".codex" / "config.toml"
+        codex_config.parent.mkdir()
+        codex_config.write_text('invalid = "unterminated', encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(fresh_workspace),
+                "--no-provision",
+                "--no-torch-config",
+                "--mcp",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        data = json.loads(result.output)
+        assert data["mcp_failed"] is True
+        assert data["sync_providers"]["codex"]["errored"] == 1
+        assert data["sync_providers"]["codex"]["errors"]
+
+        human_result = runner.invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(fresh_workspace),
+                "--no-provision",
+                "--no-torch-config",
+                "--mcp",
+            ],
+            catch_exceptions=False,
+        )
+        assert human_result.exit_code == 2, human_result.output
+        assert "Codex MCP: errored 1" in human_result.output
+        assert "error:" in human_result.output
+
+    def test_uninstall_cli_exits_nonzero_and_reports_ownership_error(
+        self, installed_workspace: Path
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        ownership = installed_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership.write_text("{not-json", encoding="utf-8")
+        discovery_skill = installed_workspace / _RAG_SKILL_REL
+        discovery_skill.unlink()
+        discovery_skill.parent.rmdir()
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "uninstall",
+                "--target",
+                str(installed_workspace),
+                "--force",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        data = json.loads(result.output)
+        assert data["mcp_failed"] is True
+        assert data["mcp_errors"]
+        assert "ownership" in " ".join(data["mcp_errors"]).lower()
+
+
 class TestUninstallSafety:
     def test_uninstall_without_force_is_dry_run(
         self, installed_workspace: Path

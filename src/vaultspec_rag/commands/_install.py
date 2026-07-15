@@ -38,7 +38,7 @@ from ._workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         InstallMode,
@@ -117,7 +117,7 @@ def _mcp_preview_projection(
     install_mcp: bool,
     force: bool,
     upgrade: bool,
-) -> Iterator[Path]:
+) -> Generator[Path]:
     """Project the requested MCP source state away from the real workspace.
 
     Core 0.1.44 accepts a target workspace for dry-run reconciliation but does not
@@ -188,7 +188,7 @@ def _run_core_sync(
         return
 
     @contextmanager
-    def sync_target() -> Iterator[Path]:
+    def sync_target() -> Generator[Path]:
         if dry_run:
             with _mcp_preview_projection(
                 target,
@@ -213,7 +213,7 @@ def _run_core_sync(
             )
         except Exception as exc:
             logger.error("project MCP sync failed during install: %s", exc)
-            report.warnings.append(f"project MCP sync failed: {exc}")
+            report.mcp_errors.append(f"project MCP sync failed: {exc}")
         else:
             report.sync_results.append(result)
             report.mcp_sync_results.append(result)

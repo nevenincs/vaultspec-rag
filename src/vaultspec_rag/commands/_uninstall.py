@@ -140,7 +140,7 @@ def _run_core_cleanup(
             _run_mcp_cleanup(target, report, dry_run=dry_run)
         except Exception as exc:
             logger.error("MCP cleanup failed during uninstall: %s", exc)
-            report.warnings.append(f"MCP cleanup failed: {exc}")
+            report.mcp_errors.append(f"MCP cleanup failed: {exc}")
 
 
 def uninstall_run(

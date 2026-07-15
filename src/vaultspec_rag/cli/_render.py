@@ -503,44 +503,50 @@ def _render_sync_summary(added: int, updated: int, removed: int) -> None:
         )
 
 
+def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
+    parts = [
+        f"{label} {outcome[label]}"
+        for label in (
+            "added",
+            "updated",
+            "unchanged",
+            "skipped",
+            "pruned",
+            "errored",
+        )
+        if isinstance(outcome.get(label), int) and outcome[label]
+    ]
+    summary = ", ".join(parts) if parts else "no changes"
+    _cli.console.print(
+        f"{provider.capitalize()} MCP: {summary}",
+        markup=False,
+        highlight=False,
+    )
+    for label in ("warnings", "errors"):
+        messages = outcome.get(label)
+        if isinstance(messages, list):
+            for message in cast("list[object]", messages):
+                _cli.console.print(
+                    f"  {label[:-1]}: {message}", markup=False, highlight=False
+                )
+
+
 def _render_provider_sync(report: Any) -> None:
     """Render the same per-provider MCP outcomes exposed by report JSON."""
     data = report.to_dict()
     providers = data.get("sync_providers")
-    if not isinstance(providers, dict):
-        return
-    for provider, raw_outcome in cast("dict[object, object]", providers).items():
-        if not isinstance(provider, str) or not isinstance(raw_outcome, dict):
-            continue
-        outcome = cast("dict[str, object]", raw_outcome)
-        parts = [
-            f"{label} {outcome[label]}"
-            for label in (
-                "added",
-                "updated",
-                "unchanged",
-                "skipped",
-                "pruned",
-                "errored",
-            )
-            if isinstance(outcome.get(label), int) and outcome[label]
-        ]
-        summary = ", ".join(parts) if parts else "no changes"
-        _cli.console.print(
-            f"{provider.capitalize()} MCP: {summary}",
-            markup=False,
-            highlight=False,
-        )
-        warnings = outcome.get("warnings")
-        if isinstance(warnings, list):
-            for warning in cast("list[object]", warnings):
-                _cli.console.print(
-                    f"  warning: {warning}", markup=False, highlight=False
+    if isinstance(providers, dict):
+        for provider, raw_outcome in cast("dict[object, object]", providers).items():
+            if isinstance(provider, str) and isinstance(raw_outcome, dict):
+                _render_provider_outcome(
+                    provider, cast("dict[str, object]", raw_outcome)
                 )
-        errors = outcome.get("errors")
-        if isinstance(errors, list):
-            for error in cast("list[object]", errors):
-                _cli.console.print(f"  error: {error}", markup=False, highlight=False)
+    top_level_errors = data.get("mcp_errors")
+    if isinstance(top_level_errors, list):
+        for error in cast("list[object]", top_level_errors):
+            _cli.console.print(
+                f"MCP lifecycle error: {error}", markup=False, highlight=False
+            )
 
 
 def _counted(count: int, singular: str, plural: str | None = None) -> str:

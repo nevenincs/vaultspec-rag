@@ -5429,6 +5429,8 @@ class TestRenderInstallReport:
         )
         codex = SyncResult(
             updated=1,
+            errored=1,
+            errors=["native target malformed"],
             warnings=["managed entry drift repaired"],
             items=[("vaultspec-rag", "[UPDATE]")],
         )
@@ -5453,12 +5455,37 @@ class TestRenderInstallReport:
             "items": [["vaultspec-rag", "[ADD]"]],
         }
         assert providers["codex"]["updated"] == 1
+        assert providers["codex"]["errored"] == 1
+        assert providers["codex"]["errors"] == ["native target malformed"]
         assert providers["codex"]["warnings"] == ["managed entry drift repaired"]
 
         out = self._render(report)
         assert "Claude MCP: added 1, unchanged 1" in out
-        assert "Codex MCP: updated 1" in out
+        assert "Codex MCP: updated 1, errored 1" in out
         assert "warning: managed entry drift repaired" in out
+        assert "error: native target malformed" in out
+
+    def test_preserves_unattributed_mcp_errors_in_json_and_human_output(self) -> None:
+        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+            SyncResult,
+        )
+
+        from ..commands import InstallReport
+
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            sync_results=[SyncResult(errored=1, errors=["ownership is malformed"])],
+            mcp_sync_results=[SyncResult(errored=1, errors=["ownership is malformed"])],
+        )
+
+        data = report.to_dict()
+        assert data["mcp_failed"] is True
+        assert data["mcp_errors"] == ["ownership is malformed"]
+        assert data["sync_providers"] == {}
+
+        out = self._render(report)
+        assert "MCP lifecycle error: ownership is malformed" in out
 
 
 class TestRenderUninstallReport:

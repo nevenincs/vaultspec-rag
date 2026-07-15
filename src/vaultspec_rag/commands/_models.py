@@ -94,6 +94,48 @@ def _provider_sync_outcomes(results: list[Any]) -> dict[str, dict[str, Any]]:
     return {provider: outcomes[provider] for provider in sorted(outcomes)}
 
 
+def _unattributed_sync_errors(results: list[Any]) -> list[str]:
+    """Keep Core errors that are not already attributed to a provider."""
+    errors: list[str] = []
+    for result in results:
+        remaining = _string_list(getattr(result, "errors", []))
+        per_tool = getattr(result, "per_tool", None)
+        if isinstance(per_tool, dict):
+            for provider_result in cast("dict[object, object]", per_tool).values():
+                for provider_error in _string_list(
+                    getattr(provider_result, "errors", [])
+                ):
+                    if provider_error in remaining:
+                        remaining.remove(provider_error)
+        errors.extend(remaining)
+        errored = getattr(result, "errored", 0)
+        if (
+            isinstance(errored, int)
+            and errored
+            and not (remaining or getattr(result, "errors", []))
+        ):
+            errors.append(
+                f"MCP reconciliation reported {errored} unattributed error(s)"
+            )
+    return errors
+
+
+def _mcp_sync_failed(results: list[Any], direct_errors: list[str]) -> bool:
+    if direct_errors:
+        return True
+    for result in results:
+        if getattr(result, "errored", 0) or getattr(result, "errors", []):
+            return True
+        per_tool = getattr(result, "per_tool", None)
+        if isinstance(per_tool, dict) and any(
+            getattr(provider_result, "errored", 0)
+            or getattr(provider_result, "errors", [])
+            for provider_result in cast("dict[object, object]", per_tool).values()
+        ):
+            return True
+    return False
+
+
 @dataclass
 class InstallReport:
     """Structured result of an install run.
@@ -117,6 +159,7 @@ class InstallReport:
     seeded: list[tuple[str, str]] = field(default_factory=list)
     sync_results: list[Any] = field(default_factory=list)
     mcp_sync_results: list[Any] = field(default_factory=list)
+    mcp_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
@@ -135,6 +178,11 @@ class InstallReport:
     # including torch's two-phase "configured, sync pending" state.
     provision_outcome: ProvisionOutcome | None = None
 
+    @property
+    def mcp_sync_failed(self) -> bool:
+        """Whether any requested MCP lifecycle operation failed."""
+        return _mcp_sync_failed(self.mcp_sync_results, self.mcp_errors)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "action": self.action,
@@ -145,6 +193,11 @@ class InstallReport:
             "sync_updated": sum(getattr(r, "updated", 0) for r in self.sync_results),
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
             "sync_providers": _provider_sync_outcomes(self.mcp_sync_results),
+            "mcp_errors": [
+                *self.mcp_errors,
+                *_unattributed_sync_errors(self.mcp_sync_results),
+            ],
+            "mcp_failed": self.mcp_sync_failed,
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),
@@ -180,11 +233,17 @@ class UninstallReport:
     data_removed: bool = False
     sync_results: list[Any] = field(default_factory=list)
     mcp_sync_results: list[Any] = field(default_factory=list)
+    mcp_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
     torch_direct_dep_action: str = "skipped"
     torch_direct_dep_location: str = ""
+
+    @property
+    def mcp_sync_failed(self) -> bool:
+        """Whether any requested MCP lifecycle operation failed."""
+        return _mcp_sync_failed(self.mcp_sync_results, self.mcp_errors)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,6 +253,11 @@ class UninstallReport:
             "data_removed": self.data_removed,
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
             "sync_providers": _provider_sync_outcomes(self.mcp_sync_results),
+            "mcp_errors": [
+                *self.mcp_errors,
+                *_unattributed_sync_errors(self.mcp_sync_results),
+            ],
+            "mcp_failed": self.mcp_sync_failed,
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),

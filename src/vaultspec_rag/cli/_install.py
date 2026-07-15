@@ -335,14 +335,18 @@ def handle_install(
     # ``DISABLED`` are intentional opt-outs; both 0.
     from ..torch_config import TorchConfigAction
 
-    if report.mcp_extra_action == "error" or (
-        configure_torch
-        and report.torch_config_action
-        in {
-            TorchConfigAction.ERROR,
-            TorchConfigAction.SKIPPED_EOF,
-            TorchConfigAction.SKIPPED_NON_TTY,
-        }
+    if (
+        report.mcp_extra_action == "error"
+        or report.mcp_sync_failed
+        or (
+            configure_torch
+            and report.torch_config_action
+            in {
+                TorchConfigAction.ERROR,
+                TorchConfigAction.SKIPPED_EOF,
+                TorchConfigAction.SKIPPED_NON_TTY,
+            }
+        )
     ):
         raise typer.Exit(code=2)
 
@@ -437,6 +441,8 @@ def handle_uninstall(
         _cli.console.print_json(
             _json.dumps(report.to_dict(), default=str), highlight=False
         )
-        return
+    else:
+        _render_uninstall_report(report)
 
-    _render_uninstall_report(report)
+    if report.mcp_sync_failed:
+        raise typer.Exit(code=2)
