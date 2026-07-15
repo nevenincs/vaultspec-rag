@@ -19,7 +19,9 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S11]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S12]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S13]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S14]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
+  - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
 ---
@@ -33,6 +35,10 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 ### adr
 
 - `2026-07-15-provider-mcp-enrollment-adr` - `provider-mcp-enrollment` adr: `Core-managed provider lifecycle with RAG-owned enrollment intent and placement` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-15-provider-mcp-enrollment-audit` - `provider-mcp-enrollment` audit: `native MCP release readiness`
 
 ### exec
 
@@ -49,6 +55,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S11` - Add end-to-end install dry-run drift upgrade uninstall and host CLI acceptance coverage
 - `2026-07-15-provider-mcp-enrollment-P03-S12` - Raise the Core minimum and refresh the lock after the fixed Core release is published
 - `2026-07-15-provider-mcp-enrollment-P03-S13` - Verify wheel metadata console entry point canonical builtin Core floor and installed-package acceptance
+- `2026-07-15-provider-mcp-enrollment-P03-S14` - Run formal code review and record release-readiness findings
 
 ### plan
 
