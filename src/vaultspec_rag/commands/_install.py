@@ -13,7 +13,8 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
     newly_establishes_dependency,
 )
 
-from ..builtins import seed_builtins
+from ..builtins import list_builtins, seed_builtins
+from ._mcp_extra import reconcile_mcp_extra
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -47,6 +48,7 @@ def _seed_builtins(
     dry_run: bool,
     force: bool,
     upgrade: bool,
+    install_mcp: bool,
 ) -> None:
     """Seed rag's whole bundled tree flat into ``.vaultspec/`` (core's fold).
 
@@ -58,16 +60,42 @@ def _seed_builtins(
     if not dry_run:
         written: list[str] = []
         try:
-            report.seeded = seed_builtins(
+            seeded = seed_builtins(
                 vaultspec_dir, force=force or upgrade, written=written
             )
         except Exception:
             _rollback_seeded(vaultspec_dir, written, report)
             raise
     else:
-        report.seeded = seed_builtins(
-            vaultspec_dir, force=force or upgrade, dry_run=True
-        )
+        seeded = seed_builtins(vaultspec_dir, force=force or upgrade, dry_run=True)
+
+    mcp_sources = {rel for rel in list_builtins() if rel.startswith("mcps/")}
+    report.seeded = [item for item in seeded if item[0] not in mcp_sources]
+    if install_mcp:
+        report.seeded.extend(item for item in seeded if item[0] in mcp_sources)
+        return
+    for rel in sorted(mcp_sources):
+        source = vaultspec_dir / rel
+        if not source.exists():
+            continue
+        if not dry_run:
+            source.unlink()
+        report.seeded.append((rel, "[REMOVE]"))
+
+
+def _reconcile_mcp_extra(
+    target: Path,
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    enabled: bool,
+    dry_run: bool,
+) -> None:
+    result = reconcile_mcp_extra(
+        target / "pyproject.toml", mode=mode, enabled=enabled, dry_run=dry_run
+    )
+    report.mcp_extra_action = result.action
+    report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
 
 
 def _run_core_sync(
@@ -264,7 +292,14 @@ def install_run(
     # -> .vaultspec/skills/<name>/), so core's collectors and sync pick them up
     # like any core builtin.
     vaultspec_dir = target / ".vaultspec"
-    _seed_builtins(vaultspec_dir, report, dry_run, force, upgrade)
+    _reconcile_mcp_extra(
+        target,
+        report,
+        resolved.mode,
+        enabled=install_mcp,
+        dry_run=dry_run,
+    )
+    _seed_builtins(vaultspec_dir, report, dry_run, force, upgrade, install_mcp)
 
     # Persist rag's own entry in the shared per-package declaration BEFORE core's
     # sync runs, and capture whether this run flips rag's deployed launch shape.
@@ -327,23 +362,6 @@ def install_run(
             f"`uv sync --reinstall-package torch` manually after resolving "
             f"the reported torch configuration issue."
         )
-
-    # Ensure the optional [mcp] extra. Install wires up the MCP surface (it
-    # seeds the rag MCP config that `uv run vaultspec-search-mcp` launches), so
-    # the operator-facing default installs that server's dependency too - mcp is
-    # a base-install opt-out, not a setup-time opt-in. The opt-out polarity lives
-    # at the CLI edge (which passes ``install_mcp=True`` by default for --mcp);
-    # this orchestrator defaults it ``False`` so programmatic callers and their
-    # network-free unit tests do not shell out, mirroring ``provision``. --no-mcp
-    # skips it for a CLI-only setup. Non-fatal: a failure is a warning, since the
-    # guarded entry point still tells the operator what to install.
-    if install_mcp:
-        if dry_run:
-            report.mcp_extra_action = "would-add"
-        else:
-            from ._uv_sync import _run_uv_add_mcp_extra
-
-            _run_uv_add_mcp_extra(target=target, report=report)
 
     if provision:
         _run_provisioning(

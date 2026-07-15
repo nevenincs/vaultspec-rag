@@ -32,13 +32,13 @@ pytestmark = [pytest.mark.unit]
 class TestInstallEnsuresMcpExtra:
     """install_mcp=True ensures the [mcp] extra; the CLI defaults it on."""
 
-    def test_install_mcp_true_would_add_the_extra(self, tmp_path: Path) -> None:
+    def test_install_mcp_true_uses_ephemeral_tool_extra(self, tmp_path: Path) -> None:
         report = install_run(path=tmp_path, dry_run=True, install_mcp=True)
-        assert report.mcp_extra_action == "would-add"
+        assert report.mcp_extra_action == "tool"
 
-    def test_no_mcp_skips_the_extra(self, tmp_path: Path) -> None:
+    def test_no_mcp_reports_an_absent_project_extra(self, tmp_path: Path) -> None:
         report = install_run(path=tmp_path, dry_run=True, install_mcp=False)
-        assert report.mcp_extra_action == "skipped"
+        assert report.mcp_extra_action == "absent"
 
     def test_orchestrator_default_is_off_so_callers_do_not_shell_out(
         self, tmp_path: Path
@@ -47,11 +47,47 @@ class TestInstallEnsuresMcpExtra:
         # programmatic callers and their network-free tests never run uv add;
         # the on-by-default polarity lives at the CLI edge.
         report = install_run(path=tmp_path, dry_run=True)
-        assert report.mcp_extra_action == "skipped"
+        assert report.mcp_extra_action == "absent"
 
     def test_mcp_action_is_in_the_json_report(self, tmp_path: Path) -> None:
         report = install_run(path=tmp_path, dry_run=True, install_mcp=True)
-        assert report.to_dict()["mcp_extra_action"] == "would-add"
+        assert report.to_dict()["mcp_extra_action"] == "tool"
+
+    def test_no_mcp_retains_rule_and_skill_but_removes_source(
+        self, tmp_path: Path
+    ) -> None:
+        enabled = install_run(
+            path=tmp_path,
+            install_mcp=True,
+            configure_torch=False,
+            provision=False,
+        )
+        assert enabled.mcp_extra_action == "tool"
+        assert (
+            tmp_path / ".vaultspec" / "mcps" / "vaultspec-rag.builtin.json"
+        ).is_file()
+
+        disabled = install_run(
+            path=tmp_path,
+            install_mcp=False,
+            configure_torch=False,
+            provision=False,
+        )
+
+        assert disabled.mcp_extra_action == "absent"
+        assert (
+            "mcps/vaultspec-rag.builtin.json",
+            "[REMOVE]",
+        ) in disabled.seeded
+        assert not (
+            tmp_path / ".vaultspec" / "mcps" / "vaultspec-rag.builtin.json"
+        ).exists()
+        assert (
+            tmp_path / ".vaultspec" / "rules" / "vaultspec-rag.builtin.md"
+        ).is_file()
+        assert (
+            tmp_path / ".vaultspec" / "skills" / "vaultspec-rag-discovery" / "SKILL.md"
+        ).is_file()
 
 
 def test_cli_install_flag_defaults_mcp_on() -> None:

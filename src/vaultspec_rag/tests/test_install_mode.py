@@ -1,11 +1,11 @@
 """Unit tests for install-time provisioning-mode wiring (install-parity W02).
 
 Exercises the real install orchestration (:func:`install_run`) over the real
-filesystem with no mocks and no network: provisioning, torch config, and the
-optional MCP extra are all opted out, so the run seeds rag's bundled tree,
-invokes core's real ``sync_provider``, and persists and renders rag's mode
-through core's shared ``workspace_mode`` machinery without touching the GPU or
-the network.
+filesystem with no mocks and no network: provisioning and torch config are opted
+out, while the optional MCP extra is reconciled directly in the temporary
+project without invoking a package manager. The run seeds rag's bundled tree,
+invokes core's real ``sync_provider``, and persists and renders rag's mode through
+core's shared ``workspace_mode`` machinery without touching the GPU or network.
 
 The three-placement model (``tool`` / ``dependency`` / ``dev``) is owned by
 vaultspec-core; rag adopts it by naming ``vaultspec-rag`` as the package core's
@@ -108,14 +108,14 @@ def _workspace(tmp_path: Path, pyproject: str | None) -> Path:
 
 
 def _install(ws: Path, *, mode: InstallMode | None = None, upgrade: bool = False):
-    """Run a network-free rag install: no provisioning, torch, or MCP extra."""
+    """Run a network-free rag install with the canonical MCP source enabled."""
     return install_run(
         path=ws,
         mode=mode,
         upgrade=upgrade,
         provision=False,
         configure_torch=False,
-        install_mcp=False,
+        install_mcp=True,
     )
 
 
