@@ -1,16 +1,10 @@
-"""Integration tests for ``vaultspec_rag.commands.install_run``/``uninstall_run``.
+"""Real install and uninstall acceptance across native MCP host targets.
 
-Real filesystem (``tmp_path``), real ``vaultspec_core`` (installed in the
-dev environment via the project dependency), real bundled wheel content
-via :mod:`vaultspec_rag.builtins`. No mocks, fakes, or stubs per the
-project test mandate.
-
-These tests pin the symmetric-mirror contract between install and
-uninstall: install seeds rag's source files and runs core's sync;
-uninstall removes the same files and runs the same sync. The
-round-trip test (install → uninstall → workspace shape matches
-pre-install) is the canonical correctness signal that depends on
-vaultspec-core 0.1.10+'s reconciling ``mcp_sync``.
+The suite uses real temporary workspaces, Core provider enrollment, RAG's bundled
+sources, and the installed Claude Code and Codex CLIs. It proves dry-run byte safety,
+provider-local drift reporting and repair, exact repeat-install stability, selective
+unenrollment, user and Core sibling preservation, and host recognition without mocks,
+fakes, stubs, patches, or skipped behavior.
 """
 
 from __future__ import annotations
@@ -18,10 +12,17 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
+import tomllib
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+    read_manifest,
+    write_manifest,
+)
 
 from ...commands import install_run, uninstall_run
 
@@ -47,6 +48,32 @@ def _read_mcp_json(target: Path) -> dict[str, Any]:
     return json.loads((target / ".mcp.json").read_text(encoding="utf-8"))
 
 
+def _read_codex_mcp(target: Path) -> dict[str, Any]:
+    raw = tomllib.loads((target / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    return raw["mcp_servers"]
+
+
+def _install(target: Path, **overrides: Any) -> Any:
+    """Run a network-free dual-provider install with MCP intent enabled."""
+    if not read_manifest(target):
+        write_manifest(target, {"claude", "codex"})
+    options: dict[str, Any] = {
+        "install_mcp": True,
+        "configure_torch": False,
+        "provision": False,
+    }
+    options.update(overrides)
+    return install_run(path=target, **options)
+
+
+def _seed_core_mcp_source(target: Path) -> None:
+    source = files("vaultspec_core.builtins") / "mcps" / "vaultspec-core.builtin.json"
+    destination = target / ".vaultspec" / "mcps" / "vaultspec-core.builtin.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    write_manifest(target, {"claude", "codex"})
+
+
 @pytest.fixture()
 def fresh_workspace(tmp_path: Path) -> Path:
     """An empty directory rag will bootstrap from scratch."""
@@ -60,13 +87,13 @@ def installed_workspace(tmp_path: Path) -> Path:
     """An empty directory with rag freshly installed (post-sync)."""
     ws = tmp_path / "workspace"
     ws.mkdir()
-    install_run(path=ws)
+    _install(ws)
     return ws
 
 
 class TestFreshInstall:
     def test_creates_required_directories(self, fresh_workspace: Path) -> None:
-        report = install_run(path=fresh_workspace)
+        report = _install(fresh_workspace)
         assert report.action == "install"
         assert (fresh_workspace / ".vault").is_dir()
         assert (fresh_workspace / ".vault" / "data").is_dir()
@@ -78,7 +105,7 @@ class TestFreshInstall:
         assert "vault" in " ".join(report.created_dirs)
 
     def test_seeds_bundled_files(self, fresh_workspace: Path) -> None:
-        report = install_run(path=fresh_workspace)
+        report = _install(fresh_workspace)
         # (path, action) pairs, matching core's seeder; a fresh install adds all.
         assert sorted(report.seeded) == [
             ("mcps/vaultspec-rag.builtin.json", "[ADD]"),
@@ -90,26 +117,38 @@ class TestFreshInstall:
         assert (fresh_workspace / _RAG_SKILL_REL).is_file()
 
     def test_propagates_mcp_via_core_sync(self, fresh_workspace: Path) -> None:
-        install_run(path=fresh_workspace)
-        data = _read_mcp_json(fresh_workspace)
-        assert "vaultspec-rag" in data["mcpServers"]
-        assert "vaultspec-rag" in data.get("_vaultspecManaged", [])
+        _install(fresh_workspace)
+        assert "vaultspec-rag" in _read_mcp_json(fresh_workspace)["mcpServers"]
+        assert "vaultspec-rag" in _read_codex_mcp(fresh_workspace)
+        ownership = json.loads(
+            (fresh_workspace / ".vaultspec" / "mcp-ownership.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert "vaultspec-rag" in json.dumps(ownership)
 
     def test_mcp_command_matches_bundled_definition(
         self, fresh_workspace: Path
     ) -> None:
-        install_run(path=fresh_workspace)
-        data = _read_mcp_json(fresh_workspace)
-        entry = data["mcpServers"]["vaultspec-rag"]
-        assert entry["command"] == "uv"
-        assert "vaultspec-search-mcp" in entry["args"]
+        _install(fresh_workspace)
+        claude_entry = _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
+        codex_entry = _read_codex_mcp(fresh_workspace)["vaultspec-rag"]
+        expected_args = [
+            "--from",
+            "vaultspec-rag[mcp]",
+            "python",
+            "-m",
+            "vaultspec_rag.server",
+        ]
+        assert claude_entry == {"command": "uvx", "args": expected_args}
+        assert codex_entry == {"command": "uvx", "args": expected_args}
 
 
 class TestIdempotentInstall:
     def test_reinstall_is_noop_for_seeded_files(
         self, installed_workspace: Path
     ) -> None:
-        report = install_run(path=installed_workspace)
+        report = _install(installed_workspace)
         # Files already exist, no force/upgrade → seed nothing
         assert report.seeded == []
         # Files still present
@@ -121,7 +160,7 @@ class TestIdempotentInstall:
         rule_path = installed_workspace / _RAG_RULE_REL
         rule_path.write_text("MUTATED", encoding="utf-8")
 
-        report = install_run(path=installed_workspace, upgrade=True)
+        report = _install(installed_workspace, upgrade=True)
         # The mutated file is re-seeded as an [UPDATE].
         assert ("rules/vaultspec-rag.builtin.md", "[UPDATE]") in report.seeded
         assert rule_path.read_text(encoding="utf-8") != "MUTATED"
@@ -129,7 +168,7 @@ class TestIdempotentInstall:
     def test_force_re_seeds_existing_files(self, installed_workspace: Path) -> None:
         rule_path = installed_workspace / _RAG_RULE_REL
         rule_path.write_text("MUTATED", encoding="utf-8")
-        install_run(path=installed_workspace, force=True)
+        _install(installed_workspace, force=True)
         assert rule_path.read_text(encoding="utf-8") != "MUTATED"
 
 
@@ -144,10 +183,28 @@ class TestDryRunInstall:
         assert report.created_dirs
         assert ("rules/vaultspec-rag.builtin.md", "[ADD]") in report.seeded
 
-    def test_dry_run_does_not_invoke_sync(self, fresh_workspace: Path) -> None:
-        report = install_run(path=fresh_workspace, dry_run=True)
-        assert report.sync_results == []
-        assert any("dry-run" in w for w in report.warnings)
+    def test_dry_run_reports_provider_repairs_without_writing(
+        self, fresh_workspace: Path
+    ) -> None:
+        _install(fresh_workspace)
+        claude_path = fresh_workspace / ".mcp.json"
+        codex_path = fresh_workspace / ".codex" / "config.toml"
+        claude = _read_mcp_json(fresh_workspace)
+        claude["mcpServers"]["vaultspec-rag"]["command"] = "drifted"
+        claude_path.write_text(json.dumps(claude, indent=2) + "\n", encoding="utf-8")
+        codex = codex_path.read_text(encoding="utf-8").replace(
+            'command = "uvx"', 'command = "drifted"', 1
+        )
+        codex_path.write_text(codex, encoding="utf-8")
+        tracked = (claude_path, codex_path, fresh_workspace / "pyproject.toml")
+        before = {path: path.read_bytes() for path in tracked if path.exists()}
+
+        report = _install(fresh_workspace, dry_run=True, force=True)
+
+        assert {path: path.read_bytes() for path in before} == before
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"]["updated"] == 1
+        assert providers["codex"]["updated"] == 1
 
 
 class TestUninstallSafety:
@@ -175,7 +232,7 @@ class TestUninstallSafety:
     def test_uninstall_propagates_via_core_sync(
         self, installed_workspace: Path
     ) -> None:
-        uninstall_run(path=installed_workspace, force=True)
+        report = uninstall_run(path=installed_workspace, force=True)
         # The .mcp.json file is removed entirely once the only managed
         # entry is pruned (core's mcp_sync deletes the empty file).
         # If any user-added entries remained the file would persist;
@@ -184,7 +241,12 @@ class TestUninstallSafety:
         if mcp_json.exists():
             data = json.loads(mcp_json.read_text(encoding="utf-8"))
             assert "vaultspec-rag" not in data.get("mcpServers", {})
-            assert "vaultspec-rag" not in data.get("_vaultspecManaged", [])
+        codex_config = installed_workspace / ".codex" / "config.toml"
+        if codex_config.exists():
+            assert "vaultspec-rag" not in _read_codex_mcp(installed_workspace)
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"]["pruned"] == 1
+        assert providers["codex"]["pruned"] == 1
 
     def test_remove_data_purges_index_dir(self, installed_workspace: Path) -> None:
         # Drop a sentinel file in .vault/data/ to detect deletion
@@ -215,15 +277,18 @@ class TestUserContentPreservation:
             encoding="utf-8",
         )
 
-        install_run(path=fresh_workspace)
+        _install(fresh_workspace)
         data = _read_mcp_json(fresh_workspace)
         # User entry survived
         assert data["mcpServers"]["my-tool"]["command"] == "custom"
         # rag's entry got added
         assert "vaultspec-rag" in data["mcpServers"]
         # User entry NOT taken into managed set
-        assert "my-tool" not in data["_vaultspecManaged"]
-        assert "vaultspec-rag" in data["_vaultspecManaged"]
+        ownership = (fresh_workspace / ".vaultspec" / "mcp-ownership.json").read_text(
+            encoding="utf-8"
+        )
+        assert "my-tool" not in ownership
+        assert "vaultspec-rag" in ownership
 
     def test_preexisting_user_mcp_entry_survives_uninstall(
         self, fresh_workspace: Path
@@ -239,14 +304,13 @@ class TestUserContentPreservation:
             encoding="utf-8",
         )
 
-        install_run(path=fresh_workspace)
+        _install(fresh_workspace)
         uninstall_run(path=fresh_workspace, force=True)
 
         # The .mcp.json file persists because the user entry survives
         data = _read_mcp_json(fresh_workspace)
         assert data["mcpServers"]["my-tool"]["command"] == "custom"
         assert "vaultspec-rag" not in data["mcpServers"]
-        assert "vaultspec-rag" not in data.get("_vaultspecManaged", [])
 
     def test_preexisting_user_rule_file_survives_uninstall(
         self, installed_workspace: Path
@@ -270,6 +334,105 @@ class TestUserContentPreservation:
         assert user_rule.is_file() or migrated_rule.is_file()
 
 
+class TestProviderLifecycleAcceptance:
+    def test_uninstall_preserves_core_user_entries_and_fingerprints(
+        self, fresh_workspace: Path
+    ) -> None:
+        _seed_core_mcp_source(fresh_workspace)
+        _install(fresh_workspace)
+        claude_path = fresh_workspace / ".mcp.json"
+        codex_path = fresh_workspace / ".codex" / "config.toml"
+        ownership_path = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+
+        claude = _read_mcp_json(fresh_workspace)
+        claude["mcpServers"]["user-tool"] = {"command": "custom", "args": []}
+        claude_path.write_text(json.dumps(claude, indent=2) + "\n", encoding="utf-8")
+        with codex_path.open("a", encoding="utf-8", newline="") as stream:
+            stream.write('\n[mcp_servers.user-tool]\ncommand = "custom"\nargs = []\n')
+
+        ownership_before = json.loads(ownership_path.read_text(encoding="utf-8"))
+        core_fingerprints = {
+            key: target["managed"]["vaultspec-core"]
+            for key, target in ownership_before["targets"].items()
+            if "vaultspec-core" in target["managed"]
+        }
+        core_claude = _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-core"]
+        core_codex = _read_codex_mcp(fresh_workspace)["vaultspec-core"]
+
+        report = uninstall_run(path=fresh_workspace, force=True)
+
+        claude_after = _read_mcp_json(fresh_workspace)["mcpServers"]
+        codex_after = _read_codex_mcp(fresh_workspace)
+        assert claude_after["vaultspec-core"] == core_claude
+        assert codex_after["vaultspec-core"] == core_codex
+        assert claude_after["user-tool"] == {"command": "custom", "args": []}
+        assert codex_after["user-tool"] == {"command": "custom", "args": []}
+        assert "vaultspec-rag" not in claude_after
+        assert "vaultspec-rag" not in codex_after
+
+        ownership_after = json.loads(ownership_path.read_text(encoding="utf-8"))
+        assert {
+            key: target["managed"]["vaultspec-core"]
+            for key, target in ownership_after["targets"].items()
+            if "vaultspec-core" in target["managed"]
+        } == core_fingerprints
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"]["pruned"] == 1
+        assert providers["codex"]["pruned"] == 1
+
+    def test_real_host_clis_recognize_project_entries(
+        self, fresh_workspace: Path
+    ) -> None:
+        subprocess.run(
+            ["git", "init", "-q"],
+            cwd=fresh_workspace,
+            check=True,
+            timeout=30,
+        )
+        _install(fresh_workspace)
+
+        claude = subprocess.run(
+            ["claude", "mcp", "get", "vaultspec-rag"],
+            cwd=fresh_workspace,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=30,
+        )
+        assert claude.returncode == 0, claude.stderr or claude.stdout
+        assert "vaultspec-rag" in claude.stdout
+        assert "Scope: Project config" in claude.stdout
+
+        codex_executable = "codex.cmd" if os.name == "nt" else "codex"
+        codex_home = fresh_workspace.parent / "codex-home"
+        codex_home.mkdir()
+        project_key = str(fresh_workspace.resolve())
+        if os.name == "nt":
+            project_key = project_key.lower()
+        (codex_home / "config.toml").write_text(
+            f'[projects.{json.dumps(project_key)}]\ntrust_level = "trusted"\n',
+            encoding="utf-8",
+        )
+        codex = subprocess.run(
+            [codex_executable, "mcp", "get", "vaultspec-rag", "--json"],
+            cwd=fresh_workspace,
+            env={**os.environ, "CODEX_HOME": str(codex_home)},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=30,
+        )
+        assert codex.returncode == 0, codex.stderr or codex.stdout
+        codex_entry = json.loads(codex.stdout)
+        assert codex_entry["name"] == "vaultspec-rag"
+        assert codex_entry["transport"]["command"] == "uvx"
+        assert "vaultspec-rag[mcp]" in codex_entry["transport"]["args"]
+
+
 class TestSymmetricRoundTrip:
     def test_install_then_uninstall_returns_to_clean_state(
         self, fresh_workspace: Path
@@ -278,7 +441,7 @@ class TestSymmetricRoundTrip:
         leaves no rag-owned artefacts behind. This is the test that
         depends on vaultspec-core 0.1.10+'s reconciling mcp_sync.
         """
-        install_run(path=fresh_workspace)
+        _install(fresh_workspace)
         uninstall_run(path=fresh_workspace, force=True)
 
         # Both rag-owned source files are gone
@@ -291,7 +454,9 @@ class TestSymmetricRoundTrip:
         if mcp_json.exists():
             data = json.loads(mcp_json.read_text(encoding="utf-8"))
             assert "vaultspec-rag" not in data.get("mcpServers", {})
-            assert "vaultspec-rag" not in data.get("_vaultspecManaged", [])
+        codex_config = fresh_workspace / ".codex" / "config.toml"
+        if codex_config.exists():
+            assert "vaultspec-rag" not in _read_codex_mcp(fresh_workspace)
 
         # rag's local infrastructure (.vault/, .vault/data/) is
         # preserved unless --remove-data was passed
@@ -301,7 +466,7 @@ class TestSymmetricRoundTrip:
 
 class TestReportSerialization:
     def test_install_report_to_dict_keys(self, fresh_workspace: Path) -> None:
-        report = install_run(path=fresh_workspace)
+        report = _install(fresh_workspace)
         d = report.to_dict()
         assert d["action"] == "install"
         assert d["target"] == str(fresh_workspace)
@@ -383,7 +548,7 @@ class TestSafetyGuards:
         sentinel = sibling / "untouched.txt"
         sentinel.write_text("safe", encoding="utf-8")
 
-        install_run(path=ws)
+        _install(ws)
 
         assert sentinel.is_file()
         assert sentinel.read_text(encoding="utf-8") == "safe"
