@@ -31,8 +31,9 @@ related:
 The local RAG wheel contains the canonical MCP source, registers both console scripts,
 and installs successfully beside the fixed Core feature wheel. The isolated installed
 CLI enrolls identical `uvx --from vaultspec-rag[mcp]` launches in Claude Code JSON and
-Codex TOML project targets. Four focused package-metadata tests and all smoke checks
-pass.
+Codex TOML project targets. Five focused package-metadata tests and all smoke checks
+pass. The built RAG wheel resolves Core 0.1.44 from the public index without a local
+source override.
 
 The full unit gate passes 1,413 tests. Its first passes exposed two stale assumptions at
 the new lifecycle boundary: malformed TOML escaped before the established report and exit
@@ -41,7 +42,7 @@ Both now use the real provider contract and have focused regression coverage.
 
 ## Notes
 
-This Step remains open until the released Core floor assertion and a published-package
-rerun complete the acceptance evidence. Local validation used Core commit `4be49ee0`
-from the isolated Core campaign worktree. The fixed release is now public as Core 0.1.44;
-the final floor and published-package rerun follow in the remaining portion of this Step.
+Initial validation used Core commit `4be49ee0` from the isolated Core campaign worktree.
+Final acceptance uses the public Core 0.1.44 wheel, verifies the exact `>=0.1.44`
+distribution floor, and runs the installed RAG CLI from its built wheel in an isolated
+environment.

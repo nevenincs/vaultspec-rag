@@ -27,6 +27,8 @@ import tomllib
 from importlib.resources import files
 from pathlib import Path
 
+from packaging.requirements import Requirement
+
 
 def _fail(msg: str) -> None:
     print(f"FAIL: {msg}", file=sys.stderr)
@@ -97,6 +99,21 @@ def check_canonical_mcp_builtin() -> None:
     if actual != expected:
         _fail(f"canonical MCP builtin mismatch: {actual!r}")
     print("PASS: canonical MCP builtin is installed")
+
+
+def check_published_core_floor() -> None:
+    """Verify the artifact requires the published native-MCP Core release."""
+    requirements = importlib.metadata.requires("vaultspec-rag") or []
+    core = next(
+        Requirement(requirement)
+        for requirement in requirements
+        if Requirement(requirement).name == "vaultspec-core"
+    )
+    if str(core.specifier) != ">=0.1.44":
+        _fail(f"vaultspec-core floor is {core.specifier}, expected >=0.1.44")
+    if importlib.metadata.version("vaultspec-core") != "0.1.44":
+        _fail("isolated smoke environment did not resolve vaultspec-core 0.1.44")
+    print("PASS: published vaultspec-core 0.1.44 floor resolves")
 
 
 def check_cli_help() -> None:
@@ -170,6 +187,7 @@ if __name__ == "__main__":
     check_version_metadata()
     check_entry_points_registered()
     check_canonical_mcp_builtin()
+    check_published_core_floor()
     check_cli_help()
     check_mcp_help()
     check_installed_package_enrollment()
