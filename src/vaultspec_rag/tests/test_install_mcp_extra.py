@@ -17,7 +17,7 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
     InstallMode,
 )
 
-from ..commands import install_run
+from ..commands import install_run, uninstall_run
 from ..commands._mcp_extra import reconcile_mcp_extra
 from ..commands._uv_sync import (
     _classify_uv_add_result,  # pyright: ignore[reportPrivateUsage]
@@ -144,6 +144,31 @@ class TestMcpExtraPlacement:
         )
         assert preview.action == "would-apply"
         assert preview.location == "[project].dependencies"
+        assert pyproject.read_bytes() == original
+
+    def test_uninstall_previews_then_restores_owned_requirement(
+        self, tmp_path: Path
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        original = (
+            b'[project]\nname = "consumer"\ndependencies = ["vaultspec-rag>=0.3"]\n'
+        )
+        pyproject.write_bytes(original)
+        (tmp_path / ".vaultspec").mkdir()
+
+        applied = reconcile_mcp_extra(
+            pyproject, mode=InstallMode.DEPENDENCY, enabled=True
+        )
+        assert applied.action == "applied"
+        managed = pyproject.read_bytes()
+        assert managed != original
+
+        preview = uninstall_run(path=tmp_path, skip={"core"})
+        assert preview.action == "dry_run"
+        assert pyproject.read_bytes() == managed
+
+        removed = uninstall_run(path=tmp_path, force=True, skip={"core"})
+        assert removed.action == "uninstall"
         assert pyproject.read_bytes() == original
 
         applied = reconcile_mcp_extra(

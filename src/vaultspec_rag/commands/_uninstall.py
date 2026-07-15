@@ -12,6 +12,8 @@ from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeS
 )
 
 from ..builtins import list_builtins
+from ._mcp_extra import reconcile_mcp_extra
+from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
@@ -148,6 +150,26 @@ def uninstall_run(
         report.warnings.append(f"no .vaultspec/ at {target}; nothing to uninstall")
         _run_torch_config_uninstall(target=target, report=report, dry_run=True)
         return report
+
+    # Reverse only the dependency edit this installer owns.  The durable
+    # ownership record captures the exact original requirement and placement;
+    # ``reconcile_mcp_extra`` refuses to rewrite a drifted or unowned surface.
+    # Resolve before removing the bundled sources so legacy mode detection can
+    # still inspect the complete installed workspace when no declaration has
+    # been persisted yet.
+    try:
+        resolved_mode = resolve_rag_mode(target, None).mode
+        extra = reconcile_mcp_extra(
+            target / "pyproject.toml",
+            mode=resolved_mode,
+            enabled=False,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        logger.error("MCP-extra reversal failed during uninstall: %s", exc)
+        report.warnings.append(f"MCP-extra reversal failed: {exc}")
+    else:
+        report.warnings.extend(f"MCP extra: {message}" for message in extra.conflicts)
 
     _remove_candidates(target, dry_run, report)
 
