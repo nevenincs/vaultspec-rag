@@ -1074,6 +1074,64 @@ class TestDryRunInstall:
             assert not (rule.parent / link_target).exists()
         assert _workspace_inventory(fresh_workspace) == before
 
+    @pytest.mark.parametrize("snapshot_kind", ["regular", "relative-symlink"])
+    @pytest.mark.parametrize(
+        "collision_kind",
+        ["regular", "live-symlink", "broken-symlink"],
+    )
+    def test_rollback_restore_ignores_predictable_temp_collisions(
+        self,
+        fresh_workspace: Path,
+        snapshot_kind: str,
+        collision_kind: str,
+    ) -> None:
+        from ...commands._install import _file_snapshot, _restore_file_snapshot
+
+        destination = fresh_workspace / "builtin-rule.md"
+        destination_target = fresh_workspace / "builtin-target.md"
+        if snapshot_kind == "regular":
+            destination.write_bytes(b"original-rule\x00")
+            destination.chmod(stat.S_IREAD)
+        else:
+            destination_target.write_bytes(b"link-target\x00")
+            destination.symlink_to(
+                destination_target.name,
+                target_is_directory=False,
+            )
+        snapshot = _file_snapshot(destination)
+        if snapshot_kind == "regular":
+            destination.chmod(stat.S_IREAD | stat.S_IWRITE)
+        destination.unlink()
+        destination.write_bytes(b"transaction-rule")
+
+        collision = destination.with_suffix(
+            destination.suffix + f".{os.getpid()}.rollback.tmp"
+        )
+        collision_target = fresh_workspace / "collision-target.md"
+        if collision_kind == "regular":
+            collision.write_bytes(b"operator-collision\x00")
+        elif collision_kind == "live-symlink":
+            collision_target.write_bytes(b"operator-target\x00")
+            collision.symlink_to(collision_target.name, target_is_directory=False)
+        else:
+            collision.symlink_to("missing-collision.md", target_is_directory=False)
+        collision_signature = _node_signature(collision)
+        collision_bytes = (
+            collision.read_bytes() if collision_kind != "broken-symlink" else None
+        )
+
+        _restore_file_snapshot(destination, snapshot)
+
+        assert _file_snapshot(destination) == snapshot
+        assert _node_signature(collision) == collision_signature
+        if collision_bytes is not None:
+            assert collision.read_bytes() == collision_bytes
+        if collision_kind == "live-symlink":
+            assert collision_target.read_bytes() == b"operator-target\x00"
+        elif collision_kind == "broken-symlink":
+            assert not (fresh_workspace / "missing-collision.md").exists()
+        assert not list(fresh_workspace.glob(f".{destination.name}.rollback-*.tmp"))
+
     if os.name == "nt":
 
         @pytest.mark.parametrize("repair_flag", ["force", "upgrade"])

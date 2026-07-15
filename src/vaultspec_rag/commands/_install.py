@@ -152,6 +152,7 @@ class _NodeSnapshot:
     kind: _SnapshotKind
     payload: bytes | str | None = None
     target_is_directory: bool = False
+    mode: int | None = None
 
 
 def _file_snapshot(path: Path) -> _NodeSnapshot:
@@ -174,9 +175,16 @@ def _file_snapshot(path: Path) -> _NodeSnapshot:
     except FileNotFoundError:
         return _NodeSnapshot(_SnapshotKind.ABSENT)
     if stat.S_ISREG(metadata.st_mode):
-        return _NodeSnapshot(_SnapshotKind.FILE, path.read_bytes())
+        return _NodeSnapshot(
+            _SnapshotKind.FILE,
+            path.read_bytes(),
+            mode=stat.S_IMODE(metadata.st_mode),
+        )
     if stat.S_ISDIR(metadata.st_mode):
-        return _NodeSnapshot(_SnapshotKind.DIRECTORY)
+        return _NodeSnapshot(
+            _SnapshotKind.DIRECTORY,
+            mode=stat.S_IMODE(metadata.st_mode),
+        )
     raise OSError(f"unsupported transactional node type at {path}")
 
 
@@ -190,13 +198,26 @@ def _remove_transaction_node(path: Path) -> None:
     path.unlink()
 
 
-def _restore_regular_file(path: Path, payload: bytes) -> None:
+def _restore_regular_file(path: Path, payload: bytes, mode: int | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + f".{os.getpid()}.rollback.tmp")
+    descriptor, raw_temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.rollback-",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(raw_temporary)
     try:
-        temporary.write_bytes(payload)
-        temporary.replace(path)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            os.chmod(temporary, mode, follow_symlinks=False)
+        os.replace(temporary, path)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
 
@@ -248,10 +269,12 @@ def _restore_file_snapshot(path: Path, snapshot: _NodeSnapshot) -> None:
     if snapshot.kind is _SnapshotKind.FILE:
         if not isinstance(snapshot.payload, bytes):
             raise TypeError(f"regular-file snapshot has no byte payload: {path}")
-        _restore_regular_file(path, snapshot.payload)
+        _restore_regular_file(path, snapshot.payload, snapshot.mode)
         return
     if snapshot.kind is _SnapshotKind.DIRECTORY:
-        path.mkdir()
+        path.mkdir(mode=snapshot.mode or 0o777)
+        if snapshot.mode is not None:
+            path.chmod(snapshot.mode)
         return
     if not isinstance(snapshot.payload, str):
         raise TypeError(f"link snapshot has no target payload: {path}")

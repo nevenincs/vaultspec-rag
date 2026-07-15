@@ -44,6 +44,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S36]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S37]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S38]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S39]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -104,6 +105,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S36` - Perform final fresh data-loss review and complete all release gates
 - `2026-07-15-provider-mcp-enrollment-P03-S37` - Preserve builtin node topology across failed install rollback
 - `2026-07-15-provider-mcp-enrollment-P03-S38` - Perform final topology-aware release review and complete every gate
+- `2026-07-15-provider-mcp-enrollment-P03-S39` - Make rollback file replacement collision-safe and metadata-preserving
 
 ### plan
 
