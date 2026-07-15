@@ -19,11 +19,14 @@ machinery operates on, so rag and core cannot drift on what a mode means.
 from __future__ import annotations
 
 import logging
-from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
+)
+from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+    mcp_status,
+    mcp_sync,
 )
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     ModeProvenance,
@@ -36,9 +39,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
-    from typing import Any
 
     from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
         SyncResult,
@@ -140,11 +141,6 @@ def _mode_is_deployed(target: Path) -> bool:
         Tool,
     )
 
-    mcp_status = cast(
-        "Callable[..., Any]",
-        vars(import_module("vaultspec_core.core.mcps"))["mcp_status"],
-    )
-
     status = cast(
         "dict[str, object]",
         mcp_status(provider="all", scope="project", target_dir=target),
@@ -221,7 +217,7 @@ def migrate_rag_mcp_entry(mode: InstallMode) -> SyncResult:
     """Force rag's already-managed MCP entry into *mode*'s launch shape.
 
     The mode-flip seam, the direct analogue of core's own force-managed pass in
-    ``commands.py``. From the ``0.1.39`` floor core's ``sync_provider`` renders
+    ``commands.py``. From the ``0.1.44`` floor core's ``sync_provider`` renders
     every companion MCP definition at *its own* declaring package's committed
     mode (rag's entry names ``vaultspec-rag`` through the ``_vaultspec_mode_package``
     token), so a fresh install and a same-mode re-install already write rag's
@@ -243,11 +239,6 @@ def migrate_rag_mcp_entry(mode: InstallMode) -> SyncResult:
     Args:
         mode: The provisioning mode whose launch shape rag's entry should carry.
     """
-    mcp_sync = cast(
-        "Callable[..., Any]",
-        vars(import_module("vaultspec_core.core.mcps"))["mcp_sync"],
-    )
-
     return mcp_sync(
         mode=mode,
         force_managed=frozenset({RAG_DISTRIBUTION_NAME}),

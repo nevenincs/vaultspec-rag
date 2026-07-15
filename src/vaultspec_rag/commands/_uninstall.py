@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
+)
+from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+    mcp_uninstall,
 )
 
 from ..builtins import list_builtins
@@ -19,10 +20,6 @@ from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +87,6 @@ def _run_mcp_cleanup(
     dry_run: bool,
 ) -> None:
     """Remove only RAG-owned provider projections through Core's authority."""
-    mcp_uninstall = cast(
-        "Callable[..., Any]",
-        vars(import_module("vaultspec_core.core.mcps"))["mcp_uninstall"],
-    )
     result = mcp_uninstall(
         target,
         dry_run=dry_run,

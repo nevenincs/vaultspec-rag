@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from importlib import import_module
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from tomlkit.exceptions import ParseError
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
+from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     dependency_leak_advisory,
     newly_establishes_dependency,
@@ -34,9 +34,7 @@ from ._workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
-    from typing import Any
 
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         InstallMode,
@@ -141,10 +139,6 @@ def _run_core_sync(
                 )
     if "mcp" in skip:
         return
-    mcp_sync = cast(
-        "Callable[..., Any]",
-        vars(import_module("vaultspec_core.core.mcps"))["mcp_sync"],
-    )
     try:
         result = mcp_sync(
             dry_run=dry_run,
@@ -172,7 +166,7 @@ def _persist_mode_and_detect_flip(
 ) -> bool:
     """Persist rag's mode before the sync and report whether it flips the launch.
 
-    From the 0.1.39 floor core's sync renders each companion MCP definition at
+    From the 0.1.44 floor core's sync renders each companion MCP definition at
     its own declaring package's committed mode, so writing rag's entry *before*
     the sync lets the sync render rag's ``.mcp.json`` launch in rag's own shape
     natively for the fresh and same-mode cases. The write reads and rewrites only
