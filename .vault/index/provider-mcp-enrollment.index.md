@@ -22,6 +22,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S14]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S15]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S16]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S17]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -60,6 +61,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S14` - Run formal code review and record release-readiness findings
 - `2026-07-15-provider-mcp-enrollment-P03-S15` - Implement accurate non-mutating MCP source-overlay previews and real-file API/CLI regressions
 - `2026-07-15-provider-mcp-enrollment-P03-S16` - Fail closed on top-level and per-provider MCP lifecycle errors with complete reports and CLI regressions
+- `2026-07-15-provider-mcp-enrollment-P03-S17` - Remove dormant uv-add MCP code and stale prose and make the Core smoke floor future-compatible
 
 ### plan
 

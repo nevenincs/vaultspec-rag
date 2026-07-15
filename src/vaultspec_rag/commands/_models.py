@@ -166,10 +166,7 @@ class InstallReport:
     torch_direct_dep_action: str = "skipped"
     torch_direct_dep_location: str = ""
     torch_sync_action: str = "skipped"
-    # Whether install ensured the optional ``[mcp]`` extra (the MCP server's
-    # dependency). ``skipped`` when ``--no-mcp`` was passed; otherwise the
-    # ``uv add vaultspec-rag[mcp]`` outcome (``succeeded`` / ``failed`` /
-    # ``uv-not-found`` / ``would-add`` for a dry run).
+    # Placement-aware optional ``[mcp]`` extra reconciliation outcome.
     mcp_extra_action: str = "skipped"
     # Heterogeneous per-dependency provisioning outcome from the unified
     # front door (``provision_dependencies``). ``None`` when provisioning

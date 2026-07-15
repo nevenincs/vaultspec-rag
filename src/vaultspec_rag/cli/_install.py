@@ -173,11 +173,10 @@ def handle_install(
         typer.Option(
             "--mcp/--no-mcp",
             help=(
-                "Ensure the optional MCP extra (`uv add vaultspec-rag[mcp]`) so "
-                "the agent-facing MCP search surface can run. On by default - "
-                "install wires up that surface; --no-mcp sets up a CLI-only "
-                "workspace without the mcp dependency (and, on Windows, without "
-                "pywin32)."
+                "Enroll the agent-facing MCP search surface and reconcile its "
+                "optional dependency at RAG's existing project placement. On "
+                "by default; --no-mcp sets up a CLI-only workspace without the "
+                "mcp dependency (and, on Windows, without pywin32)."
             ),
         ),
     ] = True,

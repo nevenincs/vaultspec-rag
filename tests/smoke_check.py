@@ -28,6 +28,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 
 def _fail(msg: str) -> None:
@@ -111,9 +112,16 @@ def check_published_core_floor() -> None:
     )
     if str(core.specifier) != ">=0.1.44":
         _fail(f"vaultspec-core floor is {core.specifier}, expected >=0.1.44")
-    if importlib.metadata.version("vaultspec-core") != "0.1.44":
-        _fail("isolated smoke environment did not resolve vaultspec-core 0.1.44")
-    print("PASS: published vaultspec-core 0.1.44 floor resolves")
+    installed = Version(importlib.metadata.version("vaultspec-core"))
+    if not core.specifier.contains(installed, prereleases=True):
+        _fail(f"resolved vaultspec-core {installed} does not satisfy {core.specifier}")
+    try:
+        from vaultspec_core.core.mcps import mcp_status, mcp_sync, mcp_uninstall
+    except ImportError as exc:
+        _fail(f"published vaultspec-core lacks required MCP lifecycle APIs: {exc}")
+    if not all(callable(api) for api in (mcp_status, mcp_sync, mcp_uninstall)):
+        _fail("published vaultspec-core MCP lifecycle exports are not callable")
+    print(f"PASS: published vaultspec-core {installed} satisfies {core.specifier}")
 
 
 def check_cli_help() -> None:
@@ -140,6 +148,7 @@ def check_mcp_help() -> None:
 def check_installed_package_enrollment() -> None:
     """Run the installed CLI and verify both provider-native project targets."""
     from vaultspec_core.core.manifest import write_manifest
+    from vaultspec_core.core.mcps import mcp_status, mcp_uninstall
 
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-smoke-") as raw_target:
         target = Path(raw_target)
@@ -179,6 +188,19 @@ def check_installed_package_enrollment() -> None:
             _fail("installed CLI did not enroll canonical Claude project entry")
         if codex.get("mcp_servers", {}).get("vaultspec-rag") != expected:
             _fail("installed CLI did not enroll canonical Codex project entry")
+        status = mcp_status(provider="all", scope="project", target_dir=target)
+        providers = status.get("providers")
+        if not isinstance(providers, dict) or set(providers) != {"claude", "codex"}:
+            _fail(f"published Core status omitted native providers: {providers!r}")
+        preview = mcp_uninstall(
+            target,
+            dry_run=True,
+            provider="all",
+            scope="project",
+            names=frozenset({"vaultspec-rag"}),
+        )
+        if preview.pruned != 2 or set(preview.per_tool) != {"claude", "codex"}:
+            _fail("published Core selective uninstall preview did not prune both hosts")
     print("PASS: installed CLI enrolls both native MCP project targets")
 
 
