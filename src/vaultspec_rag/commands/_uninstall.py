@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from importlib import import_module
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
@@ -17,6 +19,10 @@ from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +83,72 @@ def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> No
                 logger.debug("could not size %s for preview: %s", data_dir, exc)
 
 
+def _run_mcp_cleanup(
+    target: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+) -> None:
+    """Remove only RAG-owned provider projections through Core's authority."""
+    mcp_uninstall = cast(
+        "Callable[..., Any]",
+        vars(import_module("vaultspec_core.core.mcps"))["mcp_uninstall"],
+    )
+    result = mcp_uninstall(
+        target,
+        dry_run=dry_run,
+        provider="all",
+        scope="project",
+        names=frozenset({"vaultspec-rag"}),
+    )
+    report.sync_results.append(result)
+
+
+def _run_core_cleanup(
+    target: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+    force: bool,
+    skip: set[str],
+) -> None:
+    """Reconcile non-MCP resources and selectively remove RAG MCP entries."""
+    if "core" in skip:
+        return
+
+    if dry_run:
+        report.warnings.append(
+            "dry-run: non-MCP sync_provider not invoked "
+            "(would propagate bundled-source removal to provider dirs)"
+        )
+    else:
+        try:
+            _init_core_context(target)
+        except Exception as exc:
+            logger.error("workspace context bootstrap failed: %s", exc)
+            report.warnings.append(f"workspace bootstrap failed: {exc}")
+        else:
+            try:
+                report.sync_results.extend(
+                    sync_provider(
+                        "all",
+                        dry_run=False,
+                        force=force,
+                        skip={*skip, "mcp"},
+                    )
+                )
+            except Exception as exc:
+                logger.error("sync_provider failed during uninstall: %s", exc)
+                report.warnings.append(f"core sync failed: {exc}")
+
+    if "mcp" not in skip:
+        try:
+            _run_mcp_cleanup(target, report, dry_run=dry_run)
+        except Exception as exc:
+            logger.error("MCP cleanup failed during uninstall: %s", exc)
+            report.warnings.append(f"MCP cleanup failed: {exc}")
+
+
 def uninstall_run(
     path: Path | None = None,
     *,
@@ -89,15 +161,15 @@ def uninstall_run(
     """Remove vaultspec-rag enrollment from a workspace.
 
     Symmetric mirror of :func:`install_run`. Removes rag's bundled
-    source files from ``.vaultspec/rules/``, then invokes core's
-    ``sync_provider`` to propagate the removal to ``.mcp.json`` and
-    provider dirs. Propagation cleanup depends on vaultspec-core
-    0.1.10+'s reconciling ``mcp_sync``.
+    source files from ``.vaultspec/``, then invokes Core's ordinary
+    provider sync for non-MCP resources and its project-scoped
+    ``mcp_uninstall`` for MCP entries. The latter is filtered to
+    ``vaultspec-rag`` so sibling Core and user entries remain untouched.
 
     rag's uninstall NEVER touches core's installation. It removes only
-    files rag owns and lets core's sync handle propagation. ``.vault/``
-    documents are always preserved. The rag index under ``.vault/data/``
-    is preserved unless ``remove_data`` is set.
+    files and provider entries RAG owns. ``.vault/`` documents are always
+    preserved. The rag index under ``.vault/data/`` is preserved unless
+    ``remove_data`` is set.
 
     Args:
         path: Workspace target. Defaults to current working directory.
@@ -173,32 +245,13 @@ def uninstall_run(
 
     _remove_candidates(target, dry_run, report)
 
-    if dry_run:
-        report.warnings.append(
-            "dry-run: core sync_provider not invoked (would propagate "
-            "removal to .mcp.json and provider dirs)"
-        )
-    elif "core" not in skip:
-        # sync_provider needs core's runtime context. Only bootstrap
-        # it now (after we've confirmed .vaultspec/ exists), so we
-        # never create workspace state during uninstall. Same scoped-
-        # init pattern as install (see COHAB-01).
-        try:
-            _init_core_context(target)
-        except Exception as exc:
-            logger.error("workspace context bootstrap failed: %s", exc)
-            report.warnings.append(f"workspace bootstrap failed: {exc}")
-        else:
-            try:
-                report.sync_results = sync_provider(
-                    "all",
-                    dry_run=False,
-                    force=force,
-                    skip=skip,
-                )
-            except Exception as exc:
-                logger.error("sync_provider failed during uninstall: %s", exc)
-                report.warnings.append(f"core sync failed: {exc}")
+    _run_core_cleanup(
+        target,
+        report,
+        dry_run=dry_run,
+        force=force,
+        skip=skip,
+    )
 
     _run_torch_config_uninstall(target=target, report=report, dry_run=dry_run)
 
