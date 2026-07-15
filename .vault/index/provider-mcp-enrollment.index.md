@@ -25,6 +25,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S17]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S18]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S19]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S20]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -66,6 +67,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S17` - Remove dormant uv-add MCP code and stale prose and make the Core smoke floor future-compatible
 - `2026-07-15-provider-mcp-enrollment-P03-S18` - Re-audit remediated MCP enrollment and run final release gates
 - `2026-07-15-provider-mcp-enrollment-P03-S19` - Persist requested RAG mode in MCP preview projections and align tool-mode recovery guidance
+- `2026-07-15-provider-mcp-enrollment-P03-S20` - Re-audit final MCP remediation and repeat release gates
 
 ### plan
 

@@ -93,6 +93,20 @@ not mode-aware: the accepted tool-mode contract deliberately performs no project
 dependency mutation and launches through `uvx --from vaultspec-rag[mcp]`. The remaining
 message can therefore reintroduce the dependency placement that the feature removed.
 
+### partial-provider-mode-transition | high | A missing sibling suppresses mode migration and leaves split launches
+
+The final mode-overlay remediation detects a flip only when `mode_is_deployed`
+returns true, but that predicate requires every selected provider to report a healthy,
+managed RAG entry. In a dual-provider dependency-mode workspace with the persisted
+declaration removed and the Codex target missing, an explicit tool-mode upgrade
+therefore classified the workspace as not deployed and skipped the narrow
+force-managed migration. Both preview and real execution reported Claude as one
+`[SKIP]` and Codex as one `[ADD]`, and the real report set `mcp_failed` false. The
+resulting Claude entry still launched through `uv run` while the newly added Codex
+entry launched through `uvx --from vaultspec-rag[mcp]`. This is a false-success
+non-convergence: a provider-local missing state prevents repair of the still-managed
+sibling and leaves the two native hosts on different requested modes.
+
 ## Recommendations
 
 - Treat any MCP result with `errored` or `errors` as an unsuccessful requested
@@ -115,6 +129,11 @@ message can therefore reintroduce the dependency placement that the feature remo
 - Replace the remaining runtime `uv add` recovery sentence with mode-neutral guidance
   that points operators to the enrolled canonical launch or the placement-aware install
   command without prescribing a project dependency mutation.
+- Detect a mode transition when any selected provider has a managed RAG deployment,
+  rather than requiring every provider to be healthy. Add a dual-provider regression
+  with one missing target that requires preview and real execution to update the
+  existing managed sibling, add the missing sibling, converge both launch shapes, and
+  return success only after convergence.
 
 ## Remediation verification
 
@@ -139,3 +158,42 @@ Verdict: **not release-ready**. The provider error contract and Core-floor smoke
 closed, while the dry-run remediation remains behaviorally incomplete and the final
 mode-inaccurate recovery message remains. The high-severity preview divergence must be
 fixed and re-audited before merge or publication.
+
+## Final remediation verification
+
+- `provider-error-exit-contract`: verified closed. Top-level corrupt-ownership errors
+  remain present in structured reports, malformed Codex configuration is attributed to
+  the provider, and both install and uninstall exit 2 rather than reporting success.
+- `dry-run-source-overlay`: verified closed for fresh enrollment and `--no-mcp`.
+  Claude and Codex each report one native addition or prune, respectively, while all
+  workspace bytes and lock paths remain unchanged.
+- `dry-run-mode-overlay`: verified closed for healthy dual-provider transitions.
+  Dependency-to-tool, dev-to-tool, and tool-to-dependency previews match the real
+  per-provider skip/update outcomes, preserve preview bytes and locks, and converge to
+  the requested `uvx` or `uv run` launch.
+- `published-core-smoke-pin`: verified closed. The live smoke accepts the installed
+  public Core through `>=0.1.44`, imports the required status/sync/uninstall APIs, and
+  exercises dual-provider installed enrollment plus selective uninstall preview.
+- `dormant-uv-add-path`: verified closed. Repository search found no production helper,
+  classifier, or stale `uv add vaultspec-rag[mcp]` guidance; the only match is the
+  negative guidance assertion.
+- `runtime-uv-add-guidance`: verified closed. The runtime message distinguishes tool,
+  dependency, and dev recovery surfaces and explicitly keeps tool mode project-inert.
+- `partial-provider-mode-transition`: open release blocker. An independent real
+  workspace probe removed only the Codex target before a dependency-to-tool upgrade.
+  Preview was byte-inert and matched real counters, but both reported Claude skipped
+  and Codex added, `mcp_failed` remained false, and the resulting launches split between
+  Claude `uv run` and Codex `uvx --from vaultspec-rag[mcp]`.
+
+Evidence: the focused high-risk integration selection passed 8 tests; ownership,
+real-host, placement, and guidance selection passed 11 tests; both installed Claude and
+Codex CLIs recognized the project entry; the public-Core smoke passed every check with
+Core 0.1.44 satisfying `>=0.1.44`; and `git diff --check` passed. Selective uninstall
+preserved Core/user entries and ownership fingerprints. No ownership mutation or
+preview-byte divergence was observed outside the open partial-provider transition.
+
+Final verdict: **FAIL — not release-ready**. Commit `48b6127` fixes the original
+healthy-provider mode-overlay divergence and the recovery guidance, but a provider-local
+missing state still converts a requested mode migration into a successful split-mode
+deployment. This false-success path must be remediated and independently re-audited
+before merge or publication.
