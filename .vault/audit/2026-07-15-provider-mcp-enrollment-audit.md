@@ -662,3 +662,46 @@ findings**. Regular builtin files now roll back correctly, but a failed forced s
 replace an operator-owned symlink with a regular file. Merge and publication remain
 held pending topology-aware remediation, a fresh independent audit, and completion of
 every unwaived release gate.
+
+## S38 final verification
+
+### rollback-scratch-symlink-data-loss | high | Predictable rollback scratch path follows and removes an operator symlink
+
+Commit `d8de256` closes the S36 finding at the primary builtin destination. Node
+snapshots now distinguish absent paths, regular files, directories, symlinks, and
+Windows junctions; valid and broken relative symlinks recover their exact link text,
+and direct real junction restoration preserves the referenced target contents.
+
+Regular-file restoration introduces a separate data-loss path. `_restore_regular_file`
+constructs the deterministic sibling pathname
+`<destination>.<pid>.rollback.tmp`, writes the saved payload through it, replaces the
+destination, and unconditionally unlinks the scratch path. That scratch node is neither
+captured by the transaction snapshot nor created with an exclusive no-follow boundary.
+If it already exists as an operator-owned symlink, `write_bytes` follows the link and
+overwrites the referenced file before cleanup removes the link itself.
+
+An independent real temporary-workspace reproduction saved a regular builtin snapshot,
+changed the builtin, placed a relative symlink at the exact rollback scratch pathname,
+and pointed that link at an unrelated operator file containing distinct bytes.
+`_restore_file_snapshot` restored the builtin, but also replaced the operator file's
+bytes with the builtin snapshot and deleted the operator's symlink. No mock, fake,
+patch, monkeypatch, skip, or xfail was used. This is release-blocking user-data loss and
+violates the rollback contract that link targets and unrelated nodes are never followed,
+modified, or removed.
+
+Recommendation: create rollback scratch files atomically and exclusively with a
+non-following primitive in the destination directory, use an unpredictable name, and
+remove only a scratch node whose creation and identity belong to the active
+transaction. Add a real forced-install and upgrade regression with a pre-existing
+symlink collision that requires both the link and its referenced bytes to remain exact.
+
+The first exact `pytest -m "not integration"` aggregate batch was terminated before it
+produced a summary, so no test count is credited to S38. All remaining high-risk,
+static, Vaultspec, diff, build, wheel, and real-host gates were stopped after the target
+was invalidated; none is waived.
+
+S38 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. Primary builtin topology restoration is correct on the covered paths, but
+its predictable scratch file can corrupt an unrelated symlink target and delete the
+operator's link. Merge and publication remain held pending scratch-node-safe
+remediation, a fresh independent audit, and completion of every release gate.
