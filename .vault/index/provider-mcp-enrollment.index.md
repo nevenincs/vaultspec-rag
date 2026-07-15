@@ -7,6 +7,7 @@ date: '2026-07-15'
 modified: '2026-07-15'
 related:
   - '[[2026-07-15-provider-mcp-enrollment-P01-S01]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P01-S02]]'
   - '[[2026-07-15-provider-mcp-enrollment-P02-S06]]'
   - '[[2026-07-15-provider-mcp-enrollment-P02-S07]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S10]]'
@@ -28,6 +29,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 ### exec
 
 - `2026-07-15-provider-mcp-enrollment-P01-S01` - Extend the canonical RAG definition with Core's tool distribution token
+- `2026-07-15-provider-mcp-enrollment-P01-S02` - Replace JSON-only mode observation and migration with Core's provider-aware status and force-managed sync
 - `2026-07-15-provider-mcp-enrollment-P02-S06` - Implement placement-aware MCP extra reconciliation and durable ownership provenance
 - `2026-07-15-provider-mcp-enrollment-P02-S07` - Make --mcp and --no-mcp reconcile only the canonical MCP source while retaining the rule and discovery skill
 - `2026-07-15-provider-mcp-enrollment-P03-S10` - Add real-behavior dependency-placement tests for existing runtime and dev declarations

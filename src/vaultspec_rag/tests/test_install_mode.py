@@ -47,6 +47,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
     write_package_declaration,
 )
 
+from ..builtins import seed_builtins
 from ..commands import install_run
 from ..commands._mode import (
     RAG_DISTRIBUTION_NAME,
@@ -73,7 +74,7 @@ _RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 _DEP_LAUNCH = ("uv", ["run", "python", "-m", RAG_MCP_MODULE])
 _TOOL_LAUNCH = (
     "uvx",
-    ["--from", RAG_DISTRIBUTION_NAME, "python", "-m", RAG_MCP_MODULE],
+    ["--from", f"{RAG_DISTRIBUTION_NAME}[mcp]", "python", "-m", RAG_MCP_MODULE],
 )
 
 _PROJECT_WITH_RAG = (
@@ -307,15 +308,17 @@ def test_infer_upgrade_mode_persisted_wins(tmp_path: Path) -> None:
 def test_infer_upgrade_mode_legacy_dependency_shape(tmp_path: Path) -> None:
     """A legacy dependency-shaped deployment with no declaration infers dependency."""
     ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    seed_builtins(ws / ".vaultspec", force=True)
     # Deployed dependency-mode MCP launch, no committed declaration - the legacy
     # state install --upgrade must recognize.
     mcp = {
+        "_vaultspecManaged": [RAG_DISTRIBUTION_NAME],
         "mcpServers": {
             RAG_DISTRIBUTION_NAME: {
                 "command": _DEP_LAUNCH[0],
                 "args": list(_DEP_LAUNCH[1]),
             }
-        }
+        },
     }
     (ws / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
 
