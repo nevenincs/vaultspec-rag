@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import subprocess
 import tomllib
 from importlib.resources import files
@@ -75,6 +76,39 @@ def _workspace_inventory(target: Path) -> dict[str, tuple[str, bytes]]:
         )
         for path in target.rglob("*")
     }
+
+
+def _node_signature(path: Path) -> tuple[str, str | int, bool]:
+    if path.is_junction():
+        return ("junction", os.readlink(path), True)
+    if path.is_symlink():
+        metadata = path.lstat()
+        attributes = int(getattr(metadata, "st_file_attributes", 0))
+        is_directory = path.is_dir() or bool(
+            attributes & getattr(stat, "FILE_ATTRIBUTE_DIRECTORY", 0)
+        )
+        return ("symlink", os.readlink(path), is_directory)
+    return ("node", stat.S_IFMT(path.lstat().st_mode), path.is_dir())
+
+
+def _create_windows_junction(path: Path, target: Path) -> None:
+    environment = {
+        **os.environ,
+        "VAULTSPEC_TEST_JUNCTION_PATH": str(path),
+        "VAULTSPEC_TEST_JUNCTION_TARGET": str(target),
+    }
+    command = (
+        "$ErrorActionPreference = 'Stop'; "
+        "New-Item -ItemType Junction -Path $env:VAULTSPEC_TEST_JUNCTION_PATH "
+        "-Target $env:VAULTSPEC_TEST_JUNCTION_TARGET | Out-Null"
+    )
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        check=True,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
 
 
 def _install(target: Path, **overrides: Any) -> Any:
@@ -986,6 +1020,124 @@ class TestDryRunInstall:
         assert not report.seeded
         assert not report.sync_results
         assert _workspace_inventory(fresh_workspace) == before
+
+    @pytest.mark.parametrize("repair_flag", ["force", "upgrade"])
+    @pytest.mark.parametrize("link_case", ["live-relative", "broken-relative"])
+    def test_late_skill_failure_restores_rule_symlink_topology(
+        self,
+        fresh_workspace: Path,
+        repair_flag: str,
+        link_case: str,
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        (fresh_workspace / ".vault" / "data").mkdir(parents=True)
+        for name in ("mcps", "rules", "skills"):
+            (fresh_workspace / ".vaultspec" / name).mkdir(parents=True, exist_ok=True)
+        rule = fresh_workspace / _RAG_RULE_REL
+        link_target = (
+            Path("operator-target.md")
+            if link_case == "live-relative"
+            else Path("missing-target.md")
+        )
+        live_target = rule.parent / "operator-target.md"
+        if link_case == "live-relative":
+            live_target.write_bytes(b"operator-target\x00")
+        rule.symlink_to(link_target, target_is_directory=False)
+        skill = fresh_workspace / _RAG_SKILL_REL
+        skill.parent.mkdir(parents=True)
+        blocker = skill.with_suffix(skill.suffix + f".{os.getpid()}.tmp")
+        blocker.mkdir()
+        (blocker / "sentinel").write_bytes(b"blocker-owned")
+        before = _workspace_inventory(fresh_workspace)
+        signature = _node_signature(rule)
+
+        report = install_run(
+            path=fresh_workspace,
+            install_mcp=True,
+            configure_torch=False,
+            provision=False,
+            mode=InstallMode.DEPENDENCY,
+            force=repair_flag == "force",
+            upgrade=repair_flag == "upgrade",
+        )
+
+        assert report.mcp_extra_action == "error"
+        assert report.mcp_sync_failed
+        assert _node_signature(rule) == signature
+        assert rule.is_symlink()
+        assert os.readlink(rule) == str(link_target)
+        if link_case == "live-relative":
+            assert live_target.read_bytes() == b"operator-target\x00"
+        else:
+            assert not (rule.parent / link_target).exists()
+        assert _workspace_inventory(fresh_workspace) == before
+
+    if os.name == "nt":
+
+        @pytest.mark.parametrize("repair_flag", ["force", "upgrade"])
+        def test_late_junction_blocker_preserves_reparse_topology(
+            self,
+            fresh_workspace: Path,
+            repair_flag: str,
+        ) -> None:
+            pyproject = fresh_workspace / "pyproject.toml"
+            pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+            write_manifest(fresh_workspace, {"claude", "codex"})
+            (fresh_workspace / ".vault" / "data").mkdir(parents=True)
+            for name in ("mcps", "rules", "skills"):
+                (fresh_workspace / ".vaultspec" / name).mkdir(
+                    parents=True, exist_ok=True
+                )
+            (fresh_workspace / _RAG_MCP_REL).write_bytes(b"operator-mcp\x00")
+            (fresh_workspace / _RAG_RULE_REL).write_bytes(b"operator-rule\x00")
+            skill = fresh_workspace / _RAG_SKILL_REL
+            skill.parent.mkdir(parents=True)
+            target = fresh_workspace / ".vaultspec" / "operator-junction-target"
+            target.mkdir()
+            (target / "sentinel").write_bytes(b"junction-target\x00")
+            _create_windows_junction(skill, target)
+            before = _workspace_inventory(fresh_workspace)
+            signature = _node_signature(skill)
+
+            report = install_run(
+                path=fresh_workspace,
+                install_mcp=True,
+                configure_torch=False,
+                provision=False,
+                mode=InstallMode.DEPENDENCY,
+                force=repair_flag == "force",
+                upgrade=repair_flag == "upgrade",
+            )
+
+            assert report.mcp_extra_action == "error"
+            assert report.mcp_sync_failed
+            assert skill.is_junction()
+            assert _node_signature(skill) == signature
+            assert (target / "sentinel").read_bytes() == b"junction-target\x00"
+            assert _workspace_inventory(fresh_workspace) == before
+
+        def test_junction_snapshot_recreates_removed_reparse_node(
+            self, fresh_workspace: Path
+        ) -> None:
+            from ...commands._install import _file_snapshot, _restore_file_snapshot
+
+            target = fresh_workspace / "operator-target"
+            target.mkdir()
+            (target / "sentinel").write_bytes(b"target-owned\x00")
+            junction = fresh_workspace / "builtin-junction"
+            _create_windows_junction(junction, target)
+            snapshot = _file_snapshot(junction)
+            signature = _node_signature(junction)
+            junction.rmdir()
+            junction.write_bytes(b"transaction-replacement")
+
+            _restore_file_snapshot(junction, snapshot)
+
+            assert junction.is_junction()
+            assert _node_signature(junction) == signature
+            assert (target / "sentinel").read_bytes() == b"target-owned\x00"
 
     @pytest.mark.parametrize(
         ("content", "initial_mode", "target_mode", "target_location"),

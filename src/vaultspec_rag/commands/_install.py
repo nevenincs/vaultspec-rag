@@ -5,8 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import stat
+import subprocess
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -135,28 +139,133 @@ def _reconcile_mcp_extra(
     return not result.conflicts
 
 
-def _file_snapshot(path: Path) -> bytes | None:
-    """Return exact file bytes, or ``None`` when *path* does not exist."""
-    return path.read_bytes() if path.exists() else None
+class _SnapshotKind(Enum):
+    ABSENT = auto()
+    FILE = auto()
+    SYMLINK = auto()
+    DIRECTORY = auto()
+    JUNCTION = auto()
 
 
-def _restore_file_snapshot(path: Path, snapshot: bytes | None) -> None:
-    """Restore one transactional file without rewriting already-equal bytes."""
-    if snapshot is None:
-        path.unlink(missing_ok=True)
+@dataclass(frozen=True)
+class _NodeSnapshot:
+    kind: _SnapshotKind
+    payload: bytes | str | None = None
+    target_is_directory: bool = False
+
+
+def _file_snapshot(path: Path) -> _NodeSnapshot:
+    """Capture exact payload and filesystem-node topology without following links."""
+    if path.is_junction():
+        return _NodeSnapshot(_SnapshotKind.JUNCTION, os.readlink(path), True)
+    if path.is_symlink():
+        metadata = path.lstat()
+        attributes = int(getattr(metadata, "st_file_attributes", 0))
+        directory_link = path.is_dir() or bool(
+            attributes & getattr(stat, "FILE_ATTRIBUTE_DIRECTORY", 0)
+        )
+        return _NodeSnapshot(
+            _SnapshotKind.SYMLINK,
+            os.readlink(path),
+            directory_link,
+        )
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return _NodeSnapshot(_SnapshotKind.ABSENT)
+    if stat.S_ISREG(metadata.st_mode):
+        return _NodeSnapshot(_SnapshotKind.FILE, path.read_bytes())
+    if stat.S_ISDIR(metadata.st_mode):
+        return _NodeSnapshot(_SnapshotKind.DIRECTORY)
+    raise OSError(f"unsupported transactional node type at {path}")
+
+
+def _remove_transaction_node(path: Path) -> None:
+    current = _file_snapshot(path)
+    if current.kind is _SnapshotKind.ABSENT:
         return
-    if path.exists() and path.read_bytes() == snapshot:
+    if current.kind in {_SnapshotKind.DIRECTORY, _SnapshotKind.JUNCTION}:
+        path.rmdir()
         return
+    path.unlink()
+
+
+def _restore_regular_file(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.rollback.tmp")
     try:
-        temporary.write_bytes(snapshot)
+        temporary.write_bytes(payload)
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def _rollback_file_snapshots(snapshots: dict[Path, bytes | None]) -> list[str]:
+def _restore_junction(path: Path, target: str) -> None:
+    if os.name != "nt":
+        raise OSError(f"cannot restore Windows junction on {os.name}: {path}")
+    powershell_target = target
+    if target.startswith("\\\\?\\UNC\\"):
+        powershell_target = "\\\\" + target[8:]
+    elif target.startswith("\\\\?\\"):
+        powershell_target = target[4:]
+    environment = {
+        **os.environ,
+        "VAULTSPEC_JUNCTION_PATH": str(path),
+        "VAULTSPEC_JUNCTION_TARGET": powershell_target,
+    }
+    command = (
+        "$ErrorActionPreference = 'Stop'; "
+        "New-Item -ItemType Junction -Path $env:VAULTSPEC_JUNCTION_PATH "
+        "-Target $env:VAULTSPEC_JUNCTION_TARGET | Out-Null"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        check=False,
+        capture_output=True,
+        env=environment,
+        timeout=15,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        printable = "".join(
+            character if character.isprintable() else " " for character in stderr
+        )
+        diagnostic = " ".join(printable.split())[:400] or "no stderr"
+        raise OSError(
+            f"junction restore failed for {path} "
+            f"(exit {completed.returncode}: {diagnostic})"
+        )
+
+
+def _restore_file_snapshot(path: Path, snapshot: _NodeSnapshot) -> None:
+    """Restore one transactional node without following operator-owned links."""
+    if _file_snapshot(path) == snapshot:
+        return
+    _remove_transaction_node(path)
+    if snapshot.kind is _SnapshotKind.ABSENT:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if snapshot.kind is _SnapshotKind.FILE:
+        if not isinstance(snapshot.payload, bytes):
+            raise TypeError(f"regular-file snapshot has no byte payload: {path}")
+        _restore_regular_file(path, snapshot.payload)
+        return
+    if snapshot.kind is _SnapshotKind.DIRECTORY:
+        path.mkdir()
+        return
+    if not isinstance(snapshot.payload, str):
+        raise TypeError(f"link snapshot has no target payload: {path}")
+    if snapshot.kind is _SnapshotKind.SYMLINK:
+        os.symlink(
+            snapshot.payload,
+            path,
+            target_is_directory=snapshot.target_is_directory,
+        )
+        return
+    _restore_junction(path, snapshot.payload)
+
+
+def _rollback_file_snapshots(snapshots: dict[Path, _NodeSnapshot]) -> list[str]:
     """Restore transaction snapshots and return any rollback diagnostics."""
     errors: list[str] = []
     for path, snapshot in snapshots.items():
@@ -205,7 +314,7 @@ def _commit_mcp_placement_and_mode(
     configure_torch: bool,
 ) -> bool:
     """Commit placement, package mode, and builtin intent as one transition."""
-    snapshots: dict[Path, bytes | None] = {}
+    snapshots: dict[Path, _NodeSnapshot] = {}
     try:
         snapshots = {path: _file_snapshot(path) for path in _mcp_intent_paths(target)}
         if not _reconcile_mcp_extra(
