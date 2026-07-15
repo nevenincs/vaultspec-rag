@@ -37,6 +37,10 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
 from vaultspec_core.core.exceptions import (  # pyright: ignore[reportMissingTypeStubs]
     VaultSpecError,
 )
+from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+    read_manifest,
+    write_manifest,
+)
 from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
     render_mcp_definition_for_mode,
 )
@@ -110,6 +114,8 @@ def _workspace(tmp_path: Path, pyproject: str | None) -> Path:
 
 def _install(ws: Path, *, mode: InstallMode | None = None, upgrade: bool = False):
     """Run a network-free rag install with the canonical MCP source enabled."""
+    if not read_manifest(ws):
+        write_manifest(ws, {"claude"})
     return install_run(
         path=ws,
         mode=mode,

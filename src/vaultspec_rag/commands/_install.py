@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from importlib import import_module
+from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
@@ -11,6 +12,7 @@ from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeS
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     dependency_leak_advisory,
     newly_establishes_dependency,
+    read_package_declaration,
 )
 
 from ..builtins import list_builtins, seed_builtins
@@ -31,7 +33,9 @@ from ._workspace import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+    from typing import Any
 
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         InstallMode,
@@ -104,13 +108,11 @@ def _run_core_sync(
     dry_run: bool,
     force: bool,
     skip: set[str],
+    mode: InstallMode,
 ) -> None:
-    if dry_run:
-        report.warnings.append(
-            "dry-run: core sync_provider not invoked (would propagate "
-            "seeded files to .mcp.json and provider dirs)"
-        )
-    elif "core" not in skip:
+    if "core" in skip:
+        return
+    if not dry_run:
         try:
             _init_core_context(target)
         except Exception as exc:
@@ -122,7 +124,7 @@ def _run_core_sync(
                     "all",
                     dry_run=False,
                     force=force,
-                    skip=skip,
+                    skip={*skip, "mcp"},
                 )
             except Exception as exc:
                 logger.error("sync_provider failed during install: %s", exc)
@@ -131,6 +133,27 @@ def _run_core_sync(
                     f"(seeded files left in place; re-run install or "
                     f"uninstall --force to clean up)"
                 )
+    if "mcp" in skip:
+        return
+    mcp_sync = cast(
+        "Callable[..., Any]",
+        vars(import_module("vaultspec_core.core.mcps"))["mcp_sync"],
+    )
+    try:
+        result = mcp_sync(
+            dry_run=dry_run,
+            force=force,
+            prune=True,
+            mode=mode,
+            provider="all",
+            scope="project",
+            target_dir=target,
+        )
+    except Exception as exc:
+        logger.error("project MCP sync failed during install: %s", exc)
+        report.warnings.append(f"project MCP sync failed: {exc}")
+    else:
+        report.sync_results.append(result)
 
 
 def _persist_mode_and_detect_flip(
@@ -167,12 +190,13 @@ def _persist_mode_and_detect_flip(
     """
     if dry_run or "core" in skip:
         return False
-    from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
-        observed_mcp_mode,
+    declaration = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
+    previous_mode = (
+        declaration.install_mode
+        if declaration is not None
+        else infer_rag_upgrade_mode(target, None).mode
     )
-
-    observed = observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
-    mcp_mode_flipped = observed is not None and observed != mode
+    mcp_mode_flipped = previous_mode != mode
     persist_rag_mode(target, mode)
     return mcp_mode_flipped
 
@@ -311,7 +335,7 @@ def install_run(
     # (instead of in _resolve_target) so the manifest write is paired
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
-    _run_core_sync(target, report, dry_run, force, skip)
+    _run_core_sync(target, report, dry_run, force, skip, resolved.mode)
 
     # Mode-flip seam, the analogue of core's own force-managed pass: a plain
     # (non-forced) sync's force-gate skips an already-managed rag entry whose
@@ -322,7 +346,7 @@ def install_run(
     # when the mode did not flip - the common case the native sync already
     # handled above.
     if mcp_mode_flipped and not force and not dry_run and "core" not in skip:
-        migrate_rag_mcp_entry(resolved.mode)
+        report.sync_results.append(migrate_rag_mcp_entry(resolved.mode))
 
     # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
     # D3): fires only when this run newly elects the full-leak dependency

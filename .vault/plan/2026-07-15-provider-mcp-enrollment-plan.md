@@ -18,7 +18,7 @@ Route RAG's canonical MCP enrollment, preview, migration, and removal through Co
 
 - [x] `P01.S01` - Extend the canonical RAG definition with Core's tool distribution token; `src/vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json`.
 - [x] `P01.S02` - Replace JSON-only mode observation and migration with Core's provider-aware status and force-managed sync; `src/vaultspec_rag/commands/_mode.py and src/vaultspec_rag/tests/test_install_mode.py`.
-- [ ] `P01.S03` - Route install preview and reconciliation through Core's project-scoped MCP sync; `src/vaultspec_rag/commands/_install.py`.
+- [x] `P01.S03` - Route install preview and reconciliation through Core's project-scoped MCP sync; `src/vaultspec_rag/commands/_install.py and src/vaultspec_rag/tests/test_install_mode.py`.
 - [ ] `P01.S04` - Route uninstall preview and cleanup through Core's project-scoped MCP uninstall; `src/vaultspec_rag/commands/_uninstall.py`.
 - [ ] `P01.S05` - Preserve Core per-provider outcomes in structured reports and CLI rendering; `src/vaultspec_rag/commands/_models.py and src/vaultspec_rag/cli/_render.py`.
 
