@@ -249,3 +249,53 @@ S21 verdict: **FAIL — not release-ready**. The requested partial-provider tran
 fixed, but commit `e838148` regresses exact dry-run fidelity for fresh explicit enrollment
 and source-only/collision states. Release must remain held until that HIGH finding is
 remediated and independently re-audited.
+
+## S23 final verification (P03.S24)
+
+### mcp-skip-mode-migration | high | An explicit MCP skip still mutates both provider targets during a mode transition
+
+Commit `7f6d4f0` closes the source-only deployment-evidence defect. The
+non-conjunctive predicate in `src/vaultspec_rag/commands/_mode.py:185` now recognizes
+only `managed` or `drifted` native entries, both of which are grounded in Core's
+ownership state; source-derived `missing`, target absence, and unowned same-name
+entries no longer count as deployment evidence. Fresh explicit tool enrollment reports
+exactly one addition per provider in preview and real execution. The inverse unowned
+Codex collision with an absent Claude sibling likewise reports one Claude addition and
+one Codex skip in both operations, leaves the Codex file byte-identical, and creates the
+canonical Claude `uvx` launch. A managed drifted Claude entry with a missing Codex
+sibling remains affirmative evidence: preview and real both report Claude skip/update
+and Codex add/unchanged, remain byte- and lock-inert during preview, and converge both
+launches to `uvx`. All four missing-provider inverses across dependency-to-tool and
+tool-to-dependency retain exact preview-real counters and converge.
+
+The full-diff audit found a separate release blocker in the same migration control
+flow. `_run_core_sync` returns immediately when `"mcp"` is present in `skip` at
+`src/vaultspec_rag/commands/_install.py:191`, but the real post-sync migration guard at
+`src/vaultspec_rag/commands/_install.py:468` excludes only a `"core"` skip. On a real
+managed dependency-to-tool transition with the legacy declaration removed,
+`install_run(..., upgrade=True, mode=tool, skip={"mcp"})` therefore changed both
+`.mcp.json` and `.codex/config.toml` from `uv` to `uvx` and reported one provider update
+for each host. The matching dry-run reported no provider work. This violates the
+operator's explicit component skip, mutates precisely the provider surfaces the earlier
+branch promised to omit, and reintroduces preview-real divergence on an exposed command
+path.
+
+Recommendation: include `"mcp" not in skip` in the post-sync migration guard (or
+centralize the migration under the already skip-aware MCP lifecycle branch), and add a
+real dependency-to-tool regression requiring both preview and execution to report no
+MCP provider work and preserve both native target files byte-for-byte when MCP is
+skipped.
+
+Verification evidence: the complete real install integration module passed 52 tests;
+the focused high-risk selection passed 13 tests; mode, placement, public Core floor,
+packaging, and recovery-guidance coverage passed 57 tests; focused Ruff and
+`git diff --check` passed. Independent real-workspace probes covered the inverse Codex
+collision, drifted-owned evidence with a missing sibling, and the failing MCP-skip
+transition without mocks, fakes, patches, skips, or xfails. The earlier provider-error
+exit, source add/prune preview, ownership-safe uninstall, Core `>=0.1.44` floor, and
+mode-aware guidance findings remain closed.
+
+S23/S24 verdict: **FAIL — not release-ready; one unresolved HIGH finding**. The
+affirmative deployment-evidence remediation is correct, but `--skip mcp` is not honored
+by the real mode-migration seam. Merge and publication must remain held until that path
+is fixed and independently re-audited.
