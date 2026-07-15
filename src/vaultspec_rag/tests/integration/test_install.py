@@ -538,6 +538,79 @@ class TestDryRunInstall:
             expected_command
         )
 
+    @pytest.mark.parametrize(
+        "skip_tokens",
+        [frozenset({"mcp"}), frozenset({"core", "mcp"})],
+    )
+    @pytest.mark.parametrize(
+        ("initial_mode", "target_mode", "expected_command"),
+        [
+            (InstallMode.DEPENDENCY, InstallMode.TOOL, "uv"),
+            (InstallMode.TOOL, InstallMode.DEPENDENCY, "uvx"),
+        ],
+    )
+    def test_mcp_skip_is_hard_boundary_for_mode_transitions(
+        self,
+        fresh_workspace: Path,
+        skip_tokens: frozenset[str],
+        initial_mode: InstallMode,
+        target_mode: InstallMode,
+        expected_command: str,
+    ) -> None:
+        (fresh_workspace / "pyproject.toml").write_text(
+            '[project]\nname = "consumer"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n',
+            encoding="utf-8",
+        )
+        _install(fresh_workspace, mode=initial_mode)
+        protected_paths = [
+            fresh_workspace / ".mcp.json",
+            fresh_workspace / ".codex" / "config.toml",
+            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            fresh_workspace / _RAG_MCP_REL,
+        ]
+        protected_before = {path: path.read_bytes() for path in protected_paths}
+        workspace_before = _workspace_file_bytes(fresh_workspace)
+        locks_before = {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        }
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            mode=target_mode,
+            skip=set(skip_tokens),
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == workspace_before
+        assert {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        } == locks_before
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=target_mode,
+            skip=set(skip_tokens),
+        )
+        assert preview.to_dict()["sync_providers"] == {}
+        assert actual.to_dict()["sync_providers"] == {}
+        assert not preview.mcp_sync_results
+        assert not actual.mcp_sync_results
+        assert {path: path.read_bytes() for path in protected_paths} == (
+            protected_before
+        )
+        assert {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        } == locks_before
+        assert (
+            _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]["command"]
+            == expected_command
+        )
+        assert _read_codex_mcp(fresh_workspace)["vaultspec-rag"]["command"] == (
+            expected_command
+        )
+
 
 class TestProviderFailureContract:
     def test_api_report_preserves_top_level_ownership_error(

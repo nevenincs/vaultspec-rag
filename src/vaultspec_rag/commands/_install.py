@@ -277,13 +277,15 @@ def _persist_mode_and_detect_flip(
     so an ``install --upgrade`` that flips rag's mode is detectable: the returned
     flag drives the post-sync force-managed seam that migrates a stale managed
     entry the plain sync's force-gate would otherwise skip. A dry-run detects the
-    same flip without persisting it; a core-skipped run does neither.
+    same flip without persisting it. A core-skipped run does neither; an MCP-skipped
+    run still persists non-MCP package intent but performs no deployment detection.
 
     Args:
         target: Workspace root directory.
         mode: Rag's resolved provisioning mode to persist.
         dry_run: When ``True``, detect without persisting to the real workspace.
-        skip: Sync skip tokens; a ``"core"`` skip disables both.
+        skip: Sync skip tokens. A ``"core"`` skip disables detection and persistence;
+            an ``"mcp"`` skip disables detection while retaining package intent.
         explicit: Whether the operator explicitly selected *mode*.
 
     Returns:
@@ -291,6 +293,10 @@ def _persist_mode_and_detect_flip(
         be force-migrated after the sync; ``False`` otherwise.
     """
     if "core" in skip:
+        return False
+    if "mcp" in skip:
+        if not dry_run:
+            persist_rag_mode(target, mode)
         return False
     declaration = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
     previous_mode = (
@@ -465,7 +471,7 @@ def install_run(
     # (nothing deployed to flip), when --force already rewrote every entry, or
     # when the mode did not flip - the common case the native sync already
     # handled above.
-    if mcp_mode_flipped and not force and not dry_run and "core" not in skip:
+    if mcp_mode_flipped and not force and not dry_run and not {"core", "mcp"} & skip:
         migration = migrate_rag_mcp_entry(resolved.mode)
         report.sync_results.append(migration)
         report.mcp_sync_results.append(migration)
