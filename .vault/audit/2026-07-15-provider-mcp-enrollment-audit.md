@@ -622,3 +622,43 @@ findings**. S33 restores the previously missing intent and lock rollback boundar
 a forced repair followed by a later builtin write failure deletes exact pre-existing
 rule bytes. Merge and publication remain held pending remediation and a new independent
 review with the complete release gates.
+
+## S36 final verification
+
+### symlink-rollback-topology-loss | high | Failed forced seeding does not restore operator-owned builtin symlinks
+
+Commit `92ce320` closes the S34 data-loss path for ordinary files. Every bundled MCP,
+rule, and skill destination now participates in the transaction snapshot, and the real
+ordered force and upgrade regressions restore exact pre-existing bytes, remove only
+newly created files, and preserve blocker directories and unrelated files.
+
+The snapshot model still records each destination only as file bytes or absence. It
+does not record filesystem object type or symlink target. An independent real-workspace
+probe placed a pre-existing RAG rule symlink to an operator-owned file inside the
+workspace, then used a genuine atomic-temp directory blocker at the later skill
+destination during a forced MCP install. The install failed closed with structured MCP
+failure and no provider sync. Rollback preserved the rule content bytes and the link
+target, but replaced the rule symlink itself with a regular file. A failed transaction
+therefore still destroys operator-owned filesystem topology at a builtin destination.
+
+Recommendation: snapshot builtin destinations with `lstat`-level object identity and
+the exact symlink target, not only dereferenced bytes. Rollback must recreate a
+pre-existing symlink exactly, remove only transaction-created objects, and retain the
+existing exact-byte behavior for regular files and locks. Add real forced-install and
+upgrade regressions for valid and broken symlinks followed by a later ordered write
+failure.
+
+Verification evidence: the complete high-risk install integration, MCP placement,
+mode, torch-config, Qdrant runtime and CLI, and packaging selection passed 244 tests,
+including both real host CLIs and all previous malformed-input, placement, lock, and
+regular-file rollback cases. Deterministic segmentation of the exact
+`pytest -m "not integration"` inventory passed 1,632 of 1,820 selected tests before the
+target was invalidated and the service batch was terminated. The remaining 188 tests,
+static, Vaultspec, diff, build, and wheel gates were stopped after the genuine HIGH was
+accepted; none is waived.
+
+S36 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. Regular builtin files now roll back correctly, but a failed forced seed can
+replace an operator-owned symlink with a regular file. Merge and publication remain
+held pending topology-aware remediation, a fresh independent audit, and completion of
+every unwaived release gate.

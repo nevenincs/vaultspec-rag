@@ -61,7 +61,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S33` - Make native MCP intent writes transactional and generalize malformed-project diagnostics; `src/vaultspec_rag/commands/_install.py and real install transaction tests`.
 - [x] `P03.S34` - Perform fresh transaction review and complete exact segmented release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the full selected test inventory`.
 - [x] `P03.S35` - Preserve every builtin destination across failed forced seed transitions; `src/vaultspec_rag/commands/_install.py and ordered real seed rollback tests`.
-- [ ] `P03.S36` - Perform final fresh data-loss review and complete all release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact selected test inventory`.
+- [x] `P03.S36` - Perform final fresh data-loss review and complete all release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact selected test inventory`.
 
 ## Description
 
