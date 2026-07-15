@@ -411,6 +411,72 @@ class TestDryRunInstall:
             "args": ["run", "python", "-m", "vaultspec_rag.server"],
         }
 
+    @pytest.mark.parametrize("missing_provider", ["claude", "codex"])
+    @pytest.mark.parametrize(
+        ("initial_mode", "target_mode", "expected_command"),
+        [
+            (InstallMode.DEPENDENCY, InstallMode.TOOL, "uvx"),
+            (InstallMode.TOOL, InstallMode.DEPENDENCY, "uv"),
+        ],
+    )
+    def test_partial_provider_mode_preview_matches_real_without_false_success(
+        self,
+        fresh_workspace: Path,
+        missing_provider: str,
+        initial_mode: InstallMode,
+        target_mode: InstallMode,
+        expected_command: str,
+    ) -> None:
+        (fresh_workspace / "pyproject.toml").write_text(
+            '[project]\nname = "consumer"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n',
+            encoding="utf-8",
+        )
+        _install(fresh_workspace, mode=initial_mode)
+        (fresh_workspace / ".vaultspec" / "workspace.json").unlink()
+        missing_path = (
+            fresh_workspace / ".mcp.json"
+            if missing_provider == "claude"
+            else fresh_workspace / ".codex" / "config.toml"
+        )
+        missing_path.unlink()
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            mode=target_mode,
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=target_mode,
+        )
+        assert preview.mcp_sync_failed is False
+        assert actual.mcp_sync_failed is False
+        preview_providers = preview.to_dict()["sync_providers"]
+        actual_providers = actual.to_dict()["sync_providers"]
+        assert preview_providers == actual_providers
+        existing_provider = "codex" if missing_provider == "claude" else "claude"
+        assert preview_providers[existing_provider]["skipped"] == 1
+        assert preview_providers[existing_provider]["updated"] == 1
+        assert preview_providers[missing_provider]["added"] == 1
+        assert preview_providers[missing_provider]["unchanged"] == 1
+        assert not preview_providers["claude"]["errors"]
+        assert not preview_providers["codex"]["errors"]
+        assert (
+            _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]["command"]
+            == expected_command
+        )
+        assert _read_codex_mcp(fresh_workspace)["vaultspec-rag"]["command"] == (
+            expected_command
+        )
+
 
 class TestProviderFailureContract:
     def test_api_report_preserves_top_level_ownership_error(

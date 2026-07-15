@@ -136,7 +136,7 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)
 
 
-def mode_is_deployed(target: Path) -> bool:
+def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         Tool,
     )
@@ -166,6 +166,7 @@ def mode_is_deployed(target: Path) -> bool:
         providers = status.get("providers")
     if not isinstance(providers, dict) or not providers:
         return False
+    states: list[tuple[set[str], set[str], set[str]]] = []
     for state_value in cast("dict[str, object]", providers).values():
         if not isinstance(state_value, dict):
             return False
@@ -173,13 +174,18 @@ def mode_is_deployed(target: Path) -> bool:
         managed = _status_names(state.get("managed"))
         missing = _status_names(state.get("missing"))
         drifted = _status_names(state.get("drifted"))
-        if (
-            RAG_DISTRIBUTION_NAME not in managed
-            or RAG_DISTRIBUTION_NAME in missing
-            or RAG_DISTRIBUTION_NAME in drifted
-        ):
-            return False
-    return True
+        states.append((managed, missing, drifted))
+    if require_all:
+        return all(
+            RAG_DISTRIBUTION_NAME in managed
+            and RAG_DISTRIBUTION_NAME not in missing
+            and RAG_DISTRIBUTION_NAME not in drifted
+            for managed, missing, drifted in states
+        )
+    return any(
+        RAG_DISTRIBUTION_NAME in managed | missing | drifted
+        for managed, missing, drifted in states
+    )
 
 
 def _status_names(value: object) -> set[str]:

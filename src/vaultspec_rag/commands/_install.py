@@ -206,9 +206,10 @@ def _run_core_sync(
             yield target
 
     with sync_target() as mcp_target:
+        projected_mode_transition = dry_run and mode_flipped
         try:
             result = mcp_sync(
-                dry_run=dry_run,
+                dry_run=dry_run and not projected_mode_transition,
                 force=force,
                 prune=True,
                 mode=mode,
@@ -226,7 +227,7 @@ def _run_core_sync(
             report.mcp_sync_results.append(result)
             if dry_run and mode_flipped and not force:
                 migration = mcp_sync(
-                    dry_run=True,
+                    dry_run=False,
                     mode=mode,
                     force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
                     provider="all",
@@ -261,6 +262,7 @@ def _persist_mode_and_detect_flip(
     *,
     dry_run: bool,
     skip: set[str],
+    explicit: bool,
 ) -> bool:
     """Persist rag's mode before the sync and report whether it flips the launch.
 
@@ -282,6 +284,7 @@ def _persist_mode_and_detect_flip(
         mode: Rag's resolved provisioning mode to persist.
         dry_run: When ``True``, detect without persisting to the real workspace.
         skip: Sync skip tokens; a ``"core"`` skip disables both.
+        explicit: Whether the operator explicitly selected *mode*.
 
     Returns:
         ``True`` when rag's deployed launch shape diverges from *mode* and must
@@ -295,7 +298,10 @@ def _persist_mode_and_detect_flip(
         if declaration is not None
         else infer_rag_upgrade_mode(target, None).mode
     )
-    mcp_mode_flipped = mode_is_deployed(target) and previous_mode != mode
+    deployed = mode_is_deployed(target, require_all=False)
+    mcp_mode_flipped = deployed and (
+        previous_mode != mode or (explicit and declaration is None)
+    )
     if not dry_run:
         persist_rag_mode(target, mode)
     return mcp_mode_flipped
@@ -428,7 +434,11 @@ def install_run(
     # Persist rag's own entry in the shared per-package declaration BEFORE core's
     # sync runs, and capture whether this run flips rag's deployed launch shape.
     mcp_mode_flipped = _persist_mode_and_detect_flip(
-        target, resolved.mode, dry_run=dry_run, skip=skip
+        target,
+        resolved.mode,
+        dry_run=dry_run,
+        skip=skip,
+        explicit=mode is not None,
     )
 
     # sync_provider needs core's runtime context. Initialise it here
