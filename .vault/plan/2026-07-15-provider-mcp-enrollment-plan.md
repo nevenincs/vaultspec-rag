@@ -48,7 +48,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S20` - Re-audit final MCP remediation and repeat release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
 - [x] `P03.S21` - Migrate mode transitions when any managed provider remains and preserve partial-provider preview parity; `src/vaultspec_rag/commands/_mode.py, src/vaultspec_rag/commands/_install.py, and partial-provider integration tests`.
 - [x] `P03.S22` - Perform final independent partial-provider audit and release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
-- [ ] `P03.S23` - Restrict mode transitions to affirmative deployed ownership and restore fresh-install preview parity; `src/vaultspec_rag/commands/_mode.py, src/vaultspec_rag/tests/integration/test_install.py, and collision acceptance tests`.
+- [x] `P03.S23` - Restrict mode transitions to affirmative deployed ownership and restore fresh-install preview parity; `src/vaultspec_rag/commands/_mode.py, src/vaultspec_rag/tests/integration/test_install.py, and collision acceptance tests`.
 - [ ] `P03.S24` - Perform final independent deployment-evidence audit and release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
 
 ## Description

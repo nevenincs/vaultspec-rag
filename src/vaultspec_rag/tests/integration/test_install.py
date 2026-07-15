@@ -235,6 +235,67 @@ class TestDryRunInstall:
         assert providers["claude"]["items"] == [["vaultspec-rag", "[ADD]"]]
         assert providers["codex"]["items"] == [["vaultspec-rag", "[ADD]"]]
 
+    def test_fresh_explicit_mode_preview_matches_real_without_synthetic_pass(
+        self, fresh_workspace: Path
+    ) -> None:
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            mode=InstallMode.TOOL,
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        actual = _install(fresh_workspace, mode=InstallMode.TOOL)
+        preview_providers = preview.to_dict()["sync_providers"]
+        actual_providers = actual.to_dict()["sync_providers"]
+        assert preview_providers == actual_providers
+        for provider in ("claude", "codex"):
+            assert preview_providers[provider]["added"] == 1
+            assert preview_providers[provider]["unchanged"] == 0
+            assert preview_providers[provider]["items"] == [["vaultspec-rag", "[ADD]"]]
+
+    def test_unowned_collision_and_absent_sibling_preview_matches_real(
+        self, fresh_workspace: Path
+    ) -> None:
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        user_entry = {"command": "user-owned", "args": ["--keep"]}
+        claude_path = fresh_workspace / ".mcp.json"
+        claude_path.write_text(
+            json.dumps({"mcpServers": {"vaultspec-rag": user_entry}}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        claude_before = claude_path.read_bytes()
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            mode=InstallMode.TOOL,
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        actual = _install(fresh_workspace, mode=InstallMode.TOOL)
+        preview_providers = preview.to_dict()["sync_providers"]
+        actual_providers = actual.to_dict()["sync_providers"]
+        assert preview_providers == actual_providers
+        assert preview_providers["claude"]["skipped"] == 1
+        assert preview_providers["claude"]["items"] == [["vaultspec-rag", "[SKIP]"]]
+        assert preview_providers["codex"]["added"] == 1
+        assert preview_providers["codex"]["unchanged"] == 0
+        assert preview_providers["codex"]["items"] == [["vaultspec-rag", "[ADD]"]]
+        assert claude_path.read_bytes() == claude_before
+        assert _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"] == (
+            user_entry
+        )
+        assert _read_codex_mcp(fresh_workspace)["vaultspec-rag"]["command"] == "uvx"
+
     def test_no_mcp_dry_run_reports_native_prunes_without_writing(
         self, installed_workspace: Path
     ) -> None:

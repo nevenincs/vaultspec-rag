@@ -183,8 +183,8 @@ def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
             for managed, missing, drifted in states
         )
     return any(
-        RAG_DISTRIBUTION_NAME in managed | missing | drifted
-        for managed, missing, drifted in states
+        RAG_DISTRIBUTION_NAME in managed or RAG_DISTRIBUTION_NAME in drifted
+        for managed, _missing, drifted in states
     )
 
 
