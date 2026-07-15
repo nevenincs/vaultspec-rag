@@ -68,6 +68,31 @@ the implementation as `uv add vaultspec-rag[mcp]`. This leaves executable dead c
 tests that can stay green while the real placement engine regresses, and gives operators
 an inaccurate account of whether installation performs dependency resolution.
 
+### dry-run-mode-overlay | high | The preview projection omits the requested package mode and can report unchanged for a real update
+
+The source overlay added after the first audit copies the committed `.vaultspec` tree
+and provider files, but dry-run still skips `persist_rag_mode`, so the projection never
+receives the package declaration that the corresponding real install writes before Core
+renders companion definitions. Core therefore resolves a missing RAG declaration through
+its legacy dependency-mode bridge even when the requested install mode is `tool`. In a
+real legacy dependency-shaped workspace with the declaration removed, an explicit
+tool-mode upgrade preview reported both Claude and Codex as `[UNCHANGED]`; the
+corresponding real upgrade reported a skip followed by `[UPDATE]` for both providers and
+changed each launch from `uv run` to the canonical `uvx --from vaultspec-rag[mcp]`
+shape. Fresh additions and unenrollment prunes are now counted correctly and the preview
+is byte- and lock-inert, but it still does not model the same desired state as the real
+operation for mode establishment or migration. This remains release-blocking under the
+accepted exact-preview contract.
+
+### runtime-uv-add-guidance | low | Missing-extra recovery still directs tool-mode projects to mutate dependencies
+
+The dormant `_run_uv_add_mcp_extra` helper, exports, classifier tests, install help, and
+test narrative were removed. One operator-facing runtime error still says to run
+`uv add vaultspec-rag[mcp]` or re-run install "which adds it by default." That advice is
+not mode-aware: the accepted tool-mode contract deliberately performs no project
+dependency mutation and launches through `uvx --from vaultspec-rag[mcp]`. The remaining
+message can therefore reintroduce the dependency placement that the feature removed.
+
 ## Recommendations
 
 - Treat any MCP result with `errored` or `errors` as an unsuccessful requested
@@ -82,3 +107,35 @@ an inaccurate account of whether installation performs dependency resolution.
   version.
 - Remove the orphaned MCP `uv add` helper, classifier tests, and stale prose, or reconnect
   an explicit package-resolution step if that remains part of the intended contract.
+- Persist the requested RAG package declaration inside the temporary preview projection
+  before invoking Core, without touching the real workspace. Add a legacy dependency to
+  tool-mode upgrade regression that requires preview and real provider actions to agree
+  for both Claude and Codex while retaining the existing whole-workspace byte and lock
+  assertions.
+- Replace the remaining runtime `uv add` recovery sentence with mode-neutral guidance
+  that points operators to the enrolled canonical launch or the placement-aware install
+  command without prescribing a project dependency mutation.
+
+## Remediation verification
+
+- `provider-error-exit-contract`: verified remediated. Direct lifecycle exceptions,
+  unattributed top-level Core errors, and per-provider errors are retained in report JSON
+  and human rendering; both install and uninstall raise exit code 2 when
+  `mcp_sync_failed` is true. Real malformed-Codex and corrupt-ownership tests pass.
+- `dry-run-source-overlay`: partially remediated. Fresh enrollment now reports one
+  Claude and one Codex addition, `--no-mcp` reports one prune for each, and whole-workspace
+  bytes and lock paths remain stable. The new `dry-run-mode-overlay` finding prevents
+  closure because the projected render mode can differ from the real operation.
+- `published-core-smoke-pin`: verified remediated. The smoke keeps the exact
+  `vaultspec-core>=0.1.44` metadata-floor assertion, accepts any installed version in the
+  specifier, imports all three required lifecycle APIs, and exercises native-provider
+  status plus selective uninstall behavior.
+- `dormant-uv-add-path`: implementation and test-code portions verified remediated. No
+  production or test reference to the deleted helper or classifier remains, and the
+  focused placement tests pass. The new `runtime-uv-add-guidance` finding leaves the
+  stale operator guidance portion open.
+
+Verdict: **not release-ready**. The provider error contract and Core-floor smoke are
+closed, while the dry-run remediation remains behaviorally incomplete and the final
+mode-inaccurate recovery message remains. The high-severity preview divergence must be
+fixed and re-audited before merge or publication.
