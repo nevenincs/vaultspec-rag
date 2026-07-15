@@ -17,6 +17,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S09]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S10]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S11]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S13]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
@@ -45,6 +46,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S09` - Add real-behavior mode and enrollment tests for both provider-native targets
 - `2026-07-15-provider-mcp-enrollment-P03-S10` - Add real-behavior dependency-placement tests for existing runtime and dev declarations
 - `2026-07-15-provider-mcp-enrollment-P03-S11` - Add end-to-end install dry-run drift upgrade uninstall and host CLI acceptance coverage
+- `2026-07-15-provider-mcp-enrollment-P03-S13` - Verify wheel metadata console entry point canonical builtin Core floor and installed-package acceptance
 
 ### plan
 
