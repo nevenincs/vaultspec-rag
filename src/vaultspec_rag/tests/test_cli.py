@@ -5621,6 +5621,16 @@ class TestInstallExitCodes:
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
         assert result.exit_code == 2, result.output
 
+    def test_install_exit_nonzero_on_mcp_extra_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        ws = self._make_pyproject(tmp_path, "[project\nname =")
+        result = runner.invoke(
+            app,
+            ["install", "--target", str(ws), "--no-torch-config", "--mcp"],
+        )
+        assert result.exit_code == 2, result.output
+
     def test_install_exit_zero_on_conflict(self, tmp_path: Path) -> None:
         """CUSTOMISED block - user-state, not a runtime failure.
         Conflict exits 0; the warning is the signal, not the exit code.

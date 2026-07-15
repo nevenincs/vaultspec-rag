@@ -6,6 +6,7 @@ import logging
 from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
+from tomlkit.exceptions import ParseError
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
@@ -95,9 +96,14 @@ def _reconcile_mcp_extra(
     enabled: bool,
     dry_run: bool,
 ) -> None:
-    result = reconcile_mcp_extra(
-        target / "pyproject.toml", mode=mode, enabled=enabled, dry_run=dry_run
-    )
+    try:
+        result = reconcile_mcp_extra(
+            target / "pyproject.toml", mode=mode, enabled=enabled, dry_run=dry_run
+        )
+    except ParseError as exc:
+        report.mcp_extra_action = "error"
+        report.warnings.append(f"MCP extra inspect failed: {exc}")
+        return
     report.mcp_extra_action = result.action
     report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
 

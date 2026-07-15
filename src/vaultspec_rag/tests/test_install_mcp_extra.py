@@ -53,6 +53,25 @@ class TestInstallEnsuresMcpExtra:
         report = install_run(path=tmp_path, dry_run=True, install_mcp=True)
         assert report.to_dict()["mcp_extra_action"] == "tool"
 
+    def test_corrupt_pyproject_reports_error_without_mutation(
+        self, tmp_path: Path
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        original = b"[project\nname ="
+        pyproject.write_bytes(original)
+
+        report = install_run(
+            path=tmp_path,
+            install_mcp=True,
+            configure_torch=False,
+            provision=False,
+            skip={"core"},
+        )
+
+        assert report.mcp_extra_action == "error"
+        assert any("MCP extra inspect failed" in warning for warning in report.warnings)
+        assert pyproject.read_bytes() == original
+
     def test_no_mcp_retains_rule_and_skill_but_removes_source(
         self, tmp_path: Path
     ) -> None:
