@@ -177,9 +177,7 @@ def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
         workspace.with_suffix(workspace.suffix + ".lock"),
     ]
     transactional.extend(
-        target / ".vaultspec" / relative
-        for relative in list_builtins()
-        if relative.startswith("mcps/")
+        target / ".vaultspec" / relative for relative in list_builtins()
     )
     return tuple(dict.fromkeys(transactional))
 

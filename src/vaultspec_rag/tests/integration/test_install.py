@@ -941,6 +941,52 @@ class TestDryRunInstall:
             assert result.exit_code == 2, result.output
             assert _workspace_inventory(fresh_workspace) == before
 
+    @pytest.mark.parametrize("repair_flag", ["force", "upgrade"])
+    @pytest.mark.parametrize("existing_builtins", [False, True])
+    def test_late_skill_failure_restores_every_builtin_exactly(
+        self,
+        fresh_workspace: Path,
+        repair_flag: str,
+        existing_builtins: bool,
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        write_manifest(fresh_workspace, {"claude", "codex"})
+        (fresh_workspace / ".vault" / "data").mkdir(parents=True)
+        for name in ("mcps", "rules", "skills"):
+            (fresh_workspace / ".vaultspec" / name).mkdir(parents=True, exist_ok=True)
+        skill = fresh_workspace / _RAG_SKILL_REL
+        skill.parent.mkdir(parents=True)
+        if existing_builtins:
+            (fresh_workspace / _RAG_MCP_REL).write_bytes(b"operator-mcp\x00")
+            (fresh_workspace / _RAG_RULE_REL).write_bytes(b"operator-rule\x00")
+            skill.write_bytes(b"operator-skill\x00")
+        blocker = skill.with_suffix(skill.suffix + f".{os.getpid()}.tmp")
+        blocker.mkdir()
+        (blocker / "sentinel").write_bytes(b"blocker-owned")
+        unrelated = fresh_workspace / ".vaultspec" / "rules" / "operator.md"
+        unrelated.write_bytes(b"unrelated\x00")
+        workspace = fresh_workspace / ".vaultspec" / "workspace.json"
+        pyproject.with_suffix(".toml.lock").write_bytes(b"project-lock\x00")
+        workspace.with_suffix(".json.lock").write_bytes(b"workspace-lock\x00")
+        before = _workspace_inventory(fresh_workspace)
+
+        report = install_run(
+            path=fresh_workspace,
+            install_mcp=True,
+            configure_torch=False,
+            provision=False,
+            mode=InstallMode.DEPENDENCY,
+            force=repair_flag == "force",
+            upgrade=repair_flag == "upgrade",
+        )
+
+        assert report.mcp_extra_action == "error"
+        assert report.mcp_sync_failed
+        assert not report.seeded
+        assert not report.sync_results
+        assert _workspace_inventory(fresh_workspace) == before
+
     @pytest.mark.parametrize(
         ("content", "initial_mode", "target_mode", "target_location"),
         [
@@ -1485,38 +1531,28 @@ class TestSafetyGuards:
         must remove any files it had successfully written so the
         workspace is not left half-installed.
 
-        ``seed_builtins`` walks the package tree in sorted order, so
-        ``mcps/...`` is seeded before ``rules/...``. We block the
-        second (rules) iteration by making its dest path a non-empty
-        directory, so ``atomic_write`` fails after the first (mcps)
-        entry has already been seeded successfully. Rollback must
-        unlink the mcps file.
+        ``seed_builtins`` walks the package tree in sorted order. A
+        genuine atomic-temp blocker at the final skill destination
+        therefore fails only after the MCP and rule files were written.
         """
         ws = tmp_path / "workspace"
         ws.mkdir()
-        # Pre-create the workspace dirs so _ensure_workspace_dirs is a
-        # no-op and seed_builtins is the failure point.
         (ws / ".vault" / "data").mkdir(parents=True)
         (ws / ".vaultspec" / "mcps").mkdir(parents=True)
         (ws / ".vaultspec" / "rules").mkdir(parents=True)
         (ws / ".vaultspec" / "skills").mkdir(parents=True)
-        # Block the rules write: make the bundled DEST path a non-empty
-        # directory. With force=True the existence check is bypassed and
-        # atomic_write fails on the dir replacement.
-        (ws / _RAG_RULE_REL).mkdir()
-        (ws / _RAG_RULE_REL / "sentinel").write_text("x", encoding="utf-8")
+        skill = ws / _RAG_SKILL_REL
+        skill.parent.mkdir(parents=True)
+        blocker = skill.with_suffix(skill.suffix + f".{os.getpid()}.tmp")
+        blocker.mkdir()
+        (blocker / "sentinel").write_text("x", encoding="utf-8")
+        before = _workspace_inventory(ws)
 
         report = install_run(path=ws, force=True)
 
-        # The mcps file was written but must have been rolled back.
         assert report.mcp_sync_failed
         assert report.mcp_extra_action == "error"
-        assert not (ws / _RAG_MCP_REL).exists()
-        # The rules "file" is still a non-empty directory (we never
-        # wrote a file there); rollback only unlinks paths it
-        # actually wrote.
-        assert (ws / _RAG_RULE_REL).is_dir()
-        assert (ws / _RAG_RULE_REL / "sentinel").is_file()
+        assert _workspace_inventory(ws) == before
 
     def test_uninstall_in_empty_dir_does_not_create_workspace(
         self, tmp_path: Path
