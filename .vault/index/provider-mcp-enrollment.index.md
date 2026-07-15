@@ -6,6 +6,7 @@ tags:
 date: '2026-07-15'
 modified: '2026-07-15'
 related:
+  - '[[2026-07-15-provider-mcp-enrollment-P02-S06]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
@@ -20,6 +21,10 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 ### adr
 
 - `2026-07-15-provider-mcp-enrollment-adr` - `provider-mcp-enrollment` adr: `Core-managed provider lifecycle with RAG-owned enrollment intent and placement` | (**status:** `accepted`)
+
+### exec
+
+- `2026-07-15-provider-mcp-enrollment-P02-S06` - Implement placement-aware MCP extra reconciliation and durable ownership provenance
 
 ### plan
 

@@ -26,7 +26,7 @@ Route RAG's canonical MCP enrollment, preview, migration, and removal through Co
 
 Make --mcp and --no-mcp reconcile the canonical source and optional dependency at the resolved tool, dependency, or dev surface.
 
-- [ ] `P02.S06` - Implement placement-aware MCP extra reconciliation and durable ownership provenance; `src/vaultspec_rag/commands/_mcp_extra.py`.
+- [x] `P02.S06` - Implement placement-aware MCP extra reconciliation and durable ownership provenance; `src/vaultspec_rag/commands/_mcp_extra.py`.
 - [ ] `P02.S07` - Make --mcp and --no-mcp reconcile only the canonical MCP source while retaining the rule and discovery skill; `src/vaultspec_rag/builtins/__init__.py and src/vaultspec_rag/commands/_install.py`.
 - [ ] `P02.S08` - Reverse only owned MCP extra placement during unenrollment and uninstall; `src/vaultspec_rag/commands/_uninstall.py`.
 
