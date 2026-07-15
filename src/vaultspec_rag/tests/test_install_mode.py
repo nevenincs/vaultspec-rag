@@ -24,6 +24,7 @@ See the plan ``2026-07-14-install-parity-plan`` (W02.P06) and the
 from __future__ import annotations
 
 import json
+import tomllib
 from importlib.resources import files
 from typing import TYPE_CHECKING, cast
 
@@ -112,14 +113,24 @@ def _workspace(tmp_path: Path, pyproject: str | None) -> Path:
     return ws
 
 
-def _install(ws: Path, *, mode: InstallMode | None = None, upgrade: bool = False):
+def _install(
+    ws: Path,
+    *,
+    mode: InstallMode | None = None,
+    upgrade: bool = False,
+    providers: set[str] | None = None,
+    force: bool = False,
+):
     """Run a network-free rag install with the canonical MCP source enabled."""
-    if not read_manifest(ws):
+    if providers is not None:
+        write_manifest(ws, providers)
+    elif not read_manifest(ws):
         write_manifest(ws, {"claude"})
     return install_run(
         path=ws,
         mode=mode,
         upgrade=upgrade,
+        force=force,
         provision=False,
         configure_torch=False,
         install_mcp=True,
@@ -131,6 +142,112 @@ def _rag_mcp_entry(ws: Path) -> dict[str, object]:
     entry = raw["mcpServers"][RAG_DISTRIBUTION_NAME]
     assert isinstance(entry, dict)
     return cast("dict[str, object]", entry)
+
+
+def _rag_codex_entry(ws: Path) -> dict[str, object]:
+    raw = tomllib.loads((ws / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    entry = raw["mcp_servers"][RAG_DISTRIBUTION_NAME]
+    assert isinstance(entry, dict)
+    return cast("dict[str, object]", entry)
+
+
+def _provider_entry(ws: Path, provider: str) -> dict[str, object]:
+    return _rag_mcp_entry(ws) if provider == "claude" else _rag_codex_entry(ws)
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [
+        pytest.param({"claude"}, id="claude-only"),
+        pytest.param({"codex"}, id="codex-only"),
+        pytest.param({"claude", "codex"}, id="dual-provider"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("mode", "expected_command", "expected_args"),
+    [
+        (InstallMode.TOOL, _TOOL_LAUNCH[0], _TOOL_LAUNCH[1]),
+        (InstallMode.DEPENDENCY, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
+        (InstallMode.DEV, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
+    ],
+)
+def test_provider_native_targets_render_every_mode(
+    tmp_path: Path,
+    providers: set[str],
+    mode: InstallMode,
+    expected_command: str,
+    expected_args: list[str],
+) -> None:
+    """Selected provider targets receive the same canonical mode launch."""
+    pyproject = _PROJECT_RAG_DEV_GROUP if mode is InstallMode.DEV else _PROJECT_WITH_RAG
+    ws = _workspace(tmp_path, pyproject)
+
+    report = _install(ws, mode=mode, providers=providers)
+
+    assert (ws / ".mcp.json").exists() is ("claude" in providers)
+    assert (ws / ".codex" / "config.toml").exists() is ("codex" in providers)
+    assert set(report.to_dict()["sync_providers"]) == providers
+    for provider in providers:
+        entry = _provider_entry(ws, provider)
+        assert entry["command"] == expected_command
+        assert entry["args"] == expected_args
+
+
+@pytest.mark.parametrize(
+    ("mode", "pyproject"),
+    [
+        (InstallMode.TOOL, _PROJECT_WITH_RAG),
+        (InstallMode.DEPENDENCY, _PROJECT_WITH_RAG),
+        (InstallMode.DEV, _PROJECT_RAG_DEV_GROUP),
+    ],
+)
+def test_dual_provider_reinstall_is_byte_stable(
+    tmp_path: Path, mode: InstallMode, pyproject: str
+) -> None:
+    ws = _workspace(tmp_path, pyproject)
+    _install(ws, mode=mode, providers={"claude", "codex"})
+    tracked = (
+        ws / ".mcp.json",
+        ws / ".codex" / "config.toml",
+        ws / ".vaultspec" / "mcp-ownership.json",
+    )
+    before = {path: path.read_bytes() for path in tracked}
+
+    report = _install(ws, mode=mode)
+
+    assert {path: path.read_bytes() for path in tracked} == before
+    outcomes = report.to_dict()["sync_providers"]
+    assert outcomes["claude"]["unchanged"] == 1
+    assert outcomes["codex"]["unchanged"] == 1
+
+
+@pytest.mark.parametrize("drifted_provider", ["claude", "codex"])
+def test_force_repairs_only_drifted_provider_target(
+    tmp_path: Path, drifted_provider: str
+) -> None:
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    _install(ws, mode=InstallMode.TOOL, providers={"claude", "codex"})
+    claude_path = ws / ".mcp.json"
+    codex_path = ws / ".codex" / "config.toml"
+    sibling_path = codex_path if drifted_provider == "claude" else claude_path
+    sibling_before = sibling_path.read_bytes()
+
+    if drifted_provider == "claude":
+        raw = json.loads(claude_path.read_text(encoding="utf-8"))
+        raw["mcpServers"][RAG_DISTRIBUTION_NAME]["command"] = "drifted"
+        claude_path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    else:
+        content = codex_path.read_text(encoding="utf-8")
+        drifted = content.replace('command = "uvx"', 'command = "drifted"', 1)
+        assert drifted != content
+        codex_path.write_text(drifted, encoding="utf-8")
+
+    report = _install(ws, mode=InstallMode.TOOL, force=True)
+
+    assert _provider_entry(ws, drifted_provider)["command"] == _TOOL_LAUNCH[0]
+    assert sibling_path.read_bytes() == sibling_before
+    outcomes = report.to_dict()["sync_providers"]
+    assert outcomes[drifted_provider]["updated"] == 1
 
 
 @pytest.mark.parametrize(

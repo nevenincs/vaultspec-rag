@@ -14,6 +14,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P02-S06]]'
   - '[[2026-07-15-provider-mcp-enrollment-P02-S07]]'
   - '[[2026-07-15-provider-mcp-enrollment-P02-S08]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S09]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S10]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -40,6 +41,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P02-S06` - Implement placement-aware MCP extra reconciliation and durable ownership provenance
 - `2026-07-15-provider-mcp-enrollment-P02-S07` - Make --mcp and --no-mcp reconcile only the canonical MCP source while retaining the rule and discovery skill
 - `2026-07-15-provider-mcp-enrollment-P02-S08` - Reverse only owned MCP extra placement during unenrollment and uninstall
+- `2026-07-15-provider-mcp-enrollment-P03-S09` - Add real-behavior mode and enrollment tests for both provider-native targets
 - `2026-07-15-provider-mcp-enrollment-P03-S10` - Add real-behavior dependency-placement tests for existing runtime and dev declarations
 
 ### plan

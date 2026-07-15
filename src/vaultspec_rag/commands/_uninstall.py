@@ -102,6 +102,7 @@ def _run_mcp_cleanup(
         names=frozenset({"vaultspec-rag"}),
     )
     report.sync_results.append(result)
+    report.mcp_sync_results.append(result)
 
 
 def _run_core_cleanup(

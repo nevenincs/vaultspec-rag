@@ -116,6 +116,7 @@ class InstallReport:
     created_dirs: list[str] = field(default_factory=list)
     seeded: list[tuple[str, str]] = field(default_factory=list)
     sync_results: list[Any] = field(default_factory=list)
+    mcp_sync_results: list[Any] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
@@ -143,7 +144,7 @@ class InstallReport:
             "sync_added": sum(getattr(r, "added", 0) for r in self.sync_results),
             "sync_updated": sum(getattr(r, "updated", 0) for r in self.sync_results),
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
-            "sync_providers": _provider_sync_outcomes(self.sync_results),
+            "sync_providers": _provider_sync_outcomes(self.mcp_sync_results),
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),
@@ -178,6 +179,7 @@ class UninstallReport:
     removed: list[str] = field(default_factory=list)
     data_removed: bool = False
     sync_results: list[Any] = field(default_factory=list)
+    mcp_sync_results: list[Any] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
@@ -191,7 +193,7 @@ class UninstallReport:
             "removed": list(self.removed),
             "data_removed": self.data_removed,
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
-            "sync_providers": _provider_sync_outcomes(self.sync_results),
+            "sync_providers": _provider_sync_outcomes(self.mcp_sync_results),
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),

@@ -154,6 +154,7 @@ def _run_core_sync(
         report.warnings.append(f"project MCP sync failed: {exc}")
     else:
         report.sync_results.append(result)
+        report.mcp_sync_results.append(result)
 
 
 def _persist_mode_and_detect_flip(
@@ -346,7 +347,9 @@ def install_run(
     # when the mode did not flip - the common case the native sync already
     # handled above.
     if mcp_mode_flipped and not force and not dry_run and "core" not in skip:
-        report.sync_results.append(migrate_rag_mcp_entry(resolved.mode))
+        migration = migrate_rag_mcp_entry(resolved.mode)
+        report.sync_results.append(migration)
+        report.mcp_sync_results.append(migration)
 
     # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
     # D3): fires only when this run newly elects the full-leak dependency

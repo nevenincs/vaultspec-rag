@@ -5437,6 +5437,7 @@ class TestRenderInstallReport:
             action="install",
             target=Path("."),
             sync_results=[provider_result],
+            mcp_sync_results=[provider_result],
         )
 
         providers = report.to_dict()["sync_providers"]
@@ -5561,6 +5562,7 @@ class TestRenderUninstallReport:
             action="uninstall",
             target=Path("."),
             sync_results=[provider_result],
+            mcp_sync_results=[provider_result],
         )
 
         providers = report.to_dict()["sync_providers"]
