@@ -87,7 +87,12 @@ def resolve_rag_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode
     )
 
 
-def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode:
+def infer_rag_upgrade_mode(
+    target: Path,
+    explicit: InstallMode | None,
+    *,
+    allow_mcp_status: bool = True,
+) -> ResolvedMode:
     """Infer rag's provisioning mode for an ``install --upgrade`` (ADR Q6).
 
     Mirrors core's ``_infer_upgrade_mode`` precedence exactly, substituting
@@ -109,6 +114,9 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     Args:
         target: Workspace root directory.
         explicit: The mode requested via ``--mode``, or ``None``.
+        allow_mcp_status: Whether legacy inference may inspect native MCP deployment
+            state. Component-skipped installs disable this and use only durable
+            declaration or package-placement evidence.
 
     Returns:
         The inferred mode paired with its provenance.
@@ -129,8 +137,8 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     detected = resolve_install_mode(
         target, explicit=None, package=RAG_DISTRIBUTION_NAME
     )
-    if detected in {InstallMode.DEPENDENCY, InstallMode.DEV} and mode_is_deployed(
-        target
+    if detected in {InstallMode.DEPENDENCY, InstallMode.DEV} and (
+        not allow_mcp_status or mode_is_deployed(target)
     ):
         return ResolvedMode(detected, ModeProvenance.INFERRED)
     return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)

@@ -418,7 +418,11 @@ def install_run(
     # provenance rides along so the dependency-leak advisory fires only when
     # this run is the one electing dependency mode, not on a persisted read.
     resolved = (
-        infer_rag_upgrade_mode(target, mode)
+        infer_rag_upgrade_mode(
+            target,
+            mode,
+            allow_mcp_status=not bool({"core", "mcp"} & skip),
+        )
         if upgrade
         else resolve_rag_mode(target, mode)
     )

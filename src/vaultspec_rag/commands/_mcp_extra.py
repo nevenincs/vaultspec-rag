@@ -260,8 +260,17 @@ def _restore_owned(doc: TOMLDocument, ownership: McpExtraOwnership) -> str | Non
     )
 
 
+def _location_matches_mode(location: str, mode: InstallMode) -> bool:
+    if mode is InstallMode.DEPENDENCY:
+        return location.startswith("[project]")
+    return location in {_DEV_GROUP, _UV_DEV}
+
+
 def _target_for_mode(
-    doc: TOMLDocument, mode: InstallMode
+    doc: TOMLDocument,
+    mode: InstallMode,
+    *,
+    allow_unexpected: bool = False,
 ) -> tuple[str | None, str | None, list[str]]:
     candidates = [
         (location, entries, index, entry)
@@ -273,7 +282,7 @@ def _target_for_mode(
     dev = [item for item in candidates if item[0] in {_DEV_GROUP, _UV_DEV}]
     expected = runtime if mode is InstallMode.DEPENDENCY else dev
     unexpected = dev if mode is InstallMode.DEPENDENCY else runtime
-    if unexpected:
+    if unexpected and not allow_unexpected:
         return (
             None,
             None,
@@ -321,6 +330,49 @@ def _disable_mcp_extra(
     return report
 
 
+def _prepare_owned_move(
+    doc: TOMLDocument,
+    ownership: McpExtraOwnership | None,
+    mode: InstallMode,
+) -> tuple[McpExtraReport | None, bool]:
+    if ownership is None:
+        return None, False
+    report = McpExtraReport(location=ownership.location)
+    entries = _entries_at(doc, ownership.location, create=False)
+    if entries is None or ownership.managed not in entries:
+        report.action = "conflict"
+        report.conflicts.append(
+            f"owned MCP-extra requirement at {ownership.location} has drifted"
+        )
+        return report, False
+    if _location_matches_mode(ownership.location, mode):
+        report.action = "already"
+        return report, False
+    conflict = _restore_owned(doc, ownership)
+    if conflict is not None:
+        report.action = "conflict"
+        report.conflicts.append(conflict)
+        return report, False
+    return None, True
+
+
+def _complete_unowned_target_move(
+    pyproject: Path,
+    doc: TOMLDocument,
+    report: McpExtraReport,
+    *,
+    moving: bool,
+    dry_run: bool,
+) -> McpExtraReport:
+    if not moving:
+        report.action = "already"
+        return report
+    report.action = "would-move" if dry_run else "moved"
+    if not dry_run:
+        write_doc_preserving_shape(pyproject, doc)
+    return report
+
+
 def _enable_mcp_extra(
     pyproject: Path,
     doc: TOMLDocument,
@@ -330,19 +382,15 @@ def _enable_mcp_extra(
     dry_run: bool,
 ) -> McpExtraReport:
     report = McpExtraReport()
-    if ownership is not None:
-        entries = _entries_at(doc, ownership.location, create=False)
-        report.location = ownership.location
-        if entries is not None and ownership.managed in entries:
-            report.action = "already"
-            return report
-        report.action = "conflict"
-        report.conflicts.append(
-            f"owned MCP-extra requirement at {ownership.location} has drifted"
-        )
-        return report
+    terminal, moving = _prepare_owned_move(doc, ownership, mode)
+    if terminal is not None:
+        return terminal
 
-    location, original, conflicts = _target_for_mode(doc, mode)
+    location, original, conflicts = _target_for_mode(
+        doc,
+        mode,
+        allow_unexpected=moving,
+    )
     if location is None:
         report.action = "conflict"
         report.conflicts.extend(conflicts)
@@ -360,8 +408,13 @@ def _enable_mcp_extra(
     if original is not None:
         parsed = Requirement(original)
         if _EXTRA in parsed.extras:
-            report.action = "already"
-            return report
+            return _complete_unowned_target_move(
+                pyproject,
+                doc,
+                report,
+                moving=moving,
+                dry_run=dry_run,
+            )
         managed = _with_mcp_extra(original)
         entries[entries.index(original)] = managed
     else:
@@ -376,7 +429,11 @@ def _enable_mcp_extra(
             created_surface=original is None and not surface_existed,
         ),
     )
-    report.action = "would-apply" if dry_run else "applied"
+    report.action = (
+        ("would-move" if dry_run else "moved")
+        if moving
+        else ("would-apply" if dry_run else "applied")
+    )
     if not dry_run:
         write_doc_preserving_shape(pyproject, doc)
     return report

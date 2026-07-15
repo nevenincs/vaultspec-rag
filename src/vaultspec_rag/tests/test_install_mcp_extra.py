@@ -218,6 +218,107 @@ class TestMcpExtraPlacement:
         assert report.action == "removed"
         assert pyproject.read_bytes() == original
 
+    @pytest.mark.parametrize(
+        ("content", "initial_mode", "target_mode", "target_location"),
+        [
+            (
+                '[project]\nname = "consumer"\ndependencies = ["vaultspec-rag>=0.3"]\n',
+                InstallMode.DEPENDENCY,
+                InstallMode.DEV,
+                "[dependency-groups].dev",
+            ),
+            (
+                '[project]\nname = "consumer"\n\n'
+                '[dependency-groups]\ndev = ["vaultspec-rag>=0.3"]\n',
+                InstallMode.DEV,
+                InstallMode.DEPENDENCY,
+                "[project].dependencies",
+            ),
+        ],
+    )
+    def test_owned_extra_moves_between_runtime_and_dev_and_round_trips(
+        self,
+        tmp_path: Path,
+        content: str,
+        initial_mode: InstallMode,
+        target_mode: InstallMode,
+        target_location: str,
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        original = content.encode()
+        pyproject.write_bytes(original)
+        assert (
+            reconcile_mcp_extra(pyproject, mode=initial_mode, enabled=True).action
+            == "applied"
+        )
+        initial_managed = pyproject.read_bytes()
+
+        preview = reconcile_mcp_extra(
+            pyproject,
+            mode=target_mode,
+            enabled=True,
+            dry_run=True,
+        )
+
+        assert preview.action == "would-move"
+        assert preview.location == target_location
+        assert pyproject.read_bytes() == initial_managed
+        moved = reconcile_mcp_extra(
+            pyproject,
+            mode=target_mode,
+            enabled=True,
+        )
+        assert moved.action == "moved"
+        assert moved.location == target_location
+        text = pyproject.read_text(encoding="utf-8")
+        assert f'location = "{target_location}"' in text
+        assert "vaultspec-rag[mcp]" in text
+
+        returned = reconcile_mcp_extra(
+            pyproject,
+            mode=initial_mode,
+            enabled=True,
+        )
+        assert returned.action == "moved"
+        assert pyproject.read_bytes() == initial_managed
+        removed = reconcile_mcp_extra(
+            pyproject,
+            mode=initial_mode,
+            enabled=False,
+        )
+        assert removed.action == "removed"
+        assert pyproject.read_bytes() == original
+
+    def test_owned_move_preserves_unowned_extra_at_target(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "consumer"\ndependencies = ["vaultspec-rag>=0.3"]\n',
+            encoding="utf-8",
+        )
+        assert (
+            reconcile_mcp_extra(
+                pyproject,
+                mode=InstallMode.DEPENDENCY,
+                enabled=True,
+            ).action
+            == "applied"
+        )
+        with pyproject.open("a", encoding="utf-8", newline="") as stream:
+            stream.write('\n[dependency-groups]\ndev = ["vaultspec-rag[mcp]>=0.3"]\n')
+        unowned_target = 'dev = ["vaultspec-rag[mcp]>=0.3"]'
+
+        report = reconcile_mcp_extra(
+            pyproject,
+            mode=InstallMode.DEV,
+            enabled=True,
+        )
+
+        assert report.action == "moved"
+        text = pyproject.read_text(encoding="utf-8")
+        assert unowned_target in text
+        assert 'dependencies = ["vaultspec-rag>=0.3"]' in text
+        assert "mcp-extra" not in text
+
     def test_unowned_extra_is_preserved_on_disable(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         original = (

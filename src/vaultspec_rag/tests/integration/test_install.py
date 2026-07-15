@@ -26,6 +26,9 @@ from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeS
     read_manifest,
     write_manifest,
 )
+from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+    read_package_declaration,
+)
 
 from ...commands import install_run, uninstall_run
 
@@ -610,6 +613,148 @@ class TestDryRunInstall:
         assert _read_codex_mcp(fresh_workspace)["vaultspec-rag"]["command"] == (
             expected_command
         )
+
+    @pytest.mark.parametrize(
+        "skip_tokens",
+        [frozenset({"mcp"}), frozenset({"core", "mcp"})],
+    )
+    @pytest.mark.parametrize("corrupt_surface", ["codex", "ownership"])
+    def test_implicit_upgrade_mcp_skip_uses_only_durable_package_placement(
+        self,
+        fresh_workspace: Path,
+        skip_tokens: frozenset[str],
+        corrupt_surface: str,
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "consumer"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n',
+            encoding="utf-8",
+        )
+        _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+        (fresh_workspace / ".vaultspec" / "workspace.json").unlink()
+        if corrupt_surface == "codex":
+            (fresh_workspace / ".codex" / "config.toml").write_text(
+                'invalid = "unterminated',
+                encoding="utf-8",
+            )
+        else:
+            (fresh_workspace / ".vaultspec" / "mcp-ownership.json").write_text(
+                "{not-json",
+                encoding="utf-8",
+            )
+        protected_paths = [
+            pyproject,
+            fresh_workspace / ".mcp.json",
+            fresh_workspace / ".codex" / "config.toml",
+            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            fresh_workspace / _RAG_MCP_REL,
+        ]
+        protected_before = {path: path.read_bytes() for path in protected_paths}
+        workspace_before = _workspace_file_bytes(fresh_workspace)
+        locks_before = {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        }
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            skip=set(skip_tokens),
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == workspace_before
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            skip=set(skip_tokens),
+        )
+        assert preview.to_dict()["sync_providers"] == {}
+        assert actual.to_dict()["sync_providers"] == {}
+        assert not preview.mcp_sync_results
+        assert not actual.mcp_sync_results
+        assert not preview.mcp_errors
+        assert not actual.mcp_errors
+        assert {path: path.read_bytes() for path in protected_paths} == (
+            protected_before
+        )
+        assert {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        } == locks_before
+        declaration = read_package_declaration(fresh_workspace, "vaultspec-rag")
+        if "core" in skip_tokens:
+            assert declaration is None
+        else:
+            assert declaration is not None
+            assert declaration.install_mode is InstallMode.DEPENDENCY
+
+    @pytest.mark.parametrize(
+        ("content", "initial_mode", "target_mode", "target_location"),
+        [
+            (
+                '[project]\nname = "consumer"\nversion = "0.1.0"\n'
+                'dependencies = ["vaultspec-rag"]\n',
+                InstallMode.DEPENDENCY,
+                InstallMode.DEV,
+                "[dependency-groups].dev",
+            ),
+            (
+                '[project]\nname = "consumer"\nversion = "0.1.0"\n\n'
+                '[dependency-groups]\ndev = ["vaultspec-rag"]\n',
+                InstallMode.DEV,
+                InstallMode.DEPENDENCY,
+                "[project].dependencies",
+            ),
+        ],
+    )
+    def test_owned_extra_moves_with_dependency_dev_mode_and_uninstalls(
+        self,
+        fresh_workspace: Path,
+        content: str,
+        initial_mode: InstallMode,
+        target_mode: InstallMode,
+        target_location: str,
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        original = content.encode()
+        pyproject.write_bytes(original)
+        _install(fresh_workspace, mode=initial_mode)
+        initial_managed = pyproject.read_bytes()
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            mode=target_mode,
+        )
+
+        assert preview.mcp_extra_action == "would-move"
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=target_mode,
+        )
+        assert actual.mcp_extra_action == "moved"
+        assert f'location = "{target_location}"' in pyproject.read_text(
+            encoding="utf-8"
+        )
+        declaration = read_package_declaration(fresh_workspace, "vaultspec-rag")
+        assert declaration is not None
+        assert declaration.install_mode is target_mode
+
+        returned = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=initial_mode,
+        )
+        assert returned.mcp_extra_action == "moved"
+        assert pyproject.read_bytes() == initial_managed
+        uninstall_run(path=fresh_workspace, force=True)
+        assert pyproject.read_bytes() == original
 
 
 class TestProviderFailureContract:

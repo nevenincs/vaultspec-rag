@@ -52,7 +52,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S24` - Perform final independent deployment-evidence audit and release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
 - [x] `P03.S25` - Enforce MCP skip as a symmetric native-lifecycle boundary; `src/vaultspec_rag/commands/_install.py and skipped mode-transition integration tests`.
 - [x] `P03.S26` - Perform final independent skip-boundary audit and release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
-- [ ] `P03.S27` - Make implicit MCP skips status-free and migrate owned dependency-extra placement; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_mode.py, src/vaultspec_rag/commands/_mcp_extra.py, and real placement regressions`.
+- [x] `P03.S27` - Make implicit MCP skips status-free and migrate owned dependency-extra placement; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_mode.py, src/vaultspec_rag/commands/_mcp_extra.py, and real placement regressions`.
 - [ ] `P03.S28` - Perform final independent implicit-skip and placement audit with release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
 
 ## Description
