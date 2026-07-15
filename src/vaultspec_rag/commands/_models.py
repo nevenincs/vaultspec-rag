@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..torch_config import TorchConfigAction
 
@@ -27,6 +27,71 @@ __all__ = [
     "InstallReport",
     "UninstallReport",
 ]
+
+_SYNC_COUNTERS = (
+    "added",
+    "updated",
+    "unchanged",
+    "skipped",
+    "pruned",
+    "errored",
+)
+
+
+def _empty_provider_outcome() -> dict[str, Any]:
+    return {
+        **dict.fromkeys(_SYNC_COUNTERS, 0),
+        "errors": [],
+        "warnings": [],
+        "items": [],
+    }
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in cast("list[object]", value)]
+
+
+def _sync_items(value: object) -> list[list[str]]:
+    if not isinstance(value, list):
+        return []
+    normalised: list[list[str]] = []
+    for item in cast("list[object]", value):
+        if not isinstance(item, tuple):
+            continue
+        parts = cast("tuple[object, ...]", item)  # ty: ignore[redundant-cast]
+        if len(parts) != 2:
+            continue
+        path, action = parts
+        if isinstance(path, str) and isinstance(action, str):
+            normalised.append([path, action])
+    return normalised
+
+
+def _merge_provider_outcome(outcome: dict[str, Any], provider_result: object) -> None:
+    for counter in _SYNC_COUNTERS:
+        value = getattr(provider_result, counter, 0)
+        if isinstance(value, int):
+            outcome[counter] += value
+    outcome["errors"].extend(_string_list(getattr(provider_result, "errors", [])))
+    outcome["warnings"].extend(_string_list(getattr(provider_result, "warnings", [])))
+    outcome["items"].extend(_sync_items(getattr(provider_result, "items", [])))
+
+
+def _provider_sync_outcomes(results: list[Any]) -> dict[str, dict[str, Any]]:
+    """Aggregate Core's typed ``per_tool`` results without flattening hosts."""
+    outcomes: dict[str, dict[str, Any]] = {}
+    for result in results:
+        per_tool = getattr(result, "per_tool", None)
+        if not isinstance(per_tool, dict):
+            continue
+        for provider, provider_result in cast("dict[object, object]", per_tool).items():
+            if not isinstance(provider, str):
+                continue
+            outcome = outcomes.setdefault(provider, _empty_provider_outcome())
+            _merge_provider_outcome(outcome, provider_result)
+    return {provider: outcomes[provider] for provider in sorted(outcomes)}
 
 
 @dataclass
@@ -78,6 +143,7 @@ class InstallReport:
             "sync_added": sum(getattr(r, "added", 0) for r in self.sync_results),
             "sync_updated": sum(getattr(r, "updated", 0) for r in self.sync_results),
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
+            "sync_providers": _provider_sync_outcomes(self.sync_results),
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),
@@ -125,6 +191,7 @@ class UninstallReport:
             "removed": list(self.removed),
             "data_removed": self.data_removed,
             "sync_pruned": sum(getattr(r, "pruned", 0) for r in self.sync_results),
+            "sync_providers": _provider_sync_outcomes(self.sync_results),
             "warnings": list(self.warnings),
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),

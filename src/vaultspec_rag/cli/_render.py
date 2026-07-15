@@ -503,6 +503,46 @@ def _render_sync_summary(added: int, updated: int, removed: int) -> None:
         )
 
 
+def _render_provider_sync(report: Any) -> None:
+    """Render the same per-provider MCP outcomes exposed by report JSON."""
+    data = report.to_dict()
+    providers = data.get("sync_providers")
+    if not isinstance(providers, dict):
+        return
+    for provider, raw_outcome in cast("dict[object, object]", providers).items():
+        if not isinstance(provider, str) or not isinstance(raw_outcome, dict):
+            continue
+        outcome = cast("dict[str, object]", raw_outcome)
+        parts = [
+            f"{label} {outcome[label]}"
+            for label in (
+                "added",
+                "updated",
+                "unchanged",
+                "skipped",
+                "pruned",
+                "errored",
+            )
+            if isinstance(outcome.get(label), int) and outcome[label]
+        ]
+        summary = ", ".join(parts) if parts else "no changes"
+        _cli.console.print(
+            f"{provider.capitalize()} MCP: {summary}",
+            markup=False,
+            highlight=False,
+        )
+        warnings = outcome.get("warnings")
+        if isinstance(warnings, list):
+            for warning in cast("list[object]", warnings):
+                _cli.console.print(
+                    f"  warning: {warning}", markup=False, highlight=False
+                )
+        errors = outcome.get("errors")
+        if isinstance(errors, list):
+            for error in cast("list[object]", errors):
+                _cli.console.print(f"  error: {error}", markup=False, highlight=False)
+
+
 def _counted(count: int, singular: str, plural: str | None = None) -> str:
     return f"{count} {singular if count == 1 else plural or singular + 's'}"
 
@@ -553,6 +593,7 @@ def _render_install_report(report: Any) -> None:
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     _render_sync_summary(sync_added, sync_updated, sync_pruned)
+    _render_provider_sync(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
     _cli.console.print(
         f"PyTorch configuration: {_action_label(tc_action)}",
@@ -679,6 +720,7 @@ def _render_uninstall_report(report: Any) -> None:
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
         _render_sync_summary(0, 0, sync_pruned)
+    _render_provider_sync(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
     _cli.console.print(
         f"PyTorch configuration: {_action_label(tc_action)}",
