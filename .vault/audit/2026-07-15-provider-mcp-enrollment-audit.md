@@ -456,3 +456,60 @@ CRITICAL findings**. Status-free implicit mode inference and happy dependency/de
 are correct, but MCP skip does not protect all MCP-owned surfaces and placement conflicts
 can still commit a contradictory mode. Merge and publication must remain held pending
 remediation and another independent audit.
+
+## S30 final verification
+
+### malformed-pyproject-report-boundary | high | MCP preflight suppresses the established torch-config failure contract
+
+Commit `0e405ee` closes both S28 transaction findings on the adversarial paths. An MCP
+skip now filters the MCP builtin before classification and preserves the canonical or
+operator-drifted source, dependency-extra edit and provenance, both provider files, Core
+ownership, provider reports, MCP errors, and lock bytes for enabled and disabled intent
+under both the MCP-only and combined Core/MCP skip sets. Ordinary non-MCP Core
+reconciliation continues for the MCP-only skip. Owned-drift and ambiguous-target
+placement conflicts are preview/apply byte-inert, retain the previous dependency mode,
+produce structured MCP failure, and make the CLI exit 2. A genuine atomic-write blocker
+after the dependency placement edit restores the exact prior pyproject, placement
+provenance, workspace declaration, and dependency mode before returning failure.
+
+The new placement preflight nevertheless introduces a separate release-blocking report
+regression. With malformed `pyproject.toml`, `_prepare_mcp_transition` catches the parse
+failure and `install_run` immediately returns the MCP-failed report. The established
+torch-config inspection path is never reached, so `torch_config_action` remains
+`skipped` rather than `error` and the required `torch-config inspect failed` diagnostic
+is absent. The existing real test
+`TestErrorBranches.test_install_corrupt_pyproject_records_error` fails on this exact
+contract. The command still fails closed through its MCP error, but it no longer reports
+all requested component failures through the long-standing structured surface.
+
+The other reproducible unit failure is not a production finding: the old dev-mode case
+in `test_explicit_mode_persists_and_renders_rag_entry` supplies only a runtime project
+declaration. The new placement preflight correctly refuses to persist a contradictory
+dev mode, so that fixture must use a dev-surface declaration or explicitly assert the
+conflict; weakening the transaction boundary would be incorrect.
+
+Verification evidence: the focused S29 transaction matrix passed 11 tests, the complete
+real install integration module passed 73 tests, and the complete placement module
+passed 18 tests. The mode module passed 35 tests with the single stale-fixture failure
+above. The first over-broad non-integration invocation selected 1,815 of 2,148 tests and
+timed out after 904 seconds without a summary while still executing real Qdrant service
+tests; deterministic segmentation then reported 803 passes and three failures: the
+confirmed report regression, the stale dev fixture, and external machine-service
+contamination. Ruff and Ty passed, BasedPyright reported zero errors, warnings, and
+notes, and the cognitive, cyclomatic, and nesting-depth gates passed. The lock check
+resolved 141 packages, Vaultspec structural checks were clean with 24 pre-existing
+corpus warnings, and `git diff --check` passed.
+
+An isolated `vaultspec-rag 0.3.0` wheel also passed every smoke assertion: both console
+entry points and the canonical builtin were present, public `vaultspec-core 0.1.44`
+satisfied the declared `>=0.1.44` floor, both entry points started, and the installed CLI
+enrolled identical native Claude and Codex project targets. Earlier healthy
+dependency-to-dev and dev-to-dependency moves, ownership-safe uninstall, provider-error
+attribution, preview fidelity, source collision handling, selective removal, host
+acceptance, and public-Core packaging findings remain closed.
+
+S30 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. The complete MCP skip and placement/mode transaction remediations are correct,
+but malformed consumer metadata now truncates the structured install report before the
+established torch-config failure is recorded. Merge and publication must remain held
+until that contract is restored and a new independent audit passes the complete suite.
