@@ -299,3 +299,80 @@ S23/S24 verdict: **FAIL — not release-ready; one unresolved HIGH finding**. Th
 affirmative deployment-evidence remediation is correct, but `--skip mcp` is not honored
 by the real mode-migration seam. Merge and publication must remain held until that path
 is fixed and independently re-audited.
+
+## S25/S26 final verification
+
+### implicit-upgrade-mcp-skip | high | Legacy mode inference crosses the MCP skip boundary and rewrites dependency placement
+
+Commit `92ba087` correctly closes the explicit-mode seam identified in S24. For both
+dependency-to-tool and tool-to-dependency transitions, `skip={"mcp"}` and the combined
+`skip={"core", "mcp"}` now produce no preview projection, native sync, force-managed
+migration, provider counters, items, or results. Claude JSON, Codex TOML, the canonical
+MCP source, Core ownership, and lock bytes remain unchanged. A separate real-workspace
+probe removed the generated non-MCP `CLAUDE.md` and `AGENTS.md` files before an MCP-only
+skip; ordinary Core reconciliation restored both while leaving every protected MCP
+surface unchanged, so the intended non-MCP work remains active.
+
+The guard is nevertheless too late for an implicit legacy upgrade. `install_run`
+resolves an upgrade mode before it reaches `_persist_mode_and_detect_flip`; when no RAG
+package declaration or explicit mode exists, `infer_rag_upgrade_mode` calls
+`mode_is_deployed`, which calls Core `mcp_status` even when `"mcp"` is in the skip set.
+That provider-derived result then controls `_reconcile_mcp_extra`, which also runs before
+the S25 guard. In an independently created dependency-mode workspace with the legacy
+declaration removed, malformed Codex TOML or malformed MCP ownership made status cease
+to provide affirmative deployment evidence. Both `skip={"mcp"}` and
+`skip={"core", "mcp"}` consequently resolved tool mode and removed the owned `[mcp]`
+runtime extra from `pyproject.toml`; the MCP-only case also persisted a tool declaration.
+Provider bytes and reports remained inert, but MCP state still determined and mutated
+package placement despite the explicit skip. The supplied S25 matrix always passes an
+explicit mode and therefore cannot exercise this call path.
+
+Recommendation: make MCP skip part of upgrade-mode resolution itself. An implicit
+MCP-skipped upgrade must not call provider status or derive package placement from native
+deployment health; use the non-MCP declaration/project precedence instead, and cover
+missing declarations with valid, malformed, drifted, and partial provider state for both
+MCP-only and combined Core/MCP skips. Require provider, source, ownership, lock, and
+owned-extra bytes to remain unchanged while non-MCP reconciliation continues.
+
+### managed-dependency-dev-transition | high | The persisted mode changes while the owned MCP extra stays on the old project surface
+
+The complete feature diff also leaves a placement transition uncovered by the accepted
+three-mode contract. `_enable_mcp_extra` returns `already` whenever its recorded managed
+requirement still exists, without checking whether the ownership location belongs to the
+newly requested mode. Real dependency-to-dev and dev-to-dependency upgrade probes both
+returned success and persisted the new mode while leaving `pyproject.toml` byte-identical.
+Dependency-to-dev retained `vaultspec-rag[mcp]` in `[project].dependencies`, leaking the
+optional surface into published runtime dependencies. Dev-to-dependency retained it only
+in `[dependency-groups].dev`, so a built runtime consumer does not carry the dependency
+that the persisted dependency mode claims. Both native launches remain `uv run`, which
+hides the placement mismatch from provider convergence tests.
+
+Recommendation: when owned placement and requested project mode differ, restore the
+recorded original at the old surface and reconcile only an unambiguous declaration at the
+new surface, or fail closed with a structured conflict without persisting a contradictory
+mode. Add real preview/apply/reversal cases for both dependency-to-dev and
+dev-to-dependency, including exact ownership and byte assertions.
+
+Verification evidence: the complete real install integration module passed 56 tests,
+including both real host CLIs, provider-error exits, source add/prune previews, all four
+partial-provider inverses, source-only and collision cases, selective ownership-safe
+uninstall, and the four explicit S25 skip combinations. The focused placement, mode,
+packaging, server, and guidance slice passed 184 tests. Ruff, Ty, BasedPyright, all
+complexity gates, the lock check, changed-file formatting, Vaultspec validation, and
+`git diff --check` passed. The Vaultspec run retained only known corpus warnings plus the
+newly scaffolded S26 exec annotations and stale feature index; no structural error was
+reported.
+
+All earlier HIGH findings remain closed on their covered paths: provider errors fail
+closed with complete attribution; source addition and pruning previews are exact and
+byte-inert; requested-mode projections and partial-provider migrations agree with real
+execution; source-only, collision, and drifted ownership evidence behave correctly;
+selective uninstall preserves sibling and user ownership; Core `>=0.1.44` and the
+canonical tool launch remain enforced; and recovery guidance is mode-aware.
+
+S25/S26 verdict: **FAIL — not release-ready; two unresolved HIGH findings and no
+CRITICAL findings**. The explicit-mode native skip leak is fixed, but implicit upgrade
+inference still crosses the same boundary and can rewrite owned dependency placement.
+The full feature also permits dependency/dev declaration-placement contradictions.
+Merge and publication must remain held until both are remediated and independently
+re-audited.
