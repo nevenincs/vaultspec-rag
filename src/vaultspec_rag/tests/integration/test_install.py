@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
+)
 from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
     read_manifest,
     write_manifest,
@@ -308,6 +311,105 @@ class TestDryRunInstall:
         assert remove_report["sync_providers"]["claude"]["pruned"] == 1
         assert remove_report["sync_providers"]["codex"]["pruned"] == 1
         assert _workspace_file_bytes(installed_workspace) == installed_before
+
+    @pytest.mark.parametrize(
+        ("initial_mode", "pyproject_body"),
+        [
+            (
+                InstallMode.DEPENDENCY,
+                '[project]\nname = "consumer"\nversion = "0.1.0"\n'
+                'dependencies = ["vaultspec-rag"]\n',
+            ),
+            (
+                InstallMode.DEV,
+                '[project]\nname = "consumer"\nversion = "0.1.0"\n\n'
+                '[dependency-groups]\ndev = ["vaultspec-rag"]\n',
+            ),
+        ],
+    )
+    def test_legacy_project_mode_to_tool_preview_matches_real_update(
+        self,
+        fresh_workspace: Path,
+        initial_mode: InstallMode,
+        pyproject_body: str,
+    ) -> None:
+        (fresh_workspace / "pyproject.toml").write_text(
+            pyproject_body, encoding="utf-8"
+        )
+        _install(fresh_workspace, mode=initial_mode)
+        assert (
+            _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]["command"]
+            == "uv"
+        )
+        (fresh_workspace / ".vaultspec" / "workspace.json").unlink()
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            mode=InstallMode.TOOL,
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=InstallMode.TOOL,
+        )
+        preview_providers = preview.to_dict()["sync_providers"]
+        actual_providers = actual.to_dict()["sync_providers"]
+        for provider in ("claude", "codex"):
+            assert preview_providers[provider]["skipped"] == 1
+            assert preview_providers[provider]["updated"] == 1
+            assert preview_providers[provider] == actual_providers[provider]
+        entry = _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
+        assert entry["command"] == "uvx"
+        assert entry["args"][:2] == ["--from", "vaultspec-rag[mcp]"]
+
+    def test_tool_to_dependency_preview_matches_real_update(
+        self, fresh_workspace: Path
+    ) -> None:
+        (fresh_workspace / "pyproject.toml").write_text(
+            '[project]\nname = "consumer"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag"]\n',
+            encoding="utf-8",
+        )
+        _install(fresh_workspace, mode=InstallMode.TOOL)
+        assert (
+            _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]["command"]
+            == "uvx"
+        )
+        before = _workspace_file_bytes(fresh_workspace)
+        locks_before = sorted(fresh_workspace.rglob("*.lock"))
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            mode=InstallMode.DEPENDENCY,
+        )
+
+        assert _workspace_file_bytes(fresh_workspace) == before
+        assert sorted(fresh_workspace.rglob("*.lock")) == locks_before
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=InstallMode.DEPENDENCY,
+        )
+        preview_providers = preview.to_dict()["sync_providers"]
+        actual_providers = actual.to_dict()["sync_providers"]
+        for provider in ("claude", "codex"):
+            assert preview_providers[provider]["skipped"] == 1
+            assert preview_providers[provider]["updated"] == 1
+            assert preview_providers[provider] == actual_providers[provider]
+        entry = _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
+        assert entry == {
+            "command": "uv",
+            "args": ["run", "python", "-m", "vaultspec_rag.server"],
+        }
 
 
 class TestProviderFailureContract:

@@ -129,14 +129,14 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     detected = resolve_install_mode(
         target, explicit=None, package=RAG_DISTRIBUTION_NAME
     )
-    if detected in {InstallMode.DEPENDENCY, InstallMode.DEV} and _mode_is_deployed(
+    if detected in {InstallMode.DEPENDENCY, InstallMode.DEV} and mode_is_deployed(
         target
     ):
         return ResolvedMode(detected, ModeProvenance.INFERRED)
     return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)
 
 
-def _mode_is_deployed(target: Path) -> bool:
+def mode_is_deployed(target: Path) -> bool:
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         Tool,
     )

@@ -44,7 +44,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S16` - Fail closed on top-level and per-provider MCP lifecycle errors with complete reports and CLI regressions; `src/vaultspec_rag/commands/_models.py, src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_uninstall.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/cli/_render.py, and tests`.
 - [x] `P03.S17` - Remove dormant uv-add MCP code and stale prose and make the Core smoke floor future-compatible; `src/vaultspec_rag/commands/_uv_sync.py, src/vaultspec_rag/tests/test_install_mcp_extra.py, src/vaultspec_rag/cli/_install.py, and tests/smoke_check.py`.
 - [x] `P03.S18` - Re-audit remediated MCP enrollment and run final release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
-- [ ] `P03.S19` - Persist requested RAG mode in MCP preview projections and align tool-mode recovery guidance; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/server/_main.py, and real mode-transition tests`.
+- [x] `P03.S19` - Persist requested RAG mode in MCP preview projections and align tool-mode recovery guidance; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/server/_main.py, and real mode-transition tests`.
 - [ ] `P03.S20` - Re-audit final MCP remediation and repeat release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
 
 ## Description

@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tomlkit.exceptions import ParseError
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
@@ -26,6 +26,7 @@ from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
     migrate_rag_mcp_entry,
+    mode_is_deployed,
     persist_rag_mode,
     resolve_rag_mode,
 )
@@ -117,6 +118,7 @@ def _mcp_preview_projection(
     install_mcp: bool,
     force: bool,
     upgrade: bool,
+    mode: InstallMode,
 ) -> Generator[Path]:
     """Project the requested MCP source state away from the real workspace.
 
@@ -147,6 +149,7 @@ def _mcp_preview_projection(
             for relative in list_builtins():
                 if relative.startswith("mcps/"):
                     (projected_vaultspec / relative).unlink(missing_ok=True)
+        persist_rag_mode(projection, mode)
         yield projection
 
 
@@ -160,6 +163,7 @@ def _run_core_sync(
     *,
     install_mcp: bool,
     upgrade: bool,
+    mode_flipped: bool,
 ) -> None:
     if "core" in skip:
         return
@@ -195,6 +199,7 @@ def _run_core_sync(
                 install_mcp=install_mcp,
                 force=force,
                 upgrade=upgrade,
+                mode=mode,
             ) as projection:
                 yield projection
         else:
@@ -215,8 +220,39 @@ def _run_core_sync(
             logger.error("project MCP sync failed during install: %s", exc)
             report.mcp_errors.append(f"project MCP sync failed: {exc}")
         else:
+            if dry_run:
+                _rewrite_preview_paths(result, mcp_target, target)
             report.sync_results.append(result)
             report.mcp_sync_results.append(result)
+            if dry_run and mode_flipped and not force:
+                migration = mcp_sync(
+                    dry_run=True,
+                    mode=mode,
+                    force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
+                    provider="all",
+                    scope="project",
+                    target_dir=mcp_target,
+                )
+                _rewrite_preview_paths(migration, mcp_target, target)
+                report.sync_results.append(migration)
+                report.mcp_sync_results.append(migration)
+
+
+def _rewrite_preview_paths(result: object, projection: Path, target: Path) -> None:
+    """Map temporary Core diagnostics back to the operator's real target."""
+    source = str(projection)
+    destination = str(target)
+    for attribute in ("errors", "warnings"):
+        messages = getattr(result, attribute, None)
+        if isinstance(messages, list):
+            typed_messages = cast("list[object]", messages)
+            typed_messages[:] = [
+                str(message).replace(source, destination) for message in typed_messages
+            ]
+    per_tool = getattr(result, "per_tool", None)
+    if isinstance(per_tool, dict):
+        for provider_result in cast("dict[object, object]", per_tool).values():
+            _rewrite_preview_paths(provider_result, projection, target)
 
 
 def _persist_mode_and_detect_flip(
@@ -238,20 +274,20 @@ def _persist_mode_and_detect_flip(
     Rag's deployed launch shape is captured here, before the sync overwrites it,
     so an ``install --upgrade`` that flips rag's mode is detectable: the returned
     flag drives the post-sync force-managed seam that migrates a stale managed
-    entry the plain sync's force-gate would otherwise skip. A dry run or a
-    core-skipped run neither persists nor flips.
+    entry the plain sync's force-gate would otherwise skip. A dry-run detects the
+    same flip without persisting it; a core-skipped run does neither.
 
     Args:
         target: Workspace root directory.
         mode: Rag's resolved provisioning mode to persist.
-        dry_run: When ``True``, neither persist nor detect (no writes on a preview).
+        dry_run: When ``True``, detect without persisting to the real workspace.
         skip: Sync skip tokens; a ``"core"`` skip disables both.
 
     Returns:
         ``True`` when rag's deployed launch shape diverges from *mode* and must
         be force-migrated after the sync; ``False`` otherwise.
     """
-    if dry_run or "core" in skip:
+    if "core" in skip:
         return False
     declaration = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
     previous_mode = (
@@ -259,8 +295,9 @@ def _persist_mode_and_detect_flip(
         if declaration is not None
         else infer_rag_upgrade_mode(target, None).mode
     )
-    mcp_mode_flipped = previous_mode != mode
-    persist_rag_mode(target, mode)
+    mcp_mode_flipped = mode_is_deployed(target) and previous_mode != mode
+    if not dry_run:
+        persist_rag_mode(target, mode)
     return mcp_mode_flipped
 
 
@@ -407,6 +444,7 @@ def install_run(
         resolved.mode,
         install_mcp=install_mcp,
         upgrade=upgrade,
+        mode_flipped=mcp_mode_flipped,
     )
 
     # Mode-flip seam, the analogue of core's own force-managed pass: a plain
