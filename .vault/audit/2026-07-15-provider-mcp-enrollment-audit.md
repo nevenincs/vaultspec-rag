@@ -513,3 +513,69 @@ findings**. The complete MCP skip and placement/mode transaction remediations ar
 but malformed consumer metadata now truncates the structured install report before the
 established torch-config failure is recorded. Merge and publication must remain held
 until that contract is restored and a new independent audit passes the complete suite.
+
+## S32 final verification
+
+### transaction-lock-rollback | high | A fresh mode-write failure leaves newly created lock state
+
+Commit `861f6b2` retains the placement-and-mode rollback added in S29, but the
+transaction snapshots only `pyproject.toml` and `.vaultspec/workspace.json`.
+Vaultspec Core's mode persistence also creates `.vaultspec/workspace.json.lock`. A real fresh
+dependency workspace with a directory blocking Core's atomic mode write returned
+structured MCP failure and restored the exact project bytes. It removed the absent-before
+workspace declaration, but left the newly created lock file behind.
+
+The current integration regression starts from an already installed workspace, so its
+before-state already includes the lock and cannot detect this first-install residue.
+Recommendation: include lock existence and bytes in the transaction boundary. Rollback
+must remove a lock created by the failed operation while preserving any exact pre-existing
+lock state.
+
+### unreadable-project-report-boundary | high | Non-ParseError inspection failures still suppress torch-config reporting
+
+The S31 change restores the dual MCP and torch-config error contract only for
+`tomlkit.exceptions.ParseError`. The generic exception branch in
+`_reconcile_mcp_extra` still returns before the torch flow and does not set
+`TorchConfigAction.ERROR`. A real invalid-UTF-8 `pyproject.toml` reproduced this path.
+The command preserved the project bytes, created no lock, and reported MCP failure.
+It left `torch_config_action` as `skipped` and omitted the established
+`torch-config inspect failed` diagnostic.
+
+Recommendation: classify every project-inspection failure through the same requested
+component reporting contract, not only TOML syntax failures. Retain the current early
+mutation boundary, MCP failure, CLI exit 2, exact project bytes, and absent lock state.
+
+### seed-failure-transaction-order | high | Builtin failure commits placement and mode before enrollment exists
+
+The MCP placement and workspace mode commit now precedes `_seed_builtins`. The seeder's
+rollback owns only files written during its own call. A real dependency workspace with a
+non-empty directory blocking the rule destination raised `PermissionError` after the MCP
+source was written. The local seed rollback removed that source, but install retained the
+`vaultspec-rag[mcp]` dependency edit, its placement provenance, the new dependency-mode
+declaration, and the workspace lock. Provider configuration remained absent, leaving a
+half-installed state.
+
+This contradicts the existing seed-failure contract, whose test currently checks only
+the partially written MCP source. Recommendation: extend the install transaction across
+placement, mode persistence, and builtin seeding. Any seed failure must restore exact
+dependency, provenance, declaration, source, and lock state before propagating or
+reporting the failure.
+
+Verification evidence: the complete install, mode, torch-config, placement, Qdrant CLI,
+and install-integration selection passed 194 tests against the production-equivalent
+S31 code. After the Qdrant isolation commit, the complete Qdrant runtime and CLI selection
+passed 44 tests. The Qdrant delta correctly isolates status, storage, lock identity, and
+port state and produced no review finding. Ruff, Ty, BasedPyright, all complexity gates,
+the lock check, changed-file formatting, Vaultspec validation, and `git diff --check`
+passed before the test-only Qdrant delta. The owner also reported that delta's hooks and
+static checks green. These three blockers were reproduced independently with real
+temporary files and genuine filesystem failures, without mocks, patches, skips, or
+xfails. The deterministic 1,815-test aggregate and wheel smoke were not awaited because
+genuine release-blocking defects already satisfied the audit's stop condition.
+
+S32 verdict: **FAIL — not release-ready; three unresolved HIGH findings and no CRITICAL
+findings**. The malformed-TOML and Qdrant cases covered by S31 are fixed. Transaction
+rollback omits fresh lock state. Unreadable project metadata still loses requested
+torch-config failure attribution. A later builtin write failure leaves placement and
+mode committed. Hold merge and publication until remediation and another independent
+audit are complete.
