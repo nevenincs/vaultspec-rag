@@ -36,6 +36,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S28]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S29]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S30]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S31]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -88,6 +89,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S28` - Perform final independent implicit-skip and placement audit with release gates
 - `2026-07-15-provider-mcp-enrollment-P03-S29` - Enforce complete MCP intent skips and transactional placement-mode commits
 - `2026-07-15-provider-mcp-enrollment-P03-S30` - Perform final independent transaction-boundary audit and release gates
+- `2026-07-15-provider-mcp-enrollment-P03-S31` - Restore malformed-project error reporting and prove successful mode declarations
 
 ### plan
 

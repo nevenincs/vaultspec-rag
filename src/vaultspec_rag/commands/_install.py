@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from tomlkit.exceptions import ParseError
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
@@ -23,6 +24,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 )
 
 from ..builtins import list_builtins, seed_builtins
+from ..torch_config import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
@@ -112,11 +114,21 @@ def _reconcile_mcp_extra(
     *,
     enabled: bool,
     dry_run: bool,
+    record_torch_parse_error: bool = False,
 ) -> bool:
     try:
         result = reconcile_mcp_extra(
             target / "pyproject.toml", mode=mode, enabled=enabled, dry_run=dry_run
         )
+    except ParseError as exc:
+        report.mcp_extra_action = "error"
+        message = f"MCP extra inspect failed: {exc}"
+        report.warnings.append(message)
+        report.mcp_errors.append(message)
+        if record_torch_parse_error:
+            report.torch_config_action = TorchConfigAction.ERROR
+            report.warnings.append(f"torch-config inspect failed: {exc}")
+        return False
     except Exception as exc:
         report.mcp_extra_action = "error"
         message = f"MCP extra inspect failed: {exc}"
@@ -400,6 +412,7 @@ def _prepare_mcp_transition(
     skip: set[str],
     dry_run: bool,
     explicit_mode: bool,
+    configure_torch: bool,
 ) -> tuple[bool, bool]:
     """Preflight and, for real runs, commit MCP placement and package mode."""
     mcp_skipped = "mcp" in skip
@@ -409,6 +422,7 @@ def _prepare_mcp_transition(
         mode,
         enabled=install_mcp,
         dry_run=True,
+        record_torch_parse_error=configure_torch,
     ):
         return False, False
 
@@ -563,6 +577,7 @@ def install_run(
         skip=skip,
         dry_run=dry_run,
         explicit_mode=mode is not None,
+        configure_torch=configure_torch,
     )
     if not transition_ready:
         return report

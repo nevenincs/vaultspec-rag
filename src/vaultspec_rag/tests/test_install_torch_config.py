@@ -653,16 +653,42 @@ class TestErrorBranches:
     """
 
     def test_install_corrupt_pyproject_records_error(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from ..cli import app
+
         ws = tmp_path / "ws"
         ws.mkdir()
-        (ws / "pyproject.toml").write_text(
-            "[project\nname =", encoding="utf-8"
-        )  # malformed
+        pyproject = ws / "pyproject.toml"
+        pyproject.write_text("[project\nname =", encoding="utf-8")  # malformed
+        before = pyproject.read_bytes()
         report = install_run(path=ws, assume_yes=True)
         assert report.torch_config_action == "error"
+        assert report.mcp_sync_failed
+        assert not report.seeded
+        assert not report.sync_results
         assert any("torch-config inspect failed" in w for w in report.warnings), (
             report.warnings
         )
+        assert pyproject.read_bytes() == before
+        assert not list(ws.rglob("*.lock"))
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(ws),
+                "--yes",
+                "--mcp",
+                "--no-provision",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 2, result.output
+        assert pyproject.read_bytes() == before
+        assert not list(ws.rglob("*.lock"))
 
     def test_uninstall_corrupt_pyproject_records_error(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"

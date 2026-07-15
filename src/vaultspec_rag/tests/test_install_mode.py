@@ -251,21 +251,27 @@ def test_force_repairs_only_drifted_provider_target(
 
 
 @pytest.mark.parametrize(
-    ("explicit", "expected_command", "expected_args"),
+    ("explicit", "pyproject", "expected_command", "expected_args"),
     [
-        (InstallMode.TOOL, _TOOL_LAUNCH[0], _TOOL_LAUNCH[1]),
-        (InstallMode.DEPENDENCY, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
-        (InstallMode.DEV, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
+        (InstallMode.TOOL, _PROJECT_WITH_RAG, _TOOL_LAUNCH[0], _TOOL_LAUNCH[1]),
+        (
+            InstallMode.DEPENDENCY,
+            _PROJECT_WITH_RAG,
+            _DEP_LAUNCH[0],
+            _DEP_LAUNCH[1],
+        ),
+        (InstallMode.DEV, _PROJECT_RAG_DEV_GROUP, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
     ],
 )
 def test_explicit_mode_persists_and_renders_rag_entry(
     tmp_path: Path,
     explicit: InstallMode,
+    pyproject: str,
     expected_command: str,
     expected_args: list[str],
 ) -> None:
     """Each explicit mode persists rag's own entry and renders its own launch."""
-    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    ws = _workspace(tmp_path, pyproject)
 
     _install(ws, mode=explicit)
 
@@ -276,6 +282,37 @@ def test_explicit_mode_persists_and_renders_rag_entry(
     entry = _rag_mcp_entry(ws)
     assert entry["command"] == expected_command
     assert entry["args"] == expected_args
+
+
+@pytest.mark.parametrize(
+    ("explicit", "pyproject"),
+    [
+        (InstallMode.TOOL, _PROJECT_WITH_RAG),
+        (InstallMode.DEPENDENCY, _PROJECT_WITH_RAG),
+        (InstallMode.DEV, _PROJECT_RAG_DEV_GROUP),
+    ],
+)
+def test_explicit_mode_persists_with_mcp_intent_disabled(
+    tmp_path: Path,
+    explicit: InstallMode,
+    pyproject: str,
+) -> None:
+    """Disabling enrollment does not suppress a valid package-mode commit."""
+    ws = _workspace(tmp_path, pyproject)
+    write_manifest(ws, {"claude"})
+
+    report = install_run(
+        path=ws,
+        mode=explicit,
+        provision=False,
+        configure_torch=False,
+        install_mcp=False,
+    )
+
+    assert not report.mcp_sync_failed
+    declaration = read_package_declaration(ws, RAG_DISTRIBUTION_NAME)
+    assert declaration is not None
+    assert declaration.install_mode is explicit
 
 
 def test_detection_maps_rag_project_dependency_to_dependency_mode(

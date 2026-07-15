@@ -56,7 +56,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S28` - Perform final independent implicit-skip and placement audit with release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
 - [x] `P03.S29` - Enforce complete MCP intent skips and transactional placement-mode commits; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/builtins/__init__.py, and real transaction regressions`.
 - [x] `P03.S30` - Perform final independent transaction-boundary audit and release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`.
-- [ ] `P03.S31` - Restore malformed-project error reporting and prove successful mode declarations; `src/vaultspec_rag/commands/_install.py, mode and torch contract tests, and isolated real CLI gates`.
+- [x] `P03.S31` - Restore malformed-project error reporting and prove successful mode declarations; `src/vaultspec_rag/commands/_install.py, mode and torch contract tests, and isolated real CLI gates`.
 - [ ] `P03.S32` - Perform final independent malformed-project and transaction audit with release gates; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and complete segmented repository gates`.
 
 ## Description

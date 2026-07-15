@@ -613,6 +613,10 @@ class TestDryRunInstall:
         assert _read_codex_mcp(fresh_workspace)["vaultspec-rag"]["command"] == (
             expected_command
         )
+        declaration = read_package_declaration(fresh_workspace, "vaultspec-rag")
+        assert declaration is not None
+        expected_mode = initial_mode if "core" in skip_tokens else target_mode
+        assert declaration.install_mode is expected_mode
 
     @pytest.mark.parametrize(
         "skip_tokens",
