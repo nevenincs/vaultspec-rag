@@ -98,6 +98,7 @@ def seed_builtins(
     force: bool = False,
     dry_run: bool = False,
     written: list[str] | None = None,
+    exclude_prefixes: tuple[str, ...] = (),
 ) -> list[tuple[str, str]]:
     """Copy rag's bundled builtins into a target ``.vaultspec/`` directory.
 
@@ -123,6 +124,9 @@ def seed_builtins(
         dry_run: Classify every builtin without writing - previews an upgrade.
         written: Optional out-list of ``[ADD]``/``[UPDATE]`` relative paths
             actually written, in order, for targeted rollback.
+        exclude_prefixes: Forward-slash relative-path prefixes to omit before
+            classification or writing. This lets a component skip protect its
+            complete source domain rather than seeding and then reversing it.
 
     Returns:
         Sorted list of ``(relative_path, action)`` pairs for every builtin the
@@ -139,6 +143,8 @@ def seed_builtins(
     results: list[tuple[str, str]] = []
     for src_file in _iter_builtin_files(src_root):
         rel = str(src_file.relative_to(src_root)).replace("\\", "/")
+        if rel.startswith(exclude_prefixes):
+            continue
         dest = target_dir / rel
         if not _within_target(dest, target_resolved):
             continue

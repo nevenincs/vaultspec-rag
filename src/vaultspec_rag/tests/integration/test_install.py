@@ -689,6 +689,159 @@ class TestDryRunInstall:
             assert declaration.install_mode is InstallMode.DEPENDENCY
 
     @pytest.mark.parametrize(
+        "skip_tokens",
+        [frozenset({"mcp"}), frozenset({"core", "mcp"})],
+    )
+    @pytest.mark.parametrize("install_mcp", [True, False])
+    @pytest.mark.parametrize("drift_source", [False, True])
+    def test_mcp_skip_preserves_complete_intent_domain(
+        self,
+        fresh_workspace: Path,
+        skip_tokens: frozenset[str],
+        install_mcp: bool,
+        drift_source: bool,
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+        source = fresh_workspace / _RAG_MCP_REL
+        if drift_source:
+            source.write_bytes(b'{"operator": "owned bytes"}\n')
+        protected_paths = [
+            pyproject,
+            source,
+            fresh_workspace / ".mcp.json",
+            fresh_workspace / ".codex" / "config.toml",
+            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+        ]
+        protected_before = {path: path.read_bytes() for path in protected_paths}
+        locks_before = {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        }
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            install_mcp=install_mcp,
+            skip=set(skip_tokens),
+        )
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            install_mcp=install_mcp,
+            skip=set(skip_tokens),
+        )
+
+        for report in (preview, actual):
+            assert report.mcp_extra_action == "skipped"
+            assert not report.mcp_sync_results
+            assert not report.mcp_errors
+            assert report.to_dict()["sync_providers"] == {}
+            assert all(
+                not relative.startswith("mcps/") for relative, _ in report.seeded
+            )
+        assert {path: path.read_bytes() for path in protected_paths} == protected_before
+        assert {
+            path: path.read_bytes() for path in fresh_workspace.rglob("*.lock")
+        } == locks_before
+
+    @pytest.mark.parametrize("conflict_kind", ["owned-drift", "ambiguous-target"])
+    def test_placement_conflict_blocks_mode_source_and_provider_commit(
+        self, fresh_workspace: Path, conflict_kind: str
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+        content = pyproject.read_text(encoding="utf-8")
+        if conflict_kind == "owned-drift":
+            content = content.replace("vaultspec-rag[mcp]", "vaultspec-rag[mcp]>=9", 1)
+        else:
+            content += (
+                '\n[dependency-groups]\ndev = ["vaultspec-rag"]\n\n'
+                '[tool.uv]\ndev-dependencies = ["vaultspec-rag"]\n'
+            )
+        pyproject.write_text(content, encoding="utf-8")
+        before = _workspace_file_bytes(fresh_workspace)
+
+        preview = _install(
+            fresh_workspace,
+            dry_run=True,
+            upgrade=True,
+            mode=InstallMode.DEV,
+        )
+        actual = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=InstallMode.DEV,
+        )
+
+        for report in (preview, actual):
+            assert report.mcp_extra_action == "conflict"
+            assert report.mcp_sync_failed
+            assert report.mcp_errors
+            assert not report.seeded
+            assert not report.sync_results
+        assert _workspace_file_bytes(fresh_workspace) == before
+        declaration = read_package_declaration(fresh_workspace, "vaultspec-rag")
+        assert declaration is not None
+        assert declaration.install_mode is InstallMode.DEPENDENCY
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(fresh_workspace),
+                "--upgrade",
+                "--mode",
+                "dev",
+                "--mcp",
+                "--no-provision",
+                "--no-torch-config",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 2, result.output
+        data = json.loads(result.output)
+        assert data["mcp_extra_action"] == "conflict"
+        assert data["mcp_failed"] is True
+        assert _workspace_file_bytes(fresh_workspace) == before
+
+    def test_mode_write_failure_rolls_back_extra_placement(
+        self, fresh_workspace: Path
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+        before = _workspace_file_bytes(fresh_workspace)
+        workspace = fresh_workspace / ".vaultspec" / "workspace.json"
+        write_blocker = workspace.with_suffix(workspace.suffix + f".{os.getpid()}.tmp")
+        write_blocker.mkdir()
+
+        report = _install(
+            fresh_workspace,
+            upgrade=True,
+            mode=InstallMode.DEV,
+        )
+        write_blocker.rmdir()
+
+        assert report.mcp_extra_action == "error"
+        assert report.mcp_sync_failed
+        assert report.mcp_errors
+        assert not report.seeded
+        assert not report.sync_results
+        assert _workspace_file_bytes(fresh_workspace) == before
+        declaration = read_package_declaration(fresh_workspace, "vaultspec-rag")
+        assert declaration is not None
+        assert declaration.install_mode is InstallMode.DEPENDENCY
+
+    @pytest.mark.parametrize(
         ("content", "initial_mode", "target_mode", "target_location"),
         [
             (

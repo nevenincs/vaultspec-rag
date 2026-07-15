@@ -9,9 +9,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from tomlkit.exceptions import ParseError
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
+)
+from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeStubs]
+    atomic_write,
 )
 from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
@@ -57,6 +59,8 @@ def _seed_builtins(
     force: bool,
     upgrade: bool,
     install_mcp: bool,
+    *,
+    skip_mcp: bool = False,
 ) -> None:
     """Seed rag's whole bundled tree flat into ``.vaultspec/`` (core's fold).
 
@@ -69,16 +73,26 @@ def _seed_builtins(
         written: list[str] = []
         try:
             seeded = seed_builtins(
-                vaultspec_dir, force=force or upgrade, written=written
+                vaultspec_dir,
+                force=force or upgrade,
+                written=written,
+                exclude_prefixes=("mcps/",) if skip_mcp else (),
             )
         except Exception:
             _rollback_seeded(vaultspec_dir, written, report)
             raise
     else:
-        seeded = seed_builtins(vaultspec_dir, force=force or upgrade, dry_run=True)
+        seeded = seed_builtins(
+            vaultspec_dir,
+            force=force or upgrade,
+            dry_run=True,
+            exclude_prefixes=("mcps/",) if skip_mcp else (),
+        )
 
     mcp_sources = {rel for rel in list_builtins() if rel.startswith("mcps/")}
     report.seeded = [item for item in seeded if item[0] not in mcp_sources]
+    if skip_mcp:
+        return
     if install_mcp:
         report.seeded.extend(item for item in seeded if item[0] in mcp_sources)
         return
@@ -98,17 +112,98 @@ def _reconcile_mcp_extra(
     *,
     enabled: bool,
     dry_run: bool,
-) -> None:
+) -> bool:
     try:
         result = reconcile_mcp_extra(
             target / "pyproject.toml", mode=mode, enabled=enabled, dry_run=dry_run
         )
-    except ParseError as exc:
+    except Exception as exc:
         report.mcp_extra_action = "error"
-        report.warnings.append(f"MCP extra inspect failed: {exc}")
-        return
+        message = f"MCP extra inspect failed: {exc}"
+        report.warnings.append(message)
+        report.mcp_errors.append(message)
+        return False
     report.mcp_extra_action = result.action
     report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
+    report.mcp_errors.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
+    return not result.conflicts
+
+
+def _file_snapshot(path: Path) -> bytes | None:
+    """Return exact file bytes, or ``None`` when *path* does not exist."""
+    return path.read_bytes() if path.exists() else None
+
+
+def _restore_file_snapshot(path: Path, snapshot: bytes | None) -> None:
+    """Restore one transactional file without rewriting already-equal bytes."""
+    if snapshot is None:
+        path.unlink(missing_ok=True)
+        return
+    if path.exists() and path.read_bytes() == snapshot:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, snapshot.decode("utf-8"))
+
+
+def _rollback_file_snapshots(snapshots: dict[Path, bytes | None]) -> list[str]:
+    """Restore transaction snapshots and return any rollback diagnostics."""
+    errors: list[str] = []
+    for path, snapshot in snapshots.items():
+        try:
+            _restore_file_snapshot(path, snapshot)
+        except Exception as exc:
+            errors.append(f"{path}: {exc}")
+    return errors
+
+
+def _commit_mcp_placement_and_mode(
+    target: Path,
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    enabled: bool,
+    persist_mode: bool,
+) -> bool:
+    """Commit dependency placement and package mode as one guarded transition."""
+    pyproject = target / "pyproject.toml"
+    workspace = target / ".vaultspec" / "workspace.json"
+    snapshots = {
+        pyproject: _file_snapshot(pyproject),
+        workspace: _file_snapshot(workspace),
+    }
+    try:
+        if not _reconcile_mcp_extra(
+            target,
+            report,
+            mode,
+            enabled=enabled,
+            dry_run=False,
+        ):
+            rollback_errors = _rollback_file_snapshots(snapshots)
+            if rollback_errors:
+                rollback_message = "MCP transaction rollback failed: " + "; ".join(
+                    rollback_errors
+                )
+                report.mcp_errors.append(rollback_message)
+                report.warnings.append(rollback_message)
+            return False
+        if persist_mode:
+            persist_rag_mode(target, mode)
+    except Exception as exc:
+        rollback_errors = _rollback_file_snapshots(snapshots)
+        report.mcp_extra_action = "error"
+        message = f"MCP placement/mode transaction failed: {exc}"
+        if message not in report.mcp_errors:
+            report.mcp_errors.append(message)
+        report.warnings.append(message)
+        if rollback_errors:
+            rollback_message = "MCP transaction rollback failed: " + "; ".join(
+                rollback_errors
+            )
+            report.mcp_errors.append(rollback_message)
+            report.warnings.append(rollback_message)
+        return False
+    return True
 
 
 @contextmanager
@@ -256,47 +351,32 @@ def _rewrite_preview_paths(result: object, projection: Path, target: Path) -> No
             _rewrite_preview_paths(provider_result, projection, target)
 
 
-def _persist_mode_and_detect_flip(
+def _detect_mode_flip(
     target: Path,
     mode: InstallMode,
     *,
-    dry_run: bool,
     skip: set[str],
     explicit: bool,
 ) -> bool:
-    """Persist rag's mode before the sync and report whether it flips the launch.
+    """Report whether a requested mode flips an existing managed launch.
 
-    From the 0.1.44 floor core's sync renders each companion MCP definition at
-    its own declaring package's committed mode, so writing rag's entry *before*
-    the sync lets the sync render rag's ``.mcp.json`` launch in rag's own shape
-    natively for the fresh and same-mode cases. The write reads and rewrites only
-    rag's own entry under the advisory lock, leaving a sibling ``vaultspec-core``
-    entry untouched, and needs only the target path, not core's runtime context.
-
-    Rag's deployed launch shape is captured here, before the sync overwrites it,
-    so an ``install --upgrade`` that flips rag's mode is detectable: the returned
-    flag drives the post-sync force-managed seam that migrates a stale managed
-    entry the plain sync's force-gate would otherwise skip. A dry-run detects the
-    same flip without persisting it. A core-skipped run does neither; an MCP-skipped
-    run still persists non-MCP package intent but performs no deployment detection.
+    Rag's deployed launch shape is captured before the sync overwrites it, so an
+    ``install --upgrade`` that flips rag's mode is detectable. The returned flag
+    drives the post-sync force-managed seam that migrates a stale managed entry
+    the plain sync's force-gate would otherwise skip. Core- or MCP-skipped runs
+    do not inspect deployment state.
 
     Args:
         target: Workspace root directory.
-        mode: Rag's resolved provisioning mode to persist.
-        dry_run: When ``True``, detect without persisting to the real workspace.
-        skip: Sync skip tokens. A ``"core"`` skip disables detection and persistence;
-            an ``"mcp"`` skip disables detection while retaining package intent.
+        mode: Rag's resolved provisioning mode.
+        skip: Sync skip tokens. A ``"core"`` or ``"mcp"`` skip disables detection.
         explicit: Whether the operator explicitly selected *mode*.
 
     Returns:
         ``True`` when rag's deployed launch shape diverges from *mode* and must
         be force-migrated after the sync; ``False`` otherwise.
     """
-    if "core" in skip:
-        return False
-    if "mcp" in skip:
-        if not dry_run:
-            persist_rag_mode(target, mode)
+    if {"core", "mcp"} & skip:
         return False
     declaration = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
     previous_mode = (
@@ -308,9 +388,50 @@ def _persist_mode_and_detect_flip(
     mcp_mode_flipped = deployed and (
         previous_mode != mode or (explicit and declaration is None)
     )
-    if not dry_run:
-        persist_rag_mode(target, mode)
     return mcp_mode_flipped
+
+
+def _prepare_mcp_transition(
+    target: Path,
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    install_mcp: bool,
+    skip: set[str],
+    dry_run: bool,
+    explicit_mode: bool,
+) -> tuple[bool, bool]:
+    """Preflight and, for real runs, commit MCP placement and package mode."""
+    mcp_skipped = "mcp" in skip
+    if not mcp_skipped and not _reconcile_mcp_extra(
+        target,
+        report,
+        mode,
+        enabled=install_mcp,
+        dry_run=True,
+    ):
+        return False, False
+
+    mode_flipped = _detect_mode_flip(
+        target,
+        mode,
+        skip=skip,
+        explicit=explicit_mode,
+    )
+    if dry_run:
+        return True, mode_flipped
+    if mcp_skipped:
+        if "core" not in skip:
+            persist_rag_mode(target, mode)
+        return True, False
+    committed = _commit_mcp_placement_and_mode(
+        target,
+        report,
+        mode,
+        enabled=install_mcp,
+        persist_mode="core" not in skip,
+    )
+    return committed, mode_flipped if committed else False
 
 
 def install_run(
@@ -427,28 +548,36 @@ def install_run(
         else resolve_rag_mode(target, mode)
     )
 
-    # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does
-    # (rules/ -> .vaultspec/rules/, mcps/ -> .vaultspec/mcps/, skills/<name>/
-    # -> .vaultspec/skills/<name>/), so core's collectors and sync pick them up
-    # like any core builtin.
     vaultspec_dir = target / ".vaultspec"
-    _reconcile_mcp_extra(
+
+    # Placement is the first MCP transition boundary. A conflict or inspection
+    # failure stops the operation before source, package mode, provider config,
+    # ownership, or lock state can change. Real execution repeats the already-
+    # successful preview and commits placement plus mode as one rollback-guarded
+    # transaction.
+    transition_ready, mcp_mode_flipped = _prepare_mcp_transition(
         target,
         report,
         resolved.mode,
-        enabled=install_mcp,
-        dry_run=dry_run,
-    )
-    _seed_builtins(vaultspec_dir, report, dry_run, force, upgrade, install_mcp)
-
-    # Persist rag's own entry in the shared per-package declaration BEFORE core's
-    # sync runs, and capture whether this run flips rag's deployed launch shape.
-    mcp_mode_flipped = _persist_mode_and_detect_flip(
-        target,
-        resolved.mode,
-        dry_run=dry_run,
+        install_mcp=install_mcp,
         skip=skip,
-        explicit=mode is not None,
+        dry_run=dry_run,
+        explicit_mode=mode is not None,
+    )
+    if not transition_ready:
+        return report
+
+    # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does.
+    # MCP skips filter that source prefix before classification, so simultaneous
+    # --mcp/--no-mcp intent and upgrade reseeding cannot touch it.
+    _seed_builtins(
+        vaultspec_dir,
+        report,
+        dry_run,
+        force,
+        upgrade,
+        install_mcp,
+        skip_mcp="mcp" in skip,
     )
 
     # sync_provider needs core's runtime context. Initialise it here
