@@ -376,3 +376,83 @@ inference still crosses the same boundary and can rewrite owned dependency place
 The full feature also permits dependency/dev declaration-placement contradictions.
 Merge and publication must remain held until both are remediated and independently
 re-audited.
+
+## S27/S28 final verification
+
+### mcp-skip-source-and-extra-boundary | high | MCP skip still permits source and owned-extra mutations
+
+Commit `c1f81b8` closes the provider-derived implicit-mode path identified in S26.
+With no explicit mode or RAG declaration, both `skip={"mcp"}` and
+`skip={"core", "mcp"}` now resolve from durable `pyproject.toml` placement without
+calling MCP status. The supplied malformed-Codex and malformed-ownership cases retain
+dependency mode, the provider targets and Core ownership sidecar remain byte-identical,
+no MCP lifecycle result or provider report is emitted, and an MCP-only skip still runs
+ordinary non-MCP Core reconciliation.
+
+The skip boundary remains incomplete because `_reconcile_mcp_extra` and
+`_seed_builtins` execute before the skip-aware persistence and provider lifecycle
+guards. In independent real workspaces, an implicit upgrade combining either skip set
+with disabled MCP intent removed the canonical RAG MCP source and reversed the owned
+runtime extra in `pyproject.toml`; `mcp_extra_action` reported `removed` while
+`sync_providers` remained empty. With MCP intent enabled, changing the canonical source
+to operator bytes before the same skipped upgrade caused the upgrade seed to overwrite
+those bytes under both skip sets, again with no MCP report. Provider configuration and
+the provider ownership sidecar stayed unchanged, but the source and dependency/provenance
+surfaces explicitly named by the component skip did not.
+
+Recommendation: apply the MCP skip before source-intent seeding and optional-extra
+reconciliation as well as before status, projection, native sync, and migration. A
+skipped run must preserve source bytes and owned-extra state regardless of simultaneous
+`--mcp`/`--no-mcp` intent or upgrade reseeding, emit no MCP report, and continue only
+the intended non-MCP work.
+
+### placement-conflict-mode-commit | high | A placement conflict still commits a contradictory package mode
+
+The happy owned dependency-to-dev and dev-to-dependency paths are symmetric: preview is
+byte-inert, apply moves the exact owned edit to the requested surface, reverse restores
+the prior managed bytes, uninstall restores the original declaration, and ownership
+tracks the active edit. The unowned-target-extra case also restores the old owned edit,
+preserves the target extra, and clears provenance instead of adopting it.
+
+Conflict handling is only local to the TOML reconciler, however. An independent real
+dependency-mode workspace had only the owned runtime requirement externally drifted,
+leaving its recorded ownership unchanged, and then requested a dev-mode upgrade.
+Preview and apply both returned `mcp_extra_action="conflict"` and correctly left
+`pyproject.toml` byte-identical, but install continued through
+`_persist_mode_and_detect_flip`: the real run persisted `dev`, retained the drifted
+runtime `[mcp]` requirement with no dev declaration, reported two unchanged MCP passes
+per provider, left `mcp_sync_failed` false, and returned success. The local refusal is
+therefore non-destructive but the overall operation is not atomic, and persisted mode
+no longer agrees with dependency placement.
+
+Recommendation: make an MCP-extra conflict a fail-closed transition boundary. Do not
+persist the requested package mode or reconcile native launch state unless placement
+can commit, or atomically roll back every earlier placement edit if a later step fails.
+Add real drift and ambiguous-target cases requiring preview/apply parity, unchanged
+mode/provider/source/ownership/dependency/lock bytes, an explicit failed result, and a
+non-zero CLI exit.
+
+Verification evidence: the complete real install integration module passed 62 tests,
+including both host CLIs, provider failures, source add/prune previews, fresh/collision
+parity, four partial-provider inverses, explicit skip boundaries, implicit skipped
+corruption cases, selective uninstall, and the two happy placement directions. The
+focused implicit-skip and placement selection passed 6 tests, the complete placement
+module passed 18 tests, focused Ruff passed, and `git diff --check` passed. A broader
+unit run was stopped at the release owner's request after both adversarial blockers were
+accepted; the owner separately reported the 1,416-test unit, full static, and wheel
+smoke gates green. No mock, fake, patch, monkeypatch, skip, or xfail was used in the
+independent probes.
+
+All earlier HIGH findings remain closed on their covered paths: provider errors retain
+attribution and fail closed; source add/prune and requested-mode previews are exact and
+byte-inert; healthy, partial, source-only, collision, and drifted-ownership provider
+transitions converge; selective uninstall preserves sibling and user ownership; the
+public Core `>=0.1.44` floor and canonical launch remain enforced; and recovery guidance
+is mode-aware. The two findings above are new uncovered boundaries rather than
+regressions in those verified paths.
+
+S27/S28 verdict: **FAIL — not release-ready; two unresolved HIGH findings and no
+CRITICAL findings**. Status-free implicit mode inference and happy dependency/dev moves
+are correct, but MCP skip does not protect all MCP-owned surfaces and placement conflicts
+can still commit a contradictory mode. Merge and publication must remain held pending
+remediation and another independent audit.
