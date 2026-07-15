@@ -197,3 +197,55 @@ healthy-provider mode-overlay divergence and the recovery guidance, but a provid
 missing state still converts a requested mode migration into a successful split-mode
 deployment. This false-success path must be remediated and independently re-audited
 before merge or publication.
+
+## S21 independent verification
+
+### fresh-source-only-transition | high | Source-only missing status creates false mode flips and preview-real counter drift
+
+The partial-provider remediation closes the split-launch failure when either Claude or
+Codex still carries a managed RAG entry. Both missing-provider inverses now converge for
+dependency-to-tool and tool-to-dependency transitions: the existing provider reports one
+skip followed by one update, the missing sibling reports one add followed by one
+unchanged result, preview and real counters are equal, both final launches match, and the
+preview leaves every real byte and lock path unchanged.
+
+However, `mode_is_deployed(require_all=False)` now treats `missing` as affirmative
+deployment evidence. Core's status contract populates `missing` from canonical source
+definitions even when no provider entry or ownership has ever existed. On a real fresh
+explicit tool install, `_seed_builtins` materializes the source before
+`_persist_mode_and_detect_flip` runs, so both absent targets appear `missing` and the real
+operation is misclassified as a mode transition. The corresponding dry-run detects the
+flip against the unmodified source tree before its temporary projection exists and does
+not make the same classification. An independent real-workspace probe therefore produced
+one `[ADD]` per provider in preview, but `[ADD]` plus a synthetic second-pass
+`[UNCHANGED]` per provider in the matching real operation. Both operations converged and
+returned success, but their exact provider plans differ, violating the accepted preview
+contract.
+
+The same defect is visible with an unowned Claude same-name collision and absent Codex
+target: preview reports one Claude skip and one Codex add, while real execution reports
+two duplicate Claude skips and Codex add plus unchanged. The user-owned Claude entry
+remains byte-identical, so no adoption or ownership regression was observed; the blocker
+is false transition detection, duplicate diagnostics, and preview-real report divergence.
+The causal path is `src/vaultspec_rag/commands/_mode.py` in the non-conjunctive
+`managed | missing | drifted` predicate and `src/vaultspec_rag/commands/_install.py` in
+the resulting mutable two-pass projection/real migration path.
+
+All prior HIGH findings remain closed apart from this new exact-preview regression.
+Provider lifecycle errors remain visible and fail closed; fresh source addition and
+unenrollment removal previews remain byte-inert and accurate without an explicit fresh
+mode; healthy and partial-provider legacy mode transitions converge; and the adversarial
+collision probe confirmed ownership preservation. The full real integration suite passed
+50 tests, the focused mode/placement/CLI/packaging/server suite passed 449 tests, the
+high-risk transition and failure selection passed 11 tests, and focused Ruff passed.
+
+Recommendation: trigger force-managed mode migration only from affirmative deployed
+ownership evidence, not an uncorroborated source-derived `missing` name. Add a fresh
+explicit-mode preview-versus-real regression, plus the external-collision/absent-sibling
+variant, requiring exact per-provider counters and diagnostics as well as byte and lock
+inertness.
+
+S21 verdict: **FAIL — not release-ready**. The requested partial-provider transition is
+fixed, but commit `e838148` regresses exact dry-run fidelity for fresh explicit enrollment
+and source-only/collision states. Release must remain held until that HIGH finding is
+remediated and independently re-audited.

@@ -27,6 +27,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S19]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S20]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S21]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S22]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -70,6 +71,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S19` - Persist requested RAG mode in MCP preview projections and align tool-mode recovery guidance
 - `2026-07-15-provider-mcp-enrollment-P03-S20` - Re-audit final MCP remediation and repeat release gates
 - `2026-07-15-provider-mcp-enrollment-P03-S21` - Migrate mode transitions when any managed provider remains and preserve partial-provider preview parity
+- `2026-07-15-provider-mcp-enrollment-P03-S22` - Perform final independent partial-provider audit and release gates
 
 ### plan
 
