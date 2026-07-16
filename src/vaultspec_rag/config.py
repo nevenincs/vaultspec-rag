@@ -77,6 +77,9 @@ class EnvVar(StrEnum):
     PREPROCESS = "VAULTSPEC_RAG_PREPROCESS"
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
+    # Stdio shim lifetime watchdog kill switch (mcp-stdio-lifetime ADR);
+    # "0"/"false"/"off"/"no" disables the ancestor-death backstop.
+    STDIO_WATCHDOG = "VAULTSPEC_RAG_STDIO_WATCHDOG"
     # Vault document chunking knob.
     VAULT_CHUNK_CHARS = "VAULTSPEC_RAG_VAULT_CHUNK_CHARS"
     # Intent-aware vault ranking knobs.

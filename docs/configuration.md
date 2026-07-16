@@ -107,27 +107,33 @@ The tables in this section, together with the backend selection table, list ever
 | `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | integer | `2000`     | Debounce window coalescing change events before reindex (ms) | `--update-delay-ms`          |
 | `VAULTSPEC_RAG_WATCH_COOLDOWN_S`  | float   | `30`       | Per-source re-index cooldown after a completed run (s)       | `--repeat-update-delay-s`    |
 
+### Stdio MCP lifetime
+
+| Variable                       | Type    | Default    | Controls                                                                | CLI flag       |
+| ------------------------------ | ------- | ---------- | ----------------------------------------------------------------------- | -------------- |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | `1` (true) | Stdio shim self-reap when its spawning process chain breaks (`0` = off) | `--parent-pid` |
+
 ### Storage maintenance (auto-prune)
 
 The daemon's scheduled storage-maintenance cycle - see the [storage and maintenance guide](storage-maintenance.md).
 
-| Variable                                              | Type    | Default    | Controls                                                             | CLI flag |
-| ----------------------------------------------------- | ------- | ---------- | --------------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                     | boolean | `1` (true) | Scheduled auto-prune on/off (server mode only)                        | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES`    | float   | `60`       | Minutes between maintenance cycles                                    | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`         | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed        | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`    | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed | - |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float | `30`      | Days a snapshot archive is kept before the retention sweep deletes it | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`      | float   | `20`       | Total-size cap on the archive directory (oldest evicted first)        | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`       | integer | `16`       | Maximum namespaces reclaimed per cycle                                 | -        |
+| Variable                                                 | Type    | Default    | Controls                                                                           | CLI flag |
+| -------------------------------------------------------- | ------- | ---------- | ---------------------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                        | boolean | `1` (true) | Scheduled auto-prune on/off (server mode only)                                     | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES`       | float   | `60`       | Minutes between maintenance cycles                                                 | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed                     | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it              | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `20`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
 
 ### Preprocessing
 
-| Variable                                     | Type    | Default    | Controls                                                          | CLI flag                   |
-| -------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- | -------------------------- |
-| `VAULTSPEC_RAG_PREPROCESS`                   | string  | unset      | `off` disables all preprocessing; wins over everything            | `--no-preprocess`          |
-| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` | Cap on text a preprocess hook may emit per file in bytes (10 MiB) | -                          |
-| `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true) | Strip tags from `.html` to plain text before chunking             | -                          |
+| Variable                                     | Type    | Default    | Controls                                                          | CLI flag          |
+| -------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- | ----------------- |
+| `VAULTSPEC_RAG_PREPROCESS`                   | string  | unset      | `off` disables all preprocessing; wins over everything            | `--no-preprocess` |
+| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` | Cap on text a preprocess hook may emit per file in bytes (10 MiB) | -                 |
+| `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true) | Strip tags from `.html` to plain text before chunking             | -                 |
 
 ## Config-only keys
 
