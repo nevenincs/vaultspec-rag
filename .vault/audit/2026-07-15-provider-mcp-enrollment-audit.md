@@ -2276,3 +2276,226 @@ S63 verdict: **FAIL — not release-ready; one unresolved MEDIUM index
 auto-delegation coverage finding and no CRITICAL or HIGH findings**. Pull
 request approval, merge, tag, publication, and release remain blocked pending
 remediation and a fresh independent audit from one clean commit.
+
+## S64 real index auto-delegation correction
+
+### index-auto-delegation-command-coverage | medium | Resolved with real captured CLI transport
+
+S64 preserves the accepted production discovery order and changes only
+`TestAutoDelegation`. Each case still runs in a fresh interpreter with isolated status
+and machine-global storage roots. The selected endpoint is now a real loopback HTTP
+server, while the conflicting endpoint remains held by a bound, non-listening socket.
+The authority case points the valid machine-global discovery record at the server and
+the conflicting status file at the reserved socket. The fallback case points the status
+file at the server and creates no machine lock or discovery pointer.
+
+Both cases execute the real CLI `search` command and the real CLI
+`index --type vault` command. The server must capture exactly `/search` followed by
+`/reindex`. The reindex request must contain `type="vault"`, `clean=false`, the exact
+isolated project root, and `initiator_kind="cli"`. The index result must report an
+asynchronous service job, and both command envelopes must report `via="service"`.
+
+The capture-server port must equal the port selected by the shared search and index
+resolver. The nonselected port remains reserved until teardown, so neither an unrelated
+listener nor the installed service can satisfy the test. The isolated project tree is
+unchanged after both commands, and Torch, SentenceTransformers, Qdrant Client,
+Transformers, and ONNX Runtime remain unloaded. These assertions prove that no local
+search or indexing fallback ran.
+
+The focused class passed 2 of 2 and then 10 of 10 over five repeated runs. The adjacent
+machine-discovery and service-first group passed 19 of 19. The complete `test_cli.py`
+module passed 266 of 266. Ruff, affected formatting, Ty, strict BasedPyright, every
+complexity threshold, and diff checks passed.
+
+The installed service remained bound to port 55108 with process identifier 84904 and
+the same process start time. One administrative status request timed out while that
+unrelated service was busy. Its ungated `/health` endpoint immediately returned
+`status="ready"` with the same identity. The S64 probes relocate discovery state and
+send every search and reindex request only to their own capture server.
+
+The two-test count is unchanged. No production code, dependency declaration, or lock
+file changed. A fresh independent review verified the real capture boundary, exact
+search and reindex requests, meaningful discovery modes, absence of local fallback,
+cleanup, live-service isolation, and the complete S65 mandate, and returned PASS with
+no actionable findings. S64 closes the S63 MEDIUM finding but receives no
+release-campaign credit.
+
+S64 verdict: **PASS — both discovery modes execute and verify the real search and index
+auto-delegation paths without a prohibited test double or local fallback**. Pull
+request, approval, merge, tag, publication, and release remain outside this correction.
+
+## S65 final independent platform release-audit mandate
+
+S65 is an open, independent audit of the clean commit containing the S64 correction and
+execution record. Record that hash before execution and use it for every gate.
+
+Carry no test, review, static-analysis, package, provider, host-recognition, platform,
+environment-repair, discovery-isolation, or command-coverage credit from S53 through
+S64. The S64 focused, repeated, adjacent, full-CLI, and static results are corrective
+evidence only. They receive no S65 credit or waiver.
+
+Use stop-on-red semantics as stop-on-first-failure. If the tree is dirty, an environment
+or discovery preflight fails, a collection family does not reconcile, a count changes
+without explanation, a gate is missing, or a result fails, stop the campaign. Credit
+neither the incomplete gate nor any later gate. Waive nothing. Keep approval, merge,
+tag, publication, and release blocked.
+
+### Locked environment and complete auto-delegation preflight
+
+Resolve the locked public dependency graph and require scikit-learn 1.9.0 from the
+locked CPython 3.13 Windows wheel. Require the wheel artifact digest to equal
+`sha256:5808d98f15c6bf6d9d96d2348c1997392a5888ce7097e664105f930c4bca1277`.
+
+Import scikit-learn directly from the audit environment. Require these installed files
+to exist and match the installed `RECORD`:
+
+- `sklearn/.libs/msvcp140.dll`: 642,720 bytes and
+  `sha256=Y5NC6ppnwACRIiOM4HCoJX4uBNNn1idQn-wp-EQq-0I`.
+- `sklearn/.libs/vcomp140.dll`: 213,072 bytes and
+  `sha256=-W86FNiNiEbzHzqzikkDBM59bk9w-uQwTGPlnHrqLTA`.
+
+Run `uv sync --frozen`, `uv pip check`, and `uv lock --check`. Metadata compatibility
+alone does not waive a missing or mismatched wheel payload.
+
+Inspect the complete auto-delegation test surface for mocks, fakes, stubs, patches,
+monkeypatches, skips, and xfails. In fresh subprocesses with relocated status and
+machine-global storage, require both discovery modes:
+
+- A valid machine-global pointer, gated by the real OS lock and fresh heartbeat, must
+  outrank a conflicting status-file port.
+- With no machine service, the isolated status-file port must resolve.
+
+In each mode, hold the conflicting endpoint with a real bound, non-listening socket and
+run a real loopback HTTP capture server on the selected endpoint. Execute both real CLI
+commands. Require `/search` followed by `/reindex`. Require the search request to carry
+the isolated project root and code search mode. Require the reindex request to carry
+`type="vault"`, `clean=false`, the isolated project root, and
+`initiator_kind="cli"`. Require both JSON envelopes to report `via="service"`, require
+the isolated target tree to remain unchanged, and require heavy machine-learning
+libraries to remain unloaded. Prove unconditional lock, server, thread, and socket
+cleanup. Do not consult, call, or modify an unrelated live host service.
+
+### Corrected platform ledger and zero-overlap proof
+
+Recollect these four displayed-node-ID sets at the audit commit:
+
+- `M`: items selected by `not integration` on the current platform.
+- `P`: the same six S49 lifecycle-overlap items promoted from the integration-marked
+  install module.
+- `J`: the 13 items defined only inside Windows junction blocks.
+- `F`: the one POSIX-only
+  `TestErrorBranches::test_install_fifo_project_surface_fails_without_blocking` item.
+
+Require the full item count to equal the distinct displayed-node-ID count on each
+platform. Require the `not integration` item count to equal its distinct
+displayed-node-ID count. Any duplicate displayed node ID is a failed gate.
+
+Require `M` and `P` to have zero overlap on both platforms. Require `J` to have zero
+overlap with `M`, `P`, and `F`. Require `F` to have zero overlap with `P`.
+
+Reconcile `J` to these exact Windows-only families:
+
+- One `test_preview_does_not_follow_an_unrelated_windows_junction` item.
+- Six `test_required_junction_fails_before_lifecycle_mutation` items, with IDs
+  `relative0` through `relative5`.
+- Three `test_required_junction_container_fails_before_lifecycle_mutation` items, with
+  IDs `container_relative0` through `container_relative2`.
+- Two `test_late_junction_blocker_preserves_reparse_topology` items, with IDs `force`
+  and `upgrade`.
+- One `test_junction_snapshot_recreates_removed_reparse_node` item.
+
+Require `|J| = 13`. Every `J` item must be present in Windows total collection,
+excluded by `not integration`, and absent from POSIX collection. Require `|F| = 1`.
+`F` must be absent from Windows and present in the POSIX marker-selected set.
+
+The exact Windows collection is 2,271 total and unique displayed node IDs. Its marker
+split is 1,828 selected and unique and 443 excluded. All six `P` items must be present,
+integration-excluded, and disjoint from `M`. The Windows campaign is 1,834 selected and
+437 excluded.
+
+The exact POSIX total is `2,271 - |J| + |F| = 2,259`. Its marker split is
+`1,828 + |F| = 1,829` selected and `443 - |J| = 430` excluded. Promote the unchanged,
+disjoint six-item `P` set. The POSIX campaign is 1,835 selected and 424 excluded.
+Execute `F` against a real node created with `os.mkfifo`.
+
+Recollection is a gate, not a count waiver. Do not start runtime execution until both
+ledgers and every named family terminate green.
+
+### Preserved S56 bounded-model contract
+
+Preserve every S56 requirement. Inspect the S56 production and test diff independently.
+Prove every invariant with real behavior and without mocks, fakes, stubs, patches,
+monkeypatches, skips, xfails, or mirrored business logic.
+
+- Reconfirm that implementation baseline `9206a00` contained 1,111 real `.vault`
+  Markdown documents. Recount the S65 audit commit's complete corpus. The planned S64
+  execution record raises the current corpus to 1,119 documents. Require the exact
+  audit-commit count rather than treating 1,119 as a waiver. Copy and index every
+  audit-commit document through the production path, and require identical source and
+  worker counts.
+- Use gold judgments only as expected document identifiers and relevance grades. They
+  must not select, filter, narrow, preprocess, transform, or construct the indexed
+  corpus.
+- Enclose corpus copy, dense and sparse model construction, reranker construction,
+  indexing, every labeled search, result serialization, and teardown in one 600-second
+  whole-worker wall-clock boundary.
+- Unset `VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT`, or set it to exactly `600`. Record and
+  assert `deadline=600.000s` before crediting any S56 invariant.
+- At 600 seconds, terminate the child. After the bounded grace period, force-terminate
+  any survivor. Retain standard output and error. Verify that no related child, Qdrant
+  process, listener, or graphics processing unit owner remains.
+- Classify a cache as complete only when its usable snapshot has `config.json`, a
+  tokenizer artifact, and valid weights. If a valid shard index exists, require every
+  named shard.
+- Route a cold or interrupted real cache through normal online repair inside the
+  bounded child. Require successful repair to finish normally.
+- For a held request or persistent Hypertext Transfer Protocol failure, require a
+  deterministic bounded failure. Preserve the model name, final metadata URL, status,
+  body when available, and retained output tails.
+- For a complete warm cache, disable network access. Require dense, sparse, and reranker
+  models to load with zero metadata requests. Keep cache-only loading audit-specific;
+  product construction remains online-capable by default.
+- Execute all labeled queries. Preserve the requirements enforced by
+  `test_harness_produces_wellformed_metrics`,
+  `test_orientation_authoritative_rate_meets_floor`,
+  `test_index_documents_never_surface`, and
+  `test_named_orientation_regression`.
+
+### Preserved stop-on-red release sequence
+
+Run every S63 release gate again from zero in this order. Stop after the first failed or
+non-terminal gate.
+
+1. Verify the clean tree, complete diff, locked environment payload, direct
+   scikit-learn import, and complete real search-and-index auto-delegation isolation.
+   Recollect both platform ledgers. Reconcile `J`, `F`, `M`, and `P`. Scan for
+   prohibited test doubles. Audit every S56 invariant.
+1. Run all 1,834 Windows campaign items, including all six promoted items and every S56
+   model and intent-ranking case.
+1. Run all 1,835 POSIX campaign items in an exact-commit environment. Use Python 3.13
+   and published `vaultspec-core==0.1.45`. Execute the real FIFO case.
+1. Run repository-wide Ruff lint and format checks. Run Ty, strict BasedPyright, and the
+   full complexity gate. Check lock consistency and `git diff --check`.
+1. Run every Vaultspec check, annotation sanitation, provider-artifact check, and
+   project spec check.
+1. Build a wheel and source distribution from the audit commit. Inspect each artifact's
+   contents and metadata. Run the repository smoke contract against each artifact in a
+   fresh isolated environment.
+1. Resolve dependencies against published `vaultspec-core==0.1.45`. Do not use a local
+   Core checkout or editable source.
+1. Install the built artifact into a fresh isolated environment with isolated project
+   and host configuration homes. Enroll canonical project-scoped Claude Code and Codex
+   Model Context Protocol entries.
+1. Use the real Claude Code and Codex command-line interfaces to recognize their project
+   entries. Verify the launch contract, dependency placement, ownership provenance,
+   provider-local results, and independence from global state.
+1. Repeat the identical install or upgrade. Prove semantic and byte idempotence for the
+   manifest, Model Context Protocol source, ownership, `.mcp.json`,
+   `.codex/config.toml`, dependency declaration, and lock state.
+1. Exercise `--no-mcp` and uninstall. Remove only RAG-owned entries and extras. Preserve
+   Core-owned, user-owned, unrelated-provider, and unrelated-project state
+   byte-for-byte.
+
+S65 may report release readiness only after every gate terminates successfully at the
+same audit commit. Approving this mandate does not execute tests or authorize a pull
+request, approval, merge, tag, publication, or release.
