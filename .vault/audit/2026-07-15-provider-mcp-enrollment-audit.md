@@ -1658,3 +1658,69 @@ S59 may report release readiness only after every corrected platform-aware gate
 terminates successfully at the same audit commit. Approving this mandate does not
 execute tests or authorize a pull request, merge, approval, tag, publication, or
 release.
+
+## S59 final verification
+
+### windows-sklearn-wheel-payload-missing | medium | The selected model worker cannot import its locked dependency
+
+The S59 audit started from clean commit `f0ded87` with no credit carried from any prior
+review or campaign. Both corrected ledgers recollected with unique displayed node IDs
+and exact set reconciliation.
+
+Windows exposed 2,271 total and unique items. `M` contained 1,828 selected and unique
+items. All six `P` items were present, marker-excluded, and disjoint from `M`. All 13
+named `J` items were present, marker-excluded, and disjoint from `M` and `P`; `F` was
+absent. The Windows campaign therefore reconciled to 1,834 selected and 437 excluded.
+
+The exact-commit WSL2 Ubuntu archive exposed 2,259 total and unique items. `M`
+contained 1,829 selected and unique items. All six `P` items were present and disjoint
+from `M`; `J` was absent; and `F` was present in `M` and absent from `P`. The POSIX
+campaign therefore reconciled to 1,835 selected and 424 excluded. The audit commit
+also contained exactly 1,113 unique `.vault` Markdown paths, compared with 1,111 at
+the S56 implementation baseline.
+
+The first Windows runtime segment started all 1,828 `M` items with the model setup
+deadline explicitly set to 600 seconds. Seven singleton tests passed. The first
+intent-ranking case then errored in session-fixture setup. The bounded child retained
+the required context: `local_files_only=True`, `corpus='complete project vault'`,
+`deadline=600.000s`, and `stage=corpus-ready documents=1113`. Model construction then
+failed before the embedding-ready stage while importing SentenceTransformers'
+scikit-learn dependency.
+
+The process used the worktree `.venv`, Python 3.13.11, pytest 9.1.1, and scikit-learn
+1.9.0. It terminated after 31.38 seconds with seven passes, 443 deselections, and one
+setup error. The ranking fixture consumed 9.01 seconds. The causal exception was a
+`FileNotFoundError` for
+`sklearn/.libs/vcomp140.dll` while scikit-learn's `_distributor_init.py` tried to load
+the wheel-bundled OpenMP runtime.
+
+The locked environment contains scikit-learn 1.9.0. Its installed `RECORD` explicitly
+lists `sklearn/.libs/vcomp140.dll` and `sklearn/.libs/msvcp140.dll` with content
+hashes, but the `.libs` directory and both payload files are absent. `uv pip check`
+reports all 120 installed packages compatible, and `uv lock --check` resolves the
+locked graph successfully; neither metadata check detects the missing installed
+files. System copies of `vcomp140.dll` exist, but this wheel's distributor initializer
+loads the absent package-local paths.
+
+No intent-ranking worker survived the failure. A pre-existing `vaultspec-rag` service
+on port 55108 started more than 35 minutes before the S59 process and was left
+untouched; current AEAT state remains uncreditable.
+
+Recommendation: recreate the audit environment from the locked scikit-learn wheel,
+verify both package-local DLL files against `RECORD`, and require a direct
+`import sklearn` preflight before starting GPU release tests. Then restart the complete
+S59 campaign from one clean commit. A compatible dependency graph is not sufficient
+evidence when installed wheel payload files are missing.
+
+The incomplete Windows `M` segment receives zero runtime credit. The promoted `P`
+items, POSIX runtime campaign and FIFO execution, remaining S56 cache, repair, offline,
+cleanup, and ranking assertions, S54 job behavior, Ruff, formatting, Ty,
+BasedPyright, complexity, lock, diff, Vaultspec, provider-artifact, spec, build, wheel
+and source-distribution smoke, public-Core resolution, installed-package acceptance,
+Claude and Codex recognition, idempotence, unenrollment, and uninstall gates receive
+neither credit nor waiver. No production or test file changed during S59.
+
+S59 verdict: **FAIL — not release-ready; one unresolved MEDIUM installed-environment
+integrity finding and no CRITICAL or HIGH findings**. Merge, PR approval, and
+publication remain blocked until the locked Windows environment is complete and a
+fresh independent audit restarts every gate from zero.
