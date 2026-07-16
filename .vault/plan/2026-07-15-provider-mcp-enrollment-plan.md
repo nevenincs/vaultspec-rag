@@ -69,7 +69,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S41` - Repair service attribution and deterministic release-test isolation; `src/vaultspec_rag/serviceclient/_transport.py, service-job behavior tests, and isolated real service fixtures`.
 - [x] `P03.S42` - Perform fresh service-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`.
 - [x] `P03.S43` - Repair fresh provider selection and transactional MCP lifecycle boundaries; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_uninstall.py, preview topology and context handling, and real lifecycle regressions`.
-- [ ] `P03.S44` - Perform fresh transaction-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1823-test inventory`.
+- [x] `P03.S44` - Perform fresh transaction-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1823-test inventory`.
 
 ## Description
 

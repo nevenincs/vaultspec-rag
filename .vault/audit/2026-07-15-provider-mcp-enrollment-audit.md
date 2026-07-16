@@ -904,3 +904,58 @@ findings**. S41 corrects caller attribution and substantially hardens the servic
 and the prior rollback-scratch fix remains sound on the reviewed paths. The fresh
 provider-selection false success, two uninstall boundary failures, dry-run ContextVar
 mutation, and topology-divergent preview each independently block merge and publication.
+
+## S44 final verification
+
+### foreign-lock-holder-lifecycle | medium | The exact singleton gate races a surviving interpreter lock holder
+
+The S44 review started from clean commit `98a5727` and re-read the accepted research,
+ADR, plan, complete audit history, S42 and S43 records, and canonical audit and execution
+templates before inspecting the complete feature surface. Collection reported 1,824
+selected tests out of 2,191, with 367 deselected. This is one selected test and fourteen
+total tests above the historical S42 inventory.
+
+The fifteen focused S43 lifecycle regressions passed against real temporary workspaces.
+They independently reproduced closure of the five S42 HIGH findings: a fresh install
+selected Claude and Codex without a preseeded manifest; corrupt provider intent failed
+before workspace mutation; uninstall with MCP skipped preserved the complete MCP domain;
+preview restored both prior and unset Core contexts and did not follow unrelated live,
+broken, or junction topology; and optional-dependency reversal failures stopped teardown
+with structured non-zero outcomes. The three disjoint top-level inventory segments then
+passed 545, 546, and 523 tests, crediting all 1,614 top-level selections.
+
+The next exact 22-test singleton and Qdrant segment was red twice, each time after all
+22 test calls passed. The first run failed teardown in
+`test_live_foreign_machine_lock_holder_fast_fails`; the second failed teardown in
+`test_second_acquire_refused_while_foreign_holder_alive`. Both fixtures raised Windows
+`PermissionError` while unlinking their isolated `service.lock`, which remained held by
+the real subprocess. The complete `test_adversarial_singleton.py` file reproduced the
+same teardown error independently, while the single selector happened to pass once.
+
+The causal diagnostic used the real `_spawn_lock_holder` helper with no fake, mock,
+patch, monkeypatch, skip, or xfail. It reported launcher PID 84200 and holder PID 22904,
+then proved the lock became unlinkable only 0.05 seconds after the launcher was killed
+and awaited. The helper's own contract acknowledges that the launcher may spawn the
+interpreter as a grandchild, but cleanup terminates only the launcher PID and fixture
+teardown immediately unlinks the lock. The exact release gate is therefore nondeterministic
+on the supported Windows/uv process topology and currently cannot produce a terminal
+green inventory.
+
+Recommendation: terminate and await the actual reported holder PID, or supervise the
+complete spawned process tree, then verify the OS lock is released within a bounded
+deadline before fixture teardown removes the file. Apply the same real holder lifecycle
+helper to both singleton modules and require repeated clean file and combined-group runs.
+
+The red singleton segment receives no inventory credit. The remaining 210 selected
+integration tests, the complete 107-test install lifecycle module, service repetitions,
+real Claude and Codex acceptance, Ruff, changed-path format, Ty, BasedPyright,
+complexity, lock, Vaultspec, provider-artifact, diff, build, wheel, public-Core smoke,
+and fresh installed-package gates were stopped after the blocker and receive neither
+credit nor waiver. No production or test file was modified during S44.
+
+S44 verdict: **FAIL — not release-ready; one unresolved MEDIUM release-gate finding and
+no newly identified HIGH or CRITICAL finding**. S43's five targeted lifecycle repairs
+are green on their focused real-workspace surface, but every required gate must terminate
+green. Merge and publication remain blocked until the real holder lifecycle is repaired
+and a fresh independent review restarts all 1,824 selected tests and every uncredited
+release gate from zero.
