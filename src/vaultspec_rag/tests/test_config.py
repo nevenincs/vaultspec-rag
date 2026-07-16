@@ -195,7 +195,11 @@ def test_watch_cooldown_s_env_override() -> None:
         reset_config()
 
 
-@pytest.mark.parametrize("raw", ["0", "false", "False", "no", "off", ""])
+@pytest.mark.parametrize(
+    "raw",
+    ["0", "false", "False", "no", "off", ""],
+    ids=["zero", "false-lower", "false-title", "no", "off", "empty"],
+)
 def test_watch_enabled_env_falsey(raw: str) -> None:
     prev = _set_env(EnvVar.WATCH_ENABLED, raw)
     try:
@@ -209,7 +213,11 @@ def test_watch_enabled_env_falsey(raw: str) -> None:
         reset_config()
 
 
-@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "Yes"])
+@pytest.mark.parametrize(
+    "raw",
+    ["1", "true", "TRUE", "yes", "Yes"],
+    ids=["one", "true-lower", "true-upper", "yes-lower", "yes-title"],
+)
 def test_watch_enabled_env_truthy(raw: str) -> None:
     prev = _set_env(EnvVar.WATCH_ENABLED, raw)
     try:
@@ -279,7 +287,11 @@ def test_effective_server_mode_default_is_true() -> None:
         reset_config()
 
 
-@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes"])
+@pytest.mark.parametrize(
+    "raw",
+    ["1", "true", "TRUE", "yes"],
+    ids=["one", "true-lower", "true-upper", "yes"],
+)
 def test_local_only_env_flips_effective_mode_off(raw: str) -> None:
     saved = _clear_server_mode_env()
     os.environ[EnvVar.LOCAL_ONLY.value] = raw

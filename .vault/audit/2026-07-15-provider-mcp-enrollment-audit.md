@@ -1480,3 +1480,181 @@ S57 verdict: **FAIL — not release-ready; one unresolved HIGH platform-ledger f
 and no CRITICAL findings**. Merge, PR approval, and publication remain blocked until
 the POSIX inventory is corrected and a fresh independent release campaign restarts
 every gate from zero.
+
+## S58 displayed node identity correction
+
+The initial S58 formal technical review found one HIGH issue before the proposed
+release campaign began: pytest collected six pairs of distinct items with identical
+displayed node IDs. A direct set proof could therefore collapse legitimate items, while
+occurrence-index disambiguation would make audit identity depend on collection order.
+The proposed campaign mandate was not accepted.
+
+S58 assigns explicit semantic parameter IDs to the affected groups in
+`test_config.py` and `test_torch_config.py`. It changes no parameter value, assertion,
+marker, or test count. All 135 affected tests pass, together with affected Ruff lint,
+Ruff formatting, and Ty checks.
+
+Fresh Windows collection contains 2,271 items and 2,271 distinct displayed node IDs.
+Its `not integration` selection contains 1,828 items and 1,828 distinct displayed node
+IDs. Fresh POSIX collection contains 2,259 items and 2,259 distinct displayed node IDs.
+Its `not integration` selection contains 1,829 items and 1,829 distinct displayed node
+IDs. Every inventory has zero duplicate displayed-node-ID groups.
+
+The corrected identities also preserve the exact platform equations. The six promoted
+items are present and marker-excluded on both platforms. The 13 named junction items
+are present and marker-excluded on Windows and absent on POSIX. The real FIFO item is
+absent on Windows and present in the POSIX marker-selected set. Direct set
+intersections prove that `M` and `P` are disjoint, `J` is disjoint from `M`, `P`, and
+`F`, and `F` is disjoint from `P`.
+
+S58 verdict: **PASS — the displayed-node identity defect is corrected and the
+platform collection ledger is set-safe**. This correction is not a release campaign
+and gives no release-readiness credit. Pull request, merge, approval, publication, and
+release remain outside its scope.
+
+## S59 final independent platform release-audit mandate
+
+S59 is an open, independent audit of the clean commit containing the S58 correction
+and execution record. Record that hash before execution, and use it for every gate.
+
+Carry no test, review, static-analysis, package, provider, host-recognition, or platform
+credit from S53 through S58. The S58 collection, focused tests, and static checks are
+correction evidence only. They receive no S59 credit or waiver.
+
+Use stop-on-red semantics as stop-on-first-failure. If the tree is dirty, a family does
+not reconcile, a count changes without explanation, a gate is missing, or a result
+fails, stop the campaign. Credit neither the incomplete gate nor any later gate. Waive
+nothing. Keep merge, approval, and publication blocked.
+
+### Corrected platform ledger and zero-overlap proof
+
+Recollect these four displayed-node-ID sets at the audit commit:
+
+- `M`: items selected by `not integration` on the current platform.
+- `P`: the same six S49 lifecycle-overlap items promoted from the integration-marked
+  install module.
+- `J`: the 13 items defined only inside Windows junction blocks.
+- `F`: the one POSIX-only
+  `TestErrorBranches::test_install_fifo_project_surface_fails_without_blocking` item.
+
+Require the full item count to equal the distinct displayed-node-ID count on each
+platform. Require the `not integration` item count to equal its distinct
+displayed-node-ID count. Any duplicate displayed node ID is a failed gate.
+
+Using the displayed node IDs directly, require `M` and `P` to have zero overlap on both
+platforms.
+Require `J` to have zero overlap with `M`, `P`, and `F`. Require `F` to have zero
+overlap with `P`. Reject duplicate campaign membership.
+
+The Windows junction subtraction `J` must reconcile to these named families and exact
+cardinalities in `src/vaultspec_rag/tests/integration/test_install.py`:
+
+- One `test_preview_does_not_follow_an_unrelated_windows_junction` item.
+- Six `test_required_junction_fails_before_lifecycle_mutation` items, with parameter IDs
+  `relative0` through `relative5`.
+- Three `test_required_junction_container_fails_before_lifecycle_mutation` items, with
+  parameter IDs `container_relative0` through `container_relative2`.
+- Two `test_late_junction_blocker_preserves_reparse_topology` items, with parameter IDs
+  `force` and `upgrade`.
+- One `test_junction_snapshot_recreates_removed_reparse_node` item.
+
+Require `|J| = 13`. Require every `J` item to be present in Windows total collection,
+excluded by `not integration`, and absent from POSIX collection. Require `|F| = 1`.
+Require `F` to be absent from Windows and present in the POSIX marker-selected set.
+Require every named family to reconcile independently before using aggregate arithmetic.
+
+The exact Windows collection is 2,271 total and 2,271 unique displayed node IDs. Its
+marker split is 1,828 selected and unique and 443 excluded. Require all six `P` items
+to be present, integration-excluded, and disjoint from `M`. The Windows campaign is
+`M union P`: 1,834 selected and 437 excluded.
+
+The exact POSIX total follows only from the named capability delta:
+`2,271 - |J| + |F| = 2,259`. Its marker split is `1,828 + |F| = 1,829` selected and
+`443 - |J| = 430` excluded. The POSIX collection must expose 2,259 unique displayed
+node IDs, and the marker-selected inventory must expose 1,829 unique displayed node
+IDs. Promote the unchanged, disjoint six-item `P` set. The POSIX campaign is 1,835
+selected and 424 excluded. Execute `F` against a real node created with `os.mkfifo`;
+Windows evidence cannot credit it.
+
+Recollection is a gate, not a count waiver. Account for every platform-only, promoted,
+selected, and excluded item. Do not start runtime execution until both ledgers and all
+named families terminate green with zero campaign overlap.
+
+### Preserved S56 bounded-model contract
+
+Preserve every S56 requirement from S57. Inspect the S56 production and test diff
+independently. Prove every invariant with real behavior and without mocks, fakes, stubs,
+patches, monkeypatches, skips, xfails, or mirrored business logic.
+
+- Reconfirm that implementation baseline `9206a00` contained 1,111 real `.vault`
+  Markdown documents. Recount the audit commit's complete corpus before execution; the
+  planned S58 execution record raises the corpus to 1,113 documents. Require the exact
+  audit-commit count rather than treating 1,113 as a waiver. Copy and index every
+  audit-commit document through the production path, and require identical source and
+  worker counts.
+- Use gold judgments only as expected document identifiers and relevance grades. They
+  may score results, but they must not select, filter, narrow, preprocess, transform, or
+  construct the indexed corpus.
+- Enclose corpus copy, dense and sparse model construction, reranker construction,
+  indexing, every labeled search, result serialization, and teardown in one 600-second
+  whole-worker wall-clock boundary.
+- Unset `VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT`, or set it to exactly `600`. Record and
+  assert `deadline=600.000s` before crediting any S56 invariant.
+- At 600 seconds, terminate the child. After the bounded grace period, force-terminate
+  any survivor. Retain standard output and error. Verify that no related child, Qdrant
+  process, listener, or graphics processing unit owner remains.
+- Classify a cache as complete only when its usable snapshot has `config.json`, a
+  tokenizer artifact, and valid weights. If a valid shard index exists, require every
+  named shard. One missing shard makes the cache incomplete and must not fall through to
+  an unrelated safetensors file.
+- Route a cold or interrupted real cache through normal online repair inside the bounded
+  child. Require successful repair to finish normally.
+- For a held request or persistent Hypertext Transfer Protocol failure, require a
+  deterministic bounded failure. Preserve the model name, final metadata URL, status,
+  body when available, and retained output tails.
+- For a complete warm cache, disable network access. Require dense, sparse, and reranker
+  models to load with zero metadata requests. Keep cache-only loading audit-specific;
+  product construction remains online-capable by default.
+- Execute all labeled queries. Preserve the requirements enforced by
+  `test_harness_produces_wellformed_metrics`,
+  `test_orientation_authoritative_rate_meets_floor`,
+  `test_index_documents_never_surface`, and
+  `test_named_orientation_regression`.
+
+### Preserved stop-on-red release sequence
+
+Run every S57 gate again from zero in this order. Stop after the first failed or
+non-terminal gate.
+
+1. Review the clean tree and complete diff. Recollect both platform ledgers. Reconcile
+   `J`, `F`, `M`, and `P` by name and cardinality. Prove zero campaign overlap. Scan for
+   prohibited test doubles. Audit every S56 invariant.
+1. Run all 1,834 Windows campaign items, including all six promoted items and every S56
+   model and intent-ranking case.
+1. Run all 1,835 POSIX campaign items in an exact-commit environment. Use Python 3.13
+   and published `vaultspec-core==0.1.45`. Execute the real FIFO case.
+1. Run repository-wide Ruff lint and format checks. Run Ty, strict BasedPyright, and the
+   full complexity gate. Check lock consistency and `git diff --check`.
+1. Run every Vaultspec check, annotation sanitation, provider-artifact check, and project
+   spec check.
+1. Build a wheel and a source distribution from the audit commit. Inspect each
+   artifact's contents and metadata. Run the repository smoke contract against each
+   artifact in a fresh isolated environment.
+1. Resolve dependencies against published `vaultspec-core==0.1.45`. Do not use a local
+   Core checkout or editable source.
+1. Install the built artifact into a fresh isolated environment with isolated project
+   and host configuration homes. Enroll canonical project-scoped Claude Code and Codex
+   Model Context Protocol entries.
+1. Use the real Claude Code and Codex command-line interfaces to recognize their project
+   entries. Verify the launch contract, dependency placement, ownership provenance,
+   provider-local results, and independence from global state.
+1. Repeat the identical install or upgrade. Prove semantic and byte idempotence for the
+   manifest, Model Context Protocol source, ownership, `.mcp.json`,
+   `.codex/config.toml`, dependency declaration, and lock state.
+1. Exercise `--no-mcp` and uninstall. Remove only RAG-owned entries and extras. Preserve
+   Core-owned, user-owned, unrelated-provider, and unrelated-project state byte-for-byte.
+
+S59 may report release readiness only after every corrected platform-aware gate
+terminates successfully at the same audit commit. Approving this mandate does not
+execute tests or authorize a pull request, merge, approval, tag, publication, or
+release.
