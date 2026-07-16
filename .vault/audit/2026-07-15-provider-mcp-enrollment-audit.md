@@ -1130,3 +1130,43 @@ S50 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CR
 findings**. Merge, PR approval, and publication remain blocked pending structured-report
 remediation and a new independent audit that restarts all 1,830 selected tests and every
 other release gate from zero.
+
+## S52 final verification
+
+### release-ledger-stale-after-s51 | high | The declared release inventory omits new selected tests
+
+The S52 audit started from clean commit `51c0694` and rebuilt collection before
+granting any prior test or gate credit. On Windows, pytest collected 2,269 test items,
+not the plan's 2,267. Marker classification selected 1,826 items and excluded 443;
+promoting the six S49 lifecycle-overlap regressions yields a disjoint campaign ledger
+of 1,832 selected and 437 excluded, not 1,830 selected and 437 excluded.
+
+The two additional Windows-collected selected node IDs are
+`src/vaultspec_rag/tests/test_install_torch_config.py::TestErrorBranches::test_install_project_read_failure_records_both_errors[broken-relative-link]`
+and
+`src/vaultspec_rag/tests/test_install_torch_config.py::TestErrorBranches::test_live_project_link_is_not_misreported_for_unrelated_topology_failure`.
+They are genuine S51 coverage: the former expands the structured-diagnostic matrix and
+the latter protects supported live relative project links. On a POSIX host,
+`src/vaultspec_rag/tests/test_install_torch_config.py::TestErrorBranches::test_install_fifo_project_surface_fails_without_blocking`
+is capability-defined as a further selected item, so POSIX collection would be 2,270
+items with 1,833 selected and 437 excluded. The stated 1,830-test manifest therefore
+cannot include the FIFO gate requested for S52.
+
+Collection also showed that the 2,269 items expose 2,263 distinct node-ID strings
+because six pre-existing parametrized IDs collide. This does not change the campaign
+item arithmetic, but it means the prior description of 2,267 "unique node IDs" was not
+literally reproducible. Recommendation: correct the plan and release manifest to name
+test items and platform capabilities precisely, include every S51 regression, and then
+start a new independent audit from zero.
+
+The inventory mismatch is the first unwaived release-gate failure. No selected runtime
+test receives S52 credit. Source correctness review, repeated singleton and service
+gates, the POSIX FIFO execution, Ruff, formatting, Ty, BasedPyright, complexity, lock,
+Vaultspec, provider-artifact, diff, build, wheel and source-distribution smoke, public
+Core 0.1.45 installed acceptance, and fresh Claude and Codex host recognition were not
+run and are not waived. The stale AEAT workspace registrations receive no credit. No
+production or test file changed during S52.
+
+S52 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. Merge, PR approval, and publication remain blocked until the release ledger
+is corrected and every selected test and later gate is rerun from zero.

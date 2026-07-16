@@ -77,7 +77,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S49` - Reject full-lifecycle target overlap and adopt the corrective Core floor; `src/vaultspec_rag/commands/_mcp_topology.py, install and uninstall lifecycle tests, pyproject.toml, and uv.lock`.
 - [x] `P03.S50` - Repeat the complete post-remediation release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`.
 - [x] `P03.S51` - Accumulate requested project diagnostics and align filesystem failure tests with Core 0.1.45; `src/vaultspec_rag/commands/_install.py and real install regressions`.
-- [ ] `P03.S52` - Repeat the complete post-correction release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`.
+- [x] `P03.S52` - Repeat the complete post-correction release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`.
 
 ## Description
 
