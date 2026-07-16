@@ -7,10 +7,17 @@ import os
 import stat
 import subprocess
 import tempfile
+from contextvars import Context
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import cast
+
+from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+    init_paths,
+)
+
+from ..builtins import list_builtins
 
 
 class SnapshotKind(Enum):
@@ -49,6 +56,26 @@ class _RequiredLink:
 class _OwnedNode:
     snapshot: NodeSnapshot
     identity: _FileIdentity | None
+
+
+@dataclass(frozen=True)
+class LifecycleTransactionInventory:
+    """Every workspace node the RAG install lifecycle may mutate."""
+
+    files: tuple[Path, ...]
+    containers: tuple[Path, ...]
+    managed_trees: tuple[Path, ...]
+
+    def collision(self, path: Path) -> Path | None:
+        """Return the lifecycle authority that aliases *path*, if any."""
+        key = _normalized(path)
+        for candidate in (*self.files, *self.containers):
+            if _normalized(candidate) == key:
+                return candidate
+        for tree in self.managed_trees:
+            if _is_within(tree, path):
+                return tree
+        return None
 
 
 @dataclass
@@ -258,6 +285,121 @@ _REQUIRED_MCP_STATIC_RELATIVE_PATHS = (
 )
 _RAG_MCP_SOURCE = Path(".vaultspec") / "mcps" / "vaultspec-rag.builtin.json"
 
+_WORKSPACE_CONTAINERS = (
+    Path(".vault"),
+    Path(".vault") / "data",
+    Path(".vaultspec"),
+    Path(".vaultspec") / "rules",
+    Path(".vaultspec") / "mcps",
+    Path(".vaultspec") / "skills",
+)
+
+# Core's provider hook writer owns these native files and sidecars.  Keep the
+# paths in the same lifecycle inventory as Core-derived ToolConfig paths so a
+# required link can never redirect MCP publication into a later hook sync.
+_PROVIDER_HOOK_FILES = (
+    Path(".claude") / "settings.json",
+    Path(".claude") / ".vaultspec-hooks.json",
+    Path(".gemini") / "settings.json",
+    Path(".gemini") / ".vaultspec-hooks.json",
+    Path(".codex") / "hooks.json",
+    Path(".codex") / ".vaultspec-hooks.json",
+    Path(".agents") / "hooks.json",
+)
+
+_CORE_ROOT_FILES = (
+    Path(".gitignore"),
+    Path(".gitattributes"),
+    Path(".pre-commit-config.yaml"),
+)
+
+_PROVIDER_FILE_ATTRIBUTES = (
+    "config_file",
+    "native_config_file",
+    "rule_ref_config_file",
+    "system_file",
+    "mcp_config_file",
+)
+
+_PROVIDER_TREE_ATTRIBUTES = (
+    "rules_dir",
+    "skills_dir",
+    "agents_dir",
+    "workflows_dir",
+)
+
+
+def lifecycle_transaction_inventory(target: Path) -> LifecycleTransactionInventory:
+    """Build the single path authority shared by every MCP lifecycle phase.
+
+    File entries cover direct writes and advisory locks.  Managed trees cover
+    provider resource directories that Core may add to or prune, plus optional
+    install/uninstall trees such as ``.venv`` and ``.vault/data``.  Provider
+    paths come from Core's current ``ToolConfig`` mapping in an isolated
+    projection so this inspection neither mutates the workspace nor replaces a
+    caller's active Core context.
+    """
+    root = Path(os.path.abspath(target))
+    files = {
+        *required_mcp_paths(root),
+        root / "uv.lock",
+        *(root / relative for relative in _CORE_ROOT_FILES),
+        *(root / ".vaultspec" / relative for relative in list_builtins()),
+        *(root / relative for relative in _PROVIDER_HOOK_FILES),
+    }
+    containers = {root / relative for relative in _WORKSPACE_CONTAINERS}
+    managed_trees = {
+        root / ".vault" / "data",
+        root / ".vaultspec" / "rules",
+        root / ".venv",
+    }
+
+    provider_files, provider_containers, provider_trees = _provider_paths(root)
+    files.update(provider_files)
+    containers.update(provider_containers)
+    managed_trees.update(provider_trees)
+
+    locks = {path.with_suffix(path.suffix + ".lock") for path in files}
+    files.update(locks)
+    return LifecycleTransactionInventory(
+        files=tuple(sorted(files, key=_normalized)),
+        containers=tuple(sorted(containers, key=_normalized)),
+        managed_trees=tuple(sorted(managed_trees, key=_normalized)),
+    )
+
+
+def _provider_paths(root: Path) -> tuple[set[Path], set[Path], set[Path]]:
+    """Resolve provider outputs from Core without touching *root*."""
+    with tempfile.TemporaryDirectory(prefix="vaultspec-rag-provider-paths-") as raw:
+        projection = Path(raw) / "workspace"
+        (projection / ".vaultspec").mkdir(parents=True)
+        context = Context().run(init_paths, projection)
+
+        files: set[Path] = set()
+        containers: set[Path] = set()
+        managed_trees: set[Path] = set()
+        for config in context.tool_configs.values():
+            for attribute in _PROVIDER_FILE_ATTRIBUTES:
+                projected = cast("Path | None", getattr(config, attribute))
+                if projected is None:
+                    continue
+                translated = _translate_projection_path(projected, projection, root)
+                files.add(translated)
+                containers.add(translated.parent)
+            for attribute in _PROVIDER_TREE_ATTRIBUTES:
+                projected = cast("Path | None", getattr(config, attribute))
+                if projected is None:
+                    continue
+                translated = _translate_projection_path(projected, projection, root)
+                containers.add(translated)
+                managed_trees.add(translated)
+        return files, containers, managed_trees
+
+
+def _translate_projection_path(path: Path, projection: Path, root: Path) -> Path:
+    """Map one Core-derived projection path back into the real workspace."""
+    return root / path.relative_to(projection)
+
 
 def _rebase_ownership_snapshot(
     snapshot: NodeSnapshot,
@@ -330,11 +472,11 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
     """Validate and capture required nodes without following unsafe topology."""
     root = Path(os.path.abspath(target))
     required = required_mcp_paths(root)
+    lifecycle = lifecycle_transaction_inventory(root)
     transaction_paths = (
         *required,
         *(path.with_suffix(path.suffix + ".lock") for path in required),
     )
-    required_keys = {_normalized(path) for path in transaction_paths}
     nodes: list[tuple[Path, NodeSnapshot]] = []
     identities: list[tuple[Path, _FileIdentity]] = []
     captured: list[_RequiredLink] = []
@@ -344,7 +486,7 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
         snapshot, identity, linked = _capture_required_node(
             root,
             path,
-            required_keys,
+            lifecycle,
             seen_targets,
         )
         nodes.append((path, snapshot))
@@ -383,7 +525,7 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
 def _capture_required_node(
     root: Path,
     path: Path,
-    required_keys: set[str],
+    lifecycle: LifecycleTransactionInventory,
     seen_targets: dict[str, Path],
 ) -> tuple[NodeSnapshot, _FileIdentity | None, _RequiredLink | None]:
     _validate_plain_parents(root, path)
@@ -406,7 +548,7 @@ def _capture_required_node(
             root,
             path,
             snapshot,
-            required_keys,
+            lifecycle,
             seen_targets,
         ),
     )
@@ -416,7 +558,7 @@ def _capture_required_link(
     root: Path,
     path: Path,
     snapshot: NodeSnapshot,
-    required_keys: set[str],
+    lifecycle: LifecycleTransactionInventory,
     seen_targets: dict[str, Path],
 ) -> _RequiredLink:
     if not isinstance(snapshot.payload, str):
@@ -441,10 +583,19 @@ def _capture_required_link(
     target_identity = _regular_identity(linked_target)
     _reject_hard_links(linked_target, target_identity)
     target_key = _normalized(linked_target)
-    if target_key in required_keys:
+    collision = lifecycle.collision(linked_target)
+    if collision is not None:
+        required_keys = {
+            _normalized(candidate) for candidate in required_mcp_transaction_paths(root)
+        }
+        if _normalized(collision) in required_keys:
+            raise OSError(
+                f"unsafe required MCP topology at {path}: link target overlaps a "
+                "required MCP node"
+            )
         raise OSError(
             f"unsafe required MCP topology at {path}: link target overlaps a "
-            "required MCP node"
+            f"lifecycle output at {collision}"
         )
     if prior := seen_targets.get(target_key):
         raise OSError(

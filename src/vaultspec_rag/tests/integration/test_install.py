@@ -40,6 +40,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
     read_package_declaration,
 )
 
+from ...builtins import list_builtins
 from ...commands import install_run, uninstall_run
 
 if TYPE_CHECKING:
@@ -51,6 +52,9 @@ pytestmark = [pytest.mark.integration]
 _RAG_RULE_REL = Path(".vaultspec") / "rules" / "vaultspec-rag.builtin.md"
 _RAG_MCP_REL = Path(".vaultspec") / "mcps" / "vaultspec-rag.builtin.json"
 _RAG_SKILL_REL = Path(".vaultspec") / "skills" / "vaultspec-rag-discovery" / "SKILL.md"
+_RAG_NON_MCP_BUILTIN_REL = Path(".vaultspec") / next(
+    relative for relative in list_builtins() if not relative.startswith("mcps/")
+)
 _REQUIRED_MCP_RELATIVES = (
     Path(".mcp.json"),
     Path(".codex") / "config.toml",
@@ -1442,6 +1446,75 @@ class TestDryRunInstall:
         assert "overlaps a required MCP node" in " ".join(preview.mcp_errors)
         assert _node_signature(ownership) == signature
         assert providers.read_bytes() == providers_before
+
+    @pytest.mark.parametrize(
+        ("target_relative", "create_target"),
+        [
+            (_RAG_NON_MCP_BUILTIN_REL, False),
+            (
+                Path(".claude") / "rules" / "vaultspec-rag.builtin.md",
+                False,
+            ),
+            (Path(".vaultspec") / "rules" / ".gitignore", False),
+            (Path(".gitignore"), True),
+            (Path(".claude") / "settings.json.lock", True),
+        ],
+    )
+    def test_required_link_cannot_overlap_any_lifecycle_output(
+        self,
+        fresh_workspace: Path,
+        target_relative: Path,
+        create_target: bool,
+    ) -> None:
+        installed = _install(fresh_workspace, mode=InstallMode.TOOL)
+        assert not installed.mcp_sync_failed
+        node = fresh_workspace / ".mcp.json"
+        linked_target = fresh_workspace / target_relative
+        if create_target:
+            linked_target.parent.mkdir(parents=True, exist_ok=True)
+            linked_target.write_bytes(b"operator-lock-state\x00")
+        assert linked_target.is_file()
+        node.unlink()
+        node.symlink_to(os.path.relpath(linked_target, node.parent))
+        signature = _node_signature(node)
+        target_before = linked_target.read_bytes()
+
+        preview = _install(fresh_workspace, dry_run=True, upgrade=True)
+        applied = _install(fresh_workspace, upgrade=True)
+
+        for report in (preview, applied):
+            assert report.mcp_sync_failed
+            assert "overlaps a lifecycle output" in " ".join(report.mcp_errors)
+            assert not report.seeded
+            assert not report.sync_results
+        assert preview.mcp_errors == applied.mcp_errors
+        assert _node_signature(node) == signature
+        assert linked_target.read_bytes() == target_before
+
+    def test_uninstall_rejects_required_link_to_bundled_lifecycle_output(
+        self,
+        fresh_workspace: Path,
+    ) -> None:
+        installed = _install(fresh_workspace, mode=InstallMode.TOOL)
+        assert not installed.mcp_sync_failed
+        node = fresh_workspace / ".mcp.json"
+        linked_target = fresh_workspace / _RAG_NON_MCP_BUILTIN_REL
+        node.unlink()
+        node.symlink_to(os.path.relpath(linked_target, node.parent))
+        signature = _node_signature(node)
+        target_before = linked_target.read_bytes()
+
+        preview = uninstall_run(path=fresh_workspace, force=False)
+        applied = uninstall_run(path=fresh_workspace, force=True)
+
+        for report in (preview, applied):
+            assert report.mcp_sync_failed
+            assert "overlaps a lifecycle output" in " ".join(report.mcp_errors)
+            assert not report.removed
+            assert not report.sync_results
+        assert preview.mcp_errors == applied.mcp_errors
+        assert _node_signature(node) == signature
+        assert linked_target.read_bytes() == target_before
 
     def test_cli_reports_unsafe_required_topology_with_nonzero_json(
         self,
