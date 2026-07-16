@@ -483,3 +483,62 @@ assert not loaded, loaded
                 f"{module.__name__} references lifecycle terminate helpers "
                 f"{hits}; storage maintenance is read/drop only"
             )
+
+
+class TestStdioLifetimeWatchdogStaysThin:
+    """The stdio lifetime watchdog honors the thin-client decisions.
+
+    The mcp-stdio-lifetime ADR binds the watchdog to the service-client
+    and optional-mcp ADRs: its import graph must load neither ``torch``
+    nor ``mcp`` (fresh interpreter - the in-process ``sys.modules`` is
+    polluted by other tests), and only the stdio branch of the entry
+    point may install it - the HTTP daemon outlives its spawner by
+    design.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    _IMPORT_CHECK = """
+import sys
+
+import vaultspec_rag.server._stdio_lifetime  # noqa: F401
+
+loaded = sorted(
+    m for m in sys.modules
+    if m in {"torch", "mcp"}
+    or m.startswith(("torch.", "mcp."))
+)
+assert not loaded, loaded
+"""
+
+    def test_watchdog_import_graph_excludes_torch_and_mcp(self):
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            [sys.executable, "-c", self._IMPORT_CHECK],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    def test_only_the_stdio_branch_installs_the_watchdog(self):
+        import inspect
+
+        from ..server import _lifespan, _main
+
+        src = inspect.getsource(_main.main)
+        http_branch = src.split("if port is not None:")[1].split("else:")[0]
+        stdio_branch = src.split("if port is not None:")[1].split("else:")[1]
+        assert "install_stdio_lifetime_watchdog" not in http_branch, (
+            "the HTTP daemon must never install the stdio lifetime watchdog; "
+            "a daemon that dies with its spawner breaks the resident service"
+        )
+        assert "install_stdio_lifetime_watchdog" in stdio_branch, (
+            "the stdio branch must install the lifetime watchdog "
+            "(mcp-stdio-lifetime ADR)"
+        )
+        assert "install_stdio_lifetime_watchdog" not in inspect.getsource(_lifespan), (
+            "service lifespan must not reference the stdio watchdog installer"
+        )

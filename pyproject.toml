@@ -92,13 +92,13 @@ version = "0.3.0"
   # Windows, its `pywin32` transitive). Install `vaultspec-rag[mcp]` to run the
   # MCP server. See the `mcp-optional-dependency` ADR (supersedes the core-dep
   # decision of #182).
-  mcp = ["mcp>=1.26.0"]
+  mcp = ["mcp>=1.28.1"]
 
 [dependency-groups]
 dev = [
   # The test suite imports `mcp` (it tests the optional MCP server surface), so
   # the dev environment provides it even though it is not a core dependency.
-  "mcp>=1.26.0",
+  "mcp>=1.28.1",
   "basedpyright>=1.39",
   "flake8>=7.3.0",
   "flake8-cognitive-complexity>=0.1.0",

@@ -13,6 +13,12 @@ vaultspec-rag offers two transports. The right pick depends on how you work.
 
 Pick stdio when you work in one project at a time. Pick HTTP when several projects share one service. The next two sections are common examples. Either transport works with any compatible client.
 
+### Stdio server lifetime
+
+A stdio server lives exactly as long as its client connection. The normal shutdown is stdin closing (EOF), but some clients abandon or kill the launcher chain without ever closing the pipe - on Windows that used to leave orphaned `uv -> launcher -> python` chains running forever. The shim therefore watches the process chain that spawned it and exits on its own (one JSON line on stderr, exit code 0) when any link in that chain dies. Nothing to configure: it arms a few seconds after startup and never affects the HTTP service daemon, which is designed to outlive its spawner.
+
+Two knobs exist for unusual setups: `--parent-pid <pid>` adds an explicit process to watch (for spawners that know their own PID), and `VAULTSPEC_RAG_STDIO_WATCHDOG=0` disables the self-reap entirely.
+
 ## Configure a stdio client (Claude Desktop)
 
 Claude Desktop reads its MCP config from `claude_desktop_config.json`. The location varies by operating system; open Claude Desktop's settings dialog to find the path on your machine.
