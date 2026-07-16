@@ -772,3 +772,135 @@ but MCP work is misattributed, the service release inventory is deterministicall
 and baseline daemon execution is not deterministic. Merge and publication remain held
 pending S41 remediation and a fresh S42 review that restarts all 1,820 selected tests
 from zero and completes every unwaived gate.
+
+## S42 final verification
+
+### fresh-install-provider-selection | high | A self-sufficient MCP install silently enrolls no provider
+
+The S42 review restarted from commit `1fe7b99` and collected the current exact
+non-integration inventory before relying on any earlier gate. A real CLI install into a
+truly fresh temporary workspace, with MCP intent enabled and provisioning and torch
+configuration disabled, exited zero with `mcp_failed=false` and an empty
+`sync_providers` map. It created an empty Core provider manifest but neither
+`.mcp.json` nor `.codex/config.toml`.
+
+The production installer describes RAG enrollment as self-sufficient, but
+`_run_core_sync` asks Core to reconcile `provider="all"` without supplying the
+fresh-install `enrolled` selection. Core therefore resolves the just-created empty
+manifest to zero targets. The feature's install helper, native-host acceptance, and
+installed-wheel smoke all pre-seed `{"claude", "codex"}` with `write_manifest`, so
+they cannot detect the public CLI's empty-workspace behavior. A default install can
+claim success while exposing the MCP to neither host, which directly violates the
+release requirement that installation establish project-scoped Claude and Codex
+enrollment.
+
+Recommendation: make provider selection an explicit install input or a documented,
+fail-closed prerequisite, and pass Core's typed fresh-enrollment selection to every
+real and preview MCP lifecycle call. Add a real installed-CLI case with no prewritten
+manifest that either enrolls the requested hosts or exits non-zero with actionable
+provider-selection guidance; do not manufacture the condition under test in the smoke
+fixture.
+
+### uninstall-mcp-skip-boundary | high | MCP skip removes local intent while leaving both host entries active
+
+`uninstall_run` reverses the owned optional dependency and removes every bundled source
+before `_run_core_cleanup` checks the MCP skip. A real dual-provider dependency-mode
+workspace followed by `uninstall --force --skip mcp --json` exited zero with
+`mcp_failed=false` and no provider outcomes. Exact hashes proved that Claude JSON and
+Codex TOML remained byte-identical, while the canonical MCP source disappeared and
+`pyproject.toml` changed from the managed `[mcp]` requirement back to the base
+requirement, also removing placement provenance.
+
+The result is a configured server whose canonical source and required optional runtime
+surface were dismantled despite the explicit component skip. This contradicts the
+already accepted complete-intent skip boundary on install and the plan's symmetric
+uninstall contract.
+
+Recommendation: apply the MCP skip before dependency reversal and MCP source removal.
+Preserve source, dependency and provenance, provider targets, ownership, and locks
+byte-for-byte while allowing only non-MCP uninstall work to continue.
+
+### dry-run-context-leak | high | Preview leaves Core bound to a deleted temporary workspace
+
+`_mcp_preview_projection` creates a temporary workspace and `_run_core_sync` calls
+Core's `mcp_sync` with that projection as `target_dir`. Core initializes its workspace
+ContextVar to the supplied target, but RAG never restores the prior context when the
+projection closes. A real probe first initialized Core against a durable temporary
+workspace, then ran RAG's dual-provider install preview. After return,
+`get_context().target_dir` pointed at the deleted
+`vaultspec-rag-mcp-preview-*` directory rather than the original workspace.
+
+This is observable state mutation from a command promised to be non-mutating, and it
+can make a subsequent implicit Core status or sync silently inspect a nonexistent
+workspace. The provider counters for the preview itself can be accurate while the
+calling process is left corrupted.
+
+Recommendation: execute projection-bound Core calls inside a context boundary that
+restores the exact previous context, including the no-prior-context case. Add real
+sequential preview-then-status and preview-then-sync acceptance proving that the caller's
+workspace binding survives success and failure.
+
+### preview-symlink-topology | high | Dry-run follows workspace links and can fail where apply succeeds
+
+The preview copies the complete `.vaultspec` tree with default `shutil.copytree`
+semantics. Those semantics dereference links instead of preserving node topology. In a
+real enrolled workspace, an unrelated broken symlink under `.vaultspec` made the
+matching `install --upgrade --dry-run` exit one with a `shutil.Error`. The corresponding
+real upgrade exited zero, reported no MCP failure, and preserved the broken symlink and
+its exact link text.
+
+Preview and apply therefore disagree solely because the planner traverses unrelated
+filesystem topology that the actual install does not need to mutate. Live directory
+links and Windows junctions can likewise cause an unrelated target tree to be read into
+the projection, which is inconsistent with the transaction's established no-follow
+boundary.
+
+Recommendation: build a minimal MCP projection from the required source, declaration,
+ownership, and native target nodes using lstat-aware copy semantics. Cover unrelated
+live and broken symlinks plus Windows junctions with exact preview/apply parity and
+no-follow assertions.
+
+### uninstall-extra-failure-contract | high | Failed dependency reversal is reported as a successful uninstall
+
+The uninstall path converts exceptions and conflicts from `reconcile_mcp_extra` into
+warnings only. It does not populate `mcp_errors`, and it continues through source and
+provider removal. A real owned runtime requirement was externally drifted from the
+recorded managed value before `uninstall --force --json`. The CLI exited zero with
+`mcp_failed=false` and no MCP errors, removed both native provider entries and the
+canonical source, but left the drifted `[mcp]` requirement and its
+`tool.vaultspec-rag.mcp-extra` ownership table in `pyproject.toml`.
+
+The lifecycle therefore reports success while durable RAG-owned state remains and the
+workspace has been split across opposite sides of the uninstall boundary. A warning is
+not sufficient for a requested reversal that did not complete.
+
+Recommendation: make optional-dependency reversal a fail-closed MCP transaction. Record
+inspection exceptions and ownership conflicts as MCP failures, exit non-zero, and do
+not remove canonical source or provider enrollment unless the owned dependency
+transition can commit atomically.
+
+### S41 remediation review and release-gate ledger
+
+The S41 attribution change carries explicit `cli` and `mcp` literals at their real
+caller boundaries, the route retains the value, and the isolated fixture relocates the
+status directory, storage root, Qdrant port, service port, and machine lock while
+verifying service and recorded Qdrant process exit. The thirty-second client and Qdrant
+deadlines introduce no retry or local-fallback path. The current rendering assertions
+test semantic content and relative order rather than the stale fixed positions. No new
+S41-specific production or test-shortcut finding was identified by source review.
+
+Collection reported exactly 1,823 selected tests out of 2,177, with 354 deselected;
+S41 added three selected tests relative to S40's 1,820. The first deterministic
+top-level segment passed all 553 selected tests with four deselected in 152.12 seconds.
+Once the five independent HIGH findings were reproduced, the remaining 1,270 selected
+tests, complete install integration, service repetitions, real-host acceptance, Ruff,
+changed-path format, Ty, BasedPyright, complexity, lock, Vaultspec, provider-artifact,
+diff, build, wheel, and public-Core smoke gates were stopped. None receives credit or a
+waiver; a remediation audit must restart the complete current inventory and every
+release gate from zero.
+
+S42 verdict: **FAIL — not release-ready; five unresolved HIGH findings and no CRITICAL
+findings**. S41 corrects caller attribution and substantially hardens the service gate,
+and the prior rollback-scratch fix remains sound on the reviewed paths. The fresh
+provider-selection false success, two uninstall boundary failures, dry-run ContextVar
+mutation, and topology-divergent preview each independently block merge and publication.

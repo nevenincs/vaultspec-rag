@@ -67,7 +67,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S39` - Make rollback file replacement collision-safe and metadata-preserving; `src/vaultspec_rag/commands/_install.py and real rollback collision tests`.
 - [x] `P03.S40` - Perform final collision-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`.
 - [x] `P03.S41` - Repair service attribution and deterministic release-test isolation; `src/vaultspec_rag/serviceclient/_transport.py, service-job behavior tests, and isolated real service fixtures`.
-- [ ] `P03.S42` - Perform fresh service-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`.
+- [x] `P03.S42` - Perform fresh service-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`.
 
 ## Description
 
