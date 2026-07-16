@@ -2355,7 +2355,7 @@ wheels = [
 
 [[package]]
 name = "vaultspec-core"
-version = "0.1.44"
+version = "0.1.45"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -2371,9 +2371,9 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/ed/5e666bdec173a2c4a44504c06e3444cdf2b96f64ef15ef8078d749b42acf/vaultspec_core-0.1.44.tar.gz", hash = "sha256:f6666c24d5902d0430b04ff0a7ad4b209925c03b892580500025ac86b49c742c", size = 4421236, upload-time = "2026-07-15T16:03:56.237Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/94/fb89119f3dd12b50f15c39969c9987cc6575d9eb1f0152d66771a98d922d/vaultspec_core-0.1.45.tar.gz", hash = "sha256:9973f02c4c33e200647db72cc799aec3e52e747412198ea575cf28ff7aae89bd", size = 4425980, upload-time = "2026-07-16T05:29:22.323Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/c7/9c126cca1f1d7ba81d398fae54e15d6723a946e7edd65df2a876c30307b8/vaultspec_core-0.1.44-py3-none-any.whl", hash = "sha256:89c4d497e89939b01fcee0488fc772a6c789013ea77ca31db8b65abe46de7892", size = 1109515, upload-time = "2026-07-15T16:03:54.588Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/b5/1864739672440d861e105bb53cdadd9788212a5eb099f27b29dedcc85468/vaultspec_core-0.1.45-py3-none-any.whl", hash = "sha256:06642c900e154c1e90b0ddaaf8bfc2bfd08412a1b8685778c3f41e8f6183a030", size = 1111334, upload-time = "2026-07-16T05:29:20.73Z" },
 ]
 
 [[package]]
@@ -2476,7 +2476,7 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=0.10,<1.6.2" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.15" },
     { name = "typer", specifier = ">=0.26.7" },
-    { name = "vaultspec-core", specifier = ">=0.1.44" },
+    { name = "vaultspec-core", specifier = ">=0.1.45" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["dev", "mcp"]

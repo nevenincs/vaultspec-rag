@@ -74,8 +74,8 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S46` - Perform final holder-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`.
 - [x] `P03.S47` - Make required MCP nodes topology-safe across preview and apply; `preview projection, provider and workspace intent writes, native targets, ownership, and real relative-link regressions`.
 - [x] `P03.S48` - Perform final topology-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`.
-- [ ] `P03.S49` - Reject full-lifecycle target overlap and adopt the corrective Core floor; `src/vaultspec_rag/commands/_mcp_topology.py, install and uninstall lifecycle tests, pyproject.toml, and uv.lock`.
-- [ ] `P03.S50` - Repeat the complete post-remediation release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`.
+- [x] `P03.S49` - Reject full-lifecycle target overlap and adopt the corrective Core floor; `src/vaultspec_rag/commands/_mcp_topology.py, install and uninstall lifecycle tests, pyproject.toml, and uv.lock`.
+- [ ] `P03.S50` - Repeat the complete post-remediation release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`.
 
 ## Description
 

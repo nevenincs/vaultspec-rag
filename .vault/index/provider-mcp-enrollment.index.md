@@ -54,6 +54,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S46]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S47]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S48]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S49]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -124,6 +125,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S46` - Perform final holder-safe release review and complete every gate
 - `2026-07-15-provider-mcp-enrollment-P03-S47` - Make required MCP nodes topology-safe across preview and apply
 - `2026-07-15-provider-mcp-enrollment-P03-S48` - Perform final topology-safe release review and complete every gate
+- `2026-07-15-provider-mcp-enrollment-P03-S49` - Reject full-lifecycle target overlap and adopt the corrective Core floor
 
 ### plan
 

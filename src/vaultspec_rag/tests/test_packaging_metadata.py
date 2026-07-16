@@ -75,4 +75,4 @@ def test_canonical_mcp_builtin_is_installed() -> None:
 def test_published_core_floor_carries_native_mcp_contract() -> None:
     """The distribution cannot resolve against a pre-native-MCP Core release."""
     core = next(req for req in _requirements() if req.name == "vaultspec-core")
-    assert str(core.specifier) == ">=0.1.44"
+    assert str(core.specifier) == ">=0.1.45"
