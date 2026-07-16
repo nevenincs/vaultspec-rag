@@ -33,8 +33,8 @@ Build the stdlib-only stdio lifetime watchdog: Windows ancestor-chain handle wai
 
 Install the watchdog on exactly the stdio branch of the shim entry point and expose the operator surface: an optional parent-pid override and the env disable knob registered with the config env inventory.
 
-- [ ] `P02.S03` - Wire install_stdio_lifetime_watchdog into the stdio branch before mcp.run, add the optional --parent-pid argument, and keep HTTP daemon mode and --help paths watchdog-free; `src/vaultspec_rag/server/_main.py`.
-- [ ] `P02.S04` - Register the VAULTSPEC_RAG_STDIO_WATCHDOG env knob in the config env inventory following the existing knob conventions; `src/vaultspec_rag/config.py`.
+- [x] `P02.S03` - Wire install_stdio_lifetime_watchdog into the stdio branch before mcp.run, add the optional --parent-pid argument, and keep HTTP daemon mode and --help paths watchdog-free; `src/vaultspec_rag/server/_main.py`.
+- [x] `P02.S04` - Register the VAULTSPEC_RAG_STDIO_WATCHDOG env knob in the config env inventory following the existing knob conventions; `src/vaultspec_rag/config.py`.
 
 ### Phase `P03` - Tests and regression guards
 

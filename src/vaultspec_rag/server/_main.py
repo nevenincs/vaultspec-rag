@@ -55,6 +55,7 @@ def main(port: int | None = None) -> None:
         port: If provided, run on streamable-http at
             127.0.0.1:<port>. Otherwise parse argv (or use stdio).
     """
+    parent_pid: int | None = None
     if port is None:
         import argparse
 
@@ -68,8 +69,18 @@ def main(port: int | None = None) -> None:
             default=None,
             help="HTTP port (default: stdio transport)",
         )
+        parser.add_argument(
+            "--parent-pid",
+            type=int,
+            default=None,
+            help=(
+                "Explicit client PID for the stdio lifetime watchdog "
+                "(watched in addition to the discovered ancestor chain)"
+            ),
+        )
         args = parser.parse_args()
         port = args.port
+        parent_pid = args.parent_pid
 
     _m._http_mode = port is not None
 
@@ -155,6 +166,15 @@ def main(port: int | None = None) -> None:
                 "modelcontextprotocol/python-sdk#2233): run "
                 "`python -m pywin32_postinstall -install` in this environment."
             ) from exc
+
+        # The watchdog is stdio-only: this process's lifetime is its client
+        # connection, unlike the HTTP daemon above, which outlives its
+        # spawner by design. stdin EOF stays the primary exit; the watchdog
+        # reaps the shim when the spawning chain breaks without an EOF
+        # (abandoned generations, killed uv.exe).
+        from ._stdio_lifetime import install_stdio_lifetime_watchdog
+
+        install_stdio_lifetime_watchdog(parent_pid)
 
         # No model load: the stdio MCP holds no GPU resource. Every tool
         # delegates to the running daemon over HTTP through serviceclient,
