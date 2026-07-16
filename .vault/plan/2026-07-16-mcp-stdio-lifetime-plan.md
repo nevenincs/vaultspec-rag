@@ -10,6 +10,16 @@ related:
   - '[[2026-07-16-mcp-stdio-lifetime-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `mcp-stdio-lifetime` plan
 
 ### Phase `P01` - Watchdog module
@@ -31,7 +41,7 @@ Install the watchdog on exactly the stdio branch of the shim entry point and exp
 Prove the watchdog end-to-end in real subprocesses (the research W2 mandate), pin the ADR invariants as regression guards, and document the operator knobs.
 
 - [x] `P03.S05` - Add unit tests for ancestor discovery guards, disable knob, parent-pid override handling, and non-stdio inertness; `src/vaultspec_rag/tests/test_stdio_lifetime.py`.
-- [x] `P03.S06` - Add integration tests: spawn a real parent-intermediary-worker chain, kill the intermediary, assert the worker hard-exits within the bound; `plus a companion EOF-still-primary shutdown test; `src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py\`.
+- [x] `P03.S06` - Add integration tests: spawn a real parent-intermediary-worker chain, kill the intermediary after the grace window, assert the worker hard-exits within the bound, and prove stdin EOF still exits the real shim cleanly; `src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py`.
 - [x] `P03.S07` - Add ADR regression guards: fresh-interpreter import of the watchdog module loads neither torch nor mcp, and the HTTP daemon path never references the watchdog installer; `src/vaultspec_rag/tests/test_adr_regression.py`.
 - [x] `P03.S08` - Document the stdio lifetime contract, the --parent-pid override, and the VAULTSPEC_RAG_STDIO_WATCHDOG knob in the service reference docs; `docs/`.
 
