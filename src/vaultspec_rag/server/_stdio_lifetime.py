@@ -25,9 +25,11 @@ import sys
 import threading
 import time
 
+from ..config import EnvVar
+
 logger = logging.getLogger("vaultspec_rag.server")
 
-STDIO_WATCHDOG_ENV = "VAULTSPEC_RAG_STDIO_WATCHDOG"
+STDIO_WATCHDOG_ENV = EnvVar.STDIO_WATCHDOG.value
 
 #: Ancestors beyond this depth are noise (session managers, init); the
 #: spawning client is always within a few hops (client -> uv -> launcher).
