@@ -2499,3 +2499,85 @@ non-terminal gate.
 S65 may report release readiness only after every gate terminates successfully at the
 same audit commit. Approving this mandate does not execute tests or authorize a pull
 request, approval, merge, tag, publication, or release.
+
+## S65 independent platform release audit
+
+### live-service-readiness-budget | medium | Real model initialization exceeds the fixed 90-second service-start limit
+
+Step S65 audited clean candidate
+`4b097c026bb6a475ce4a6f8207b469a3a6678fbd`. The candidate contained exactly
+1,119 unique `.vault` Markdown documents. Both complete displayed-node-ID
+ledgers reconciled without duplicates or overlap. `M` is the marker-selected
+set, `P` is the promoted lifecycle set, `J` is the Windows junction-only set,
+and `F` is the Portable Operating System Interface (POSIX) first-in,
+first-out (FIFO) named-pipe item:
+
+- Windows collected 2,271 total and unique items: 1,828 `M`, six disjoint `P`,
+  13 Windows-only `J`, no `F`, 1,834 campaign items, and 437 exclusions.
+- POSIX collected 2,259 total and unique items: 1,829 `M`, six disjoint `P`, no
+  `J`, one real FIFO `F` inside `M`, 1,835 campaign items, and 424 exclusions.
+
+The Windows frozen-environment preflight passed with CPython 3.13.11,
+scikit-learn 1.9.0, the required wheel digest, and exact installed `RECORD`
+sizes and hashes for `msvcp140.dll` and `vcomp140.dll`. The frozen sync,
+package-compatibility check, and lock check passed. The fresh exact-archive
+POSIX environment used CPython 3.13.14 and published
+`vaultspec-core==0.1.45`; its locked sync and package-compatibility check
+passed. The real `os.mkfifo` FIFO selector passed one of one.
+
+The two fresh-interpreter Step S64 cases passed. Both modes executed real
+command-line interface (CLI) search and index commands against their test-owned
+capture server. Source inspection confirmed exact `/search` and `/reindex`
+bodies, service envelopes, unchanged target state, unloaded heavy libraries,
+and unconditional cleanup. An independent formal review found no actionable
+Step S64, Step S54, or Step S56 regression.
+The unrelated installed service retained process identifier `84904`, its start
+time, command, and port `55108`. Its status file was absent, so S65 makes no
+byte-preservation claim.
+
+The exact Windows `M` segment started with
+`VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT=600`. All four S56 intent-ranking
+assertions passed. Their shared real graphics processing unit (GPU) fixture ran
+for 192.906884 seconds. It enforced the complete 1,119-document corpus, all
+labeled searches, and the established ranking regressions inside the
+whole-worker boundary.
+
+The first failure occurred during setup for
+`test_reindex_vault_records_finished_tool_job`. The test-owned `live_service`
+fixture spawned an isolated service on port `51949`, then polled health for 90
+seconds. The service did not reach ready state before that deadline. Its
+retained output showed live Hugging Face reranker metadata requests, weight
+loading, and continuing model initialization. The fixture failed before the
+test body could start the reindex job or exercise S54's separate 120-second
+job-completion poll.
+
+This exposes a mismatched integration boundary. The S56 model worker gives real
+model acquisition and construction a bounded 600-second budget. The real
+service fixture allows only 90 seconds for the same initialization. A valid
+warm cache can still issue online metadata requests and load the reranker,
+making the release result depend on host and network timing.
+
+Recommendation: give real service startup its own explicit model-aware
+contract. If the test requires warm-cache behavior, first prove cache
+completeness and disable network access, then require readiness within a
+measured bound. Otherwise align startup with the established bounded model
+budget. In both cases, retain phase diagnostics, terminate and force-terminate
+survivors on expiry, and add a regression that starts the service immediately
+after the full-corpus model worker.
+
+The failed Windows segment reported 18 passes, one setup error, 443
+deselections, and eight warnings in 300.67 seconds. It receives zero runtime
+credit. Teardown left no listener on port `51949` and no S65 intent worker,
+test service, or test-owned Qdrant process. All remaining gates receive no
+credit or waiver:
+
+- The six promoted Windows items and the complete POSIX runtime campaign.
+- Static, type, complexity, lock, Vaultspec, provider, and package gates.
+- Public Core, installed Claude and Codex, idempotence, unenrollment, and
+  uninstall gates.
+- Approval, merge, tag, publication, and release.
+
+S65 verdict: **FAIL — not release-ready; one unresolved MEDIUM real-service
+readiness-budget finding and no CRITICAL or HIGH findings**. Pull request
+approval, merge, tag, publication, and release remain blocked pending
+remediation and a fresh independent audit from one clean commit.

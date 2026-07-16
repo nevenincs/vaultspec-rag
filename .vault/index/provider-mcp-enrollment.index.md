@@ -70,6 +70,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S62]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S63]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S64]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S65]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -158,6 +159,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S62` - Replace patched auto-delegation isolation
 - `2026-07-15-provider-mcp-enrollment-P03-S63` - Repeat every platform-aware release gate from zero after the real auto-delegation isolation correction and stop on the first failure
 - `2026-07-15-provider-mcp-enrollment-P03-S64` - Exercise real index auto-delegation through both isolated discovery modes
+- `2026-07-15-provider-mcp-enrollment-P03-S65` - Repeat every platform-aware release gate from zero after real index auto-delegation coverage and stop on the first failure
 
 ### plan
 
