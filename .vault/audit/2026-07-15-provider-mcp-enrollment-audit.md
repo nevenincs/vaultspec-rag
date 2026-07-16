@@ -2823,3 +2823,129 @@ unenrollment, and uninstall from the same clean commit.
 S67 may report release readiness only after every required gate terminates
 successfully. This open mandate does not authorize a pull request, approval,
 merge, tag, publication, or release.
+
+## S67 independent platform release audit
+
+S67 audited exact clean commit
+`83ecbadf2fc735170af892bb4d8c1a191338068a` with no carried S65 or S66 credit.
+The complete `.vault` corpus independently recounted to 1,122 Markdown
+documents and 1,122 unique paths.
+
+The Windows locked environment passed `uv sync --frozen`, `uv pip check`, and
+`uv lock --check` under CPython 3.13.11. Direct scikit-learn import reported
+1.9.0 from the exact locked
+`scikit_learn-1.9.0-cp313-cp313-win_amd64.whl` payload. The wheel digest was
+`sha256:5808d98f15c6bf6d9d96d2348c1997392a5888ce7097e664105f930c4bca1277`;
+the independently checked `msvcp140.dll` and `vcomp140.dll` RECORD payloads
+matched their locked sizes and digests.
+
+A new exact-commit archive at
+`/home/hello/vaultspec-rag-s67-83ecbad` created a fresh POSIX environment under
+CPython 3.13.14. Frozen sync installed 138 compatible packages, lock validation
+resolved 141 packages, direct scikit-learn import reported 1.9.0, and published
+`vaultspec-core==0.1.45` was present.
+
+Both displayed-node-ID ledgers were recollected from zero and contained no
+duplicates:
+
+- Windows collected 2,283 total and unique items. `M` contained 1,840 items.
+  The six unchanged `P` items were present, integration-excluded, and disjoint
+  from `M`. `J` contained the exact 13 Windows-only junction items and was
+  outside `M` and `P`. `F` was absent. The campaign ledger was therefore 1,846
+  selected and 437 excluded.
+- POSIX collected 2,273 total and unique items. `M` contained 1,843 items. The
+  same six `P` items were present and disjoint from `M`; `J` was absent. `F`
+  contained the one real `os.mkfifo` item and was inside `M`. Two further
+  POSIX-only `M` items were the S66 witnessed and zero-owner-witness forced-stop
+  regressions. The platform arithmetic was `2,283 - 13 + 3 = 2,273`; the
+  campaign ledger was 1,849 selected and 424 excluded.
+
+The independent code review then found five actionable MEDIUM defects and
+triggered the stop-first-red rule.
+
+### service-env-saved-value-overwritten | medium | Context-entry failure can leak isolated status state
+
+`tests/integration/_helpers.py` saves the original
+`VAULTSPEC_RAG_STATUS_DIR`, sets it to the isolated directory, and later saves
+each explicit override. If the override mapping repeats the status key, the
+second save records the already-mutated temporary value and overwrites the
+ambient value. A subsequent context-entry failure therefore restores the
+temporary directory rather than the caller's environment.
+
+A fresh child-interpreter probe set the ambient value to `ambient-status`,
+supplied both a status-directory override and an invalid NUL environment key,
+and entered the real `_service_env` context. The invalid key raised
+`ValueError`; afterward the status variable equalled the generated temporary
+directory and the probe reported `LEAKED=True`. The existing entry-failure
+regression does not repeat the status key and therefore does not cover this
+case.
+
+### job-auth-fallback-multiplies-deadline | medium | Token recovery is not bounded by one remaining job deadline
+
+The exact-job poll passes its complete remaining budget to one administration
+call. `serviceclient/_transport.py` can then spend that same timeout
+independently on the first `/jobs` request, `/health` token recovery after 401,
+and the authenticated `/jobs` retry. Rejecting a terminal response after expiry
+does not enforce the promised wall-clock boundary while the call is blocked.
+The existing 50-millisecond regression exercises only a valid-token,
+single-request path.
+
+A real isolated loopback server reproduced the defect. Each of the three
+requests completed inside the supplied 0.040-second per-request timeout, but
+the full administration call returned success after 0.160 seconds. The
+observed sequence was `/jobs`, `/health`, `/jobs`, four times the alleged
+whole-call budget.
+
+### qdrant-status-publication-race | medium | Pre-warming child identity can remain unpublished
+
+The pre-model Qdrant stamp silently returns when `service.json` is absent or
+temporarily unreadable and is attempted only once. Production spawns the child
+before the parent writes the status file. If the child reaches supervised
+Qdrant readiness first, the stamp is skipped and the next identity publication
+is the heartbeat after model loading. Qdrant PID and port can therefore remain
+unpublished throughout the warming interval. The new regression writes the
+status file immediately before waiting and cannot exercise the production
+scheduling race.
+
+### startup-failures-lose-stage-diagnostics | medium | The whole-startup contract covers health expiry only
+
+The live-service fixture does not wrap model repair, process spawn, or status
+publication in a startup-level diagnostic handler. Only health
+`TimeoutError` receives completed stages, timings, PID, port, environment, and
+retained output. Repair, spawn, or status-write failures therefore lose the
+promised diagnostic envelope. In addition, the acquisition worker receives
+the entire remaining startup budget and can then spend a fixed five-second
+termination grace, so the asserted whole-startup deadline is not strict on
+repair timeout.
+
+### qdrant-child-incarnation-not-pinned | medium | Forced POSIX cleanup can signal an unrelated reused PID
+
+The forced-stop path positively witnesses the service owner's creation time,
+but the managed identity records no creation-time witness for the Qdrant child.
+The implementation separately proves that the recorded PID currently has a
+Qdrant image and that a pinned-version Qdrant answers the recorded port; it
+does not bind that listener, version, or storage to that PID. After the
+service-stop window, revalidation checks only the image before signalling. A
+dead child's reused PID occupied by an unrelated Qdrant can therefore be
+reaped. The new POSIX tests cover the positive path and a missing owner
+witness, not child-incarnation or post-capture PID reuse.
+
+Because formal review was the first failed gate, S67 started no selected pytest
+runtime. The actual FIFO selector, exact formerly failed jobs selector, full
+jobs registry, service-jobs and lifecycle groups, S56 model and full-corpus
+ranking cases, complete Windows and POSIX campaigns, static and type checks,
+complexity and Vaultspec checks, build and artifact inspection, public-Core
+smoke, installed Claude and Codex recognition, idempotence, `--no-mcp`,
+selective unenrollment, uninstall, and every release action received zero S67
+credit.
+
+The unrelated installed service observed at PID 88968 on port 8766 and its
+Qdrant PID 65108 on port 8765 remained live and untouched. No test-owned
+service, Qdrant process, listener, or GPU worker was started by an S67 runtime
+campaign.
+
+S67 verdict: **FAIL — not release-ready; five actionable MEDIUM review findings
+remain and every runtime or later release gate is uncredited.**
+
+This documentation-only closure does not authorize a pull request, approval,
+merge, tag, publication, or release.

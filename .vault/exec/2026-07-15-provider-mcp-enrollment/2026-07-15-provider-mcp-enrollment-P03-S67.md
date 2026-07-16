@@ -51,11 +51,51 @@ related:
 
 ## Outcome
 
-Pending independent execution.
+Failed at the independent code-review gate before the selected runtime campaign.
+
+The audit inspected exact clean commit
+`83ecbadf2fc735170af892bb4d8c1a191338068a`, independently recounted 1,122
+unique `.vault` Markdown documents, and rebuilt both collection ledgers from
+zero. Windows collected 2,283 unique items: 1,840 in `M`, six disjoint promoted
+items in `P`, 13 Windows-only junction items in `J`, no `F`, 1,846 campaign
+items, and 437 exclusions. The fresh exact-archive POSIX environment collected
+2,273 unique items: 1,843 in `M`, the same six disjoint `P` items, no `J`, one
+real-FIFO `F` item inside `M`, two additional S66 POSIX-only forced-stop items,
+1,849 campaign items, and 424 exclusions.
+
+The frozen Windows and POSIX environments resolved successfully, direct
+scikit-learn 1.9.0 imports passed, and published `vaultspec-core==0.1.45` was
+present. The independent review then found five actionable MEDIUM defects:
+
+- auth-token recovery can spend the remaining job timeout independently on
+  three sequential requests;
+- pre-warming Qdrant status publication can be skipped if the child starts
+  before the parent writes `service.json`;
+- forced POSIX cleanup witnesses the service incarnation but not the Qdrant
+  child incarnation;
+- a repeated status-directory override can overwrite the saved ambient value
+  and leak the isolated directory after context-entry failure; and
+- model repair, spawn, and status-write failures do not receive the promised
+  whole-startup diagnostics, while repair termination can exceed the remaining
+  budget by its fixed grace period.
+
+The environment leak and multiplied admin deadline were reproduced
+independently with real child-process and loopback HTTP probes. The first red
+review gate stopped the campaign. No FIFO runtime selector, focused S54/S56/S64/
+S66 selector, full Windows or POSIX runtime campaign, static gate, package gate,
+provider gate, host-recognition gate, idempotence gate, unenrollment gate,
+uninstall gate, pull request, approval, merge, tag, publication, or release
+received S67 credit.
 
 ## Notes
 
-S67 starts with zero credit. S66 focused, repeated, adjacent, S56, and static
-results are remediation evidence only. A green S67 verdict requires every
-mandated gate to terminate successfully at one clean commit. This mandate does
-not authorize a pull request, approval, merge, tag, publication, or release.
+S67 began with zero carried credit. Because formal review failed first, every
+runtime and later gate remains uncredited. S66 focused, repeated, adjacent, S56,
+and static results are remediation evidence only. A green S67 verdict requires
+every mandated gate to terminate successfully at one clean commit. This mandate
+does not authorize a pull request, approval, merge, tag, publication, or
+release.
+
+The unrelated installed service observed at PID 88968 on port 8766 and its
+Qdrant PID 65108 on port 8765 remained outside the isolated audit and was not
+signalled or stopped.

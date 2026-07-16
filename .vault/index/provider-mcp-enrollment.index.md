@@ -71,6 +71,8 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S63]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S64]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S65]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S66]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S67]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -160,6 +162,8 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S63` - Repeat every platform-aware release gate from zero after the real auto-delegation isolation correction and stop on the first failure
 - `2026-07-15-provider-mcp-enrollment-P03-S64` - Exercise real index auto-delegation through both isolated discovery modes
 - `2026-07-15-provider-mcp-enrollment-P03-S65` - Repeat every platform-aware release gate from zero after real index auto-delegation coverage and stop on the first failure
+- `2026-07-15-provider-mcp-enrollment-P03-S66` - Bound real service startup around complete cache preparation and offline readiness
+- `2026-07-15-provider-mcp-enrollment-P03-S67` - Repeat every platform-aware release gate after the model-aware service-startup correction
 
 ### plan
 
