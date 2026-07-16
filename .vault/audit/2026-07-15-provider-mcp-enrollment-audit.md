@@ -2217,3 +2217,62 @@ non-terminal gate.
 S63 may report release readiness only after every gate terminates successfully at the
 same audit commit. Approving this mandate does not execute tests or authorize a pull
 request, merge, approval, tag, publication, or release.
+
+## S63 independent platform release audit
+
+### index-auto-delegation-command-coverage | medium | Index delegation is resolved but never executed
+
+S63 audited clean candidate
+`46eca748447eace8cbb70fce539d3e58e6b59e5a`. The candidate contained exactly
+1,117 unique `.vault` Markdown documents. Both complete displayed-node-ID
+ledgers reconciled without duplicates or overlap:
+
+- Windows collected 2,271 total and unique items: 1,828 `M`, six disjoint `P`,
+  13 Windows-only `J`, no `F`, 1,834 campaign items, and 437 exclusions.
+- POSIX collected 2,259 total and unique items: 1,829 `M`, six disjoint `P`, no
+  `J`, one real FIFO `F` inside `M`, 1,835 campaign items, and 424 exclusions.
+
+The Windows lock, dependency, and wheel-payload preflight passed with CPython
+3.13.11, scikit-learn 1.9.0, the required wheel digest, and exact installed
+`RECORD` sizes and hashes for `msvcp140.dll` and `vcomp140.dll`. The frozen
+sync, package-compatibility check, and lock check passed. The fresh
+exact-archive POSIX environment used CPython 3.13.14 and published
+`vaultspec-core==0.1.45`; its locked sync and package compatibility checks
+passed. The real `os.mkfifo` selector passed one of one.
+
+The two fresh-interpreter `TestAutoDelegation` cases passed while a
+pre-existing installed service remained live on port `55108` with the same
+process identifier and start time. Its status file was absent, so S63 makes no
+byte-preservation claim. The cases prove that machine-global authority outranks
+the isolated status fallback and that the fallback resolves when the authority
+is absent.
+
+They do not prove the promised index-command behavior. The subprocess imports
+the search and index `_default_service_port` aliases and asserts that both
+return the expected port, but invokes only the real `search` command. The index
+command has separate auto-detection and service-delegation control flow in
+`_index.index`. The replaced test formerly exercised that path and verified
+that the reindex transport received the discovered port and
+`initiator_kind="cli"`. A regression in index fallback enabling, delegation,
+request routing, or payload construction can therefore pass the S62
+replacement tests.
+
+Recommendation: add real-loopback, fresh-interpreter index CLI probes under
+both the machine-global winner and isolated status-fallback modes. Assert the
+selected endpoint and the actual reindex request payload, including
+`initiator_kind="cli"`, without mocks, fakes, stubs, patches, or
+monkeypatches. Preserve the existing reserved-port race boundary and
+unconditional cleanup.
+
+This independent review is the first S63 target red. Per the mandated
+stop-on-first-failure sequence, no Windows or POSIX runtime campaign started.
+Repository-wide static, type, complexity, lock, Vaultspec, provider, package,
+public Core, installed Claude and Codex, idempotence, selective unenrollment,
+uninstall, approval, merge, tag, publication, and release gates receive no
+credit or waiver. No additional S54 or S56 regression attributable to the S62
+diff was found.
+
+S63 verdict: **FAIL — not release-ready; one unresolved MEDIUM index
+auto-delegation coverage finding and no CRITICAL or HIGH findings**. Pull
+request approval, merge, tag, publication, and release remain blocked pending
+remediation and a fresh independent audit from one clean commit.
