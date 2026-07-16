@@ -1170,3 +1170,25 @@ production or test file changed during S52.
 S52 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
 findings**. Merge, PR approval, and publication remain blocked until the release ledger
 is corrected and every selected test and later gate is rerun from zero.
+
+## S53 corrected platform-aware release mandate
+
+S52 remains a failed historical audit and grants no runtime or later-gate credit. The
+replacement S53 ledger is expressed in pytest test items rather than unique node-ID
+strings because six pre-existing parametrized IDs collide.
+
+On Windows, collection contains 2,269 test items. Marker classification selects 1,826
+items and excludes 443; promoting the same six named S49 lifecycle-overlap items yields
+the S53 Windows campaign of 1,832 selected and 437 excluded items.
+
+On POSIX, the capability-defined
+`src/vaultspec_rag/tests/test_install_torch_config.py::TestErrorBranches::test_install_fifo_project_surface_fails_without_blocking`
+adds one selected item. The POSIX ledger is therefore 2,270 total, 1,833 selected, and
+437 excluded items. Windows evidence cannot credit that POSIX-only item: Linux CI must
+collect and execute the FIFO node as part of the 1,833-item POSIX campaign.
+
+S53 must restart the complete platform-appropriate selected ledger and every later
+release gate from zero. Campaign closure requires Windows evidence for its 1,832-item
+ledger and Linux evidence that includes the POSIX-only FIFO item in the 1,833-item
+ledger. No S52 execution, static-analysis, packaging, provider, host-recognition, or
+publication credit carries forward.

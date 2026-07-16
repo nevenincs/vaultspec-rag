@@ -50,12 +50,13 @@ Broken, directory, and special project nodes continue through the shared compone
 contract. The finding is resolved in S51.
 
 S51 verdict: **PASS — no actionable findings after resolution of both HIGH review
-findings**. This verdict is limited to the corrective surface and does not grant S52
+findings**. This verdict is limited to the corrective surface and does not grant
 release readiness.
 
 ## Recommendations
 
-Run S52 from a clean commit and restart the exact 1,830-test release ledger and every
-package, provider, host-recognition, and publication gate from zero. Linux CI or the S52
-audit must collect the real FIFO regression; this Windows review cannot grant that node
-execution credit.
+Run S53 from a clean commit and restart every package, provider, host-recognition, and
+publication gate from zero. The Windows ledger is 2,269 total, 1,832 selected, and 437
+excluded test items. The POSIX ledger is 2,270 total, 1,833 selected, and 437 excluded
+test items; Linux CI must collect and execute the POSIX-only FIFO regression because
+this Windows review cannot grant that item execution credit.
