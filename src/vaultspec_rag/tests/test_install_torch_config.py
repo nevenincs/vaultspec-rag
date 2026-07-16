@@ -737,16 +737,30 @@ class TestErrorBranches:
         } == before_files
         assert not list(ws.rglob("*.lock"))
 
-    def test_uninstall_corrupt_pyproject_records_error(self, tmp_path: Path) -> None:
+    def test_uninstall_corrupt_pyproject_fails_closed_before_torch(
+        self, tmp_path: Path
+    ) -> None:
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / ".vaultspec").mkdir()
         (ws / "pyproject.toml").write_text("[project\nname =", encoding="utf-8")
+        before = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+
         report = uninstall_run(path=ws, force=True)
-        assert report.torch_config_action == "error"
-        assert any("torch-config inspect failed" in w for w in report.warnings), (
-            report.warnings
-        )
+
+        assert report.mcp_sync_failed
+        assert report.mcp_extra_action == "error"
+        assert report.torch_config_action == "skipped"
+        assert any("reversal inspection failed" in item for item in report.mcp_errors)
+        assert {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        } == before
 
 
 class TestSyncSilentDrop:

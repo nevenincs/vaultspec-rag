@@ -5539,6 +5539,22 @@ class TestRenderUninstallReport:
         out = self._render(report)
         assert "PyTorch configuration: error" in out
 
+    def test_mcp_extra_result_is_preserved_in_json_and_human_output(self) -> None:
+        from ..commands import UninstallReport
+
+        report = UninstallReport(
+            action="uninstall",
+            target=Path("."),
+            mcp_extra_action="removed",
+            mcp_extra_location="[project].dependencies",
+        )
+
+        data = report.to_dict()
+        assert data["mcp_extra_action"] == "removed"
+        assert data["mcp_extra_location"] == "[project].dependencies"
+        out = self._render(report)
+        assert "MCP optional dependency: removed ([project].dependencies)" in out
+
     def test_dry_run_uses_operator_language(self) -> None:
         from ..commands import UninstallReport
 

@@ -19,6 +19,7 @@ machinery operates on, so rag and core cannot drift on what a mode means.
 from __future__ import annotations
 
 import logging
+from contextvars import Context
 from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
@@ -149,9 +150,11 @@ def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
         Tool,
     )
 
-    status = cast(
-        "dict[str, object]",
-        mcp_status(provider="all", scope="project", target_dir=target),
+    status = Context().run(
+        lambda: cast(
+            "dict[str, object]",
+            mcp_status(provider="all", scope="project", target_dir=target),
+        )
     )
     providers = status.get("providers")
     if not isinstance(providers, dict) or not providers:
@@ -162,14 +165,16 @@ def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
             enrolled.append(Tool.CODEX)
         if not enrolled:
             return False
-        status = cast(
-            "dict[str, object]",
-            mcp_status(
-                provider="all",
-                scope="project",
-                target_dir=target,
-                enrolled=enrolled,
-            ),
+        status = Context().run(
+            lambda: cast(
+                "dict[str, object]",
+                mcp_status(
+                    provider="all",
+                    scope="project",
+                    target_dir=target,
+                    enrolled=enrolled,
+                ),
+            )
         )
         providers = status.get("providers")
     if not isinstance(providers, dict) or not providers:

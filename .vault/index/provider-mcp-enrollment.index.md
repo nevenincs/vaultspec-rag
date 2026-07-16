@@ -48,6 +48,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S40]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S41]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S42]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S43]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -112,6 +113,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S40` - Perform final collision-safe release review and complete every gate
 - `2026-07-15-provider-mcp-enrollment-P03-S41` - Repair service attribution and deterministic release-test isolation
 - `2026-07-15-provider-mcp-enrollment-P03-S42` - Perform fresh service-safe release review and complete every gate
+- `2026-07-15-provider-mcp-enrollment-P03-S43` - Repair fresh provider selection and transactional MCP lifecycle boundaries
 
 ### plan
 

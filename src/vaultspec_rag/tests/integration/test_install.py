@@ -15,17 +15,25 @@ import os
 import stat
 import subprocess
 import tomllib
+from contextvars import Context
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]
+    resolve_workspace,
+)
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
 )
 from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
     read_manifest,
     write_manifest,
+)
+from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+    get_context,
+    init_paths,
 )
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     read_package_declaration,
@@ -113,8 +121,6 @@ def _create_windows_junction(path: Path, target: Path) -> None:
 
 def _install(target: Path, **overrides: Any) -> Any:
     """Run a network-free dual-provider install with MCP intent enabled."""
-    if not read_manifest(target):
-        write_manifest(target, {"claude", "codex"})
     options: dict[str, Any] = {
         "install_mcp": True,
         "configure_torch": False,
@@ -150,6 +156,125 @@ def installed_workspace(tmp_path: Path) -> Path:
 
 
 class TestFreshInstall:
+    def test_corrupt_provider_intent_fails_closed_before_any_workspace_mutation(
+        self, fresh_workspace: Path
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        vaultspec = fresh_workspace / ".vaultspec"
+        vaultspec.mkdir()
+        (vaultspec / "providers.json").write_bytes(b"{corrupt-provider-intent")
+        (vaultspec / "providers.json.lock").write_bytes(b"operator-lock")
+        (vaultspec / "mcps").mkdir()
+        (vaultspec / "mcps" / "operator.json").write_bytes(b'{"operator": true}\n')
+        (vaultspec / "mcp-ownership.json").write_bytes(
+            b'{"version": 1, "targets": {}}\n'
+        )
+        (fresh_workspace / ".mcp.json").write_bytes(
+            b'{"mcpServers": {"operator": {"command": "operator"}}}\n'
+        )
+        codex = fresh_workspace / ".codex" / "config.toml"
+        codex.parent.mkdir()
+        codex.write_bytes(b'[mcp_servers.operator]\ncommand = "operator"\n')
+        (fresh_workspace / "pyproject.toml").write_bytes(
+            b'[project]\nname = "operator"\nversion = "1.0.0"\n'
+        )
+        before = _workspace_inventory(fresh_workspace)
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(fresh_workspace),
+                "--no-provision",
+                "--no-torch-config",
+                "--mcp",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        report = json.loads(result.output)
+        assert report["mcp_failed"] is True
+        assert "provider intent is unreadable" in " ".join(report["mcp_errors"])
+        assert _workspace_inventory(fresh_workspace) == before
+
+    def test_cli_selects_both_project_hosts_without_a_seeded_manifest(
+        self, fresh_workspace: Path
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        assert not (fresh_workspace / ".vaultspec" / "providers.json").exists()
+        result = CliRunner().invoke(
+            app,
+            [
+                "install",
+                "--target",
+                str(fresh_workspace),
+                "--no-provision",
+                "--no-torch-config",
+                "--mcp",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        report = json.loads(result.output)
+        assert report["mcp_failed"] is False
+        assert set(report["sync_providers"]) == {"claude", "codex"}
+        assert read_manifest(fresh_workspace) == {"claude", "codex"}
+        assert "vaultspec-rag" in _read_mcp_json(fresh_workspace)["mcpServers"]
+        assert "vaultspec-rag" in _read_codex_mcp(fresh_workspace)
+
+    def test_fresh_provider_selection_merges_unrelated_manifest_entries(
+        self, fresh_workspace: Path
+    ) -> None:
+        write_manifest(fresh_workspace, {"gemini"})
+
+        report = _install(fresh_workspace)
+
+        assert not report.mcp_sync_failed
+        assert read_manifest(fresh_workspace) == {"claude", "codex", "gemini"}
+        assert set(report.to_dict()["sync_providers"]) == {"claude", "codex"}
+
+    def test_provider_manifest_persistence_failure_restores_prior_bytes(
+        self, fresh_workspace: Path
+    ) -> None:
+        write_manifest(fresh_workspace, {"gemini"})
+        manifest = fresh_workspace / ".vaultspec" / "providers.json"
+        lock = manifest.with_suffix(".json.lock")
+        claude = fresh_workspace / ".mcp.json"
+        claude.write_bytes(b'{"mcpServers": {"operator": {"command": "operator"}}}\n')
+        codex = fresh_workspace / ".codex" / "config.toml"
+        codex.parent.mkdir()
+        codex.write_bytes(b'[mcp_servers.operator]\ncommand = "operator"\n')
+        before = {
+            manifest: manifest.read_bytes(),
+            claude: claude.read_bytes(),
+            codex: codex.read_bytes(),
+        }
+        lock.unlink(missing_ok=True)
+        lock.mkdir()
+
+        report = _install(fresh_workspace)
+
+        assert report.mcp_sync_failed
+        assert {path: path.read_bytes() for path in before} == before
+        assert read_manifest(fresh_workspace) == {"gemini"}
+        assert lock.is_dir()
+        assert not (fresh_workspace / ".mcp.json.lock").exists()
+        assert not (fresh_workspace / ".codex" / "config.toml.lock").exists()
+        assert not (fresh_workspace / ".vaultspec" / "mcp-ownership.json").exists()
+        assert not (fresh_workspace / ".vaultspec" / "mcp-ownership.json.lock").exists()
+        assert any("provider enrollment failed" in item for item in report.mcp_errors)
+
     def test_creates_required_directories(self, fresh_workspace: Path) -> None:
         report = _install(fresh_workspace)
         assert report.action == "install"
@@ -267,7 +392,6 @@ class TestDryRunInstall:
     def test_fresh_mcp_dry_run_reports_native_additions_without_writing(
         self, fresh_workspace: Path
     ) -> None:
-        write_manifest(fresh_workspace, {"claude", "codex"})
         before = _workspace_file_bytes(fresh_workspace)
         locks_before = sorted(fresh_workspace.rglob("*.lock"))
 
@@ -284,7 +408,6 @@ class TestDryRunInstall:
     def test_fresh_explicit_mode_preview_matches_real_without_synthetic_pass(
         self, fresh_workspace: Path
     ) -> None:
-        write_manifest(fresh_workspace, {"claude", "codex"})
         before = _workspace_file_bytes(fresh_workspace)
         locks_before = sorted(fresh_workspace.rglob("*.lock"))
 
@@ -373,7 +496,6 @@ class TestDryRunInstall:
         runner = CliRunner()
         fresh_workspace = tmp_path / "fresh"
         fresh_workspace.mkdir()
-        write_manifest(fresh_workspace, {"claude", "codex"})
         fresh_before = _workspace_file_bytes(fresh_workspace)
         add_result = runner.invoke(
             app,
@@ -418,6 +540,111 @@ class TestDryRunInstall:
         assert remove_report["sync_providers"]["claude"]["pruned"] == 1
         assert remove_report["sync_providers"]["codex"]["pruned"] == 1
         assert _workspace_file_bytes(installed_workspace) == installed_before
+
+    @pytest.mark.parametrize("malformed_ownership", [False, True])
+    def test_preview_restores_a_prior_core_context(
+        self,
+        tmp_path: Path,
+        malformed_ownership: bool,
+    ) -> None:
+        durable = tmp_path / "durable"
+        (durable / ".vaultspec").mkdir(parents=True)
+        (durable / ".vault").mkdir()
+        init_paths(resolve_workspace(target_override=durable))
+        prior = get_context()
+
+        target = tmp_path / "preview"
+        target.mkdir()
+        if malformed_ownership:
+            (target / ".vaultspec").mkdir()
+            (target / ".vaultspec" / "mcp-ownership.json").write_text(
+                "{not-json",
+                encoding="utf-8",
+            )
+        report = _install(target, dry_run=True)
+
+        assert report.mcp_sync_failed is malformed_ownership
+        assert get_context() is prior
+        assert get_context().target_dir == durable
+
+    def test_preview_preserves_an_unset_core_context(self, tmp_path: Path) -> None:
+        target = tmp_path / "preview"
+        target.mkdir()
+
+        def run_without_context() -> None:
+            with pytest.raises(LookupError):
+                get_context()
+            report = _install(target, dry_run=True)
+            assert not report.mcp_sync_failed
+            with pytest.raises(LookupError):
+                get_context()
+
+        Context().run(run_without_context)
+
+    @pytest.mark.parametrize("link_case", ["live", "broken"])
+    def test_preview_does_not_follow_unrelated_vaultspec_symlinks(
+        self,
+        fresh_workspace: Path,
+        tmp_path: Path,
+        link_case: str,
+    ) -> None:
+        _install(fresh_workspace)
+        link = fresh_workspace / ".vaultspec" / f"operator-{link_case}"
+        if link_case == "live":
+            target = tmp_path / "operator-target"
+            target.mkdir()
+            (target / "sentinel").write_bytes(b"operator-owned\x00")
+            (target / "nested-broken").symlink_to(
+                "missing-nested-target",
+                target_is_directory=True,
+            )
+            link.symlink_to(target, target_is_directory=True)
+            target_before = _workspace_inventory(target)
+        else:
+            link.symlink_to("missing-operator-target", target_is_directory=True)
+            target = None
+            target_before = None
+        signature = _node_signature(link)
+
+        preview = _install(fresh_workspace, dry_run=True, upgrade=True)
+        actual = _install(fresh_workspace, upgrade=True)
+
+        assert not preview.mcp_sync_failed
+        assert preview.to_dict()["sync_providers"] == actual.to_dict()["sync_providers"]
+        assert _node_signature(link) == signature
+        if target is not None:
+            assert _workspace_inventory(target) == target_before
+
+    if os.name == "nt":
+
+        def test_preview_does_not_follow_an_unrelated_windows_junction(
+            self,
+            fresh_workspace: Path,
+            tmp_path: Path,
+        ) -> None:
+            _install(fresh_workspace)
+            target = tmp_path / "operator-junction-target"
+            target.mkdir()
+            (target / "sentinel").write_bytes(b"operator-owned\x00")
+            (target / "nested-broken").symlink_to(
+                "missing-nested-target",
+                target_is_directory=True,
+            )
+            junction = fresh_workspace / ".vaultspec" / "operator-junction"
+            _create_windows_junction(junction, target)
+            signature = _node_signature(junction)
+            target_before = _workspace_inventory(target)
+
+            preview = _install(fresh_workspace, dry_run=True, upgrade=True)
+            actual = _install(fresh_workspace, upgrade=True)
+
+            assert not preview.mcp_sync_failed
+            assert (
+                preview.to_dict()["sync_providers"]
+                == actual.to_dict()["sync_providers"]
+            )
+            assert _node_signature(junction) == signature
+            assert _workspace_inventory(target) == target_before
 
     @pytest.mark.parametrize(
         ("initial_mode", "pyproject_body"),
@@ -1363,6 +1590,58 @@ class TestProviderFailureContract:
         assert data["mcp_errors"]
         assert "ownership" in " ".join(data["mcp_errors"]).lower()
 
+    @pytest.mark.parametrize(
+        ("failure_kind", "expected_action"),
+        [("drift", "conflict"), ("malformed", "error")],
+    )
+    def test_uninstall_extra_failure_is_fail_closed_and_exits_two(
+        self,
+        fresh_workspace: Path,
+        failure_kind: str,
+        expected_action: str,
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from ...cli import app
+
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+        if failure_kind == "drift":
+            pyproject.write_text(
+                pyproject.read_text(encoding="utf-8").replace(
+                    "vaultspec-rag[mcp]",
+                    "vaultspec-rag[mcp]>=9",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            pyproject.write_text("[project\n", encoding="utf-8")
+        before = _workspace_inventory(fresh_workspace)
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "uninstall",
+                "--target",
+                str(fresh_workspace),
+                "--force",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        report = json.loads(result.output)
+        assert report["mcp_failed"] is True
+        assert report["mcp_extra_action"] == expected_action
+        assert report["mcp_errors"]
+        assert _workspace_inventory(fresh_workspace) == before
+        assert (fresh_workspace / _RAG_MCP_REL).is_file()
+        assert "vaultspec-rag" in _read_mcp_json(fresh_workspace)["mcpServers"]
+        assert "vaultspec-rag" in _read_codex_mcp(fresh_workspace)
+
 
 class TestUninstallSafety:
     def test_uninstall_without_force_is_dry_run(
@@ -1385,6 +1664,46 @@ class TestUninstallSafety:
         assert (installed_workspace / ".vault").is_dir()
         # rag must never touch .vault/data/ unless --remove-data
         assert (installed_workspace / ".vault" / "data").is_dir()
+
+    def test_uninstall_mcp_skip_preserves_the_complete_mcp_domain(
+        self, fresh_workspace: Path
+    ) -> None:
+        pyproject = fresh_workspace / "pyproject.toml"
+        pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
+        _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
+        tracked = [
+            pyproject,
+            fresh_workspace / _RAG_MCP_REL,
+            fresh_workspace / ".vaultspec" / "workspace.json",
+            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            fresh_workspace / ".mcp.json",
+            fresh_workspace / ".codex" / "config.toml",
+        ]
+        tracked.extend(
+            path
+            for path in fresh_workspace.rglob("*.lock")
+            if path.is_file()
+            and path.name
+            in {
+                "pyproject.toml.lock",
+                "workspace.json.lock",
+                "mcp-ownership.json.lock",
+                ".mcp.json.lock",
+                "config.toml.lock",
+            }
+            and path not in tracked
+        )
+        before = {path: path.read_bytes() for path in tracked}
+
+        report = uninstall_run(path=fresh_workspace, force=True, skip={"mcp"})
+
+        assert not report.mcp_sync_failed
+        assert report.mcp_extra_action == "skipped"
+        assert not report.to_dict()["sync_providers"]
+        assert {path: path.read_bytes() for path in tracked} == before
+        assert not (fresh_workspace / _RAG_RULE_REL).exists()
+        assert not (fresh_workspace / _RAG_SKILL_REL).exists()
+        assert (fresh_workspace / _RAG_MCP_REL).is_file()
 
     def test_uninstall_propagates_via_core_sync(
         self, installed_workspace: Path

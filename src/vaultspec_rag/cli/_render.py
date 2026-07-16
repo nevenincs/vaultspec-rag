@@ -575,6 +575,20 @@ def _print_warning_or_note(warning: object) -> None:
     _cli.console.print(f"{prefix}: {text}", markup=False, highlight=False)
 
 
+def _render_mcp_extra(report: Any) -> None:
+    """Render the structured MCP optional-dependency lifecycle result."""
+    action = getattr(report, "mcp_extra_action", "skipped")
+    if action == "skipped":
+        return
+    location = getattr(report, "mcp_extra_location", "")
+    suffix = f" ({location})" if location else ""
+    _cli.console.print(
+        f"MCP optional dependency: {_action_label(action)}{suffix}",
+        markup=False,
+        highlight=False,
+    )
+
+
 def _render_install_report(report: Any) -> None:
     """Render an install report as plain CLI lines."""
     title = {
@@ -600,6 +614,7 @@ def _render_install_report(report: Any) -> None:
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     _render_sync_summary(sync_added, sync_updated, sync_pruned)
     _render_provider_sync(report)
+    _render_mcp_extra(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
     _cli.console.print(
         f"PyTorch configuration: {_action_label(tc_action)}",
@@ -727,6 +742,7 @@ def _render_uninstall_report(report: Any) -> None:
     if sync_pruned:
         _render_sync_summary(0, 0, sync_pruned)
     _render_provider_sync(report)
+    _render_mcp_extra(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
     _cli.console.print(
         f"PyTorch configuration: {_action_label(tc_action)}",

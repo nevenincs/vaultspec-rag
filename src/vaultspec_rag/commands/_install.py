@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import stat
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from contextvars import Context
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -16,6 +16,11 @@ from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
+)
+from vaultspec_core.core.enums import Tool  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+    add_providers,
+    read_manifest_data,
 )
 from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
@@ -53,6 +58,8 @@ if TYPE_CHECKING:
     from ._models import ConfirmFn
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
 
 
 def _seed_builtins(
@@ -314,6 +321,106 @@ def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
     return tuple(dict.fromkeys(transactional))
 
 
+def _fresh_mcp_provider_selection(target: Path) -> tuple[Tool, ...] | None:
+    """Select both project hosts only when no MCP-host decision exists yet."""
+    installed = read_manifest_data(target, strict=True).installed
+    if {provider.value for provider in _DEFAULT_PROJECT_MCP_PROVIDERS} & installed:
+        return None
+    return _DEFAULT_PROJECT_MCP_PROVIDERS
+
+
+def _requested_fresh_mcp_providers(
+    target: Path, skip: set[str]
+) -> tuple[Tool, ...] | None:
+    """Resolve fresh-host enrollment only for an active MCP transition."""
+    if "mcp" in skip:
+        return None
+    return _fresh_mcp_provider_selection(target)
+
+
+def _prepare_install_target(
+    path: Path | None,
+    *,
+    action: str,
+    dry_run: bool,
+    skip: set[str],
+) -> tuple[Path, InstallReport, tuple[Tool, ...] | None, bool]:
+    """Fail closed on provider intent before bootstrapping any workspace node."""
+    target = _resolve_target(path, bootstrap=False)
+    report = InstallReport(action=action, target=target)
+    try:
+        fresh_providers = _requested_fresh_mcp_providers(target, skip)
+    except Exception as exc:
+        message = f"project MCP provider intent is unreadable: {exc}"
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+        return target, report, None, False
+    if not dry_run:
+        _resolve_target(target, bootstrap=True)
+    report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
+    return target, report, fresh_providers, True
+
+
+def _fresh_provider_transaction_paths(target: Path) -> tuple[Path, ...]:
+    """Return every project artifact a fresh dual-host sync can mutate."""
+    manifest = target / ".vaultspec" / "providers.json"
+    claude = target / ".mcp.json"
+    codex = target / ".codex" / "config.toml"
+    ownership = target / ".vaultspec" / "mcp-ownership.json"
+    files = (manifest, claude, codex, ownership)
+    return (
+        *files,
+        *(item.with_suffix(item.suffix + ".lock") for item in files),
+        codex.parent,
+    )
+
+
+def _restore_fresh_provider_transaction(
+    snapshots: dict[Path, _NodeSnapshot], report: InstallReport
+) -> None:
+    errors = _rollback_file_snapshots(snapshots)
+    if not errors:
+        return
+    message = "MCP provider-enrollment rollback failed: " + "; ".join(errors)
+    report.mcp_errors.append(message)
+    report.warnings.append(message)
+
+
+def _persist_fresh_mcp_providers(
+    target: Path,
+    selected: tuple[Tool, ...],
+    snapshots: dict[Path, _NodeSnapshot],
+    report: InstallReport,
+) -> bool:
+    """Merge a successful fresh selection into Core's provider manifest."""
+    try:
+        add_providers(target, [provider.value for provider in selected])
+    except Exception as exc:
+        message = f"project MCP provider enrollment failed: {exc}"
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+        _restore_fresh_provider_transaction(snapshots, report)
+        return False
+    return True
+
+
+def _finish_fresh_provider_enrollment(
+    target: Path,
+    selected: tuple[Tool, ...] | None,
+    snapshots: dict[Path, _NodeSnapshot],
+    report: InstallReport,
+    *,
+    dry_run: bool,
+    install_mcp: bool,
+) -> None:
+    if selected is None or dry_run or not install_mcp:
+        return
+    if report.mcp_sync_failed:
+        _restore_fresh_provider_transaction(snapshots, report)
+        return
+    _persist_fresh_mcp_providers(target, selected, snapshots, report)
+
+
 def _record_torch_transaction_error(
     report: InstallReport, exc: Exception, *, configure_torch: bool
 ) -> None:
@@ -406,16 +513,30 @@ def _mcp_preview_projection(
 
         source_vaultspec = target / ".vaultspec"
         projected_vaultspec = projection / ".vaultspec"
-        if source_vaultspec.exists():
-            shutil.copytree(source_vaultspec, projected_vaultspec)
+        projected_vaultspec.mkdir()
+
+        for name in ("providers.json", "workspace.json", "mcp-ownership.json"):
+            _copy_preview_node(source_vaultspec / name, projected_vaultspec / name)
+
+        source_mcps = source_vaultspec / "mcps"
+        if _file_snapshot(source_mcps).kind is _SnapshotKind.DIRECTORY:
+            projected_mcps = projected_vaultspec / "mcps"
+            projected_mcps.mkdir()
+            with os.scandir(source_mcps) as entries:
+                for entry in entries:
+                    source = Path(entry.path)
+                    snapshot = _file_snapshot(source)
+                    if snapshot.kind not in {
+                        _SnapshotKind.FILE,
+                        _SnapshotKind.SYMLINK,
+                    }:
+                        continue
+                    _restore_file_snapshot(projected_mcps / entry.name, snapshot)
 
         for relative in (Path(".mcp.json"), Path(".codex") / "config.toml"):
             source = target / relative
-            if not source.exists():
-                continue
             destination = projection / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            _copy_preview_node(source, destination)
 
         seed_builtins(projected_vaultspec, force=force or upgrade)
         if not install_mcp:
@@ -424,6 +545,60 @@ def _mcp_preview_projection(
                     (projected_vaultspec / relative).unlink(missing_ok=True)
         persist_rag_mode(projection, mode)
         yield projection
+
+
+def _copy_preview_node(source: Path, destination: Path) -> None:
+    """Copy one required projection node without following its topology."""
+    snapshot = _file_snapshot(source)
+    if snapshot.kind in {_SnapshotKind.ABSENT, _SnapshotKind.DIRECTORY}:
+        return
+    _restore_file_snapshot(destination, snapshot)
+
+
+def _reconcile_project_mcp(
+    mcp_target: Path,
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    mode: InstallMode,
+    mode_flipped: bool,
+    fresh_providers: tuple[Tool, ...] | None,
+) -> None:
+    """Run Core's project MCP reconciliation against one concrete target."""
+    projected_mode_transition = dry_run and mode_flipped
+    try:
+        result = mcp_sync(
+            dry_run=dry_run and not projected_mode_transition,
+            force=force,
+            prune=True,
+            mode=mode,
+            provider="all",
+            scope="project",
+            target_dir=mcp_target,
+            enrolled=fresh_providers,
+        )
+    except Exception as exc:
+        logger.error("project MCP sync failed during install: %s", exc)
+        report.mcp_errors.append(f"project MCP sync failed: {exc}")
+        return
+    if dry_run:
+        _rewrite_preview_paths(result, mcp_target, target)
+    report.sync_results.append(result)
+    report.mcp_sync_results.append(result)
+    if dry_run and mode_flipped and not force:
+        migration = mcp_sync(
+            dry_run=False,
+            mode=mode,
+            force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
+            provider="all",
+            scope="project",
+            target_dir=mcp_target,
+            enrolled=fresh_providers,
+        )
+        _rewrite_preview_paths(migration, mcp_target, target)
+        report.sync_results.append(migration)
+        report.mcp_sync_results.append(migration)
 
 
 def _run_core_sync(
@@ -437,7 +612,13 @@ def _run_core_sync(
     install_mcp: bool,
     upgrade: bool,
     mode_flipped: bool,
+    fresh_providers: tuple[Tool, ...] | None,
 ) -> None:
+    manifest_snapshots = {
+        path: _file_snapshot(path)
+        for path in _fresh_provider_transaction_paths(target)
+        if fresh_providers is not None
+    }
     if "core" in skip:
         return
     if not dry_run:
@@ -479,37 +660,38 @@ def _run_core_sync(
             yield target
 
     with sync_target() as mcp_target:
-        projected_mode_transition = dry_run and mode_flipped
-        try:
-            result = mcp_sync(
-                dry_run=dry_run and not projected_mode_transition,
-                force=force,
-                prune=True,
-                mode=mode,
-                provider="all",
-                scope="project",
-                target_dir=mcp_target,
+        if dry_run:
+            Context().run(
+                _reconcile_project_mcp,
+                mcp_target,
+                target,
+                report,
+                dry_run,
+                force,
+                mode,
+                mode_flipped,
+                fresh_providers,
             )
-        except Exception as exc:
-            logger.error("project MCP sync failed during install: %s", exc)
-            report.mcp_errors.append(f"project MCP sync failed: {exc}")
         else:
-            if dry_run:
-                _rewrite_preview_paths(result, mcp_target, target)
-            report.sync_results.append(result)
-            report.mcp_sync_results.append(result)
-            if dry_run and mode_flipped and not force:
-                migration = mcp_sync(
-                    dry_run=False,
-                    mode=mode,
-                    force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
-                    provider="all",
-                    scope="project",
-                    target_dir=mcp_target,
-                )
-                _rewrite_preview_paths(migration, mcp_target, target)
-                report.sync_results.append(migration)
-                report.mcp_sync_results.append(migration)
+            _reconcile_project_mcp(
+                mcp_target,
+                target,
+                report,
+                dry_run,
+                force,
+                mode,
+                mode_flipped,
+                fresh_providers,
+            )
+
+    _finish_fresh_provider_enrollment(
+        target,
+        fresh_providers,
+        manifest_snapshots,
+        report,
+        dry_run=dry_run,
+        install_mcp=install_mcp,
+    )
 
 
 def _rewrite_preview_paths(result: object, projection: Path, target: Path) -> None:
@@ -607,6 +789,23 @@ def _prepare_mcp_transition(
     return True, mode_flipped
 
 
+def _run_mode_migration(
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    mode_flipped: bool,
+    force: bool,
+    dry_run: bool,
+    skip: set[str],
+) -> None:
+    """Repair only RAG's managed native entry after a real mode flip."""
+    if not mode_flipped or force or dry_run or {"core", "mcp"} & skip:
+        return
+    migration = migrate_rag_mcp_entry(mode)
+    report.sync_results.append(migration)
+    report.mcp_sync_results.append(migration)
+
+
 def install_run(
     path: Path | None = None,
     *,
@@ -697,12 +896,13 @@ def install_run(
         provisioning outcome on ``report.provision_outcome`` when
         provisioning ran.
     """
-    target = _resolve_target(path, bootstrap=not dry_run)
     skip = skip or set()
     action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")
-
-    report = InstallReport(action=action, target=target)
-    report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
+    target, report, fresh_mcp_providers, provider_intent_ready = (
+        _prepare_install_target(path, action=action, dry_run=dry_run, skip=skip)
+    )
+    if not provider_intent_ready:
+        return report
 
     # Resolve rag's provisioning mode through core's shared precedence chain
     # before seeding, so an impossible explicit request (dependency/dev mode
@@ -781,6 +981,7 @@ def install_run(
         install_mcp=install_mcp,
         upgrade=upgrade,
         mode_flipped=mcp_mode_flipped,
+        fresh_providers=fresh_mcp_providers,
     )
 
     # Mode-flip seam, the analogue of core's own force-managed pass: a plain
@@ -791,10 +992,14 @@ def install_run(
     # (nothing deployed to flip), when --force already rewrote every entry, or
     # when the mode did not flip - the common case the native sync already
     # handled above.
-    if mcp_mode_flipped and not force and not dry_run and not {"core", "mcp"} & skip:
-        migration = migrate_rag_mcp_entry(resolved.mode)
-        report.sync_results.append(migration)
-        report.mcp_sync_results.append(migration)
+    _run_mode_migration(
+        report,
+        resolved.mode,
+        mode_flipped=mcp_mode_flipped,
+        force=force,
+        dry_run=dry_run,
+        skip=skip,
+    )
 
     # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
     # D3): fires only when this run newly elects the full-leak dependency

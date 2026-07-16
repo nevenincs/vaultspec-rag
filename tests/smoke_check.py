@@ -147,12 +147,10 @@ def check_mcp_help() -> None:
 
 def check_installed_package_enrollment() -> None:
     """Run the installed CLI and verify both provider-native project targets."""
-    from vaultspec_core.core.manifest import write_manifest
     from vaultspec_core.core.mcps import mcp_status, mcp_uninstall
 
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-smoke-") as raw_target:
         target = Path(raw_target)
-        write_manifest(target, {"claude", "codex"})
         result = _run_script(
             "vaultspec-rag",
             [

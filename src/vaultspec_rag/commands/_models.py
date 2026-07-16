@@ -232,6 +232,8 @@ class UninstallReport:
     mcp_sync_results: list[Any] = field(default_factory=list)
     mcp_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    mcp_extra_action: str = "skipped"
+    mcp_extra_location: str = ""
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
     torch_config_conflicts: list[str] = field(default_factory=list)
     torch_direct_dep_action: str = "skipped"
@@ -256,6 +258,8 @@ class UninstallReport:
             ],
             "mcp_failed": self.mcp_sync_failed,
             "warnings": list(self.warnings),
+            "mcp_extra_action": self.mcp_extra_action,
+            "mcp_extra_location": self.mcp_extra_location,
             "torch_config_action": self.torch_config_action,
             "torch_config_conflicts": list(self.torch_config_conflicts),
             "torch_direct_dep_action": self.torch_direct_dep_action,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from contextvars import Context
 from pathlib import Path
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
@@ -24,13 +25,23 @@ from ._workspace import _init_core_context, _resolve_target
 logger = logging.getLogger(__name__)
 
 
-def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> None:
+def _remove_candidates(
+    target: Path,
+    dry_run: bool,
+    report: UninstallReport,
+    *,
+    skip_mcp: bool,
+) -> None:
     # Mirror install symmetrically: remove exactly the files that
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
     vaultspec_dir = target / ".vaultspec"
-    candidates = [vaultspec_dir / rel for rel in list_builtins()]
+    candidates = [
+        vaultspec_dir / rel
+        for rel in list_builtins()
+        if not (skip_mcp and rel.startswith("mcps/"))
+    ]
     for src_file in candidates:
         if not src_file.exists():
             continue
@@ -87,15 +98,79 @@ def _run_mcp_cleanup(
     dry_run: bool,
 ) -> None:
     """Remove only RAG-owned provider projections through Core's authority."""
-    result = mcp_uninstall(
-        target,
-        dry_run=dry_run,
-        provider="all",
-        scope="project",
-        names=frozenset({"vaultspec-rag"}),
-    )
+
+    def cleanup() -> object:
+        return mcp_uninstall(
+            target,
+            dry_run=dry_run,
+            provider="all",
+            scope="project",
+            names=frozenset({"vaultspec-rag"}),
+        )
+
+    result = Context().run(cleanup) if dry_run else cleanup()
     report.sync_results.append(result)
     report.mcp_sync_results.append(result)
+
+
+def _record_extra_failure(
+    report: UninstallReport,
+    action: str,
+    messages: list[str],
+) -> None:
+    report.mcp_extra_action = action
+    for detail in messages:
+        message = f"MCP extra: {detail}"
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+
+
+def _reverse_mcp_extra(
+    target: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Preflight and commit owned extra reversal before MCP teardown."""
+    try:
+        resolved_mode = resolve_rag_mode(target, None).mode
+        preview = reconcile_mcp_extra(
+            target / "pyproject.toml",
+            mode=resolved_mode,
+            enabled=False,
+            dry_run=True,
+        )
+    except Exception as exc:
+        logger.debug("MCP-extra reversal inspection failed during uninstall: %s", exc)
+        _record_extra_failure(report, "error", [f"reversal inspection failed: {exc}"])
+        return False
+
+    report.mcp_extra_action = preview.action
+    report.mcp_extra_location = preview.location
+    if preview.conflicts:
+        _record_extra_failure(report, "conflict", preview.conflicts)
+        return False
+    if dry_run:
+        return True
+
+    try:
+        committed = reconcile_mcp_extra(
+            target / "pyproject.toml",
+            mode=resolved_mode,
+            enabled=False,
+            dry_run=False,
+        )
+    except Exception as exc:
+        logger.debug("MCP-extra reversal failed during uninstall: %s", exc)
+        _record_extra_failure(report, "error", [f"reversal failed: {exc}"])
+        return False
+
+    report.mcp_extra_action = committed.action
+    report.mcp_extra_location = committed.location
+    if committed.conflicts:
+        _record_extra_failure(report, "conflict", committed.conflicts)
+        return False
+    return True
 
 
 def _run_core_cleanup(
@@ -217,27 +292,15 @@ def uninstall_run(
         _run_torch_config_uninstall(target=target, report=report, dry_run=True)
         return report
 
-    # Reverse only the dependency edit this installer owns.  The durable
-    # ownership record captures the exact original requirement and placement;
-    # ``reconcile_mcp_extra`` refuses to rewrite a drifted or unowned surface.
-    # Resolve before removing the bundled sources so legacy mode detection can
-    # still inspect the complete installed workspace when no declaration has
-    # been persisted yet.
-    try:
-        resolved_mode = resolve_rag_mode(target, None).mode
-        extra = reconcile_mcp_extra(
-            target / "pyproject.toml",
-            mode=resolved_mode,
-            enabled=False,
-            dry_run=dry_run,
-        )
-    except Exception as exc:
-        logger.error("MCP-extra reversal failed during uninstall: %s", exc)
-        report.warnings.append(f"MCP-extra reversal failed: {exc}")
-    else:
-        report.warnings.extend(f"MCP extra: {message}" for message in extra.conflicts)
+    mcp_skipped = "mcp" in skip
+    if not mcp_skipped and not _reverse_mcp_extra(
+        target,
+        report,
+        dry_run=dry_run,
+    ):
+        return report
 
-    _remove_candidates(target, dry_run, report)
+    _remove_candidates(target, dry_run, report, skip_mcp=mcp_skipped)
 
     _run_core_cleanup(
         target,
