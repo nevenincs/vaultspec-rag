@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-15'
+modified: '2026-07-16'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-adr]]"
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
@@ -1017,3 +1017,60 @@ S46 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CR
 findings**. Merge, PR approval, and publication remain blocked pending required-node
 projection remediation and a new independent audit that restarts every required gate
 from zero.
+
+## S48 final verification
+
+### core-atomic-writer-node-integrity | critical | Core can consume a pre-existing sibling node as its scratch file
+
+The S48 review started from clean topology-remediation commit `5a96aad` and rebuilt the
+exact release inventory: 2,261 collected tests, 437 excluded integration cases, and
+1,824 selected cases. The selected ledger remained non-overlapping: 1,614 top-level
+cases in 545, 546, and 523-test segments; 22 singleton and Qdrant cases; 54 remaining
+non-service integration cases; 134 selected service-ledger cases; and 177 native
+install cases.
+
+Before the first segment produced a terminal result, source review found that the
+published Core `atomic_write` constructs a sibling path from the destination suffix,
+the current process identifier, and `.tmp`, then writes that path before replacement.
+That name is knowable before the call and is not created exclusively. A pre-existing
+regular file, link, or other filesystem node at the same sibling path is therefore
+treated as Core's private scratch node. For a link, the byte write follows the link;
+the subsequent replacement can also install the link itself at the destination. The
+same helper is used by MCP JSON and ownership writes, and parallel PID-derived writers
+exist for generated ignore and attributes files.
+
+Recommendation: create an unpredictable same-directory temporary regular file
+exclusively, write through the returned descriptor, flush and close it, atomically
+replace the destination, and clean up only the node created by that invocation. Audit
+the parallel generated-file writers and add real regressions proving that pre-existing
+sibling regular files, links, broken links, and directories retain exact bytes and
+topology.
+
+### required-target-lifecycle-output-overlap | high | RAG validates linked targets against only a subset of lifecycle writes
+
+`inspect_required_mcp_topology` rejects a required link target when it overlaps another
+required MCP node or another captured required target. It does not compare that target
+with the full install and uninstall write inventory. The install path separately
+enumerates every bundled output through `list_builtins`, then seeds and synchronizes
+those files while the required-node topology transaction is materialized. A required
+link can consequently target a non-required bundled or provider output: both lifecycle
+subsystems then claim the same effective file, and the topology finish phase can
+replace the bytes written by the other subsystem.
+
+Recommendation: derive one authoritative lifecycle transaction-path inventory before
+mutation and reject any required link target that aliases any content node, lock node,
+or managed container in that inventory. Use the same inventory for install preview,
+install apply, and uninstall, with real overlap regressions requiring a fail-closed
+report and exact preservation of every operator-owned node.
+
+The initial 545-test process was interrupted before a terminal pytest summary and
+therefore receives zero credit. No later inventory segment, host acceptance, static
+check, Vaultspec check, build, wheel, public-Core smoke, or fresh installed-package gate
+was started. None is waived. Earlier focused evidence remains useful but cannot
+establish release readiness for this revision.
+
+S48 verdict: **FAIL — not release-ready; one unresolved CRITICAL finding and one
+unresolved HIGH finding**. Merge and publication remain blocked until Core publishes a
+corrective release, RAG rejects full-lifecycle target overlap and adopts that Core
+floor, and a fresh independent audit restarts all 1,824 selected tests and every other
+release gate from zero.
