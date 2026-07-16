@@ -45,6 +45,17 @@ def model_setup_timeout_seconds() -> float:
     return timeout
 
 
+def configured_service_model_ids() -> tuple[str, ...]:
+    """Return every model the resident service will load during startup."""
+    from ..config import get_config
+
+    cfg = get_config()
+    model_ids = [str(cfg.embedding_model), str(cfg.sparse_model)]
+    if bool(cfg.reranker_enabled):
+        model_ids.append(str(cfg.reranker_model))
+    return tuple(dict.fromkeys(model_id for model_id in model_ids if model_id))
+
+
 def ensure_model_snapshots(
     model_ids: Sequence[str],
     *,
@@ -250,8 +261,10 @@ def _setup_context(
     endpoint: str | None,
 ) -> str:
     """Render stable failure context for fixture diagnostics."""
+    from ..config import EnvVar
+
     effective_endpoint = endpoint or os.environ.get(
-        "HF_ENDPOINT",
+        EnvVar.HF_ENDPOINT.value,
         "https://huggingface.co",
     )
     effective_cache = str(cache_dir) if cache_dir is not None else "<default HF cache>"
@@ -289,9 +302,11 @@ def _worker(
         snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # stubs partially unknown
     )
 
+    from ..config import EnvVar
+
     for model_id in model_ids:
         effective_endpoint = endpoint or os.environ.get(
-            "HF_ENDPOINT",
+            EnvVar.HF_ENDPOINT.value,
             "https://huggingface.co",
         )
         metadata_url = (

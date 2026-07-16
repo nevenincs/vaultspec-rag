@@ -50,6 +50,7 @@ runner = CliRunner()
 # A port with nothing listening: _try_http_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59235"
+_JOB_COMPLETION_TIMEOUT_SECONDS = 120.0
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _JOB_ROW_RE = re.compile(
     r"^(?P<marker>[*!~ -]) (?P<time>\d\d:\d\d:\d\d|time not reported) "
@@ -199,18 +200,42 @@ def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
     _jobs.reset()
 
 
-async def _wait_for_terminal_jobs() -> dict[str, Any]:
-    """Wait for the real service registry to expose a terminal job."""
+async def _wait_for_terminal_jobs(
+    job_id: str,
+    *,
+    timeout: float = _JOB_COMPLETION_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Wait for one real service job to reach a terminal phase."""
     import asyncio
 
     result: dict[str, Any] = {}
-    for _ in range(50):
-        result = await admin.get_jobs()
-        jobs = result.get("jobs")
-        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+    last_job: dict[str, Any] | None = None
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             break
-        await asyncio.sleep(0.1)
-    return result
+        result = await admin.get_jobs(job_id=job_id, timeout=remaining)
+        jobs = result.get("jobs", [])
+        last_job = next(
+            (job for job in jobs if job.get("id") == job_id),
+            None,
+        )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if last_job is not None and last_job.get("phase") in (
+            "done",
+            "error",
+            "failed",
+        ):
+            return result
+        await asyncio.sleep(min(0.1, remaining))
+    msg = (
+        f"job {job_id} did not reach a terminal phase within {timeout:g}s; "
+        f"last_job={last_job!r}; last_response={result!r}"
+    )
+    raise AssertionError(msg)
 
 
 def _assert_mcp_job_snapshot(
@@ -292,7 +317,7 @@ async def test_get_jobs_returns_snapshot_shape(
     (tmp_path / ".vaultspec").mkdir(parents=True, exist_ok=True)
     mcp_job = await tools.reindex_vault(project_root=str(tmp_path))
 
-    result = await _wait_for_terminal_jobs()
+    result = await _wait_for_terminal_jobs(cast("str", mcp_job["job_id"]))
     _assert_mcp_job_snapshot(
         result,
         job_id=mcp_job["job_id"],
@@ -303,6 +328,22 @@ async def test_get_jobs_returns_snapshot_shape(
         project_root=tmp_path,
         mcp_job_id=mcp_job["job_id"],
     )
+
+
+@pytest.mark.subprocess_gpu
+async def test_terminal_job_wait_honours_subsecond_deadline(
+    live_service: tuple[int, Path],  # noqa: ARG001
+) -> None:
+    """Real filtered admin polling cannot overrun its caller's short budget."""
+    started = time.monotonic()
+    with pytest.raises(
+        AssertionError,
+        match=r"did not reach a terminal phase within 0\.05s",
+    ) as caught:
+        await _wait_for_terminal_jobs("nonexistent-job", timeout=0.05)
+    assert time.monotonic() - started < 1.0
+    assert "last_job=None" in str(caught.value)
+    assert "last_response=" in str(caught.value)
 
 
 @pytest.mark.subprocess_gpu

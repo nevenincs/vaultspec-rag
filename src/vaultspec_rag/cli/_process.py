@@ -293,11 +293,12 @@ def _heartbeat_age_seconds(status: dict[str, Any]) -> float | None:
     return delta.total_seconds()
 
 
-def _health_probe(port: int) -> dict[str, Any] | None:
+def _health_probe(port: int, timeout: float = 5.0) -> dict[str, Any] | None:
     """Probe the service health endpoint via HTTP GET.
 
     Args:
         port: TCP port to connect to on 127.0.0.1.
+        timeout: Maximum seconds for the HTTP request.
 
     Returns:
         Parsed JSON dict on success, a dict with ``status``
@@ -309,7 +310,7 @@ def _health_probe(port: int) -> dict[str, Any] | None:
     url = f"http://127.0.0.1:{port}/health"
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(url, timeout=5) as resp:
+        with opener.open(url, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # HTTP errors mean the server answered but unhealthy - surface
@@ -627,23 +628,112 @@ def _terminate_pid(pid: int) -> None:
 
     On Windows sends ``CTRL_BREAK_EVENT`` for graceful uvicorn
     shutdown, then force-kills if the process survives. On Unix
-    sends ``SIGTERM``, falling back to ``SIGKILL``.
+    sends ``SIGTERM``, falling back to ``SIGKILL``. Before signalling,
+    captures any Qdrant child whose managed identity is pinned to this
+    exact service-process incarnation. If forced daemon termination
+    bypasses lifespan cleanup, the validated child is reaped explicitly;
+    unrelated, attached, stale, or unverifiable Qdrant processes are never
+    targeted.
 
     Args:
         pid: Process ID to terminate.
 
     """
+    qdrant_pid = _owned_qdrant_pid(pid)
     if sys.platform == "win32":
         with contextlib.suppress(OSError):
             os.kill(pid, signal.CTRL_BREAK_EVENT)
     else:
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGTERM)
-    # Allow graceful drain before force-killing
-    time.sleep(2)
+    # Allow graceful drain before force-killing. On POSIX this CLI is normally
+    # the daemon's parent, so reap an exited child promptly instead of treating
+    # its zombie record as a live process that still needs SIGKILL.
+    if _wait_for_child_exit(pid, timeout=2.0):
+        _reap_owned_qdrant(qdrant_pid)
+        return
     if _cli._is_pid_alive(pid):
         with contextlib.suppress(OSError):
             if sys.platform == "win32":
                 os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows
             else:
                 os.kill(pid, signal.SIGKILL)
+        _wait_for_child_exit(pid, timeout=2.0)
+    _reap_owned_qdrant(qdrant_pid)
+
+
+def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
+    """Wait boundedly for process exit, reaping a POSIX child when applicable."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if sys.platform != "win32":
+            try:
+                waited, _status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                waited = 0
+            if waited == pid:
+                return True
+        if not _cli._is_pid_alive(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _owned_qdrant_pid(service_pid: int) -> int | None:
+    """Return the validated managed child owned by this service incarnation."""
+    from pathlib import Path
+
+    from ..config import get_config
+    from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
+    from ..qdrant_runtime._resolve import (
+        pid_image_is_qdrant,
+        pid_start_time,
+        probe_qdrant_endpoint,
+        read_qdrant_identity,
+    )
+
+    identity = read_qdrant_identity()
+    if (
+        identity is None
+        or identity.owner_pid != service_pid
+        or identity.owner_start_time <= 0.0
+        or identity.qdrant_pid <= 0
+    ):
+        return None
+    live_owner_start = pid_start_time(identity.owner_pid)
+    if (
+        live_owner_start <= 0.0
+        or abs(live_owner_start - identity.owner_start_time) >= 1.0
+    ):
+        return None
+    cfg = get_config()
+    expected_storage = Path(str(cfg.qdrant_storage_dir)).expanduser().resolve()
+    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+    if (
+        recorded_storage != expected_storage
+        or identity.version != QDRANT_SERVER_VERSION
+        or not pid_image_is_qdrant(identity.qdrant_pid)
+    ):
+        return None
+    probe = probe_qdrant_endpoint(identity.http_port)
+    if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
+        return None
+    return identity.qdrant_pid
+
+
+def _reap_owned_qdrant(qdrant_pid: int | None) -> None:
+    """Reap a previously validated child if it is still a Qdrant process."""
+    if qdrant_pid is None:
+        return
+    from ..qdrant_runtime._resolve import (
+        pid_image_is_qdrant,
+        reap_qdrant_orphan,
+    )
+
+    if not pid_image_is_qdrant(qdrant_pid):
+        return
+    if not reap_qdrant_orphan(qdrant_pid):
+        logger.warning(
+            "validated service-owned qdrant pid %d survived forced service stop",
+            qdrant_pid,
+        )

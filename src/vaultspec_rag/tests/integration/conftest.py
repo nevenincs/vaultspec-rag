@@ -8,6 +8,7 @@ indexing on top of vault indexing.
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -26,10 +27,74 @@ from ..._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
-from ...config import EnvVar, reset_config
+from ...config import EnvVar, get_config, reset_config
 from ...progress import NullProgressReporter
+from .._model_setup import (
+    configured_service_model_ids,
+    ensure_model_snapshots,
+    model_setup_timeout_seconds,
+    models_are_cached,
+)
 from ..conftest import _index_corpus
 from ..corpus import build_synthetic_vault
+
+
+def _service_output(log_path: Path) -> str:
+    """Return the complete retained service log, or an empty string."""
+    if not log_path.is_file():
+        return ""
+    return log_path.read_text(encoding="utf-8", errors="replace")
+
+
+def _service_diagnostics(log_path: Path) -> str:
+    """Return the bounded retained service-log tail."""
+    output = _service_output(log_path)
+    if not output:
+        return "service log was not created"
+    return "\n".join(output.splitlines()[-80:])
+
+
+def _remaining_startup_budget(
+    *,
+    started: float,
+    budget: float,
+    stages: list[str],
+    stage: str,
+) -> float:
+    """Return the remaining whole-startup budget or fail with stage context."""
+    elapsed = time.monotonic() - started
+    remaining = budget - elapsed
+    if remaining <= 0:
+        detail = "\n".join(stages) or "<no completed startup stages>"
+        raise AssertionError(
+            f"Service startup exceeded {budget:.3f}s before {stage}; "
+            f"elapsed={elapsed:.3f}s\nStartup stages:\n{detail}"
+        )
+    return remaining
+
+
+def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
+    """Prove local-only constructors ran without the configured HF endpoint."""
+    output = _service_output(log_path)
+    expected_markers = ["EmbeddingModel cache-only mode: True"]
+    if bool(get_config().reranker_enabled):
+        expected_markers.append("(cache-only=True)")
+    missing_markers = [marker for marker in expected_markers if marker not in output]
+    hf_endpoint = (
+        os.environ.get(EnvVar.HF_ENDPOINT.value) or "https://huggingface.co"
+    ).rstrip("/")
+    if missing_markers or hf_endpoint in output:
+        raise AssertionError(
+            "Service did not prove cache-only startup without Hugging Face "
+            f"metadata access; missing_markers={missing_markers!r}, "
+            f"endpoint_seen={hf_endpoint in output}, endpoint={hf_endpoint!r}\n"
+            f"Startup stages:\n{'\n'.join(stages)}\nService output:\n"
+            f"{_service_diagnostics(log_path)}"
+        )
+    return (
+        f"offline verification endpoint={hf_endpoint!r} metadata_requests=0 "
+        f"markers={expected_markers!r}"
+    )
 
 
 @pytest.fixture
@@ -93,7 +158,7 @@ def rag_components_with_code(
 def live_service(
     tmp_path: Path,
 ) -> Generator[tuple[int, Path]]:
-    """Provide a test-owned real service with bounded startup and shutdown."""
+    """Provide a cache-prepared, offline real service with bounded startup."""
     from ...cli import (
         _read_service_status,
         _spawn_service,
@@ -107,26 +172,79 @@ def live_service(
         _wait_for_exit,
     )
 
-    def diagnostics(log_path: Path) -> str:
-        if not log_path.is_file():
-            return "service log was not created"
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return "\n".join(lines[-80:])
+    startup_started = time.monotonic()
+    startup_budget = model_setup_timeout_seconds()
+    stages: list[str] = []
 
-    with _service_env(tmp_path):
+    def remaining_budget(stage: str) -> float:
+        return _remaining_startup_budget(
+            started=startup_started,
+            budget=startup_budget,
+            stages=stages,
+            stage=stage,
+        )
+
+    online_acquisition_env = {
+        EnvVar.HF_HUB_OFFLINE.value: None,
+        EnvVar.TRANSFORMERS_OFFLINE.value: None,
+    }
+    with _service_env(tmp_path, env_overrides=online_acquisition_env):
+        model_ids = configured_service_model_ids()
+        warm_cache = models_are_cached(model_ids)
+        stage_started = time.monotonic()
+        ensure_model_snapshots(
+            model_ids,
+            timeout_seconds=remaining_budget("model acquisition"),
+        )
+        elapsed = time.monotonic() - stage_started
+        stages.append(
+            "model acquisition "
+            f"state={'warm' if warm_cache else 'repaired'} "
+            f"elapsed={elapsed:.3f}s "
+            f"remaining={remaining_budget('service spawn'):.3f}s "
+            f"models={list(model_ids)!r} "
+            f"offline_env_cleared={list(online_acquisition_env)!r}"
+        )
+
+    offline_env = {
+        EnvVar.HF_HUB_OFFLINE.value: "1",
+        EnvVar.TRANSFORMERS_OFFLINE.value: "1",
+    }
+    with _service_env(tmp_path, env_overrides=offline_env):
         port = _get_ephemeral_port()
         log_path = tmp_path / "service.log"
+        stage_started = time.monotonic()
         pid = _spawn_service(
             port,
             log_path,
             watch=False,
         )
-        _write_service_status(pid, port)
         try:
+            _write_service_status(pid, port)
+            stages.append(
+                "service spawn "
+                f"elapsed={time.monotonic() - stage_started:.3f}s "
+                f"remaining={remaining_budget('health readiness'):.3f}s "
+                f"pid={pid} port={port} offline_env={offline_env!r}"
+            )
             try:
-                _poll_health(port, timeout=90.0)
+                stage_started = time.monotonic()
+                _poll_health(
+                    port,
+                    timeout=remaining_budget("health readiness"),
+                )
+                stages.append(
+                    "health readiness "
+                    f"elapsed={time.monotonic() - stage_started:.3f}s "
+                    f"total={time.monotonic() - startup_started:.3f}s"
+                )
+                stages.append(_verify_offline_service_startup(log_path, stages))
             except TimeoutError as exc:
-                message = f"{exc}\nService output:\n{diagnostics(log_path)}"
+                message = (
+                    f"{exc}\nStartup deadline={startup_budget:.3f}s\n"
+                    f"Startup stages:\n{'\n'.join(stages)}\n"
+                    f"Service output:\n{_service_diagnostics(log_path)}"
+                )
                 raise AssertionError(message) from exc
             yield port, tmp_path
         finally:
@@ -142,12 +260,13 @@ def live_service(
             if not _wait_for_exit(pid, timeout=15.0):
                 raise AssertionError(
                     f"Test-owned service process {pid} did not exit.\n"
-                    f"Service output:\n{diagnostics(log_path)}"
+                    f"Service output:\n{_service_diagnostics(log_path)}"
                 )
             if qdrant_pid is not None and not _wait_for_exit(qdrant_pid, timeout=15.0):
                 _terminate_pid(qdrant_pid)
                 _wait_for_exit(qdrant_pid, timeout=15.0)
                 raise AssertionError(
                     f"Test-owned Qdrant process {qdrant_pid} did not exit with its "
-                    f"service {pid}.\nService output:\n{diagnostics(log_path)}"
+                    f"service {pid}.\nService output:\n"
+                    f"{_service_diagnostics(log_path)}"
                 )

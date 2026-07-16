@@ -12,20 +12,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import select
+import subprocess
+import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
 
 from ...cli import (
     _is_pid_alive,
+    _port_is_listening,
     _read_service_status,
     _spawn_service,
     _status_file,
     _terminate_pid,
     _write_service_status,
     app,
+)
+from ...config import EnvVar
+from .._model_setup import (
+    configured_service_model_ids,
+    ensure_model_snapshots,
+    model_setup_timeout_seconds,
 )
 from ._helpers import (
     _get_ephemeral_port,
@@ -40,7 +50,234 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 
+def _wait_for_published_qdrant(
+    *,
+    service_pid: int,
+    timeout: float = 90.0,
+) -> tuple[int, int] | None:
+    """Wait for the warming daemon to publish its supervised child identity."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = _read_service_status()
+        raw_pid = status.get("qdrant_pid") if status else None
+        raw_port = status.get("qdrant_port") if status else None
+        valid_pid = (
+            isinstance(raw_pid, int) and not isinstance(raw_pid, bool) and raw_pid > 0
+        )
+        valid_port = (
+            isinstance(raw_port, int)
+            and not isinstance(raw_port, bool)
+            and raw_port > 0
+        )
+        if valid_pid and valid_port:
+            return cast("int", raw_pid), cast("int", raw_port)
+        if not _is_pid_alive(service_pid):
+            return None
+        time.sleep(0.1)
+    return None
+
+
+def _terminate_test_processes(pids: list[int]) -> None:
+    """Best-effort finalizer for only the process identifiers this test owns."""
+    for pid in pids:
+        if _is_pid_alive(pid):
+            _terminate_pid(pid)
+            _wait_for_exit(pid, timeout=15.0)
+
+
+def _wait_for_listeners_closed(*ports: int, timeout: float = 10.0) -> bool:
+    """Return whether every test-owned listener closes within the bound."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not any(_port_is_listening(port) for port in ports):
+            return True
+        time.sleep(0.1)
+    return not any(_port_is_listening(port) for port in ports)
+
+
+def _cleanup_forced_stop_harness(
+    service: subprocess.Popen[str],
+    qdrant_pid: int,
+) -> None:
+    """Clean only the real processes owned by the POSIX forced-stop harness."""
+    from ...qdrant_runtime._resolve import pid_alive, reap_qdrant_orphan
+
+    if _is_pid_alive(service.pid):
+        service.kill()
+        service.wait(timeout=15)
+    if pid_alive(qdrant_pid):
+        reap_qdrant_orphan(qdrant_pid)
+
+
+def _spawn_posix_qdrant_owner() -> tuple[subprocess.Popen[str], int, int]:
+    """Start a real SIGTERM-resistant service owner and supervised Qdrant."""
+    service = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import signal,time;"
+                "from vaultspec_rag.qdrant_runtime import "
+                "start_supervised_from_config;"
+                "supervisor=start_supervised_from_config();"
+                "signal.signal(signal.SIGTERM,lambda *_:None);"
+                "print("
+                "f'ready {supervisor.pid} {supervisor.http_port}',"
+                "flush=True);"
+                "time.sleep(60)"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    assert service.stdout is not None
+    output: list[str] = []
+    deadline = time.monotonic() + 90.0
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select(
+            [service.stdout],
+            [],
+            [],
+            max(0.0, deadline - time.monotonic()),
+        )
+        if not readable:
+            break
+        line = service.stdout.readline()
+        if not line:
+            break
+        output.append(line.rstrip())
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "ready":
+            return service, int(parts[1]), int(parts[2])
+    raise AssertionError(
+        "real POSIX Qdrant owner did not publish readiness\n" + "\n".join(output)
+    )
+
+
 # -- Tests -------------------------------------------------------------------
+
+
+def test_poll_health_honours_subsecond_deadline() -> None:
+    """A real unreachable endpoint cannot overrun the caller's short budget."""
+    port = _get_ephemeral_port()
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match=r"not ready after 0\.050s"):
+        _poll_health(port, timeout=0.05)
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.subprocess_gpu
+def test_startup_expiry_reaps_pre_readiness_qdrant(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """An expired real startup leaves no service, Qdrant process, or listener."""
+    acquisition_env = {
+        EnvVar.HF_HUB_OFFLINE.value: None,
+        EnvVar.TRANSFORMERS_OFFLINE.value: None,
+    }
+    with _service_env(tmp_path, env_overrides=acquisition_env):
+        ensure_model_snapshots(
+            configured_service_model_ids(),
+            timeout_seconds=model_setup_timeout_seconds(),
+        )
+
+    offline_env = {
+        EnvVar.HF_HUB_OFFLINE.value: "1",
+        EnvVar.TRANSFORMERS_OFFLINE.value: "1",
+    }
+    with _service_env(tmp_path, env_overrides=offline_env):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "startup-expiry.log"
+        pid = _spawn_service(port, log_path, watch=False)
+        owned_pids = [pid]
+        request.addfinalizer(lambda: _terminate_test_processes(owned_pids))
+        _write_service_status(pid, port)
+        identity = _wait_for_published_qdrant(service_pid=pid)
+        output = (
+            log_path.read_text(encoding="utf-8", errors="replace")
+            if log_path.is_file()
+            else "<no service log>"
+        )
+        assert identity is not None, (
+            "Qdrant identity was not published during startup.\n"
+            f"Service output:\n{output}"
+        )
+        qdrant_pid, qdrant_port = identity
+        owned_pids.append(qdrant_pid)
+        assert _is_pid_alive(qdrant_pid)
+        assert _port_is_listening(qdrant_port)
+
+        with pytest.raises(TimeoutError, match=r"not ready after 0\.050s"):
+            _poll_health(port, timeout=0.05)
+
+        _terminate_pid(pid)
+        assert _wait_for_exit(pid, timeout=30.0), (
+            f"startup-expired service process {pid} did not exit"
+        )
+        assert _wait_for_exit(qdrant_pid, timeout=30.0), (
+            f"startup-expired Qdrant process {qdrant_pid} did not exit"
+        )
+        assert _wait_for_listeners_closed(port, qdrant_port)
+
+
+if sys.platform != "win32":
+
+    def test_posix_forced_stop_reaps_validated_detached_qdrant(
+        request: pytest.FixtureRequest,
+        tmp_path: Path,
+    ) -> None:
+        """A SIGTERM-resistant owner cannot strand its real detached Qdrant."""
+        with _service_env(tmp_path):
+            service, qdrant_pid, qdrant_port = _spawn_posix_qdrant_owner()
+            request.addfinalizer(
+                lambda: _cleanup_forced_stop_harness(service, qdrant_pid)
+            )
+            assert _port_is_listening(qdrant_port)
+
+            _terminate_pid(service.pid)
+
+            assert service.wait(timeout=15.0) is not None
+            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert _wait_for_listeners_closed(qdrant_port)
+
+    def test_posix_forced_stop_rejects_unwitnessed_qdrant_identity(
+        request: pytest.FixtureRequest,
+        tmp_path: Path,
+    ) -> None:
+        """A legacy PID-only identity cannot authorize forced child reaping."""
+        from ...config import get_config
+        from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
+        from ...qdrant_runtime._resolve import (
+            reap_qdrant_orphan,
+            write_qdrant_identity,
+        )
+
+        with _service_env(tmp_path):
+            service, qdrant_pid, qdrant_port = _spawn_posix_qdrant_owner()
+            request.addfinalizer(
+                lambda: _cleanup_forced_stop_harness(service, qdrant_pid)
+            )
+            assert _port_is_listening(qdrant_port)
+            write_qdrant_identity(
+                storage_path=str(get_config().qdrant_storage_dir),
+                version=QDRANT_SERVER_VERSION,
+                owner_pid=service.pid,
+                http_port=qdrant_port,
+                qdrant_pid=qdrant_pid,
+                owner_start_time=0.0,
+            )
+
+            _terminate_pid(service.pid)
+
+            assert service.wait(timeout=15.0) is not None
+            assert _is_pid_alive(qdrant_pid)
+            assert _port_is_listening(qdrant_port)
+            assert reap_qdrant_orphan(qdrant_pid)
+            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert _wait_for_listeners_closed(qdrant_port)
 
 
 @pytest.mark.subprocess_gpu

@@ -2581,3 +2581,245 @@ S65 verdict: **FAIL — not release-ready; one unresolved MEDIUM real-service
 readiness-budget finding and no CRITICAL or HIGH findings**. Pull request
 approval, merge, tag, publication, and release remain blocked pending
 remediation and a fresh independent audit from one clean commit.
+
+## S66 model-aware service-startup correction
+
+S66 closes the S65 MEDIUM readiness-budget finding by reusing the S56 model
+snapshot contract at the real service-fixture boundary. The fixture now derives
+the resident service's complete eager model set from production configuration:
+the dense encoder, sparse encoder, and enabled reranker. It verifies complete
+local snapshots first and routes any cold or interrupted cache through the
+existing killable online acquisition worker.
+
+One explicit `VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT` budget covers cache
+verification or repair, daemon spawn, and health readiness. The fixture records
+the model identifiers, warm or repaired cache state, elapsed and remaining
+time, process identifier, port, offline environment, and retained worker or
+service output. It no longer applies the unrelated fixed 90-second readiness
+limit.
+
+After model preparation, and only then, the test daemon receives
+`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. Production
+`ServiceRegistry` construction now honours those supported variables by
+passing `local_files_only=True` to both `EmbeddingModel` and `CrossEncoder`.
+When neither variable is set, product construction remains online-capable.
+The fixture verifies the cache-only log markers and rejects any appearance of
+the configured Hugging Face endpoint during readiness.
+
+The exact S65 failed selector passed four remediation executions. Three
+consecutive runs completed with fixture setup times of 52.29, 30.48, and 26.25
+seconds; the final endpoint-exclusion run completed setup in 17.17 seconds.
+Each real vault reindex job reached its terminal phase and every test-owned
+service and Qdrant process exited.
+
+The complete jobs registry passed 9 of 9. The adjacent service-jobs group first
+reported 60 passes and one failure because a test helper returned the latest
+snapshot after a fixed five-second poll even when the submitted job was still
+running.
+
+A formal independent review then found three MEDIUM contract holes and no
+CRITICAL or HIGH findings:
+
+- The cleanup guard began after post-spawn status and deadline work, so an early
+  failure could bypass service and Qdrant teardown.
+- Health polling used a fixed five-second request timeout, did not cap sleeps by
+  the remaining whole-startup budget, and could credit readiness observed after
+  expiry.
+- The adjacent job helper used broad independently timed administration calls,
+  did not pass the exact `job_id`, and could credit a terminal result received
+  after its 120-second deadline.
+
+S66 moved the cleanup guard immediately after successful spawn. Health requests
+and sleeps now use the remaining startup budget and reject post-deadline ready
+responses. The job helper sends the exact identifier, bounds each real
+administration request by the remaining job budget, rejects late terminal
+responses, and retains the last exact job plus full response on timeout.
+
+Before the second review, the exact formerly failed selector and the complete
+9-case jobs registry passed again. The complete service-jobs group passed 62 of
+62, including a real filtered-administration 50-millisecond deadline regression
+whose call completed in 0.057 seconds. The direct service lifecycle then passed
+9 of 9, including a real unreachable-health 50-millisecond deadline regression
+whose call completed in 0.074 seconds.
+
+A fresh independent re-review confirmed all three deadline and cleanup findings
+closed, then identified three additional MEDIUM edge cases and no CRITICAL or
+HIGH findings:
+
+- The alleged online repair phase inherited ambient `HF_HUB_OFFLINE` and
+  `TRANSFORMERS_OFFLINE`, so a cold cache could fail in offline mode before
+  reaching its configured acquisition endpoint.
+- Offline log verification required the reranker marker even when effective
+  configuration disabled the reranker.
+- Qdrant started before model warming but reached `service.json` only through
+  the post-model initial heartbeat. A pre-yield failure or cancellation could
+  therefore leave no cleanup PID, and the lifespan failure guard released only
+  the machine lock rather than stopping the active supervisor.
+
+S66 now gives `_service_env` explicit variable-removal semantics. The online
+preparation context removes both supported offline switches and restores their
+prior values afterward; the daemon context alone sets them to `1`. A real
+cold-cache loopback regression began with both variables set in the parent and
+proved that the bounded worker still reached the configured endpoint.
+
+Offline verification now derives its reranker marker requirement from the same
+effective configuration used to select eager models. A real
+`VAULTSPEC_RAG_RERANKER_ENABLED=0` regression prepared only dense and sparse
+models and passed with no reranker marker.
+
+The daemon now publishes Qdrant PID, liveness, and port immediately after
+supervised startup and before model warming. Its pre-yield failure or
+cancellation guard stops and clears any active owned supervisor before
+releasing the machine lock. A real startup-expiry regression observed the
+published Qdrant identity and listener during warming, expired a 50-millisecond
+readiness budget, terminated startup, and proved the service process, Qdrant
+process, service listener, and Qdrant listener were absent.
+
+After these corrections the exact formerly failed selector and the full jobs
+registry passed 9 of 9 with the real service fixture completing in 17.14 and
+16.86 seconds. The complete service-jobs group passed 62 of 62. The direct
+service lifecycle passed 10 of 10 in 227.01 seconds, including the
+startup-expiry case. Server passed 120 of 120 and configuration plus real
+model-setup regressions passed 56 of 56. The four S56 intent-ranking assertions
+passed again against all 1,119 documents; their real bounded worker completed
+in 102.23 seconds.
+
+Service registry passed 37 of 37, server 120 of 120, and the final configuration
+plus real model-setup group passed 56 of 56. The four S56 intent-ranking
+assertions passed against all 1,119 pre-S66 corpus documents; their bounded real
+worker completed in 102.23 seconds. Existing delayed-504,
+persistent-metadata-failure, retained final URL and response, and
+incomplete-sharded-cache cases passed.
+
+The final review pass also found that `_service_env` began its restoration guard
+after status, storage, port, and override mutation. A real context-entry failure
+could therefore leak isolated values or removed offline switches into later
+tests. The restoration guard now encloses every mutation, managed-binary mirror,
+configuration reset, and yield step, and both configuration reset paths run
+during teardown. A real invalid environment-key entry failure passed after
+proving every inherited service and Hugging Face value was restored.
+
+The final cross-platform review then found one further MEDIUM and no CRITICAL or
+HIGH findings. On POSIX, Qdrant starts in its own session. Uvicorn can remain
+inside non-cancellable model warming after `SIGTERM`, while `_terminate_pid`
+escalates to `SIGKILL` after two seconds. The daemon could therefore die before
+its lifespan failure guard ran and leave the detached Qdrant alive.
+
+The production stop path now captures a Qdrant child only when the managed
+identity has a positive creation-time witness pinned to the exact live service
+PID, its recorded storage resolves to configured managed storage, its recorded
+and live versions equal the pinned Qdrant version, its recorded loopback port is
+ready, and the target PID image is Qdrant. The path reads the live owner start
+time directly and requires a positive value matching the recorded witness;
+legacy PID-only identities fail closed even though the general detection helper
+retains backward-compatible fallback behavior. After forced service termination
+it revalidates and reaps only that captured child. Unrelated, attached, stale,
+storage-mismatched, port-mismatched, version-skewed, or unverifiable processes
+fail closed. POSIX service-child exit is also reaped with bounded `waitpid`, so
+an exited zombie is not misreported as a running daemon. Windows retains the
+existing kill-on-close Job Object.
+
+A fresh review found one MEDIUM in the first correction: it reused the general
+owner helper whose legacy behavior accepts a missing creation-time witness by
+PID liveness alone. The strict forced-stop capture now rejects a missing or zero
+witness and independently requires a readable matching live start time.
+
+The first combined rerun recreated the isolated WSL environment and removed its
+pinned Qdrant binary, ran the actual model startup concurrently with the Windows
+GPU lifecycle, and exposed that real Qdrant logs can precede the focused
+harness's readiness line. Those three WSL selectors failed without leaving a
+test-owned process or listener. The pinned 1.18.2 binary was restored, the
+reader was made tolerant of preceding real startup logs, and the platform gates
+were rerun sequentially.
+
+Three real WSL gates then passed. The actual cached-model resident service
+started a real detached Qdrant, published its identity during warming, expired
+the 50-millisecond readiness budget, and left both processes and both listeners
+absent. A positive focused POSIX gate launched real Qdrant supervision inside a
+SIGTERM-resistant service owner, forced the two-second escalation path, and
+again proved the service, Qdrant, and listener absent. A negative focused gate
+rewrote only the real managed identity witness to zero, forced service
+termination, and proved the Qdrant PID and listener remained unchanged until
+explicit test-owned cleanup. The complete equivalent Windows lifecycle passed
+10 of 10 again.
+
+Repository Ruff lint, Ty, strict BasedPyright, every complexity threshold,
+affected-file formatting, and `git diff --check` passed. The full-tree format
+check still identifies only the pre-existing untouched
+`src/vaultspec_rag/cli/_preprocess.py` formatting drift. No dependency or lock
+file changed and no test double, patch, monkeypatch, skip, or xfail was added.
+Published `vaultspec-core==0.1.45` reported clean structure, frontmatter,
+modified stamps, annotations, Markdown, links, placeholders, orphans,
+references, and encoding. Its 25 warnings are existing feature-index,
+research-reference, and legacy ADR-status corpus warnings.
+
+A fresh independent final review inspected the strict creation-witness capture,
+the real witnessed and zero-witness POSIX paths, the preserved Windows Job
+Object path, and every earlier S66 finding. It returned PASS with no actionable
+finding. A final process sweep found no test-owned Windows or WSL service or
+Qdrant process.
+
+S66 verdict: **PASS — the S65 real-service startup harness defect and every
+subsequent deadline, cleanup, offline-mode, configuration, and cross-platform
+ownership finding are closed by real behavior.**
+
+S66 closes the S65 MEDIUM finding as corrective evidence. It earns no S67
+release credit and does not authorize a pull request, approval, merge, tag,
+publication, or release.
+
+## S67 final independent platform release-audit mandate
+
+S67 is open. It must audit one clean commit containing the complete S66
+correction and begin with zero credit. No S65 or S66 collection count, runtime
+result, static result, package result, provider result, or waiver carries
+forward.
+
+Recount the clean candidate's complete `.vault` Markdown corpus. Recollect the
+Windows and exact-archive POSIX displayed-node-ID ledgers and reconcile the
+unique `M`, `P`, `J`, and `F` sets from zero. Preserve the published Core
+dependency boundary, locked environment checks, real POSIX FIFO execution, and
+the complete stop-on-first-failure order established by S65.
+
+Audit the complete S54, S56, and S66 contracts independently:
+
+- Real job completion uses the established 120-second service-job deadline and
+  reports the exact non-terminal snapshot on expiry.
+- The full-corpus S56 worker owns one 600-second boundary across copy, model
+  acquisition and construction, indexing, labeled searches, serialization, and
+  cleanup.
+- Cache completeness requires configuration, tokenizer data, and complete
+  weights, including every shard named by a valid index.
+- Cold or interrupted caches use bounded real online repair with final URL,
+  response, and retained output diagnostics.
+- Ambient offline switches are removed for repair, restored afterward, and set
+  only for the daemon; a cold real loopback acquisition proves the separation.
+- Every eager resident-service model is complete before spawn.
+- The test daemon enters supported offline/cache-only mode only after repair,
+  performs no Hugging Face metadata request during readiness, proves dense and
+  sparse local-only construction, and requires the reranker marker exactly when
+  effective configuration enables it.
+- One explicit budget covers service cache preparation, spawn, and readiness;
+  failure diagnostics retain all completed stages, timings, model identifiers,
+  process identity, port, environment, and output.
+- Qdrant PID and port are published before model warming, and pre-yield failure
+  or cancellation stops and clears the owned supervisor before releasing the
+  singleton lock.
+- POSIX forced service termination validates managed identity, service
+  incarnation, storage, ready port, pinned version, and Qdrant image before
+  reaping a detached child; real WSL startup-warming and SIGTERM-resistant
+  owner cases leave no process or listener.
+- Every test-owned service, Qdrant child, listener, and GPU owner is absent
+  after success or forced expiry.
+
+Before broader runtime credit, repeat the exact formerly failed job selector,
+the full jobs registry, the complete service-jobs and service-lifecycle groups,
+and every S56 model and intent-ranking case. Then run the complete Windows and
+POSIX campaigns, repository static and type checks, complexity and lock gates,
+Vaultspec and provider checks, wheel and source-distribution inspection,
+fresh-artifact smoke tests, published-Core resolution, installed Claude and
+Codex recognition, repeat-install idempotence, `--no-mcp`, selective
+unenrollment, and uninstall from the same clean commit.
+
+S67 may report release readiness only after every required gate terminates
+successfully. This open mandate does not authorize a pull request, approval,
+merge, tag, publication, or release.

@@ -5,13 +5,21 @@ from __future__ import annotations
 import contextlib
 import http.server
 import json
+import os
 import threading
 import time
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ._model_setup import ensure_model_snapshots, models_are_cached
+from ..config import EnvVar
+from ._model_setup import (
+    configured_service_model_ids,
+    ensure_model_snapshots,
+    models_are_cached,
+)
+from .integration._helpers import _service_env
+from .integration.conftest import _verify_offline_service_startup
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -22,6 +30,7 @@ class _PersistentGatewayTimeout(http.server.BaseHTTPRequestHandler):
     """Delay if requested, then return a real HTTP 504."""
 
     response_delay_seconds = 0.0
+    requests_received = 0
 
     def do_HEAD(self) -> None:
         self._gateway_timeout()
@@ -30,6 +39,7 @@ class _PersistentGatewayTimeout(http.server.BaseHTTPRequestHandler):
         self._gateway_timeout()
 
     def _gateway_timeout(self) -> None:
+        type(self).requests_received += 1
         time.sleep(type(self).response_delay_seconds)
         self.send_response(http.HTTPStatus.GATEWAY_TIMEOUT)
         self.send_header("Content-Type", "text/plain")
@@ -47,10 +57,20 @@ class _ThreadingGatewayTimeoutServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
 
+def test_configured_service_models_cover_eager_startup() -> None:
+    """The bounded preparation set includes every default eager service model."""
+    assert configured_service_model_ids() == (
+        "Qwen/Qwen3-Embedding-0.6B",
+        "naver/splade-v3",
+        "BAAI/bge-reranker-v2-m3",
+    )
+
+
 @contextlib.contextmanager
 def _gateway_timeout_endpoint(*, response_delay_seconds: float) -> Generator[str]:
     """Serve persistent metadata failures on a real loopback HTTP endpoint."""
     _PersistentGatewayTimeout.response_delay_seconds = response_delay_seconds
+    _PersistentGatewayTimeout.requests_received = 0
     server = _ThreadingGatewayTimeoutServer(
         ("127.0.0.1", 0),
         _PersistentGatewayTimeout,
@@ -65,6 +85,95 @@ def _gateway_timeout_endpoint(*, response_delay_seconds: float) -> Generator[str
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_online_repair_clears_ambient_offline_mode(tmp_path: Path) -> None:
+    """An offline parent still reaches the real acquisition endpoint."""
+    offline_keys = (
+        EnvVar.HF_HUB_OFFLINE.value,
+        EnvVar.TRANSFORMERS_OFFLINE.value,
+    )
+    previous = {key: os.environ.get(key) for key in offline_keys}
+    for key in offline_keys:
+        os.environ[key] = "1"
+    model_id = "vaultspec-regression/ambient-offline-model"
+    try:
+        with (
+            _gateway_timeout_endpoint(response_delay_seconds=0) as endpoint,
+            _service_env(
+                tmp_path / "service-env",
+                env_overrides=dict.fromkeys(offline_keys),
+            ),
+            pytest.raises(RuntimeError) as caught,
+        ):
+            ensure_model_snapshots(
+                (model_id,),
+                timeout_seconds=10,
+                cache_dir=tmp_path / "hf-cache",
+                endpoint=endpoint,
+            )
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    assert _PersistentGatewayTimeout.requests_received > 0
+    assert "504" in str(caught.value)
+    assert endpoint in str(caught.value)
+    assert all(os.environ.get(key) == previous[key] for key in offline_keys)
+
+
+def test_service_env_entry_failure_restores_every_mutation(tmp_path: Path) -> None:
+    """A real context-entry failure restores inherited service and HF values."""
+    inherited = {
+        "VAULTSPEC_RAG_STATUS_DIR": "ambient-status",
+        EnvVar.QDRANT_STORAGE_DIR.value: "ambient-storage",
+        EnvVar.QDRANT_PORT.value: "28765",
+        EnvVar.HF_HUB_OFFLINE.value: "1",
+        EnvVar.TRANSFORMERS_OFFLINE.value: "1",
+    }
+    previous = {key: os.environ.get(key) for key in inherited}
+    os.environ.update(inherited)
+    overrides: dict[str, str | None] = {
+        EnvVar.HF_HUB_OFFLINE.value: None,
+        EnvVar.TRANSFORMERS_OFFLINE.value: None,
+        "INVALID\0ENV": "entry failure",
+    }
+    try:
+        with (
+            pytest.raises(ValueError),
+            _service_env(tmp_path / "service-env", env_overrides=overrides),
+        ):
+            pytest.fail("invalid environment key should fail during context entry")
+        assert all(os.environ.get(key) == value for key, value in inherited.items())
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_offline_verification_omits_disabled_reranker_marker(
+    tmp_path: Path,
+) -> None:
+    """Effective disabled-reranker config requires only the dense marker."""
+    log_path = tmp_path / "service.log"
+    log_path.write_text("EmbeddingModel cache-only mode: True\n", encoding="utf-8")
+    with _service_env(
+        tmp_path / "service-env",
+        env_overrides={EnvVar.RERANKER_ENABLED.value: "0"},
+    ):
+        assert configured_service_model_ids() == (
+            "Qwen/Qwen3-Embedding-0.6B",
+            "naver/splade-v3",
+        )
+        detail = _verify_offline_service_startup(log_path, [])
+
+    assert "EmbeddingModel cache-only mode: True" in detail
+    assert "(cache-only=True)" not in detail
 
 
 def test_persistent_metadata_failure_cannot_hang_model_fixture(

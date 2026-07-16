@@ -124,9 +124,28 @@ class EnvVar(StrEnum):
 
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
+    HF_ENDPOINT = "HF_ENDPOINT"
     HF_HOME = "HF_HOME"
+    HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
+    TRANSFORMERS_OFFLINE = "TRANSFORMERS_OFFLINE"
     DISABLE_SAFETENSORS_CONVERSION = "DISABLE_SAFETENSORS_CONVERSION"
+
+
+def hf_cache_only() -> bool:
+    """Return whether supported Hugging Face offline mode is enabled.
+
+    ``HF_HUB_OFFLINE`` is the authoritative Hub switch. Transformers also
+    documents ``TRANSFORMERS_OFFLINE`` for cache-only model loading, so honour
+    either value and pass ``local_files_only=True`` explicitly to model
+    constructors. Normal product construction remains online-capable when both
+    variables are unset.
+    """
+    enabled_values = {"1", "true", "yes", "on"}
+    return any(
+        os.environ.get(var.value, "").strip().lower() in enabled_values
+        for var in (EnvVar.HF_HUB_OFFLINE, EnvVar.TRANSFORMERS_OFFLINE)
+    )
 
 
 # Mapping from _RAG_DEFAULTS key → EnvVar member for env override lookup.
