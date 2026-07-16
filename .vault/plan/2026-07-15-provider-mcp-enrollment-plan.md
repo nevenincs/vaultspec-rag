@@ -78,7 +78,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S50` - Repeat the complete post-remediation release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`.
 - [x] `P03.S51` - Accumulate requested project diagnostics and align filesystem failure tests with Core 0.1.45; `src/vaultspec_rag/commands/_install.py and real install regressions`.
 - [x] `P03.S52` - Repeat the complete post-correction release review and every gate from zero; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`.
-- [ ] `P03.S53` - Repeat every release-review gate from zero and credit the POSIX-only FIFO item on Linux CI; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; Windows test items: 2,269 total, 1,832 selected, 437 excluded; POSIX test items: 2,270 total, 1,833 selected, 437 excluded`.
+- [x] `P03.S53` - Repeat every release-review gate from zero and credit the POSIX-only FIFO item on Linux CI; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; Windows test items: 2,269 total, 1,832 selected, 437 excluded; POSIX test items: 2,270 total, 1,833 selected, 437 excluded`.
 
 ## Description
 

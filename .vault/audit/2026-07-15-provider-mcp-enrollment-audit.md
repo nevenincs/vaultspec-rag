@@ -1192,3 +1192,57 @@ release gate from zero. Campaign closure requires Windows evidence for its 1,832
 ledger and Linux evidence that includes the POSIX-only FIFO item in the 1,833-item
 ledger. No S52 execution, static-analysis, packaging, provider, host-recognition, or
 publication credit carries forward.
+
+## S53 final verification
+
+### selected-job-completion-window | medium | Real reindex jobs outlive the selected test's fixed polling budget
+
+The S53 audit started from clean commit `d7d2e16` with no credit carried from S50 or
+S52. Windows collection reproduced the corrected ledger exactly: 2,269 total test
+items, 1,826 selected by `not integration`, 443 excluded by that marker expression,
+and six promoted S49 overlap items, for 1,832 selected and 437 excluded.
+
+The POSIX capability gate used a git archive of the exact commit in WSL2 Ubuntu, an
+isolated Python 3.13 `uv` environment, and public `vaultspec-core 0.1.45`. The
+`test_install_torch_config.py` module collected 60 items on POSIX rather than the 59
+Windows items, establishing the platform delta, and the real
+`test_install_fifo_project_surface_fails_without_blocking` selector passed once against
+an actual `os.mkfifo` node without a skip, fake, mock, patch, or monkeypatch. Together
+with the exact Windows collection, this confirms the corrected POSIX arithmetic of
+2,270 total, 1,833 selected, and 437 excluded items.
+
+The first Windows segment attempted all 1,826 marker-selected items together. Before a
+terminal summary, both
+`test_reindex_vault_records_finished_tool_job` and
+`test_reindex_codebase_records_finished_tool_job` reported red, so the process was
+stopped under the release-gate rule. The vault selector then reproduced independently:
+the real service accepted the reindex request and exposed its job, but the test polls
+only fifty times at 0.1-second intervals and observed `phase="running"` after its
+five-second budget.
+
+The retained service log proves this was neither a missing job nor a silent service
+failure. The vault job started at `09:03:01.815`, its real incremental index reported a
+5,033-millisecond result, and the job reached `phase="done"` at `09:03:08.989`, roughly
+7.2 seconds after submission and after the assertion had already failed. The selected
+test therefore encodes a completion deadline shorter than behavior exercised on the
+supported Windows service path. The aggregate has no terminal summary and receives no
+test credit; the independently red selector is the decisive gate.
+
+Recommendation: poll the real job to a terminal phase using a bounded deadline aligned
+with the service's supported administrative timeout, preserve the final job payload for
+diagnostics, and require both vault and codebase selectors plus the complete selected
+segment to terminate green. Do not replace the service, index, or job registry with a
+test double.
+
+The six promoted overlap items, remaining Windows selections, static and type checks,
+complexity and diff gates, lock and Vaultspec checks, provider-artifact validation,
+wheel and source-distribution builds, public-Core smoke, and fresh installed-package
+Claude and Codex acceptance were stopped and receive neither credit nor waiver. The
+POSIX FIFO pass is recorded as bounded platform evidence but cannot make the incomplete
+Windows campaign release-ready. The stale AEAT workspace registration receives no
+credit. No production or test file changed during S53.
+
+S53 verdict: **FAIL — not release-ready; one unresolved MEDIUM release-gate finding and
+no CRITICAL or HIGH findings**. Merge, PR approval, and publication remain blocked
+until the real job-completion tests are made deterministic and a new independent audit
+restarts both platform ledgers and every later gate from zero.

@@ -58,6 +58,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S50]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S51]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S52]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S53]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -134,6 +135,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S50` - Repeat the complete post-remediation release review and every gate from zero
 - `2026-07-15-provider-mcp-enrollment-P03-S51` - Accumulate requested project diagnostics and align filesystem failure tests with Core 0.1.45
 - `2026-07-15-provider-mcp-enrollment-P03-S52` - Repeat the complete post-correction release review and every gate from zero
+- `2026-07-15-provider-mcp-enrollment-P03-S53` - Repeat every release-review gate from zero and credit the POSIX-only FIFO item on Linux CI
 
 ### plan
 
