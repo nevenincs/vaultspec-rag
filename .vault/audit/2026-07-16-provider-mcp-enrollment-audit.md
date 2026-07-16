@@ -82,3 +82,101 @@ S54 verdict: **PASS — no actionable findings after resolution of the MEDIUM
 deadline-enforcement finding**. This verdict is limited to the job-completion test
 correction and does not grant release readiness or waive the complete platform-aware
 release campaign.
+
+## S56 bounded fixture review
+
+### intent-corpus-gold-selection | high | Gold-aware corpus narrowing invalidates the established ranking gate
+
+The process boundary correctly bounds the complete child-side model construction,
+indexing, reranker load, and query execution, and the real GPU selector and four-test
+module terminate green. The same change replaces the quality gate's established full
+real-vault corpus with a 50-document subset selected from the seven features already
+named by the labeled query set. `_feature_corpus_sources` admits every gold exec stem
+while admitting only the first three non-gold exec links per feature; `_copy_feature_corpus`
+therefore uses the judgment set itself to decide which competing documents may enter the
+retrieval corpus. The original baseline indexed 694 real vault documents specifically so
+ADRs, research, plans, exec records, and unrelated vocabulary genuinely competed; the
+current vault contains 1,111 Markdown documents, of which this harness indexes 50. A
+four-of-four green result on the reduced set cannot establish the accepted full-corpus
+ranking contract and can hide regressions by removing hard negatives. The exact
+`corpus_documents == 50` assertion also turns incidental feature-index growth into a
+brittle test failure rather than proving a semantic corpus invariant.
+
+Recommendation: keep the whole-fixture process boundary, but build the child corpus by
+copying the full real vault under the same exclusions as the established harness. If
+runtime needs reduction, define and approve a retrieval-quality sampling contract that
+is independent of gold judgments, includes deterministic hard negatives, and is
+validated against the full-corpus baseline before replacing the gate.
+
+### partial-cache-completeness | medium | Config-only cache detection disables bounded online repair
+
+`models_are_cached` and `ensure_model_snapshots` classify a repository as complete when
+`try_to_load_from_cache` finds only `config.json`. That API answers whether one named file
+exists; it does not establish that model weights, tokenizer assets, SentenceTransformers
+modules, sparse-encoder files, or reranker files are present. An independent real cache
+probe created a valid Hugging Face snapshot layout containing only `config.json`, and
+`models_are_cached` returned true. An interrupted cold download commonly reaches config
+metadata before all large blobs, so the intent worker then chooses `--local-files-only`
+and the shared embedding fixture skips the acquisition worker. Both fail locally instead
+of using the supported, deadline-bounded online path to repair the partial cache. The two
+new HTTP regressions cover empty-cache timeout and final-response retention, but neither
+covers this warm/partial boundary.
+
+Recommendation: make cache readiness reflect the loader's actual required snapshot, or
+run the bounded online-capable child whenever cache-only construction has not been proven
+successful. Add a real partial-cache regression that begins with genuine repository
+metadata/config but missing model assets, permits the local endpoint or supported online
+source to complete the snapshot under the deadline, and then proves cache-only real model
+construction succeeds.
+
+The direct-process timeout and termination path is sound for the current Hugging Face
+threaded downloader and embedded Qdrant worker on Windows and POSIX: timeout failure
+terminates the child, escalates to kill after five seconds, retains a bounded output tail,
+and the real loopback 504 tests pass. Keyword-only `local_files_only=False` defaults keep
+normal `EmbeddingModel` and `VaultSearcher` callers online-capable, while the explicit
+true path reaches dense, sparse, and reranker constructors. Test modules already ship
+inside the package, so the private `-m` workers add no new package-inclusion boundary.
+
+S56 review verdict: **FAIL — one HIGH quality-gate validity finding and one MEDIUM
+partial-cache recovery finding remain actionable**. The timeout mechanism itself is
+bounded, but release evidence cannot rely on the gold-aware 50-document corpus and the
+cache decision does not preserve supported repair after an interrupted download.
+
+## S56 final remediation verification
+
+Both independent findings are resolved.
+
+The intent-ranking worker now copies the complete project `.vault` through one
+unconditional `shutil.copytree`, excluding only `data` and `*.lock`. No
+feature-list, manifest traversal, gold-stem admission, or judgment-conditioned
+selection remains. Gold judgments are used only to assert that labeled documents exist
+after the copy. An independent filesystem comparison produced 1,111 expected source
+files and 1,111 copied files with no missing or extra paths, and the corpus assertion
+compares the child evidence to the current complete-vault Markdown count. The real-GPU
+module passed four of four tests in 131.71 seconds, including 131.00 seconds of bounded
+whole-fixture setup, while the Hugging Face endpoint was unreachable and the 600-second
+deadline remained authoritative. The HIGH `intent-corpus-gold-selection` finding is
+closed.
+
+Cache readiness now resolves the local snapshot offline, requires config and tokenizer
+artifacts, and distinguishes unsharded weights from indexed weights. Once a valid
+non-empty weight index is present, only complete existence of every referenced shard
+can return true; the unsharded `*.safetensors` and `pytorch_model*.bin` fallback is
+unreachable for an incomplete indexed snapshot. The committed real-endpoint regression
+seeds config, tokenizer, a two-shard index, and only shard one before asserting that the
+cache is incomplete and bounded online acquisition is attempted. An independent probe
+reproduced false with one shard and true after adding shard two. The persistent delayed
+504 and immediate 504 regressions pass two of two, retaining the deadline, model ID,
+endpoint, final metadata URL, and response diagnostics. The MEDIUM
+`partial-cache-completeness` finding is closed.
+
+Ruff, BasedPyright, focused endpoint tests, six-item collection, and `git diff --check`
+are green. The keyword-only production defaults remain online-capable, explicit
+cache-only behavior reaches dense, sparse, and reranker loading, direct child
+termination remains bounded on Windows and POSIX for the current workers, and no
+package-inclusion or service-orphan regression was identified.
+
+S56 final review verdict: **PASS — no actionable findings remain in the bounded model
+fixture remediation**. This verdict closes the S56 corrective surface only; the complete
+platform-aware release campaign still starts from zero and retains its independent gate
+requirements.
