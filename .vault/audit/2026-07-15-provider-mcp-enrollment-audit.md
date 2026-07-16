@@ -1246,3 +1246,66 @@ S53 verdict: **FAIL — not release-ready; one unresolved MEDIUM release-gate fi
 no CRITICAL or HIGH findings**. Merge, PR approval, and publication remain blocked
 until the real job-completion tests are made deterministic and a new independent audit
 restarts both platform ledgers and every later gate from zero.
+
+## S55 final verification
+
+### selected-gpu-fixture-setup-unbounded | medium | External model metadata setup is outside the selected gate timeout
+
+The S55 audit started from clean commit `9e92cbb` and carried no test, static-analysis,
+packaging, provider, or host-recognition credit from an earlier step. Full branch
+review included the S54 correction at `265d201`: the shared real-job helper computes
+the remaining 120-second wall-clock budget before every administrative request, passes
+that budget as the request timeout, checks the deadline again after the response, and
+only then credits an exact-job terminal phase. No unresolved S54 source finding was
+identified. Full diff hygiene was green, and review found no newly introduced mock,
+fake, stub, patch, monkeypatch, skip, or xfail.
+
+Collection reproduced the platform-aware mandate. Windows contains 2,269 test items:
+1,826 selected by `not integration`, 443 excluded by that expression, and six promoted
+S49 lifecycle-overlap items, yielding 1,832 selected and 437 excluded. An exact-commit
+archive in WSL2 Ubuntu collected 60 items in `test_install_torch_config.py`, one more
+than Windows, and the POSIX-only FIFO selector passed one of one against a real
+`os.mkfifo` node in 0.06 seconds using Python 3.13 and public Core 0.1.45. That
+establishes the POSIX ledger of 2,270 total, 1,833 selected, and 437 excluded items.
+
+The complete Windows marker-selected command started at 09:55:00. Its first quality
+case requested the session-scoped real `EmbeddingModel`, which constructs
+SentenceTransformers 5.6.0 with `Qwen/Qwen3-Embedding-0.6B`. Hugging Face returned
+`504 Gateway Timeout` to every observed metadata `HEAD` request. The loader exhausted
+the retry sequences for all seven legacy SentenceTransformers configuration names:
+`sentence_bert_config.json`, `sentence_roberta_config.json`,
+`sentence_distilbert_config.json`, `sentence_camembert_config.json`,
+`sentence_albert_config.json`, `sentence_xlm-roberta_config.json`, and
+`sentence_xlnet_config.json`. It then continued into a further
+`adapter_config.json` retry sequence.
+
+The final retained response was another 504 at 10:24:17, exactly 1,757 seconds after
+the process start. At that point the process was still in session-fixture setup, had
+not executed the first test assertion, had emitted no stderr, and had produced no
+terminal pytest summary. The repository config declares `timeout = 300` together with
+`timeout_func_only = true`, so the five-minute timeout excludes this fixture setup and
+cannot bound the external metadata retry surface. The two pytest processes started by
+the audit were therefore terminated after more than 29 minutes under the stop-on-red
+release rule.
+
+Recommendation: place real GPU model acquisition and session-fixture construction
+under one explicit wall-clock deadline that includes every remote metadata request,
+retains the final URL and response for diagnostics, and fails the selected gate
+deterministically when the deadline expires. Exercise both a usable local model cache
+and an unavailable metadata endpoint without replacing model construction or
+embedding behavior with a test double. The release campaign must never depend on
+pytest's function-only timeout to bound fixture setup.
+
+The incomplete Windows process receives zero selected-test credit. The six promoted
+overlap items, the remaining Windows selections, Ruff, formatting, Ty, BasedPyright,
+complexity, lock, Vaultspec and provider-artifact checks, build, wheel and source-
+distribution smoke, public-Core 0.1.45 installed acceptance, and fresh Claude and
+Codex host recognition were stopped and receive neither credit nor waiver. The POSIX
+FIFO pass is bounded platform evidence only and cannot make the failed Windows
+campaign release-ready. The stale AEAT workspace registration remains uncreditable.
+No production or test file changed during S55.
+
+S55 verdict: **FAIL — not release-ready; one unresolved MEDIUM test-harness and
+external-resilience finding and no CRITICAL or HIGH findings**. Merge, PR approval,
+and publication remain blocked until model-backed fixture setup is bounded and a new
+independent audit restarts both platform ledgers and every later gate from zero.

@@ -60,6 +60,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S52]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S53]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S54]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S55]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -138,6 +139,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S52` - Repeat the complete post-correction release review and every gate from zero
 - `2026-07-15-provider-mcp-enrollment-P03-S53` - Repeat every release-review gate from zero and credit the POSIX-only FIFO item on Linux CI
 - `2026-07-15-provider-mcp-enrollment-P03-S54` - Align real job-completion integration waits with the bounded service administration contract
+- `2026-07-15-provider-mcp-enrollment-P03-S55` - Repeat every platform-aware release gate from zero, verify S54 deadline behavior, and stop on the first red gate
 
 ### plan
 
