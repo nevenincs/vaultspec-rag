@@ -52,11 +52,11 @@ contract for the stdio shim.
   the MCP spec. Ancestor discovery at startup is the only self-serve way to
   learn whom to watch (research L6).
 - Feasibility is proven: Toolhelp32 ancestor walk + `OpenProcess(SYNCHRONIZE)`
-  + wait-on-handle all work unprivileged from ctypes; handles taken at
-  startup defuse PID reuse, and creation-time monotonicity guards the walk
-  itself (research W1). Undeclared ctypes signatures fail silently, so the
-  implementation and its tests must exercise the fires-on-death path
-  end-to-end (W2).
+  - wait-on-handle all work unprivileged from ctypes; handles taken at
+    startup defuse PID reuse, and creation-time monotonicity guards the walk
+    itself (research W1). Undeclared ctypes signatures fail silently, so the
+    implementation and its tests must exercise the fires-on-death path
+    end-to-end (W2).
 
 ## Considered options
 

@@ -9,7 +9,7 @@ related:
   - "[[2026-07-16-mcp-stdio-lifetime-plan]]"
 ---
 
-# Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os._exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob
+# Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os.\_exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob
 
 ## Scope
 

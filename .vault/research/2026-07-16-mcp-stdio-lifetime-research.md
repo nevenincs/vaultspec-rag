@@ -55,8 +55,7 @@ report table of 2026-07-16 23:00).
 
 Spawning `uv run --no-sync vaultspec-search-mcp` from a .NET
 `System.Diagnostics.Process` with redirected stdin, then closing stdin,
-terminated the entire 4-process chain (`uv.exe -> vaultspec-search-mcp.exe
-launcher -> venv python.exe -> base python.exe`) within 12 seconds. The SDK's
+terminated the entire 4-process chain (`uv.exe -> vaultspec-search-mcp.exe launcher -> venv python.exe -> base python.exe`) within 12 seconds. The SDK's
 EOF contract and the uv/launcher chain propagation both work: when the python
 worker exits, the launcher and uv.exe exit with it. The bug is therefore not
 "the server ignores EOF" and not "uv fails to reap its child".

@@ -17,7 +17,7 @@ related:
 Build the stdlib-only stdio lifetime watchdog: Windows ancestor-chain handle wait plus POSIX reparent poll, hard-exit backstop behind stdin EOF.
 
 - [x] `P01.S01` - Create the watchdog module with ctypes kernel32 bindings (full argtypes and restype), Toolhelp32 ancestor-chain discovery bounded and cycle-safe, creation-time monotonicity PID-reuse guard, and immediate SYNCHRONIZE handle acquisition; `src/vaultspec_rag/server/_stdio_lifetime.py`.
-- [x] `P01.S02` - Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os._exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob; `src/vaultspec_rag/server/_stdio_lifetime.py`.
+- [x] `P01.S02` - Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os.\_exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob; `src/vaultspec_rag/server/_stdio_lifetime.py`.
 
 ### Phase `P02` - Wiring and configuration
 
@@ -31,7 +31,7 @@ Install the watchdog on exactly the stdio branch of the shim entry point and exp
 Prove the watchdog end-to-end in real subprocesses (the research W2 mandate), pin the ADR invariants as regression guards, and document the operator knobs.
 
 - [x] `P03.S05` - Add unit tests for ancestor discovery guards, disable knob, parent-pid override handling, and non-stdio inertness; `src/vaultspec_rag/tests/test_stdio_lifetime.py`.
-- [x] `P03.S06` - Add integration tests: spawn a real parent-intermediary-worker chain, kill the intermediary, assert the worker hard-exits within the bound; `plus a companion EOF-still-primary shutdown test; `src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py`.
+- [x] `P03.S06` - Add integration tests: spawn a real parent-intermediary-worker chain, kill the intermediary, assert the worker hard-exits within the bound; `plus a companion EOF-still-primary shutdown test; `src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py\`.
 - [x] `P03.S07` - Add ADR regression guards: fresh-interpreter import of the watchdog module loads neither torch nor mcp, and the HTTP daemon path never references the watchdog installer; `src/vaultspec_rag/tests/test_adr_regression.py`.
 - [x] `P03.S08` - Document the stdio lifetime contract, the --parent-pid override, and the VAULTSPEC_RAG_STDIO_WATCHDOG knob in the service reference docs; `docs/`.
 

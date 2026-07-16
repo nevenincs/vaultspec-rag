@@ -40,7 +40,7 @@ Auto-generated index of all documents tagged with `#mcp-stdio-lifetime`.
 ### exec
 
 - `2026-07-16-mcp-stdio-lifetime-P01-S01` - Create the watchdog module with ctypes kernel32 bindings (full argtypes and restype), Toolhelp32 ancestor-chain discovery bounded and cycle-safe, creation-time monotonicity PID-reuse guard, and immediate SYNCHRONIZE handle acquisition
-- `2026-07-16-mcp-stdio-lifetime-P01-S02` - Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os._exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob
+- `2026-07-16-mcp-stdio-lifetime-P01-S02` - Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os.\_exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob
 - `2026-07-16-mcp-stdio-lifetime-P01-summary` - `mcp-stdio-lifetime` `P01` summary
 - `2026-07-16-mcp-stdio-lifetime-P02-S03` - Wire install_stdio_lifetime_watchdog into the stdio branch before mcp.run, add the optional --parent-pid argument, and keep HTTP daemon mode and --help paths watchdog-free
 - `2026-07-16-mcp-stdio-lifetime-P02-S04` - Register the VAULTSPEC_RAG_STDIO_WATCHDOG env knob in the config env inventory following the existing knob conventions
