@@ -71,7 +71,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S43` - Repair fresh provider selection and transactional MCP lifecycle boundaries; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_uninstall.py, preview topology and context handling, and real lifecycle regressions`.
 - [x] `P03.S44` - Perform fresh transaction-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1823-test inventory`.
 - [x] `P03.S45` - Make singleton teardown wait for the actual lock holder; `real singleton and Qdrant integration fixtures with foreign-holder process regressions`.
-- [ ] `P03.S46` - Perform final holder-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`.
+- [x] `P03.S46` - Perform final holder-safe release review and complete every gate; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`.
 
 ## Description
 

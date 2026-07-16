@@ -959,3 +959,61 @@ are green on their focused real-workspace surface, but every required gate must 
 green. Merge and publication remain blocked until the real holder lifecycle is repaired
 and a fresh independent review restarts all 1,824 selected tests and every uncredited
 release gate from zero.
+
+## S46 final verification
+
+### required-node-relative-symlink-preview | high | The isolated preview breaks relative links and reports a different native lifecycle
+
+The S46 review started from clean holder-safe commit `59e08842` and re-read the accepted
+research, ADR, plan, complete audit history through S44, S42 through S45 execution
+records, and canonical audit and execution templates. Source review then classified the
+previously unresolved required-node relative-symlink candidate before beginning the
+expensive release campaign.
+
+`_mcp_preview_projection` copies required provider intent, package declaration,
+ownership, and native target nodes through `_copy_preview_node`. That helper captures a
+symlink's exact link text and recreates it unchanged under the temporary projection.
+For a relative link, the same text is resolved from the projection directory rather
+than the real workspace directory, while the sibling target file is not projected. The
+preview therefore sees a broken or semantically different required node even though the
+matching apply reads the live target correctly.
+
+An independent real temporary-workspace matrix first completed a fresh dual-provider
+dependency-mode install, then replaced each required file with a relative symlink to a
+distinct sibling carrying its exact bytes. No mock, fake, stub, patch, monkeypatch,
+skip, or xfail was used. With linked `.mcp.json`, preview reported Claude `[ADD]` while
+apply reported `[UNCHANGED]`. With linked `.codex/config.toml`, preview reported Codex
+`[ADD]` while apply reported `[UNCHANGED]`. With linked
+`.vaultspec/mcp-ownership.json`, preview classified Claude as externally managed and
+`[SKIP]`, while apply retained managed ownership and reported `[UNCHANGED]`. With linked
+`.vaultspec/providers.json`, preview returned an empty provider map and
+`mcp_failed=false`, while apply reconciled both Claude and Codex as `[UNCHANGED]`.
+Every preview left the real symlink and target bytes exact, so the defect is the plan it
+reports rather than preview mutation.
+
+The same matrix also showed that a no-delta real upgrade replaced relative-symlink
+`.vaultspec/providers.json` and `.vaultspec/workspace.json` nodes with regular files
+while leaving their sibling targets intact. That topology mutation is not represented
+by the preview report and contradicts the feature's byte-stable, idempotent reinstall
+intent. Required-node topology therefore needs an explicit lifecycle contract rather
+than inheriting the unrelated-node no-follow implementation.
+
+Recommendation: project the effective contents of each exact required node into an
+isolated projection-local regular node, or use a Core planning input that does not
+relocate filesystem links. Do not re-create raw relative link text under a different
+root and do not point a projected mutating pass back at the real link target. Add real
+preview/apply/idempotency regressions for relative links at provider intent, workspace
+mode, ownership, Claude JSON, and Codex TOML, requiring exact provider outcomes and
+unchanged operator topology where no logical update is needed.
+
+The exact 1,824-test inventory, complete 107-plus native lifecycle acceptance, service
+repetitions, real-host recognition, static checks, Vaultspec checks, build, wheel,
+public-Core smoke, and truly fresh installed-package gates were not started after this
+HIGH invalidated the release target. They receive no credit and no waiver. S45's
+focused holder evidence remains useful but cannot establish release readiness for the
+broken preview contract.
+
+S46 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. Merge, PR approval, and publication remain blocked pending required-node
+projection remediation and a new independent audit that restarts every required gate
+from zero.
