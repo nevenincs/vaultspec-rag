@@ -6025,121 +6025,174 @@ class TestJsonStdoutPurityAcrossCommands:
 
 
 class TestAutoDelegation:
-    """Verify CLI search and index auto-detect and delegate to a running service."""
+    """Verify auto-delegation against real isolated discovery state."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_search_auto_delegates_when_service_running(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """If service is running, search auto-delegates to it."""
-        (tmp_path / ".vaultspec").mkdir()
+    @staticmethod
+    def _run_resolution_probe(tmp_path: Path, mode: str) -> dict[str, object]:
+        """Run real discovery and search routing in a fresh interpreter."""
+        import subprocess
+        import sys
 
-        def _stub_read_status() -> dict[str, object]:
-            return {"pid": 12345, "port": 8766, "service_token": "token123"}
+        code = r"""
+import json
+import os
+import socket
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
-        def _stub_is_our_service_search(
-            _pid: int, _port: int, _expected_token: str | None
-        ) -> bool:
-            return True
+root = Path(sys.argv[1])
+mode = sys.argv[2]
+target = root / "project"
+status_dir = root / "status"
+storage_dir = root / "qdrant-server" / "storage"
+target.mkdir(parents=True)
+(target / ".vaultspec").mkdir()
+status_dir.mkdir()
 
-        # Stub _read_service_status to return active port and pid.
-        # _default_service_port reads through the serviceclient discovery
-        # module after the service-client factoring, so patch it there.
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._discovery._read_service_status",
-            _stub_read_status,
-        )
-        # Mock _is_our_service to return True
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._is_our_service",
-            _stub_is_our_service_search,
-        )
+os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
+os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_dir)
+os.environ.pop("VAULTSPEC_RAG_LOCAL_ONLY", None)
 
-        # Mock _try_http_search to return dummy results (so we know it got called)
-        called: list[int] = []
+from vaultspec_rag.config import reset_config
 
-        def mock_try_search(*args: object, **_kwargs: object) -> dict[str, object]:
-            # args: query, search_type, max_results, port, target
-            called.append(int(typing.cast("str | int", args[3])))
-            return {"ok": True, "results": []}
+reset_config()
 
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._search._try_http_search", mock_try_search
-        )
 
-        runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "search",
-                "anything",
-            ],
-        )
-        assert len(called) == 1
-        assert called[0] == 8766
+from vaultspec_rag._machine_lock import (
+    acquire_machine_lock,
+    machine_discovery_path,
+    release_machine_lock,
+)
 
-    def test_index_auto_delegates_when_service_running(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """If service is running, index auto-delegates to it."""
-        (tmp_path / ".vaultspec").mkdir()
+machine_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+fallback_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+machine_lock_acquired = False
 
-        def _stub_read_status_idx() -> dict[str, object]:
-            return {"pid": 12345, "port": 8766, "service_token": "token123"}
+try:
+    machine_socket.bind(("127.0.0.1", 0))
+    fallback_socket.bind(("127.0.0.1", 0))
+    machine_port = int(machine_socket.getsockname()[1])
+    fallback_port = int(fallback_socket.getsockname()[1])
+    assert machine_port != fallback_port
 
-        def _stub_is_our_service_idx(
-            _pid: int, _port: int, _expected_token: str | None
-        ) -> bool:
-            return True
-
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._discovery._read_service_status",
-            _stub_read_status_idx,
-        )
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._is_our_service",
-            _stub_is_our_service_idx,
-        )
-
-        called: list[tuple[str, int]] = []
-
-        def mock_try_reindex(
-            reindex_type: str,
-            _rebuild: bool,
-            port: int,
-            _target: str,
-            *,
-            initiator_kind: str,
-        ) -> dict[str, object]:
-            assert initiator_kind == "cli"
-            called.append((reindex_type, port))
-            return {
-                "ok": True,
-                "added": 1,
-                "updated": 0,
-                "removed": 0,
-                "total": 1,
-                "duration_ms": 10,
+    (status_dir / "service.json").write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "port": fallback_port,
+                "service_token": "fallback-token",
             }
+        ),
+        encoding="utf-8",
+    )
 
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._index._try_http_reindex", mock_try_reindex
+    if mode == "machine":
+        machine_lock_acquired, holder = acquire_machine_lock()
+        assert machine_lock_acquired, holder
+        pointer = machine_discovery_path()
+        pointer.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "port": machine_port,
+                    "service_token": "machine-token",
+                    "last_heartbeat": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "stale_after_s": 60,
+                }
+            ),
+            encoding="utf-8",
         )
 
-        runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "index",
-                "--type",
-                "vault",
-            ],
+    expected = machine_port if mode == "machine" else fallback_port
+
+    from vaultspec_rag.cli._index import _default_service_port as index_port
+    from vaultspec_rag.cli._search import _default_service_port as search_port
+
+    assert search_port() == expected
+    assert index_port() == expected
+
+    from typer.testing import CliRunner
+    from vaultspec_rag.cli import app
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--target",
+            str(target),
+            "search",
+            "anything",
+            "--type",
+            "code",
+            "--json",
+        ],
+    )
+    envelope = json.loads(result.output)
+    assert result.exit_code == 1, result.output
+    assert envelope["error"] == "port_unreachable", envelope
+    assert envelope["port"] == expected, envelope
+
+    forbidden = (
+        "torch",
+        "sentence_transformers",
+        "qdrant_client",
+        "transformers",
+        "onnxruntime",
+    )
+    heavy = sorted(
+        module
+        for module in sys.modules
+        if any(module == name or module.startswith(name + ".") for name in forbidden)
+    )
+    assert not heavy, heavy
+    print(
+        json.dumps(
+            {
+                "mode": mode,
+                "expected": expected,
+                "machine_port": machine_port,
+                "fallback_port": fallback_port,
+                "error": envelope["error"],
+                "heavy": heavy,
+            }
         )
-        assert len(called) == 1
-        assert called[0] == ("vault", 8766)
+    )
+finally:
+    if machine_lock_acquired:
+        release_machine_lock()
+    fallback_socket.close()
+    machine_socket.close()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(tmp_path), mode],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return typing.cast("dict[str, object]", json.loads(result.stdout))
+
+    def test_auto_delegation_prefers_machine_global_resolution(
+        self, tmp_path: Path
+    ) -> None:
+        """A valid machine-global service outranks a conflicting status hint."""
+        evidence = self._run_resolution_probe(tmp_path, "machine")
+        assert evidence["expected"] == evidence["machine_port"]
+        assert evidence["expected"] != evidence["fallback_port"]
+        assert evidence["error"] == "port_unreachable"
+        assert evidence["heavy"] == []
+
+    def test_auto_delegation_uses_status_fallback_without_machine_service(
+        self, tmp_path: Path
+    ) -> None:
+        """The real status file is used only when machine resolution is absent."""
+        evidence = self._run_resolution_probe(tmp_path, "fallback")
+        assert evidence["expected"] == evidence["fallback_port"]
+        assert evidence["expected"] != evidence["machine_port"]
+        assert evidence["error"] == "port_unreachable"
+        assert evidence["heavy"] == []
 
 
 class TestWarmingStatusState:

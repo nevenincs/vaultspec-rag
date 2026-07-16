@@ -67,6 +67,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S59]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S60]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S61]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S62]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -152,6 +153,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S59` - Repeat every platform-aware release gate from zero at the corrected unique-item ledger
 - `2026-07-15-provider-mcp-enrollment-P03-S60` - Repair locked Windows scikit-learn wheel payload
 - `2026-07-15-provider-mcp-enrollment-P03-S61` - Repeat every platform-aware release gate from zero after the verified environment repair and stop on the first failure
+- `2026-07-15-provider-mcp-enrollment-P03-S62` - Replace patched auto-delegation isolation
 
 ### plan
 
