@@ -65,6 +65,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S57]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S58]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S59]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S60]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -148,6 +149,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S57` - Repeat every platform-aware release gate from zero, audit the complete S56 bounded model contract independently, and stop on the first failure
 - `2026-07-15-provider-mcp-enrollment-P03-S58` - Assign stable unique pytest parameter IDs
 - `2026-07-15-provider-mcp-enrollment-P03-S59` - Repeat every platform-aware release gate from zero at the corrected unique-item ledger
+- `2026-07-15-provider-mcp-enrollment-P03-S60` - Repair locked Windows scikit-learn wheel payload
 
 ### plan
 

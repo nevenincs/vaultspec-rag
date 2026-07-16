@@ -1724,3 +1724,202 @@ S59 verdict: **FAIL — not release-ready; one unresolved MEDIUM installed-envir
 integrity finding and no CRITICAL or HIGH findings**. Merge, PR approval, and
 publication remain blocked until the locked Windows environment is complete and a
 fresh independent audit restarts every gate from zero.
+
+## S60 locked Windows environment repair
+
+### windows-sklearn-wheel-payload-missing | medium | Resolved in the disposable worktree environment
+
+S60 treated the S59 failure as installed-environment corruption, not a product defect.
+The worktree's scikit-learn 1.9.0 metadata listed both package-local runtime DLLs, but
+the installed `sklearn/.libs` directory was absent.
+
+The locked Windows wheel is
+`scikit_learn-1.9.0-cp313-cp313-win_amd64.whl`, with artifact digest
+`sha256:5808d98f15c6bf6d9d96d2348c1997392a5888ce7097e664105f930c4bca1277`.
+One uv cached extraction contained both DLLs. A separate
+`UV_NO_CACHE=1` public-wheel extraction contained the same files. Both sources matched
+their wheel `RECORD`:
+
+- `msvcp140.dll`: 642,720 bytes and
+  `sha256=Y5NC6ppnwACRIiOM4HCoJX4uBNNn1idQn-wp-EQq-0I`.
+- `vcomp140.dll`: 213,072 bytes and
+  `sha256=-W86FNiNiEbzHzqzikkDBM59bk9w-uQwTGPlnHrqLTA`.
+
+The uv cache artifact was complete. S60 therefore retained the cache and lock, then
+reinstalled only scikit-learn with
+`uv sync --locked --reinstall-package scikit-learn`. The repaired worktree installation
+contains both DLLs at the exact sizes and hashes above. A direct `import sklearn`
+succeeds from the worktree `.venv` and reports scikit-learn 1.9.0. `uv sync --frozen`,
+`uv pip check`, and `uv lock --check` pass.
+
+With `VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT=600`, the exact S59 selector
+`TestIntentRankingHarness::test_harness_produces_wellformed_metrics` passed one of one
+in 218.70 seconds. Its complete-vault fixture used 133.97 seconds. The six-test S56
+group then passed in 117.41 seconds: both real model-setup HTTP and deadline tests and
+all four complete-vault intent-ranking assertions terminated green. Its complete-vault
+fixture used 112.94 seconds.
+
+No product, test, lock, or package source changed. The environment repair and focused
+tests diagnose and close the MEDIUM finding, but they earn no release-campaign credit.
+
+S60 verdict: **PASS — the locked Windows environment is complete, the installed DLL
+payload matches `RECORD`, and the failed S56 surface passes**. Pull request, merge,
+approval, publication, and release remain outside this corrective step.
+
+## S61 final independent platform release-audit mandate
+
+S61 is an open, independent audit of the clean commit containing the S60 environment
+record. Record that hash before execution, and use it for every gate.
+
+Carry no test, review, static-analysis, package, provider, host-recognition, platform,
+or environment-repair credit from S53 through S60. The S60 wheel checks, direct import,
+exact selector, and six-test group are corrective evidence only. They receive no S61
+credit or waiver.
+
+Use stop-on-red semantics as stop-on-first-failure. If the tree is dirty, the
+environment preflight fails, a collection family does not reconcile, a count changes
+without explanation, a gate is missing, or a result fails, stop the campaign. Credit
+neither the incomplete gate nor any later gate. Waive nothing. Keep merge, approval,
+and publication blocked.
+
+### Locked environment preflight
+
+Before test collection, resolve the locked public dependency graph and require
+scikit-learn 1.9.0 from the locked CPython 3.13 Windows wheel. Require the wheel artifact
+digest to equal
+`sha256:5808d98f15c6bf6d9d96d2348c1997392a5888ce7097e664105f930c4bca1277`.
+
+Import scikit-learn directly from the audit environment. Require these installed files
+to exist and match the installed `RECORD` before starting GPU work:
+
+- `sklearn/.libs/msvcp140.dll`: 642,720 bytes and
+  `sha256=Y5NC6ppnwACRIiOM4HCoJX4uBNNn1idQn-wp-EQq-0I`.
+- `sklearn/.libs/vcomp140.dll`: 213,072 bytes and
+  `sha256=-W86FNiNiEbzHzqzikkDBM59bk9w-uQwTGPlnHrqLTA`.
+
+Run `uv sync --frozen`, `uv pip check`, and `uv lock --check`. Metadata compatibility
+alone does not waive a missing or mismatched wheel payload.
+
+### Corrected platform ledger and zero-overlap proof
+
+Recollect these four displayed-node-ID sets at the audit commit:
+
+- `M`: items selected by `not integration` on the current platform.
+- `P`: the same six S49 lifecycle-overlap items promoted from the integration-marked
+  install module.
+- `J`: the 13 items defined only inside Windows junction blocks.
+- `F`: the one POSIX-only
+  `TestErrorBranches::test_install_fifo_project_surface_fails_without_blocking` item.
+
+Require the full item count to equal the distinct displayed-node-ID count on each
+platform. Require the `not integration` item count to equal its distinct
+displayed-node-ID count. Any duplicate displayed node ID is a failed gate.
+
+Require `M` and `P` to have zero overlap on both platforms. Require `J` to have zero
+overlap with `M`, `P`, and `F`. Require `F` to have zero overlap with `P`.
+
+Reconcile `J` to these exact Windows-only families:
+
+- One `test_preview_does_not_follow_an_unrelated_windows_junction` item.
+- Six `test_required_junction_fails_before_lifecycle_mutation` items, with IDs
+  `relative0` through `relative5`.
+- Three `test_required_junction_container_fails_before_lifecycle_mutation` items, with
+  IDs `container_relative0` through `container_relative2`.
+- Two `test_late_junction_blocker_preserves_reparse_topology` items, with IDs `force`
+  and `upgrade`.
+- One `test_junction_snapshot_recreates_removed_reparse_node` item.
+
+Require `|J| = 13`. Every `J` item must be present in Windows total collection,
+excluded by `not integration`, and absent from POSIX collection. Require `|F| = 1`.
+`F` must be absent from Windows and present in the POSIX marker-selected set.
+
+The exact Windows collection is 2,271 total and unique displayed node IDs. Its marker
+split is 1,828 selected and unique and 443 excluded. All six `P` items must be present,
+integration-excluded, and disjoint from `M`. The Windows campaign is 1,834 selected and
+437 excluded.
+
+The exact POSIX total is `2,271 - |J| + |F| = 2,259`. Its marker split is
+`1,828 + |F| = 1,829` selected and `443 - |J| = 430` excluded. Promote the unchanged,
+disjoint six-item `P` set. The POSIX campaign is 1,835 selected and 424 excluded.
+Execute `F` against a real node created with `os.mkfifo`.
+
+Recollection is a gate, not a count waiver. Do not start runtime execution until both
+ledgers and every named family terminate green.
+
+### Preserved S56 bounded-model contract
+
+Preserve every S56 requirement. Inspect the S56 production and test diff independently.
+Prove every invariant with real behavior and without mocks, fakes, stubs, patches,
+monkeypatches, skips, xfails, or mirrored business logic.
+
+- Reconfirm that implementation baseline `9206a00` contained 1,111 real `.vault`
+  Markdown documents. Recount the S61 audit commit's complete corpus. The planned S60
+  execution record raises the current corpus to 1,115 documents. Require the exact
+  audit-commit count rather than treating 1,115 as a waiver. Copy and index every
+  audit-commit document through the production path, and require identical source and
+  worker counts.
+- Use gold judgments only as expected document identifiers and relevance grades. They
+  must not select, filter, narrow, preprocess, transform, or construct the indexed
+  corpus.
+- Enclose corpus copy, dense and sparse model construction, reranker construction,
+  indexing, every labeled search, result serialization, and teardown in one 600-second
+  whole-worker wall-clock boundary.
+- Unset `VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT`, or set it to exactly `600`. Record and
+  assert `deadline=600.000s` before crediting any S56 invariant.
+- At 600 seconds, terminate the child. After the bounded grace period, force-terminate
+  any survivor. Retain standard output and error. Verify that no related child, Qdrant
+  process, listener, or graphics processing unit owner remains.
+- Classify a cache as complete only when its usable snapshot has `config.json`, a
+  tokenizer artifact, and valid weights. If a valid shard index exists, require every
+  named shard.
+- Route a cold or interrupted real cache through normal online repair inside the
+  bounded child. Require successful repair to finish normally.
+- For a held request or persistent Hypertext Transfer Protocol failure, require a
+  deterministic bounded failure. Preserve the model name, final metadata URL, status,
+  body when available, and retained output tails.
+- For a complete warm cache, disable network access. Require dense, sparse, and reranker
+  models to load with zero metadata requests. Keep cache-only loading audit-specific;
+  product construction remains online-capable by default.
+- Execute all labeled queries. Preserve the requirements enforced by
+  `test_harness_produces_wellformed_metrics`,
+  `test_orientation_authoritative_rate_meets_floor`,
+  `test_index_documents_never_surface`, and
+  `test_named_orientation_regression`.
+
+### Preserved stop-on-red release sequence
+
+Run every S59 release gate again from zero in this order. Stop after the first failed or
+non-terminal gate.
+
+1. Verify the clean tree, complete diff, locked environment payload, and direct
+   scikit-learn import. Recollect both platform ledgers. Reconcile `J`, `F`, `M`, and
+   `P`. Scan for prohibited test doubles. Audit every S56 invariant.
+1. Run all 1,834 Windows campaign items, including all six promoted items and every S56
+   model and intent-ranking case.
+1. Run all 1,835 POSIX campaign items in an exact-commit environment. Use Python 3.13
+   and published `vaultspec-core==0.1.45`. Execute the real FIFO case.
+1. Run repository-wide Ruff lint and format checks. Run Ty, strict BasedPyright, and the
+   full complexity gate. Check lock consistency and `git diff --check`.
+1. Run every Vaultspec check, annotation sanitation, provider-artifact check, and
+   project spec check.
+1. Build a wheel and source distribution from the audit commit. Inspect each artifact's
+   contents and metadata. Run the repository smoke contract against each artifact in a
+   fresh isolated environment.
+1. Resolve dependencies against published `vaultspec-core==0.1.45`. Do not use a local
+   Core checkout or editable source.
+1. Install the built artifact into a fresh isolated environment with isolated project
+   and host configuration homes. Enroll canonical project-scoped Claude Code and Codex
+   Model Context Protocol entries.
+1. Use the real Claude Code and Codex command-line interfaces to recognize their project
+   entries. Verify the launch contract, dependency placement, ownership provenance,
+   provider-local results, and independence from global state.
+1. Repeat the identical install or upgrade. Prove semantic and byte idempotence for the
+   manifest, Model Context Protocol source, ownership, `.mcp.json`,
+   `.codex/config.toml`, dependency declaration, and lock state.
+1. Exercise `--no-mcp` and uninstall. Remove only RAG-owned entries and extras. Preserve
+   Core-owned, user-owned, unrelated-provider, and unrelated-project state
+   byte-for-byte.
+
+S61 may report release readiness only after every gate terminates successfully at the
+same audit commit. Approving this mandate does not execute tests or authorize a pull
+request, merge, approval, tag, publication, or release.
