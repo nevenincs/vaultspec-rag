@@ -1074,3 +1074,59 @@ unresolved HIGH finding**. Merge and publication remain blocked until Core publi
 corrective release, RAG rejects full-lifecycle target overlap and adopts that Core
 floor, and a fresh independent audit restarts all 1,824 selected tests and every other
 release gate from zero.
+
+## S50 final verification
+
+### project-surface-preflight-report-truncation | high | Topology preflight suppresses requested component inspection failures
+
+The S50 review started from clean commit `523986d` and re-read the accepted research,
+ADR, plan, complete audit history, S47 through S49 execution records, canonical audit
+template, code-review workflow, and repository rules. Collection produced 2,267 unique
+node IDs. Marker classification alone yielded 1,824 selected and 443 excluded nodes;
+the campaign manifest then explicitly promoted the six S49 lifecycle-overlap
+regressions from the integration-marked install module. The resulting disjoint release
+ledger is exactly 1,830 selected and 437 excluded: three alphabetic top-level segments
+of 545, 546, and 523 nodes; 22 singleton and Qdrant nodes; 54 remaining non-service
+nodes; 134 service nodes; and the six promoted overlap nodes. No node ID is duplicated.
+
+The first 545-node segment terminated green with 545 passes and four marker
+deselections in 168.12 seconds. The next 546-node segment terminated red with 545
+passes and one failure. The failing
+`test_install_project_read_failure_records_both_errors[directory-blocker]` selector
+then failed identically by itself: a directory at `pyproject.toml` made
+`install_run` return `mcp_failed=true`, but `mcp_extra_action` and
+`torch_config_action` both remained `skipped`. The established MCP-extra and
+torch-config inspection diagnostics were also absent; only a generic required-topology
+preflight error was reported.
+
+The causal path is the outer `install_run` topology wrapper in
+`src/vaultspec_rag/commands/_install.py`. `inspect_required_mcp_topology` classifies the
+directory-shaped project surface as unsafe and the wrapper returns a newly constructed
+failure report before `_prepare_mcp_transition` or the requested torch-config inspector
+can apply their structured error contracts. The command still fails closed and the
+operator files remain unchanged, but its machine-readable report falsely says both
+requested component inspections were skipped. This regresses the unreadable-project
+report boundary previously repaired and independently verified during S31 through S34.
+
+Recommendation: retain the topology refusal and non-mutating exit while routing every
+project-surface inspection failure through the complete requested-component report
+contract. A directory, unreadable file, malformed TOML, and invalid UTF-8 project
+surface must all report MCP-extra and torch-config errors when those components were
+requested, preserve exact bytes and topology, create no locks or enrollment state, and
+exit non-zero. Add a wrapper-level real regression so topology preflight cannot bypass
+those fields again.
+
+Only the first 545 selected tests receive credit. The red 546-node segment and its 545
+passing calls receive zero campaign credit, and the remaining 1,285 selected nodes are
+uncredited. Per the release-gate stop rule, the remaining inventory, singleton and
+service repetitions, Ruff, formatting, Ty, BasedPyright, complexity, lock, Vaultspec
+and provider-artifact checks, diff check, build, wheel and source-distribution smoke,
+public-Core 0.1.45 installed acceptance, and real Claude and Codex project recognition
+were not run and are not waived. The current AEAT workspace registration is explicitly
+not release evidence, and this session's start-time tool snapshot remains distinct from
+future CLI registration. No production or test file changed during S50.
+
+S50 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
+findings**. Merge, PR approval, and publication remain blocked pending structured-report
+remediation and a new independent audit that restarts all 1,830 selected tests and every
+other release gate from zero.
