@@ -1309,3 +1309,121 @@ S55 verdict: **FAIL — not release-ready; one unresolved MEDIUM test-harness an
 external-resilience finding and no CRITICAL or HIGH findings**. Merge, PR approval,
 and publication remain blocked until model-backed fixture setup is bounded and a new
 independent audit restarts both platform ledgers and every later gate from zero.
+
+## S57 independent platform release-audit mandate
+
+S57 is an open, independent release audit of implementation commit `9206a00`. The
+docs-only S57 commit becomes the audit commit. Record that hash before execution, and
+use the same audit commit for every gate.
+
+Carry no credit from the S53 or S55 platform audits, the S56 corrective verification,
+or any diagnostic iteration. This prohibition covers tests, review, static analysis,
+packages, providers, host recognition, and platform evidence.
+
+If the tree is dirty, a count changes without explanation, a gate is missing, or a
+result fails, stop the campaign. Credit neither the incomplete gate nor any later gate.
+Waive nothing. Keep merge, approval, and publication blocked.
+
+### Exact platform ledger
+
+Collection at implementation commit `9206a00` contains 2,271 Windows test items. The
+`not integration` expression selects 1,828 and excludes 443. Promote the following six
+S49 lifecycle-overlap items as a disjoint set:
+
+- `src/vaultspec_rag/tests/integration/test_install.py::TestDryRunInstall::test_required_link_cannot_overlap_any_lifecycle_output[target_relative0-False]`
+- `src/vaultspec_rag/tests/integration/test_install.py::TestDryRunInstall::test_required_link_cannot_overlap_any_lifecycle_output[target_relative1-False]`
+- `src/vaultspec_rag/tests/integration/test_install.py::TestDryRunInstall::test_required_link_cannot_overlap_any_lifecycle_output[target_relative2-False]`
+- `src/vaultspec_rag/tests/integration/test_install.py::TestDryRunInstall::test_required_link_cannot_overlap_any_lifecycle_output[target_relative3-True]`
+- `src/vaultspec_rag/tests/integration/test_install.py::TestDryRunInstall::test_required_link_cannot_overlap_any_lifecycle_output[target_relative4-True]`
+- `src/vaultspec_rag/tests/integration/test_install.py::TestDryRunInstall::test_uninstall_rejects_required_link_to_bundled_lifecycle_output`
+
+The resulting Windows ledger is 1,834 selected and 437 excluded. Portable Operating
+System Interface (POSIX) collection adds one capability-defined first-in, first-out
+(FIFO) item. The resulting POSIX ledger is 2,272 total, 1,835 selected, and 437
+excluded.
+
+Execute every selected item on its assigned platform. Windows results do not credit the
+POSIX-only item. On POSIX, run the FIFO regression against a node created with
+`os.mkfifo`.
+
+Recollection is a gate, not a count waiver. Recollect at the audit commit before any
+test execution. If the inventory changes, update the ledger first. Account for every
+added, removed, promoted, and excluded item.
+
+### S56 bounded-model contract audit
+
+Inspect the S56 production and test diff independently. Prove each invariant with real
+behavior. Do not use mocks, fakes, stubs, patches, monkeypatches, skips, xfails, or
+mirrored business logic.
+
+- Copy and index all 1,111 Markdown documents in the real `.vault` corpus through the
+  production indexing path. Require identical source and worker counts. The query
+  fixture's gold judgments are expected document identifiers and relevance grades.
+  They may score results, but they must not select or transform the indexed corpus.
+- Enclose the whole intent-ranking worker in one 600-second wall-clock boundary. This
+  boundary covers corpus copy, all model construction, indexing, every labeled search,
+  result serialization, and teardown.
+- Unset `VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT`, or set it to exactly `600`. Record and
+  assert the effective `deadline=600.000s` before crediting any S56 invariant.
+- When the worker reaches 600 seconds, terminate its child process. After the bounded
+  grace period, force-terminate any survivor. Retain the diagnostic output tail. Verify
+  that no related child, Qdrant process, listener, or graphics processing unit (GPU)
+  owner remains.
+- Classify a model cache as complete only when its usable snapshot contains
+  `config.json`, a tokenizer artifact, and valid model weights. Accept unsharded weights
+  only when no shard index governs the snapshot. Require every file named by a valid
+  weight index. Treat one missing shard as an incomplete cache.
+- Classify a cache as cold or interrupted when any required snapshot or artifact is
+  absent. Route that state through normal online repair inside the bounded child.
+  Require successful repair to complete normally.
+- For a held request or persistent Hypertext Transfer Protocol (HTTP) failure, require a
+  deterministic bounded failure. Preserve the model name, final metadata URL, HTTP
+  status and body when available, and the retained standard-output and standard-error
+  tail.
+- Classify a cache as warm only when the dense, sparse, and reranker snapshots are
+  complete before worker launch. Disable network access, require all three models to
+  load, and observe zero metadata requests.
+- Keep cache-only behavior opt-in for the audit worker. Confirm that normal product
+  construction remains online-capable by default.
+- Execute all labeled queries and retain the requirements enforced by
+  `test_harness_produces_wellformed_metrics`,
+  `test_orientation_authoritative_rate_meets_floor`,
+  `test_index_documents_never_surface`, and
+  `test_named_orientation_regression`.
+
+### Stop-on-first-failure release sequence
+
+Run these gates from zero in order. Stop after the first failed or non-terminal gate.
+
+1. Review the clean tree and complete diff. Recollect both platform ledgers. Confirm
+   disjoint selection accounting. Scan for prohibited test doubles. Audit every S56
+   invariant.
+1. Run the complete 1,834-item Windows ledger. Include the six promoted overlap items
+   and every S56 model and intent-ranking case.
+1. Run the complete 1,835-item POSIX ledger in an exact-commit environment. Use Python
+   3.13 and published `vaultspec-core==0.1.45`. Execute the real FIFO case.
+1. Run repository-wide Ruff lint and format checks. Run Ty, strict BasedPyright, and the
+   full complexity gate. Check lock consistency and `git diff --check`.
+1. Run all Vaultspec checks, annotation sanitation, provider-artifact checks, and the
+   project spec check.
+1. Build a wheel and a source distribution from the audit commit. Inspect each
+   artifact's contents and metadata. Run the repository smoke contract against each
+   artifact in a fresh isolated environment.
+1. Resolve dependencies against published `vaultspec-core==0.1.45`. Do not use a local
+   Core checkout or editable source.
+1. Install the built artifact into a fresh isolated environment. Use isolated project
+   and host configuration homes. Enroll canonical project-scoped Claude Code and Codex
+   Model Context Protocol (MCP) entries.
+1. Use the real Claude Code and Codex command-line interfaces (CLIs) to recognize their
+   project entries. Verify the installed launch contract, dependency placement,
+   ownership provenance, provider-local results, and independence from global state.
+1. Repeat the identical install or upgrade. Prove semantic and byte idempotence for
+   the manifest, MCP source, ownership, `.mcp.json`, `.codex/config.toml`, dependency
+   declaration, and lock state.
+1. Exercise `--no-mcp` and uninstall. Remove only RAG-owned entries and extras.
+   Preserve Core-owned, user-owned, unrelated-provider, and unrelated-project state
+   byte-for-byte.
+
+S57 may report release readiness only after every gate terminates successfully at the
+same audit commit. Approving this mandate does not execute tests or authorize a pull
+request, merge, approval, tag, publication, or release.
