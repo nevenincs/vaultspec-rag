@@ -1923,3 +1923,86 @@ non-terminal gate.
 S61 may report release readiness only after every gate terminates successfully at the
 same audit commit. Approving this mandate does not execute tests or authorize a pull
 request, merge, approval, tag, publication, or release.
+
+## S61 final verification
+
+### machine-global-auto-delegation-test-isolation | medium | A live installed service overrides the test's injected status port
+
+S61 started from clean commit
+`c9cf20697dd647096c2f070b51ff72d152031c7c` and carried no runtime, review,
+environment-repair, package, provider, or host-recognition credit from earlier
+steps.
+
+The locked Windows preflight passed. `uv sync --frozen`, `uv pip check`, and
+`uv lock --check` terminated successfully. The worktree used Python 3.13.11 and
+scikit-learn 1.9.0 from the locked
+`scikit_learn-1.9.0-cp313-cp313-win_amd64.whl`, whose artifact digest is
+`sha256:5808d98f15c6bf6d9d96d2348c1997392a5888ce7097e664105f930c4bca1277`.
+A direct import succeeded. The installed `msvcp140.dll` was 642,720 bytes with
+`sha256=Y5NC6ppnwACRIiOM4HCoJX4uBNNn1idQn-wp-EQq-0I`, and
+`vcomp140.dll` was 213,072 bytes with
+`sha256=-W86FNiNiEbzHzqzikkDBM59bk9w-uQwTGPlnHrqLTA`; both matched the
+installed `RECORD`.
+
+Both platform ledgers reconciled exactly with unique displayed node IDs. Windows
+collected 2,271 total and unique items. `M` contained 1,828 selected and unique
+items, all six `P` items were present and disjoint from `M`, all 13 named `J`
+items were present outside `M` and `P`, and `F` was absent. The Windows campaign
+therefore reconciled to 1,834 selected and 437 excluded.
+
+The exact-commit WSL2 Ubuntu archive collected 2,259 total and unique items.
+`M` contained 1,829 selected and unique items, the six `P` items were present
+and disjoint, `J` was absent, and `F` was present in `M` and absent from `P`.
+The POSIX campaign therefore reconciled to 1,835 selected and 424 excluded. A
+bounded capability probe executed `F` against a real `os.mkfifo` node and passed,
+but it receives no POSIX runtime-campaign credit because the release sequence
+stopped during Windows execution.
+
+The audit commit contained exactly 1,115 unique `.vault` Markdown paths, compared
+with 1,111 at the S56 implementation baseline. The Windows marker-selected
+segment started all 1,828 `M` items with
+`VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT=600`. It passed the adversarial singleton,
+intent-ranking, complete-corpus ranking, Qdrant, service lifecycle, jobs, logs,
+metrics, diagnostics, storage, ADR-regression, chunk-worker, and early CLI
+surfaces. The ranking testimonial copied and indexed all 1,115 documents through
+the production path, adding 1,115 with no updates or removals.
+
+The first failure occurred at
+`TestAutoDelegation::test_search_auto_delegates_when_service_running`. The test
+patched the per-status-directory discovery read to return port `8766` and asserted
+that automatic search delegation used that port. Production discovery first
+consults authoritative machine-global singleton state. A real installed
+`vaultspec-rag` service had been running on port `55108` since before the S61
+campaign, so the command delegated to `55108` and the assertion failed:
+`assert 55108 == 8766`.
+
+This is a release-test isolation defect. The test does not control the
+machine-global authority that production intentionally resolves before the
+patched compatibility fallback, so its result depends on unrelated valid host
+state. The live service was not created by S61 and was left untouched. No S61
+Python worker, Qdrant process, listener, or graphics processing unit owner
+survived the failure.
+
+Recommendation: replace the partial patched-status setup with a deterministic
+boundary that controls the authoritative machine-global resolution as well as
+the compatibility fallback, or exercise a real isolated service namespace whose
+status, lock, ports, storage, and teardown are owned by the test. Prove both the
+machine-global winner and fallback behavior without consulting or modifying a
+user's live service. Then restart the complete platform-aware release campaign
+from one clean commit.
+
+The failed Windows segment reported one failure, 505 passes, 443 deselections,
+and 284 warnings in 1,599.80 seconds. Under stop-on-first-failure semantics, the
+incomplete segment receives zero runtime credit. The remaining 1,322 `M` items,
+all six promoted Windows `P` items, the complete POSIX runtime campaign,
+repository-wide Ruff and format checks, Ty, strict BasedPyright, complexity,
+lock, diff, Vaultspec, provider-artifact, spec, build, wheel and source
+distribution smoke, published Core 0.1.45 resolution, isolated installed-package
+acceptance, Claude and Codex recognition, idempotence, unenrollment, and
+uninstall gates receive neither credit nor waiver. Current AEAT state also
+remains uncreditable.
+
+S61 verdict: **FAIL — not release-ready; one unresolved MEDIUM deterministic
+test-isolation finding and no CRITICAL or HIGH findings**. Pull request approval,
+merge, tag, publication, and release remain blocked pending remediation and a
+fresh independent audit that restarts every gate from zero.
