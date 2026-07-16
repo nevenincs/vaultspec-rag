@@ -56,10 +56,12 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S48]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S49]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S50]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S51]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
+  - '[[2026-07-16-provider-mcp-enrollment-audit]]'
 ---
 
 # `provider-mcp-enrollment` feature index
@@ -75,6 +77,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 ### audit
 
 - `2026-07-15-provider-mcp-enrollment-audit` - `provider-mcp-enrollment` audit: `native MCP release readiness`
+- `2026-07-16-provider-mcp-enrollment-audit` - `provider-mcp-enrollment` audit: `S51 correction review`
 
 ### exec
 
@@ -128,6 +131,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S48` - Perform final topology-safe release review and complete every gate
 - `2026-07-15-provider-mcp-enrollment-P03-S49` - Reject full-lifecycle target overlap and adopt the corrective Core floor
 - `2026-07-15-provider-mcp-enrollment-P03-S50` - Repeat the complete post-remediation release review and every gate from zero
+- `2026-07-15-provider-mcp-enrollment-P03-S51` - Accumulate requested project diagnostics and align filesystem failure tests with Core 0.1.45
 
 ### plan
 

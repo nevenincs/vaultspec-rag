@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from contextvars import Context
@@ -140,18 +142,71 @@ def _reconcile_mcp_extra(
             pyproject, mode=mode, enabled=enabled, dry_run=dry_run
         )
     except Exception as exc:
-        report.mcp_extra_action = "error"
-        message = f"MCP extra inspect failed: {exc}"
-        report.warnings.append(message)
-        report.mcp_errors.append(message)
-        if record_torch_inspect_error:
-            report.torch_config_action = TorchConfigAction.ERROR
-            report.warnings.append(f"torch-config inspect failed: {exc}")
+        _record_project_inspection_error(
+            report,
+            exc,
+            record_torch_inspect_error=record_torch_inspect_error,
+        )
         return False
     report.mcp_extra_action = result.action
     report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
     report.mcp_errors.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
     return not result.conflicts
+
+
+def _record_project_inspection_error(
+    report: InstallReport,
+    exc: Exception,
+    *,
+    record_torch_inspect_error: bool,
+) -> None:
+    report.mcp_extra_action = "error"
+    message = f"MCP extra inspect failed: {exc}"
+    report.warnings.append(message)
+    report.mcp_errors.append(message)
+    if record_torch_inspect_error:
+        report.torch_config_action = TorchConfigAction.ERROR
+        report.warnings.append(f"torch-config inspect failed: {exc}")
+
+
+def _regular_project_decode_error(path: Path) -> Exception | None:
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return OSError(f"project surface is not a regular file: {path}")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.read()
+    except Exception as exc:
+        return exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return None
+
+
+def _project_surface_inspection_error(pyproject: Path) -> Exception | None:
+    try:
+        metadata = pyproject.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return exc
+    if not stat.S_ISLNK(metadata.st_mode):
+        return _regular_project_decode_error(pyproject)
+    try:
+        linked = Path(os.readlink(pyproject))
+        if linked.is_absolute():
+            return OSError(f"project surface uses an absolute link: {pyproject}")
+        project_root = pyproject.parent.resolve(strict=True)
+        target = (pyproject.parent / linked).resolve(strict=True)
+        target.relative_to(project_root)
+    except Exception as exc:
+        return exc
+    return _regular_project_decode_error(target)
 
 
 def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
@@ -715,6 +770,13 @@ def install_run(
     try:
         topology = inspect_required_mcp_topology(target)
     except Exception as exc:
+        project_exc = _project_surface_inspection_error(target / "pyproject.toml")
+        if project_exc is not None:
+            _record_project_inspection_error(
+                failure,
+                project_exc,
+                record_torch_inspect_error=configure_torch,
+            )
         message = f"required MCP topology preflight failed: {exc}"
         failure.mcp_errors.append(message)
         failure.warnings.append(message)

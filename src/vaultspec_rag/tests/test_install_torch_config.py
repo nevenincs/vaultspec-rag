@@ -11,8 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
+from threading import Thread
 from typing import TYPE_CHECKING
 
 import pytest
@@ -27,6 +29,8 @@ from ..commands import install_run, uninstall_run
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ..commands._models import InstallReport
 
 pytestmark = [pytest.mark.unit]
 
@@ -695,7 +699,7 @@ class TestErrorBranches:
 
     @pytest.mark.parametrize(
         "project_surface",
-        ["invalid-utf8", "directory-blocker"],
+        ["invalid-utf8", "directory-blocker", "broken-relative-link"],
     )
     def test_install_project_read_failure_records_both_errors(
         self, tmp_path: Path, project_surface: str
@@ -705,9 +709,11 @@ class TestErrorBranches:
         pyproject = ws / "pyproject.toml"
         if project_surface == "invalid-utf8":
             pyproject.write_bytes(b"[project]\nname = \xff\xfe\n")
-        else:
+        elif project_surface == "directory-blocker":
             pyproject.mkdir()
             (pyproject / "sentinel").write_bytes(b"preserve")
+        else:
+            pyproject.symlink_to("missing-project.toml")
         before_files = {
             path.relative_to(ws).as_posix(): path.read_bytes()
             for path in ws.rglob("*")
@@ -728,6 +734,14 @@ class TestErrorBranches:
         assert report.torch_config_action == "error"
         assert any("MCP extra inspect failed" in item for item in report.mcp_errors)
         assert any("torch-config inspect failed" in item for item in report.warnings)
+        if project_surface != "invalid-utf8":
+            assert any(
+                "required MCP topology preflight failed" in item
+                for item in report.mcp_errors
+            )
+        if project_surface == "broken-relative-link":
+            assert pyproject.is_symlink()
+            assert os.readlink(pyproject) == "missing-project.toml"
         assert not report.seeded
         assert not report.sync_results
         assert {
@@ -736,6 +750,87 @@ class TestErrorBranches:
             if path.is_file()
         } == before_files
         assert not list(ws.rglob("*.lock"))
+
+    def test_live_project_link_is_not_misreported_for_unrelated_topology_failure(
+        self, tmp_path: Path
+    ) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        target = ws / "project.toml"
+        target.write_text(PROJECT_ONLY, encoding="utf-8")
+        pyproject = ws / "pyproject.toml"
+        pyproject.symlink_to(target.name)
+        workspace = ws / ".vaultspec" / "workspace.json"
+        workspace.mkdir(parents=True)
+        (workspace / "operator.json").write_bytes(b"preserve\x00")
+        target_before = target.read_bytes()
+
+        report = install_run(
+            path=ws,
+            install_mcp=True,
+            configure_torch=True,
+            assume_yes=True,
+            provision=False,
+            mode=InstallMode.TOOL,
+        )
+
+        assert report.mcp_extra_action == "skipped"
+        assert report.mcp_sync_failed
+        assert report.torch_config_action == "skipped"
+        assert "required MCP topology preflight failed" in " ".join(report.mcp_errors)
+        assert pyproject.is_symlink()
+        assert os.readlink(pyproject) == target.name
+        assert target.read_bytes() == target_before
+        assert (workspace / "operator.json").read_bytes() == b"preserve\x00"
+        assert not list(ws.rglob("*.lock"))
+
+    if getattr(os, "mkfifo", None) is not None:
+
+        def test_install_fifo_project_surface_fails_without_blocking(
+            self, tmp_path: Path
+        ) -> None:
+            ws = tmp_path / "ws"
+            ws.mkdir()
+            pyproject = ws / "pyproject.toml"
+            os.mkfifo(pyproject)
+            reports: list[InstallReport] = []
+
+            def run_install() -> None:
+                reports.append(
+                    install_run(
+                        path=ws,
+                        install_mcp=True,
+                        configure_torch=True,
+                        assume_yes=True,
+                        provision=False,
+                        mode=InstallMode.TOOL,
+                    )
+                )
+
+            worker = Thread(target=run_install, daemon=True)
+            worker.start()
+            worker.join(timeout=2)
+            completed_without_writer = not worker.is_alive()
+            if not completed_without_writer:
+                descriptor = os.open(pyproject, os.O_WRONLY | os.O_NONBLOCK)
+                try:
+                    os.write(descriptor, b"invalid")
+                finally:
+                    os.close(descriptor)
+                worker.join(timeout=2)
+
+            assert completed_without_writer
+            assert len(reports) == 1
+            report = reports[0]
+            assert report.mcp_extra_action == "error"
+            assert report.mcp_sync_failed
+            assert report.torch_config_action == "error"
+            assert any(
+                "required MCP topology preflight failed" in item
+                for item in report.mcp_errors
+            )
+            assert stat.S_ISFIFO(pyproject.lstat().st_mode)
+            assert set(ws.iterdir()) == {pyproject}
 
     def test_uninstall_corrupt_pyproject_fails_closed_before_torch(
         self, tmp_path: Path

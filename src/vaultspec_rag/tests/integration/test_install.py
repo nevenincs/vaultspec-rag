@@ -2075,36 +2075,34 @@ class TestDryRunInstall:
         assert data["mcp_failed"] is True
         assert _workspace_file_bytes(fresh_workspace) == before
 
-    def test_mode_write_failure_rolls_back_extra_placement(
+    def test_required_workspace_directory_blocks_mode_transition(
         self, fresh_workspace: Path
     ) -> None:
         pyproject = fresh_workspace / "pyproject.toml"
         pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
         _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
-        before = _workspace_file_bytes(fresh_workspace)
         workspace = fresh_workspace / ".vaultspec" / "workspace.json"
-        write_blocker = workspace.with_suffix(workspace.suffix + f".{os.getpid()}.tmp")
-        write_blocker.mkdir()
+        prior_workspace = workspace.read_bytes()
+        workspace.unlink()
+        workspace.mkdir()
+        (workspace / "operator.json").write_bytes(prior_workspace)
+        before = _workspace_inventory(fresh_workspace)
 
         report = _install(
             fresh_workspace,
             upgrade=True,
             mode=InstallMode.DEV,
         )
-        write_blocker.rmdir()
 
-        assert report.mcp_extra_action == "error"
+        assert report.mcp_extra_action == "skipped"
         assert report.mcp_sync_failed
-        assert report.mcp_errors
+        assert "required MCP topology preflight failed" in " ".join(report.mcp_errors)
         assert not report.seeded
         assert not report.sync_results
-        assert _workspace_file_bytes(fresh_workspace) == before
-        declaration = read_package_declaration(fresh_workspace, "vaultspec-rag")
-        assert declaration is not None
-        assert declaration.install_mode is InstallMode.DEPENDENCY
+        assert _workspace_inventory(fresh_workspace) == before
 
     @pytest.mark.parametrize("preexisting_locks", [False, True])
-    def test_fresh_mode_write_failure_restores_exact_intent_inventory(
+    def test_required_workspace_directory_preserves_exact_intent_inventory(
         self, fresh_workspace: Path, preexisting_locks: bool
     ) -> None:
         pyproject = fresh_workspace / "pyproject.toml"
@@ -2117,22 +2115,22 @@ class TestDryRunInstall:
         if preexisting_locks:
             pyproject.with_suffix(".toml.lock").write_bytes(b"project-lock\x00")
             workspace.with_suffix(".json.lock").write_bytes(b"workspace-lock\x00")
-        write_blocker = workspace.with_suffix(workspace.suffix + f".{os.getpid()}.tmp")
-        write_blocker.mkdir()
+        workspace.mkdir()
+        (workspace / "operator.json").write_bytes(b"preserve\x00")
         before = _workspace_inventory(fresh_workspace)
 
         report = _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
 
-        assert report.mcp_extra_action == "error"
+        assert report.mcp_extra_action == "skipped"
         assert report.mcp_sync_failed
+        assert "required MCP topology preflight failed" in " ".join(report.mcp_errors)
         assert not report.seeded
         assert not report.sync_results
         assert _workspace_inventory(fresh_workspace) == before
-        assert not workspace.exists()
 
-    @pytest.mark.parametrize("existing_source", [False, True])
-    def test_mcp_source_write_failure_rolls_back_full_intent_transaction(
-        self, fresh_workspace: Path, existing_source: bool
+    @pytest.mark.parametrize("source_has_sentinel", [False, True])
+    def test_required_mcp_source_directory_preserves_full_intent_inventory(
+        self, fresh_workspace: Path, source_has_sentinel: bool
     ) -> None:
         pyproject = fresh_workspace / "pyproject.toml"
         pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
@@ -2141,9 +2139,9 @@ class TestDryRunInstall:
         for name in ("mcps", "rules", "skills"):
             (fresh_workspace / ".vaultspec" / name).mkdir(parents=True, exist_ok=True)
         source = fresh_workspace / _RAG_MCP_REL
-        if existing_source:
-            source.write_bytes(b'{"operator": "preserve exact bytes"}\n')
-        source.with_suffix(source.suffix + f".{os.getpid()}.tmp").mkdir()
+        source.mkdir()
+        if source_has_sentinel:
+            (source / "operator.json").write_bytes(b"preserve\x00")
         pyproject.with_suffix(".toml.lock").write_bytes(b"project-lock\x00")
         workspace = fresh_workspace / ".vaultspec" / "workspace.json"
         workspace.with_suffix(".json.lock").write_bytes(b"workspace-lock\x00")
@@ -2159,14 +2157,15 @@ class TestDryRunInstall:
             mode=InstallMode.DEPENDENCY,
         )
 
-        assert report.mcp_extra_action == "error"
+        assert report.mcp_extra_action == "skipped"
         assert report.mcp_sync_failed
-        assert report.torch_config_action == "error"
+        assert report.torch_config_action == "skipped"
+        assert "required MCP topology preflight failed" in " ".join(report.mcp_errors)
         assert not report.seeded
         assert not report.sync_results
         assert _workspace_inventory(fresh_workspace) == before
         assert not workspace.exists()
-        if not existing_source:
+        if not source_has_sentinel:
             from typer.testing import CliRunner
 
             from ...cli import app
@@ -2209,10 +2208,8 @@ class TestDryRunInstall:
         if existing_builtins:
             (fresh_workspace / _RAG_MCP_REL).write_bytes(b"operator-mcp\x00")
             (fresh_workspace / _RAG_RULE_REL).write_bytes(b"operator-rule\x00")
-            skill.write_bytes(b"operator-skill\x00")
-        blocker = skill.with_suffix(skill.suffix + f".{os.getpid()}.tmp")
-        blocker.mkdir()
-        (blocker / "sentinel").write_bytes(b"blocker-owned")
+        skill.mkdir()
+        (skill / "operator.md").write_bytes(b"operator-skill\x00")
         unrelated = fresh_workspace / ".vaultspec" / "rules" / "operator.md"
         unrelated.write_bytes(b"unrelated\x00")
         workspace = fresh_workspace / ".vaultspec" / "workspace.json"
@@ -2262,9 +2259,8 @@ class TestDryRunInstall:
         rule.symlink_to(link_target, target_is_directory=False)
         skill = fresh_workspace / _RAG_SKILL_REL
         skill.parent.mkdir(parents=True)
-        blocker = skill.with_suffix(skill.suffix + f".{os.getpid()}.tmp")
-        blocker.mkdir()
-        (blocker / "sentinel").write_bytes(b"blocker-owned")
+        skill.mkdir()
+        (skill / "operator.md").write_bytes(b"operator-skill\x00")
         before = _workspace_inventory(fresh_workspace)
         signature = _node_signature(rule)
 
@@ -3064,9 +3060,9 @@ class TestSafetyGuards:
         must remove any files it had successfully written so the
         workspace is not left half-installed.
 
-        ``seed_builtins`` walks the package tree in sorted order. A
-        genuine atomic-temp blocker at the final skill destination
-        therefore fails only after the MCP and rule files were written.
+        ``seed_builtins`` walks the package tree in sorted order. A directory
+        at the final skill destination makes Core's real atomic replacement
+        fail only after the MCP and rule files were written.
         """
         ws = tmp_path / "workspace"
         ws.mkdir()
@@ -3076,9 +3072,8 @@ class TestSafetyGuards:
         (ws / ".vaultspec" / "skills").mkdir(parents=True)
         skill = ws / _RAG_SKILL_REL
         skill.parent.mkdir(parents=True)
-        blocker = skill.with_suffix(skill.suffix + f".{os.getpid()}.tmp")
-        blocker.mkdir()
-        (blocker / "sentinel").write_text("x", encoding="utf-8")
+        skill.mkdir()
+        (skill / "operator.md").write_bytes(b"preserve\x00")
         before = _workspace_inventory(ws)
 
         report = install_run(path=ws, force=True)
