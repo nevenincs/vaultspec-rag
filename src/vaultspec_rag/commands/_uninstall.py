@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import tempfile
 from contextvars import Context
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs
 
 from ..builtins import list_builtins
 from ._mcp_extra import reconcile_mcp_extra
+from ._mcp_topology import RequiredMcpTopology, inspect_required_mcp_topology
 from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
@@ -218,6 +220,47 @@ def _run_core_cleanup(
             report.mcp_errors.append(f"MCP cleanup failed: {exc}")
 
 
+def _run_mcp_disenrollment_transaction(
+    target: Path,
+    report: UninstallReport,
+    topology: RequiredMcpTopology,
+    *,
+    dry_run: bool,
+    rollback_on_failure: bool = True,
+) -> bool:
+    """Reverse placement and native enrollment as one failure boundary."""
+    if not dry_run:
+        try:
+            topology.materialize()
+        except Exception as exc:
+            message = f"required MCP topology materialization failed: {exc}"
+            report.mcp_errors.append(message)
+            report.warnings.append(message)
+            return False
+    if not _reverse_mcp_extra(target, report, dry_run=dry_run):
+        if not dry_run and rollback_on_failure:
+            _record_topology_errors(report, topology.finish(commit=False))
+        return False
+    try:
+        _run_mcp_cleanup(target, report, dry_run=dry_run)
+    except Exception as exc:
+        logger.error("MCP cleanup failed during uninstall: %s", exc)
+        report.mcp_errors.append(f"MCP cleanup failed: {exc}")
+    if report.mcp_sync_failed:
+        if not dry_run and rollback_on_failure:
+            _record_topology_errors(report, topology.finish(commit=False))
+        return False
+    if not dry_run:
+        _record_topology_errors(report, topology.finish(commit=True))
+    return not report.mcp_sync_failed
+
+
+def _record_topology_errors(report: UninstallReport, errors: list[str]) -> None:
+    for message in errors:
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+
+
 def uninstall_run(
     path: Path | None = None,
     *,
@@ -279,6 +322,24 @@ def uninstall_run(
     action = "dry_run" if dry_run else "uninstall"
     report = UninstallReport(action=action, target=target)
 
+    topology: RequiredMcpTopology | None = None
+    if "mcp" not in skip:
+        try:
+            topology = inspect_required_mcp_topology(target)
+        except Exception as exc:
+            message = f"required MCP topology preflight failed: {exc}"
+            report.mcp_errors.append(message)
+            report.warnings.append(message)
+            return report
+        if topology.disenrollment_links:
+            message = (
+                "required MCP topology preflight failed: linked required nodes "
+                "cannot be safely removed while preserving exact link topology"
+            )
+            report.mcp_errors.append(message)
+            report.warnings.append(message)
+            return report
+
     if not (target / ".vaultspec").is_dir():
         # No ``.vaultspec/`` means rag was never installed at this
         # target - anything we found in ``pyproject.toml`` belongs to
@@ -293,10 +354,30 @@ def uninstall_run(
         return report
 
     mcp_skipped = "mcp" in skip
-    if not mcp_skipped and not _reverse_mcp_extra(
-        target,
-        report,
-        dry_run=dry_run,
+    if not mcp_skipped and not dry_run and topology is not None:
+        with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
+            replay_target = Path(raw) / "workspace"
+            topology.populate_projection(replay_target)
+            replay_topology = inspect_required_mcp_topology(replay_target)
+            replay_report = UninstallReport(action="uninstall", target=replay_target)
+            Context().run(
+                _run_mcp_disenrollment_transaction,
+                replay_target,
+                replay_report,
+                replay_topology,
+                dry_run=False,
+                rollback_on_failure=False,
+            )
+            topology.capture_expected_projection(replay_target)
+    if (
+        not mcp_skipped
+        and topology is not None
+        and not _run_mcp_disenrollment_transaction(
+            target,
+            report,
+            topology,
+            dry_run=dry_run,
+        )
     ):
         return report
 
@@ -307,7 +388,7 @@ def uninstall_run(
         report,
         dry_run=dry_run,
         force=force,
-        skip=skip,
+        skip={*skip, "mcp"},
     )
 
     _run_torch_config_uninstall(target=target, report=report, dry_run=dry_run)

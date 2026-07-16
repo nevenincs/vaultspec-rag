@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import stat
-import subprocess
 import tempfile
 from contextlib import contextmanager
 from contextvars import Context
-from dataclasses import dataclass
-from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -32,6 +27,15 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 from ..builtins import list_builtins, seed_builtins
 from ..torch_config import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
+from ._mcp_topology import (
+    NodeSnapshot,
+    RequiredMcpTopology,
+    SnapshotKind,
+    file_snapshot,
+    inspect_required_mcp_topology,
+    restore_file_snapshot,
+    rollback_file_snapshots,
+)
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -58,6 +62,10 @@ if TYPE_CHECKING:
     from ._models import ConfirmFn
 
 logger = logging.getLogger(__name__)
+
+# Compatibility aliases for the established focused rollback tests.
+_file_snapshot = file_snapshot
+_restore_file_snapshot = restore_file_snapshot
 
 _DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
 
@@ -146,166 +154,6 @@ def _reconcile_mcp_extra(
     return not result.conflicts
 
 
-class _SnapshotKind(Enum):
-    ABSENT = auto()
-    FILE = auto()
-    SYMLINK = auto()
-    DIRECTORY = auto()
-    JUNCTION = auto()
-
-
-@dataclass(frozen=True)
-class _NodeSnapshot:
-    kind: _SnapshotKind
-    payload: bytes | str | None = None
-    target_is_directory: bool = False
-    mode: int | None = None
-
-
-def _file_snapshot(path: Path) -> _NodeSnapshot:
-    """Capture exact payload and filesystem-node topology without following links."""
-    if path.is_junction():
-        return _NodeSnapshot(_SnapshotKind.JUNCTION, os.readlink(path), True)
-    if path.is_symlink():
-        metadata = path.lstat()
-        attributes = int(getattr(metadata, "st_file_attributes", 0))
-        directory_link = path.is_dir() or bool(
-            attributes & getattr(stat, "FILE_ATTRIBUTE_DIRECTORY", 0)
-        )
-        return _NodeSnapshot(
-            _SnapshotKind.SYMLINK,
-            os.readlink(path),
-            directory_link,
-        )
-    try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        return _NodeSnapshot(_SnapshotKind.ABSENT)
-    if stat.S_ISREG(metadata.st_mode):
-        return _NodeSnapshot(
-            _SnapshotKind.FILE,
-            path.read_bytes(),
-            mode=stat.S_IMODE(metadata.st_mode),
-        )
-    if stat.S_ISDIR(metadata.st_mode):
-        return _NodeSnapshot(
-            _SnapshotKind.DIRECTORY,
-            mode=stat.S_IMODE(metadata.st_mode),
-        )
-    raise OSError(f"unsupported transactional node type at {path}")
-
-
-def _remove_transaction_node(path: Path) -> None:
-    current = _file_snapshot(path)
-    if current.kind is _SnapshotKind.ABSENT:
-        return
-    if current.kind in {_SnapshotKind.DIRECTORY, _SnapshotKind.JUNCTION}:
-        path.rmdir()
-        return
-    path.unlink()
-
-
-def _restore_regular_file(path: Path, payload: bytes, mode: int | None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, raw_temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.rollback-",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    temporary = Path(raw_temporary)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            descriptor = -1
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if mode is not None:
-            os.chmod(temporary, mode, follow_symlinks=False)
-        os.replace(temporary, path)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        temporary.unlink(missing_ok=True)
-
-
-def _restore_junction(path: Path, target: str) -> None:
-    if os.name != "nt":
-        raise OSError(f"cannot restore Windows junction on {os.name}: {path}")
-    powershell_target = target
-    if target.startswith("\\\\?\\UNC\\"):
-        powershell_target = "\\\\" + target[8:]
-    elif target.startswith("\\\\?\\"):
-        powershell_target = target[4:]
-    environment = {
-        **os.environ,
-        "VAULTSPEC_JUNCTION_PATH": str(path),
-        "VAULTSPEC_JUNCTION_TARGET": powershell_target,
-    }
-    command = (
-        "$ErrorActionPreference = 'Stop'; "
-        "New-Item -ItemType Junction -Path $env:VAULTSPEC_JUNCTION_PATH "
-        "-Target $env:VAULTSPEC_JUNCTION_TARGET | Out-Null"
-    )
-    completed = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
-        check=False,
-        capture_output=True,
-        env=environment,
-        timeout=15,
-    )
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace")
-        printable = "".join(
-            character if character.isprintable() else " " for character in stderr
-        )
-        diagnostic = " ".join(printable.split())[:400] or "no stderr"
-        raise OSError(
-            f"junction restore failed for {path} "
-            f"(exit {completed.returncode}: {diagnostic})"
-        )
-
-
-def _restore_file_snapshot(path: Path, snapshot: _NodeSnapshot) -> None:
-    """Restore one transactional node without following operator-owned links."""
-    if _file_snapshot(path) == snapshot:
-        return
-    _remove_transaction_node(path)
-    if snapshot.kind is _SnapshotKind.ABSENT:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if snapshot.kind is _SnapshotKind.FILE:
-        if not isinstance(snapshot.payload, bytes):
-            raise TypeError(f"regular-file snapshot has no byte payload: {path}")
-        _restore_regular_file(path, snapshot.payload, snapshot.mode)
-        return
-    if snapshot.kind is _SnapshotKind.DIRECTORY:
-        path.mkdir(mode=snapshot.mode or 0o777)
-        if snapshot.mode is not None:
-            path.chmod(snapshot.mode)
-        return
-    if not isinstance(snapshot.payload, str):
-        raise TypeError(f"link snapshot has no target payload: {path}")
-    if snapshot.kind is _SnapshotKind.SYMLINK:
-        os.symlink(
-            snapshot.payload,
-            path,
-            target_is_directory=snapshot.target_is_directory,
-        )
-        return
-    _restore_junction(path, snapshot.payload)
-
-
-def _rollback_file_snapshots(snapshots: dict[Path, _NodeSnapshot]) -> list[str]:
-    """Restore transaction snapshots and return any rollback diagnostics."""
-    errors: list[str] = []
-    for path, snapshot in snapshots.items():
-        try:
-            _restore_file_snapshot(path, snapshot)
-        except Exception as exc:
-            errors.append(f"{path}: {exc}")
-    return errors
-
-
 def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
     pyproject = target / "pyproject.toml"
     workspace = target / ".vaultspec" / "workspace.json"
@@ -376,9 +224,9 @@ def _fresh_provider_transaction_paths(target: Path) -> tuple[Path, ...]:
 
 
 def _restore_fresh_provider_transaction(
-    snapshots: dict[Path, _NodeSnapshot], report: InstallReport
+    snapshots: dict[Path, NodeSnapshot], report: InstallReport
 ) -> None:
-    errors = _rollback_file_snapshots(snapshots)
+    errors = rollback_file_snapshots(snapshots)
     if not errors:
         return
     message = "MCP provider-enrollment rollback failed: " + "; ".join(errors)
@@ -389,7 +237,7 @@ def _restore_fresh_provider_transaction(
 def _persist_fresh_mcp_providers(
     target: Path,
     selected: tuple[Tool, ...],
-    snapshots: dict[Path, _NodeSnapshot],
+    snapshots: dict[Path, NodeSnapshot],
     report: InstallReport,
 ) -> bool:
     """Merge a successful fresh selection into Core's provider manifest."""
@@ -407,7 +255,7 @@ def _persist_fresh_mcp_providers(
 def _finish_fresh_provider_enrollment(
     target: Path,
     selected: tuple[Tool, ...] | None,
-    snapshots: dict[Path, _NodeSnapshot],
+    snapshots: dict[Path, NodeSnapshot],
     report: InstallReport,
     *,
     dry_run: bool,
@@ -444,7 +292,7 @@ def _commit_mcp_placement_and_mode(
     configure_torch: bool,
 ) -> bool:
     """Commit placement, package mode, and builtin intent as one transition."""
-    snapshots: dict[Path, _NodeSnapshot] = {}
+    snapshots: dict[Path, NodeSnapshot] = {}
     try:
         snapshots = {path: _file_snapshot(path) for path in _mcp_intent_paths(target)}
         if not _reconcile_mcp_extra(
@@ -455,7 +303,7 @@ def _commit_mcp_placement_and_mode(
             dry_run=False,
             record_torch_inspect_error=configure_torch,
         ):
-            rollback_errors = _rollback_file_snapshots(snapshots)
+            rollback_errors = rollback_file_snapshots(snapshots)
             if rollback_errors:
                 rollback_message = "MCP transaction rollback failed: " + "; ".join(
                     rollback_errors
@@ -474,7 +322,7 @@ def _commit_mcp_placement_and_mode(
             enabled,
         )
     except Exception as exc:
-        rollback_errors = _rollback_file_snapshots(snapshots)
+        rollback_errors = rollback_file_snapshots(snapshots)
         report.mcp_extra_action = "error"
         message = f"MCP intent transaction failed: {exc}"
         if message not in report.mcp_errors:
@@ -507,6 +355,7 @@ def _mcp_preview_projection(
     plan from the exact source intent while leaving the real workspace, ownership
     sidecar, provider files, and lock paths untouched.
     """
+    topology = inspect_required_mcp_topology(target)
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-preview-") as raw:
         projection = Path(raw) / "workspace"
         projection.mkdir()
@@ -516,27 +365,25 @@ def _mcp_preview_projection(
         projected_vaultspec.mkdir()
 
         for name in ("providers.json", "workspace.json", "mcp-ownership.json"):
-            _copy_preview_node(source_vaultspec / name, projected_vaultspec / name)
+            _copy_preview_node(
+                source_vaultspec / name,
+                projected_vaultspec / name,
+                topology,
+            )
 
-        source_mcps = source_vaultspec / "mcps"
-        if _file_snapshot(source_mcps).kind is _SnapshotKind.DIRECTORY:
+        if topology.mcp_sources:
             projected_mcps = projected_vaultspec / "mcps"
             projected_mcps.mkdir()
-            with os.scandir(source_mcps) as entries:
-                for entry in entries:
-                    source = Path(entry.path)
-                    snapshot = _file_snapshot(source)
-                    if snapshot.kind not in {
-                        _SnapshotKind.FILE,
-                        _SnapshotKind.SYMLINK,
-                    }:
-                        continue
-                    _restore_file_snapshot(projected_mcps / entry.name, snapshot)
+            for source in topology.mcp_sources:
+                snapshot = topology.projection_snapshot(source)
+                if snapshot.kind is not SnapshotKind.FILE:
+                    continue
+                restore_file_snapshot(projected_mcps / source.name, snapshot)
 
         for relative in (Path(".mcp.json"), Path(".codex") / "config.toml"):
             source = target / relative
             destination = projection / relative
-            _copy_preview_node(source, destination)
+            _copy_preview_node(source, destination, topology)
 
         seed_builtins(projected_vaultspec, force=force or upgrade)
         if not install_mcp:
@@ -547,12 +394,16 @@ def _mcp_preview_projection(
         yield projection
 
 
-def _copy_preview_node(source: Path, destination: Path) -> None:
-    """Copy one required projection node without following its topology."""
-    snapshot = _file_snapshot(source)
-    if snapshot.kind in {_SnapshotKind.ABSENT, _SnapshotKind.DIRECTORY}:
+def _copy_preview_node(
+    source: Path,
+    destination: Path,
+    topology: RequiredMcpTopology,
+) -> None:
+    """Materialize one required node's effective bytes inside the projection."""
+    snapshot = topology.projection_snapshot(source)
+    if snapshot.kind in {SnapshotKind.ABSENT, SnapshotKind.DIRECTORY}:
         return
-    _restore_file_snapshot(destination, snapshot)
+    restore_file_snapshot(destination, snapshot)
 
 
 def _reconcile_project_mcp(
@@ -621,27 +472,6 @@ def _run_core_sync(
     }
     if "core" in skip:
         return
-    if not dry_run:
-        try:
-            _init_core_context(target)
-        except Exception as exc:
-            logger.error("workspace context bootstrap failed: %s", exc)
-            report.warnings.append(f"workspace bootstrap failed: {exc}")
-        else:
-            try:
-                report.sync_results = sync_provider(
-                    "all",
-                    dry_run=False,
-                    force=force,
-                    skip={*skip, "mcp"},
-                )
-            except Exception as exc:
-                logger.error("sync_provider failed during install: %s", exc)
-                report.warnings.append(
-                    f"core sync failed: {exc} "
-                    f"(seeded files left in place; re-run install or "
-                    f"uninstall --force to clean up)"
-                )
     if "mcp" in skip:
         return
 
@@ -692,6 +522,40 @@ def _run_core_sync(
         dry_run=dry_run,
         install_mcp=install_mcp,
     )
+
+
+def _run_non_mcp_sync(
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    skip: set[str],
+) -> None:
+    """Propagate non-MCP resources only after the MCP transaction succeeds."""
+    if dry_run or "core" in skip:
+        return
+    try:
+        _init_core_context(target)
+    except Exception as exc:
+        logger.error("workspace context bootstrap failed: %s", exc)
+        report.warnings.append(f"workspace bootstrap failed: {exc}")
+        return
+    try:
+        report.sync_results.extend(
+            sync_provider(
+                "all",
+                dry_run=False,
+                force=force,
+                skip={*skip, "mcp"},
+            )
+        )
+    except Exception as exc:
+        logger.error("sync_provider failed during install: %s", exc)
+        report.warnings.append(
+            f"core sync failed: {exc} "
+            "(seeded files left in place; re-run install or uninstall --force "
+            "to clean up)"
+        )
 
 
 def _rewrite_preview_paths(result: object, projection: Path, target: Path) -> None:
@@ -807,6 +671,133 @@ def _run_mode_migration(
 
 
 def install_run(
+    path: Path | None = None,
+    *,
+    upgrade: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+    skip: set[str] | None = None,
+    configure_torch: bool = True,
+    assume_yes: bool = False,
+    sync_after: bool = False,
+    confirm: ConfirmFn | None = None,
+    provision: bool = False,
+    local_only: bool = False,
+    provision_skip: set[str] | None = None,
+    torch_group: str | None = None,
+    install_mcp: bool = False,
+    mode: InstallMode | None = None,
+) -> InstallReport:
+    """Run install behind one required-node topology transaction."""
+    skip_tokens = skip or set()
+    if "mcp" in skip_tokens:
+        return _install_run_unchecked(
+            path,
+            upgrade=upgrade,
+            dry_run=dry_run,
+            force=force,
+            skip=skip_tokens,
+            configure_torch=configure_torch,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+            provision=provision,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            torch_group=torch_group,
+            install_mcp=install_mcp,
+            mode=mode,
+        )
+
+    target = _resolve_target(path, bootstrap=False)
+    action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")
+    failure = InstallReport(action=action, target=target)
+    try:
+        topology = inspect_required_mcp_topology(target)
+    except Exception as exc:
+        message = f"required MCP topology preflight failed: {exc}"
+        failure.mcp_errors.append(message)
+        failure.warnings.append(message)
+        return failure
+    if not install_mcp and topology.disenrollment_links:
+        message = (
+            "required MCP topology preflight failed: linked required nodes cannot "
+            "be safely removed while preserving exact link topology"
+        )
+        failure.mcp_errors.append(message)
+        failure.warnings.append(message)
+        return failure
+
+    def run() -> InstallReport:
+        return _install_run_unchecked(
+            target,
+            upgrade=upgrade,
+            dry_run=dry_run,
+            force=force,
+            skip=skip_tokens,
+            configure_torch=configure_torch,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+            provision=provision,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            torch_group=torch_group,
+            install_mcp=install_mcp,
+            mode=mode,
+        )
+
+    if dry_run:
+        return run()
+
+    with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
+        replay_target = Path(raw) / "workspace"
+        topology.populate_projection(replay_target)
+        Context().run(
+            _install_run_unchecked,
+            replay_target,
+            upgrade=upgrade,
+            dry_run=False,
+            force=force,
+            skip=set(skip_tokens),
+            configure_torch=False,
+            assume_yes=True,
+            sync_after=False,
+            confirm=None,
+            provision=False,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            torch_group=torch_group,
+            install_mcp=install_mcp,
+            mode=mode,
+        )
+        topology.capture_expected_projection(replay_target)
+
+    try:
+        topology.materialize()
+    except Exception as exc:
+        message = f"required MCP topology materialization failed: {exc}"
+        failure.mcp_errors.append(message)
+        failure.warnings.append(message)
+        return failure
+    try:
+        report = run()
+    except BaseException as exc:
+        rollback = topology.finish(commit=False)
+        if rollback:
+            raise RuntimeError(
+                "install failed and required MCP topology rollback was incomplete: "
+                + "; ".join(rollback)
+            ) from exc
+        raise
+    topology_errors = topology.finish(commit=not report.mcp_sync_failed)
+    for message in topology_errors:
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+    return report
+
+
+def _install_run_unchecked(
     path: Path | None = None,
     *,
     upgrade: bool = False,
@@ -1000,6 +991,17 @@ def install_run(
         dry_run=dry_run,
         skip=skip,
     )
+
+    # A failed MCP transition must not continue into unrelated package or
+    # provisioning mutation.  The outer required-state transaction owns the
+    # complete failure rollback from this point.
+    if report.mcp_sync_failed:
+        return report
+
+    # Non-MCP propagation is deliberately sequenced after both native MCP
+    # passes.  A mode migration is itself a fallible MCP reconciliation and
+    # must complete before unrelated provider documents can be mutated.
+    _run_non_mcp_sync(target, report, dry_run, force, skip)
 
     # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
     # D3): fires only when this run newly elects the full-leak dependency

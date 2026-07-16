@@ -52,6 +52,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S44]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S45]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S46]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S47]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -120,6 +121,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S44` - Perform fresh transaction-safe release review and complete every gate
 - `2026-07-15-provider-mcp-enrollment-P03-S45` - Make singleton teardown wait for the actual lock holder
 - `2026-07-15-provider-mcp-enrollment-P03-S46` - Perform final holder-safe release review and complete every gate
+- `2026-07-15-provider-mcp-enrollment-P03-S47` - Make required MCP nodes topology-safe across preview and apply
 
 ### plan
 
