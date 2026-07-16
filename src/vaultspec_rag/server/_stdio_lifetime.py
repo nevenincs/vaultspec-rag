@@ -332,6 +332,7 @@ def _pid_alive(pid: int) -> bool:
 
 def install_stdio_lifetime_watchdog(
     parent_pid: int | None = None,
+    grace_seconds: float = _GRACE_SECONDS,
 ) -> threading.Thread | None:
     """Arm the lifetime backstop for the stdio shim; returns its thread.
 
@@ -361,7 +362,7 @@ def install_stdio_lifetime_watchdog(
             )
             thread = threading.Thread(
                 target=_windows_watchdog,
-                args=(watched, _GRACE_SECONDS),
+                args=(watched, grace_seconds),
                 name="stdio-lifetime-watchdog",
                 daemon=True,
             )
