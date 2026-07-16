@@ -1427,3 +1427,56 @@ Run these gates from zero in order. Stop after the first failed or non-terminal 
 S57 may report release readiness only after every gate terminates successfully at the
 same audit commit. Approving this mandate does not execute tests or authorize a pull
 request, merge, approval, tag, publication, or release.
+
+## S57 final verification
+
+### posix-ledger-carries-windows-junction-items | high | The mandated POSIX inventory cannot be recollected
+
+The S57 audit started from clean audit commit `8874d58` with no credit carried from
+S53, S55, S56, or any diagnostic iteration. Windows recollection terminated green at
+2,271 total test items. The `not integration` expression selected 1,828 and excluded
+443\. All six promoted S49 lifecycle-overlap items were present in total collection and
+absent from the marker-selected set, yielding the exact mandated Windows campaign of
+1,834 selected and 437 excluded items.
+
+The exact-commit POSIX archive was then collected in WSL2 Ubuntu with Python 3.13,
+published `vaultspec-core==0.1.45`, and the real Hugging Face credential source. It
+collected 2,259 items, not 2,272. The `not integration` expression selected 1,829 and
+excluded 430. The same six promoted S49 items were present and disjoint, yielding
+1,835 selected and 424 excluded items. The selected count happens to equal the mandate,
+but the total and excluded counts do not.
+
+The 13-item difference is capability-defined and reproducible in
+`test_install.py`. These tests are declared only inside `if os.name == "nt"` blocks:
+one unrelated-junction preview test; six parametrizations of
+`test_required_junction_fails_before_lifecycle_mutation`; three parametrizations of
+`test_required_junction_container_fails_before_lifecycle_mutation`; two
+parametrizations of `test_late_junction_blocker_preserves_reparse_topology`; and one
+`test_junction_snapshot_recreates_removed_reparse_node`. POSIX adds the one real FIFO
+item but does not collect those 13 Windows junction items, so its arithmetic is
+2,271 - 13 + 1 = 2,259 total items. The approved 2,272 total and 437 excluded ledger
+incorrectly retained every Windows-only junction item while adding the FIFO.
+
+The POSIX FIFO selector itself passed one of one in 0.07 seconds against an actual
+`os.mkfifo` node. That bounded capability evidence does not waive the failed
+recollection gate. The S57 mandate explicitly makes recollection a gate, requires the
+ledger to be updated before execution when counts differ, and forbids a count waiver.
+
+Recommendation: correct the platform ledger to state Windows 2,271 total, 1,834
+selected, and 437 excluded; and POSIX 2,259 total, 1,835 selected, and 424 excluded.
+Name the 13 Windows-only junction items as the platform subtraction and the FIFO as the
+POSIX addition. Then start a new independent audit from zero at one clean audit commit.
+
+No Windows selected runtime process was started. The incomplete S56 diff and invariant
+review, complete Windows and POSIX runtime ledgers, model timeout and cache probes,
+ranking assertions, Ruff, formatting, Ty, BasedPyright, complexity, lock, diff,
+Vaultspec, provider-artifact, spec, build, wheel and source-distribution smoke,
+public-Core resolution, installed-package acceptance, Claude and Codex recognition,
+idempotence, selective unenrollment, and uninstall gates receive neither credit nor
+waiver. The current AEAT state remains uncreditable. No production or test file
+changed during S57.
+
+S57 verdict: **FAIL — not release-ready; one unresolved HIGH platform-ledger finding
+and no CRITICAL findings**. Merge, PR approval, and publication remain blocked until
+the POSIX inventory is corrected and a fresh independent release campaign restarts
+every gate from zero.
