@@ -15,10 +15,17 @@ any watched ancestor's death as termination intent. It must stay
 stdlib-only and must never import ``mcp``, torch, or the store: the shim is
 a thin service client, and this watchdog also guards nothing in HTTP daemon
 mode, where outliving the spawner is by design.
+
+One deliberate blind spot: ancestors that die during the startup grace
+window are pruned as transient spawn helpers, so a client that crashes
+within those first seconds can empty the survivor set and disarm the
+backstop for the process lifetime (stdin EOF remains). The
+empty-survivors disarm is that accepted trade-off, not a bug.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -284,6 +291,8 @@ if sys.platform == "win32":
                 result,
                 ctypes.get_last_error(),
             )
+            for ancestor in survivors:
+                _kernel32.CloseHandle(ancestor.handle)
             return
         _exit_on_ancestor_death(survivors[index].pid, survivors[index].exe)
 
@@ -297,8 +306,14 @@ def _exit_on_ancestor_death(pid: int, exe: str) -> None:
     broke is the intended outcome, not a crash a broker should retry.
     """
     print(
-        f'{{"event": "stdio_watchdog_exit", "dead_ancestor_pid": {pid}, '
-        f'"dead_ancestor_exe": "{exe}", "shim_pid": {os.getpid()}}}',
+        json.dumps(
+            {
+                "event": "stdio_watchdog_exit",
+                "dead_ancestor_pid": pid,
+                "dead_ancestor_exe": exe,
+                "shim_pid": os.getpid(),
+            }
+        ),
         file=sys.stderr,
         flush=True,
     )
@@ -366,6 +381,12 @@ def install_stdio_lifetime_watchdog(
                 name="stdio-lifetime-watchdog",
                 daemon=True,
             )
+            try:
+                thread.start()
+            except Exception:
+                for ancestor in watched:
+                    _kernel32.CloseHandle(ancestor.handle)
+                raise
         else:
             thread = threading.Thread(
                 target=_posix_watchdog,
@@ -373,7 +394,7 @@ def install_stdio_lifetime_watchdog(
                 name="stdio-lifetime-watchdog",
                 daemon=True,
             )
-        thread.start()
+            thread.start()
     except Exception:
         logger.exception(
             "stdio watchdog failed to install; stdin EOF is the only exit path"
