@@ -27,7 +27,7 @@ related:
 Build the stdlib-only stdio lifetime watchdog: Windows ancestor-chain handle wait plus POSIX reparent poll, hard-exit backstop behind stdin EOF.
 
 - [x] `P01.S01` - Create the watchdog module with ctypes kernel32 bindings (full argtypes and restype), Toolhelp32 ancestor-chain discovery bounded and cycle-safe, creation-time monotonicity PID-reuse guard, and immediate SYNCHRONIZE handle acquisition; `src/vaultspec_rag/server/_stdio_lifetime.py`.
-- [ ] `P01.S02` - Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os._exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob; `src/vaultspec_rag/server/_stdio_lifetime.py`.
+- [x] `P01.S02` - Add watchdog arming in the same module: startup grace window that prunes ancestors dead during grace, wait-any watchdog daemon thread, structured stderr line naming the dead ancestor, os._exit(0) trigger, POSIX getppid reparent poll fallback, and the VAULTSPEC_RAG_STDIO_WATCHDOG disable knob; `src/vaultspec_rag/server/_stdio_lifetime.py`.
 
 ### Phase `P02` - Wiring and configuration
 

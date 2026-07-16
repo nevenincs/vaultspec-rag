@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+import time
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -239,3 +241,139 @@ if sys.platform == "win32":
             watched.append(WatchedAncestor(pid, names.get(pid, "?"), handle))
             child_ctime = ancestor_ctime
         return watched
+
+    def _windows_watchdog(watched: list[WatchedAncestor], grace_seconds: float) -> None:
+        """Grace-prune, then wait-any on the survivors; hard-exit on death.
+
+        Runs on a daemon thread. Ancestors that die during the grace window
+        are transient spawn helpers, not termination intent, and are
+        dropped. A failed wait disarms the backstop (stdin EOF remains)
+        rather than killing a live session.
+        """
+        time.sleep(grace_seconds)
+        survivors: list[WatchedAncestor] = []
+        for ancestor in watched:
+            if _kernel32.WaitForSingleObject(ancestor.handle, 0) == _WAIT_TIMEOUT:
+                survivors.append(ancestor)
+            else:
+                _kernel32.CloseHandle(ancestor.handle)
+                logger.info(
+                    "stdio watchdog: dropping ancestor %d (%s) gone during grace",
+                    ancestor.pid,
+                    ancestor.exe,
+                )
+        if not survivors:
+            logger.warning(
+                "stdio watchdog: no ancestors survived the grace window; "
+                "backstop disarmed, stdin EOF is the only exit path"
+            )
+            return
+        handles = (wintypes.HANDLE * len(survivors))(
+            *[ancestor.handle for ancestor in survivors]
+        )
+        result = int(
+            _kernel32.WaitForMultipleObjects(len(survivors), handles, False, _INFINITE)
+        )
+        index = result - _WAIT_OBJECT_0
+        if not 0 <= index < len(survivors):
+            logger.error(
+                "stdio watchdog: wait failed (result 0x%x, error %d); "
+                "backstop disarmed, stdin EOF is the only exit path",
+                result,
+                ctypes.get_last_error(),
+            )
+            return
+        _exit_on_ancestor_death(survivors[index].pid, survivors[index].exe)
+
+
+def _exit_on_ancestor_death(pid: int, exe: str) -> None:
+    """Log one structured line and hard-exit.
+
+    ``os._exit`` is deliberate: the anyio stdin reader blocks a non-daemon
+    thread that nothing in-process can cancel, so a graceful shutdown can
+    hang forever. Exit code 0 because self-reaping after the spawning chain
+    broke is the intended outcome, not a crash a broker should retry.
+    """
+    print(
+        f'{{"event": "stdio_watchdog_exit", "dead_ancestor_pid": {pid}, '
+        f'"dead_ancestor_exe": "{exe}", "shim_pid": {os.getpid()}}}',
+        file=sys.stderr,
+        flush=True,
+    )
+    os._exit(0)
+
+
+def _posix_watchdog(initial_ppid: int, extra_pids: tuple[int, ...]) -> None:
+    """Coarse reparent poll: exit when orphaned or an explicit pid dies."""
+    while True:
+        time.sleep(_POSIX_POLL_SECONDS)
+        ppid = os.getppid()
+        if ppid != initial_ppid:
+            _exit_on_ancestor_death(initial_ppid, "parent")
+        for pid in extra_pids:
+            if not _pid_alive(pid):
+                _exit_on_ancestor_death(pid, "explicit-parent")
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        logger.exception("stdio watchdog: liveness probe failed for pid %d", pid)
+        return True
+    return True
+
+
+def install_stdio_lifetime_watchdog(
+    parent_pid: int | None = None,
+) -> threading.Thread | None:
+    """Arm the lifetime backstop for the stdio shim; returns its thread.
+
+    Never raises: a watchdog that cannot install must not take down a shim
+    whose stdin EOF path still works. Returns ``None`` when disabled via
+    ``VAULTSPEC_RAG_STDIO_WATCHDOG`` or when installation failed.
+    """
+    if watchdog_disabled():
+        logger.info(
+            "stdio watchdog disabled via %s; stdin EOF is the only exit path",
+            STDIO_WATCHDOG_ENV,
+        )
+        return None
+    extra_pids = (parent_pid,) if parent_pid is not None else ()
+    try:
+        if sys.platform == "win32":
+            watched = open_ancestor_handles(extra_pids)
+            if not watched:
+                logger.warning(
+                    "stdio watchdog: no watchable ancestors; "
+                    "backstop disarmed, stdin EOF is the only exit path"
+                )
+                return None
+            logger.info(
+                "stdio watchdog armed on ancestors: %s",
+                ", ".join(f"{a.pid}({a.exe})" for a in watched),
+            )
+            thread = threading.Thread(
+                target=_windows_watchdog,
+                args=(watched, _GRACE_SECONDS),
+                name="stdio-lifetime-watchdog",
+                daemon=True,
+            )
+        else:
+            thread = threading.Thread(
+                target=_posix_watchdog,
+                args=(os.getppid(), extra_pids),
+                name="stdio-lifetime-watchdog",
+                daemon=True,
+            )
+        thread.start()
+    except Exception:
+        logger.exception(
+            "stdio watchdog failed to install; stdin EOF is the only exit path"
+        )
+        return None
+    return thread
