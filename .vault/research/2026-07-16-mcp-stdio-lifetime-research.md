@@ -162,6 +162,38 @@ self-defense, not waiting for client fixes.
 
 Source: the cited upstream issues/PRs; LSP 3.17 `InitializeParams`.
 
+### S7 - Handle-inheritance mechanics: why the client's EOF never arrives
+
+A pipe's read end sees EOF only when EVERY copy of the write handle is
+closed. Any handle flagged `HANDLE_FLAG_INHERIT` is duplicated into every
+child spawned with `bInheritHandles=TRUE` while it is open, and standard
+streams propagate down each generation by design (`STARTF_USESTDHANDLES`).
+A client that spawns successive shim generations with inheritable pipe
+ends therefore leaks generation A's stdin writer into generation B, and
+closing its own copy no longer produces EOF for A. The correct fixes
+(`SetHandleInformation(..., HANDLE_FLAG_INHERIT, 0)` or the
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` allow-list) live in the spawner - out
+of our reach. Rust `std::process` (uv's spawner) is defensive here, which
+matches repro L4: the residual leaker is the client, and a watchdog
+independent of stdin is warranted regardless.
+
+Source: MS Learn "Inheritance" and "Creating a Child Process with
+Redirected Input and Output"; teammate research F1-F4.
+
+### S8 - Cross-platform fast paths and their races (future work)
+
+Linux `prctl(PR_SET_PDEATHSIG, SIGTERM)` requires an immediate
+`os.getppid()` re-check (a parent that died before the call never sends
+the signal, and the signal keys on the parent thread); macOS has kqueue
+`EVFILT_PROC`/`NOTE_EXIT`. The portable floor is polling `os.getppid()`
+for reparenting - what the shipped POSIX fallback does; the poll-based
+approach has no set-then-check race. A two-tier shutdown (graceful httpx
+close, then a 2-3s deadline into `os._exit`) was considered and rejected
+in the ADR: the shim holds no GPU or store resources worth a graceful
+pass, and straight hard-exit removes the hang window entirely.
+
+Source: man7 `PR_SET_PDEATHSIG`; `kqueue(2)`; teammate research F12-F16.
+
 ### W1 - Prototype: ancestor discovery and death-wait both work from unprivileged ctypes
 
 A scratchpad prototype (no pywin32) walked the parent chain via
