@@ -60,3 +60,25 @@ publication gate from zero. The Windows ledger is 2,269 total, 1,832 selected, a
 excluded test items. The POSIX ledger is 2,270 total, 1,833 selected, and 437 excluded
 test items; Linux CI must collect and execute the POSIX-only FIFO regression because
 this Windows review cannot grant that item execution credit.
+
+## S54 correction review
+
+### completion-deadline-enforcement | medium | The first bounded helper could credit a late terminal response
+
+The first S54 review found that the 120-second deadline was checked only after each
+administrative poll and after terminal-state recognition. A slow request could
+therefore return `done` after expiry and still pass, while the environment-configurable
+per-request timeout could extend the observed wait beyond the declared completion
+contract.
+
+The final helper computes the remaining wall-clock budget before each real service
+poll, supplies that value as the poll's HTTP timeout, checks expiry again after the
+response, and only then accepts an exact-job terminal phase. Timeout failure retains
+the final job payload and full service envelope. The existing exact `done` assertions
+remain authoritative, so `error` and `failed` responses terminate polling without being
+converted into success. The finding is resolved in S54.
+
+S54 verdict: **PASS — no actionable findings after resolution of the MEDIUM
+deadline-enforcement finding**. This verdict is limited to the job-completion test
+correction and does not grant release readiness or waive the complete platform-aware
+release campaign.
