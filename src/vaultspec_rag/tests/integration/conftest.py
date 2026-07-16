@@ -7,6 +7,7 @@ indexing on top of vault indexing.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -20,9 +21,44 @@ if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
     from ..conftest import RagComponentsWithManifest
 
+from ..._machine_lock import (
+    machine_lock_live_holder,
+    machine_lock_path,
+    release_machine_lock,
+)
+from ...config import EnvVar, reset_config
 from ...progress import NullProgressReporter
 from ..conftest import _index_corpus
 from ..corpus import build_synthetic_vault
+
+
+@pytest.fixture
+def isolated_lock(tmp_path: Path) -> Generator[Path]:
+    """Provide and safely remove a test-owned machine-singleton lock path."""
+    key = EnvVar.QDRANT_STORAGE_DIR.value
+    previous = os.environ.get(key)
+    os.environ[key] = str(tmp_path / "qdrant-server" / "storage")
+    reset_config()
+    try:
+        yield machine_lock_path()
+    finally:
+        try:
+            release_machine_lock()
+            path = machine_lock_path()
+            live_holder = machine_lock_live_holder()
+            if live_holder != 0:
+                msg = (
+                    "refusing to unlink test-owned machine lock while its real "
+                    f"holder {live_holder} is still alive"
+                )
+                raise AssertionError(msg)
+            path.unlink(missing_ok=True)
+        finally:
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+            reset_config()
 
 
 @pytest.fixture(scope="session")

@@ -11,17 +11,12 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
-
-import pytest
 
 from ..._machine_lock import (
     acquire_machine_lock,
     machine_lock_live_holder,
-    machine_lock_path,
 )
 from ...config import EnvVar, reset_config
 from ...qdrant_runtime._resolve import (
@@ -29,43 +24,14 @@ from ...qdrant_runtime._resolve import (
     QdrantIdentity,
     decide_qdrant_action,
 )
+from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 _STORAGE_ENV = EnvVar.QDRANT_STORAGE_DIR.value
 _VERSION = "1.18.2"
 _STORAGE = "/srv/storage"
-
-# A child that acquires the real machine lock, announces its own pid, and holds
-# it. It announces os.getpid() (not the Popen pid) because a launcher/uv shim
-# may spawn the real interpreter as a grandchild.
-_HOLD = (
-    "import os,sys,time;"
-    "os.environ['VAULTSPEC_RAG_QDRANT_STORAGE_DIR']=sys.argv[1];"
-    "from vaultspec_rag.config import reset_config; reset_config();"
-    "from vaultspec_rag._machine_lock import acquire_machine_lock;"
-    "ok,_=acquire_machine_lock();"
-    "print('ACQUIRED:'+str(os.getpid()) if ok else 'FAILED', flush=True);"
-    "time.sleep(60)"
-)
-
-
-def _spawn_lock_holder(storage_dir: str) -> tuple[subprocess.Popen[str], int]:
-    """Spawn a child that holds the machine lock; return (proc, holder pid)."""
-    proc = subprocess.Popen(
-        [sys.executable, "-c", _HOLD, storage_dir],
-        stdout=subprocess.PIPE,
-        text=True,
-    )
-    line = proc.stdout.readline() if proc.stdout is not None else ""
-    if not line.startswith("ACQUIRED:"):
-        proc.kill()
-        proc.wait(timeout=5)
-        msg = f"lock-holder child failed to acquire: {line!r}"
-        raise AssertionError(msg)
-    return proc, int(line.split(":", 1)[1].strip())
 
 
 def _race_worker(storage_dir: str) -> bool:
@@ -80,26 +46,6 @@ def _race_worker(storage_dir: str) -> bool:
     reset_config()
     acquired, _holder = acquire_machine_lock()
     return acquired
-
-
-@pytest.fixture
-def isolated_lock(tmp_path: Path) -> Iterator[Path]:
-    previous = os.environ.get(_STORAGE_ENV)
-    os.environ[_STORAGE_ENV] = str(tmp_path / "qdrant-server" / "storage")
-    reset_config()
-    try:
-        yield machine_lock_path()
-    finally:
-        # The winning child holds the lock; remove the file directly (the
-        # parent is not the holder, so release_machine_lock would no-op).
-        path = machine_lock_path()
-        if path.exists():
-            path.unlink()
-        if previous is None:
-            os.environ.pop(_STORAGE_ENV, None)
-        else:
-            os.environ[_STORAGE_ENV] = previous
-        reset_config()
 
 
 class TestConcurrentStartRace:
@@ -159,17 +105,22 @@ class TestInjectedHolderNeverYieldsCompetitor:
         # A live foreign holder of the OS lock: a second acquire from this
         # process must fast-fail, never displace it.
         storage = os.environ[_STORAGE_ENV]
-        proc, holder_pid = _spawn_lock_holder(storage)
+        foreign_holder = spawn_foreign_machine_lock_holder(storage)
+        holder_pid = foreign_holder.holder_pid
         try:
             assert isolated_lock.exists()
+            assert foreign_holder.launcher_pid != holder_pid
             acquired, holder = acquire_machine_lock()
             assert acquired is False
             assert holder == holder_pid
             assert machine_lock_live_holder() == holder_pid
         finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait(timeout=5)
+            evidence = foreign_holder.stop()
+        # The real holder releases first while the launcher is deliberately
+        # still alive; only then may cleanup let the launcher exit.
+        assert evidence.lock_released is True
+        assert evidence.launcher_alive_at_release is True
+        assert machine_lock_live_holder() == 0
 
 
 class TestUnhealthyOrCorruptHolderRefusedWithCause:
