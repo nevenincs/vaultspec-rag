@@ -521,6 +521,7 @@ class VaultStore:
                 self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
+                    timeout=30,
                 )
             except Exception as exc:
                 logger.error(

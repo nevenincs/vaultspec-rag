@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..config import EnvVar
-from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._transport import (
+    DEFAULT_ADMIN_TIMEOUT_SECONDS,
+    _get_admin_timeout,
+    _try_http_admin,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -94,6 +98,33 @@ def isolated_status_dir(tmp_path: object) -> Iterator[None]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = previous
+
+
+@pytest.fixture
+def isolated_admin_timeout_env() -> Iterator[None]:
+    """Isolate the admin-timeout environment override for precedence tests."""
+    key = "VAULTSPEC_RAG_ADMIN_TIMEOUT"
+    previous = os.environ.pop(key, None)
+    try:
+        yield
+    finally:
+        if previous is not None:
+            os.environ[key] = previous
+
+
+@pytest.mark.usefixtures("isolated_admin_timeout_env")
+class TestAdminTimeoutResolution:
+    def test_default_allows_real_service_observability_work(self) -> None:
+        assert DEFAULT_ADMIN_TIMEOUT_SECONDS == 30.0
+        assert _get_admin_timeout() == 30.0
+
+    def test_explicit_timeout_wins(self) -> None:
+        os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "17"
+        assert _get_admin_timeout(2.5) == 2.5
+
+    def test_environment_override_wins_over_default(self) -> None:
+        os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "17"
+        assert _get_admin_timeout() == 17.0
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

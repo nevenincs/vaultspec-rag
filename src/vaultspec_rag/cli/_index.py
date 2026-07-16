@@ -268,17 +268,19 @@ def _try_service_delegation(
 
     if do_vault:
         v_data = _try_http_reindex(
-            "reindex_vault",
+            "vault",
             rebuild,
             port,
             str(target),
+            initiator_kind="cli",
         )
     if do_code:
         c_data = _try_http_reindex(
-            "reindex_codebase",
+            "codebase",
             rebuild,
             port,
             str(target),
+            initiator_kind="cli",
         )
 
     for label, data in (("vault", v_data), ("codebase", c_data)):

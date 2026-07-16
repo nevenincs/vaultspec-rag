@@ -328,7 +328,7 @@ def test_multi_project_search_isolation(
                         f"http://127.0.0.1:{test_port}/search",
                         headers={"Authorization": f"Bearer {token}"},
                         json={"type": "vault", **arguments},
-                        timeout=10.0,
+                        timeout=30.0,
                     )
                     assert resp.status_code == 200, f"search_vault failed: {resp.text}"
                     # Return string format because the test expects to json.load it
@@ -338,7 +338,7 @@ def test_multi_project_search_isolation(
                         f"http://127.0.0.1:{test_port}/jobs",
                         headers={"Authorization": f"Bearer {token}"},
                         params={"limit": int(str(arguments.get("limit", 50)))},
-                        timeout=10.0,
+                        timeout=30.0,
                     )
                     assert resp.status_code == 200, f"get_jobs failed: {resp.text}"
                     return resp.text

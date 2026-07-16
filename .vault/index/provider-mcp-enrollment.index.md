@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#provider-mcp-enrollment'
-date: '2026-07-15'
-modified: '2026-07-15'
+date: '2026-07-16'
+modified: '2026-07-16'
 related:
   - '[[2026-07-15-provider-mcp-enrollment-P01-S01]]'
   - '[[2026-07-15-provider-mcp-enrollment-P01-S02]]'
@@ -46,6 +46,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S38]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S39]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S40]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S41]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -108,6 +109,7 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S38` - Perform final topology-aware release review and complete every gate
 - `2026-07-15-provider-mcp-enrollment-P03-S39` - Make rollback file replacement collision-safe and metadata-preserving
 - `2026-07-15-provider-mcp-enrollment-P03-S40` - Perform final collision-safe release review and complete every gate
+- `2026-07-15-provider-mcp-enrollment-P03-S41` - Repair service attribution and deterministic release-test isolation
 
 ### plan
 

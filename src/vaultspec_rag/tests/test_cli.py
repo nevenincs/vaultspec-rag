@@ -2001,10 +2001,11 @@ class TestMcpFastPath:
         )
 
         result = cli_mod._try_http_reindex(
-            "reindex_vault",
+            "vault",
             False,
             8766,
             "/tmp/proj",
+            initiator_kind="cli",
         )
         assert isinstance(result, dict)
         assert result.get("ok") is False
@@ -6089,9 +6090,15 @@ class TestAutoDelegation:
         called: list[tuple[str, int]] = []
 
         def mock_try_reindex(
-            tool_name: str, _rebuild: bool, port: int, _target: str
+            reindex_type: str,
+            _rebuild: bool,
+            port: int,
+            _target: str,
+            *,
+            initiator_kind: str,
         ) -> dict[str, object]:
-            called.append((tool_name, port))
+            assert initiator_kind == "cli"
+            called.append((reindex_type, port))
             return {
                 "ok": True,
                 "added": 1,
@@ -6116,7 +6123,7 @@ class TestAutoDelegation:
             ],
         )
         assert len(called) == 1
-        assert called[0] == ("reindex_vault", 8766)
+        assert called[0] == ("vault", 8766)
 
 
 class TestWarmingStatusState:

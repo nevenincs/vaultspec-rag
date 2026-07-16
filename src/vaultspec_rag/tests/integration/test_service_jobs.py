@@ -199,41 +199,32 @@ def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
     _jobs.reset()
 
 
-# --------------------------------------------------------------------------- #
-# MCP: get_jobs returns the registry snapshot shape                           #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.subprocess_gpu
-async def test_get_jobs_returns_snapshot_shape(
-    live_service: tuple[int, Path],  # noqa: ARG001
-    tmp_path: Path,
-) -> None:
-    # Trigger a real job so the daemon has one in its registry.
-    # We use an empty tmp_path so the reindex is near-instant.
-    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
-    await tools.reindex_vault(project_root=str(tmp_path))
-
-    # Poll until it's done so the snapshot is stable.
+async def _wait_for_terminal_jobs() -> dict[str, Any]:
+    """Wait for the real service registry to expose a terminal job."""
     import asyncio
 
     result: dict[str, Any] = {}
     for _ in range(50):
         result = await admin.get_jobs()
-        done = result.get("jobs") and result["jobs"][0]["phase"] in (
-            "done",
-            "error",
-            "failed",
-        )
-        if done:
+        jobs = result.get("jobs")
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
             break
         await asyncio.sleep(0.1)
+    return result
 
+
+def _assert_mcp_job_snapshot(
+    result: dict[str, Any],
+    *,
+    job_id: str,
+    project_root: Path,
+) -> None:
+    """Assert the complete real MCP job envelope and caller identity."""
     assert set(result) == {"jobs", "total", "returned", "summary", "filters"}
     jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
-    assert len(jobs) >= 1
-    entry: dict[str, Any] = jobs[0]
+    assert jobs
+    entry = next(job for job in jobs if job["id"] == job_id)
     assert {
         "id",
         "source",
@@ -252,11 +243,66 @@ async def test_get_jobs_returns_snapshot_shape(
     assert entry["source"] == "vault"
     assert entry["trigger"] == "tool"
     assert entry["phase"] in ("done", "error", "failed")
-    assert entry["initiator"]["project_root"] == str(tmp_path)
+    assert entry["initiator"]["project_root"] == str(project_root)
     assert entry["initiator"]["kind"] == "mcp"
     assert isinstance(entry["runtime"]["pid"], int)
     assert isinstance(entry["runtime"]["user"], str)
     assert isinstance(entry["resources"]["started"]["rss_mb"], float)
+
+
+async def _assert_cli_job_attribution(
+    *,
+    port: int,
+    project_root: Path,
+    mcp_job_id: str,
+) -> None:
+    """Submit through the real CLI and assert its distinct caller identity."""
+    cli_result = runner.invoke(
+        app,
+        [
+            "--target",
+            str(project_root),
+            "index",
+            "--type",
+            "vault",
+            "--port",
+            str(port),
+        ],
+    )
+    assert cli_result.exit_code == 0, cli_result.output
+    cli_jobs = (await admin.get_jobs())["jobs"]
+    cli_entry = next(job for job in cli_jobs if job["id"] != mcp_job_id)
+    assert cli_entry["initiator"]["kind"] == "cli"
+    assert cli_entry["initiator"]["project_root"] == str(project_root)
+
+
+# --------------------------------------------------------------------------- #
+# MCP: get_jobs returns the registry snapshot shape                           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.subprocess_gpu
+async def test_get_jobs_returns_snapshot_shape(
+    live_service: tuple[int, Path],
+    tmp_path: Path,
+) -> None:
+    # Trigger a real job so the daemon has one in its registry.
+    # We use an empty tmp_path so the reindex is near-instant.
+    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".vaultspec").mkdir(parents=True, exist_ok=True)
+    mcp_job = await tools.reindex_vault(project_root=str(tmp_path))
+
+    result = await _wait_for_terminal_jobs()
+    _assert_mcp_job_snapshot(
+        result,
+        job_id=mcp_job["job_id"],
+        project_root=tmp_path,
+    )
+    await _assert_cli_job_attribution(
+        port=live_service[0],
+        project_root=tmp_path,
+        mcp_job_id=mcp_job["job_id"],
+    )
 
 
 @pytest.mark.subprocess_gpu
@@ -457,7 +503,7 @@ def test_jobs_index_filter_is_operator_facing_cli_alias() -> None:
     query = urllib.parse.parse_qs(request.query)
     assert request.path == "/jobs"
     assert query["source"] == ["code"]
-    assert "No matching jobs." in result.output
+    assert "No jobs matched these filters." in result.output
     assert "--source" not in result.output
 
 
@@ -492,7 +538,7 @@ def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
     query = urllib.parse.parse_qs(request.query)
     assert request.path == "/jobs"
     assert query["trigger"] == ["watcher"]
-    assert "No matching jobs." in result.output
+    assert "No jobs matched these filters." in result.output
     assert "--trigger" not in result.output
 
 
@@ -666,17 +712,8 @@ def test_empty_jobs_output_is_actionable(
     assert "No recent jobs." not in output
 
 
-def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
-    now = time.time()
-    with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "jobs", "--limit", "5", "--port", str(port)],
-        )
-
-    assert result.exit_code == 0, result.output
-    output = result.output
-    lines = _plain_lines(output)
+def _assert_jobs_feed_header(lines: list[str], *, port: int) -> None:
+    """Assert the stable operator summary and header order."""
     assert lines[:6] == [
         "Jobs",
         f"Address: http://127.0.0.1:{port}",
@@ -685,23 +722,51 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
         "Displayed jobs: 1 active, 0 waiting, 1 finished, 1 failed",
         "Showing: active, waiting, failed, then latest finished",
     ]
-    assert lines[6] == "Order: latest job appears last"
-    assert lines[7] == "Legend: * active, ~ waiting, ! failed, - finished"
-    rows = _jobs_feed_rows(output)
-    assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
-    assert rows[0]["marker"] == "-"
-    assert rows[0]["state"] == "finished"
-    assert rows[0]["operation"] == "code index refresh for proj-c"
-    assert rows[0]["detail"] == "added 3, updated 1, removed 0, finished in 22 seconds"
-    assert rows[1]["marker"] == "!"
-    assert rows[1]["state"] == "failed"
-    assert rows[1]["operation"] == "vault index refresh for proj-b"
-    assert rows[2]["marker"] == "*"
-    assert rows[2]["state"] == "active"
-    assert rows[2]["operation"] == "code index update for proj-a"
-    assert rows[2]["detail"] == (
+    order_line = "Order: latest job appears last"
+    legend_line = "Legend: * active, ~ waiting, ! failed, - finished"
+    scripting_line = (
+        "Scripting: use --json (this summary always contains the word 'active')"
+    )
+    assert order_line in lines
+    assert legend_line in lines
+    assert scripting_line in lines
+    assert lines.index(order_line) < lines.index(legend_line)
+    assert lines.index(legend_line) < lines.index(scripting_line)
+
+
+def _assert_finished_jobs_feed_row(row: dict[str, str]) -> None:
+    assert row["marker"] == "-"
+    assert row["state"] == "finished"
+    assert row["operation"] == "code index refresh for proj-c"
+    assert row["detail"] == "added 3, updated 1, removed 0, finished in 22 seconds"
+
+
+def _assert_failed_jobs_feed_row(row: dict[str, str]) -> None:
+    assert row["marker"] == "!"
+    assert row["state"] == "failed"
+    assert row["operation"] == "vault index refresh for proj-b"
+
+
+def _assert_active_jobs_feed_row(row: dict[str, str]) -> None:
+    assert row["marker"] == "*"
+    assert row["state"] == "active"
+    assert row["operation"] == "code index update for proj-a"
+    assert row["detail"] == (
         "embedding source code sections 2 of 5; running for 10 seconds"
     )
+
+
+def _assert_jobs_feed_content(output: str) -> None:
+    """Assert row ordering and the content of every rendered state."""
+    rows = _jobs_feed_rows(output)
+    assert [row["id"] for row in rows] == ["donejob1", "failjob1", "runjob12"]
+    _assert_finished_jobs_feed_row(rows[0])
+    _assert_failed_jobs_feed_row(rows[1])
+    _assert_active_jobs_feed_row(rows[2])
+
+
+def _assert_no_internal_jobs_fragments(output: str) -> None:
+    """Assert service-internal and table phrasing stays out of the operator feed."""
     forbidden_fragments = (
         "3/3 shown:",
         "Displayed: 3 of 3",
@@ -725,6 +790,22 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     )
     leaked = [text for text in forbidden_fragments if text in output]
     assert not leaked, f"internal or table fragments leaked: {leaked}"
+
+
+def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
+    now = time.time()
+    with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--limit", "5", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    output = result.output
+    lines = _plain_lines(output)
+    _assert_jobs_feed_header(lines, port=port)
+    _assert_jobs_feed_content(output)
+    _assert_no_internal_jobs_fragments(output)
 
 
 def test_jobs_sparse_service_payload_uses_reported_absence_language() -> None:
@@ -961,7 +1042,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
 
     output = capsys.readouterr().out
     lines = _plain_lines(output)
-    assert lines[:8] == [
+    expected_header_lines = (
         "Jobs",
         "Address: http://127.0.0.1:8766",
         "Displayed: 2 matching jobs",
@@ -969,8 +1050,16 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
         "Displayed jobs: 2 active, 0 waiting, 0 finished, 0 failed",
         "Order: latest job appears last",
         "Legend: * active, ~ waiting, ! failed, - finished",
+        "Scripting: use --json (this summary always contains the word 'active')",
         "Filter: state active or waiting",
-    ]
+    )
+    missing_header_lines = [line for line in expected_header_lines if line not in lines]
+    assert not missing_header_lines, (
+        f"missing filtered jobs header lines: {missing_header_lines}"
+    )
+    assert [lines.index(line) for line in expected_header_lines] == sorted(
+        lines.index(line) for line in expected_header_lines
+    )
     assert "Showing:" not in output
     rows = _jobs_feed_rows(output)
     assert len(rows) == 2
@@ -1459,7 +1548,8 @@ def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
     assert result.exit_code == 0, result.output
     assert "Watch: refresh 1 of 1." in result.output
     assert "press Ctrl+C" not in result.output
-    assert "There are no active or waiting jobs." in result.output
+    assert "There are no active jobs." in result.output
+    assert "There are no active or waiting jobs." not in result.output
 
 
 def test_jobs_watch_is_human_only() -> None:

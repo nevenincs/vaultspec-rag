@@ -41,7 +41,10 @@ __all__ = [
 ]
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
-DEFAULT_ADMIN_TIMEOUT_SECONDS = 10.0
+DEFAULT_ADMIN_TIMEOUT_SECONDS = 30.0
+
+type ReindexType = Literal["vault", "codebase"]
+type ReindexInitiator = Literal["cli", "mcp"]
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
@@ -208,18 +211,19 @@ def _do_http_call(
 
 
 def _try_http_reindex(
-    tool_name: str,
+    reindex_type: ReindexType,
     clean: bool,
     port: int,
     project_root: str,
+    *,
+    initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
-        search_type = "vault" if "vault" in tool_name else "codebase"
         payload: dict[str, object] = {
-            "type": search_type,
+            "type": reindex_type,
             "clean": clean,
             "project_root": project_root,
-            "initiator_kind": "cli",
+            "initiator_kind": initiator_kind,
         }
         res = _do_http_call(port, "/reindex", payload)
         if res is not None:

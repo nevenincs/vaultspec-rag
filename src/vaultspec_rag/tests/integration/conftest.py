@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-    from pytest import FixtureRequest, TempPathFactory
+    from pytest import TempPathFactory
 
     from ...embeddings import EmbeddingModel
     from ..conftest import RagComponentsWithManifest
@@ -55,18 +55,63 @@ def rag_components_with_code(
 
 @pytest.fixture
 def live_service(
-    request: FixtureRequest,
     tmp_path: Path,
 ) -> Generator[tuple[int, Path]]:
-    """Provides a running real background service and its temp status directory."""
-    from ...cli import _spawn_service, _terminate_pid, _write_service_status
-    from ._helpers import _get_ephemeral_port, _poll_health, _service_env
+    """Provide a test-owned real service with bounded startup and shutdown."""
+    from ...cli import (
+        _read_service_status,
+        _spawn_service,
+        _terminate_pid,
+        _write_service_status,
+    )
+    from ._helpers import (
+        _get_ephemeral_port,
+        _poll_health,
+        _service_env,
+        _wait_for_exit,
+    )
+
+    def diagnostics(log_path: Path) -> str:
+        if not log_path.is_file():
+            return "service log was not created"
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(lines[-80:])
 
     with _service_env(tmp_path):
         port = _get_ephemeral_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
-        request.addfinalizer(lambda: _terminate_pid(pid))
+        pid = _spawn_service(
+            port,
+            log_path,
+            watch=False,
+        )
         _write_service_status(pid, port)
-        _poll_health(port)
-        yield port, tmp_path
+        try:
+            try:
+                _poll_health(port, timeout=90.0)
+            except TimeoutError as exc:
+                message = f"{exc}\nService output:\n{diagnostics(log_path)}"
+                raise AssertionError(message) from exc
+            yield port, tmp_path
+        finally:
+            status = _read_service_status()
+            raw_qdrant_pid = status.get("qdrant_pid") if status else None
+            qdrant_pid = (
+                raw_qdrant_pid
+                if isinstance(raw_qdrant_pid, int)
+                and not isinstance(raw_qdrant_pid, bool)
+                else None
+            )
+            _terminate_pid(pid)
+            if not _wait_for_exit(pid, timeout=15.0):
+                raise AssertionError(
+                    f"Test-owned service process {pid} did not exit.\n"
+                    f"Service output:\n{diagnostics(log_path)}"
+                )
+            if qdrant_pid is not None and not _wait_for_exit(qdrant_pid, timeout=15.0):
+                _terminate_pid(qdrant_pid)
+                _wait_for_exit(qdrant_pid, timeout=15.0)
+                raise AssertionError(
+                    f"Test-owned Qdrant process {qdrant_pid} did not exit with its "
+                    f"service {pid}.\nService output:\n{diagnostics(log_path)}"
+                )
