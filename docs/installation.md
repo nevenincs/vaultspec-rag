@@ -170,6 +170,8 @@ uv sync
 
 `uv sync` refetches the GPU PyTorch build if it changed. Two optional follow-ups apply only when a release changes bundled content. Run `uv run vaultspec-rag install --upgrade` to refresh the bundled rules and integration files. If the release pins a newer Qdrant version, run `uv run vaultspec-rag server qdrant install --upgrade`. There is no migration step and no automatic reindex. If a release notes a changed embedding or reranker model, reindex by hand with `index --rebuild`.
 
+One refresh matters for MCP launch hygiene: workspaces set up before the tokenized launch format still carry a static MCP seed (`.vaultspec/mcps/vaultspec-rag.builtin.json` with a literal `uv run vaultspec-search-mcp` entry) that bypasses vaultspec-core's launch renderer. `install --upgrade` rewrites that seed to the tokenized form, which the renderer turns into a side-effect-free launch for the workspace's declared mode (including the `[mcp]` extra spec that tool mode needs). If an assistant's MCP config predates the refresh, re-run the client's MCP setup afterwards so the rendered entry lands in its config.
+
 The `server updates` commands are unrelated to upgrades. They control the automatic-reindex watcher, covered in the [service mode guide](service-mode.md).
 
 ## Uninstall

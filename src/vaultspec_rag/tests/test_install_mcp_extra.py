@@ -17,6 +17,8 @@ import pytest
 from ..commands import install_run
 from ..commands._uv_sync import (
     _classify_uv_add_result,  # pyright: ignore[reportPrivateUsage]
+    _detect_rag_placement,  # pyright: ignore[reportPrivateUsage]
+    _mcp_extra_add_command,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -84,3 +86,197 @@ class TestClassifyUvAdd:
         assert action == "failed"
         assert warning is not None
         assert "lockfile conflict" in warning
+
+
+class TestMcpExtraPlacement:
+    """The extra follows the host's declaration, then the declared mode.
+
+    A bare ``uv add`` always targets runtime ``[project.dependencies]``,
+    which leaked ``vaultspec-rag[mcp]`` into a dev-mode host's published
+    dependency list (issue #231). The command matrix is a pure function.
+    """
+
+    @pytest.mark.parametrize(
+        ("placement", "mode", "expected"),
+        [
+            (None, "dependency", ["uv", "add", "vaultspec-rag[mcp]"]),
+            (None, "dev", ["uv", "add", "--group", "dev", "vaultspec-rag[mcp]"]),
+            ("runtime", "dev", ["uv", "add", "vaultspec-rag[mcp]"]),
+            ("runtime", "dependency", ["uv", "add", "vaultspec-rag[mcp]"]),
+            (
+                "dev",
+                "dependency",
+                ["uv", "add", "--group", "dev", "vaultspec-rag[mcp]"],
+            ),
+            ("docs", "dev", ["uv", "add", "--group", "docs", "vaultspec-rag[mcp]"]),
+        ],
+    )
+    def test_placement_matrix(
+        self, placement: str | None, mode: str, expected: list[str]
+    ) -> None:
+        assert _mcp_extra_add_command(placement, mode) == expected
+
+    @pytest.mark.parametrize("placement", [None, "runtime", "dev"])
+    def test_tool_mode_never_runs_uv_add(self, placement: str | None) -> None:
+        assert _mcp_extra_add_command(placement, "tool") is None
+
+    def test_tool_mode_reports_skip_without_subprocess(self, tmp_path: Path) -> None:
+        from ..commands._models import InstallReport
+        from ..commands._uv_sync import (
+            _run_uv_add_mcp_extra,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        report = InstallReport(action="install", target=tmp_path)
+        _run_uv_add_mcp_extra(target=tmp_path, report=report, mode="tool")
+        assert report.mcp_extra_action == "skipped-tool-mode"
+        assert not report.warnings
+
+
+class TestDetectRagPlacement:
+    """Reading the host's actual vaultspec-rag declaration from pyproject."""
+
+    def test_runtime_dependencies_win(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\n'
+            'dependencies = ["vaultspec-rag[mcp]>=0.2.23"]\n'
+            '[dependency-groups]\ndev = ["vaultspec-rag"]\n',
+            encoding="utf-8",
+        )
+        assert _detect_rag_placement(tmp_path) == "runtime"
+
+    def test_dev_group_detected(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\ndependencies = []\n'
+            '[dependency-groups]\ndev = ["pytest", "vaultspec-rag>=0.3.0"]\n',
+            encoding="utf-8",
+        )
+        assert _detect_rag_placement(tmp_path) == "dev"
+
+    def test_custom_group_detected(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\n'
+            '[dependency-groups]\ntooling = ["vaultspec-rag"]\n',
+            encoding="utf-8",
+        )
+        assert _detect_rag_placement(tmp_path) == "tooling"
+
+    def test_longer_names_do_not_match(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\n'
+            'dependencies = ["vaultspec-rag-extras"]\n',
+            encoding="utf-8",
+        )
+        assert _detect_rag_placement(tmp_path) is None
+
+    def test_absent_declaration_and_missing_file(self, tmp_path: Path) -> None:
+        assert _detect_rag_placement(tmp_path) is None
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\n', encoding="utf-8"
+        )
+        assert _detect_rag_placement(tmp_path) is None
+
+    def test_malformed_pyproject_is_non_fatal(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("not [ toml", encoding="utf-8")
+        assert _detect_rag_placement(tmp_path) is None
+
+
+class TestSeedRefreshOnUpgrade:
+    """install --upgrade rewrites a pre-parity exe-form MCP seed (issue #231).
+
+    Pre-parity workspaces carry the old static exe-form entry that bypasses
+    core's renderer entirely (the Windows exe-lock incident shape); the
+    seeder must classify it [UPDATE] under force and land the tokenized form
+    with the tool-mode extra spec.
+    """
+
+    def test_stale_exe_seed_is_refreshed_to_tokenized_form(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        from ..builtins import seed_builtins
+
+        mcps = tmp_path / ".vaultspec" / "mcps"
+        mcps.mkdir(parents=True)
+        stale = mcps / "vaultspec-rag.builtin.json"
+        stale.write_text(
+            '{"command": "uv", "args": ["run", "vaultspec-search-mcp"]}',
+            encoding="utf-8",
+        )
+
+        results = seed_builtins(tmp_path / ".vaultspec", force=True)
+        actions = dict(results)
+        assert actions["mcps/vaultspec-rag.builtin.json"] == "[UPDATE]"
+        seeded = json.loads(stale.read_text(encoding="utf-8"))
+        assert seeded["_vaultspec_mode_tool_spec"] == "vaultspec-rag[mcp]"
+        assert seeded["command"] == "@@VAULTSPEC_INSTALL_MODE_COMMAND@@"
+
+    def test_existing_seed_untouched_without_force(self, tmp_path: Path) -> None:
+        from ..builtins import seed_builtins
+
+        mcps = tmp_path / ".vaultspec" / "mcps"
+        mcps.mkdir(parents=True)
+        stale = mcps / "vaultspec-rag.builtin.json"
+        stale.write_text('{"command": "uv"}', encoding="utf-8")
+
+        results = seed_builtins(tmp_path / ".vaultspec", force=False)
+        assert "mcps/vaultspec-rag.builtin.json" not in dict(results)
+        assert stale.read_text(encoding="utf-8") == '{"command": "uv"}'
+
+
+class TestUpgradeRefreshesSeedEndToEnd:
+    """install_run(upgrade=True) itself forces the seed refresh (issue #231).
+
+    The direct seeder test above pins the mechanism; this pins the wiring -
+    the upgrade flag must reach seed_builtins as force.
+    """
+
+    def test_install_upgrade_rewrites_a_stale_exe_seed(self, tmp_path: Path) -> None:
+        import json
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\ndependencies = []\n',
+            encoding="utf-8",
+        )
+        mcps = tmp_path / ".vaultspec" / "mcps"
+        mcps.mkdir(parents=True)
+        stale = mcps / "vaultspec-rag.builtin.json"
+        stale.write_text(
+            '{"command": "uv", "args": ["run", "vaultspec-search-mcp"]}',
+            encoding="utf-8",
+        )
+
+        install_run(
+            path=tmp_path,
+            upgrade=True,
+            provision=False,
+            configure_torch=False,
+            install_mcp=False,
+        )
+
+        seeded = json.loads(stale.read_text(encoding="utf-8"))
+        assert seeded.get("_vaultspec_mode_tool_spec") == "vaultspec-rag[mcp]"
+
+
+class TestClassifierNamesTheRealCommand:
+    """Failure remediation must repeat the placement-aware command that ran."""
+
+    def test_group_command_appears_in_failure_warning(self) -> None:
+        action, warning = _classify_uv_add_result(
+            returncode=2,
+            stdout="",
+            stderr="resolution failed",
+            command_display='uv add --group dev "vaultspec-rag[mcp]"',
+        )
+        assert action == "failed"
+        assert warning is not None
+        assert 'uv add --group dev "vaultspec-rag[mcp]"' in warning
+        assert "run `uv add vaultspec-rag[mcp]` manually" not in warning
+
+    def test_normalized_names_still_detected(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "host"\nversion = "0"\n'
+            '[dependency-groups]\ndev = ["Vaultspec_RAG>=0.3.0"]\n',
+            encoding="utf-8",
+        )
+        assert _detect_rag_placement(tmp_path) == "dev"
