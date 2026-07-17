@@ -37,6 +37,27 @@ from ..logging_config import log_event, read_service_log
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
 from . import _jobs
+from ._routes_jobs import (
+    _clamp_limit,
+    _job_matches,
+    _job_summary,
+    _job_with_liveness,
+    _normalise_filter_value,
+    _normalise_job_source_filter,
+    _parse_since_seconds,
+    _prioritise_running_jobs,
+)
+from ._routes_logs import (
+    _MAX_LOG_LINES,
+    _clamp_lines,
+    _filter_log_lines,
+    _log_filters_from_request,
+)
+from ._routes_storage import (
+    _clamp_survey_limit,
+    _fetch_surveys,
+    _shape_survey_payload,
+)
 from ._utils import (
     ProjectRootRequiredError,
     _clamp_top_k,
@@ -48,8 +69,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from starlette.requests import Request
-
-    from ..storage_survey import NamespaceSurvey
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -87,11 +106,6 @@ def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
         },
         status_code=400,
     )
-
-
-# Default and clamp bounds for the ``?lines=`` query parameter.
-_DEFAULT_LOG_LINES = 200
-_MAX_LOG_LINES = 5_000
 
 
 def _extract_token(request: Request) -> str | None:
@@ -145,55 +159,6 @@ def require_token(request: Request) -> JSONResponse | None:
     )
 
 
-def _clamp_lines(raw: str | None) -> int:
-    """Parse and clamp the ``?lines=`` query parameter.
-
-    Non-integer or non-positive values fall back to the default; the
-    value is clamped to ``_MAX_LOG_LINES`` to bound the response size.
-    """
-    if raw is None:
-        return _DEFAULT_LOG_LINES
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return _DEFAULT_LOG_LINES
-    if value <= 0:
-        return _DEFAULT_LOG_LINES
-    return min(value, _MAX_LOG_LINES)
-
-
-def _filter_log_lines(
-    lines: list[str],
-    *,
-    job_id: str | None = None,
-    contains: str | None = None,
-) -> list[str]:
-    job_filter = job_id.strip().lower() if job_id else None
-    contains_filter = contains.strip().lower() if contains else None
-    if not job_filter and not contains_filter:
-        return lines
-    filtered: list[str] = []
-    for line in lines:
-        lowered = line.lower()
-        if job_filter and job_filter not in lowered:
-            continue
-        if contains_filter and contains_filter not in lowered:
-            continue
-        filtered.append(line)
-    return filtered
-
-
-def _log_filters_from_request(request: Request) -> dict[str, str]:
-    filters: dict[str, str] = {}
-    job_id = request.query_params.get("job_id")
-    contains = request.query_params.get("contains")
-    if job_id and job_id.strip():
-        filters["job_id"] = job_id.strip()
-    if contains and contains.strip():
-        filters["contains"] = contains.strip()
-    return filters
-
-
 async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     """Token-gated read-only ``GET /logs`` returning recent log text.
 
@@ -220,228 +185,6 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
         body_lines = _filter_log_lines(body_lines, **filters)
         body_lines = body_lines[-lines:]
     return PlainTextResponse("\n".join(body_lines))
-
-
-def _clamp_limit(raw: str | None) -> int | None:
-    """Parse the ``?limit=`` query parameter; ``None`` when absent/invalid.
-
-    Returns ``None`` (no cap) when the parameter is missing or
-    non-integer, so the full bounded snapshot is returned.
-    """
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_since_seconds(raw: str | None) -> float | None:
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value >= 0 else None
-
-
-def _normalise_filter_value(raw: str | None) -> str | None:
-    """Return a stripped lower-case query filter or ``None`` when absent."""
-    if raw is None:
-        return None
-    value = raw.strip().lower()
-    return value or None
-
-
-def _normalise_job_source_filter(raw: str | None) -> str | None:
-    value = _normalise_filter_value(raw)
-    if value == "codebase":
-        return "code"
-    return value
-
-
-def _job_progress_text(record: dict[str, object]) -> str:
-    progress = record.get("progress")
-    if not isinstance(progress, dict):
-        return ""
-    progress_map = cast("dict[str, object]", progress)
-    step = progress_map.get("step")
-    completed = progress_map.get("completed")
-    total = progress_map.get("total")
-    parts = [str(step)] if step else []
-    if total is not None:
-        parts.append(f"{completed}/{total}")
-    elif completed is not None:
-        parts.append(str(completed))
-    return " ".join(parts)
-
-
-def _job_updated_timestamp(record: dict[str, object]) -> float | None:
-    progress = record.get("progress")
-    if isinstance(progress, dict):
-        last_updated = cast("dict[str, object]", progress).get("last_updated")
-        if isinstance(last_updated, int | float):
-            return float(last_updated)
-    timestamp = record.get("finished_at") or record.get("started_at")
-    if isinstance(timestamp, int | float):
-        return float(timestamp)
-    return None
-
-
-def _job_runtime_seconds(record: dict[str, object], now: float) -> float | None:
-    started_at = record.get("started_at")
-    if not isinstance(started_at, int | float):
-        return None
-    finished_at = record.get("finished_at")
-    end = float(finished_at) if isinstance(finished_at, int | float) else now
-    return max(0.0, end - float(started_at))
-
-
-def _job_last_progress_age_seconds(
-    record: dict[str, object],
-    now: float,
-) -> float | None:
-    progress = record.get("progress")
-    if not isinstance(progress, dict):
-        return None
-    last_updated = cast("dict[str, object]", progress).get("last_updated")
-    if not isinstance(last_updated, int | float):
-        return None
-    return max(0.0, now - float(last_updated))
-
-
-def _job_with_liveness(
-    record: dict[str, object],
-    *,
-    now: float,
-) -> dict[str, object]:
-    enriched = dict(record)
-    enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
-    enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
-    resources = record.get("resources")
-    if isinstance(resources, dict):
-        resources_map = cast("dict[str, object]", resources)
-        enriched_resources: dict[str, object] = {
-            str(key): dict(cast("dict[str, object]", value))
-            if isinstance(value, dict)
-            else value
-            for key, value in resources_map.items()
-        }
-        if record.get("phase") == "running":
-            enriched_resources["current"] = _jobs.resource_snapshot()
-        enriched["resources"] = enriched_resources
-    return enriched
-
-
-def _job_id_matches(record: dict[str, object], job_id: str | None) -> bool:
-    if job_id is None:
-        return True
-    return str(record.get("id", "")).startswith(job_id)
-
-
-def _job_matches(
-    record: dict[str, object],
-    *,
-    phase: str | None,
-    source: str | None,
-    trigger: str | None,
-    query: str | None,
-    failed: bool,
-    job_id: str | None,
-    since_seconds: float | None,
-    now: float,
-) -> bool:
-    if not _job_id_matches(record, job_id):
-        return False
-    if failed and str(record.get("phase", "")).lower() not in ("error", "failed"):
-        return False
-    if since_seconds is not None:
-        timestamp = _job_updated_timestamp(record)
-        if timestamp is None or timestamp < now - since_seconds:
-            return False
-    if phase is not None and str(record.get("phase", "")).lower() != phase:
-        return False
-    if source is not None and str(record.get("source", "")).lower() != source:
-        return False
-    if trigger is not None and str(record.get("trigger", "")).lower() != trigger:
-        return False
-    if query is None:
-        return True
-    haystack = " ".join(
-        [
-            str(record.get("id", "")),
-            str(record.get("source", "")),
-            str(record.get("trigger", "")),
-            str(record.get("phase", "")),
-            str(record.get("result", "")),
-            _job_progress_text(record),
-            *_job_nested_values(record.get("initiator")),
-            *_job_nested_values(record.get("runtime")),
-        ]
-    ).lower()
-    return query in haystack
-
-
-def _job_nested_values(raw: object) -> list[str]:
-    if not isinstance(raw, dict):
-        return []
-    raw_map = cast("dict[str, object]", raw)
-    return [str(value) for value in raw_map.values() if value is not None]
-
-
-def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
-    phases: dict[str, int] = {}
-    sources: dict[str, int] = {}
-    triggers: dict[str, int] = {}
-    initiators: dict[str, int] = {}
-    active_initiators: dict[str, int] = {}
-    users: dict[str, int] = {}
-    for record in records:
-        phase = str(record.get("phase", "unknown"))
-        source = str(record.get("source", "unknown"))
-        trigger = str(record.get("trigger", "unknown"))
-        phases[phase] = phases.get(phase, 0) + 1
-        sources[source] = sources.get(source, 0) + 1
-        triggers[trigger] = triggers.get(trigger, 0) + 1
-        initiator = record.get("initiator")
-        if isinstance(initiator, dict):
-            kind = str(cast("dict[str, object]", initiator).get("kind", "unknown"))
-            initiators[kind] = initiators.get(kind, 0) + 1
-            if phase == "running":
-                active_initiators[kind] = active_initiators.get(kind, 0) + 1
-        runtime = record.get("runtime")
-        if isinstance(runtime, dict):
-            user = str(cast("dict[str, object]", runtime).get("user", "unknown"))
-            users[user] = users.get(user, 0) + 1
-    return {
-        "phases": phases,
-        "sources": sources,
-        "triggers": triggers,
-        "initiators": initiators,
-        "active_initiators": active_initiators,
-        "users": users,
-        "running": phases.get("running", 0),
-    }
-
-
-def _prioritise_running_jobs(
-    records: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Keep running and failed work visible before completed history."""
-
-    def priority(record: dict[str, object]) -> int:
-        phase = record.get("phase")
-        if phase == "running":
-            return 0
-        if phase in ("error", "failed"):
-            return 1
-        return 2
-
-    return sorted(
-        records,
-        key=priority,
-    )
 
 
 def _search_index_state(
@@ -872,108 +615,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     return JSONResponse(state)
 
 
-_STORAGE_SURVEY_DEFAULT_LIMIT = 200
-_STORAGE_SURVEY_MAX_LIMIT = 1000
 _STORAGE_SURVEY_STATUSES = frozenset({"live", "orphaned", "unknown", "unverifiable"})
-
-
-def _clamp_survey_limit(raw: str | None) -> int:
-    """Parse and clamp the survey ``?limit=`` to a bounded window."""
-    if raw is None:
-        return _STORAGE_SURVEY_DEFAULT_LIMIT
-    try:
-        value = int(raw)
-    except ValueError:
-        return _STORAGE_SURVEY_DEFAULT_LIMIT
-    if value <= 0:
-        return _STORAGE_SURVEY_DEFAULT_LIMIT
-    return min(value, _STORAGE_SURVEY_MAX_LIMIT)
-
-
-def _fetch_surveys() -> list[NamespaceSurvey]:
-    """Run the full read-only storage survey against the managed server.
-
-    Opens a short-lived client, classifies every per-root namespace through
-    the persisted manifest, and returns the classified records. Pure storage
-    IO, never touches the GPU. This is the O(namespaces) footprint walk; the
-    route prefers the daemon-held snapshot and only calls this on
-    ``?fresh=true`` or a cold cache.
-    """
-    from qdrant_client import QdrantClient
-
-    from ..config import get_config
-    from ..storage_ops import gather_survey, server_storage_collections_dir
-
-    cfg = get_config()
-    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
-    client = QdrantClient(url=url)
-    try:
-        return gather_survey(client, server_storage_collections_dir())
-    finally:
-        client.close()
-
-
-def _shape_survey_payload(
-    surveys: list[NamespaceSurvey],
-    status_filter: str | None,
-    limit: int,
-    root: str | None,
-    *,
-    computed_at: str,
-    source: str,
-) -> dict[str, Any]:
-    """Shape a classified survey as the bounded route response.
-
-    Applies the optional status and root filters, truncates to the clamped
-    limit, and stamps freshness metadata: ``computed_at`` is when the
-    underlying survey ran, ``source`` is ``"cache"`` (daemon snapshot) or
-    ``"fresh"`` (computed for this request).
-
-    With ``root``, the namespace list is narrowed to the root's own prefix
-    and the response carries a top-level ``queried_root`` object holding the
-    authoritative computed prefix - derived through the one real
-    ``root_collection_prefix`` derivation, so consumers never recompute the
-    hash. An unindexed root still gets its prefix, with an empty namespace
-    list. ``total`` always counts the post-filter namespaces, so under a
-    root (or status) filter it is not the server-wide count.
-    """
-    import pathlib
-
-    from ..store import root_collection_prefix
-
-    if status_filter:
-        surveys = [s for s in surveys if s.status == status_filter]
-    queried_root: dict[str, str] | None = None
-    if root is not None:
-        prefix = root_collection_prefix(root)
-        queried_root = {
-            "root": str(pathlib.Path(root).resolve()),
-            "prefix": prefix,
-        }
-        surveys = [s for s in surveys if s.prefix == prefix]
-    total = len(surveys)
-    bounded = surveys[:limit]
-    payload: dict[str, Any] = {
-        "namespaces": [
-            {
-                "prefix": s.prefix,
-                "root": s.root,
-                "status": s.status,
-                "collections": s.collections,
-                "points": s.points,
-                "footprint_bytes": s.footprint_bytes,
-            }
-            for s in bounded
-        ],
-        "returned": len(bounded),
-        "total": total,
-        "limit": limit,
-        "computed_at": computed_at,
-        "source": source,
-    }
-    if queried_root is not None:
-        payload["queried_root"] = queried_root
-    return payload
 
 
 def _gather_storage_survey(
