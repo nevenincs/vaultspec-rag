@@ -1,23 +1,28 @@
-"""End-to-end integration tests for the stdio lifetime watchdog.
+"""End-to-end tests for the stdio shim: served capability plus lifetime.
 
-The research mandate (finding W2): the fires-on-death path must be proven
-in real subprocesses, because a silently mis-bound wait primitive passes
-every in-process test while never firing. Two real-process scenarios:
+The functional assertion floor (issue #232, mirroring the companion core
+repo's adopted contract): every test that spawns the real shim asserts at
+least one measurable served capability - the initialize handshake, the
+exact five-tool surface, or a structurally-asserted tool result - over the
+actual line-delimited JSON-RPC stdio transport, never process existence
+alone. The lifetime scenarios (issue #229) then compose on top:
 
-- chain-kill: a worker armed with a short grace watches a real
-  intermediary; killing the intermediary must hard-exit the worker (the
-  orphaned-shim leak shape - research L5).
-- EOF-still-primary: the real stdio shim entry point exits cleanly when
-  stdin closes, watchdog armed (research L3 must keep holding).
+- client-kill: an intermediary client proves the shim serves (handshake +
+  tools/list), then dies; the pipe-creator anchor must reap the shim
+  immediately - no grace window applies to precise anchors.
+- EOF-still-primary: the served shim exits cleanly when stdin closes.
+- degraded tool call: with the daemon unreachable, ``search_vault`` must
+  return its service-down guidance THROUGH the wire.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -26,25 +31,198 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
-_WORKER_SCRIPT = """
-import sys
-from pathlib import Path
+EXPECTED_TOOLS = {
+    "search_vault",
+    "search_codebase",
+    "get_code_file",
+    "reindex_vault",
+    "reindex_codebase",
+}
 
-from vaultspec_rag.server import _stdio_lifetime  # absolute-import-ok
+_SHIM_CMD = [sys.executable, "-c", "from vaultspec_rag.server import main; main()"]
 
-pid_file = Path(sys.argv[1])
-thread = _stdio_lifetime.install_stdio_lifetime_watchdog(grace_seconds=0.5)
-assert thread is not None
-pid_file.write_text(str(__import__("os").getpid()), encoding="utf-8")
-__import__("time").sleep(120)
-"""
 
-_INTERMEDIARY_SCRIPT = """
+def _spawn_shim(env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
+    merged = dict(os.environ)
+    if env:
+        merged.update(env)
+    return subprocess.Popen(
+        _SHIM_CMD,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=merged,
+    )
+
+
+def _send(shim: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
+    assert shim.stdin is not None
+    shim.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+    shim.stdin.flush()
+
+
+def _recv(
+    shim: subprocess.Popen[bytes], want_id: int, timeout: float = 60.0
+) -> dict[str, Any]:
+    """Read line-delimited JSON-RPC until the response with ``want_id``."""
+    assert shim.stdout is not None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        line = shim.stdout.readline()
+        if not line:
+            raise AssertionError(
+                "shim closed stdout before responding; stderr tail: "
+                + (shim.stderr.read() if shim.stderr else b"").decode(errors="replace")[
+                    -2000:
+                ]
+            )
+        try:
+            message = json.loads(line.decode("utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if message.get("id") == want_id:
+            return message
+    raise AssertionError(f"no response with id {want_id} within {timeout}s")
+
+
+def _handshake(shim: subprocess.Popen[bytes]) -> dict[str, Any]:
+    """initialize -> initialized; returns the server's initialize result."""
+    _send(
+        shim,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "rag-e2e-harness", "version": "0"},
+            },
+        },
+    )
+    response = _recv(shim, 1)
+    assert "result" in response, response
+    return response["result"]
+
+
+def _initialized(shim: subprocess.Popen[bytes]) -> None:
+    # The notification carries no id; the next request's response proves it
+    # was consumed.
+    _send(shim, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+
+def _list_tool_names(shim: subprocess.Popen[bytes], request_id: int = 2) -> set[str]:
+    _send(shim, {"jsonrpc": "2.0", "id": request_id, "method": "tools/list"})
+    response = _recv(shim, request_id)
+    assert "result" in response, response
+    return {tool["name"] for tool in response["result"]["tools"]}
+
+
+def test_shim_serves_the_five_tool_surface_then_exits_on_eof() -> None:
+    """The floor for the EOF scenario: prove serving, then prove shutdown."""
+    shim = _spawn_shim()
+    try:
+        init = _handshake(shim)
+        assert init["serverInfo"]["name"] == "VaultSpec Search"
+        _initialized(shim)
+        assert _list_tool_names(shim) == EXPECTED_TOOLS
+
+        assert shim.stdin is not None
+        shim.stdin.close()
+        assert shim.wait(timeout=60) == 0
+    finally:
+        if shim.poll() is None:
+            shim.kill()
+
+
+def test_degraded_search_vault_reports_service_down_through_the_wire(
+    tmp_path: Path,
+) -> None:
+    """A tool call must produce correct degraded-mode guidance on the wire."""
+    # Full machine isolation: discovery is authoritative on the machine
+    # singleton (derived from the qdrant storage dir), so the status dir
+    # alone would still find a live resident service on this machine.
+    shim = _spawn_shim(
+        {
+            "VAULTSPEC_RAG_STATUS_DIR": str(tmp_path / "status"),
+            "VAULTSPEC_RAG_QDRANT_STORAGE_DIR": str(
+                tmp_path / "qdrant-server" / "storage"
+            ),
+            "VAULTSPEC_RAG_PORT": "59999",
+            "VAULTSPEC_RAG_ROOT": str(tmp_path),
+        }
+    )
+    try:
+        _handshake(shim)
+        _initialized(shim)
+        _send(
+            shim,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_vault",
+                    "arguments": {"query": "anything at all"},
+                },
+            },
+        )
+        response = _recv(shim, 3, timeout=90)
+        assert "result" in response, response
+        content = response["result"]["content"]
+        text = " ".join(
+            block.get("text", "") for block in content if isinstance(block, dict)
+        )
+        assert (
+            "is not running" in text
+            or "not reachable" in text.lower()
+            or ("server start" in text)
+        ), f"degraded guidance missing from wire payload: {text[:500]}"
+    finally:
+        if shim.poll() is None:
+            shim.kill()
+
+
+_CLIENT_SCRIPT = """
+import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-worker = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])
+shim = subprocess.Popen(
+    [sys.executable, "-c", "from vaultspec_rag.server import main; main()"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+)
+
+def send(message):
+    shim.stdin.write((json.dumps(message) + "\\n").encode("utf-8"))
+    shim.stdin.flush()
+
+def recv(want_id):
+    while True:
+        line = shim.stdout.readline()
+        if not line:
+            raise SystemExit("shim closed stdout during handshake")
+        try:
+            message = json.loads(line.decode("utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if message.get("id") == want_id:
+            return message
+
+send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    "protocolVersion": "2025-06-18", "capabilities": {},
+    "clientInfo": {"name": "kill-test-client", "version": "0"}}})
+recv(1)
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+tools = {t["name"] for t in recv(2)["result"]["tools"]}
+Path(sys.argv[1]).write_text(
+    json.dumps({"shim_pid": shim.pid, "tools": sorted(tools)}), encoding="utf-8"
+)
 time.sleep(120)
 """
 
@@ -68,65 +246,51 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def test_worker_reaps_itself_when_an_ancestor_dies(tmp_path: Path) -> None:
-    """Killing the middle of a real spawn chain hard-exits the worker."""
-    worker_py = tmp_path / "worker.py"
-    worker_py.write_text(_WORKER_SCRIPT, encoding="utf-8")
-    intermediary_py = tmp_path / "intermediary.py"
-    intermediary_py.write_text(_INTERMEDIARY_SCRIPT, encoding="utf-8")
-    pid_file = tmp_path / "worker.pid"
+def test_shim_reaps_instantly_when_its_serving_client_dies(tmp_path: Path) -> None:
+    """Served capability + exact-client reap in one real-process scenario.
 
-    intermediary = subprocess.Popen(
-        [sys.executable, str(intermediary_py), str(worker_py), str(pid_file)]
-    )
+    The intermediary client spawns the real shim over pipes (so IT is the
+    stdin pipe creator - the precise anchor), proves the shim serves the
+    five-tool surface, then idles; killing it must reap the shim without
+    waiting out any grace window, because precise anchors are never
+    grace-pruned.
+    """
+    client_py = tmp_path / "client.py"
+    client_py.write_text(_CLIENT_SCRIPT, encoding="utf-8")
+    report_file = tmp_path / "report.json"
+
+    client = subprocess.Popen([sys.executable, str(client_py), str(report_file)])
     try:
-        deadline = time.monotonic() + 30
-        while not pid_file.exists() and time.monotonic() < deadline:
+        deadline = time.monotonic() + 60
+        while not report_file.exists() and time.monotonic() < deadline:
             time.sleep(0.2)
-        assert pid_file.exists(), "worker never armed its watchdog"
-        worker_pid = int(pid_file.read_text(encoding="utf-8"))
-        assert _pid_alive(worker_pid)
+        assert report_file.exists(), "client never completed the shim handshake"
+        report = json.loads(report_file.read_text(encoding="utf-8"))
+        assert set(report["tools"]) == EXPECTED_TOOLS, report
+        shim_pid = int(report["shim_pid"])
+        assert _pid_alive(shim_pid)
 
-        # An ancestor death INSIDE the grace window is deliberately pruned
-        # as spawn-helper noise; the kill must land after the watchdog arms.
-        time.sleep(2)
-        intermediary.kill()
-        intermediary.wait(timeout=15)
+        client.kill()
+        client.wait(timeout=15)
 
-        deadline = time.monotonic() + 20
-        while _pid_alive(worker_pid) and time.monotonic() < deadline:
-            time.sleep(0.5)
-        assert not _pid_alive(worker_pid), (
-            "worker survived its ancestor's death; the watchdog never fired"
+        # Precise anchor: no grace window applies; allow only process
+        # scheduling slack, far below the 10s fallback grace.
+        deadline = time.monotonic() + 8
+        while _pid_alive(shim_pid) and time.monotonic() < deadline:
+            time.sleep(0.25)
+        assert not _pid_alive(shim_pid), (
+            "shim survived its client's death; the pipe-creator anchor never fired"
         )
     finally:
-        if intermediary.poll() is None:
-            intermediary.kill()
-        if pid_file.exists():
-            worker_pid = int(pid_file.read_text(encoding="utf-8"))
-            if _pid_alive(worker_pid) and sys.platform == "win32":
+        if client.poll() is None:
+            client.kill()
+        if report_file.exists():
+            leftover = int(
+                json.loads(report_file.read_text(encoding="utf-8"))["shim_pid"]
+            )
+            if _pid_alive(leftover) and sys.platform == "win32":
                 subprocess.run(
-                    ["taskkill", "/F", "/PID", str(worker_pid)],
+                    ["taskkill", "/F", "/PID", str(leftover)],
                     capture_output=True,
                     check=False,
                 )
-
-
-def test_stdin_eof_still_exits_the_real_shim_cleanly() -> None:
-    """The protocol-blessed EOF path keeps working with the watchdog armed."""
-    shim = subprocess.Popen(
-        [sys.executable, "-c", "from vaultspec_rag.server import main; main()"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    try:
-        assert shim.stdin is not None
-        # Give the shim a moment to reach the stdio read loop, then EOF.
-        time.sleep(5)
-        shim.stdin.close()
-        returncode = shim.wait(timeout=60)
-        assert returncode == 0
-    finally:
-        if shim.poll() is None:
-            shim.kill()

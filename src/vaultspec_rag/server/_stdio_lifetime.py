@@ -269,7 +269,7 @@ if sys.platform == "win32":
                 return None
             return pid
         except Exception:
-            logger.exception("stdio watchdog: client resolution failed")
+            logger.debug("stdio watchdog: client resolution failed", exc_info=True)
             return None
 
     def open_watched(pid: int, *, grace_prunable: bool) -> WatchedAncestor | None:
