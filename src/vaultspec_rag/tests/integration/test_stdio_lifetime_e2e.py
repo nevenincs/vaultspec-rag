@@ -22,7 +22,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -169,9 +169,9 @@ def test_degraded_search_vault_reports_service_down_through_the_wire(
         )
         response = _recv(shim, 3, timeout=90)
         assert "result" in response, response
-        content = response["result"]["content"]
+        content = cast("list[dict[str, Any]]", response["result"]["content"])
         text = " ".join(
-            block.get("text", "") for block in content if isinstance(block, dict)
+            str(block.get("text", "")) for block in content if isinstance(block, dict)
         )
         assert (
             "is not running" in text
