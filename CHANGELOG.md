@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.1...vaultspec-rag-v0.3.2) (2026-07-17)
+
+
+### Features
+
+* **server:** stdio watchdog converges on the pipe-creator anchor; e2e suite reaches the functional assertion floor ([#234](https://github.com/nevenincs/vaultspec-rag/issues/234)) ([df9cf6f](https://github.com/nevenincs/vaultspec-rag/commit/df9cf6fad6b855105e1011c33b192cea42b4a211))
+
 ## [0.3.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.0...vaultspec-rag-v0.3.1) (2026-07-17)
 
 
