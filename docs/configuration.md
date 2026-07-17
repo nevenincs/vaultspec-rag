@@ -89,15 +89,18 @@ The tables in this section, together with the backend selection table, list ever
 
 ### Search and model toggles
 
-| Variable                                  | Type    | Default                      | Controls                                                          | CLI flag                                 |
-| ----------------------------------------- | ------- | ---------------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`            | boolean | `1` (true)                   | SPLADE sparse vectors on/off                                      | -                                        |
-| `VAULTSPEC_RAG_RERANKER_ENABLED`          | boolean | `1` (true)                   | CrossEncoder rerank on/off                                        | -                                        |
-| `VAULTSPEC_RAG_SEARCH_TIMEOUT`            | integer | `300`                        | Connection and read budget for service-handled searches (seconds) | `--timeout`                              |
-| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`   | string  | `worktree,generated`         | Code domains hidden from results by default                       | -                                        |
-| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS` | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                      | -                                        |
-| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY` | float   | `0.3`                        | Score subtracted from a demoted code result                       | -                                        |
-| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`     | boolean | `1` (true)                   | Collapse locale-variant code results by default                   | `--dedup-locales` / `--no-dedup-locales` |
+| Variable                                     | Type    | Default                      | Controls                                                                                                                                                    | CLI flag                                 |
+| -------------------------------------------- | ------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`               | boolean | `1` (true)                   | SPLADE sparse vectors on/off                                                                                                                                | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT`         | string  | `orientation`                | Default vault ranking intent when a search names none (`orientation` surfaces active ADRs and grounding; `debugging` surfaces execution records and audits) | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED` | boolean | `1` (true)                   | Intent-aware vault re-ranking on/off (`0` restores the bare-reranker ordering)                                                                              | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`        | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)                                                                                      | -                                        |
+| `VAULTSPEC_RAG_RERANKER_ENABLED`             | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                                                                                                  | -                                        |
+| `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | integer | `300`                        | Connection and read budget for service-handled searches (seconds)                                                                                           | `--timeout`                              |
+| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`      | string  | `worktree,generated`         | Code domains hidden from results by default                                                                                                                 | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`    | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                                                                                                | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`    | float   | `0.3`                        | Score subtracted from a demoted code result                                                                                                                 | -                                        |
+| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`        | boolean | `1` (true)                   | Collapse locale-variant code results by default                                                                                                             | `--dedup-locales` / `--no-dedup-locales` |
 
 ### Automatic updates
 

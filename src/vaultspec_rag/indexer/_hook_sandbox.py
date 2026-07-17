@@ -4,10 +4,12 @@ A root's ``.vaultragpreprocess.toml`` is repo-authored code: running it is the
 same act of trust as building that repo, so hooks run directly with the
 operator's privileges (preprocess-sandbox-removal ADR). What remains here is
 the cheap, load-bearing hygiene: the child gets a curated, secret-free
-environment (no daemon tokens, no ``VAULTSPEC_RAG_*`` knobs) and a fresh
-scratch directory as its cwd so a hook that writes relative paths never
-pollutes the repo. The subprocess boundary itself is a CPU/CUDA-correctness
-requirement (``index-workers-stay-cpu-only``), not a security measure.
+environment (no daemon tokens, no ``VAULTSPEC_RAG_*`` knobs). The caller runs
+the hook with the project root as its cwd - project-launcher commands
+(``uv run``, ``npm exec``, ``make``) resolve their project from the cwd, so any
+other directory silently breaks them. The subprocess boundary itself is a
+CPU/CUDA-correctness requirement (``index-workers-stay-cpu-only``), not a
+security measure.
 
 The module is stdlib-only so it stays importable from the CPU-only spawn chunk
 worker without loading torch.
@@ -78,7 +80,7 @@ def default_popen_handle(
     cwd: pathlib.Path,
     env: dict[str, str],
 ) -> subprocess.Popen[bytes]:
-    """Launch a hook child with the curated env and scratch cwd.
+    """Launch a hook child with the curated env and the caller-supplied cwd.
 
     Pipes are captured; the caller drains them on threads and enforces the
     wall-clock timeout.
