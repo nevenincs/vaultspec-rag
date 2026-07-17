@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.0...vaultspec-rag-v0.3.1) (2026-07-17)
+
+
+### Features
+
+* **index:** surface preprocess_ok so a working hook pipeline is observable ([#226](https://github.com/nevenincs/vaultspec-rag/issues/226)) ([874f0fe](https://github.com/nevenincs/vaultspec-rag/commit/874f0fea75126daebfc7b1f9ace874d47966e54f))
+* **server:** stdio shim owns its lifetime - ancestor-chain watchdog reaps orphaned MCP shims on Windows ([#228](https://github.com/nevenincs/vaultspec-rag/issues/228)) ([6ee6f8f](https://github.com/nevenincs/vaultspec-rag/commit/6ee6f8f738c14d4a70f9ff25a863b2611d267ffb))
+
+
+### Bug Fixes
+
+* **install:** bind rag to core's static-launch MCP contract ([#233](https://github.com/nevenincs/vaultspec-rag/issues/233)) ([a1a93fb](https://github.com/nevenincs/vaultspec-rag/commit/a1a93fb59b54cc8cec8093aa011fd4619e3e8fad))
+
 ## [0.3.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.28...vaultspec-rag-v0.3.0) (2026-07-14)
 
 
