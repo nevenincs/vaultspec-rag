@@ -173,7 +173,7 @@ class TestRemediationCommands:
         assert cmd.endswith("torch")
 
     def test_durable_command_pins_a_cu130_wheel_via_with(self) -> None:
-        from vaultspec_rag.torch_config import TORCH_TOOL_PIN_VERSION
+        from ..torch_config import TORCH_TOOL_PIN_VERSION
 
         cmd = durable_tool_install_command()
         assert CU130_INDEX_URL in cmd

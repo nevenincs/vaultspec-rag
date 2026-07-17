@@ -27,18 +27,17 @@ from concurrent.futures.process import BrokenProcessPool
 from typing import TYPE_CHECKING, NamedTuple
 
 from ..logging_config import log_event
-from . import _chunk_worker, _config_epoch
+from . import _chunk_worker, _code_meta, _ignore_specs, _preprocess_glue
 from ._chunking import (
     _MAX_FILE_SIZE,
-    LANGUAGE_MAP,
     SUPPORTED_EXTENSIONS,
     _is_binary,
 )
-from ._preprocess_cache import clear_preprocess_cache, preprocess_cache_dir
-from ._preprocess_config import (
-    PreprocessConfig,
-    PreprocessContext,
-    load_preprocess_rules,
+from ._code_meta import (
+    CODE_EMBED_SCHEMA,
+    CONTENT_EPOCH_KEY,
+    EMBED_SCHEMA_KEY,
+    MEMBERSHIP_EPOCH_KEY,
 )
 from ._streaming import (
     _stream_encode_and_upsert_codebase,
@@ -57,6 +56,7 @@ if TYPE_CHECKING:
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultStore
     from ._chunk_worker import FileChunkResult
+    from ._preprocess_config import PreprocessConfig, PreprocessContext
 
 logger = logging.getLogger(__name__)
 
@@ -66,25 +66,6 @@ logger = logging.getLogger(__name__)
 # escalates to a raised error instead of hanging the producer and holding the
 # indexer's writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
-
-#: Version of the embedding-input format for code chunks. ``2`` embeds
-#: a one-line locational header (path, class, function) ahead of the
-#: chunk text; ``1`` (or an absent marker over a non-empty collection)
-#: embedded the bare chunk text. A mismatch triggers a one-time clean
-#: rebuild so the two regimes never mix in one collection.
-_CODE_EMBED_SCHEMA = "2"
-
-#: Reserved key carrying the format version inside the hash-metadata
-#: sidecar. Never collides with relative file paths.
-_EMBED_SCHEMA_KEY = "__code_embed_schema__"
-
-#: Reserved sidecar keys carrying the two-tier config epoch. Both begin
-#: with ``__`` so ``_load_meta`` strips them from file-path set arithmetic.
-#: The membership epoch tracks which files are indexed (ignore + preprocess
-#: patterns); the content epoch tracks how their bytes become chunks
-#: (preprocess invocation fields and ``html_strip``).
-_MEMBERSHIP_EPOCH_KEY = "__code_membership_epoch__"
-_CONTENT_EPOCH_KEY = "__code_content_epoch__"
 
 
 class _ScanInputs(NamedTuple):
@@ -169,65 +150,13 @@ class CodebaseIndexer:
         self._membership_epoch: str | None = None
         self._content_epoch: str | None = None
 
-    @staticmethod
-    def _get_language(path: pathlib.Path) -> str:
-        """Return the language name for a file extension.
-
-        Args:
-            path: File path whose suffix determines the language.
-
-        Returns:
-            Language name string (e.g. ``"python"``), or ``"text"``
-            if the extension is not in ``LANGUAGE_MAP``.
-        """
-        entry = LANGUAGE_MAP.get(path.suffix.lower())
-        return entry[0] if entry else "text"
-
     def _collect_gitignore_patterns(self) -> list[str]:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
-        Walks all ``.gitignore`` files in the project tree (the single tree
-        walk on any index run), prefixing each pattern by the file's relative
-        directory so nested patterns resolve from the project root. Returns the
-        raw pattern list so both the compiled spec and the membership epoch can
-        be built from one traversal.
+        Delegates to :func:`_ignore_specs.collect_gitignore_patterns`; kept as
+        a method so callers (and tests) can monkeypatch the single tree walk.
         """
-        from ..config import get_config
-
-        cfg = get_config()
-        patterns: list[str] = [
-            # Always exclude these directories.
-            ".venv/",
-            ".git/",
-            ".vault/",
-            ".vaultspec/",
-            "node_modules/",
-            "__pycache__/",
-            # Agent worktree clones duplicate the real source verbatim;
-            # indexing them floods results with identical-score duplicates.
-            ".claude/worktrees/",
-            f"{cfg.data_dir}/",
-        ]
-        for gitignore in self.root_dir.rglob(".gitignore"):
-            try:
-                lines = gitignore.read_text(encoding="utf-8").splitlines()
-            except OSError as exc:
-                logger.debug("gitignore %s unreadable; skipping: %s", gitignore, exc)
-                continue
-            rel_dir = gitignore.parent.relative_to(self.root_dir)
-            self._process_gitignore_lines(lines, rel_dir, patterns)
-        return patterns
-
-    def _build_gitignore_spec(self) -> pathspec.GitIgnoreSpec:
-        """Build a pathspec from hardcoded exclusions and ``.gitignore`` files.
-
-        Returns:
-            A compiled ``GitIgnoreSpec`` covering hardcoded dirs and
-            all ``.gitignore`` entries.
-        """
-        import pathspec
-
-        return pathspec.GitIgnoreSpec.from_lines(self._collect_gitignore_patterns())
+        return _ignore_specs.collect_gitignore_patterns(self.root_dir)
 
     def _process_gitignore_lines(
         self,
@@ -235,64 +164,17 @@ class CodebaseIndexer:
         rel_dir: pathlib.Path,
         patterns: list[str],
     ) -> None:
-        rel_dir_str = str(rel_dir)
-        prefix = rel_dir_str.replace(chr(92), "/")
-        for line in lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if rel_dir_str == ".":
-                patterns.append(stripped)
-            else:
-                if stripped.startswith("!"):
-                    # Negation must stay at the start: !subdir/pattern
-                    inner = stripped[1:].lstrip("/")
-                    patterns.append(f"!{prefix}/{inner}")
-                else:
-                    patterns.append(f"{prefix}/{stripped.lstrip('/')}")
+        _ignore_specs.process_gitignore_lines(lines, rel_dir, patterns)
 
     def _collect_vaultragignore_patterns(self) -> list[str]:
-        """Collect the root ``.vaultragignore`` patterns (excluding ``--exclude``).
-
-        CLI ``--exclude`` entries are deliberately omitted: they are ephemeral
-        and non-persisting, so folding them into the membership epoch would make
-        it thrash between an ad-hoc CLI run and the resident service.
-        """
-        patterns: list[str] = []
-        ignore_file = self.root_dir / ".vaultragignore"
-        if ignore_file.is_file():
-            try:
-                lines = ignore_file.read_text(encoding="utf-8").splitlines()
-                patterns.extend(
-                    line.strip()
-                    for line in lines
-                    if line.strip() and not line.strip().startswith("#")
-                )
-            except OSError as exc:
-                logger.debug(
-                    ".vaultragignore at %s unreadable; using --exclude only: %s",
-                    ignore_file,
-                    exc,
-                )
-        return patterns
+        """Collect the root ``.vaultragignore`` patterns (excluding ``--exclude``)."""
+        return _ignore_specs.collect_vaultragignore_patterns(self.root_dir)
 
     def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
-        """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns.
-
-        Reads patterns from the ``.vaultragignore`` file at the project
-        root (if it exists) and merges any ``extra_excludes`` passed via
-        the constructor.  Returns ``None`` when no patterns are present.
-
-        Returns:
-            A compiled ``GitIgnoreSpec``, or ``None`` if there are no
-            patterns to apply.
-        """
-        import pathspec
-
-        patterns = [*self._collect_vaultragignore_patterns(), *self._extra_excludes]
-        if not patterns:
-            return None
-        return pathspec.GitIgnoreSpec.from_lines(patterns)
+        """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns."""
+        return _ignore_specs.build_vaultragignore_spec(
+            self.root_dir, self._extra_excludes
+        )
 
     def _resolve_scan_inputs(self) -> _ScanInputs:
         """Resolve ignore specs and preprocess config in a single tree walk.
@@ -321,21 +203,11 @@ class CodebaseIndexer:
 
     def _compute_code_epochs(self, inputs: _ScanInputs) -> tuple[str, str]:
         """Compute the (membership, content) epoch pair from resolved inputs."""
-        from ..config import get_config
-
-        cfg = get_config()
-        rules = inputs.preprocess_config.rules
-        membership = _config_epoch.code_membership_epoch(
+        return _code_meta.compute_code_epochs(
             gitignore_patterns=inputs.gitignore_patterns,
             vaultragignore_patterns=inputs.vaultragignore_patterns,
-            preprocess_rules=rules,
+            preprocess_rules=inputs.preprocess_config.rules,
         )
-        content = _config_epoch.code_content_epoch(
-            preprocess_rules=rules,
-            html_strip=bool(cfg.html_strip),
-            max_emitted_bytes=int(cfg.preprocess_max_emitted_bytes),
-        )
-        return membership, content
 
     def _classify_config_drift(self, membership: str, content: str) -> str:
         """Classify config drift against the stored epochs.
@@ -346,18 +218,9 @@ class CodebaseIndexer:
         sidecar to compare against). Content drift outranks membership drift
         because the clean rebuild subsumes the membership reconcile.
         """
-        raw = self._read_meta_raw()
-        if not raw:
-            return "ok"
-        stored_membership = raw.get(_MEMBERSHIP_EPOCH_KEY)
-        stored_content = raw.get(_CONTENT_EPOCH_KEY)
-        if stored_membership is None or stored_content is None:
-            return "unscoped"
-        if stored_content != content:
-            return "clean"
-        if stored_membership != membership:
-            return "unscoped"
-        return "ok"
+        return _code_meta.classify_config_drift(
+            self._read_meta_raw(), membership, content
+        )
 
     def _config_drift_dispatch(
         self, changed_paths: Iterable[pathlib.Path] | None
@@ -389,14 +252,10 @@ class CodebaseIndexer:
     def _build_preprocess_rules(self) -> PreprocessConfig:
         """Resolve ``.vaultragpreprocess.toml`` into compiled preprocess rules.
 
-        Root-only resolution, mirroring ``_build_vaultragignore_spec``: read
-        fresh from the project root on each call so an edited config is picked
-        up on the next scan. Degrades to an empty config on any defect (D1, D3).
-
-        Returns:
-            The resolved :class:`PreprocessConfig` (empty when no rules apply).
+        Kept as a method (delegating to :func:`_preprocess_glue`) so callers
+        and tests can monkeypatch the root-only resolution.
         """
-        return load_preprocess_rules(self.root_dir)
+        return _preprocess_glue.build_preprocess_rules(self.root_dir)
 
     def preprocess_config(self) -> PreprocessConfig:
         """Resolve the project's preprocess rules (public accessor, #185).
@@ -407,27 +266,12 @@ class CodebaseIndexer:
 
     def _clear_preprocess_cache(self) -> None:
         """Remove the preprocess output cache subtree for a clean rebuild (D7)."""
-        clear_preprocess_cache(preprocess_cache_dir(self._data_root))
+        _preprocess_glue.clear_preprocess_cache_for(self._data_root)
 
     def _resolve_preprocess_context(self) -> PreprocessContext | None:
-        """Build the per-run preprocess context, or ``None`` when no rules apply.
-
-        Returning ``None`` for a project with no ``.vaultragpreprocess.toml``
-        rules keeps the worker path byte-identical to the pre-feature behaviour
-        (the workers receive ``prep=None``), so there is zero overhead when the
-        hook is unused.
-        """
-        config = self._build_preprocess_rules()
-        if not config:
-            return None
-        from ..config import get_config
-
-        cfg = get_config()
-        return PreprocessContext(
-            config=config,
-            cache_root=preprocess_cache_dir(self._data_root),
-            max_emitted_bytes=int(cfg.preprocess_max_emitted_bytes),
-            project_root=self.root_dir,
+        """Build the per-run preprocess context, or ``None`` when no rules apply."""
+        return _preprocess_glue.resolve_preprocess_context(
+            self.root_dir, self._data_root, self._build_preprocess_rules()
         )
 
     def _begin_preprocess_run(self) -> None:
@@ -438,44 +282,23 @@ class CodebaseIndexer:
 
     def _prep_rule_count(self) -> int:
         """Return the number of preprocess rules active for the current run."""
-        prep = self._prep_ctx
-        return len(prep.config.rules) if prep is not None else 0
+        return _preprocess_glue.prep_rule_count(self._prep_ctx)
 
     def _record_preprocess_result(self, res: FileChunkResult | None) -> None:
-        """Accumulate a worker result's preprocess disposition (D11).
-
-        Workers run in spawn subprocesses whose logging never reaches the
-        owning process, so both outcomes are tallied here: skips for failure
-        visibility, successes so a working pipeline is positively observable.
-        """
-        if res is None:
-            return
-        if res.preprocess_status == "ok":
-            self._prep_ok += 1
-        elif res.preprocess_status == "skipped":
-            reason = res.preprocess_reason or "preprocessor skipped the file"
-            self._prep_skips.append(f"{res.rel_path}: {reason}")
+        """Accumulate a worker result's preprocess disposition (D11)."""
+        self._prep_ok += _preprocess_glue.record_preprocess_result(
+            res, self._prep_skips
+        )
 
     def _record_scoped_preprocess(
         self,
         path: pathlib.Path,
         result: _chunk_worker.ScopedChunkResult,
     ) -> None:
-        """Accumulate a scoped-path preprocess disposition (D11).
-
-        The scoped/incremental path (used by the watcher) reports here so
-        coverage gaps and rule-fed successes are surfaced on every path, not
-        just the full index (review VIS-001).
-        """
-        if result.preprocess_status == "ok":
-            self._prep_ok += 1
-        elif result.preprocess_status == "skipped":
-            try:
-                rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
-            except ValueError:
-                rel = str(path)
-            reason = result.preprocess_reason or "preprocessor skipped the file"
-            self._prep_skips.append(f"{rel}: {reason}")
+        """Accumulate a scoped-path preprocess disposition (D11)."""
+        self._prep_ok += _preprocess_glue.record_scoped_preprocess(
+            self.root_dir, path, result, self._prep_skips
+        )
 
     def _scan_codebase(self, inputs: _ScanInputs | None = None) -> list[pathlib.Path]:
         """Scan codebase for supported source files.
@@ -528,10 +351,9 @@ class CodebaseIndexer:
         extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
         because the preprocessor extracts indexable text from it (D2, D10).
         """
-        prep = getattr(self, "_prep_ctx", None)
-        if prep is None:
-            return False
-        return prep.config.match(rel) is not None
+        return _preprocess_glue.matches_preprocess_rule(
+            getattr(self, "_prep_ctx", None), rel
+        )
 
     def _process_scan_files(
         self,
@@ -1746,18 +1568,9 @@ class CodebaseIndexer:
         one-time clean rebuild. A missing sidecar over a non-empty
         collection is treated the same way.
         """
-        raw = self._read_meta_raw()
-        if raw:
-            return raw.get(_EMBED_SCHEMA_KEY) != _CODE_EMBED_SCHEMA
-        try:
-            return self.store.count_code() > 0
-        except (OSError, RuntimeError):
-            logger.warning(
-                "Could not probe the code collection for an embed "
-                "rebuild decision; assuming no rebuild is needed",
-                exc_info=True,
-            )
-            return False
+        return _code_meta.needs_embed_rebuild(
+            self._read_meta_raw(), self.store.count_code
+        )
 
     def _write_meta(self, meta: dict[str, str]) -> None:
         """Atomically write content-hash metadata to the sidecar JSON file.
@@ -1784,28 +1597,17 @@ class CodebaseIndexer:
             membership, content = self._compute_code_epochs(self._resolve_scan_inputs())
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
-        stamped = {**meta, _EMBED_SCHEMA_KEY: _CODE_EMBED_SCHEMA}
+        stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}
         if membership is not None:
-            stamped[_MEMBERSHIP_EPOCH_KEY] = membership
+            stamped[MEMBERSHIP_EPOCH_KEY] = membership
         if content is not None:
-            stamped[_CONTENT_EPOCH_KEY] = content
+            stamped[CONTENT_EPOCH_KEY] = content
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
     def _read_meta_raw(self) -> dict[str, str]:
         """Load the sidecar JSON verbatim, reserved keys included."""
-        if not self._meta_path.exists():
-            return {}
-        try:
-            return json.loads(self._meta_path.read_text(encoding="utf-8"))
-        except (KeyError, ValueError, OSError) as exc:
-            logger.debug(
-                "codebase meta %s unreadable; treating as empty: %s",
-                self._meta_path,
-                exc,
-                exc_info=True,
-            )
-            return {}
+        return _code_meta.read_meta_raw(self._meta_path)
 
     def _load_meta(self) -> dict[str, str]:
         """Load codebase index metadata from the sidecar JSON file.
@@ -1820,8 +1622,4 @@ class CodebaseIndexer:
             an empty dict if the file does not exist or cannot be
             parsed.
         """
-        return {
-            key: value
-            for key, value in self._read_meta_raw().items()
-            if not key.startswith("__")
-        }
+        return _code_meta.load_meta(self._meta_path)

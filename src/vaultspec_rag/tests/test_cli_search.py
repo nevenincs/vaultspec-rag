@@ -1,0 +1,689 @@
+"""CLI coverage for search argument validation and result rendering."""
+
+from __future__ import annotations
+
+import os
+import typing
+
+import pytest
+
+from ._cli_helpers import (
+    DEFAULT_SEARCH_TIMEOUT_SECONDS,
+    _display_search_results,
+    _display_service_error,
+    _get_search_timeout,
+    _search_records,
+    _try_http_search,
+    app,
+    runner,
+)
+
+pytestmark = [pytest.mark.unit]
+
+
+class TestSearchTimeoutDefaults:
+    """Tests for service-delegated search timeout defaults."""
+
+    def test_default_search_timeout_is_production_budget(self) -> None:
+        previous = os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
+        try:
+            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        finally:
+            if previous is not None:
+                os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
+
+    def test_invalid_env_timeout_uses_production_budget(self) -> None:
+        previous = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+        os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = "not-a-number"
+        try:
+            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        finally:
+            if previous is None:
+                os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
+            else:
+                os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
+
+    def test_explicit_timeout_still_wins(self) -> None:
+        assert _get_search_timeout(0.25) == 0.25
+
+
+class TestMcpFastPath:
+    """Tests for MCP fast-path functions (_try_http_search, _display_search_results)."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_tool_map_vault(self):
+        """Connection refused on port 1 returns None, no exception."""
+        result = _try_http_search("test query", "vault", 5, 1, "/tmp/proj")
+        assert result is None
+
+    def test_tool_map_code(self):
+        """search_type='code' maps to search_codebase, returns None on failure."""
+        result = _try_http_search("test query", "code", 5, 1, "/tmp/proj")
+        assert result is None
+
+    def test_invalid_search_type(self):
+        """Unknown search_type falls back to search_vault, returns None on failure."""
+        result = _try_http_search("test query", "invalid", 5, 1, "/tmp/proj")
+        assert result is None
+
+    def test_code_filters_with_vault_returns_usage_error(self):
+        """Filter kwargs with --type vault yield a structured usage error."""
+        result = _try_http_search(
+            "test query",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            function_name="foo",
+        )
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--function-name" in str(result.get("message", ""))
+
+    def test_code_filters_with_all_returns_usage_error(self):
+        """search_type='all' is also incompatible with code-only filters."""
+        result = _try_http_search(
+            "q",
+            "all",
+            5,
+            1,
+            "/tmp/proj",
+            language="python",
+            class_name="Foo",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        msg = str(result.get("message", ""))
+        assert "--language" in msg and "--class-name" in msg
+
+    def test_code_filters_unset_dont_short_circuit(self):
+        """All filters None must not trigger the usage error path."""
+        # No service running on port 1 → expect transport None, NOT usage-error dict.
+        result = _try_http_search("q", "vault", 5, 1, "/tmp/proj")
+        assert result is None
+
+    def test_code_filters_with_code_attempts_call(self):
+        """Filters paired with --type code reach the call path; no service → None."""
+        result = _try_http_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            language="python",
+            function_name="foo",
+        )
+        # No live service → transport failure → None (not a usage-error dict).
+        assert result is None
+
+    def test_search_cmd_rejects_filter_with_vault(self):
+        """The CLI ``search`` command refuses filter flags when --type vault."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--function-name",
+                "foo",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_vault_filter_with_code(self):
+        """Vault filters with --type code error explicitly."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--feature",
+                "auth",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type vault" in result.output
+
+    def test_search_cmd_rejects_unknown_option_with_plain_language(self):
+        result = runner.invoke(app, ["search", "anything", "--bogus-option"])
+
+        assert result.exit_code == 2
+        assert "Unexpected search options: --bogus-option" in result.output
+        assert "option(s)" not in result.output
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["search", "anything", "--type", "code", "--node-type", "function"],
+            ["search", "anything", "--type", "code", "--no-truncate"],
+        ],
+    )
+    def test_search_removed_legacy_flags_are_not_supported(self, argv: list[str]):
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 2
+        assert "Unexpected search options:" in result.output
+        assert "Searching code" not in result.output
+
+    def test_path_filter_with_vault_returns_usage_error(self):
+        """--path is a code filter; pairing it with vault must error."""
+        result = _try_http_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            path="src/foo.py",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "path" in str(result.get("message", ""))
+
+    def test_vault_filter_with_code_returns_usage_error(self):
+        """doc_type/feature/date/tag with --type code must error."""
+        result = _try_http_search(
+            "test",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            doc_type="adr",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--doc-type" in str(result.get("message", ""))
+
+    def test_vault_filters_with_code_attempt_call(self):
+        """doc_type/feature/date/tag with --type vault reach the call path."""
+        result = _try_http_search(
+            "q",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            doc_type="adr",
+            feature="auth",
+            date="2026-05-28",
+            tag="auth",
+        )
+        # No live service → ConnectionRefused → None.
+        assert result is None
+
+    def test_include_path_with_vault_returns_usage_error(self):
+        """--include-path is a code filter; --type vault must error."""
+        result = _try_http_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            include_paths=["src/foo/**"],
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--include-path" in str(result.get("message", ""))
+
+    def test_exclude_path_with_vault_returns_usage_error(self):
+        """--exclude-path with --type vault errors out symmetrically."""
+        result = _try_http_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            exclude_paths=["locales/*.yml"],
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--exclude-path" in str(result.get("message", ""))
+
+    def test_glob_filters_with_code_attempt_call(self):
+        """--include-path/--exclude-path with --type code reach the call path."""
+        result = _try_http_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            include_paths=["src/**"],
+            exclude_paths=["tests/**"],
+        )
+        assert result is None
+
+    def test_search_cmd_rejects_include_path_with_vault(self):
+        """CLI: --include-path + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--include-path",
+                "src/**",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_exclude_path_with_vault(self):
+        """CLI: --exclude-path + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--exclude-path",
+                "locales/*.yml",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_dedup_locales_with_vault_returns_usage_error(self):
+        """--dedup-locales is a code-only post-process flag."""
+        result = _try_http_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            dedup_locales=True,
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--dedup-locales" in str(result.get("message", ""))
+
+    def test_prefer_with_vault_returns_usage_error(self):
+        """--prefer is a code-only post-process flag."""
+        result = _try_http_search(
+            "test",
+            "vault",
+            5,
+            1,
+            "/tmp/proj",
+            prefer="prod",
+        )
+        assert isinstance(result, dict)
+        assert result.get("error") == "invalid_filter_for_search_type"
+        assert "--prefer" in str(result.get("message", ""))
+
+    def test_postproc_flags_with_code_attempt_call(self):
+        """dedup_locales/prefer with --type code reach the call path."""
+        result = _try_http_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            dedup_locales=True,
+            prefer="tests",
+        )
+        assert result is None
+
+    def test_search_cmd_rejects_dedup_locales_with_vault(self):
+        """CLI: --dedup-locales + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--dedup-locales",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_prefer_with_vault(self):
+        """CLI: --prefer + --type vault exits 2 with usage error."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "vault",
+                "--prefer",
+                "production",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "require --type code" in result.output
+
+    def test_search_cmd_rejects_invalid_prefer_value(self):
+        """CLI: --prefer reports user-facing supported values."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--prefer",
+                "bogus",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "production, tests, or documentation" in result.output
+        assert "prod|tests|docs" not in result.output
+
+    @pytest.mark.parametrize("prefer", ["prod", "docs"])
+    def test_search_cmd_rejects_internal_prefer_values(self, prefer: str):
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "anything",
+                "--type",
+                "code",
+                "--prefer",
+                prefer,
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "production, tests, or documentation" in result.output
+        assert prefer in result.output
+
+    def test_path_filter_with_code_attempts_call(self):
+        """--path with --type code reaches the call path."""
+        result = _try_http_search(
+            "q",
+            "code",
+            5,
+            1,
+            "/tmp/proj",
+            path="src/foo.py",
+        )
+        assert result is None
+
+    def test_live_but_broken_returns_structured_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Non-connection-refused exception yields ok=False dict, not None.
+
+        Without this discrimination the caller would treat a
+        live-but-broken service the same as a dead one and silently
+        relane to the unsafe in-process path. The fix preserves the
+        ``None`` -> dead-service semantic for ConnectionRefused only.
+        """
+
+        from .. import cli as cli_mod
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("synthetic live-but-broken tool failure")
+
+        monkeypatch.setattr(
+            "vaultspec_rag.serviceclient._transport._do_http_call", _boom
+        )
+
+        result = cli_mod._try_http_search(
+            "q",
+            "code",
+            5,
+            8766,
+            "/tmp/proj",
+        )
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "http_call_failed"
+        assert "synthetic live-but-broken" in str(result.get("message", ""))
+
+    def test_live_but_broken_reindex_returns_structured_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Same discrimination for _try_http_reindex."""
+
+        from .. import cli as cli_mod
+
+        def mock_timeout(*_a: object, **_kw: object) -> None:
+            raise TimeoutError("synthetic mcp timeout")
+
+        monkeypatch.setattr(
+            "vaultspec_rag.serviceclient._transport._do_http_call", mock_timeout
+        )
+
+        result = cli_mod._try_http_reindex(
+            "reindex_vault",
+            False,
+            8766,
+            "/tmp/proj",
+        )
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "http_call_failed"
+
+    def test_connection_refused_still_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Explicit ConnectionRefusedError must keep the dead-service path."""
+
+        from .. import cli as cli_mod
+
+        def _refuse(*_args: object, **_kwargs: object) -> None:
+            raise ConnectionRefusedError("port closed")
+
+        monkeypatch.setattr(
+            "vaultspec_rag.serviceclient._transport._do_http_call", _refuse
+        )
+
+        result = cli_mod._try_http_search(
+            "q",
+            "code",
+            5,
+            8766,
+            "/tmp/proj",
+        )
+        assert result is None
+
+
+class TestSearchResultRendering:
+    """Human search results are line-oriented and never silently truncated."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def _render(
+        self,
+        result: dict[str, object],
+        *,
+        show_scores: bool = False,
+    ) -> str:
+        from io import StringIO
+
+        from rich.console import Console
+
+        out = StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "vaultspec_rag.cli.console",
+                Console(file=out, force_terminal=False, width=400),
+            )
+            _display_search_results(
+                [result],
+                "code",
+                via="service",
+                show_scores=show_scores,
+            )
+        return out.getvalue()
+
+    def test_default_keeps_full_snippet(self):
+        """Default output renders the full snippet."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
+        [record] = _search_records(rendered)
+        assert record["text"] == "a" * 300
+
+    def test_scores_are_hidden_by_default(self):
+        """Default output shows numbering, not numeric relevance score."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
+        [record] = _search_records(rendered)
+        assert record["number"] == 1
+        assert record["location"] == "foo.py"
+        assert record["score"] is None
+
+    def test_scores_flag_renders_numeric_score(self):
+        """--scores detail mode includes the relevance score."""
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "test"},
+            show_scores=True,
+        )
+        [record] = _search_records(rendered)
+        assert record["score"] == "0.9000"
+
+    def test_display_empty_results(self):
+        """Empty results list renders without raising."""
+        _display_search_results([], "vault")
+
+    def test_display_missing_fields(self):
+        """Dict with no keys renders without raising."""
+        _display_search_results([{}], "vault")
+
+    def test_display_with_line_start(self):
+        """Result with line_start appends :N to location."""
+        rendered = self._render(
+            {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
+        )
+        [record] = _search_records(rendered)
+        assert record["location"] == "foo.py:42"
+
+    def test_display_without_line_start(self):
+        """Result without line_start renders location as bare path."""
+        rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
+        [record] = _search_records(rendered)
+        assert record["location"] == "foo.py"
+
+    def test_display_with_anchor_prefers_deep_link(self):
+        """Anchor locators stay mechanically grabbable."""
+        rendered = self._render(
+            {
+                "path": "report.pdf",
+                "anchor": "report.pdf#page=4",
+                "line_start": 12,
+                "score": 0.9,
+                "snippet": "test",
+            }
+        )
+        [record] = _search_records(rendered)
+        assert record["location"] == "report.pdf#page=4"
+
+    def test_display_service_lock_error_hides_backend_contract(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        """Default service errors do not render backend contract tables."""
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "local_store_locked",
+                "message": "Route concurrent searches through one service.",
+                "db_path": "/tmp/qdrant",
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                    "cross_project_search_strategy": "parallel",
+                    "local_storage_process_model": "exclusive",
+                },
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "Route concurrent searches through one service." in out
+        assert "local_store_locked" in out
+        assert "Index data: /tmp/qdrant" in out
+        assert "DB path:" not in out
+        assert "same-project local backend access" not in out
+        assert "same_project_search_strategy" not in out
+        assert "serialized" not in out
+        for forbidden in ("┌", "└", "│"):
+            assert forbidden not in out
+
+    def test_display_service_error_fallback_uses_plain_service_name(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        _display_service_error({"ok": False, "error": "service_error"})
+
+        out = capsys.readouterr().out
+        assert "Search service returned an error." in out
+        assert "RAG service" not in out
+
+    def test_display_search_timeout_error_humanizes_diagnostics(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        """Search timeout errors answer readiness/work status without raw keys."""
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": (
+                    "HTTP search on port 8766 timed out after 180.0s. "
+                    "The service may still be processing the request. "
+                    "Service status=unknown; running_jobs=unknown; "
+                    "same_project_search_strategy=serialized."
+                ),
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                    "cross_project_search_strategy": "parallel",
+                    "local_storage_process_model": "exclusive",
+                },
+                "diagnostics": {
+                    "health": {
+                        "available": False,
+                        "error": "TimeoutError",
+                        "message": "timed out",
+                    },
+                    "jobs": {
+                        "available": True,
+                        "running_count": 2,
+                    },
+                },
+                "remediation": [
+                    "vaultspec-rag search ... --port 8766 --timeout 360",
+                    "vaultspec-rag server status",
+                    "vaultspec-rag server jobs --state active --port 8766",
+                ],
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "HTTP search on port 8766 timed out after 180.0s." in out
+        assert "Service: request check timed out" in out
+        assert "Work: 2 active index jobs" in out
+        assert "vaultspec-rag server jobs --state active --port 8766" in out
+        assert "same_project_search_strategy" not in out
+        assert "serialized" not in out
+        for forbidden in ("┌", "└", "│"):
+            assert forbidden not in out
+
+    def test_display_search_timeout_missing_job_count_uses_absence_language(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        _display_service_error(
+            {
+                "ok": False,
+                "error": "http_search_timeout",
+                "message": "HTTP search on port 8766 timed out after 180.0s.",
+                "diagnostics": {
+                    "health": {
+                        "available": True,
+                        "status": "ready",
+                    },
+                    "jobs": {
+                        "available": True,
+                    },
+                },
+            },
+        )
+
+        out = capsys.readouterr().out
+        assert "Service: reachable; requests ready" in out
+        assert "Work: active job count not reported by service" in out
+        assert "running work status unknown" not in out
+        assert "unknown" not in out
+        assert "health check" not in out

@@ -33,7 +33,7 @@ def _seed_rag(root: Path) -> None:
     (``rules/`` / ``mcps/`` / ``skills/``) an actual ``vaultspec-rag install``
     produces, matching core's layout.
     """
-    from vaultspec_rag.builtins import seed_builtins
+    from ...builtins import seed_builtins
 
     seed_builtins(root / ".vaultspec", force=True)
 
@@ -154,7 +154,13 @@ class TestMcpRegistration:
         data = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
         entry = data["mcpServers"]["vaultspec-rag"]
         assert entry["command"] == "uv"
-        assert "vaultspec-search-mcp" in entry["args"]
+        # Core's renderer (0.1.39+) seeds the module form; the console
+        # script remains an equivalent stdio entry point. Both launch
+        # `vaultspec_rag.server:main` in stdio mode.
+        launches_stdio_server = "vaultspec-search-mcp" in entry["args"] or entry[
+            "args"
+        ][-2:] == ["-m", "vaultspec_rag.server"]
+        assert launches_stdio_server, entry["args"]
 
     def test_core_mcp_entry_preserved(self, workspace: Path) -> None:
         data = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))

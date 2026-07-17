@@ -38,10 +38,10 @@ _HOLDER_SRC = """
 import os, sys, time
 
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = sys.argv[1]
-from vaultspec_rag.config import reset_config
+from vaultspec_rag.config import reset_config  # absolute-import-ok
 
 reset_config()
-from vaultspec_rag._machine_lock import acquire_machine_lock
+from vaultspec_rag._machine_lock import acquire_machine_lock  # absolute-import-ok
 
 acquired, _holder = acquire_machine_lock()
 with open(sys.argv[2], "w", encoding="utf-8") as fh:

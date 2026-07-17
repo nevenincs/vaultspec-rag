@@ -96,7 +96,7 @@ def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
     ``ImportError``. Together across environments this covers both the success
     and the fail-hard branches of the single centralized gate.
     """
-    from vaultspec_rag._gpu import load_torch
+    from .._gpu import load_torch
 
     if importlib.util.find_spec("torch") is None:
         with pytest.raises(ImportError):

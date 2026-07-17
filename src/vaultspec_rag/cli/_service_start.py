@@ -1,0 +1,698 @@
+"""``server start``: spawn, guard, and await the background search service.
+
+Owns the start path end to end: the qdrant-binary and machine-singleton
+preconditions, the GPU pre-flight of the daemon interpreter, the idempotent
+"already running" success, the spawn, and the health-wait that emits the
+terminal outcome. Every terminal branch converges on ``_start_success`` /
+``_fail_start`` so a broker in ``--json`` mode reads exactly one envelope.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import time
+from pathlib import Path
+from typing import Annotated, Literal
+
+import typer
+
+import vaultspec_rag.cli as _cli
+
+from ..config import EnvVar, get_config
+from ._app import _global_target, server_app
+from ._core import logger
+from ._gpu_errors import (
+    RuntimeEnvKind,
+    classify_interpreter_env,
+    durable_tool_install_command,
+    gpu_escape_hatch_command,
+)
+from ._process import (
+    DaemonBreakawayError,
+    _health_probe,
+    _port_is_available,
+    _probe_daemon_cuda,
+    _resolve_daemon_interpreter,
+    _spawn_service,
+)
+from ._render import _emit_json
+from ._service_lifecycle import (
+    _address_line,
+    _print_lifecycle_lines,
+    _print_lifecycle_next_actions,
+    _process_line,
+    _should_unlink_discovery_file,
+)
+from ._service_status import (
+    SERVICE_PHASE_WARMING,
+    _log_file,
+    _read_service_status,
+    _service_phase,
+    _status_file,
+    _update_service_metadata,
+    _update_service_token,
+    _write_service_status,
+)
+
+__all__ = [
+    "_ephemeral_env_warning",
+    "_existing_service_running",
+    "_fail_start",
+    "_start_success",
+    "_tail_daemon_log",
+    "service_start",
+]
+
+_START_COMMAND = "service.start"
+
+
+def _ensure_qdrant_binary(*, auto_provision: bool, json_mode: bool = False) -> None:
+    """Fail fast (or provision with consent) before a server-mode start.
+
+    Server mode is the default backend, so this guard runs by default and
+    only ``--local-only`` (or an explicit ``--no-qdrant``) skips it. Never
+    downloads silently: an absent executable without ``auto_provision`` prints
+    the exact install command and exits non-zero. In ``--json`` mode the absent/
+    failed outcomes are emitted as start envelopes so a broker reads one document.
+    """
+    from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+
+    if resolve_binary() is not None:
+        return
+    if not auto_provision:
+        raise _fail_start(
+            json_mode,
+            error="qdrant_missing",
+            message="Service start failed",
+            human_lines=(
+                "Qdrant server mode needs the managed Qdrant server, "
+                "which is not installed.",
+                "Run: vaultspec-rag server qdrant install",
+                "(or re-run with --qdrant-auto-provision to consent to the download)",
+                "Local-only option: vaultspec-rag server start --local-only",
+            ),
+        )
+    report = provision()
+    if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
+        raise _fail_start(
+            json_mode,
+            error="qdrant_provision_failed",
+            message="Service start failed",
+            human_lines=(f"Qdrant install failed: {report.message}",),
+            detail=str(report.message),
+        )
+    if not json_mode:
+        _print_lifecycle_lines(
+            "Installed Qdrant server",
+            f"Version: {report.version}",
+            f"Install: {report.binary}",
+        )
+
+
+def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
+    serving_pid = health.get("pid")
+    if isinstance(serving_pid, int) and serving_pid > 0:
+        return serving_pid
+    return fallback_pid
+
+
+def _status_metadata_from_health(
+    health: dict[str, object],
+    *,
+    pid: int,
+) -> dict[str, object]:
+    return {
+        "pid": pid,
+        "parent_pid": health.get("parent_pid"),
+        "executable": health.get("executable"),
+        "prefix": health.get("prefix"),
+        "base_prefix": health.get("base_prefix"),
+        "virtual_env": health.get("virtual_env"),
+    }
+
+
+def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
+    """Return the last few non-empty lines of the daemon log, best-effort.
+
+    Surfaces why a detached daemon died during startup (e.g. the model-load
+    RuntimeError or a qdrant failure) instead of only pointing at the log file.
+    Bounded tail read; any IO failure yields an empty list and the caller still
+    prints the log path.
+    """
+    try:
+        with log_path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 8192))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = [ln.rstrip() for ln in tail.splitlines() if ln.strip()]
+    return lines[-max_lines:]
+
+
+def _existing_service_running() -> tuple[int, int] | None:
+    """Return the ``(pid, port)`` of a healthy owned running service, else ``None``.
+
+    Detection only - it no longer prints, so the caller renders the human
+    "already running" lines or the JSON envelope from one shared detection path
+    (the idempotent-start contract). Removes the status file only when its
+    recorded PID is confirmed dead; an ambiguous identity/health miss on a *live*
+    PID leaves the file untouched so a transient probe failure cannot erase a
+    running daemon's discovery file (issue #204).
+    """
+    status = _read_service_status()
+    if status is None:
+        return None
+    existing_pid = int(status["pid"])
+    existing_port = int(status["port"])
+    existing_token = status.get("service_token")
+    existing_token_str = existing_token if isinstance(existing_token, str) else None
+    if _cli._is_our_service(
+        existing_pid,
+        port=existing_port,
+        expected_token=existing_token_str,
+    ):
+        health = _health_probe(existing_port)
+        if health is not None:
+            return (existing_pid, existing_port)
+    # Identity or health did not confirm a live service we own. Remove the
+    # status file only when the recorded PID is confirmed dead; leave it in
+    # place on an ambiguous miss against a live PID (issue #204).
+    if _should_unlink_discovery_file(_cli._is_pid_alive(existing_pid)):
+        _status_file().unlink(missing_ok=True)
+    return None
+
+
+def _start_success(
+    json_mode: bool,
+    *,
+    status: str,
+    human_title: str,
+    human_lines: tuple[str, ...],
+    **data: object,
+) -> None:
+    """Emit a successful start outcome (``already_running`` / ``started``).
+
+    In ``--json`` mode emits one ``{ok, command, data:{status, ...}}`` envelope;
+    otherwise the bespoke human lines. The caller returns after this (exit 0).
+    """
+    if json_mode:
+        _emit_json(True, _START_COMMAND, data={"status": status, **data})
+    else:
+        _print_lifecycle_lines(human_title, *human_lines)
+
+
+def _fail_start(
+    json_mode: bool,
+    *,
+    error: str,
+    message: str,
+    human_lines: tuple[str, ...],
+    next_actions: tuple[str, ...] = (),
+    **data: object,
+) -> typer.Exit:
+    """Render a failed start outcome and RETURN the ``typer.Exit`` to raise.
+
+    In ``--json`` mode emits one ``ok:false`` error envelope (``error`` is the
+    machine status, ``data`` the structured fields); otherwise the bespoke human
+    lines and next actions. Returns the ``Exit`` so the call site keeps an
+    explicit ``raise`` for control-flow clarity.
+    """
+    if json_mode:
+        _emit_json(
+            False,
+            _START_COMMAND,
+            error=error,
+            message=message,
+            data=dict(data) or None,
+        )
+    else:
+        _print_lifecycle_lines(message, *human_lines)
+        if next_actions:
+            _print_lifecycle_next_actions(*next_actions)
+    return typer.Exit(code=1)
+
+
+def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
+    """Fail fast if the daemon interpreter cannot run the GPU-only service.
+
+    The daemon inherits this interpreter and is GPU-only, so a missing /
+    CPU-only / no-GPU torch should fail legibly here rather than as a background
+    model-load crash. The service does not provision its own python environment.
+    An inconclusive probe (CPU-only host, torch absent in a way we cannot
+    classify) is logged and allowed to proceed.
+    """
+    cuda_probe = _probe_daemon_cuda(interpreter)
+    if cuda_probe is None:
+        return
+    blocking, reason = cuda_probe
+    if blocking:
+        kind = classify_interpreter_env(interpreter)
+        if kind is RuntimeEnvKind.PROJECT_VENV:
+            next_actions = (
+                "Install/repair GPU torch in the service environment: "
+                "vaultspec-rag install, then uv sync --reinstall-package torch",
+                "Confirm the GPU is visible: nvidia-smi",
+            )
+        else:
+            next_actions = (
+                "Repair this environment now (undone by the next tool "
+                f"upgrade): {gpu_escape_hatch_command(interpreter)}",
+                "Make upgrades keep the GPU wheel (stop the service first): "
+                f"{durable_tool_install_command()}",
+                "Confirm the GPU is visible: nvidia-smi",
+            )
+        raise _fail_start(
+            json_mode,
+            error="service_env_no_gpu",
+            message="Service start failed",
+            human_lines=(
+                f"Service interpreter: {interpreter} ({kind.label})",
+                f"That environment cannot run the GPU-only service: {reason}.",
+                "The service runs in the environment that launches it and does "
+                "not provision its own python.",
+            ),
+            next_actions=next_actions,
+            detail=reason,
+        )
+    logger.warning(
+        "daemon torch pre-flight inconclusive for %s (%s); proceeding",
+        interpreter,
+        reason,
+    )
+
+
+def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
+    """Print a best-effort notice about the target root's preprocess rules.
+
+    Operator visibility: when the resolved root defines preprocess rules, say
+    whether they will run under the effective mode. Rules run directly for any
+    root; the ``off`` kill switch skips them. Never raises - a missing or
+    invalid config simply yields no notice. Imports are function-local so this
+    stays off the module import path (the CLI service-control surface stays
+    torch-free).
+    """
+    from ..indexer._preprocess_config import (
+        PREPROCESS_CONFIG_FILENAME,
+        PreprocessConfigError,
+        load_preprocess_rules,
+    )
+
+    if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
+        return
+    try:
+        config = load_preprocess_rules(root, strict=True)
+    except PreprocessConfigError:
+        return
+    rules = config.rules
+    if not rules:
+        return
+    count = len(rules)
+    word = "rule" if count == 1 else "rules"
+    if effective_mode == "off":
+        _print_lifecycle_lines(
+            f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
+        )
+        return
+    _print_lifecycle_lines(
+        f"Preprocess: {count} {word} at {root} will run; their commands "
+        "execute with the service's privileges."
+    )
+
+
+def _guard_start_preconditions(port: int, json_mode: bool) -> None:
+    """Fail fast on a taken port or an owned machine, one envelope each.
+
+    Port-level guard: prevents concurrent start races. A foreign process
+    holding the port (NOT our service, which the caller's idempotent check
+    already handled) is a genuine failure. Machine-level guard: one resident
+    service per machine - it owns the single GPU and the single managed
+    Qdrant; a live holder on ANY port or status dir refuses a second daemon,
+    while a stale lock from a dead holder is reclaimed by the daemon's own
+    acquire. The machine check catches a second instance that a port-scoped
+    check (different --port / status dir) misses.
+    """
+    if not _port_is_available(port):
+        raise _fail_start(
+            json_mode,
+            error="port_in_use",
+            message="Service start failed",
+            human_lines=(
+                f"Port {port} is already in use.",
+                "Another process is already using this service address.",
+            ),
+            next_actions=(
+                f"vaultspec-rag server status --port {port}",
+                f"vaultspec-rag server jobs --state active --port {port}",
+                "vaultspec-rag server start --port <free-port>",
+            ),
+            port=port,
+        )
+
+    from .._machine_lock import machine_lock_live_holder
+
+    machine_holder = machine_lock_live_holder()
+    if machine_holder:
+        warming = _service_phase(_read_service_status()) == SERVICE_PHASE_WARMING
+        owner_line = (
+            f"A vaultspec-rag service already owns this machine "
+            f"(pid {machine_holder}) and is warming up (loading models); "
+            "it will serve shortly."
+            if warming
+            else f"A vaultspec-rag service already owns this machine "
+            f"(pid {machine_holder})."
+        )
+        raise _fail_start(
+            json_mode,
+            error="machine_owned",
+            message="Service start failed",
+            human_lines=(
+                owner_line,
+                "One service owns the machine's GPU and managed Qdrant; a second "
+                "resident service is not supported.",
+            ),
+            next_actions=(
+                "vaultspec-rag server status",
+                "vaultspec-rag server stop",
+            ),
+            holder_pid=machine_holder,
+            **({"holder_phase": "warming"} if warming else {}),
+        )
+
+
+@server_app.command(
+    "start",
+    help=(
+        "Start the background search service. Defaults to the managed Qdrant "
+        "server backend (server mode); pass --local-only for the on-disk store. "
+        "Waits until it is ready and records how the CLI can reach it."
+    ),
+)
+def service_start(
+    ctx: typer.Context,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            help="Port for the background search service.",
+            envvar=EnvVar.PORT,
+        ),
+    ] = 8766,
+    updates: Annotated[
+        bool | None,
+        typer.Option(
+            "--updates/--no-updates",
+            help=(
+                "Enable or disable automatic index updates when files change "
+                "(default: enabled)."
+            ),
+        ),
+    ] = None,
+    update_delay_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--update-delay-ms",
+            help="Delay before indexing a burst of file changes, in milliseconds.",
+        ),
+    ] = None,
+    repeat_update_delay_s: Annotated[
+        float | None,
+        typer.Option(
+            "--repeat-update-delay-s",
+            help=(
+                "Minimum wait before automatically updating a project again, "
+                "in seconds."
+            ),
+        ),
+    ] = None,
+    local_only: Annotated[
+        bool,
+        typer.Option(
+            "--local-only",
+            help=(
+                "Use the on-disk local store instead of the default managed "
+                "Qdrant server. This is the first-class opt-out for CI, "
+                "offline, and small-project hosts."
+            ),
+        ),
+    ] = False,
+    qdrant: Annotated[
+        bool | None,
+        typer.Option(
+            "--qdrant/--no-qdrant",
+            help=(
+                "Explicitly opt in to (or out of) the managed Qdrant server. "
+                "Server mode is already the default, so --qdrant is redundant; "
+                "use --local-only to select the on-disk store. Unset leaves "
+                "the current Qdrant setting unchanged."
+            ),
+        ),
+    ] = None,
+    qdrant_auto_provision: Annotated[
+        bool,
+        typer.Option(
+            "--qdrant-auto-provision",
+            help=(
+                "Download the managed Qdrant server if it is missing. "
+                "Without this flag, start prints the install command."
+            ),
+        ),
+    ] = False,
+    no_preprocess: Annotated[
+        bool,
+        typer.Option(
+            "--no-preprocess",
+            help=(
+                "Kill switch: the service loads no document-preprocessing rules "
+                "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off)."
+            ),
+        ),
+    ] = False,
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Emit one machine-readable outcome envelope instead of human "
+                "text. An already-running owned service is the success "
+                "`already_running` (exit 0), so a supervising broker can attach "
+                "rather than treating it as a fault."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Start the background search service."""
+    preprocess_forward: Literal["off"] | None = "off" if no_preprocess else None
+    # Idempotent check FIRST: a healthy owned service already running is a
+    # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
+    # so the friendly path is no longer shadowed by the port-guard exit 1 - a
+    # supervising broker attaches instead of seeing a gateway fault.
+    existing = _existing_service_running()
+    if existing is not None:
+        existing_pid, existing_port = existing
+        _start_success(
+            json_mode,
+            status="already_running",
+            human_title="Service already running",
+            human_lines=(_process_line(existing_pid), _address_line(existing_port)),
+            pid=existing_pid,
+            port=existing_port,
+        )
+        return
+
+    _guard_start_preconditions(port, json_mode)
+
+    # Server mode is the default backend, so the qdrant-binary guard runs
+    # by default. --local-only (and an explicit --no-qdrant) select the
+    # on-disk store and skip it, so a default start fails fast on a missing
+    # binary while the local opt-out never touches the server.
+    if not local_only and qdrant is not False:
+        _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
+
+    # Operator visibility for the target root's preprocess rules.
+    # Best-effort and human-only so the --json envelope stays a single document.
+    if not json_mode:
+        effective_mode = preprocess_forward or get_config().preprocess_mode
+        _print_preprocess_start_notice(
+            _global_target(ctx) or Path.cwd(),
+            effective_mode,
+        )
+
+    log_path = _log_file()
+    interpreter = _resolve_daemon_interpreter()
+    env_warnings = _ephemeral_env_warning(interpreter)
+    if env_warnings and not json_mode:
+        _print_lifecycle_lines(*env_warnings)
+    _preflight_daemon_cuda(interpreter, json_mode=json_mode)
+    t0 = time.perf_counter()
+    try:
+        pid = _spawn_service(
+            port,
+            log_path,
+            watch=updates,
+            watch_debounce_ms=update_delay_ms,
+            watch_cooldown_s=repeat_update_delay_s,
+            qdrant=qdrant,
+            local_only=local_only,
+            preprocess_mode=preprocess_forward,
+        )
+    except DaemonBreakawayError as exc:
+        # The launching shell's Job Object denied detachment, so a daemon
+        # started here would die when the shell exits (the issue #204 flapping
+        # symptom). Surface the actionable guidance rather than spawning a
+        # doomed daemon. No status file was written, so nothing to clean up.
+        raise _fail_start(
+            json_mode,
+            error="daemon_breakaway",
+            message="Service start failed",
+            human_lines=(str(exc),),
+            next_actions=(
+                "Start from a plain console (cmd.exe or powershell.exe) outside a "
+                "restricted terminal",
+                "Or run the service under a service manager that permits breakaway",
+            ),
+            detail=str(exc),
+        ) from exc
+    _write_service_status(pid, port)
+    _await_service_ready(
+        pid,
+        port,
+        log_path,
+        json_mode=json_mode,
+        t0=t0,
+        env_warnings=env_warnings,
+    )
+
+
+def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
+    """Warning lines when the daemon interpreter is a uvx ephemeral cache env.
+
+    A uvx run silently falls back to a cached ephemeral environment when the
+    installed tool env is broken (e.g. a forced reinstall failed mid-removal
+    because the running service held the Scripts dir) or the request does not
+    match the installed spec. Nothing else distinguishes that env from the
+    installed tool, so the start surface names it loudly. Returns ``()`` for
+    every other environment kind.
+    """
+    if classify_interpreter_env(interpreter) is not RuntimeEnvKind.UVX_EPHEMERAL:
+        return ()
+    return (
+        "WARNING: the service interpreter is a uvx EPHEMERAL cache "
+        "environment - not the installed tool:",
+        f"  {interpreter}",
+        "uvx falls back to a cached environment when the installed tool env "
+        "is broken or the request does not match it.",
+        "Reinstall the tool with the service stopped (the Scripts lock during "
+        "a forced reinstall is the running service itself):",
+        f"  {durable_tool_install_command()}",
+    )
+
+
+def _await_service_ready(
+    pid: int,
+    port: int,
+    log_path: Path,
+    *,
+    json_mode: bool,
+    t0: float,
+    env_warnings: tuple[str, ...] = (),
+) -> None:
+    """Poll the spawned daemon's health until it is ready, or fail/time out.
+
+    Extracted from :func:`service_start` so the guard sequence and the health
+    wait each read as one unit. Emits the terminal outcome itself: the success
+    envelope on readiness, a typed failure if the process dies, and a timeout
+    failure if it never reports ready within the deadline. Health is polled with
+    exponential backoff; the live spinner is suppressed in ``--json`` mode so a
+    single clean envelope reaches stdout.
+
+    Args:
+        pid: The spawned daemon process id.
+        port: The port the daemon was started on.
+        log_path: The daemon log file, surfaced in failure output.
+        json_mode: Whether to emit a machine-readable outcome envelope.
+        t0: The ``time.perf_counter`` reading taken just before the spawn, for
+            the reported startup duration.
+    """
+    delay = 0.1
+    deadline = 300.0
+    elapsed = 0.0
+    spinner: contextlib.AbstractContextManager[object] = (
+        contextlib.nullcontext()
+        if json_mode
+        else _cli.console.status("Starting service...")
+    )
+    with spinner:
+        while elapsed < deadline:
+            time.sleep(delay)
+            elapsed = time.perf_counter() - t0
+
+            # Check if process died (port conflict, etc.)
+            if not _cli._is_pid_alive(pid):
+                _status_file().unlink(missing_ok=True)
+                tail = _tail_daemon_log(log_path)
+                human = [_process_line(pid), _address_line(port)]
+                if tail:
+                    human.append("Last log lines:")
+                    human.extend(f"  {ln}" for ln in tail)
+                human.append(f"Log: {log_path}")
+                raise _fail_start(
+                    json_mode,
+                    error="start_died",
+                    message="Service start failed",
+                    human_lines=tuple(human),
+                    pid=pid,
+                    port=port,
+                    log=str(log_path),
+                )
+
+            health = _health_probe(port)
+            if health is not None and health.get("status") == "ready":
+                # Persist the token from /health into service.json so
+                # auto-delegation auth works before the first heartbeat
+                # tick overwrites the file (S10 / #181 A5).
+                token_from_health = health.get("service_token")
+                if isinstance(token_from_health, str) and token_from_health:
+                    _update_service_token(token_from_health)
+                pid = _health_service_pid(health, pid)
+                _update_service_metadata(_status_metadata_from_health(health, pid=pid))
+                startup_s = time.perf_counter() - t0
+                extra: dict[str, object] = (
+                    {"warnings": list(env_warnings)} if env_warnings else {}
+                )
+                _start_success(
+                    json_mode,
+                    status="started",
+                    human_title="Service started",
+                    human_lines=(
+                        _process_line(pid),
+                        _address_line(port),
+                        f"Startup: {startup_s:.1f}s",
+                        f"Log: {log_path}",
+                    ),
+                    pid=pid,
+                    port=port,
+                    startup_s=round(startup_s, 1),
+                    log=str(log_path),
+                    **extra,
+                )
+                return
+
+            delay = min(delay * 2, 5.0)
+
+    raise _fail_start(
+        json_mode,
+        error="start_timeout",
+        message="Service start timed out",
+        human_lines=(
+            f"Waited: {deadline:.0f}s",
+            _process_line(pid),
+            "Server: process is running but not ready",
+            f"Log: {log_path}",
+        ),
+        pid=pid,
+        waited_s=deadline,
+        log=str(log_path),
+    )

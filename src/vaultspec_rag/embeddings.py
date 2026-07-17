@@ -255,20 +255,6 @@ class EmbeddingModel:
     MAX_EMBED_CHARS = 8000
 
     @staticmethod
-    def _default_batch_size() -> int:
-        """Return the configured streaming slice size.
-
-        Note this is the *slice* size (one slice's worth of docs is
-        encoded + upserted before the next slice begins). It is NOT
-        the inner sub-batch size that the model's encode call uses
-        for its forward passes - that is governed by
-        :meth:`_default_encode_batch_size`.
-        """
-        from .config import get_config
-
-        return get_config().embedding_batch_size
-
-    @staticmethod
     def _default_encode_batch_size() -> int:
         """Return the configured inner sub-batch size for ``encode``.
 

@@ -160,9 +160,10 @@ _dev-lint target='all':
       break \
     } \
     "absolute-imports" { \
-      if (Select-String -Path src\vaultspec_rag\*.py, src\vaultspec_rag\*\*.py -Pattern "^\s*from vaultspec_rag\." -Quiet -CaseSensitive) { \
+      $absHits = Get-ChildItem -Recurse -Path src/vaultspec_rag -Filter *.py | Select-String -Pattern "^\s*from vaultspec_rag\." -CaseSensitive | Where-Object { $_.Line -notmatch "absolute-import-ok" } ; \
+      if ($absHits) { \
         Write-Host "ABSOLUTE IMPORTS FOUND!" -ForegroundColor Red ; \
-        Select-String -Path src\vaultspec_rag\*.py, src\vaultspec_rag\*\*.py -Pattern "^\s*from vaultspec_rag\." -CaseSensitive ; \
+        $absHits | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber):$($_.Line)" } ; \
         exit 1 \
       } ; \
       break \

@@ -211,15 +211,15 @@ A handful of knobs shape the chunking and encoding pipeline this page describes.
 The [configuration reference](configuration.md) holds every variable with its
 default and precedence; the ones specific to this pipeline are:
 
-| Variable                                 | Controls                                                          |
-| ---------------------------------------- | ---------------------------------------------------------------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`           | SPLADE sparse channel; off falls back to dense-only               |
-| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`        | Character budget per vault chunk                                  |
-| `VAULTSPEC_RAG_MAX_EMBED_CHARS`          | Character truncation limit per document before encoding           |
-| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | Chunk worker processes; auto-sizes by default, 1 forces serial    |
-| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | Source-size threshold before the process pool activates           |
-| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`      | Reranker token bound on candidate content                         |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`      | Vector quantization: `scalar`, `turbo`, or `product`              |
+| Variable                                 | Controls                                                       |
+| ---------------------------------------- | -------------------------------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`           | SPLADE sparse channel; off falls back to dense-only            |
+| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`        | Character budget per vault chunk                               |
+| `VAULTSPEC_RAG_MAX_EMBED_CHARS`          | Character truncation limit per document before encoding        |
+| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | Chunk worker processes; auto-sizes by default, 1 forces serial |
+| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | Source-size threshold before the process pool activates        |
+| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`      | Reranker token bound on candidate content                      |
+| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`      | Vector quantization: `scalar`, `turbo`, or `product`           |
 
 For "my GPU is small" or "indexing is slow" tuning, see
 [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed).

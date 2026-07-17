@@ -30,10 +30,10 @@ _WORKER_SCRIPT = """
 import sys
 from pathlib import Path
 
-from vaultspec_rag.server._stdio_lifetime import install_stdio_lifetime_watchdog
+from vaultspec_rag.server import _stdio_lifetime  # absolute-import-ok
 
 pid_file = Path(sys.argv[1])
-thread = install_stdio_lifetime_watchdog(grace_seconds=0.5)
+thread = _stdio_lifetime.install_stdio_lifetime_watchdog(grace_seconds=0.5)
 assert thread is not None
 pid_file.write_text(str(__import__("os").getpid()), encoding="utf-8")
 __import__("time").sleep(120)
