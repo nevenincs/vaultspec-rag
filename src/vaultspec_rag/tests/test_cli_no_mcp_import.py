@@ -21,7 +21,7 @@ _CHECK = """
 import sys
 
 import vaultspec_rag  # noqa: F401
-from vaultspec_rag.cli import app  # noqa: F401
+from vaultspec_rag.cli import app  # noqa: F401  # absolute-import-ok
 
 forbidden_prefixes = ("win32", "pywintypes", "pythoncom")
 loaded = sorted(
