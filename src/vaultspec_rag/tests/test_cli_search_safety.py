@@ -1,0 +1,644 @@
+"""CLI coverage for the search service-safety and fallback contract."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import typing
+
+import pytest
+
+from ._cli_helpers import (
+    _assert_no_table_borders,
+    _assert_record,
+    _empty_search_contract_server,
+    _expected_code_search_request,
+    _invoke_search_contract,
+    _label_values,
+    _plain_lines,
+    _search_output_contract_server,
+    _search_records,
+    _slow_search_contract_server,
+    _sparse_search_output_contract_server,
+    app,
+    runner,
+)
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+pytestmark = [pytest.mark.unit]
+
+
+class TestSearchSafetyContract:
+    """Fail-hard fast path + path indicator + tqdm suppression."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_search_port_dead_default_fails_hard(self, tmp_path: Path):
+        """--port unreachable + no --allow-fallback exits non-zero."""
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--limit",
+                "3",
+                "--port",
+                "1",
+            ],
+        )
+        assert result.exit_code != 0
+        normalized = " ".join(result.output.split())
+        assert "unreachable" in normalized.lower()
+        assert "allow-fallback" in normalized.lower()
+        assert "local search index" in normalized
+        assert "one user only" in normalized
+        assert "agents waiting" not in normalized
+        assert "single-agent" not in normalized
+        assert "Qdrant lock" not in normalized
+        assert "in-process" not in normalized
+
+    def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path: Path):
+        """--allow-fallback does NOT emit the legacy fallthrough warning."""
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--port",
+                "1",
+                "--allow-fallback",
+            ],
+        )
+        normalized = " ".join(result.output.split())
+        assert "falling back to in-process" not in normalized
+
+    def test_index_exclude_warning_uses_running_service_language(self, tmp_path: Path):
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--port",
+                "1",
+                "--exclude",
+                "temp.py",
+            ],
+        )
+
+        assert result.exit_code != 0
+        normalized = " ".join(result.output.split())
+        assert "--exclude is ignored when using the running service." in normalized
+        assert "RAG service" not in normalized
+
+    def test_search_command_renders_numbered_results_from_http_response(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        records = _search_records(result.output)
+        assert [record["number"] for record in records] == [1, 2]
+        _assert_record(
+            records[0],
+            number=1,
+            location="src/search_ui.py:12",
+            text="def render_search_results():\nreturn 'full service text'",
+        )
+        _assert_record(
+            records[1],
+            number=2,
+            location="docs/ops.md#service-status",
+            text="Use server status for service readiness and current work.",
+        )
+        lines = _plain_lines(result.output)
+        assert lines[0] == "1. src/search_ui.py:12"
+        assert lines[1] == "def render_search_results():"
+        assert lines[2] == "return 'full service text'"
+        assert " - " not in lines[0]
+        _assert_no_table_borders(result.output)
+
+    def test_search_structure_filter_sends_service_node_type(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(
+                tmp_path,
+                server.server_port,
+                "--structure",
+                "function",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["node_type"] = "function"
+        assert requests == [expected]
+        assert "--node-type" not in result.output
+
+    def test_search_prefer_accepts_user_facing_value_alias(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(
+                tmp_path,
+                server.server_port,
+                "--prefer",
+                "production",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["prefer"] = "prod"
+        assert requests == [expected]
+
+    def test_search_command_humanizes_missing_result_location(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _sparse_search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        records = _search_records(result.output)
+        _assert_record(
+            records[0],
+            number=1,
+            location="location-not-reported",
+            text="result text without a source location",
+        )
+        assert "<unknown>" not in result.output
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_command_scores_flag_uses_plain_score_label(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, _requests = _search_output_contract_server()
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port, "--scores")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        records = _search_records(result.output)
+        _assert_record(
+            records[0],
+            number=1,
+            location="src/search_ui.py:12",
+            text="def render_search_results():\nreturn 'full service text'",
+            score="0.8750",
+        )
+        _assert_no_table_borders(result.output)
+
+    def test_empty_search_command_humanizes_service_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _empty_search_contract_server()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "missing symbol",
+                    "--type",
+                    "code",
+                    "--limit",
+                    "2",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [_expected_code_search_request(tmp_path, "missing symbol")]
+        lines = _plain_lines(result.output)
+        assert lines[0].endswith("missing symbol")
+        assert lines[1].startswith("Why:")
+        assert "No indexed code items are available" in lines[1]
+        count_match = re.fullmatch(r"Indexed source code sections: (\d+)\.", lines[2])
+        assert count_match is not None
+        assert int(count_match.group(1)) == 0
+        assert "Project mismatch: requested project differs from indexed project." in (
+            lines
+        )
+        assert "Requested project: current project" in lines
+        assert "Indexed project: other project" in lines
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            "- vaultspec-rag index --type code --port 8766",
+            "- vaultspec-rag server status",
+        ]
+        assert "index is for" not in result.output
+        assert not any("=" in line for line in lines)
+
+    def test_empty_local_fallback_search_is_actionable(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "missing local symbol",
+                "--type",
+                "vault",
+                "--limit",
+                "1",
+                "--port",
+                "1",
+                "--allow-fallback",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert lines[0].endswith("missing local symbol")
+        labels = _label_values(result.output)
+        assert labels["Why"].startswith("No matching vault documents")
+        assert "local index" in labels["Why"]
+        assert labels["Project"] == str(tmp_path)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            "- vaultspec-rag index --type vault",
+            "- vaultspec-rag status",
+        ]
+        assert "No vault results found" not in result.output
+        _assert_no_table_borders(result.output)
+
+    def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
+        """_suppress_hf_progress sets the HF env vars idempotently."""
+        from ..cli import _suppress_hf_progress
+
+        monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
+        _suppress_hf_progress()
+        assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
+        assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
+
+    def test_search_locked_store_raises_actionable_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Locked store in direct search prints a friendly routing-mode message."""
+        from ..store import VaultStoreLockedError
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def mock_search(*_args: object, **_kwargs: object) -> None:
+            raise VaultStoreLockedError(str(tmp_path / "db"))
+
+        monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._search._default_service_port", lambda: None
+        )
+
+        # Search is service-first: the local store is only opened under an
+        # explicit local mandate, so --allow-fallback is required to reach the
+        # in-process path that surfaces the locked-store message.
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--allow-fallback",
+            ],
+        )
+        assert result.exit_code != 0
+        normalized = " ".join(result.output.split())
+        assert "local search index" in normalized
+        assert "background service" in normalized
+        assert "automatic index update" in normalized
+        assert "vaultspec-rag server status" in normalized
+        assert "vaultspec-rag server stop" in normalized
+        assert "orphaned Python process" in normalized
+        assert "server mcp" not in normalized
+        assert "MCP" not in normalized
+        assert "direct local-store search" not in normalized
+        assert "RAG service" not in normalized
+        assert "file watcher" not in normalized
+
+    def test_search_locked_store_json_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Locked store in direct search under --json outputs local_store_locked."""
+        import json
+
+        from ..store import VaultStoreLockedError
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def mock_search(*_args: object, **_kwargs: object) -> None:
+            raise VaultStoreLockedError(str(tmp_path / "db"))
+
+        monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._search._default_service_port", lambda: None
+        )
+
+        # Service-first: --allow-fallback is the explicit mandate that opens the
+        # local store, the only path that can report local_store_locked.
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "anything",
+                "--allow-fallback",
+                "--json",
+            ],
+        )
+        assert result.exit_code != 0
+        data = json.loads(result.output.strip())
+        assert data["ok"] is False
+        assert data["error"] == "local_store_locked"
+        assert "local search index" in data["message"]
+        assert "background service" in data["message"]
+        assert "automatic index update" in data["message"]
+        remediation = data["remediation"]
+        assert "vaultspec-rag server status" in remediation
+        assert "vaultspec-rag server stop" in remediation
+        assert not any("server mcp" in item.lower() for item in remediation)
+        assert "direct local-store search" not in data["message"]
+        assert "RAG service" not in data["message"]
+        assert "file watcher" not in data["message"]
+
+    def test_search_mcp_timeout_diagnostics(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Timeout in client inside _try_http_search returns http_search_timeout."""
+        from ..cli import _try_http_search
+
+        def mock_timeout(*_args: object, **_kwargs: object) -> None:
+            raise TimeoutError("connection timed out")
+
+        monkeypatch.setattr(
+            "vaultspec_rag.serviceclient._transport._do_http_call", mock_timeout
+        )
+
+        res = _try_http_search(
+            query="test",
+            search_type="vault",
+            top_k=5,
+            port=8766,
+            project_root=str(tmp_path),
+            timeout=0.01,
+        )
+        assert isinstance(res, dict)
+        assert res["ok"] is False
+        assert res["error"] == "http_search_timeout"
+        msg = res["message"]
+        assert isinstance(msg, str)
+        assert "timed out after" in msg
+        assert "same_project_search_strategy" not in msg
+
+    def test_search_timeout_human_output_is_plain_diagnostic(
+        self, tmp_path: Path
+    ) -> None:
+        """Default search timeout output is natural text, not a backend table."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server()
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        folded = " ".join(_plain_lines(result.output))
+        assert re.match(
+            rf"Error: The search request to the service on port {port} "
+            r"timed out after 0\.001 seconds",
+            folded,
+        )
+        assert "active index jobs before retrying." in folded
+        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
+        assert labels["Work"] == "no active index jobs"
+        lines = _plain_lines(result.output)
+        next_actions = lines[lines.index("Next actions:") + 1 :]
+        assert next_actions == [
+            f"- vaultspec-rag server status --port {port}",
+            f"- vaultspec-rag server jobs --state active --port {port}",
+            "- Rerun the same search with --timeout 300",
+        ]
+        assert "running jobs before retrying" not in result.output
+        assert "running index jobs" not in result.output
+        assert "health check" not in result.output
+        for forbidden in (
+            "same_project_search_strategy",
+            "Backend Contract",
+            "Search Concurrency",
+            "Cross-project Search",
+            "Storage Process Model",
+            "http_search_timeout",
+            "┌",
+            "│",
+            "└",
+        ):
+            assert forbidden not in result.output
+
+    def test_search_timeout_missing_health_status_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server(
+            health_payload={
+                "project_count": 1,
+                "backend_capabilities": {
+                    "same_project_search_strategy": "serialized",
+                },
+            }
+        )
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        assert (
+            labels["Service"]
+            == "reachable; request status not reported by service; 1 project loaded"
+        )
+        assert labels["Work"] == "no active index jobs"
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_timeout_jobs_error_is_reported_absence(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server(
+            jobs_payload={
+                "ok": False,
+                "error": "jobs_unavailable",
+                "message": "Job summary is not available.",
+            },
+            jobs_status_code=503,
+        )
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        labels = _label_values(result.output)
+        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
+        assert (
+            labels["Work"]
+            == "jobs check not reported by service (Job summary is not available.)"
+        )
+        assert "unknown" not in result.output.lower()
+        _assert_no_table_borders(result.output)
+
+    def test_search_timeout_json_preserves_backend_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        """JSON timeout output keeps full diagnostic fields for agents."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _slow_search_contract_server()
+        port = server.server_address[1]
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "service status jobs logs timeout diagnostics",
+                    "--type",
+                    "code",
+                    "--max-results",
+                    "3",
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "0.001",
+                    "--json",
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 1, result.output
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "search"
+        assert envelope["error"] == "http_search_timeout"
+        assert envelope["backend_capabilities"]["same_project_search_strategy"] == (
+            "serialized"
+        )
+        diagnostics = envelope["diagnostics"]
+        assert diagnostics["backpressure"]["same_project_search_strategy"] == (
+            "serialized"
+        )
+        assert diagnostics["health"]["status"] == "ready"
+        assert diagnostics["jobs"]["running_count"] == 0
