@@ -9,6 +9,7 @@ related:
   - '[[2026-07-17-stdio-watchdog-convergence-adr]]'
   - '[[2026-07-17-stdio-watchdog-convergence-research]]'
 ---
+
 # `stdio-watchdog-convergence` plan
 
 ### Phase `P01` - Watchdog convergence
