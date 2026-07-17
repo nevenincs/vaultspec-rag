@@ -343,7 +343,9 @@ def install_run(
         else:
             from ._uv_sync import _run_uv_add_mcp_extra
 
-            _run_uv_add_mcp_extra(target=target, report=report)
+            _run_uv_add_mcp_extra(
+                target=target, report=report, mode=resolved.mode.value
+            )
 
     if provision:
         _run_provisioning(
