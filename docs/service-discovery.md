@@ -20,30 +20,30 @@ every heartbeat tick by the daemon.
 Every file carries a schema discriminator. Pin on the pair and refuse a file you do not
 understand:
 
-| Field | Type | Value |
-| --- | --- | --- |
-| `schema` | string | `vaultspec.rag.service` |
-| `version` | integer | `1` |
+| Field     | Type    | Value                   |
+| --------- | ------- | ----------------------- |
+| `schema`  | string  | `vaultspec.rag.service` |
+| `version` | integer | `1`                     |
 
 `version` is bumped only on a breaking shape change, and this document is updated in the same
 change. Additive fields do not bump the version.
 
 ## Interface fields
 
-| Field | Type | Format / meaning |
-| --- | --- | --- |
-| `schema` | string | Schema discriminator (see Version discriminator). |
-| `version` | integer | Schema version (see Version discriminator). |
-| `pid` | integer | OS process id of the serving daemon. See the PID-reuse caveat in the Staleness contract section. |
-| `port` | integer | TCP port the service listens on (loopback). |
-| `started_at` | string | Service start time, **ISO-8601 with UTC offset, second precision** (e.g. `2026-06-24T10:23:52+00:00`). |
-| `last_heartbeat` | string | Time of the last heartbeat write, **same format as `started_at`**. Drives the staleness check. |
-| `heartbeat_interval_s` | integer | Seconds between heartbeat writes. |
-| `stale_after_s` | integer | Age in seconds past which `last_heartbeat` is considered stale. |
-| `service_token` | string | Per-process identity token; also echoed by the ungated `/health` route for identity verification. |
-| `qdrant_pid` | integer or null | PID of the supervised Qdrant child. Null when the daemon attached to an externally-started Qdrant rather than spawning one. |
-| `qdrant_alive` | boolean or null | Whether the supervised Qdrant child is alive. |
-| `qdrant_port` | integer or null | Port of the supervised Qdrant child. |
+| Field                  | Type            | Format / meaning                                                                                                            |
+| ---------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `schema`               | string          | Schema discriminator (see Version discriminator).                                                                           |
+| `version`              | integer         | Schema version (see Version discriminator).                                                                                 |
+| `pid`                  | integer         | OS process id of the serving daemon. See the PID-reuse caveat in the Staleness contract section.                            |
+| `port`                 | integer         | TCP port the service listens on (loopback).                                                                                 |
+| `started_at`           | string          | Service start time, **ISO-8601 with UTC offset, second precision** (e.g. `2026-06-24T10:23:52+00:00`).                      |
+| `last_heartbeat`       | string          | Time of the last heartbeat write, **same format as `started_at`**. Drives the staleness check.                              |
+| `heartbeat_interval_s` | integer         | Seconds between heartbeat writes.                                                                                           |
+| `stale_after_s`        | integer         | Age in seconds past which `last_heartbeat` is considered stale.                                                             |
+| `service_token`        | string          | Per-process identity token; also echoed by the ungated `/health` route for identity verification.                           |
+| `qdrant_pid`           | integer or null | PID of the supervised Qdrant child. Null when the daemon attached to an externally-started Qdrant rather than spawning one. |
+| `qdrant_alive`         | boolean or null | Whether the supervised Qdrant child is alive.                                                                               |
+| `qdrant_port`          | integer or null | Port of the supervised Qdrant child.                                                                                        |
 
 The three `qdrant_*` fields are present only in managed-server mode. In local-only mode, and when
 the service targets a remote Qdrant URL, the daemon supervises no child, so the fields are absent
