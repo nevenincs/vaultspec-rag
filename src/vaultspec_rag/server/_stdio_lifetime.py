@@ -8,19 +8,23 @@ stdin reader (a non-daemon thread) cannot be cancelled in-process. The only
 reliable backstop is to notice that the process chain above us broke and
 hard-exit.
 
-This module discovers the shim's ancestor chain at startup, takes
-``SYNCHRONIZE`` handles immediately (a handle taken while the ancestor is
-alive stays valid across PID reuse), and arms a watchdog thread that treats
-any watched ancestor's death as termination intent. It must stay
-stdlib-only and must never import ``mcp``, torch, or the store: the shim is
-a thin service client, and this watchdog also guards nothing in HTTP daemon
-mode, where outliving the spawner is by design.
+This module anchors the shim's lifetime through layered anchors, matching
+the companion vaultspec-core watchdog so both servers behave identically:
+the primary anchor resolves the stdin pipe creator (the exact client at any
+wrapper depth) and is never grace-pruned, so an already-dead client reaps
+the shim at arm time; the discovered ancestor chain (handles taken at
+startup so PID reuse cannot retarget the wait, creation-time monotonicity,
+a grace window dropping transient spawn helpers) arms only when no client
+resolves. The module must stay stdlib-only and must never import ``mcp``,
+torch, or the store: the shim is a thin service client, and this watchdog
+guards nothing in HTTP daemon mode, where outliving the spawner is by
+design.
 
-One deliberate blind spot: ancestors that die during the startup grace
-window are pruned as transient spawn helpers, so a client that crashes
-within those first seconds can empty the survivor set and disarm the
-backstop for the process lifetime (stdin EOF remains). The
-empty-survivors disarm is that accepted trade-off, not a bug.
+One deliberate blind spot remains in the FALLBACK shape only: discovered
+ancestors that die during the startup grace window are pruned as transient
+spawn helpers, so with no resolvable client an entire chain dying inside
+the grace disarms the backstop (stdin EOF remains). Precise anchors are
+exempt from pruning, so the common pipe-spawned case has no such window.
 """
 
 from __future__ import annotations
@@ -122,6 +126,11 @@ if sys.platform == "win32":
     # Undeclared ctypes signatures fail SILENTLY (a watchdog that waits on
     # garbage never fires), so every binding declares argtypes and restype.
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.GetNamedPipeServerProcessId.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.GetNamedPipeServerProcessId.restype = wintypes.BOOL
     _kernel32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
     _kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
     _kernel32.Process32First.argtypes = (
@@ -157,14 +166,25 @@ if sys.platform == "win32":
     _kernel32.WaitForMultipleObjects.restype = wintypes.DWORD
 
     class WatchedAncestor:
-        """An ancestor process we hold a SYNCHRONIZE handle on."""
+        """A process we hold a SYNCHRONIZE handle on.
 
-        __slots__ = ("exe", "handle", "pid")
+        ``grace_prunable`` separates the two anchor precisions: discovered
+        ancestors may be transient spawn helpers and are dropped when they
+        die inside the grace window; precise anchors (the resolved stdin
+        pipe creator, an explicit ``--parent-pid``) signal exit immediately,
+        so an already-dead client reaps the shim at arm time instead of
+        silently disarming the backstop.
+        """
 
-        def __init__(self, pid: int, exe: str, handle: int) -> None:
+        __slots__ = ("exe", "grace_prunable", "handle", "pid")
+
+        def __init__(
+            self, pid: int, exe: str, handle: int, *, grace_prunable: bool = True
+        ) -> None:
             self.pid = pid
             self.exe = exe
             self.handle = handle
+            self.grace_prunable = grace_prunable
 
     def _snapshot_processes() -> tuple[dict[int, int], dict[int, str]]:
         """One Toolhelp32 pass: pid -> ppid and pid -> exe name."""
@@ -209,33 +229,82 @@ if sys.platform == "win32":
         )
         return int(handle) if handle else None
 
-    def open_ancestor_handles(
-        extra_pids: tuple[int, ...] = (),
-    ) -> list[WatchedAncestor]:
+    def resolve_stdin_client_pid() -> int | None:
+        """Resolve the PID of the process that created this process's stdin pipe.
+
+        Anonymous pipes are named pipes under the hood on Windows, so
+        ``GetNamedPipeServerProcessId`` on the inherited stdin handle yields
+        the pipe-creating process: the MCP client itself, regardless of how
+        many wrapper processes (``uv``, venv launchers) sit in between.
+
+        Returns:
+            The client PID, or ``None`` when stdin is not a pipe (console or
+            redirected-file stdin), the handle is unavailable, or the
+            resolved PID is this process itself. Fails open on anything
+            unexpected.
+        """
+        try:
+            import msvcrt
+
+            try:
+                handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+            except OSError:
+                logger.debug("stdio watchdog: no stdin OS handle")
+                return None
+
+            server_pid = ctypes.c_ulong(0)
+            ok = _kernel32.GetNamedPipeServerProcessId(handle, ctypes.byref(server_pid))
+            if not ok:
+                logger.debug(
+                    "stdio watchdog: stdin is not a pipe (error %d)",
+                    ctypes.get_last_error(),
+                )
+                return None
+
+            pid = int(server_pid.value)
+            if pid == 0 or pid == os.getpid():
+                logger.debug(
+                    "stdio watchdog: pipe creator is self or unresolved (%d)", pid
+                )
+                return None
+            return pid
+        except Exception:
+            logger.debug("stdio watchdog: client resolution failed", exc_info=True)
+            return None
+
+    def open_watched(pid: int, *, grace_prunable: bool) -> WatchedAncestor | None:
+        """Open one explicit PID as a watched target; ``None`` when refused."""
+        handle = _open_process(pid)
+        if handle is None:
+            logger.warning(
+                "stdio watchdog: cannot open process %d (error %d)",
+                pid,
+                ctypes.get_last_error(),
+            )
+            return None
+        try:
+            _, names = _snapshot_processes()
+            exe = names.get(pid, "?")
+        except OSError:
+            exe = "?"
+        return WatchedAncestor(pid, exe, handle, grace_prunable=grace_prunable)
+
+    def open_ancestor_handles() -> list[WatchedAncestor]:
         """SYNCHRONIZE handles on the live ancestor chain, PID-reuse safe.
 
         Walks the snapshot parent chain from this process, opening each
         ancestor's handle immediately and enforcing creation-time
         monotonicity: a genuine ancestor existed before its child, so a
         "parent" younger than the child is a reused PID and ends the walk.
-        ``extra_pids`` (an explicit ``--parent-pid`` override) are watched
-        ahead of discovery when alive.
+        Discovered ancestors are grace-prunable; precise anchors come from
+        ``open_watched`` instead.
         """
         watched: list[WatchedAncestor] = []
         parents, names = _snapshot_processes()
-        for pid in extra_pids:
-            handle = _open_process(pid)
-            if handle is None:
-                logger.warning(
-                    "stdio watchdog: explicit parent pid %d not watchable", pid
-                )
-                continue
-            watched.append(WatchedAncestor(pid, names.get(pid, "?"), handle))
         my_handle = _open_process(os.getpid())
         child_ctime = _creation_time(my_handle) if my_handle is not None else 0
         if my_handle is not None:
             _kernel32.CloseHandle(my_handle)
-        already = {ancestor.pid for ancestor in watched}
         for pid in _walk_ancestor_pids(os.getpid(), parents):
             handle = _open_process(pid)
             if handle is None:
@@ -244,24 +313,64 @@ if sys.platform == "win32":
             if child_ctime and (ancestor_ctime == 0 or ancestor_ctime > child_ctime):
                 _kernel32.CloseHandle(handle)
                 break
-            if pid in already:
-                _kernel32.CloseHandle(handle)
-                continue
-            watched.append(WatchedAncestor(pid, names.get(pid, "?"), handle))
+            watched.append(
+                WatchedAncestor(pid, names.get(pid, "?"), handle, grace_prunable=True)
+            )
             child_ctime = ancestor_ctime
         return watched
 
-    def _windows_watchdog(watched: list[WatchedAncestor], grace_seconds: float) -> None:
-        """Grace-prune, then wait-any on the survivors; hard-exit on death.
+    def _gather_windows_targets(
+        parent_pid: int | None, client_pid: int | None
+    ) -> list[WatchedAncestor]:
+        """Compose the layered anchor set for the Windows watchdog.
 
-        Runs on a daemon thread. Ancestors that die during the grace window
-        are transient spawn helpers, not termination intent, and are
-        dropped. A failed wait disarms the backstop (stdin EOF remains)
-        rather than killing a live session.
+        Explicit override first, then the resolved stdin pipe creator (both
+        precise); the discovered ancestor chain only when no client anchor
+        landed - watching processes above a known client would reap a live
+        session when its hosting terminal dies.
         """
-        time.sleep(grace_seconds)
+        watched: list[WatchedAncestor] = []
+        if parent_pid is not None:
+            explicit = open_watched(parent_pid, grace_prunable=False)
+            if explicit is not None:
+                watched.append(explicit)
+        resolved = client_pid if client_pid is not None else resolve_stdin_client_pid()
+        client_watched = False
+        if resolved is not None:
+            if any(target.pid == resolved for target in watched):
+                client_watched = True
+            else:
+                client = open_watched(resolved, grace_prunable=False)
+                if client is not None:
+                    watched.append(client)
+                    client_watched = True
+        if not client_watched:
+            known = {target.pid for target in watched}
+            for target in open_ancestor_handles():
+                if target.pid in known:
+                    # An explicit override on the chain: drop the duplicate
+                    # without leaking its fresh handle.
+                    _kernel32.CloseHandle(target.handle)
+                else:
+                    watched.append(target)
+        return watched
+
+    def _windows_watchdog(watched: list[WatchedAncestor], grace_seconds: float) -> None:
+        """Grace-prune the prunable targets, then wait-any; hard-exit on death.
+
+        Runs on a daemon thread. Only discovered-chain targets are grace
+        prunable; the resolved client and an explicit override signal exit
+        immediately, preserving the instant reap of an already-dead client.
+        A failed wait disarms the backstop (stdin EOF remains) rather than
+        killing a live session.
+        """
+        if any(ancestor.grace_prunable for ancestor in watched):
+            time.sleep(grace_seconds)
         survivors: list[WatchedAncestor] = []
         for ancestor in watched:
+            if not ancestor.grace_prunable:
+                survivors.append(ancestor)
+                continue
             if _kernel32.WaitForSingleObject(ancestor.handle, 0) == _WAIT_TIMEOUT:
                 survivors.append(ancestor)
             else:
@@ -348,8 +457,18 @@ def _pid_alive(pid: int) -> bool:
 def install_stdio_lifetime_watchdog(
     parent_pid: int | None = None,
     grace_seconds: float = _GRACE_SECONDS,
+    client_pid: int | None = None,
 ) -> threading.Thread | None:
     """Arm the lifetime backstop for the stdio shim; returns its thread.
+
+    On Windows the primary anchor is the stdin pipe creator resolved by
+    ``resolve_stdin_client_pid`` (or the injected ``client_pid``) - exact
+    client semantics at any wrapper depth, never grace-pruned, so an
+    already-dead client reaps immediately. The discovered ancestor chain
+    arms ONLY when no client resolves (console runs, exotic spawners):
+    watching processes above a known client would reap a live session when
+    its hosting terminal dies. An explicit ``parent_pid`` is watched ahead
+    of discovery in either shape.
 
     Never raises: a watchdog that cannot install must not take down a shim
     whose stdin EOF path still works. Returns ``None`` when disabled via
@@ -361,19 +480,21 @@ def install_stdio_lifetime_watchdog(
             STDIO_WATCHDOG_ENV,
         )
         return None
-    extra_pids = (parent_pid,) if parent_pid is not None else ()
     try:
         if sys.platform == "win32":
-            watched = open_ancestor_handles(extra_pids)
+            watched = _gather_windows_targets(parent_pid, client_pid)
             if not watched:
                 logger.warning(
-                    "stdio watchdog: no watchable ancestors; "
+                    "stdio watchdog: no watchable targets; "
                     "backstop disarmed, stdin EOF is the only exit path"
                 )
                 return None
             logger.info(
-                "stdio watchdog armed on ancestors: %s",
-                ", ".join(f"{a.pid}({a.exe})" for a in watched),
+                "stdio watchdog armed on: %s",
+                ", ".join(
+                    f"{a.pid}({a.exe}{'' if a.grace_prunable else ', precise'})"
+                    for a in watched
+                ),
             )
             thread = threading.Thread(
                 target=_windows_watchdog,
@@ -388,6 +509,7 @@ def install_stdio_lifetime_watchdog(
                     _kernel32.CloseHandle(ancestor.handle)
                 raise
         else:
+            extra_pids = (parent_pid,) if parent_pid is not None else ()
             thread = threading.Thread(
                 target=_posix_watchdog,
                 args=(os.getppid(), extra_pids),

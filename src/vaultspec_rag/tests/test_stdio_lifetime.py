@@ -9,6 +9,7 @@ fires-on-death path is exercised end-to-end in the integration suite.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from typing import TYPE_CHECKING
 
@@ -104,25 +105,18 @@ class TestOpenAncestorHandlesWindows:
             for ancestor in watched:
                 lifetime._kernel32.CloseHandle(ancestor.handle)
 
-    def test_explicit_parent_pid_is_watched_first(self) -> None:
-        ppid = os.getppid()
-        watched = lifetime.open_ancestor_handles((ppid,))
+    def test_chain_targets_are_grace_prunable(self) -> None:
+        watched = lifetime.open_ancestor_handles()
         try:
-            assert watched[0].pid == ppid
-            assert [ancestor.pid for ancestor in watched].count(ppid) == 1
+            assert all(ancestor.grace_prunable for ancestor in watched)
         finally:
             for ancestor in watched:
                 lifetime._kernel32.CloseHandle(ancestor.handle)
 
-    def test_unwatchable_explicit_pid_is_skipped(self) -> None:
+    def test_unwatchable_pid_is_refused_not_fatal(self) -> None:
         # Windows PIDs are multiples of 4, so PID 3 can never name a
-        # process; the unopenable explicit target is skipped, not fatal.
-        watched = lifetime.open_ancestor_handles((3,))
-        try:
-            assert all(ancestor.pid != 3 for ancestor in watched)
-        finally:
-            for ancestor in watched:
-                lifetime._kernel32.CloseHandle(ancestor.handle)
+        # process; the unopenable target is refused, not fatal.
+        assert lifetime.open_watched(3, grace_prunable=False) is None
 
     def test_creation_times_are_monotonic_up_the_chain(self) -> None:
         watched = lifetime.open_ancestor_handles()
@@ -133,3 +127,63 @@ class TestOpenAncestorHandlesWindows:
         finally:
             for ancestor in watched:
                 lifetime._kernel32.CloseHandle(ancestor.handle)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows pipe semantics")
+class TestLayeredAnchors:
+    """The layered composition: precise anchors beat the discovered chain."""
+
+    def test_pipe_creator_resolves_to_the_spawning_process(self) -> None:
+        # A child spawned with stdin=PIPE must resolve THIS process as the
+        # pipe creator - the exact-client anchor at any wrapper depth.
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from vaultspec_rag.server import _stdio_lifetime as w; "
+                "print(w.resolve_stdin_client_pid())",  # absolute-import-ok
+            ],
+            stdin=subprocess.PIPE,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert proc.stdout.strip() == str(os.getpid())
+
+    def test_console_stdin_fails_open(self) -> None:
+        # Under pytest, stdin is a captured non-pipe handle or a console;
+        # either way resolution must fail open rather than raise. A pipe
+        # result is possible when the runner itself was piped - accept int
+        # or None, never an exception.
+        result = lifetime.resolve_stdin_client_pid()
+        assert result is None or isinstance(result, int)
+
+    def test_resolved_client_suppresses_the_chain(self) -> None:
+        watched = lifetime._gather_windows_targets(None, os.getppid())
+        try:
+            assert [target.pid for target in watched] == [os.getppid()]
+            assert not watched[0].grace_prunable
+        finally:
+            for target in watched:
+                lifetime._kernel32.CloseHandle(target.handle)
+
+    def test_explicit_and_client_deduplicate(self) -> None:
+        ppid = os.getppid()
+        watched = lifetime._gather_windows_targets(ppid, ppid)
+        try:
+            assert [target.pid for target in watched] == [ppid]
+            assert not watched[0].grace_prunable
+        finally:
+            for target in watched:
+                lifetime._kernel32.CloseHandle(target.handle)
+
+    def test_no_client_falls_back_to_the_chain(self) -> None:
+        # An unopenable client pid (3) leaves no client anchor, so the
+        # discovered chain must arm as the fallback.
+        watched = lifetime._gather_windows_targets(None, 3)
+        try:
+            assert watched, "fallback chain must arm when the client cannot"
+            assert all(target.grace_prunable for target in watched)
+        finally:
+            for target in watched:
+                lifetime._kernel32.CloseHandle(target.handle)
