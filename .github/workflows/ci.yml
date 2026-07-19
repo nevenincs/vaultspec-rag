@@ -79,6 +79,9 @@ jobs:
       - name: Markdown
         run: just dev lint markdown
 
+      - name: Docs version guard
+        run: just dev lint docs-version
+
       # Baseline-calibrated gate: thresholds sit at today's worst offender
       # (cognitive<=20, xenon absolute/modules<=C, average<=A) so this stays
       # green until the remediation campaign ratchets them down.
