@@ -48,6 +48,14 @@ macOS, AMD GPUs, and Apple Silicon are not supported. The [architecture overview
 
 ### Install
 
+Try it now with no project setup, straight from PyPI:
+
+```bash
+uvx vaultspec-rag install
+```
+
+Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try; a bare `uvx` run does not pin the GPU torch build across invocations the way the durable paths below do, so switch to one of them once you're keeping vaultspec-rag around.
+
 Add vaultspec-rag to your project and set it up:
 
 ```bash
