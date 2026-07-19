@@ -22,13 +22,13 @@
 
 </div>
 
-A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a durable record of decisions, plans, research, and the code they produced. vaultspec-rag searches that record and your source code by meaning, not by keyword.
-
-Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as a coding agent reads it.
-
 <p align="center">
 <img src="assets/term-search-vault.svg" alt="vaultspec-rag search - a plain-English query surfacing the governing ADR from this repository's own vault" width="880" />
 </p>
+
+A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a durable record of decisions, plans, research, and the code they produced. vaultspec-rag searches that record and your source code by meaning, not by keyword.
+
+Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as a coding agent reads it.
 
 Every terminal render on this page is real output against this repository's own vault and code. The [architecture overview](docs/architecture.md) explains how it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
 
@@ -44,7 +44,7 @@ Try it now with no project setup, straight from PyPI:
 uvx vaultspec-rag install
 ```
 
-Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try; a bare `uvx` run does not pin the GPU torch build across invocations the way the durable paths below do, so switch to one of them once you're keeping vaultspec-rag around.
+Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try. A bare `uvx` run does not pin the GPU torch build across invocations the way the project-dependency and standalone-tool paths do, so switch to one of those once you're keeping vaultspec-rag around.
 
 Add vaultspec-rag to your project and set it up:
 
@@ -56,7 +56,7 @@ uv sync
 
 `install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. `uv sync` then pulls in that GPU build. The models total a few gigabytes, so the first download takes several minutes, but it runs only once.
 
-To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build (a bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts):
+To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build. A bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts, so the `--with` pin is the durable fix:
 
 ```bash
 uv tool install "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
@@ -112,9 +112,16 @@ See the [getting started guide](docs/getting-started.md) for the full walkthroug
 
 See [search and index](docs/search-and-index.md) for the full filter set, [MCP integration](docs/mcp.md) for client setup, and [preprocessing hooks](docs/preprocessing-hooks.md) for the extraction rule syntax and its trust model.
 
+## The vaultspec family
+
+- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - Beta - The agent harness: the pipeline, the vault, and the CLI that drives them.
+- **vaultspec-rag** - Beta - The semantic search component for vault and code.
+- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - Beta - The application that runs it all as a UI.
+- [vaultspec-a2a](https://github.com/nevenincs/vaultspec-a2a) - Beta - Headless agent-to-agent orchestration.
+
 ## Documentation
 
-### Getting started
+### Getting started guide
 
 - [Getting started](docs/getting-started.md) - install, index, and run your first query end to end.
 - [Installation](docs/installation.md) - the GPU build, dependency provisioning, and recovery steps.
@@ -139,13 +146,6 @@ See [search and index](docs/search-and-index.md) for the full filter set, [MCP i
 
 - [Architecture](docs/architecture.md) - how it works, why a GPU is required, and the server and local-only modes.
 - [Indexing](docs/indexing.md) - indexing and retrieval internals.
-
-## The vaultspec family
-
-- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - Beta - The agent harness: the pipeline, the vault, and the CLI that drives them.
-- **vaultspec-rag** - Beta - The semantic search component for vault and code.
-- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - Beta - The application that runs it all as a UI.
-- [vaultspec-a2a](https://github.com/nevenincs/vaultspec-a2a) - Beta - Headless agent-to-agent orchestration.
 
 ## Status, help, and license
 
