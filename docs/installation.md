@@ -113,7 +113,7 @@ Check the installed version:
 uv run vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.3.0`.
+This reports `vaultspec-rag v0.3.2`.
 
 Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qdrant binary and server:
 
