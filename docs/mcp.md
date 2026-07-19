@@ -2,7 +2,7 @@
 
 An assistant like Claude Desktop or Claude Code can search your vault and source code without leaving the editor. The Model Context Protocol (MCP) is a JSON-RPC interface assistants use to call external tools. vaultspec-rag ships an MCP server that exposes its search and indexing operations as MCP tools. Any client that speaks stdio MCP can connect.
 
-Before you start, this page assumes you've installed vaultspec-rag and run at least one search. See the [installation guide](installation.md) for setup and the [getting-started tutorial](getting-started.md) for the first-search path. The MCP server binary `vaultspec-search-mcp` lands on `PATH` when you install the package.
+Before you start, this page assumes you've installed vaultspec-rag and run at least one search. See the [installation guide](installation.md) for setup and the [getting-started tutorial](getting-started.md) for the first-search path. The MCP server is an opt-in extra: install `vaultspec-rag[mcp]` (not the base package) to put the `vaultspec-search-mcp` binary on `PATH`.
 
 ## How the MCP server connects
 
