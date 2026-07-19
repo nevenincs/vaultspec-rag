@@ -1,14 +1,14 @@
-"""Guard against stale ``vaultspec-rag v0.x.y`` version strings in docs.
+"""Guard against stale ``vaultspec-rag vX.Y.Z`` version strings in docs.
 
 ``docs/getting-started.md`` and ``docs/installation.md`` show literal
 ``vaultspec-rag --version`` output as part of their walkthrough. Those
 literals drift silently whenever a release bumps ``pyproject.toml`` without
 a matching docs edit. This scans ``README.md`` and ``docs/`` for the
-``vaultspec-rag v0.x.y`` output-literal pattern and fails on any value that
+``vaultspec-rag vX.Y.Z`` output-literal pattern and fails on any value that
 does not match the current package version.
 
 CHANGELOG.md and RELEASING.md use a different, deliberately excluded
-literal shape (``vaultspec-rag-v0.x.y``, hyphenated) for historical compare
+literal shape (``vaultspec-rag-vX.Y.Z``, hyphenated) for historical compare
 links and an illustrative example, so they are not scanned.
 
 Usage:
@@ -24,7 +24,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCAN_PATHS = [REPO_ROOT / "README.md", REPO_ROOT / "docs"]
-VERSION_LITERAL = re.compile(r"vaultspec-rag v(0\.\d+\.\d+)")
+VERSION_LITERAL = re.compile(r"vaultspec-rag v(\d+\.\d+\.\d+)")
 
 
 def current_version() -> str:

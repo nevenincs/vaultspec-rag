@@ -118,6 +118,21 @@ jobs:
         working-directory: dist
         run: sha256sum * > SHA256SUMS
 
+      - name: Ensure the GitHub Release exists
+        # release-please normally creates the Release before dispatching this
+        # workflow, but the manual tag-push trigger can fire against a tag
+        # with no Release yet. --verify-tag refuses to create one for a tag
+        # that isn't pushed; `|| true` is safe because the only failure mode
+        # once the tag is verified is "already exists", which is the case we
+        # want to no-op through.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ inputs.tag || github.ref_name }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes || true
+
       - name: Attach wheel, sdist, and checksums to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
