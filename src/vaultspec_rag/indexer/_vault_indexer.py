@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING
 
 from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
@@ -21,6 +21,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     scan_vault,
 )
 
+from ..job_control import NO_RUN_CONTROL
 from ..logging_config import log_event
 from . import _config_epoch
 from ._streaming import _stream_encode_and_upsert_vault
@@ -29,9 +30,10 @@ from ._vault_prep import IndexResult, prepare_document
 if TYPE_CHECKING:
     import pathlib
     import threading
-    from collections.abc import Iterable
+    from collections.abc import Generator, Iterable
 
     from ..embeddings import EmbeddingModel
+    from ..job_control import RunControl
     from ..progress import ProgressReporter
     from ..store import VaultDocument, VaultStore
 
@@ -54,6 +56,23 @@ _SCHEMA_KEY = "__vault_point_schema__"
 #: class as ``html_strip`` on the code side. Begins with ``__`` so
 #: ``_load_meta`` strips it from document-id set arithmetic.
 _CONTENT_EPOCH_KEY = "__vault_content_epoch__"
+
+
+@contextlib.contextmanager
+def _controlled_phase(
+    reporter: ProgressReporter,
+    run_control: RunControl,
+    name: str,
+    total: int | None,
+) -> Generator[None]:
+    """Balance one progress phase and checkpoint at both safe edges."""
+    run_control.checkpoint()
+    reporter.phase_start(name, total)
+    try:
+        yield
+    finally:
+        reporter.phase_end()
+    run_control.checkpoint()
 
 
 class VaultIndexer:
@@ -110,6 +129,7 @@ class VaultIndexer:
         clean: bool = False,
         *,
         reporter: ProgressReporter,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full re-index serialized through the indexer writer lock.
 
@@ -119,8 +139,13 @@ class VaultIndexer:
         the same indexer instance run sequentially, eliminating the
         ``existing_ids_before`` snapshot race documented in the #68
         rolling audit (F6.6).
+
+        ``run_control`` defaults to the inert implementation so direct and
+        legacy callers retain their existing behavior.
         """
+        run_control.checkpoint()
         with self._writer_lock:
+            run_control.checkpoint()
             log_event(
                 logger,
                 "service.index",
@@ -135,9 +160,17 @@ class VaultIndexer:
                 # completion: a long run spanning a maintenance tick must
                 # advance the ephemeral idle clock before any reclaim
                 # evaluation can see a stale stamp mid-write.
+                run_control.checkpoint()
                 self.store.touch_manifest_last_indexed()
-                result = self._full_index_locked(clean=clean, reporter=reporter)
+                run_control.checkpoint()
+                result = self._full_index_locked(
+                    clean=clean,
+                    reporter=reporter,
+                    run_control=run_control,
+                )
+                run_control.checkpoint()
                 self.store.touch_manifest_last_indexed()
+                run_control.checkpoint()
             except Exception as exc:
                 log_event(
                     logger,
@@ -173,6 +206,7 @@ class VaultIndexer:
         clean: bool = False,
         *,
         reporter: ProgressReporter,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
 
@@ -196,6 +230,9 @@ class VaultIndexer:
                 contract on successful completion.
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
+            run_control: Cooperative attempt control checked between phases
+                and batches. Clean rebuild control is deferred across the
+                destructive publication span.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total number
@@ -216,25 +253,20 @@ class VaultIndexer:
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
 
-        reporter.phase_start("scan vault", None)
-        paths = list(scan_vault(self.root_dir))
-        reporter.phase_end()
+        with _controlled_phase(reporter, run_control, "scan vault", None):
+            paths: list[pathlib.Path] = []
+            for path in scan_vault(self.root_dir):
+                run_control.checkpoint()
+                paths.append(path)
+                run_control.checkpoint()
 
-        reporter.phase_start("parse documents", len(paths))
-        docs: list[VaultDocument] = []
-        with ThreadPoolExecutor() as pool:
-            futures = [pool.submit(prepare_document, p, self.root_dir) for p in paths]
-            for future in as_completed(futures):
-                try:
-                    doc = future.result()
-                except Exception:
-                    logger.warning("Worker failed to prepare document", exc_info=True)
-                    reporter.advance()
-                    continue
-                if doc is not None:
-                    docs.append(doc)
-                reporter.advance()
-        reporter.phase_end()
+        with _controlled_phase(reporter, run_control, "parse documents", len(paths)):
+            docs = self._prepare_documents_bounded(
+                paths,
+                reporter,
+                run_control=run_control,
+                skip_errors=True,
+            )
 
         # Note: we intentionally do NOT short-circuit when docs is
         # empty. The streaming helper handles a zero-length list
@@ -258,53 +290,72 @@ class VaultIndexer:
         # drop and the streaming upsert - but only on the explicit
         # opt-in path. ``clean=False`` (the default + watcher path)
         # remains failure-safe.
-        existing_counts = self._prepare_collection(clean=clean, reporter=reporter)
-        existing_ids_before: set[str] = set(existing_counts)
-
-        new_counts = _stream_encode_and_upsert_vault(
-            docs=docs,
-            slice_size=slice_size,
-            model=self.model,
-            store=self.store,
-            gpu_lock=self._gpu_lock,
-            reporter=reporter,
+        # A cooperative request already pending is delivered before a clean
+        # collection can be dropped. Once the drop begins, defer new requests
+        # through streaming, stale cleanup, and metadata publication so a
+        # deliberate pause/cancel never exposes a partial replacement.
+        publication_span = (
+            run_control.protected() if clean else contextlib.nullcontext()
         )
-        self._purge_shrunk_chunk_tails(existing_counts, new_counts)
+        with publication_span:
+            existing_counts = self._prepare_collection(
+                clean=clean,
+                reporter=reporter,
+                run_control=run_control,
+            )
+            existing_ids_before: set[str] = set(existing_counts)
 
-        # Streaming completed successfully - now it is safe to delete
-        # the rows that were in the collection before but are absent
-        # from the freshly-indexed corpus.
-        new_ids = {doc.id for doc in docs}
-        stale_ids = sorted(existing_ids_before - new_ids)
-        reporter.phase_start("purge stale documents", len(stale_ids))
-        try:
-            if stale_ids:
-                try:
-                    self.store.delete_documents(stale_ids)
-                except OSError:
-                    logger.error(
-                        "Failed to purge stale vault documents after "
-                        "successful rebuild - collection still "
-                        "contains valid new data plus %d stale rows",
-                        len(stale_ids),
-                    )
-                    raise
-                reporter.advance(len(stale_ids))
-        finally:
-            reporter.phase_end()
-        # F10.1: removed dead `if clean and not stale_ids and
-        # existing_ids_before` debug log. After iter 9, clean=True
-        # drops the collection up front, so existing_ids_before is
-        # always empty on that path and the condition could never
-        # fire. The non-clean path with no stale_ids is the no-op
-        # case and doesn't need a log line.
+            new_counts = _stream_encode_and_upsert_vault(
+                docs=docs,
+                slice_size=slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=reporter,
+                run_control=run_control,
+            )
+            self._purge_shrunk_chunk_tails(
+                existing_counts,
+                new_counts,
+                run_control=run_control,
+            )
 
-        reporter.phase_start("write metadata", 1)
-        try:
-            self._save_meta(docs)
-            reporter.advance(1)
-        finally:
-            reporter.phase_end()
+            # Streaming completed successfully - now it is safe to delete
+            # the rows that were in the collection before but are absent
+            # from the freshly-indexed corpus.
+            new_ids = {doc.id for doc in docs}
+            stale_ids = sorted(existing_ids_before - new_ids)
+            with _controlled_phase(
+                reporter,
+                run_control,
+                "purge stale documents",
+                len(stale_ids),
+            ):
+                if stale_ids:
+                    run_control.checkpoint()
+                    try:
+                        self.store.delete_documents(stale_ids)
+                    except OSError:
+                        logger.error(
+                            "Failed to purge stale vault documents after "
+                            "successful rebuild - collection still "
+                            "contains valid new data plus %d stale rows",
+                            len(stale_ids),
+                        )
+                        raise
+                    run_control.checkpoint()
+                    reporter.advance(len(stale_ids))
+            # F10.1: removed dead `if clean and not stale_ids and
+            # existing_ids_before` debug log. After iter 9, clean=True
+            # drops the collection up front, so existing_ids_before is
+            # always empty on that path and the condition could never
+            # fire. The non-clean path with no stale_ids is the no-op
+            # case and doesn't need a log line.
+
+            with _controlled_phase(reporter, run_control, "write metadata", 1):
+                self._save_meta(docs, run_control=run_control)
+                reporter.advance(1)
+        run_control.checkpoint()
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -324,6 +375,7 @@ class VaultIndexer:
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental re-index serialized through the writer lock.
 
@@ -340,8 +392,12 @@ class VaultIndexer:
                 (#151). When ``None`` the method keeps its full-scan
                 semantics, so first-run, explicit, and ``clean`` callers
                 are unchanged.
+            run_control: Cooperative attempt control checked between phases,
+                batches, and storage mutations.
         """
+        run_control.checkpoint()
         with self._writer_lock:
+            run_control.checkpoint()
             mode = "scoped_incremental" if changed_paths is not None else "incremental"
             log_event(
                 logger,
@@ -357,12 +413,17 @@ class VaultIndexer:
                 # completion: a long run spanning a maintenance tick must
                 # advance the ephemeral idle clock before any reclaim
                 # evaluation can see a stale stamp mid-write.
+                run_control.checkpoint()
                 self.store.touch_manifest_last_indexed()
+                run_control.checkpoint()
                 result = self._incremental_index_locked(
                     reporter=reporter,
                     changed_paths=changed_paths,
+                    run_control=run_control,
                 )
+                run_control.checkpoint()
                 self.store.touch_manifest_last_indexed()
+                run_control.checkpoint()
             except Exception as exc:
                 log_event(
                     logger,
@@ -398,6 +459,7 @@ class VaultIndexer:
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`.
 
@@ -409,6 +471,8 @@ class VaultIndexer:
             changed_paths: When provided, delegates to
                 :meth:`_scoped_incremental_locked` so only the named paths
                 are reconciled. When ``None`` the full-vault scan below runs.
+            run_control: Cooperative attempt control inherited from the
+                public index operation.
 
         Returns:
             An ``IndexResult`` with counts for newly added, updated, and
@@ -417,24 +481,36 @@ class VaultIndexer:
         Raises:
             OSError: If vault files cannot be read or hashed.
         """
+        run_control.checkpoint()
         if self._needs_layout_rebuild():
             logger.info(
                 "Vault point layout changed; running a one-time clean "
                 "rebuild of the vault collection",
             )
-            return self._full_index_locked(clean=True, reporter=reporter)
+            return self._full_index_locked(
+                clean=True,
+                reporter=reporter,
+                run_control=run_control,
+            )
 
+        run_control.checkpoint()
         if self._needs_content_rebuild():
             logger.info(
                 "Vault chunk boundary changed; running a one-time clean "
                 "rebuild of the vault collection",
             )
-            return self._full_index_locked(clean=True, reporter=reporter)
+            return self._full_index_locked(
+                clean=True,
+                reporter=reporter,
+                run_control=run_control,
+            )
 
+        run_control.checkpoint()
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
                 reporter=reporter,
+                run_control=run_control,
             )
 
         from ..config import get_config
@@ -442,23 +518,37 @@ class VaultIndexer:
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
 
+        run_control.checkpoint()
         prev_meta = self._load_meta()
+        run_control.checkpoint()
 
-        reporter.phase_start("scan vault", None)
-        docs_dir = self.root_dir / get_config().docs_dir
-        current_docs: dict[str, pathlib.Path] = self._scan_vault_for_docs(docs_dir)
-        reporter.phase_end()
+        with _controlled_phase(reporter, run_control, "scan vault", None):
+            docs_dir = self.root_dir / get_config().docs_dir
+            current_docs: dict[str, pathlib.Path] = self._scan_vault_for_docs(
+                docs_dir,
+                run_control=run_control,
+            )
 
+        run_control.checkpoint()
         stored_counts = self.store.get_chunk_counts()
+        run_control.checkpoint()
         stored_ids = set(stored_counts)
         current_ids = set(current_docs.keys())
         new_ids = current_ids - stored_ids
         deleted_ids = stored_ids - current_ids
         potentially_modified = current_ids & stored_ids
 
-        reporter.phase_start("hash documents", len(current_docs))
-        current_hashes: dict[str, str] = self._hash_documents(current_docs, reporter)
-        reporter.phase_end()
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "hash documents",
+            len(current_docs),
+        ):
+            current_hashes: dict[str, str] = self._hash_documents(
+                current_docs,
+                reporter,
+                run_control=run_control,
+            )
 
         modified_ids = {
             doc_id
@@ -468,7 +558,12 @@ class VaultIndexer:
         }
 
         to_index_ids = new_ids | modified_ids
-        docs_to_index = self._parse_documents(to_index_ids, current_docs, reporter)
+        docs_to_index = self._parse_documents(
+            to_index_ids,
+            current_docs,
+            reporter,
+            run_control=run_control,
+        )
 
         if docs_to_index:
             new_counts = _stream_encode_and_upsert_vault(
@@ -478,24 +573,41 @@ class VaultIndexer:
                 store=self.store,
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
+                run_control=run_control,
             )
-            self._purge_shrunk_chunk_tails(stored_counts, new_counts)
+            self._purge_shrunk_chunk_tails(
+                stored_counts,
+                new_counts,
+                run_control=run_control,
+            )
         else:
-            reporter.phase_start("embed + upsert documents", 0)
-            reporter.phase_end()
+            with _controlled_phase(
+                reporter,
+                run_control,
+                "embed + upsert documents",
+                0,
+            ):
+                pass
 
-        reporter.phase_start("delete removed", len(deleted_ids))
-        if deleted_ids:
-            self.store.delete_documents(list(deleted_ids))
-            reporter.advance(len(deleted_ids))
-        reporter.phase_end()
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "delete removed",
+            len(deleted_ids),
+        ):
+            if deleted_ids:
+                run_control.checkpoint()
+                self.store.delete_documents(list(deleted_ids))
+                run_control.checkpoint()
+                reporter.advance(len(deleted_ids))
 
-        reporter.phase_start("write metadata", 1)
-        self._write_meta(current_hashes)
-        reporter.advance(1)
-        reporter.phase_end()
+        with _controlled_phase(reporter, run_control, "write metadata", 1):
+            self._write_meta(current_hashes, run_control=run_control)
+            reporter.advance(1)
 
+        run_control.checkpoint()
         total = self.store.count()
+        run_control.checkpoint()
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
             total=total,
@@ -507,9 +619,15 @@ class VaultIndexer:
             files=len(current_docs),
         )
 
-    def _scan_vault_for_docs(self, docs_dir: pathlib.Path) -> dict[str, pathlib.Path]:
+    def _scan_vault_for_docs(
+        self,
+        docs_dir: pathlib.Path,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> dict[str, pathlib.Path]:
         current_docs: dict[str, pathlib.Path] = {}
         for path in scan_vault(self.root_dir):
+            run_control.checkpoint()
             doc_type = get_doc_type(path, self.root_dir)
             if doc_type is not None:
                 try:
@@ -524,13 +642,19 @@ class VaultIndexer:
                     rel = path.name
                 doc_id = rel.rsplit(".", 1)[0] if "." in rel else rel
                 current_docs[doc_id] = path
+            run_control.checkpoint()
         return current_docs
 
     def _hash_documents(
-        self, current_docs: dict[str, pathlib.Path], reporter: ProgressReporter
+        self,
+        current_docs: dict[str, pathlib.Path],
+        reporter: ProgressReporter,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> dict[str, str]:
         current_hashes: dict[str, str] = {}
         for doc_id, path in current_docs.items():
+            run_control.checkpoint()
             try:
                 with open(path, "rb") as f:
                     current_hashes[doc_id] = hashlib.file_digest(
@@ -540,6 +664,7 @@ class VaultIndexer:
             except OSError:
                 logger.warning("Cannot hash file, skipping: %s", doc_id)
             reporter.advance()
+            run_control.checkpoint()
         return current_hashes
 
     def _parse_documents(
@@ -547,22 +672,94 @@ class VaultIndexer:
         to_index_ids: set[str],
         id_to_path: dict[str, pathlib.Path],
         reporter: ProgressReporter,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> list[VaultDocument]:
         docs_to_index: list[VaultDocument] = []
-        reporter.phase_start("parse documents", len(to_index_ids))
-        if to_index_ids:
-            paths_to_index = [id_to_path[d] for d in to_index_ids]
-
-            def _prep(p: pathlib.Path) -> VaultDocument | None:
-                return prepare_document(p, self.root_dir)
-
-            with ThreadPoolExecutor() as pool:
-                for doc in pool.map(_prep, paths_to_index):
-                    if doc is not None:
-                        docs_to_index.append(doc)
-                    reporter.advance()
-        reporter.phase_end()
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "parse documents",
+            len(to_index_ids),
+        ):
+            if not to_index_ids:
+                return docs_to_index
+            paths_to_index: list[pathlib.Path] = []
+            for doc_id in to_index_ids:
+                run_control.checkpoint()
+                paths_to_index.append(id_to_path[doc_id])
+            docs_to_index = self._prepare_documents_bounded(
+                paths_to_index,
+                reporter,
+                run_control=run_control,
+                skip_errors=False,
+            )
         return docs_to_index
+
+    def _prepare_documents_bounded(
+        self,
+        paths: Iterable[pathlib.Path],
+        reporter: ProgressReporter,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+        skip_errors: bool,
+    ) -> list[VaultDocument]:
+        """Prepare documents with bounded queued work and control-aware unwind."""
+        max_workers = min(32, (os.cpu_count() or 1) + 4)
+        max_in_flight = max_workers * 2
+        path_iter = iter(paths)
+        pending: set[Future[VaultDocument | None]] = set()
+        docs: list[VaultDocument] = []
+        exhausted = False
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+
+        def _fill_window() -> None:
+            nonlocal exhausted
+            while not exhausted and len(pending) < max_in_flight:
+                run_control.checkpoint()
+                try:
+                    path = next(path_iter)
+                except StopIteration:
+                    exhausted = True
+                    break
+                pending.add(pool.submit(prepare_document, path, self.root_dir))
+
+        try:
+            _fill_window()
+            while pending:
+                run_control.checkpoint()
+                done, _not_done = wait(
+                    pending,
+                    timeout=0.1,
+                    return_when=FIRST_COMPLETED,
+                )
+                run_control.checkpoint()
+                for future in done:
+                    pending.remove(future)
+                    try:
+                        doc = future.result()
+                    except Exception:
+                        if not skip_errors:
+                            raise
+                        logger.warning(
+                            "Worker failed to prepare document",
+                            exc_info=True,
+                        )
+                    else:
+                        if doc is not None:
+                            docs.append(doc)
+                    reporter.advance()
+                    run_control.checkpoint()
+                _fill_window()
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
+        run_control.checkpoint()
+        return docs
 
     def _vault_doc_id(
         self,
@@ -593,6 +790,7 @@ class VaultIndexer:
         *,
         changed_paths: Iterable[pathlib.Path],
         reporter: ProgressReporter,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile only ``changed_paths`` against the index (#151).
 
@@ -604,6 +802,8 @@ class VaultIndexer:
         Args:
             changed_paths: Filesystem paths reported as changed.
             reporter: Required progress reporter.
+            run_control: Cooperative attempt control checked between scoped
+                reconciliation batches and mutations.
 
         Returns:
             An ``IndexResult`` with added/updated/removed counts for the
@@ -614,20 +814,35 @@ class VaultIndexer:
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
         docs_dir = self.root_dir / get_config().docs_dir
+        run_control.checkpoint()
         prev_meta = self._load_meta()
+        run_control.checkpoint()
 
-        reporter.phase_start("scan changed", None)
         to_hash: dict[str, pathlib.Path] = {}
         delete_ids: set[str] = set()
-        for path in changed_paths:
-            self._process_changed_vault_path(
-                path, docs_dir, prev_meta, to_hash, delete_ids
-            )
-        reporter.phase_end()
+        with _controlled_phase(reporter, run_control, "scan changed", None):
+            for path in changed_paths:
+                run_control.checkpoint()
+                self._process_changed_vault_path(
+                    path,
+                    docs_dir,
+                    prev_meta,
+                    to_hash,
+                    delete_ids,
+                )
+                run_control.checkpoint()
 
-        reporter.phase_start("hash documents", len(to_hash))
-        changed_hashes = self._hash_documents(to_hash, reporter)
-        reporter.phase_end()
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "hash documents",
+            len(to_hash),
+        ):
+            changed_hashes = self._hash_documents(
+                to_hash,
+                reporter,
+                run_control=run_control,
+            )
 
         new_ids = {d for d in changed_hashes if d not in prev_meta}
         modified_ids = {
@@ -637,9 +852,15 @@ class VaultIndexer:
         }
         to_index_ids = new_ids | modified_ids
 
-        docs_to_index = self._parse_documents(to_index_ids, to_hash, reporter)
+        docs_to_index = self._parse_documents(
+            to_index_ids,
+            to_hash,
+            reporter,
+            run_control=run_control,
+        )
 
         if docs_to_index:
+            run_control.checkpoint()
             try:
                 existing_counts = self.store.get_chunk_counts(
                     doc_ids=to_index_ids,
@@ -651,6 +872,7 @@ class VaultIndexer:
                     exc_info=True,
                 )
                 existing_counts = {}
+            run_control.checkpoint()
             new_counts = _stream_encode_and_upsert_vault(
                 docs=docs_to_index,
                 slice_size=slice_size,
@@ -658,17 +880,33 @@ class VaultIndexer:
                 store=self.store,
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
+                run_control=run_control,
             )
-            self._purge_shrunk_chunk_tails(existing_counts, new_counts)
+            self._purge_shrunk_chunk_tails(
+                existing_counts,
+                new_counts,
+                run_control=run_control,
+            )
         else:
-            reporter.phase_start("embed + upsert documents", 0)
-            reporter.phase_end()
+            with _controlled_phase(
+                reporter,
+                run_control,
+                "embed + upsert documents",
+                0,
+            ):
+                pass
 
-        reporter.phase_start("delete removed", len(delete_ids))
-        if delete_ids:
-            self.store.delete_documents(list(delete_ids))
-            reporter.advance(len(delete_ids))
-        reporter.phase_end()
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "delete removed",
+            len(delete_ids),
+        ):
+            if delete_ids:
+                run_control.checkpoint()
+                self.store.delete_documents(list(delete_ids))
+                run_control.checkpoint()
+                reporter.advance(len(delete_ids))
 
         # Partial read-modify-write: preserve every unchanged entry, refresh
         # the changed hashes, and drop the deleted ids. Never recompute the
@@ -676,13 +914,15 @@ class VaultIndexer:
         new_meta = dict(prev_meta)
         new_meta.update(changed_hashes)
         for doc_id in delete_ids:
+            run_control.checkpoint()
             new_meta.pop(doc_id, None)
-        reporter.phase_start("write metadata", 1)
-        self._write_meta(new_meta)
-        reporter.advance(1)
-        reporter.phase_end()
+        with _controlled_phase(reporter, run_control, "write metadata", 1):
+            self._write_meta(new_meta, run_control=run_control)
+            reporter.advance(1)
 
+        run_control.checkpoint()
         total = self.store.count()
+        run_control.checkpoint()
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
             total=total,
@@ -712,7 +952,12 @@ class VaultIndexer:
         elif doc_id in prev_meta:
             delete_ids.add(doc_id)
 
-    def _save_meta(self, docs: list[VaultDocument]) -> None:
+    def _save_meta(
+        self,
+        docs: list[VaultDocument],
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> None:
         """Save index metadata (content hashes) from VaultDocument list.
 
         Computes blake2b hashes for each document's file and delegates
@@ -732,19 +977,22 @@ class VaultIndexer:
 
         docs_dir = self.root_dir / get_config().docs_dir
         for doc in docs:
+            run_control.checkpoint()
             path = docs_dir / doc.path
             with contextlib.suppress(OSError), open(path, "rb") as f:
                 meta[doc.id] = hashlib.file_digest(
                     f,
                     "blake2b",
                 ).hexdigest()
-        self._write_meta(meta)
+            run_control.checkpoint()
+        self._write_meta(meta, run_control=run_control)
 
     def _prepare_collection(
         self,
         *,
         clean: bool,
         reporter: ProgressReporter,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> dict[str, int]:
         """Drop/ensure the collection and snapshot stored chunk counts.
 
@@ -752,16 +1000,19 @@ class VaultIndexer:
         shrunk-tail purge after streaming. A failed snapshot degrades
         to skipping those purges rather than failing the rebuild.
         """
-        reporter.phase_start("prepare collection", 1)
-        try:
+        with _controlled_phase(reporter, run_control, "prepare collection", 1):
             if clean:
+                run_control.checkpoint()
                 self.store.drop_table()
                 self.store.ensure_table()
+                run_control.checkpoint()
                 # The collection was just dropped: the snapshot is empty
                 # by construction, and scanning would only burn CPU.
                 reporter.advance(1)
                 return {}
+            run_control.checkpoint()
             self.store.ensure_table()
+            run_control.checkpoint()
             try:
                 existing_counts: dict[str, int] = self.store.get_chunk_counts()
             except (OSError, RuntimeError):
@@ -776,15 +1027,16 @@ class VaultIndexer:
                     exc_info=True,
                 )
                 existing_counts = {}
+            run_control.checkpoint()
             reporter.advance(1)
-        finally:
-            reporter.phase_end()
         return existing_counts
 
     def _purge_shrunk_chunk_tails(
         self,
         existing_counts: dict[str, int],
         new_counts: dict[str, int],
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
         """Delete orphaned tail chunks of documents that shrank.
 
@@ -793,6 +1045,7 @@ class VaultIndexer:
         ordinals at or beyond the new count are stale and must go.
         """
         for doc_id, new_count in new_counts.items():
+            run_control.checkpoint()
             if existing_counts.get(doc_id, 0) > new_count:
                 try:
                     self.store.delete_document_chunk_tail(doc_id, new_count)
@@ -805,6 +1058,7 @@ class VaultIndexer:
                         new_count,
                         exc_info=True,
                     )
+            run_control.checkpoint()
 
     def _needs_layout_rebuild(self) -> bool:
         """Return True when the stored point layout predates chunking.
@@ -852,7 +1106,12 @@ class VaultIndexer:
             return False
         return stored != self._current_vault_content_epoch()
 
-    def _write_meta(self, meta: dict[str, str]) -> None:
+    def _write_meta(
+        self,
+        meta: dict[str, str],
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> None:
         """Write content-hash metadata to the sidecar JSON file.
 
         Uses an atomic write (write-to-temp + os.replace) so a crash mid-write
@@ -868,6 +1127,7 @@ class VaultIndexer:
             OSError: If the metadata directory cannot be created or the
                 file cannot be written.
         """
+        run_control.checkpoint()
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {
@@ -877,6 +1137,7 @@ class VaultIndexer:
         }
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
+        run_control.checkpoint()
 
     def _read_meta_raw(self) -> dict[str, str]:
         """Load the sidecar JSON verbatim, reserved keys included."""
