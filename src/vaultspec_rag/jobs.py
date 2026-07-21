@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
+from ._job_errors import classify_error_text
 from .concurrency import get_index_limiter
 from .logging_config import log_event
 from .registry import get_registry
@@ -129,6 +130,10 @@ def record_start(
         "started_at": time.time(),
         "finished_at": None,
         "result": None,
+        # Stable failure classification (#242): stamped by record_finish
+        # from the error text so /jobs consumers and the CLI share one
+        # taxonomy instead of per-surface string matching.
+        "error_kind": None,
         "progress": None,
         # Document-preprocessing outcome, surfaced through /jobs so a
         # non-interactive client sees which files failed extraction rather than
@@ -267,6 +272,9 @@ def record_finish(
                 record["phase"] = target_phase
                 record["finished_at"] = finished_at
                 record["result"] = summary
+                record["error_kind"] = (
+                    classify_error_text(error) if error is not None else None
+                )
                 record["preprocess_ok"] = preprocess_ok
                 record["preprocess_skipped"] = preprocess_skipped
                 record["preprocess_failures"] = list(preprocess_failures or [])
@@ -280,6 +288,7 @@ def record_finish(
                     "trigger": record.get("trigger"),
                     "phase": target_phase,
                     "result": summary,
+                    "error_kind": record.get("error_kind"),
                 }
                 break
     if log_fields is not None:
