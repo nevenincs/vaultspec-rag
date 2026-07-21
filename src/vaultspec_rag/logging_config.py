@@ -17,7 +17,7 @@ import re
 import shutil
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, override
 
 from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     configure_logging as _core_configure_logging,
@@ -29,11 +29,14 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
 
 __all__ = [
     "DaemonRotatingFileHandler",
+    "InvalidManagedLogSourceError",
+    "ManagedLogGroup",
+    "ManagedLogSource",
     "configure_logging",
     "get_console",
     "install_daemon_log_rotation",
     "log_event",
-    "read_service_log",
+    "read_managed_logs",
     "reset_logging",
 ]
 
@@ -45,6 +48,25 @@ if TYPE_CHECKING:
 _EVENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _FIELD_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BARE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@\\-]+$")
+
+type ManagedLogSource = Literal["service", "qdrant", "all"]
+type ManagedLogGroupSource = Literal["service", "qdrant"]
+
+
+class ManagedLogGroup(TypedDict):
+    """One source's raw records, ordered only within that source."""
+
+    source: ManagedLogGroupSource
+    lines: list[str]
+
+
+class InvalidManagedLogSourceError(ValueError):
+    """Raised when a managed-log source selector is not supported."""
+
+
+_MANAGED_LOG_SOURCES: tuple[ManagedLogGroupSource, ...] = ("service", "qdrant")
+_QDRANT_LOG_NAME = "qdrant.log"
+_TAIL_READ_BLOCK_BYTES = 64 * 1024
 
 
 def _format_event_value(value: object) -> str:
@@ -130,68 +152,131 @@ def _resolve_status_dir(status_dir: Path | None) -> Path:
     return Path(cfg.status_dir).expanduser()
 
 
-def read_service_log(lines: int, status_dir: Path | None = None) -> list[str]:
-    """Return the last *lines* log lines spanning the rotated set.
+def _managed_log_source(raw: str) -> ManagedLogSource:
+    if raw == "service":
+        return "service"
+    if raw == "qdrant":
+        return "qdrant"
+    if raw == "all":
+        return "all"
+    msg = "source must be one of service, qdrant, all."
+    raise InvalidManagedLogSourceError(msg)
 
-    The daemon's :class:`DaemonRotatingFileHandler` rotates
-    ``service.log`` into ``service.log.1``, ``service.log.2``, … with
-    the highest-numbered backup being the oldest. This reader walks the
-    set oldest-first (``service.log.N`` … ``service.log.1`` …
-    ``service.log``) so the concatenated stream is chronological -
-    newest lines last - then returns the final *lines* entries.
 
-    The walk is tolerant of a backup file vanishing mid-rollover: a
-    file that disappears (or otherwise fails to read) between the
-    existence probe and the read is logged at DEBUG and skipped, so a
-    concurrent rotation never crashes the reader.
-
-    Args:
-        lines: Maximum number of trailing lines to return. Values
-            ``<= 0`` yield an empty list.
-        status_dir: Optional explicit status directory. Defaults to the
-            resolved ``cfg.status_dir`` (env/CLI overrides honoured).
-
-    Returns:
-        Up to *lines* log lines (without trailing newlines),
-        oldest-first, newest last.
-    """
-    if lines <= 0:
-        return []
-
-    base = _resolve_status_dir(status_dir)
+def _managed_log_name(source: ManagedLogGroupSource) -> str:
+    if source == "qdrant":
+        return _QDRANT_LOG_NAME
     from .config import get_config
 
-    log_name = get_config().log_file
-    base_log = base / log_name
+    return str(get_config().log_file)
 
-    # Highest backup index is the oldest; walk N..1 then the live file
-    # so the concatenated stream is chronological (oldest-first).
-    backups: list[Path] = []
-    index = 1
-    while True:
-        candidate = base / f"{log_name}.{index}"
-        if not candidate.exists():
+
+def _rotated_log_paths(status_dir: Path, log_name: str) -> list[Path]:
+    """Return sparse generations oldest-first, followed by the active file."""
+    suffix_re = re.compile(rf"^{re.escape(log_name)}\.(\d+)$")
+    generations: list[tuple[int, Path]] = []
+    try:
+        entries = status_dir.iterdir()
+        for entry in entries:
+            match = suffix_re.fullmatch(entry.name)
+            if match is None:
+                continue
+            generation = int(match.group(1))
+            if generation > 0:
+                generations.append((generation, entry))
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.debug("managed log directory %s unreadable: %s", status_dir, exc)
+
+    generations.sort(key=lambda item: item[0], reverse=True)
+    return [*(path for _generation, path in generations), status_dir / log_name]
+
+
+def _tail_file_lines(path: Path, lines: int) -> list[str]:
+    """Read at most the final *lines* records without loading the whole file."""
+    if lines <= 0:
+        return []
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            position = stream.tell()
+            chunks: list[bytes] = []
+            newline_count = 0
+            # Read one delimiter beyond the requested record count when possible,
+            # so an initial partial record from the first block is discarded by
+            # the final tail rather than surfaced as a fabricated log line.
+            while position > 0 and newline_count <= lines:
+                block_size = min(position, _TAIL_READ_BLOCK_BYTES)
+                position -= block_size
+                stream.seek(position)
+                chunk = stream.read(block_size)
+                chunks.append(chunk)
+                newline_count += chunk.count(b"\n")
+    except FileNotFoundError as exc:
+        logger.debug("managed log %s vanished mid-read: %s", path, exc)
+        return []
+    except OSError as exc:
+        logger.debug("managed log %s unreadable: %s", path, exc)
+        return []
+
+    text = b"".join(reversed(chunks)).decode("utf-8", errors="replace")
+    return text.splitlines()[-lines:]
+
+
+def _read_managed_source(
+    status_dir: Path,
+    source: ManagedLogGroupSource,
+    lines: int,
+) -> ManagedLogGroup:
+    remaining = max(0, lines)
+    newest_chunks: list[list[str]] = []
+    # Paths are chronological; read them newest-first so older generations are
+    # never touched after the requested per-source record bound is satisfied.
+    for path in reversed(_rotated_log_paths(status_dir, _managed_log_name(source))):
+        if remaining <= 0:
             break
-        backups.append(candidate)
-        index += 1
-
-    ordered = [*reversed(backups), base_log]
-
-    collected: list[str] = []
-    for path in ordered:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except FileNotFoundError as exc:
-            # The file vanished between the existence probe above and
-            # this read - a rotation raced us. Skip and continue.
-            logger.debug("read_service_log: %s vanished mid-read: %s", path, exc)
+        chunk = _tail_file_lines(path, remaining)
+        if not chunk:
             continue
-        except OSError as exc:
-            logger.debug("read_service_log: %s unreadable: %s", path, exc)
-            continue
-        collected.extend(text.splitlines())
+        newest_chunks.append(chunk)
+        remaining -= len(chunk)
 
-    return collected[-lines:]
+    source_lines = [line for chunk in reversed(newest_chunks) for line in chunk]
+    return {"source": source, "lines": source_lines}
+
+
+def read_managed_logs(
+    lines: int,
+    *,
+    source: str = "all",
+    status_dir: Path | None = None,
+) -> list[ManagedLogGroup]:
+    """Return bounded raw records grouped by managed producer.
+
+    ``all`` returns the service group followed by the Qdrant group. That is a
+    stable display order only: no chronology is inferred across producers.
+    Within each group, records are oldest-first and span any sparse numeric
+    backup generations plus the active file. Missing or concurrently rotated
+    files are skipped without failing the whole operator view.
+
+    Args:
+        lines: Maximum records returned for each selected source. Non-positive
+            values retain the selected empty group or groups.
+        source: ``service``, ``qdrant``, or ``all`` (the default).
+        status_dir: Explicit managed-log directory, primarily for offline use
+            and tests. Defaults to the configured status directory.
+
+    Raises:
+        InvalidManagedLogSourceError: When *source* is not supported.
+    """
+    selected = _managed_log_source(source)
+    selected_sources = _MANAGED_LOG_SOURCES if selected == "all" else (selected,)
+    base = _resolve_status_dir(status_dir)
+    return [
+        _read_managed_source(base, managed_source, lines)
+        for managed_source in selected_sources
+    ]
 
 
 def configure_logging(
