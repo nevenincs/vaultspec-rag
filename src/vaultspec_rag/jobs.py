@@ -643,6 +643,54 @@ class JobManager:
             )
             return True
 
+    def start_attempt(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+        control: RunControlToken,
+    ) -> JobOutcome:
+        """Atomically claim and start the queued attempt for one exact job."""
+        command = "start_attempt"
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            if (
+                managed.snapshot.state is not JobState.QUEUED
+                or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+            ):
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "Only queued work with running desired state can start.",
+                    managed,
+                )
+            if managed.runtime.task is not None:
+                return self._error(
+                    command,
+                    "runtime_already_owned",
+                    "The current attempt already has a runtime owner.",
+                    managed,
+                )
+
+            managed.runtime = JobRuntimeOwner(task=task, control=control)
+            now = time.time()
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.RUNNING,
+                desired_state=DesiredJobState.RUNNING,
+                now=now,
+                started_at=now,
+            )
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="attempt_started",
+                message="The queued attempt acquired its runtime.",
+                job=self._snapshot_locked(managed),
+            )
+
     def set_worker_active(
         self,
         job_id: str,
@@ -672,14 +720,600 @@ class JobManager:
             managed.runtime = JobRuntimeOwner(task=None, control=None)
             return True
 
+    def set_desired_state(
+        self,
+        job_id: str,
+        desired_state: DesiredJobState,
+        *,
+        expected_revision: int | None = None,
+        mode: Literal["graceful", "force"] = "graceful",
+    ) -> JobOutcome:
+        """Set operator intent for one exact job and request cooperative control.
+
+        Replays of the current desired state are successful even when the supplied
+        revision is stale. This lets clients safely retry a request whose response
+        was lost without weakening optimistic concurrency for real state changes.
+        """
+        command = "set_desired_state"
+        with self._lock:
+            managed = self._active.get(job_id)
+            terminal = (
+                None if managed is not None else self._get_terminal_locked(job_id)
+            )
+            if managed is None and terminal is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            target = managed if managed is not None else terminal
+            if mode == "force":
+                return self._error(
+                    command,
+                    "force_termination_unavailable",
+                    "Per-job force termination is unavailable for this runtime.",
+                    target,
+                )
+            if mode != "graceful":
+                return self._error(
+                    command,
+                    "invalid_control_mode",
+                    f"Unsupported control mode {mode!r}.",
+                    target,
+                )
+            if managed is None:
+                assert terminal is not None
+                if (
+                    terminal.snapshot.state is JobState.CANCELLED
+                    and desired_state is DesiredJobState.CANCELLED
+                ):
+                    return self._already_satisfied(command, terminal)
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "A terminal job cannot change desired state.",
+                    terminal,
+                )
+            if managed.snapshot.desired_state is desired_state:
+                return self._already_satisfied(command, managed)
+            if (
+                expected_revision is not None
+                and expected_revision != managed.snapshot.revision
+            ):
+                return self._error(
+                    command,
+                    "revision_conflict",
+                    (
+                        f"Expected revision {expected_revision}, but the job is at "
+                        f"revision {managed.snapshot.revision}."
+                    ),
+                    managed,
+                )
+
+            state = managed.snapshot.state
+            if desired_state is DesiredJobState.PAUSED:
+                return self._request_pause_locked(command, managed, state)
+            if desired_state is DesiredJobState.RUNNING:
+                return self._request_resume_locked(command, managed, state)
+            return self._request_cancel_locked(command, managed, state)
+
+    def acknowledge_control(
+        self,
+        job_id: str,
+        *,
+        attempt: int,
+        task: asyncio.Task[Any],
+    ) -> JobOutcome:
+        """Acknowledge safe attempt unwind without accepting stale callbacks."""
+        command = "acknowledge_control"
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None:
+                terminal = self._get_terminal_locked(job_id)
+                if terminal is not None:
+                    return JobOutcome(
+                        command=command,
+                        status=JobOutcomeStatus.OK,
+                        code="terminal_state_preserved",
+                        message=(
+                            "The job is already terminal; its first outcome was kept."
+                        ),
+                        job=self._snapshot_locked(terminal),
+                    )
+                return self._error(command, "job_not_found", "The job was not found.")
+            if (
+                managed.snapshot.attempt.number != attempt
+                or managed.runtime.task is not task
+            ):
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="stale_attempt_ignored",
+                    message="A stale attempt acknowledgement was ignored.",
+                    job=self._snapshot_locked(managed),
+                )
+
+            state = managed.snapshot.state
+            if state not in {JobState.PAUSING, JobState.CANCELLING}:
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="control_acknowledgement_ignored",
+                    message="The job no longer has a pending control acknowledgement.",
+                    job=self._snapshot_locked(managed),
+                )
+
+            now = time.time()
+            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            if (
+                state is JobState.PAUSING
+                and managed.snapshot.desired_state is DesiredJobState.RUNNING
+            ):
+                self._queue_resumed_attempt_locked(managed, now=now)
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.ACCEPTED,
+                    code="resume_requeued",
+                    message="The unwound job queued a new reconciliation attempt.",
+                    job=self._snapshot_locked(managed),
+                )
+
+            acknowledged_state = (
+                JobState.PAUSED if state is JobState.PAUSING else JobState.CANCELLED
+            )
+            self._replace_snapshot_locked(
+                managed,
+                state=acknowledged_state,
+                desired_state=(
+                    DesiredJobState.PAUSED
+                    if acknowledged_state is JobState.PAUSED
+                    else DesiredJobState.CANCELLED
+                ),
+                now=now,
+                control_acknowledged_at=now,
+                finished_at=now if acknowledged_state.is_terminal else None,
+            )
+            if acknowledged_state.is_terminal:
+                self._archive_terminal_locked(managed)
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="control_acknowledged",
+                message=f"The job acknowledged {acknowledged_state.value}.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def finish_attempt(
+        self,
+        job_id: str,
+        *,
+        attempt: int,
+        task: asyncio.Task[Any],
+        state: JobState,
+        result: str | None = None,
+        error_kind: str | None = None,
+    ) -> JobOutcome:
+        """Commit one attempt's terminal outcome with first-writer-wins semantics."""
+        command = "finish_attempt"
+        if not state.is_terminal:
+            raise ValueError("attempt completion requires a terminal state")
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None:
+                terminal = self._get_terminal_locked(job_id)
+                if terminal is not None:
+                    return JobOutcome(
+                        command=command,
+                        status=JobOutcomeStatus.OK,
+                        code="terminal_state_preserved",
+                        message="The first terminal outcome was preserved.",
+                        job=self._snapshot_locked(terminal),
+                    )
+                return self._error(command, "job_not_found", "The job was not found.")
+            if (
+                managed.snapshot.attempt.number != attempt
+                or managed.runtime.task is not task
+            ):
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="stale_attempt_ignored",
+                    message="A stale attempt completion was ignored.",
+                    job=self._snapshot_locked(managed),
+                )
+
+            now = time.time()
+            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            self._replace_snapshot_locked(
+                managed,
+                state=state,
+                desired_state=(
+                    DesiredJobState.CANCELLED
+                    if state is JobState.CANCELLED
+                    else managed.snapshot.desired_state
+                ),
+                now=now,
+                finished_at=now,
+                result=result,
+                error_kind=error_kind,
+            )
+            self._archive_terminal_locked(managed)
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="job_finished",
+                message=f"The job finished as {state.value}.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def retry(
+        self,
+        job_id: str,
+        *,
+        initiator: JobInitiator | None = None,
+    ) -> JobOutcome:
+        """Create a new job linked to one retryable terminal resource."""
+        command = "retry"
+        with self._lock:
+            parent = self._get_terminal_locked(job_id)
+            if parent is None:
+                active = self._active.get(job_id)
+                if active is not None:
+                    return self._error(
+                        command,
+                        "job_not_terminal",
+                        "Only terminal jobs can be retried.",
+                        active,
+                    )
+                return self._error(command, "job_not_found", "The job was not found.")
+            if parent.snapshot.state not in {
+                JobState.FAILED,
+                JobState.CANCELLED,
+                JobState.INTERRUPTED,
+            }:
+                return self._error(
+                    command,
+                    "job_not_retryable",
+                    "Succeeded jobs are recreated through ordinary job creation.",
+                    parent,
+                )
+            if len(self._active) >= self._max_nonterminal:
+                return self._error(
+                    command,
+                    "job_capacity_exceeded",
+                    (
+                        "The service has reached its configured nonterminal job "
+                        f"capacity ({self._max_nonterminal})."
+                    ),
+                    parent,
+                )
+            equivalent = self._find_equivalent_active_locked(parent.snapshot.spec)
+            if equivalent is not None:
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.ERROR,
+                    code="active_job_exists",
+                    message="Equivalent active work is already registered.",
+                    job=equivalent,
+                )
+
+            now = time.time()
+            new_id = str(uuid.uuid4())
+            retried = JobSnapshot(
+                id=new_id,
+                revision=1,
+                spec=parent.snapshot.spec,
+                state=JobState.QUEUED,
+                desired_state=DesiredJobState.RUNNING,
+                capabilities=self._capabilities_for(JobState.QUEUED),
+                attempt=JobAttempt(number=1, parent_job_id=parent.snapshot.id),
+                timestamps=JobTimestamps(created_at=now, state_changed_at=now),
+                progress=None,
+                result=None,
+                error_kind=None,
+                initiator=initiator or parent.snapshot.initiator,
+                runtime=self._process_runtime_snapshot(),
+                resources=JobResourceSnapshot(started=None, finished=None),
+            )
+            managed = _ManagedJob(
+                snapshot=retried,
+                runtime=JobRuntimeOwner(task=None, control=None),
+            )
+            self._active[new_id] = managed
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.ACCEPTED,
+                code="job_retry_created",
+                message="A linked retry job was admitted.",
+                job=retried,
+            )
+
+    def delete(self, job_id: str) -> JobOutcome:
+        """Delete retained terminal history; never cancel nonterminal work."""
+        command = "delete"
+        with self._lock:
+            active = self._active.get(job_id)
+            if active is not None:
+                return self._error(
+                    command,
+                    "job_not_terminal",
+                    "Nonterminal work must be cancelled before deletion.",
+                    active,
+                )
+            terminal = self._get_terminal_locked(job_id)
+            if terminal is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            self._terminal.remove(terminal)
+            self._forget_idempotency_locked(job_id)
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="job_deleted",
+                message="The terminal job history was deleted.",
+                job=self._snapshot_locked(terminal),
+            )
+
+    def _request_pause_locked(
+        self,
+        command: str,
+        managed: _ManagedJob,
+        state: JobState,
+    ) -> JobOutcome:
+        if state is JobState.QUEUED:
+            now = time.time()
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.PAUSED,
+                desired_state=DesiredJobState.PAUSED,
+                now=now,
+                control_requested_at=now,
+                control_acknowledged_at=now,
+            )
+            code = "job_paused"
+            status = JobOutcomeStatus.OK
+        elif state is JobState.RUNNING:
+            now = time.time()
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.PAUSING,
+                desired_state=DesiredJobState.PAUSED,
+                now=now,
+                control_requested_at=now,
+            )
+            if managed.runtime.control is not None:
+                managed.runtime.control.request_pause()
+            code = "pause_requested"
+            status = JobOutcomeStatus.ACCEPTED
+        else:
+            return self._error(
+                command,
+                "invalid_transition",
+                f"A {state.value} job cannot be paused.",
+                managed,
+            )
+        return JobOutcome(
+            command=command,
+            status=status,
+            code=code,
+            message="The pause request was applied.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _request_resume_locked(
+        self,
+        command: str,
+        managed: _ManagedJob,
+        state: JobState,
+    ) -> JobOutcome:
+        now = time.time()
+        if state is JobState.PAUSED:
+            self._queue_resumed_attempt_locked(managed, now=now)
+        elif state is JobState.PAUSING:
+            control = managed.runtime.control
+            task = managed.runtime.task
+            signal_delivered = (
+                control is not None and control.snapshot().delivered is not None
+            )
+            if task is None:
+                self._queue_resumed_attempt_locked(managed, now=now)
+            elif control is not None and not signal_delivered:
+                control.request_resume()
+                self._replace_snapshot_locked(
+                    managed,
+                    state=JobState.RUNNING,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                    control_requested_at=None,
+                    control_acknowledged_at=None,
+                )
+            else:
+                # The old attempt has crossed its safe unwind boundary. Keep
+                # its pause request armed until cleanup acknowledges release,
+                # then queue a new convergence attempt without exposing a
+                # transient paused state.
+                self._replace_snapshot_locked(
+                    managed,
+                    state=JobState.PAUSING,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                )
+        else:
+            return self._error(
+                command,
+                "invalid_transition",
+                f"A {state.value} job cannot be resumed.",
+                managed,
+            )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ACCEPTED,
+            code="resume_requested",
+            message="The job was queued to reconcile.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _queue_resumed_attempt_locked(
+        self,
+        managed: _ManagedJob,
+        *,
+        now: float,
+    ) -> None:
+        previous_attempt = managed.snapshot.attempt.number
+        self._replace_snapshot_locked(
+            managed,
+            state=JobState.QUEUED,
+            desired_state=DesiredJobState.RUNNING,
+            now=now,
+            attempt=JobAttempt(
+                number=previous_attempt + 1,
+                parent_job_id=managed.snapshot.attempt.parent_job_id,
+                resumed_from_attempt=previous_attempt,
+                resume_strategy=ResumeStrategy.RECONCILE,
+            ),
+            started_at=None,
+            control_requested_at=None,
+            control_acknowledged_at=None,
+        )
+
+    def _request_cancel_locked(
+        self,
+        command: str,
+        managed: _ManagedJob,
+        state: JobState,
+    ) -> JobOutcome:
+        now = time.time()
+        if state in {JobState.QUEUED, JobState.PAUSED}:
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.CANCELLED,
+                desired_state=DesiredJobState.CANCELLED,
+                now=now,
+                control_requested_at=now,
+                control_acknowledged_at=now,
+                finished_at=now,
+            )
+            self._archive_terminal_locked(managed)
+            status = JobOutcomeStatus.OK
+            code = "job_cancelled"
+        elif state in {JobState.RUNNING, JobState.PAUSING}:
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.CANCELLING,
+                desired_state=DesiredJobState.CANCELLED,
+                now=now,
+                control_requested_at=now,
+            )
+            if managed.runtime.control is not None:
+                managed.runtime.control.request_cancel()
+            status = JobOutcomeStatus.ACCEPTED
+            code = "cancellation_requested"
+        else:
+            return self._error(
+                command,
+                "invalid_transition",
+                f"A {state.value} job cannot be cancelled.",
+                managed,
+            )
+        return JobOutcome(
+            command=command,
+            status=status,
+            code=code,
+            message="The cancellation request was applied.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _replace_snapshot_locked(
+        self,
+        managed: _ManagedJob,
+        *,
+        state: JobState,
+        desired_state: DesiredJobState,
+        now: float,
+        attempt: JobAttempt | None = None,
+        started_at: float | None | object = ...,
+        control_requested_at: float | None | object = ...,
+        control_acknowledged_at: float | None | object = ...,
+        finished_at: float | None | object = ...,
+        result: str | None | object = ...,
+        error_kind: str | None | object = ...,
+    ) -> None:
+        previous = managed.snapshot
+        timestamps = previous.timestamps
+        managed.snapshot = replace(
+            previous,
+            revision=previous.revision + 1,
+            state=state,
+            desired_state=desired_state,
+            capabilities=self._capabilities_for(state),
+            attempt=attempt or previous.attempt,
+            timestamps=replace(
+                timestamps,
+                state_changed_at=now,
+                started_at=(
+                    timestamps.started_at
+                    if started_at is ...
+                    else cast("float | None", started_at)
+                ),
+                control_requested_at=(
+                    timestamps.control_requested_at
+                    if control_requested_at is ...
+                    else cast("float | None", control_requested_at)
+                ),
+                control_acknowledged_at=(
+                    timestamps.control_acknowledged_at
+                    if control_acknowledged_at is ...
+                    else cast("float | None", control_acknowledged_at)
+                ),
+                finished_at=(
+                    timestamps.finished_at
+                    if finished_at is ...
+                    else cast("float | None", finished_at)
+                ),
+            ),
+            result=previous.result if result is ... else cast("str | None", result),
+            error_kind=(
+                previous.error_kind
+                if error_kind is ...
+                else cast("str | None", error_kind)
+            ),
+        )
+
+    def _get_terminal_locked(self, job_id: str) -> _ManagedJob | None:
+        for managed in reversed(self._terminal):
+            if managed.snapshot.id == job_id:
+                return managed
+        return None
+
+    def _already_satisfied(
+        self,
+        command: str,
+        managed: _ManagedJob,
+    ) -> JobOutcome:
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="already_satisfied",
+            message="The requested desired state is already set.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _error(
+        self,
+        command: str,
+        code: str,
+        message: str,
+        managed: _ManagedJob | None = None,
+    ) -> JobOutcome:
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ERROR,
+            code=code,
+            message=message,
+            job=self._snapshot_locked(managed) if managed is not None else None,
+        )
+
     def _get_locked(self, job_id: str) -> JobSnapshot | None:
         active = self._active.get(job_id)
         if active is not None:
             return self._snapshot_locked(active)
-        for managed in reversed(self._terminal):
-            if managed.snapshot.id == job_id:
-                return self._snapshot_locked(managed)
-        return None
+        terminal = self._get_terminal_locked(job_id)
+        return self._snapshot_locked(terminal) if terminal is not None else None
 
     def _find_equivalent_active_locked(self, spec: JobSpec) -> JobSnapshot | None:
         for managed in self._active.values():
@@ -741,9 +1375,10 @@ class JobManager:
     def _capabilities_for(state: JobState) -> JobCapabilities:
         return JobCapabilities(
             pausable=state in {JobState.QUEUED, JobState.RUNNING},
-            resumable=state is JobState.PAUSED,
+            resumable=state in {JobState.PAUSING, JobState.PAUSED},
             cancellable=not state.is_terminal,
-            retryable=state in {JobState.FAILED, JobState.INTERRUPTED},
+            retryable=state
+            in {JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED},
             deletable=state.is_terminal,
         )
 
