@@ -110,9 +110,18 @@ class RunControlToken:
             return changed
 
     def request_resume(self) -> bool:
-        """Withdraw a pause request unless cancellation is already desired."""
+        """Withdraw an undelivered pause request.
+
+        Once a checkpoint has delivered pause, the attempt must finish its
+        cooperative unwind. Returning ``False`` tells orchestration to queue a
+        reconciliation attempt after acknowledgement instead of pretending the
+        current stack can continue.
+        """
         with self._lock:
-            if self._desired is not ControlRequest.PAUSE:
+            if (
+                self._desired is not ControlRequest.PAUSE
+                or self._delivered is ControlRequest.PAUSE
+            ):
                 return False
             self._desired = None
             return True

@@ -387,13 +387,6 @@ class TestManagedJobPersistence:
             assert started.job is not None
             assert started.job.state is JobState.RUNNING
             assert (
-                manager.release_runtime(
-                    created.job.id,
-                    task=stale_task,
-                )
-                is False
-            )
-            assert (
                 manager.acknowledge_control(
                     created.job.id,
                     attempt=1,
@@ -494,6 +487,163 @@ class TestManagedJobPersistence:
 
         assert outcome.code == "job_state_invalid"
         assert manager.list_jobs() == []
+
+    def test_failed_persistence_rolls_back_reversible_intent(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
+        created = manager.create(spec, initiator, idempotency_key="rollback-1")
+        assert created.job is not None
+
+        state_path.unlink()
+        state_path.mkdir()
+        outcome = manager.set_desired_state(
+            created.job.id,
+            DesiredJobState.PAUSED,
+        )
+
+        assert outcome.code == "job_persistence_failed"
+        unchanged = manager.get(created.job.id)
+        assert unchanged == created.job
+        assert (
+            manager.create(
+                spec,
+                initiator,
+                idempotency_key="rollback-1",
+            ).code
+            == "idempotency_replayed"
+        )
+        assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
+
+    @pytest.mark.asyncio
+    async def test_failed_terminal_persistence_does_not_revive_finished_work(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.REBUILD,
+        )
+        initiator = JobInitiator("cli", "server job create", str(tmp_path))
+        created = manager.create(spec, initiator)
+        assert created.job is not None
+        task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            manager.start_attempt(
+                created.job.id,
+                task=task,
+                control=RunControlToken(),
+            )
+            state_path.unlink()
+            state_path.mkdir()
+            outcome = manager.finish_attempt(
+                created.job.id,
+                attempt=1,
+                task=task,
+                state=JobState.FAILED,
+                result="real worker failure",
+                error_kind="other",
+            )
+
+            assert outcome.code == "job_persistence_failed"
+            assert outcome.job is not None
+            assert outcome.job.state is JobState.FAILED
+            assert manager.get(created.job.id) == outcome.job
+            assert manager.runtime_owner(created.job.id) is None
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    def test_structurally_valid_inconsistent_state_is_rejected(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
+        manager.create(spec, initiator, idempotency_key="validation-1")
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+
+        payload["jobs"][0]["desired_state"] = "paused"
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+        inconsistent = JobManager(max_nonterminal=1, state_path=state_path)
+        assert inconsistent.restore_persisted().code == "job_state_invalid"
+        assert inconsistent.list_jobs() == []
+
+        payload["jobs"][0]["desired_state"] = "running"
+        payload["idempotency"][0]["job_id"] = "missing-job"
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+        dangling = JobManager(max_nonterminal=1, state_path=state_path)
+        assert dangling.restore_persisted().code == "job_state_invalid"
+        assert dangling.list_jobs() == []
+
+    @pytest.mark.asyncio
+    async def test_lower_capacity_still_recovers_crashed_attempts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=3, state_path=state_path)
+        tasks: list[asyncio.Task[bool]] = []
+        try:
+            for index in range(3):
+                root = tmp_path / f"project-{index}"
+                created = manager.create(
+                    JobSpec(
+                        JobOperation.INDEX,
+                        JobSource.VAULT,
+                        str(root),
+                        JobMode.INCREMENTAL,
+                    ),
+                    JobInitiator("watcher", "watcher_vault_index", str(root)),
+                )
+                assert created.job is not None
+                event = asyncio.Event()
+                task = asyncio.create_task(event.wait())
+                tasks.append(task)
+                assert (
+                    manager.start_attempt(
+                        created.job.id,
+                        task=task,
+                        control=RunControlToken(),
+                    ).code
+                    == "attempt_started"
+                )
+
+            restarted = JobManager(max_nonterminal=1, state_path=state_path)
+            outcome = restarted.restore_persisted()
+            assert outcome.code == "job_state_restored"
+            assert restarted.active() == []
+            assert len(restarted.terminal()) == 3
+            assert all(
+                job.state is JobState.INTERRUPTED for job in restarted.terminal()
+            )
+        finally:
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with pytest.raises(asyncio.CancelledError):
+                    await task
 
 
 # --------------------------------------------------------------------------- #

@@ -57,6 +57,15 @@ Prove transition races, idempotency, admission, persistence, retry, deletion, an
 - [x] `W01.P03.S08` - Verify the transition matrix, idempotency, stale revisions, admission, deduplication, retry, deletion, and terminal immutability using vaultspec-standard-executor; `src/vaultspec_rag/tests/test_jobs_unit.py`.
 - [x] `W01.P03.S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
 
+### Phase `W01.P17` - job domain modularization
+
+Split the canonical job domain out of the legacy compatibility module before cooperative
+indexing and adapters add more behavior to the boundary.
+
+- [ ] `W01.P17.S38` - Extract canonical enums, immutable resources, outcomes, and serialization into a focused model module while preserving public imports using vaultspec-standard-executor; `src/vaultspec_rag/job_models.py`, `src/vaultspec_rag/jobs.py`.
+- [ ] `W01.P17.S39` - Extract the versioned state codec and atomic filesystem store into a focused persistence module using vaultspec-standard-executor; `src/vaultspec_rag/job_persistence.py`, `src/vaultspec_rag/jobs.py`.
+- [ ] `W01.P17.S40` - Extract JobManager ownership and lifecycle orchestration, leave jobs.py as the legacy compatibility and dispatch facade, and verify unchanged public behavior using vaultspec-standard-executor; `src/vaultspec_rag/job_manager.py`, `src/vaultspec_rag/jobs.py`, `src/vaultspec_rag/tests/test_jobs_unit.py`, `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
+
 ## Wave `W02` - cooperative indexing execution
 
 Thread the accepted control contract through vault and code indexing so attempts unwind only at safe checkpoints and release scarce resources before the orchestration and API waves depend on them.
