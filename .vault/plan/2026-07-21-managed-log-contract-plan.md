@@ -63,7 +63,7 @@ Carry the source selector and grouped payload through the existing authenticated
 
 - [x] `W02.P04.S09` - Serve source-aware plain and JSON log responses from the shared reader; `src/vaultspec_rag/server/_routes.py`.
 - [x] `W02.P04.S10` - Carry the source selector and structured log outcome through the admin transport; `src/vaultspec_rag/serviceclient/_transport.py`.
-- [ ] `W02.P04.S11` - Verify authenticated live responses, bounds, filters, and source-group schema; `src/vaultspec_rag/tests/integration/test_service_logs.py`.
+- [x] `W02.P04.S11` - Verify authenticated live responses, bounds, filters, and source-group schema; `src/vaultspec_rag/tests/integration/test_service_logs.py`.
 
 ### Phase `W02.P05` - make CLI logs work live and post-crash
 
