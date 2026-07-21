@@ -61,7 +61,7 @@ Read sparse rotated generations for service, Qdrant, or grouped all-source views
 
 Carry the source selector and grouped payload through the existing authenticated admin routes and import-light transport.
 
-- [ ] `W02.P04.S09` - Serve source-aware plain and JSON log responses from the shared reader; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W02.P04.S09` - Serve source-aware plain and JSON log responses from the shared reader; `src/vaultspec_rag/server/_routes.py`.
 - [ ] `W02.P04.S10` - Carry the source selector and structured log outcome through the admin transport; `src/vaultspec_rag/serviceclient/_transport.py`.
 - [ ] `W02.P04.S11` - Verify authenticated live responses, bounds, filters, and source-group schema; `src/vaultspec_rag/tests/integration/test_service_logs.py`.
 
