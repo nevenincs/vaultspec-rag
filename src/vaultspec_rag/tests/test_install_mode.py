@@ -396,6 +396,83 @@ def test_advisory_silent_for_tool_mode(tmp_path: Path) -> None:
     assert _RAG_LEAK_ADVISORY not in report.warnings
 
 
+def test_dependency_install_leaves_no_rag_runtime_noise_in_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependency-mode install writes only canonical, committable outputs.
+
+    The issue-236 invariant: rag runtime state lives in the machine-global
+    status dir and ``.vault/data/``, never as loose sentinels in the consumer's
+    repo. A fresh install into a clean git worktree must leave ``git status``
+    free of RAG-owned runtime noise (``.qdrant-initialized``,
+    ``.vaultspec/runtime/``) while the canonical ``.vaultspec`` inputs it
+    seeds remain present and visible.
+    """
+    import subprocess
+
+    # Isolate the machine-global paths per the managed-singleton rule so the
+    # install can never touch the operator's real service state.
+    monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+    monkeypatch.setenv(
+        EnvVar.QDRANT_STORAGE_DIR.value, str(tmp_path / "qdrant" / "storage")
+    )
+    reset_config()
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    subprocess.run(["git", "init", "-q"], cwd=ws, check=True)
+
+    _install(ws, mode=InstallMode.DEPENDENCY)
+
+    porcelain = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ws,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert ".qdrant-initialized" not in porcelain
+    assert ".vaultspec/runtime" not in porcelain
+    assert not (ws / ".qdrant-initialized").exists()
+    assert not (ws / ".vaultspec" / "runtime").exists()
+    # The canonical inputs stay visible (they are meant to be committed).
+    assert (ws / ".vaultspec" / "workspace.json").is_file()
+    assert (ws / ".vaultspec" / "rules").is_dir()
+
+
+def test_uninstall_removes_obsolete_runtime_sentinels(tmp_path: Path) -> None:
+    """Uninstall clears sentinels an older rag may have left in the repo."""
+    from ..commands import uninstall_run
+
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    _install(ws, mode=InstallMode.DEPENDENCY)
+    (ws / ".qdrant-initialized").write_text("", encoding="utf-8")
+    runtime_dir = ws / ".vaultspec" / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "state.json").write_text("{}", encoding="utf-8")
+
+    report = uninstall_run(path=ws, force=True)
+
+    assert not (ws / ".qdrant-initialized").exists()
+    assert not runtime_dir.exists()
+    assert ".qdrant-initialized" in report.removed
+    assert ".vaultspec/runtime" in report.removed
+
+
+def test_uninstall_dry_run_previews_sentinels_without_removing(
+    tmp_path: Path,
+) -> None:
+    """Without --force the sentinels are reported but left untouched."""
+    from ..commands import uninstall_run
+
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    _install(ws, mode=InstallMode.DEPENDENCY)
+    (ws / ".qdrant-initialized").write_text("", encoding="utf-8")
+
+    report = uninstall_run(path=ws, force=False)
+
+    assert (ws / ".qdrant-initialized").exists()
+    assert ".qdrant-initialized" in report.removed
+
+
 def test_local_only_marker_is_orthogonal_to_mode_declaration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
