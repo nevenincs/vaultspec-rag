@@ -143,7 +143,7 @@ def _stream_encode_and_upsert_vault(
                         else:
                             chunk.sparse_indices = []
                             chunk.sparse_values = []
-                    store.upsert_document_chunks(slice_chunks)
+                    store.upsert_document_chunks(slice_chunks, write_policy=None)
                 finally:
                     # Drop references to per-slice tensors before
                     # releasing the CUDA caching pool so freed blocks
@@ -243,7 +243,7 @@ def encode_and_upsert_code_slice(
             else:
                 chunk.sparse_indices = []
                 chunk.sparse_values = []
-        store.upsert_code_chunks(slice_chunks)
+        store.upsert_code_chunks(slice_chunks, write_policy=None)
     finally:
         # del beats ``= None`` for dropping the local out of the frame
         # entirely before the caching pool is released (#68 audit F10.4).
