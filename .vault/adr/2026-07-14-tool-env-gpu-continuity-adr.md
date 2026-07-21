@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-07-14'
+modified: '2026-07-19'
 related:
   - "[[2026-07-14-tool-env-gpu-continuity-research]]"
 ---

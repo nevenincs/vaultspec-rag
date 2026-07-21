@@ -25,6 +25,17 @@ prod *args='':
   uv run vaultspec-rag {{args}}
 
 # ===========================================================================
+# readme-assets - regenerate the README terminal-render SVGs
+#
+# Requires the managed search server running (just prod server start) and
+# this repo's own index current.
+# ===========================================================================
+
+# readme-assets - regenerate the README terminal-render SVGs
+readme-assets out_dir='assets':
+  uv run --no-sync python scripts/render_readme_assets.py {{out_dir}}
+
+# ===========================================================================
 # dev - development toolchain (linters, formatters, tests, builds)
 #
 # Nothing here exists in the shipped CLI.
@@ -159,6 +170,10 @@ _dev-lint target='all':
       uv run python tools/module_length.py ; \
       break \
     } \
+    "docs-version" { \
+      uv run python tools/check_docs_version.py ; \
+      break \
+    } \
     "absolute-imports" { \
       $absHits = Get-ChildItem -Recurse -Path src/vaultspec_rag -Filter *.py | Select-String -Pattern "^\s*from vaultspec_rag\." -CaseSensitive | Where-Object { $_.Line -notmatch "absolute-import-ok" } ; \
       if ($absHits) { \
@@ -187,12 +202,14 @@ _dev-lint target='all':
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint module-length ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      just _dev-lint docs-version ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint type-strict ; \
       break \
     } \
     default { \
       Write-Host "unknown dev lint target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length absolute-imports all" -ForegroundColor Red ; \
+      Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length docs-version absolute-imports all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }

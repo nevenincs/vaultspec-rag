@@ -21,6 +21,14 @@ If that command lists your card and a driver version, the driver is loaded. macO
 
 ## Install the package
 
+Try it now with no setup, directly from PyPI:
+
+```bash
+uvx vaultspec-rag install
+```
+
+Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, prompting once before it edits any config (see [Provision dependencies with the install command](#provision-dependencies-with-the-install-command) below). Good for a first try; because the environment is ephemeral, it does not pin the GPU torch build across runs the way the durable options below do. For a lasting install, use one of the paths below.
+
 To add vaultspec-rag as a dependency of an existing project, run:
 
 ```bash
@@ -113,7 +121,7 @@ Check the installed version:
 uv run vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.3.0`.
+This reports `vaultspec-rag v0.3.2`.
 
 Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qdrant binary and server:
 
