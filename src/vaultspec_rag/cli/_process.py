@@ -21,9 +21,10 @@ import sysconfig
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import vaultspec_rag.cli as _cli
 
@@ -35,6 +36,9 @@ from .._machine_lock import (
 )
 from ..config import EnvVar
 from ._core import logger
+
+if TYPE_CHECKING:
+    from ..qdrant_runtime._resolve import QdrantIdentity
 
 __all__ = [
     "_HEARTBEAT_STALENESS_SECONDS",
@@ -508,6 +512,8 @@ def _spawn_service(
     qdrant: bool | None = None,
     local_only: bool | None = None,
     preprocess_mode: Literal["off"] | None = None,
+    timeout: float | None = None,
+    cleanup_timeout: float = 15.0,
 ) -> int:
     """Spawn the RAG service as a detached background process.
 
@@ -526,8 +532,20 @@ def _spawn_service(
         PID of the spawned process.
 
     """
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    launch_token = uuid.uuid4().hex
+    if deadline is not None and deadline <= time.monotonic():
+        raise TimeoutError("service spawn received no remaining startup budget")
     interpreter = _resolve_daemon_interpreter()
-    cmd = [interpreter, "-m", "vaultspec_rag.server", "--port", str(port)]
+    cmd = [
+        interpreter,
+        "-m",
+        "vaultspec_rag.server",
+        "--port",
+        str(port),
+        "--launch-token",
+        launch_token,
+    ]
     env = _service_child_env(
         watch=watch,
         watch_debounce_ms=watch_debounce_ms,
@@ -554,7 +572,183 @@ def _spawn_service(
             )
     finally:
         os.close(log_fd)  # child has the fd now (or the spawn failed)
+    if deadline is not None and time.monotonic() >= deadline:
+        launcher_start_time = _process_start_time(proc.pid)
+        cleanup_error = _cleanup_late_service_spawn(
+            launcher_pid=proc.pid,
+            launcher_start_time=launcher_start_time,
+            port=port,
+            launch_token=launch_token,
+            timeout=cleanup_timeout,
+        )
+        detail = f"; cleanup_error={cleanup_error}" if cleanup_error else ""
+        raise TimeoutError(
+            f"service spawn exceeded its {timeout:.3f}s remaining startup "
+            f"budget{detail}"
+        )
     return proc.pid
+
+
+def _cleanup_late_service_spawn(
+    *,
+    launcher_pid: int,
+    launcher_start_time: float,
+    port: int,
+    launch_token: str,
+    timeout: float,
+) -> str:
+    """Find and stop a late launcher, detached daemon, and witnessed Qdrant."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    candidates: dict[int, float] = {}
+    if launcher_start_time > 0.0:
+        candidates[launcher_pid] = launcher_start_time
+    last_error = ""
+
+    discovery_deadline = min(
+        deadline,
+        time.monotonic() + min(2.0, max(0.0, timeout * 0.5)),
+    )
+    while time.monotonic() < discovery_deadline:
+        discovered, last_error = _discover_late_service_pids(
+            port=port,
+            launch_token=launch_token,
+        )
+        candidates.update(discovered)
+        if any(pid != launcher_pid for pid in candidates):
+            break
+        time.sleep(min(0.02, max(0.0, discovery_deadline - time.monotonic())))
+
+    for candidate in sorted(candidates, key=lambda pid: pid == launcher_pid):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            break
+        if _pid_matches_start_time(candidate, candidates[candidate]):
+            _terminate_pid(candidate, timeout=remaining)
+
+    while time.monotonic() < deadline:
+        discovered, last_error = _discover_late_service_pids(
+            port=port,
+            launch_token=launch_token,
+        )
+        candidates.update(discovered)
+        live = [
+            pid
+            for pid, start_time in candidates.items()
+            if _pid_matches_start_time(pid, start_time)
+        ]
+        if not live:
+            return ""
+        for candidate in sorted(live, key=lambda pid: pid == launcher_pid):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                break
+            _terminate_pid(candidate, timeout=remaining)
+        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+    survivors = sorted(
+        pid
+        for pid, start_time in candidates.items()
+        if _pid_matches_start_time(pid, start_time)
+    )
+    if survivors:
+        detail = f"late service processes survived: {survivors}; {last_error}"
+        return detail.rstrip("; ")
+    return last_error
+
+
+def _discover_late_service_pids(
+    *,
+    port: int,
+    launch_token: str,
+) -> tuple[dict[int, float], str]:
+    """Discover exact late-launch members by their unguessable argv witness."""
+    candidates: dict[int, float] = {}
+    status = _cli._read_service_status()
+    status_pid = 0
+    if (
+        status is not None
+        and status.get("port") == port
+        and status.get("launch_token") == launch_token
+    ):
+        raw_pid = status.get("pid")
+        if (
+            isinstance(raw_pid, int)
+            and not isinstance(raw_pid, bool)
+            and raw_pid > 0
+        ):
+            status_pid = raw_pid
+    try:
+        import psutil
+
+        for process in psutil.process_iter(["pid", "cmdline", "create_time"]):
+            info = cast("dict[str, object]", process.info)
+            created = info.get("create_time")
+            if (
+                not isinstance(created, int | float)
+                or created <= 0.0
+                or not _is_service_command(
+                    info.get("cmdline"),
+                    port,
+                    launch_token=launch_token,
+                )
+            ):
+                continue
+            raw_pid = info.get("pid")
+            if isinstance(raw_pid, int) and not isinstance(raw_pid, bool):
+                candidates[raw_pid] = float(created)
+        if status_pid and status_pid not in candidates:
+            return (
+                candidates,
+                "matching launch-token status pid did not carry the same "
+                "launch-token command witness",
+            )
+    except Exception as exc:
+        return candidates, f"{exc.__class__.__name__}: {exc}"
+    return candidates, ""
+
+
+def _is_service_command(
+    raw_cmdline: object,
+    port: int,
+    *,
+    launch_token: str,
+) -> bool:
+    """Return whether argv carries this exact resident-server launch witness."""
+    if not isinstance(raw_cmdline, list):
+        return False
+    argv = [str(item) for item in cast("list[object]", raw_cmdline)]
+    expected = [
+        "-m",
+        "vaultspec_rag.server",
+        "--port",
+        str(port),
+        "--launch-token",
+        launch_token,
+    ]
+    return any(
+        argv[index : index + len(expected)] == expected
+        for index in range(len(argv) - len(expected) + 1)
+    )
+
+
+def _process_start_time(pid: int) -> float:
+    """Return a process-incarnation witness, or zero when it is unreadable."""
+    if pid <= 0:
+        return 0.0
+    try:
+        import psutil
+
+        return float(psutil.Process(pid).create_time())
+    except Exception as exc:
+        logger.debug("late-spawn pid %d start-time read failed: %s", pid, exc)
+        return 0.0
+
+
+def _pid_matches_start_time(pid: int, expected: float) -> bool:
+    """Return whether *pid* is still the exact witnessed launch member."""
+    if expected <= 0.0:
+        return False
+    current = _process_start_time(pid)
+    return current > 0.0 and abs(current - expected) <= 1e-6
 
 
 def _spawn_windows(
@@ -623,7 +817,7 @@ def _spawn_windows(
         ) from detached_exc
 
 
-def _terminate_pid(pid: int) -> None:
+def _terminate_pid(pid: int, timeout: float = 4.0) -> None:
     """Send a termination signal to a process.
 
     On Windows sends ``CTRL_BREAK_EVENT`` for graceful uvicorn
@@ -637,9 +831,12 @@ def _terminate_pid(pid: int) -> None:
 
     Args:
         pid: Process ID to terminate.
+        timeout: Whole termination budget, including child validation,
+            graceful service drain, escalation, and owned-Qdrant reap.
 
     """
-    qdrant_pid = _owned_qdrant_pid(pid)
+    deadline = time.monotonic() + max(0.0, timeout)
+    qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
     if sys.platform == "win32":
         with contextlib.suppress(OSError):
             os.kill(pid, signal.CTRL_BREAK_EVENT)
@@ -649,8 +846,10 @@ def _terminate_pid(pid: int) -> None:
     # Allow graceful drain before force-killing. On POSIX this CLI is normally
     # the daemon's parent, so reap an exited child promptly instead of treating
     # its zombie record as a live process that still needs SIGKILL.
-    if _wait_for_child_exit(pid, timeout=2.0):
-        _reap_owned_qdrant(qdrant_pid)
+    remaining = max(0.0, deadline - time.monotonic())
+    graceful_wait = min(2.0, remaining / 2.0)
+    if _wait_for_child_exit(pid, timeout=graceful_wait):
+        _reap_owned_qdrant(qdrant_identity, deadline=deadline)
         return
     if _cli._is_pid_alive(pid):
         with contextlib.suppress(OSError):
@@ -658,8 +857,11 @@ def _terminate_pid(pid: int) -> None:
                 os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows
             else:
                 os.kill(pid, signal.SIGKILL)
-        _wait_for_child_exit(pid, timeout=2.0)
-    _reap_owned_qdrant(qdrant_pid)
+        _wait_for_child_exit(
+            pid,
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
+    _reap_owned_qdrant(qdrant_identity, deadline=deadline)
 
 
 def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
@@ -679,15 +881,20 @@ def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
     return False
 
 
-def _owned_qdrant_pid(service_pid: int) -> int | None:
-    """Return the validated managed child owned by this service incarnation."""
+def _owned_qdrant_identity(
+    service_pid: int,
+    *,
+    deadline: float,
+) -> QdrantIdentity | None:
+    """Capture the exact validated managed child owned by this service."""
     from pathlib import Path
 
     from ..config import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
         pid_image_is_qdrant,
-        pid_start_time,
+        pid_listens_on_loopback_port,
+        pid_matches_start_time,
         probe_qdrant_endpoint,
         read_qdrant_identity,
     )
@@ -698,41 +905,124 @@ def _owned_qdrant_pid(service_pid: int) -> int | None:
         or identity.owner_pid != service_pid
         or identity.owner_start_time <= 0.0
         or identity.qdrant_pid <= 0
+        or identity.qdrant_start_time <= 0.0
     ):
         return None
-    live_owner_start = pid_start_time(identity.owner_pid)
-    if (
-        live_owner_start <= 0.0
-        or abs(live_owner_start - identity.owner_start_time) >= 1.0
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    if not pid_matches_start_time(
+        identity.owner_pid,
+        identity.owner_start_time,
+        timeout=remaining,
+    ):
+        return None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not pid_matches_start_time(
+        identity.qdrant_pid,
+        identity.qdrant_start_time,
+        timeout=remaining,
     ):
         return None
     cfg = get_config()
     expected_storage = Path(str(cfg.qdrant_storage_dir)).expanduser().resolve()
     recorded_storage = Path(identity.storage_path).expanduser().resolve()
+    remaining = deadline - time.monotonic()
     if (
-        recorded_storage != expected_storage
+        remaining <= 0
+        or recorded_storage != expected_storage
         or identity.version != QDRANT_SERVER_VERSION
-        or not pid_image_is_qdrant(identity.qdrant_pid)
+        or not pid_image_is_qdrant(identity.qdrant_pid, timeout=remaining)
     ):
         return None
-    probe = probe_qdrant_endpoint(identity.http_port)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not pid_listens_on_loopback_port(
+        identity.qdrant_pid, identity.http_port, timeout=remaining
+    ):
+        return None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    probe = probe_qdrant_endpoint(
+        identity.http_port,
+        timeout=max(0.001, min(2.0, remaining / 2.0)),
+    )
     if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
         return None
-    return identity.qdrant_pid
+    return identity
 
 
-def _reap_owned_qdrant(qdrant_pid: int | None) -> None:
-    """Reap a previously validated child if it is still a Qdrant process."""
-    if qdrant_pid is None:
+def _reap_owned_qdrant(
+    identity: QdrantIdentity | None,
+    *,
+    deadline: float,
+) -> None:
+    """Revalidate and reap the same previously captured Qdrant incarnation."""
+    if identity is None:
         return
+    from pathlib import Path
+
+    from ..config import get_config
+    from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
+        pid_alive,
         pid_image_is_qdrant,
+        pid_listens_on_loopback_port,
+        pid_matches_start_time,
+        probe_qdrant_endpoint,
+        read_qdrant_identity,
         reap_qdrant_orphan,
     )
 
-    if not pid_image_is_qdrant(qdrant_pid):
+    qdrant_pid = identity.qdrant_pid
+    if not pid_alive(qdrant_pid):
         return
-    if not reap_qdrant_orphan(qdrant_pid):
+    current = read_qdrant_identity()
+    expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
+    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    if (
+        current != identity
+        or identity.qdrant_start_time <= 0.0
+        or recorded_storage != expected_storage
+        or identity.version != QDRANT_SERVER_VERSION
+    ):
+        return
+    if not pid_matches_start_time(
+        qdrant_pid,
+        identity.qdrant_start_time,
+        timeout=remaining,
+    ):
+        return
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not pid_image_is_qdrant(qdrant_pid, timeout=remaining):
+        return
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not pid_listens_on_loopback_port(
+        qdrant_pid,
+        identity.http_port,
+        timeout=remaining,
+    ):
+        return
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    probe = probe_qdrant_endpoint(
+        identity.http_port,
+        timeout=max(0.001, min(2.0, remaining / 2.0)),
+    )
+    if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
+        return
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    if not reap_qdrant_orphan(
+        qdrant_pid,
+        wait_seconds=remaining,
+        expected_start_time=identity.qdrant_start_time,
+    ):
         logger.warning(
             "validated service-owned qdrant pid %d survived forced service stop",
             qdrant_pid,

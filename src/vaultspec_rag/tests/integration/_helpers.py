@@ -166,41 +166,30 @@ def _service_env(
     # the source is the real managed install, not the (empty) isolated dir.
     host_qdrant = _resolve_host_provisioned_qdrant()
 
+    overrides = dict(env_overrides or {})
     env_key = "VAULTSPEC_RAG_STATUS_DIR"
-    saved: dict[str, str | None] = {env_key: os.environ.get(env_key)}
+    storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    qdrant_port_key = "VAULTSPEC_RAG_QDRANT_PORT"
+    updates: dict[str, str | None] = {
+        env_key: str(tmp_path),
+    }
+    if storage_key not in overrides:
+        updates[storage_key] = str(tmp_path / "qdrant-storage")
+    if qdrant_port_key not in overrides:
+        updates[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
+    updates.update(overrides)
+
+    # Snapshot every distinct key exactly once before the first mutation.
+    # Reserved defaults (notably STATUS_DIR) may also appear in overrides; a
+    # second snapshot after the reserved write would capture the isolated value
+    # and leak it on context-entry failure.
+    saved: dict[str, str | None] = {key: os.environ.get(key) for key in updates}
     try:
-        os.environ[env_key] = str(tmp_path)
-
-        # Isolate the machine-global Qdrant storage too: the machine-scoped
-        # service lock is co-located with it, so without this a test daemon
-        # would acquire the real machine lock and collide with a real service
-        # or a sibling test.
-        # The deep pytest tmp path is deliberate: the supervisor hands the
-        # qdrant child extended-length (\\?\) paths on Windows, and running
-        # every integration daemon against a long storage dir keeps that
-        # translation permanently exercised.
-        storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
-        if storage_key not in (env_overrides or {}):
-            saved[storage_key] = os.environ.get(storage_key)
-            os.environ[storage_key] = str(tmp_path / "qdrant-storage")
-
-        # Isolate the Qdrant port off the shared machine default (8765): once
-        # the binary is mirrored, a server-mode test daemon spawns a real
-        # Qdrant child, and the default port would collide with the host's real
-        # Qdrant or a sibling test's. An ephemeral http port (with grpc one
-        # below it) keeps each test's Qdrant on its own loopback ports.
-        qdrant_port_key = "VAULTSPEC_RAG_QDRANT_PORT"
-        if qdrant_port_key not in (env_overrides or {}):
-            saved[qdrant_port_key] = os.environ.get(qdrant_port_key)
-            os.environ[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
-
-        if env_overrides:
-            for k, v in env_overrides.items():
-                saved[k] = os.environ.get(k)
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+        for key, value in updates.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
         # Mirror the host's provisioned binary into the isolated status dir so
         # the managed-binary guard resolves it and a server-mode daemon

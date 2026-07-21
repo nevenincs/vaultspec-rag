@@ -87,10 +87,19 @@ def main(port: int | None = None) -> None:
             default=None,
             help="HTTP port (default: stdio transport)",
         )
+        parser.add_argument(
+            "--launch-token",
+            default="",
+            help=argparse.SUPPRESS,
+        )
         args = parser.parse_args()
         port = args.port
+        _m._launch_token = str(args.launch_token)
+    else:
+        _m._launch_token = ""
 
     _m._http_mode = port is not None
+    _m._service_port = port or 0
 
     if port is not None:
         import uvicorn

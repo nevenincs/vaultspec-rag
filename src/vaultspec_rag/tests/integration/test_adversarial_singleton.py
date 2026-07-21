@@ -23,6 +23,7 @@ from ...qdrant_runtime._resolve import (
     QdrantEndpointProbe,
     QdrantIdentity,
     decide_qdrant_action,
+    pid_start_time,
 )
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 
@@ -80,7 +81,11 @@ class TestInjectedHolderNeverYieldsCompetitor:
         # shared single-writer storage.
         probe = QdrantEndpointProbe(listening=True, ready=True, version=_VERSION)
         action, reason = decide_qdrant_action(
-            probe, None, expected_version=_VERSION, expected_storage=_STORAGE
+            probe,
+            None,
+            expected_port=8765,
+            expected_version=_VERSION,
+            expected_storage=_STORAGE,
         )
         assert action == "refuse"
         assert "competitor" in reason or "non-managed" in reason
@@ -95,7 +100,11 @@ class TestInjectedHolderNeverYieldsCompetitor:
             qdrant_pid=2_000_000_001,
         )
         action, _reason = decide_qdrant_action(
-            probe, identity, expected_version=_VERSION, expected_storage=_STORAGE
+            probe,
+            identity,
+            expected_port=8765,
+            expected_version=_VERSION,
+            expected_storage=_STORAGE,
         )
         assert action == "reap_then_spawn"
 
@@ -132,9 +141,14 @@ class TestUnhealthyOrCorruptHolderRefusedWithCause:
             owner_pid=os.getpid(),
             http_port=8765,
             qdrant_pid=os.getpid(),
+            owner_start_time=pid_start_time(os.getpid()),
         )
         action, reason = decide_qdrant_action(
-            probe, identity, expected_version=_VERSION, expected_storage=_STORAGE
+            probe,
+            identity,
+            expected_port=8765,
+            expected_version=_VERSION,
+            expected_storage=_STORAGE,
         )
         assert action == "refuse"
         assert "ready" in reason
@@ -147,9 +161,14 @@ class TestUnhealthyOrCorruptHolderRefusedWithCause:
             owner_pid=os.getpid(),
             http_port=8765,
             qdrant_pid=os.getpid(),
+            owner_start_time=pid_start_time(os.getpid()),
         )
         action, reason = decide_qdrant_action(
-            probe, identity, expected_version=_VERSION, expected_storage=_STORAGE
+            probe,
+            identity,
+            expected_port=8765,
+            expected_version=_VERSION,
+            expected_storage=_STORAGE,
         )
         assert action == "refuse"
         assert "version" in reason

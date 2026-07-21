@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
@@ -140,6 +141,13 @@ def run_bounded_process(
         msg = f"worker timeout must be positive, got {timeout_seconds}"
         raise ValueError(msg)
 
+    deadline = time.monotonic() + timeout_seconds
+    termination_grace = min(
+        _TERMINATE_GRACE_SECONDS,
+        max(0.05, timeout_seconds * 0.20),
+        timeout_seconds * 0.50,
+    )
+    worker_deadline = deadline - termination_grace
     process = subprocess.Popen(
         list(command),
         stdout=subprocess.PIPE,
@@ -149,19 +157,65 @@ def run_bounded_process(
         errors="replace",
     )
     output = ""
+    worker_timeout = worker_deadline - time.monotonic()
+    if worker_timeout <= 0.0:
+        process.terminate()
+        try:
+            trailing, _ = process.communicate(
+                timeout=max(0.001, deadline - time.monotonic())
+            )
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                trailing, _ = process.communicate(
+                    timeout=max(0.001, deadline - time.monotonic())
+                )
+            except subprocess.TimeoutExpired as kill_exc:
+                output += _coerce_output(kill_exc.output)
+                msg = (
+                    f"{operation} exceeded {timeout_seconds:.3f}s "
+                    "whole-operation deadline during process creation and the "
+                    "killed worker did not exit; "
+                    f"termination_grace={termination_grace:.3f}s; {context}\n"
+                    f"worker output tail:\n{_output_tail(output)}"
+                )
+                raise RuntimeError(msg) from kill_exc
+        output += trailing or ""
+        msg = (
+            f"{operation} exceeded {timeout_seconds:.3f}s whole-operation "
+            "deadline during process creation; "
+            f"termination_grace={termination_grace:.3f}s; {context}\n"
+            f"worker output tail:\n{_output_tail(output)}"
+        )
+        raise RuntimeError(msg)
     try:
-        output, _ = process.communicate(timeout=timeout_seconds)
+        output, _ = process.communicate(timeout=worker_timeout)
     except subprocess.TimeoutExpired as exc:
         output = _coerce_output(exc.output)
         process.terminate()
         try:
-            trailing, _ = process.communicate(timeout=_TERMINATE_GRACE_SECONDS)
+            trailing, _ = process.communicate(
+                timeout=max(0.001, deadline - time.monotonic())
+            )
         except subprocess.TimeoutExpired:
             process.kill()
-            trailing, _ = process.communicate()
+            try:
+                trailing, _ = process.communicate(
+                    timeout=max(0.001, deadline - time.monotonic())
+                )
+            except subprocess.TimeoutExpired as kill_exc:
+                output += _coerce_output(kill_exc.output)
+                msg = (
+                    f"{operation} exceeded {timeout_seconds:.3f}s "
+                    "whole-operation deadline and the killed worker did not "
+                    f"exit; termination_grace={termination_grace:.3f}s; "
+                    f"{context}\nworker output tail:\n{_output_tail(output)}"
+                )
+                raise RuntimeError(msg) from kill_exc
         output += trailing or ""
         msg = (
-            f"{operation} exceeded {timeout_seconds:.3f}s; {context}\n"
+            f"{operation} exceeded {timeout_seconds:.3f}s whole-operation "
+            f"deadline; termination_grace={termination_grace:.3f}s; {context}\n"
             f"worker output tail:\n{_output_tail(output)}"
         )
         raise RuntimeError(msg) from exc

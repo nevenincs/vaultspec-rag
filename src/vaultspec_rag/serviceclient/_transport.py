@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -118,6 +119,8 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
         ) as resp:
             data: object = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
+        if _is_timeout(exc):
+            raise
         logger.debug("health token probe on port %s failed: %s", port, exc)
         return ""
     if isinstance(data, dict):
@@ -193,20 +196,60 @@ def _do_http_call(
     against a service started out-of-band (missing status file) or restarted
     (rotated token), without an extra round-trip when the first call succeeds.
     """
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    started = time.monotonic()
+
+    def remaining(stage: str) -> float | None:
+        if deadline is None or timeout is None:
+            return timeout
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError(
+                f"whole HTTP call deadline={timeout:.3f}s exceeded "
+                f"during {stage}; elapsed={time.monotonic() - started:.3f}s "
+                "remaining=0.000s"
+            )
+        return value
+
+    def send(stage: str, token: str) -> tuple[int, dict[str, object]]:
+        try:
+            return _send_call(
+                _build_call_request(port, path, payload, token),
+                remaining(stage),
+            )
+        except Exception as exc:
+            if not _is_timeout(exc) or timeout is None:
+                raise
+            value = max(0.0, (deadline or started) - time.monotonic())
+            raise TimeoutError(
+                f"whole HTTP call deadline={timeout:.3f}s exhausted "
+                f"during {stage}; elapsed={time.monotonic() - started:.3f}s "
+                f"remaining={value:.3f}s"
+            ) from exc
+
     token = _status_file_token()
-    status_code, result = _send_call(
-        _build_call_request(port, path, payload, token), timeout
-    )
+    status_code, result = send("initial request", token)
+    remaining("initial response")
 
     if status_code == 401:
-        fresh = _fetch_health_token(port, timeout)
+        try:
+            fresh = _fetch_health_token(port, remaining("health-token request"))
+        except Exception as exc:
+            if not _is_timeout(exc) or timeout is None:
+                raise
+            value = max(0.0, (deadline or started) - time.monotonic())
+            raise TimeoutError(
+                f"whole HTTP call deadline={timeout:.3f}s exhausted during "
+                f"health-token request; elapsed={time.monotonic() - started:.3f}s "
+                f"remaining={value:.3f}s"
+            ) from exc
+        remaining("health-token response")
         if fresh and fresh != token:
             logger.debug(
                 "token rejected on port %s; retrying with the /health token", port
             )
-            _, result = _send_call(
-                _build_call_request(port, path, payload, fresh), timeout
-            )
+            _, result = send("authenticated retry", fresh)
+            remaining("authenticated retry response")
     return result
 
 
@@ -391,7 +434,8 @@ def _try_http_admin(
                 "error": "admin_timeout",
                 "message": (
                     f"The service on port {port} did not answer within "
-                    f"{_format_timeout_seconds(resolved_timeout)}."
+                    f"{_format_timeout_seconds(resolved_timeout)}. "
+                    f"Deadline diagnostics: {exc}"
                 ),
             }
         logger.debug(

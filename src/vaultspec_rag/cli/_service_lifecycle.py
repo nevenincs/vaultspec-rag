@@ -47,10 +47,10 @@ from ._service_jobs import (
 from ._service_status import (
     SERVICE_PHASE_WARMING,
     _default_service_port,
+    _delete_service_status,
     _log_file,
     _read_service_status,
     _service_phase,
-    _status_file,
     _update_service_metadata,
     _update_service_token,
     _write_service_status,
@@ -218,7 +218,7 @@ def _existing_service_running() -> tuple[int, int] | None:
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
     if _should_unlink_discovery_file(_cli._is_pid_alive(existing_pid)):
-        _status_file().unlink(missing_ok=True)
+        _delete_service_status()
     return None
 
 
@@ -671,7 +671,7 @@ def _await_service_ready(
 
             # Check if process died (port conflict, etc.)
             if not _cli._is_pid_alive(pid):
-                _status_file().unlink(missing_ok=True)
+                _delete_service_status()
                 tail = _tail_daemon_log(log_path)
                 human = [_process_line(pid), _address_line(port)]
                 if tail:
@@ -929,7 +929,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
     # status file.
     status = _read_service_status()
     if status is not None and int(status.get("port", 0)) == port:
-        _status_file().unlink(missing_ok=True)
+        _delete_service_status()
     _stop_success(
         json_mode,
         status="stopped",
@@ -1032,7 +1032,7 @@ def service_stop(
         # /health/identity miss) must not have its file erased, which would
         # both mis-report a live daemon as gone and break discovery (#204).
         if _should_unlink_discovery_file(_cli._is_pid_alive(pid)):
-            _status_file().unlink(missing_ok=True)
+            _delete_service_status()
             _stop_success(
                 json_mode,
                 status="cleaned",
@@ -1055,7 +1055,7 @@ def service_stop(
         )
 
     _terminate_and_confirm(pid)
-    _status_file().unlink(missing_ok=True)
+    _delete_service_status()
     _stop_success(
         json_mode,
         status="stopped",
@@ -1098,7 +1098,7 @@ def _compute_state(
         # removed (#204). The ambiguous branches below keep the file and only
         # report a degraded state.
         if _should_unlink_discovery_file(pid_alive):
-            _status_file().unlink(missing_ok=True)
+            _delete_service_status()
         return (
             "crashed_pid_dead",
             "crashed (PID dead, stale service.json cleaned)",

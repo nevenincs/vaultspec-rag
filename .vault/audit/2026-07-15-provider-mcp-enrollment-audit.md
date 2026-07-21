@@ -2949,3 +2949,117 @@ remain and every runtime or later release gate is uncredited.**
 
 This documentation-only closure does not authorize a pull request, approval,
 merge, tag, publication, or release.
+
+## S68 review-finding remediation
+
+S68 accepted all five S67 MEDIUM findings and treated every later independent
+review finding as release-blocking. It changed no MCP enrollment semantics and
+claimed no broad release-gate credit. Its scope was the service fixture,
+transport, discovery, managed-Qdrant identity and teardown boundaries that S67
+proved unsafe.
+
+### S67 findings closed
+
+- `_service_env` snapshots each distinct environment key before its first
+  mutation. Real entry failures after valid mutations, including a duplicate
+  status-directory override, restore every ambient value.
+- Service administration uses one monotonic deadline across the initial
+  request, `/health` token recovery, and authenticated retry. Stage diagnostics
+  retain the failing request and remaining budget.
+- Every `service.json` writer uses one cross-process lock, a unique temporary
+  sibling, and atomic replacement. The daemon publishes warming state and
+  managed-Qdrant identity even when it wins the race against the CLI parent;
+  the late parent preserves the daemon PID and first start timestamp.
+- The real service fixture places online repair, offline transition, spawn,
+  status and Qdrant publication, health readiness, and failed-startup cleanup
+  inside one deadline. It reserves teardown grace inside that envelope so
+  readiness cannot consume the cleanup budget.
+- Managed-Qdrant identity records the child creation-time witness. Ordinary
+  orphan cleanup and forced service teardown revalidate the owner and child
+  incarnations, Qdrant image, process-owned loopback listener, pinned version,
+  managed storage, and ready endpoint before signalling.
+
+### Independent review corrections
+
+The first S68 formal review found seven further defects: attached-mode PID
+authority, incomplete ordinary-orphan witness validation, a renewed reaper
+deadline and unbounded `taskkill`, unbounded status-lock and spawn edges,
+restart identity-publication leakage, an environment regression that failed
+before mutation, and unlocked heartbeat/token/metadata writers. All seven were
+corrected and received focused proof.
+
+The second independent review found three MEDIUM defects:
+
+- Attached Qdrant identity was correct immediately after startup but the first
+  heartbeat wrote the supervisor's null process handle over the witnessed
+  child PID. Heartbeat publication now resolves attached PID, start time, port,
+  version, and storage from the validated identity sidecar. A fresh WSL test
+  proves the identity survives a later heartbeat.
+- Health readiness could consume the whole startup budget and leave zero time
+  for teardown. Startup work now reserves bounded cleanup grace inside the same
+  total envelope. A real Windows readiness-expiry test proves the launcher,
+  daemon, Qdrant child, service listener, and Qdrant listener are absent without
+  a cleanup error before the asserted total bound.
+- Windows termination bounded `taskkill` but not process-start, `tasklist`, or
+  listener inspection. Those inspections now accept the caller's remaining
+  timeout and fail closed. A real warming service and Qdrant regression proves
+  a 0.200-second termination request returns in under 0.700 seconds before
+  witnessed final cleanup.
+
+### Focused evidence
+
+- Windows discovery schema and status-lock contract: 6 passed.
+- Windows model setup and environment restoration: 8 passed.
+- Windows HTTP administration deadlines: 7 passed.
+- Windows managed-Qdrant identity and orphan handling: 24 passed.
+- Windows real readiness-expiry teardown: 1 passed.
+- Windows real subsecond termination and final process/listener cleanup:
+  1 passed.
+- Fresh WSL attached identity through heartbeat: 1 passed.
+- Fresh WSL ordinary-orphan storage, version, and port mismatch rejection:
+  3 passed.
+- Fresh WSL attach, restart-publication failure, forced-stop, and child-witness
+  group: 6 passed before the final attached-heartbeat strengthening.
+- Ruff over `src/vaultspec_rag` and `tools`: passed.
+- BasedPyright over `src/vaultspec_rag`: zero errors, warnings, or notes.
+- Ty over `src/vaultspec_rag`: passed.
+- `git diff --check`: passed apart from Git's informational line-ending notice
+  for the CLI-managed plan document.
+
+The third independent review then found five further actionable gaps:
+
+- A transient unreadable creation time for a live recorded Qdrant owner could
+  be classified as a managed orphan. Owner-witness state is now explicit:
+  unknown ownership refuses attach, reap, and spawn. Ordinary orphan cleanup
+  revalidates immediately before signalling that the recorded owner is dead or
+  replaced. A real live-owner WSL Qdrant regression proves the child and
+  listener remain untouched.
+- A spawn call returning after its work deadline could kill only the Windows
+  launcher before the fixture received a PID. Late-spawn cleanup now discovers
+  the exact daemon through matching status or its unique module-and-port command
+  line, terminates the daemon before the launcher, and uses witnessed service
+  termination to reap Qdrant. Real Windows tests cover the exact pre-assignment
+  timeout branch and a launcher-different-from-daemon process tree with a live
+  Qdrant child.
+- Running-phase status publication could fail after heartbeat, maintenance, and
+  survey tasks started. Every pre-yield failure now runs the full shutdown path:
+  cancel and await tasks, stop watchers, close the registry and loaded models,
+  stop Qdrant, and release the singleton in a `finally` boundary. A real
+  cross-process Windows status-lock failure after all models load proves all
+  processes and listeners are absent, registry and Qdrant shutdown are logged,
+  the singleton is reacquirable, and no later heartbeat appears.
+- Managed-child reaping now passes the one remaining deadline into every
+  process-start witness inspection. A real 0.050-second Windows regression
+  returned in 0.073 seconds.
+- Model-worker timing now starts before `Popen`; process creation consumes the
+  same work budget and termination grace remains inside the total deadline. A
+  real 0.001-second worker regression raises the process-creation diagnostic and
+  leaves no matching process.
+
+The fourth independent formal review remains the final S68 gate. S69 remains
+open for the exact from-zero Windows and POSIX runtime, static, packaging,
+public-Core, installed-provider, idempotence, selective unenrollment,
+uninstall, and release campaign.
+
+S68 does not authorize a pull request, approval, merge, tag, package
+publication, or release.

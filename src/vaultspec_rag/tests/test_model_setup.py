@@ -6,9 +6,11 @@ import contextlib
 import http.server
 import json
 import os
+import sys
 import threading
 import time
-from typing import TYPE_CHECKING
+import uuid
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -17,9 +19,13 @@ from ._model_setup import (
     configured_service_model_ids,
     ensure_model_snapshots,
     models_are_cached,
+    run_bounded_process,
 )
 from .integration._helpers import _service_env
-from .integration.conftest import _verify_offline_service_startup
+from .integration.conftest import (
+    _live_service_context,
+    _verify_offline_service_startup,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -139,14 +145,14 @@ def test_service_env_entry_failure_restores_every_mutation(tmp_path: Path) -> No
     overrides: dict[str, str | None] = {
         EnvVar.HF_HUB_OFFLINE.value: None,
         EnvVar.TRANSFORMERS_OFFLINE.value: None,
-        "INVALID\0ENV": "entry failure",
+        "VAULTSPEC_RAG_INVALID_VALUE": "entry\0failure",
     }
     try:
         with (
             pytest.raises(ValueError),
             _service_env(tmp_path / "service-env", env_overrides=overrides),
         ):
-            pytest.fail("invalid environment key should fail during context entry")
+            pytest.fail("invalid environment value should fail after mutations")
         assert all(os.environ.get(key) == value for key, value in inherited.items())
     finally:
         for key, value in previous.items():
@@ -154,6 +160,31 @@ def test_service_env_entry_failure_restores_every_mutation(tmp_path: Path) -> No
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def test_service_env_duplicate_status_override_restores_original_on_entry_failure(
+    tmp_path: Path,
+) -> None:
+    """A reserved-key override cannot replace the one ambient snapshot."""
+    status_key = EnvVar.STATUS_DIR.value
+    original = os.environ.get(status_key)
+    os.environ[status_key] = "ambient-status-before-duplicate"
+    try:
+        overrides = {
+            status_key: str(tmp_path / "override-status"),
+            "VAULTSPEC_RAG_INVALID_VALUE": "entry\0failure",
+        }
+        with (
+            pytest.raises(ValueError),
+            _service_env(tmp_path / "reserved-status", env_overrides=overrides),
+        ):
+            pytest.fail("invalid environment value should fail after mutations")
+        assert os.environ.get(status_key) == "ambient-status-before-duplicate"
+    finally:
+        if original is None:
+            os.environ.pop(status_key, None)
+        else:
+            os.environ[status_key] = original
 
 
 def test_offline_verification_omits_disabled_reranker_marker(
@@ -207,6 +238,75 @@ def test_persistent_metadata_failure_cannot_hang_model_fixture(
     assert "vaultspec-regression/unavailable-model" in message
     assert endpoint in message
     assert "/api/models/vaultspec-regression/unavailable-model/revision/main" in message
+
+
+def test_worker_process_creation_is_inside_whole_operation_deadline() -> None:
+    """A real worker spawned after work expiry is terminated inside the total bound."""
+    token = f"vaultspec-model-deadline-{uuid.uuid4().hex}"
+    command = [
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        token,
+    ]
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="during process creation"):
+        run_bounded_process(
+            command,
+            timeout_seconds=0.001,
+            operation="deadline regression worker",
+            context=token,
+        )
+    assert time.monotonic() - started < 0.500
+
+    import psutil
+
+    matching = [
+        process.pid
+        for process in psutil.process_iter(["cmdline"])
+        if token
+        in [
+            str(arg)
+            for arg in cast("list[object]", process.info.get("cmdline") or [])
+        ]
+    ]
+    assert matching == []
+
+
+def test_live_service_repair_failure_uses_shared_startup_envelope(
+    tmp_path: Path,
+) -> None:
+    """Real repair timeout retains exact stage, budget, endpoint, and log state."""
+    model_id = "vaultspec-regression/startup-envelope-model"
+    with _gateway_timeout_endpoint(response_delay_seconds=30) as endpoint:
+        started = time.monotonic()
+        with (
+            _service_env(
+                tmp_path / "outer-env",
+                env_overrides={
+                    EnvVar.HF_ENDPOINT.value: endpoint,
+                    EnvVar.HF_HOME.value: str(tmp_path / "hf-cache"),
+                },
+            ),
+            pytest.raises(AssertionError) as caught,
+            _live_service_context(
+                tmp_path / "service",
+                startup_budget=0.700,
+                model_ids=(model_id,),
+            ),
+        ):
+            pytest.fail("real delayed model repair should exhaust startup")
+        elapsed = time.monotonic() - started
+
+    message = str(caught.value)
+    assert elapsed < 1.250
+    assert "stage=model acquisition" in message
+    assert "deadline=0.700s" in message
+    assert "remaining=" in message
+    assert model_id in message
+    assert endpoint in message
+    assert "worker output tail" in message
+    assert "Service output:" in message
 
 
 def _write_incomplete_hf_cache(cache_dir: Path, *, model_id: str) -> None:

@@ -8,6 +8,7 @@ attach verifier is exercised across its gates with constructed inputs.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,7 @@ from ..qdrant_runtime._resolve import (
     QdrantIdentity,
     classify_qdrant_state,
     owner_pid_is_live_owner,
+    owner_pid_witness_state,
     pid_start_time,
     qdrant_identity_path,
     read_qdrant_identity,
@@ -57,6 +59,7 @@ class TestIdentityRoundTrip:
             owner_pid=4242,
             http_port=8765,
             owner_start_time=1234.5,
+            qdrant_start_time=6789.25,
         )
         assert path == temp_storage.parent / "identity.json"
         assert path == qdrant_identity_path()
@@ -68,6 +71,32 @@ class TestIdentityRoundTrip:
         assert ident.owner_pid == 4242
         assert ident.http_port == 8765
         assert ident.owner_start_time == 1234.5
+        assert ident.qdrant_start_time == 6789.25
+
+    def test_legacy_sidecar_without_child_witness_reads_as_unwitnessed(
+        self,
+        temp_storage: Path,
+    ) -> None:
+        qdrant_identity_path().parent.mkdir(parents=True, exist_ok=True)
+        qdrant_identity_path().write_text(
+            json.dumps(
+                {
+                    "storage_path": str(temp_storage),
+                    "version": "1.18.2",
+                    "owner_pid": 4242,
+                    "http_port": 8765,
+                    "qdrant_pid": 4343,
+                    "owner_start_time": 1234.5,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        ident = read_qdrant_identity()
+
+        assert ident is not None
+        assert ident.qdrant_pid == 4343
+        assert ident.qdrant_start_time == 0.0
 
     def test_read_missing_sidecar_is_none(self, temp_storage: Path) -> None:
         assert qdrant_identity_path() == temp_storage.parent / "identity.json"
@@ -77,25 +106,35 @@ class TestIdentityRoundTrip:
 
 class TestVerifyAttachable:
     def _identity(self, storage: str) -> QdrantIdentity:
+        live_start = pid_start_time(os.getpid())
         return QdrantIdentity(
-            storage_path=storage, version="1.18.2", owner_pid=1, http_port=8765
+            storage_path=storage,
+            version="1.18.2",
+            owner_pid=os.getpid(),
+            http_port=8765,
+            qdrant_pid=os.getpid(),
+            owner_start_time=live_start,
+            qdrant_start_time=live_start,
         )
 
-    def test_attachable_when_ready_owned_and_capable(self) -> None:
+    def test_refuse_when_witnessed_child_is_not_qdrant(self) -> None:
         probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
         ok, reason = verify_attachable(
             probe,
             self._identity("/srv/storage"),
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )
-        assert ok is True, reason
+        assert ok is False
+        assert "image" in reason.lower()
 
     def test_refuse_when_not_ready(self) -> None:
         probe = QdrantEndpointProbe(listening=True, ready=False, version="1.18.2")
         ok, reason = verify_attachable(
             probe,
             self._identity("/srv/storage"),
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )
@@ -105,7 +144,11 @@ class TestVerifyAttachable:
     def test_refuse_when_no_identity(self) -> None:
         probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
         ok, reason = verify_attachable(
-            probe, None, expected_version="1.18.2", expected_storage="/srv/storage"
+            probe,
+            None,
+            expected_port=8765,
+            expected_version="1.18.2",
+            expected_storage="/srv/storage",
         )
         assert ok is False
         assert "not ours" in reason or "identity" in reason
@@ -115,6 +158,7 @@ class TestVerifyAttachable:
         ok, reason = verify_attachable(
             probe,
             self._identity("/srv/storage"),
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )
@@ -126,6 +170,7 @@ class TestVerifyAttachable:
         ok, reason = verify_attachable(
             probe,
             self._identity("/srv/other-storage"),
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )
@@ -140,6 +185,7 @@ class TestVerifyAttachable:
         ok, reason = verify_attachable(
             probe,
             self._identity("/srv/storage"),
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )
@@ -186,11 +232,24 @@ class TestOwnerPidReuseWitness:
         identity = self._identity(os.getpid(), live + 10_000.0)
         assert owner_pid_is_live_owner(identity) is False
 
-    def test_legacy_record_without_witness_falls_back_to_pid(self) -> None:
-        # A record predating the witness (owner_start_time 0.0) degrades to the
-        # prior pid-only liveness check for backward compatibility.
+    def test_unreadable_live_owner_is_unverified_not_orphaned(self) -> None:
+        live = pid_start_time(os.getpid())
+        identity = self._identity(os.getpid(), live)
+        probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
+
+        assert owner_pid_witness_state(identity, timeout=0.0) == "unknown"
+        assert (
+            classify_qdrant_state(probe, identity, owner_timeout=0.0)
+            == "owner_unverified"
+        )
+
+    def test_legacy_record_without_witness_is_unverified(self) -> None:
+        """A live PID cannot substitute for a missing incarnation witness."""
         identity = self._identity(os.getpid(), 0.0)
-        assert owner_pid_is_live_owner(identity) is True
+        probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
+        assert owner_pid_is_live_owner(identity) is False
+        assert owner_pid_witness_state(identity) == "unknown"
+        assert classify_qdrant_state(probe, identity) == "owner_unverified"
 
     def test_dead_owner_is_never_the_live_owner(self) -> None:
         identity = self._identity(2_000_000_000, 0.0)
