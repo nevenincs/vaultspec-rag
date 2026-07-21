@@ -82,7 +82,7 @@ Document the generic retention budget and the unified live/offline log workflow 
 
 - [x] `W03.P06.S14` - Document generic managed-log environment variables and aggregate retention semantics; `docs/configuration.md`.
 - [x] `W03.P06.S15` - Document source selection, grouped output, JSON shape, and removal of the raw flag; `docs/cli.md`.
-- [ ] `W03.P06.S16` - Document live and post-crash service plus Qdrant log inspection; `docs/service-mode.md`.
+- [x] `W03.P06.S16` - Document live and post-crash service plus Qdrant log inspection; `docs/service-mode.md`.
 
 ### Phase `W03.P07` - close regression and quality gates
 
