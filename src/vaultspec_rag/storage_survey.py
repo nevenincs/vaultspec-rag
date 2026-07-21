@@ -28,9 +28,46 @@ from dataclasses import dataclass, field
 
 from .storage_manifest import ManifestEntry, classify_root
 
-__all__ = ["NamespaceSurvey", "classify_namespaces"]
+__all__ = ["NamespaceSurvey", "classify_namespaces", "is_temp_rooted"]
 
 _PREFIX_RE = re.compile(r"^(r[0-9a-f]{12}_)")
+
+
+def is_temp_rooted(root: str | None) -> bool:
+    """Return whether a namespace root lives under an OS temp directory.
+
+    A live temp-rooted namespace is the issue-242 leak signature: a test or
+    demo harness indexed a throwaway directory into the shared server backend
+    and never tore it down, and because the directory still exists it
+    classifies ``live`` and survives pruning forever. The flag is report-only
+    operator visibility - it never feeds any destructive path, per the
+    time-confirmed-danglingness rule.
+    """
+    if root is None:
+        return False
+    import os
+    import pathlib
+    import tempfile
+
+    candidates = {tempfile.gettempdir()}
+    for env_name in ("TEMP", "TMP", "TMPDIR"):
+        env_value = os.environ.get(env_name)
+        if env_value:
+            candidates.add(env_value)
+    candidates.update(("/tmp", "/var/tmp"))
+
+    try:
+        root_resolved = pathlib.Path(os.path.normcase(root)).resolve()
+    except OSError:
+        return False
+    for candidate in candidates:
+        try:
+            base = pathlib.Path(os.path.normcase(candidate)).resolve()
+        except OSError:
+            continue
+        if root_resolved == base or root_resolved.is_relative_to(base):
+            return True
+    return False
 
 
 @dataclass(frozen=True)

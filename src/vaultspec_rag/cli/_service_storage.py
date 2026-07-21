@@ -103,6 +103,8 @@ def _require_yes_for_json(command: str, json_mode: bool, yes: bool) -> None:
 def _emit_survey_json(
     surveys: list[NamespaceSurvey], queried_root: dict[str, str] | None = None
 ) -> None:
+    from ..storage_survey import is_temp_rooted
+
     data: dict[str, object] = {
         "namespaces": [
             {
@@ -112,6 +114,7 @@ def _emit_survey_json(
                 "collections": s.collections,
                 "points": s.points,
                 "footprint_bytes": s.footprint_bytes,
+                "temp_rooted": is_temp_rooted(s.root),
             }
             for s in surveys
         ],
@@ -124,6 +127,8 @@ def _emit_survey_json(
 
 
 def _print_survey(surveys: list[NamespaceSurvey]) -> None:
+    from ..storage_survey import is_temp_rooted
+
     if not surveys:
         typer.echo("No matching namespaces.")
         return
@@ -131,17 +136,28 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         status: sum(1 for s in surveys if s.status == status)
         for status in ("orphaned", "unknown", "unverifiable", "live")
     }
+    temp_count = sum(1 for s in surveys if is_temp_rooted(s.root))
     total = _human_size(sum(s.footprint_bytes for s in surveys))
-    typer.echo(
+    summary = (
         f"{len(surveys)} namespaces  (orphaned={counts['orphaned']} "
         f"unknown={counts['unknown']} unverifiable={counts['unverifiable']} "
         f"live={counts['live']})  {total} on disk"
     )
+    if temp_count:
+        summary += f"  [{temp_count} temp-rooted]"
+    typer.echo(summary)
     for s in surveys:
         root = s.root if s.root is not None else "(unattributable)"
+        marker = "  [temp]" if is_temp_rooted(s.root) else ""
         typer.echo(
             f"  {s.status:<8} {s.prefix}  {s.points:>8} pts  "
-            f"{_human_size(s.footprint_bytes):>9}  {root}"
+            f"{_human_size(s.footprint_bytes):>9}  {root}{marker}"
+        )
+    if temp_count:
+        typer.echo(
+            "Temp-rooted namespaces are usually leaked test/demo harness "
+            "indexes; reclaim with: vaultspec-rag server storage delete "
+            "--root <dir> --yes"
         )
 
 
