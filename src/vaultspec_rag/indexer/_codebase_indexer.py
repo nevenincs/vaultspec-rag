@@ -67,6 +67,10 @@ logger = logging.getLogger(__name__)
 # indexer's writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
 
+#: Conservative chunks-per-file factor for the pre-pool disk pre-flight;
+#: the issue-242 incident tree measured ~12 chunks per source file.
+_CHUNKS_PER_FILE_ESTIMATE = 12
+
 
 class _ScanInputs(NamedTuple):
     """Ignore specs and preprocess config resolved in one pass.
@@ -896,6 +900,13 @@ class CodebaseIndexer:
                 paths, meta, encode_batch_size, flush_slices, reporter, total, new_ids
             )
             advanced += adv_inc
+
+        # Chunk counts are unknown before the pool runs, so the pre-flight
+        # estimates points from the file count with a conservative
+        # chunks-per-file factor (the issue-242 incident tree averaged ~12);
+        # the per-write floor check in the store still guards mid-run
+        # exhaustion exactly.
+        self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
 
         reporter.phase_start("chunk + embed", len(paths))
         try:
