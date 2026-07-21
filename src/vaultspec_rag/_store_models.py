@@ -39,7 +39,11 @@ def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
     path. The hash input is case-normalised (Windows paths are
     case-insensitive) and resolved (``./project`` and ``project``
     collide deliberately) so the same root always lands in the same
-    collections across processes and sessions.
+    collections across processes and sessions. Windows extended-length
+    prefixes (``\\\\?\\`` and ``\\\\?\\UNC\\``) are stripped before
+    resolution: ``Path.resolve()`` does not reliably collapse them, so
+    without the strip an aliased spelling of an already-registered root
+    mints a duplicate namespace for the same project (issue #242).
 
     Args:
         root_dir: Workspace root directory.
@@ -50,7 +54,12 @@ def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
     import os
     import pathlib as _pathlib
 
-    resolved = os.path.normcase(str(_pathlib.Path(root_dir).resolve()))
+    raw = str(root_dir)
+    if raw.startswith("\\\\?\\UNC\\"):
+        raw = "\\\\" + raw[8:]
+    elif raw.startswith("\\\\?\\"):
+        raw = raw[4:]
+    resolved = os.path.normcase(str(_pathlib.Path(raw).resolve()))
     digest = hashlib.blake2b(resolved.encode("utf-8"), digest_size=6).hexdigest()
     return f"r{digest}_"
 

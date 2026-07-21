@@ -119,6 +119,30 @@ uv run vaultspec-rag server storage delete --root C:\Temp\my-throwaway-root --ye
 
 The path is resolved and hashed exactly as indexing does, so it removes precisely the namespace that root's indexing created. Deletion is idempotent: an already-absent namespace reports `already_absent` and exits `0`, so a teardown hook can run unconditionally. A harness that instead simply deletes its temp roots is also fine - the automatic reclamation above removes the leftover namespaces once their grace window passes.
 
+### Harnesses must isolate or tear down
+
+A test, demo, or acceptance harness that indexes a throwaway root against the
+resident service mints a real namespace in the shared backend - often gigabytes
+once fully indexed - and as long as the temp directory still exists it
+classifies `live` and survives every prune. Left alone, leaked harness
+namespaces can exhaust the disk (the issue-242 incident: 36 temp-rooted
+namespaces, ~74 GB). Every harness must do one of these, in order of
+preference:
+
+1. **Isolate**: point `VAULTSPEC_RAG_STATUS_DIR` and
+   `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` at harness-owned temp paths so its
+   indexing never reaches the shared backend at all.
+2. **Tear down**: run `vaultspec-rag server storage delete --root <dir> --yes`
+   unconditionally in the harness's cleanup (idempotent, exits `0` when
+   already absent).
+3. **Delete the root and wait**: removing the temp directory itself lets the
+   scheduled reclamation collect the namespace after its grace window.
+
+`server storage survey` marks suspect entries: any namespace whose root lives
+under an OS temp directory is flagged `temp_rooted` in `--json` and `[temp]`
+in the human table, so leaked harness indexes are visible before they become a
+disk incident.
+
 Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
 
 ## Observe maintenance

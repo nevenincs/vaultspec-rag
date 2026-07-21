@@ -91,6 +91,7 @@ def _shape_survey_payload(
     """
     import pathlib
 
+    from ..storage_survey import is_temp_rooted
     from ..store import root_collection_prefix
 
     if status_filter:
@@ -114,6 +115,7 @@ def _shape_survey_payload(
                 "collections": s.collections,
                 "points": s.points,
                 "footprint_bytes": s.footprint_bytes,
+                "temp_rooted": is_temp_rooted(s.root),
             }
             for s in bounded
         ],
