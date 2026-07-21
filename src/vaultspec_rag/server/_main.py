@@ -138,8 +138,8 @@ def main(port: int | None = None) -> None:
         cfg = get_config()
         install_daemon_log_rotation(
             _m._resolve_log_path(),
-            max_bytes=int(cfg.service_log_max_bytes),
-            backup_count=int(cfg.service_log_backup_count),
+            max_bytes=int(cfg.managed_log_max_bytes),
+            backup_count=int(cfg.managed_log_backup_count),
         )
 
         from ..jobs import register_on_job_complete
