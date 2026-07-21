@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from .._job_errors import STALL_THRESHOLD_SECONDS
 from . import _jobs
 
 __all__ = [
@@ -116,6 +117,28 @@ def _job_last_progress_age_seconds(
     return max(0.0, now - float(last_updated))
 
 
+def _job_is_waiting(record: dict[str, object]) -> bool:
+    progress = record.get("progress")
+    return (
+        isinstance(progress, dict)
+        and cast("dict[str, object]", progress).get("step") == "queued"
+    )
+
+
+def _job_stalled(record: dict[str, object], now: float) -> bool:
+    """Service-domain stall signal (#242): running, working, no progress.
+
+    A running, non-waiting job whose last progress update is older than
+    :data:`STALL_THRESHOLD_SECONDS` is flagged so every adapter (CLI,
+    MCP, HTTP consumers) sees the same "something is wrong" signal the
+    human jobs feed used to compute locally.
+    """
+    if record.get("phase") != "running" or _job_is_waiting(record):
+        return False
+    age = _job_last_progress_age_seconds(record, now)
+    return age is not None and age >= STALL_THRESHOLD_SECONDS
+
+
 def _job_with_liveness(
     record: dict[str, object],
     *,
@@ -124,6 +147,7 @@ def _job_with_liveness(
     enriched = dict(record)
     enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
     enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
+    enriched["stalled"] = _job_stalled(record, now)
     resources = record.get("resources")
     if isinstance(resources, dict):
         resources_map = cast("dict[str, object]", resources)
@@ -195,14 +219,25 @@ def _job_nested_values(raw: object) -> list[str]:
     return [str(value) for value in raw_map.values() if value is not None]
 
 
-def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
+def _job_summary(
+    records: list[dict[str, object]],
+    *,
+    now: float,
+) -> dict[str, object]:
     phases: dict[str, int] = {}
     sources: dict[str, int] = {}
     triggers: dict[str, int] = {}
     initiators: dict[str, int] = {}
     active_initiators: dict[str, int] = {}
     users: dict[str, int] = {}
+    stalled = 0
+    error_kinds: dict[str, int] = {}
     for record in records:
+        if _job_stalled(record, now):
+            stalled += 1
+        kind = record.get("error_kind")
+        if isinstance(kind, str) and kind:
+            error_kinds[kind] = error_kinds.get(kind, 0) + 1
         phase = str(record.get("phase", "unknown"))
         source = str(record.get("source", "unknown"))
         trigger = str(record.get("trigger", "unknown"))
@@ -227,6 +262,8 @@ def _job_summary(records: list[dict[str, object]]) -> dict[str, object]:
         "active_initiators": active_initiators,
         "users": users,
         "running": phases.get("running", 0),
+        "stalled": stalled,
+        "error_kinds": error_kinds,
     }
 
 
