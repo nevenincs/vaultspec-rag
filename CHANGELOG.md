@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.2...vaultspec-rag-v0.3.3) (2026-07-21)
+
+
+### Features
+
+* fail-loud index observability, ephemeral namespace TTL, debris reclaim, and test-run isolation ([#242](https://github.com/nevenincs/vaultspec-rag/issues/242)) ([#248](https://github.com/nevenincs/vaultspec-rag/issues/248)) ([cdd61fe](https://github.com/nevenincs/vaultspec-rag/commit/cdd61fe69100896ddf1b31f56e327d8fdfd778b9))
+* integrate provider-mcp-enrollment (Core-managed provider lifecycle, Codex-native TOML) ([#250](https://github.com/nevenincs/vaultspec-rag/issues/250)) ([3d51e4d](https://github.com/nevenincs/vaultspec-rag/commit/3d51e4d9a143989a5306ffc861d39aa849358d04))
+* **preprocess:** opt-in batch manifest hook invocation (~100x first-index hook speedup) ([#247](https://github.com/nevenincs/vaultspec-rag/issues/247)) ([3fa6f24](https://github.com/nevenincs/vaultspec-rag/commit/3fa6f24b97028d17dba43499f67f5b4e0be8a7fb))
+
+
+### Bug Fixes
+
+* **cli:** honest start outcomes during warm-up and visible cold-start progress ([#238](https://github.com/nevenincs/vaultspec-rag/issues/238)) ([45cb3f1](https://github.com/nevenincs/vaultspec-rag/commit/45cb3f1e9b3c17bc609a8a5e0bf2471b2eb27db3)), closes [#237](https://github.com/nevenincs/vaultspec-rag/issues/237)
+* **indexer,store:** bounded write retry, disk headroom guards, server request timeout ([#246](https://github.com/nevenincs/vaultspec-rag/issues/246)) ([96b6204](https://github.com/nevenincs/vaultspec-rag/commit/96b62046d810ddbaf2b0c49d5ada27a9b1ff8058))
+* **install:** clean-worktree invariant for runtime artifacts, sentinel cleanup on uninstall ([#243](https://github.com/nevenincs/vaultspec-rag/issues/243)) ([06571ac](https://github.com/nevenincs/vaultspec-rag/commit/06571acf2882a145a9e07e20b856877e89060dd3)), closes [#236](https://github.com/nevenincs/vaultspec-rag/issues/236)
+* **storage:** normalize extended-length root aliases, flag temp-rooted namespaces, harness teardown guidance ([#245](https://github.com/nevenincs/vaultspec-rag/issues/245)) ([276312e](https://github.com/nevenincs/vaultspec-rag/commit/276312e7a01142b07ecb8f3899a43fad4ae00d99))
+
 ## [0.3.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.1...vaultspec-rag-v0.3.2) (2026-07-17)
 
 
