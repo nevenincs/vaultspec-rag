@@ -757,14 +757,13 @@ class TestDiskPreflightRefusal:
         # envelope; strip control characters and anchor on the
         # envelope's own opening tokens, which are always last.
         cleaned = "".join(ch for ch in result.output if ch >= " ")
-        decoded, _ = json.JSONDecoder().raw_decode(
-            cleaned, cleaned.rindex('{"ok"')
-        )
+        decoded, _ = json.JSONDecoder().raw_decode(cleaned, cleaned.rindex('{"ok"'))
         payload = typing.cast("dict[str, object]", decoded)
         assert payload["ok"] is False
         assert payload["error"] == "disk_preflight_failed"
-        assert "disk space" in payload["message"]
-        assert any("storage survey" in r for r in payload["remediation"])
+        assert "disk space" in str(payload["message"])
+        remediation = typing.cast("list[str]", payload["remediation"])
+        assert any("storage survey" in r for r in remediation)
 
     def test_human_mode_prints_the_refusal(
         self,
