@@ -56,7 +56,7 @@ Define configuration, typed safety outcomes, and one reusable RSS and CUDA budge
 
 - [ ] `W01.P01.S01` - Add explicit queue, no-progress, retry-circuit, RSS, CUDA, and support-profile configuration with environment mappings; `src/vaultspec_rag/config.py`.
 - [x] `W01.P01.S02` - Define typed no-progress, memory-ceiling, circuit-open, and admission outcomes with shared remediation; `src/vaultspec_rag/_job_errors.py`.
-- [ ] `W01.P01.S03` - Upgrade memory observation into an enforceable RSS and CUDA budget sampled outside gpu_lock; `src/vaultspec_rag/memory_probe.py`.
+- [x] `W01.P01.S03` - Upgrade memory observation into an enforceable RSS and CUDA budget sampled outside gpu_lock; `src/vaultspec_rag/memory_probe.py`.
 - [ ] `W01.P01.S05` - Verify production configuration and deliberately low resource budgets through imported behavior; `src/vaultspec_rag/tests/test_config.py`.
 
 ### Phase `W01.P02` - bounded vector lifetime
