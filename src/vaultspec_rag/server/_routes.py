@@ -24,6 +24,7 @@ import hmac
 import logging
 import time
 import uuid
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -33,7 +34,11 @@ from starlette.routing import Route
 import vaultspec_rag.server as _m
 
 from ..concurrency import get_search_limiter
-from ..logging_config import log_event, read_service_log
+from ..logging_config import (
+    InvalidManagedLogSourceError,
+    log_event,
+    read_managed_logs,
+)
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
 from . import _jobs
@@ -50,8 +55,11 @@ from ._routes_jobs import (
 from ._routes_logs import (
     _MAX_LOG_LINES,
     _clamp_lines,
-    _filter_log_lines,
+    _filter_log_groups,
     _log_filters_from_request,
+    _managed_log_payload,
+    _render_plain_log_groups,
+    _tail_log_groups,
 )
 from ._routes_storage import (
     _clamp_survey_limit,
@@ -160,11 +168,10 @@ def require_token(request: Request) -> JSONResponse | None:
 
 
 async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
-    """Token-gated read-only ``GET /logs`` returning recent log text.
+    """Token-gated read-only ``GET /logs`` returning grouped log text.
 
-    Returns the last ``?lines=N`` (default 200, clamped to 5000) lines
-    of the rotated service log as ``text/plain``, newest last - parity
-    with the ``get_logs`` MCP tool.
+    Returns bounded service, Qdrant, or all-source sections selected by
+    ``?source=``. ``all`` is grouped and never presented as a global timeline.
 
     Args:
         request: The incoming Starlette request.
@@ -176,15 +183,45 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    result = await _managed_logs_for_request(request)
+    if isinstance(result, JSONResponse):
+        return result
+    groups = cast("list[Any]", result["groups"])
+    return PlainTextResponse(_render_plain_log_groups(groups))
+
+
+async def _managed_logs_for_request(
+    request: Request,
+) -> dict[str, object] | JSONResponse:
+    """Read, filter, and shape one bounded managed-log request."""
     lines = _clamp_lines(request.query_params.get("lines"))
+    source = request.query_params.get("source", "all")
     filters = _log_filters_from_request(request)
     read_limit = _MAX_LOG_LINES if filters else lines
-    # Rotated-set log reads can span megabytes; keep them off the loop.
-    body_lines = await _run_in_thread(read_service_log, read_limit)
+    try:
+        # Sparse rotated reads can cross several files; keep filesystem work
+        # off the event loop while preserving the production reader contract.
+        groups = await _run_in_thread(
+            partial(read_managed_logs, read_limit, source=source)
+        )
+    except InvalidManagedLogSourceError as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "invalid_log_source",
+                "message": str(exc),
+            },
+            status_code=400,
+        )
     if filters:
-        body_lines = _filter_log_lines(body_lines, **filters)
-        body_lines = body_lines[-lines:]
-    return PlainTextResponse("\n".join(body_lines))
+        groups = _filter_log_groups(groups, **filters)
+    groups = _tail_log_groups(groups, lines)
+    return _managed_log_payload(
+        source=source,
+        limit=lines,
+        groups=groups,
+        filters=filters,
+    )
 
 
 def _search_index_state(
@@ -909,15 +946,10 @@ async def logs_json_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    lines = _clamp_lines(request.query_params.get("lines"))
-    filters = _log_filters_from_request(request)
-    read_limit = _MAX_LOG_LINES if filters else lines
-    # Rotated-set log reads can span megabytes; keep them off the loop.
-    body = await _run_in_thread(read_service_log, read_limit)
-    if filters:
-        body = _filter_log_lines(body, **filters)
-        body = body[-lines:]
-    return JSONResponse({"lines": body, "total": len(body), "filters": filters})
+    result = await _managed_logs_for_request(request)
+    if isinstance(result, JSONResponse):
+        return result
+    return JSONResponse(result)
 
 
 async def vault_document_route(request: Request) -> JSONResponse:
