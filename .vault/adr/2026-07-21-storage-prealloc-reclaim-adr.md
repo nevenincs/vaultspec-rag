@@ -116,20 +116,47 @@ collections receive.
 
 ## Implementation
 
-**D1 - Geometry drift is a first-class survey property.** The storage domain
-gains a drift predicate that compares a live collection's optimizer segment
-target against the configured target. Collections whose target differs are
-reported as drifted, with their current segment count and on-disk footprint.
-Drift is visible in the survey and its rollup before any reconcile runs, so an
-operator can see the pending reclamation without authorising it.
+**D1 - Geometry drift is readable without authorising a change.** The storage
+domain gains a drift predicate that compares a live collection's optimizer
+segment target against the configured target. Collections whose target differs
+are reported as drifted, with their current segment count and on-disk
+footprint. Drift is exposed two ways before any mutation: the reconcile verb's
+preview, which mutates nothing, and the drifted gauge, which the maintenance
+cycle publishes every tick. Drift is deliberately NOT added to the namespace
+survey - the survey is namespace-scoped and cached for sub-second operator
+reads, while geometry is per-collection and costs a `get_collection` per
+entry; pushing it there would either double the survey's cost or serve stale
+geometry from the snapshot cache.
+
+Reconcile reads and mutates only canonically-prefixed namespaces this project
+owns, the same guard every destructive verb applies. A shared Qdrant instance
+may hold collections belonging to other applications, and triggering a
+multi-gigabyte background merge on them is not ours to do.
 
 **D2 - Reconcile is an optimizer configuration update plus a bounded
 convergence wait.** Reconciling one collection issues an optimizer
-configuration update setting the segment target, then waits for convergence:
-segment count and on-disk directory size both stable across consecutive
-samples while the collection reports a settled optimizer status. Because
-restructuring transiently inflates both quantities (research F8), stability -
-not a first reading, and not a monotonic decrease - is the convergence signal.
+configuration update setting the segment target, then waits for convergence.
+Because restructuring transiently inflates both segment count and size
+(research F8), stability - not a first reading, and not a monotonic decrease -
+is the convergence signal.
+
+Stability alone is insufficient, and this is the sharpest edge in the design.
+A merge queued behind a saturated optimizer thread pool has not started, so
+its segment count and size are also perfectly stable; measuring it would
+publish an untouched footprint as a converged reclamation. The busy signal is
+the collection status (green / yellow / grey / red), NOT the optimizer status,
+which is an ok-or-error field with no busy state at all and would therefore
+read settled on every healthy sample. The wait is consequently two-phase:
+observe the collection leave green, then wait for it to return to green and
+hold steady. A collection that never leaves green within a short start window
+had no work to do, and its unchanged measurement is a truthful zero-reclaim
+result.
+
+Because a merge inflates before it shrinks, each reconcile pre-flights free
+space against the collection's own footprint and is skipped rather than
+started when the volume lacks headroom - these backends are reconciled
+precisely because they are full, and pushing one into ENOSPC mid-optimize is
+the wedge class the bounded-write work already hardened against.
 
 The wait is bounded by a configurable budget. Convergence within budget yields
 a reconciled outcome carrying before and after footprint and the reclaimed
@@ -157,10 +184,16 @@ the converging set rather than blocking. A backend with no drift is a success
 reporting nothing to do.
 
 **D5 - Observability.** Reconcile emits counters for collections reconciled and
-bytes reclaimed, and a gauge for collections still drifted, alongside the
+bytes reclaimed, and a gauge for collections not yet converged, alongside the
 existing maintenance metrics. Log lines record per-collection before and after
-footprints on completion only. The drifted-collection gauge reaching zero is
-the operator-visible signal that the backend has converged.
+footprints on completion only.
+
+The gauge counts both collections whose setting is still off-target and
+collections already at target that are still merging. Setting-drift alone
+would be a lie: the configuration update lands before the merge does, so a
+gauge keyed on it would read zero while gigabytes were still in flight. With
+the unsettled term included, the gauge reaching zero genuinely means the
+backend has converged.
 
 **Config knobs** (existing naming conventions): reconcile enable, per-cycle
 collection cap, and convergence wait budget.
@@ -200,8 +233,12 @@ exactly the recreation this decision rejects.
   survey property rather than an effect discovered afterwards.
 - The first cycles after upgrade do sustained optimizer work, consuming CPU and
   disk bandwidth. The per-cycle cap bounds this; it does not eliminate it.
-- Collections that do not settle within budget stay drifted and are retried,
-  so a slow or busy backend converges later rather than failing.
+- Collections that do not settle within budget keep converging on their own -
+  the setting has already landed, so no retry is needed to finish the merge.
+  They continue to count toward the not-yet-converged gauge until they settle,
+  but the bytes they eventually reclaim are not attributed to any cycle, so
+  the reclaimed-bytes counter under-reports on a backend that regularly
+  exceeds its convergence budget.
 - Reconciled collections keep a 32 MiB write-ahead log where new collections
   take 16 MiB, leaving a small permanent asymmetry between reconciled and
   freshly created collections.

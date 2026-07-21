@@ -268,6 +268,89 @@ class TestReconcileRendering:
         assert entry["bytes_after"] is None
         assert entry["reclaimed_bytes"] == 0
 
+    def test_preview_is_never_reported_as_applied(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A broker keys on `status`; a preview changed nothing."""
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "would_reconcile",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=True,
+            ),
+            json_mode=True,
+        )
+
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["status"] == "preview"
+        assert data["dry_run"] is True
+
+    def test_unwaited_pass_reports_issued_not_applied(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Nothing converged, so nothing was reclaimed to claim."""
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "converging",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                        reason="not_awaited",
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=False,
+            ),
+            json_mode=True,
+        )
+
+        assert json.loads(capsys.readouterr().out)["data"]["status"] == "issued"
+
+    def test_human_mode_does_not_claim_reconciled_when_nothing_converged(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "converging",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                        reason="not_awaited",
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=False,
+            ),
+            json_mode=False,
+        )
+
+        out = capsys.readouterr().out
+        assert "Reconciled 1 collections" not in out
+        assert "Started reconcile on" in out
+
     def test_human_mode_states_a_converged_backend_plainly(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
