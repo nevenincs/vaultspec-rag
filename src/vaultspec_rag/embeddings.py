@@ -602,8 +602,9 @@ class EmbeddingModel:
         texts: list[str],
         *,
         batch_size: int | None = None,
+        gpu_lock: threading.Lock | None = None,
     ) -> list[SparseResult]:
-        """Encode document texts as SPLADE sparse vectors on GPU.
+        """Encode documents in bounded SPLADE batches with forward-only locking.
 
         Args:
             texts: List of document texts.
@@ -612,6 +613,9 @@ class EmbeddingModel:
                 (config ``embedding_encode_batch_size``) so the
                 sparse path mirrors the dense path's length-uniform
                 sub-batching strategy.
+            gpu_lock: Optional process-wide GPU lock. Each bounded model
+                forward holds it independently; device-to-host transfer,
+                sparse conversion, and result mapping run after release.
 
         Returns:
             List of SparseResult objects with .indices and .values.
@@ -624,18 +628,68 @@ class EmbeddingModel:
 
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}")
 
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
 
         while True:
+            results: list[SparseResult] = []
             try:
-                sparse_tensor = self._sparse_model.encode_document(
-                    truncated,
-                    batch_size=batch_size,
-                )
-                return _sparse_tensor_to_results(sparse_tensor)
+                for start in range(0, len(truncated), batch_size):
+                    texts_batch = truncated[start : start + batch_size]
+                    accelerator_tensor = None
+                    cpu_tensor = None
+                    cpu_sparse_tensor = None
+                    try:
+                        if gpu_lock is None:
+                            accelerator_tensor = cast(
+                                "torch.Tensor",
+                                self._sparse_model.encode_document(
+                                    texts_batch,
+                                    batch_size=batch_size,
+                                    show_progress_bar=False,
+                                    convert_to_tensor=True,
+                                    convert_to_sparse_tensor=False,
+                                    save_to_cpu=False,
+                                ),
+                            )
+                        else:
+                            with gpu_lock:
+                                accelerator_tensor = cast(
+                                    "torch.Tensor",
+                                    self._sparse_model.encode_document(
+                                        texts_batch,
+                                        batch_size=batch_size,
+                                        show_progress_bar=False,
+                                        convert_to_tensor=True,
+                                        convert_to_sparse_tensor=False,
+                                        save_to_cpu=False,
+                                    ),
+                                )
+
+                        # Sentence Transformers 5.6.0 otherwise performs this
+                        # transfer inside encode when save_to_cpu=True. Keep
+                        # the returned dense tensor GPU-resident only until the
+                        # forward lock is released, then immediately transfer
+                        # and drop the accelerator reference before CPU sparse
+                        # conversion and Python result mapping.
+                        cpu_tensor = accelerator_tensor.cpu()
+                        del accelerator_tensor
+                        accelerator_tensor = None
+                        cpu_sparse_tensor = cpu_tensor.to_sparse().coalesce()
+                        del cpu_tensor
+                        cpu_tensor = None
+                        results.extend(_sparse_tensor_to_results(cpu_sparse_tensor))
+                    finally:
+                        del accelerator_tensor
+                        del cpu_tensor
+                        del cpu_sparse_tensor
+                        del texts_batch
+                return results
             except torch.cuda.OutOfMemoryError:
+                del results
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
                     raise

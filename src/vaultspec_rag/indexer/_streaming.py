@@ -119,15 +119,19 @@ def _stream_encode_and_upsert_vault(
                 # mid-encode interrupt cannot leave a stale reserved
                 # pool wedged in the allocator (#68 audit F6.9).
                 try:
-                    # Hold the GPU lock only across the encode call so
-                    # that the I/O-bound upsert below runs without
-                    # blocking concurrent searches on the same GPU.
+                    # Dense and sparse forwards get independent lock spans.
+                    # Sparse document encoding manages its lock per bounded
+                    # inner batch so transfer and result conversion happen
+                    # outside it; the I/O-bound upsert stays unlocked too.
                     with gpu_lock if gpu_lock is not None else nullcontext():
                         dense = model.encode_documents(slice_texts)
-                        if sparse_enabled:
-                            sparse = model.encode_documents_sparse(slice_texts)
-                        else:
-                            sparse = [None] * len(slice_texts)
+                    if sparse_enabled:
+                        sparse = model.encode_documents_sparse(
+                            slice_texts,
+                            gpu_lock=gpu_lock,
+                        )
+                    else:
+                        sparse = [None] * len(slice_texts)
                     probe.checkpoint(f"slice-{i}-after-encode")
                     for chunk, vec, svec in zip(
                         slice_chunks, dense, sparse, strict=True
@@ -192,8 +196,9 @@ def encode_and_upsert_code_slice(
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
-    The GPU lock is held only across the encode calls so the I/O-bound upsert
-    does not block concurrent searches on the same device. When
+    Dense and sparse forwards use separate GPU-lock spans, and sparse transfer
+    and conversion run outside the lock, so the I/O-bound upsert does not block
+    concurrent searches on the same device. When
     ``release_cache`` is True the CUDA caching pool is returned to the driver
     on every exit path (#68 audit F6.9); the chunk-to-embed pipeline passes
     False on most slices and flushes periodically instead (#155 P03).
@@ -222,13 +227,14 @@ def encode_and_upsert_code_slice(
     try:
         with gpu_lock if gpu_lock is not None else nullcontext():
             dense = model.encode_documents(slice_texts, batch_size=encode_batch_size)
-            if cfg.sparse_enabled:
-                sparse = model.encode_documents_sparse(
-                    slice_texts,
-                    batch_size=encode_batch_size,
-                )
-            else:
-                sparse = [None] * len(slice_texts)
+        if cfg.sparse_enabled:
+            sparse = model.encode_documents_sparse(
+                slice_texts,
+                batch_size=encode_batch_size,
+                gpu_lock=gpu_lock,
+            )
+        else:
+            sparse = [None] * len(slice_texts)
         for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
             chunk.vector = vec.tolist()
             if svec is not None:
