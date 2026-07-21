@@ -15,6 +15,8 @@ import threading
 import time
 import uuid
 from collections import deque
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -32,7 +34,25 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_RECORDS",
+    "DesiredJobState",
+    "JobAttempt",
+    "JobCapabilities",
+    "JobInitiator",
+    "JobMode",
+    "JobOperation",
+    "JobOutcome",
+    "JobOutcomeStatus",
+    "JobProgress",
     "JobProgressReporter",
+    "JobResourceSnapshot",
+    "JobRuntimeSnapshot",
+    "JobSnapshot",
+    "JobSource",
+    "JobSpec",
+    "JobState",
+    "JobTimestamps",
+    "ProcessResourceSnapshot",
+    "ResumeStrategy",
     "record_finish",
     "record_progress",
     "record_start",
@@ -44,6 +64,320 @@ __all__ = [
     "start_reindex_codebase",
     "start_reindex_vault",
 ]
+
+
+class JobOperation(StrEnum):
+    """Stable service-domain operation vocabulary."""
+
+    INDEX = "index"
+    MAINTENANCE = "maintenance"
+
+
+class JobSource(StrEnum):
+    """Corpus or service resource acted on by a job."""
+
+    VAULT = "vault"
+    CODE = "code"
+    MAINTENANCE = "maintenance"
+
+
+class JobMode(StrEnum):
+    """Requested indexing convergence mode."""
+
+    INCREMENTAL = "incremental"
+    REBUILD = "rebuild"
+
+
+class JobState(StrEnum):
+    """Canonical observed lifecycle state."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    PAUSING = "pausing"
+    PAUSED = "paused"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+    @property
+    def is_terminal(self) -> bool:
+        """Return whether no transition may rewrite this job resource."""
+        return self in {
+            JobState.CANCELLED,
+            JobState.SUCCEEDED,
+            JobState.FAILED,
+            JobState.INTERRUPTED,
+        }
+
+
+class DesiredJobState(StrEnum):
+    """Canonical operator intent, distinct from observed state."""
+
+    RUNNING = "running"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
+
+
+class ResumeStrategy(StrEnum):
+    """How a later attempt continues paused logical work."""
+
+    RECONCILE = "reconcile"
+
+
+class JobOutcomeStatus(StrEnum):
+    """Stable disposition for service-domain command outcomes."""
+
+    ACCEPTED = "accepted"
+    OK = "ok"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class JobSpec:
+    """Immutable instructions for one logical job resource."""
+
+    operation: JobOperation
+    source: JobSource
+    project_root: str | None
+    mode: JobMode | None
+
+
+@dataclass(frozen=True, slots=True)
+class JobInitiator:
+    """Immutable attribution retained across execution attempts."""
+
+    kind: str
+    command: str
+    project_root: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class JobCapabilities:
+    """Actions currently supported for an exact job resource."""
+
+    pausable: bool
+    resumable: bool
+    cancellable: bool
+    retryable: bool
+    deletable: bool
+    force_killable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class JobAttempt:
+    """Attempt and retry lineage for one logical job resource."""
+
+    number: int
+    parent_job_id: str | None = None
+    resumed_from_attempt: int | None = None
+    resume_strategy: ResumeStrategy | None = None
+
+    def __post_init__(self) -> None:
+        if self.number < 1:
+            raise ValueError("job attempt number must be at least 1")
+        if self.resumed_from_attempt is not None and self.resumed_from_attempt < 1:
+            raise ValueError("resumed attempt number must be at least 1")
+
+
+@dataclass(frozen=True, slots=True)
+class JobTimestamps:
+    """Lifecycle clocks carried by every canonical snapshot."""
+
+    created_at: float
+    state_changed_at: float
+    started_at: float | None = None
+    finished_at: float | None = None
+    control_requested_at: float | None = None
+    control_acknowledged_at: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class JobProgress:
+    """Immutable view of the canonical progress stream."""
+
+    step: str
+    completed: int
+    total: int | None
+    last_updated: float
+
+
+@dataclass(frozen=True, slots=True)
+class JobRuntimeSnapshot:
+    """Process identity and live execution ownership for one snapshot."""
+
+    pid: int
+    parent_pid: int
+    user: str
+    executable: str
+    prefix: str
+    base_prefix: str
+    virtual_env: str | None
+    task_active: bool = False
+    worker_active: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessResourceSnapshot:
+    """Best-effort process memory readings at one lifecycle boundary."""
+
+    rss_mb: float
+    cuda_allocated_mb: float
+    cuda_reserved_mb: float
+
+
+@dataclass(frozen=True, slots=True)
+class JobResourceSnapshot:
+    """Execution-resource ownership and boundary memory readings."""
+
+    started: ProcessResourceSnapshot | None
+    finished: ProcessResourceSnapshot | None
+    index_capacity_held: bool = False
+    project_lease_held: bool = False
+    writer_lock_held: bool = False
+    pipeline_active: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class JobSnapshot:
+    """Immutable exact-ID view of one canonical job resource."""
+
+    id: str
+    revision: int
+    spec: JobSpec
+    state: JobState
+    desired_state: DesiredJobState
+    capabilities: JobCapabilities
+    attempt: JobAttempt
+    timestamps: JobTimestamps
+    progress: JobProgress | None
+    result: str | None
+    error_kind: str | None
+    initiator: JobInitiator
+    runtime: JobRuntimeSnapshot
+    resources: JobResourceSnapshot
+
+    def __post_init__(self) -> None:
+        if self.revision < 1:
+            raise ValueError("job revision must be at least 1")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the stable JSON-ready resource representation."""
+        return {
+            "id": self.id,
+            "revision": self.revision,
+            "spec": {
+                "operation": self.spec.operation.value,
+                "source": self.spec.source.value,
+                "project_root": self.spec.project_root,
+                "mode": self.spec.mode.value if self.spec.mode is not None else None,
+            },
+            "state": self.state.value,
+            "desired_state": self.desired_state.value,
+            "capabilities": {
+                "pausable": self.capabilities.pausable,
+                "resumable": self.capabilities.resumable,
+                "cancellable": self.capabilities.cancellable,
+                "retryable": self.capabilities.retryable,
+                "deletable": self.capabilities.deletable,
+                "force_killable": self.capabilities.force_killable,
+            },
+            "attempt": self.attempt.number,
+            "parent_job_id": self.attempt.parent_job_id,
+            "resumed_from_attempt": self.attempt.resumed_from_attempt,
+            "resume_strategy": (
+                self.attempt.resume_strategy.value
+                if self.attempt.resume_strategy is not None
+                else None
+            ),
+            "created_at": self.timestamps.created_at,
+            "state_changed_at": self.timestamps.state_changed_at,
+            "started_at": self.timestamps.started_at,
+            "finished_at": self.timestamps.finished_at,
+            "control_requested_at": self.timestamps.control_requested_at,
+            "control_acknowledged_at": self.timestamps.control_acknowledged_at,
+            "progress": _progress_to_dict(self.progress),
+            "result": self.result,
+            "error_kind": self.error_kind,
+            "initiator": {
+                "kind": self.initiator.kind,
+                "command": self.initiator.command,
+                "project_root": self.initiator.project_root,
+            },
+            "runtime": _runtime_to_dict(self.runtime),
+            "resources": _resources_to_dict(self.resources),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class JobOutcome:
+    """One structured service-domain result for a job command."""
+
+    command: str
+    status: JobOutcomeStatus
+    code: str
+    message: str
+    job: JobSnapshot | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Return one adapter-ready outcome envelope."""
+        return {
+            "command": self.command,
+            "status": self.status.value,
+            "code": self.code,
+            "message": self.message,
+            "job": self.job.to_dict() if self.job is not None else None,
+        }
+
+
+def _progress_to_dict(progress: JobProgress | None) -> dict[str, object] | None:
+    if progress is None:
+        return None
+    return {
+        "step": progress.step,
+        "completed": progress.completed,
+        "total": progress.total,
+        "last_updated": progress.last_updated,
+    }
+
+
+def _runtime_to_dict(runtime: JobRuntimeSnapshot) -> dict[str, object]:
+    return {
+        "pid": runtime.pid,
+        "parent_pid": runtime.parent_pid,
+        "user": runtime.user,
+        "executable": runtime.executable,
+        "prefix": runtime.prefix,
+        "base_prefix": runtime.base_prefix,
+        "virtual_env": runtime.virtual_env,
+        "task_active": runtime.task_active,
+        "worker_active": runtime.worker_active,
+    }
+
+
+def _process_resources_to_dict(
+    resources: ProcessResourceSnapshot | None,
+) -> dict[str, object] | None:
+    if resources is None:
+        return None
+    return {
+        "rss_mb": resources.rss_mb,
+        "cuda_allocated_mb": resources.cuda_allocated_mb,
+        "cuda_reserved_mb": resources.cuda_reserved_mb,
+    }
+
+
+def _resources_to_dict(resources: JobResourceSnapshot) -> dict[str, object]:
+    return {
+        "started": _process_resources_to_dict(resources.started),
+        "finished": _process_resources_to_dict(resources.finished),
+        "index_capacity_held": resources.index_capacity_held,
+        "project_lease_held": resources.project_lease_held,
+        "writer_lock_held": resources.writer_lock_held,
+        "pipeline_active": resources.pipeline_active,
+    }
+
 
 # Source of an activity: the documentation vault, the source codebase, or
 # the service's own scheduled storage maintenance.
