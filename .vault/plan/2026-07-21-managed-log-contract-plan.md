@@ -43,7 +43,7 @@ Expose one generic managed-log policy and wire the service logger to the renamed
 Give the raw child-output drain a secure independently rotating sink while preserving uninterrupted recent-output diagnostics.
 
 - [x] `W01.P02.S04` - Implement bounded raw-byte rotation and configure the Qdrant supervisor from the shared retention policy; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `W01.P02.S05` - Exercise real Qdrant-output rollover, retention, restart append, and diagnostic continuity; `src/vaultspec_rag/tests/test_qdrant_supervise_diagnostics.py`.
+- [x] `W01.P02.S05` - Exercise real Qdrant-output rollover, retention, restart append, and diagnostic continuity; `src/vaultspec_rag/tests/test_qdrant_supervise_diagnostics.py`.
 
 ## Wave `W02` - unify live and offline operator views
 
