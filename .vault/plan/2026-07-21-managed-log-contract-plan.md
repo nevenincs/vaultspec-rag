@@ -70,7 +70,7 @@ Carry the source selector and grouped payload through the existing authenticated
 Replace parsed service activity with explicit source selection, grouped raw rendering, and local fallback through the production reader.
 
 - [x] `W02.P05.S12` - Replace the legacy activity parser and raw compatibility flag with grouped source rendering and offline fallback; `src/vaultspec_rag/cli/_service_logs.py`.
-- [ ] `W02.P05.S13` - Update in-process CLI contract coverage for source selection and local post-crash reads; `src/vaultspec_rag/tests/test_cli_server.py`.
+- [x] `W02.P05.S13` - Update in-process CLI contract coverage for source selection and local post-crash reads; `src/vaultspec_rag/tests/test_cli_server.py`.
 
 ## Wave `W03` - publish and verify the clean-break contract
 
