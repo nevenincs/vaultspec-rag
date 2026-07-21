@@ -10,7 +10,13 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from ..config import EnvVar, get_config, hf_cache_only, reset_config
+from ..config import (
+    EnvVar,
+    VaultSpecConfigWrapper,
+    get_config,
+    hf_cache_only,
+    reset_config,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +81,12 @@ def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
     # M1 (security): an empty/whitespace path override must be treated as absent
     # and fall back to the default, never collapse to cwd (Path("") == ".") -
     # which would repoint the managed-dir delete/clean blast radius.
-    default = get_config().status_dir
+    # The session-wide singleton isolation fixture deliberately supplies a
+    # non-default status directory. Compare the blank override with the
+    # production default itself, not with that outer test override.
+    default = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyright: ignore[reportPrivateUsage]
+        "status_dir"
+    ]
     reset_config()
     prev = _set_env(EnvVar.STATUS_DIR, "   ")
     reset_config()
@@ -104,14 +115,27 @@ def test_service_max_projects_default() -> None:
     assert cfg.service_max_projects == 16
 
 
-def test_service_log_max_bytes_default() -> None:
+def test_managed_log_max_bytes_default() -> None:
     cfg = get_config()
-    assert cfg.service_log_max_bytes == 10485760
+    assert cfg.managed_log_max_bytes == 10485760
 
 
-def test_service_log_backup_count_default() -> None:
+def test_managed_log_backup_count_default() -> None:
     cfg = get_config()
-    assert cfg.service_log_backup_count == 5
+    assert cfg.managed_log_backup_count == 5
+
+
+def test_managed_log_environment_names_are_generic_only() -> None:
+    assert EnvVar.MANAGED_LOG_MAX_BYTES.value == "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
+    assert (
+        EnvVar.MANAGED_LOG_BACKUP_COUNT.value
+        == "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
+    )
+    assert not any(name.startswith("SERVICE_LOG_") for name in EnvVar.__members__)
+    assert not any(
+        name.startswith("service_log_")
+        for name in VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 def test_service_idle_ttl_env_override() -> None:
@@ -140,29 +164,52 @@ def test_service_max_projects_env_override() -> None:
         reset_config()
 
 
-def test_service_log_max_bytes_env_override() -> None:
-    prev = _set_env(EnvVar.SERVICE_LOG_MAX_BYTES, "4096")
+def test_managed_log_max_bytes_env_override() -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_MAX_BYTES, "4096")
     try:
         reset_config()
         cfg = get_config()
-        value = cfg.service_log_max_bytes
+        value = cfg.managed_log_max_bytes
         assert value == 4096
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.SERVICE_LOG_MAX_BYTES, prev)
+        _restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
         reset_config()
 
 
-def test_service_log_backup_count_env_override() -> None:
-    prev = _set_env(EnvVar.SERVICE_LOG_BACKUP_COUNT, "2")
+def test_managed_log_backup_count_env_override() -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "2")
     try:
         reset_config()
         cfg = get_config()
-        value = cfg.service_log_backup_count
+        value = cfg.managed_log_backup_count
         assert value == 2
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.SERVICE_LOG_BACKUP_COUNT, prev)
+        _restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["0", "-1"])
+def test_managed_log_max_bytes_rejects_unbounded_values(raw: str) -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_MAX_BYTES, raw)
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            _ = get_config().managed_log_max_bytes
+    finally:
+        _restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
+        reset_config()
+
+
+def test_managed_log_backup_count_rejects_negative_value() -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "-1")
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="must be a non-negative integer"):
+            _ = get_config().managed_log_backup_count
+    finally:
+        _restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
         reset_config()
 
 

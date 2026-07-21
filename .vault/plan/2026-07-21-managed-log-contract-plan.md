@@ -36,7 +36,7 @@ Expose one generic managed-log policy and wire the service logger to the renamed
 
 - [x] `W01.P01.S01` - Replace service-only retention settings and environment names with the generic managed-log contract; `src/vaultspec_rag/config.py`.
 - [x] `W01.P01.S02` - Install the service log handler from the generic managed-log settings; `src/vaultspec_rag/server/_main.py`.
-- [ ] `W01.P01.S03` - Assert generic defaults, environment overrides, and removal of legacy configuration names; `src/vaultspec_rag/tests/test_config.py`.
+- [x] `W01.P01.S03` - Assert generic defaults, environment overrides, and removal of legacy configuration names; `src/vaultspec_rag/tests/test_config.py`.
 
 ### Phase `W01.P02` - rotate supervised Qdrant output
 
