@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import threading
 import warnings
 from contextlib import contextmanager, nullcontext
@@ -52,11 +53,6 @@ __all__ = [
 
 
 EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
-
-#: Server-mode request timeout. Bounded so a Qdrant server wedged on a
-#: full-disk WAL raises instead of blocking an upsert socket forever;
-#: generous enough for large batch upserts and slow scans.
-_SERVER_REQUEST_TIMEOUT_S = 120
 
 
 @contextmanager
@@ -218,7 +214,7 @@ class VaultStore(_VaultSearchMixin):
                 self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
-                    timeout=_SERVER_REQUEST_TIMEOUT_S,
+                    timeout=math.ceil(cfg.store_operation_timeout_seconds),
                 )
             except Exception as exc:
                 logger.error(
