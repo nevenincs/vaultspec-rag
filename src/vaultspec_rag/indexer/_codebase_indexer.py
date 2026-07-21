@@ -56,7 +56,11 @@ if TYPE_CHECKING:
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultStore
     from ._chunk_worker import FileChunkResult
-    from ._preprocess_config import PreprocessConfig, PreprocessContext
+    from ._preprocess_config import (
+        PreprocessConfig,
+        PreprocessContext,
+        PreprocessRule,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,12 @@ _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
 #: Conservative chunks-per-file factor for the pre-pool disk pre-flight;
 #: the issue-242 incident tree measured ~12 chunks per source file.
 _CHUNKS_PER_FILE_ESTIMATE = 12
+
+# Maximum number of source paths handed to one batch preprocess spawn (#241).
+# A batch rule's matched files are grouped into manifests of at most this many
+# paths, each group running as a single pool task, so the hook's spawn cost is
+# amortised across the group instead of paid per file.
+BATCH_SIZE = 64
 
 
 class _ScanInputs(NamedTuple):
@@ -488,21 +498,161 @@ class CodebaseIndexer:
                 return workers
         return 1
 
+    def _partition_batch_work(
+        self,
+        paths: list[pathlib.Path],
+    ) -> tuple[list[tuple[PreprocessRule, list[pathlib.Path]]], list[pathlib.Path]]:
+        """Split paths into batch-rule groups and everything else (#241).
+
+        Files matched by a ``batch = true`` rule are grouped per rule (keyed by
+        rule identity - :meth:`PreprocessConfig.match` returns the same rule
+        object each time) and chunked into manifests of at most
+        :data:`BATCH_SIZE`, so each group runs as one batch spawn. Every other
+        file - unmatched, or matched by a non-batch rule - stays a single, so
+        the existing per-file flow is untouched.
+
+        Returns:
+            ``(batch_groups, singles)``: batch groups as ``(rule, paths)`` pairs
+            and the single-file paths, together covering every input path.
+        """
+        prep = getattr(self, "_prep_ctx", None)
+        if prep is None or not any(rule.batch for rule in prep.config.rules):
+            # No batch rule configured: every file keeps the per-file flow and
+            # pays zero extra per-path match cost.
+            return [], list(paths)
+
+        groups: dict[int, list[pathlib.Path]] = {}
+        rules: dict[int, PreprocessRule] = {}
+        singles: list[pathlib.Path] = []
+        for p in paths:
+            try:
+                rel = str(p.relative_to(self.root_dir)).replace("\\", "/")
+            except ValueError:
+                singles.append(p)
+                continue
+            rule = prep.config.match(rel)
+            if rule is not None and rule.batch and rule.command is not None:
+                rid = id(rule)
+                groups.setdefault(rid, []).append(p)
+                rules[rid] = rule
+            else:
+                singles.append(p)
+
+        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]] = []
+        for rid, group in groups.items():
+            rule = rules[rid]
+            for start in range(0, len(group), BATCH_SIZE):
+                batch_groups.append((rule, group[start : start + BATCH_SIZE]))
+        return batch_groups, singles
+
+    def _run_batch_groups(
+        self,
+        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
+        reporter: ProgressReporter,
+        handle_group: Callable[[list[FileChunkResult]], None],
+    ) -> None:
+        """Run batch groups as pool tasks, one task per group (#241).
+
+        Each group is one :func:`_chunk_worker.chunk_batch_files` task: a single
+        hook spawn over the group's manifest, then per-file chunking. ``handle_group``
+        is invoked with each completed group's results as they arrive, so a
+        streaming caller never has to hold every group's chunks at once. Falls
+        back to the serial in-process path when a single worker is resolved or
+        the pool cannot start before any progress has been reported. The reporter
+        is advanced once per file in each completed group.
+        """
+        prep = getattr(self, "_prep_ctx", None)
+        if not batch_groups or prep is None:
+            return
+
+        workers = self._resolve_chunk_workers(len(batch_groups))
+        if workers <= 1:
+            self._run_batch_groups_serial(batch_groups, reporter, handle_group)
+            return
+
+        completed = 0
+        ctx = multiprocessing.get_context("spawn")
+        try:
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                futures = {
+                    pool.submit(
+                        _chunk_worker.chunk_batch_files,
+                        group,
+                        self.root_dir,
+                        rule,
+                        prep,
+                    ): len(group)
+                    for rule, group in batch_groups
+                }
+                for future in as_completed(futures):
+                    group_len = futures[future]
+                    try:
+                        handle_group(future.result())
+                    except BrokenProcessPool:
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "Batch worker failed for a group of %d files",
+                            group_len,
+                            exc_info=True,
+                        )
+                    for _ in range(group_len):
+                        reporter.advance()
+                    completed += group_len
+        except BrokenProcessPool:
+            if completed:
+                logger.error(
+                    "Batch process pool broke after %d files; aborting",
+                    completed,
+                )
+                raise
+            logger.warning(
+                "Batch process pool could not start; running batch groups serially"
+            )
+            self._run_batch_groups_serial(batch_groups, reporter, handle_group)
+
+    def _run_batch_groups_serial(
+        self,
+        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
+        reporter: ProgressReporter,
+        handle_group: Callable[[list[FileChunkResult]], None],
+    ) -> None:
+        """Run batch groups serially in-process (single-worker / fallback path).
+
+        ``handle_group`` receives each group's results as it completes, matching
+        the pool path's streaming contract.
+        """
+        prep = getattr(self, "_prep_ctx", None)
+        if prep is None:
+            return
+        for rule, group in batch_groups:
+            try:
+                results = _chunk_worker.chunk_batch_files(
+                    group, self.root_dir, rule, prep
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to run batch group of %d files",
+                    len(group),
+                    exc_info=True,
+                )
+                results = []
+            handle_group(results)
+            for _ in range(len(group)):
+                reporter.advance()
+
     def _chunk_paths(
         self,
         paths: list[pathlib.Path],
         *,
         reporter: ProgressReporter,
     ) -> list[CodeChunk]:
-        """Chunk files in parallel via a spawn-based process pool.
+        """Chunk files, batching batch-rule matches and pooling the rest.
 
-        tree-sitter AST chunking is CPU-bound and holds the GIL for both parse
-        and traverse, so a process pool (not threads) is required to use more
-        than one core. CUDA/torch are never touched in the workers, and the
-        pool uses the ``spawn`` start method so no parent CUDA context is
-        inherited (#155 ADR, rule ``index-workers-stay-cpu-only``). Falls back
-        to the serial in-process path when a single worker is resolved, or when
-        the pool cannot start before any progress has been reported.
+        Files matched by a ``batch = true`` rule are grouped and run through the
+        batch path (one spawn per group); every other file keeps the per-file
+        process-pool flow. Returns all chunks across both, recording each file's
+        preprocess disposition.
 
         Args:
             paths: Absolute file paths to chunk.
@@ -515,9 +665,40 @@ class CodebaseIndexer:
         if not paths:
             return all_chunks
 
+        batch_groups, singles = self._partition_batch_work(paths)
+
+        def _collect(results: list[FileChunkResult]) -> None:
+            for res in results:
+                self._record_preprocess_result(res)
+                all_chunks.extend(res.chunks)
+
+        self._run_batch_groups(batch_groups, reporter, _collect)
+        if singles:
+            all_chunks.extend(self._chunk_singles(singles, reporter))
+        return all_chunks
+
+    def _chunk_singles(
+        self,
+        paths: list[pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> list[CodeChunk]:
+        """Chunk single (non-batch) files in parallel via a spawn process pool.
+
+        tree-sitter AST chunking is CPU-bound and holds the GIL for both parse
+        and traverse, so a process pool (not threads) is required to use more
+        than one core. CUDA/torch are never touched in the workers, and the
+        pool uses the ``spawn`` start method so no parent CUDA context is
+        inherited (#155 ADR, rule ``index-workers-stay-cpu-only``). Falls back
+        to the serial in-process path when a single worker is resolved, or when
+        the pool cannot start before any progress has been reported.
+        """
+        all_chunks: list[CodeChunk] = []
+        if not paths:
+            return all_chunks
+
         workers = self._plan_chunk_workers(paths)
         if workers <= 1:
-            return self._chunk_paths_serial(paths, reporter)
+            return self._chunk_singles_serial(paths, reporter)
 
         completed = 0
         ctx = multiprocessing.get_context("spawn")
@@ -561,7 +742,7 @@ class CodebaseIndexer:
                 )
                 raise
             logger.warning("Chunk process pool could not start; chunking serially")
-            return self._chunk_paths_serial(paths, reporter)
+            return self._chunk_singles_serial(paths, reporter)
         return all_chunks
 
     def _chunk_paths_serial(
@@ -571,6 +752,9 @@ class CodebaseIndexer:
     ) -> list[CodeChunk]:
         """Chunk files serially in-process (single-worker / fallback path).
 
+        Batch-rule matches are batched serially (one spawn per group); every
+        other file is chunked one at a time. Returns all chunks across both.
+
         Args:
             paths: Absolute file paths to chunk.
             reporter: Progress reporter, advanced once per file.
@@ -578,6 +762,24 @@ class CodebaseIndexer:
         Returns:
             All ``CodeChunk``s across every file, with empty vectors.
         """
+        all_chunks: list[CodeChunk] = []
+        batch_groups, singles = self._partition_batch_work(paths)
+
+        def _collect(results: list[FileChunkResult]) -> None:
+            for res in results:
+                self._record_preprocess_result(res)
+                all_chunks.extend(res.chunks)
+
+        self._run_batch_groups_serial(batch_groups, reporter, _collect)
+        all_chunks.extend(self._chunk_singles_serial(singles, reporter))
+        return all_chunks
+
+    def _chunk_singles_serial(
+        self,
+        paths: list[pathlib.Path],
+        reporter: ProgressReporter,
+    ) -> list[CodeChunk]:
+        """Chunk single (non-batch) files serially in-process."""
         all_chunks: list[CodeChunk] = []
         prep = getattr(self, "_prep_ctx", None)
         for p in paths:
@@ -643,6 +845,79 @@ class CodebaseIndexer:
             _encode_accumulated(force=False)
         _encode_accumulated(force=True)
         return total, advanced
+
+    def _chunk_embed_batch_groups(
+        self,
+        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
+        meta: dict[str, str],
+        new_ids: set[str],
+        slice_size: int,
+        encode_batch_size: int,
+        flush_slices: int,
+        reporter: ProgressReporter,
+    ) -> int:
+        """Chunk batch groups, stamp their meta, and embed their chunks (#241).
+
+        Runs the batch groups (one hook spawn per group) and, as each group
+        completes, records each file's content hash and preprocess disposition
+        and embeds that group's chunks through the same encode/upsert slice path
+        the singles pipeline uses. Embedding per group bounds peak memory to a
+        single group's chunks rather than every group's at once.
+
+        Returns:
+            The number of chunks embedded, for the run's total tally.
+        """
+        embedded = [0]
+
+        def _embed_group(results: list[FileChunkResult]) -> None:
+            chunks: list[CodeChunk] = []
+            for res in results:
+                meta[res.rel_path] = res.content_hash
+                self._record_preprocess_result(res)
+                chunks.extend(res.chunks)
+            embedded[0] += self._embed_chunks(
+                chunks, slice_size, flush_slices, encode_batch_size, new_ids
+            )
+
+        self._run_batch_groups(batch_groups, reporter, _embed_group)
+        return embedded[0]
+
+    def _embed_chunks(
+        self,
+        chunks: list[CodeChunk],
+        slice_size: int,
+        flush_slices: int,
+        encode_batch_size: int,
+        new_ids: set[str],
+    ) -> int:
+        """Encode and upsert a chunk list in ``slice_size`` batches.
+
+        Mirrors :meth:`_do_encode_accumulated` for a fully-materialised chunk
+        list (the batch path chunks its files before embedding, so there is no
+        producer to overlap). Runs on the calling thread, which is the sole GPU
+        consumer here - no other thread touches the device concurrently.
+
+        Returns:
+            The number of chunks embedded.
+        """
+        total = 0
+        state = [0]
+        for start in range(0, len(chunks), slice_size):
+            take = chunks[start : start + slice_size]
+            state[0] += 1
+            is_final = start + slice_size >= len(chunks)
+            release = is_final or state[0] % flush_slices == 0
+            encode_and_upsert_code_slice(
+                take,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                release_cache=release,
+                encode_batch_size=encode_batch_size,
+            )
+            new_ids.update(c.id for c in take)
+            total += len(take)
+        return total
 
     def _drain_pool(
         self,
@@ -894,13 +1169,6 @@ class CodebaseIndexer:
             )
             total += consumed
 
-        def _run_serial() -> None:
-            nonlocal advanced, total
-            total, adv_inc = self._run_serial_chunk_and_embed(
-                paths, meta, encode_batch_size, flush_slices, reporter, total, new_ids
-            )
-            advanced += adv_inc
-
         # Chunk counts are unknown before the pool runs, so the pre-flight
         # estimates points from the file count with a conservative
         # chunks-per-file factor (the issue-242 incident tree averaged ~12);
@@ -913,7 +1181,36 @@ class CodebaseIndexer:
             if not paths:
                 return new_ids, total, meta
 
-            workers = self._plan_chunk_workers(paths)
+            # Batch-rule matches run as grouped hook spawns and are embedded
+            # up front; every other file keeps the per-file pipeline below (#241).
+            batch_groups, singles = self._partition_batch_work(paths)
+            if batch_groups:
+                total += self._chunk_embed_batch_groups(
+                    batch_groups,
+                    meta,
+                    new_ids,
+                    slice_size,
+                    encode_batch_size,
+                    flush_slices,
+                    reporter,
+                )
+            if not singles:
+                return new_ids, total, meta
+
+            def _run_serial() -> None:
+                nonlocal advanced, total
+                total, adv_inc = self._run_serial_chunk_and_embed(
+                    singles,
+                    meta,
+                    encode_batch_size,
+                    flush_slices,
+                    reporter,
+                    total,
+                    new_ids,
+                )
+                advanced += adv_inc
+
+            workers = self._plan_chunk_workers(singles)
             if workers <= 1:
                 _run_serial()
                 return new_ids, total, meta
@@ -950,7 +1247,7 @@ class CodebaseIndexer:
 
             broke = False
             consumer_hung = False
-            paths_iter = iter(paths)
+            paths_iter = iter(singles)
 
             try:
                 broke, _consumer_died, advanced_inc = self._drain_pool(
