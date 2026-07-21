@@ -90,3 +90,52 @@ def test_non_namespaced_name_is_unknown() -> None:
 
 def test_empty_input() -> None:
     assert classify_namespaces([], {}) == []
+
+
+# -- issue 242: extended-length alias normalization and temp-root flagging --
+
+
+def test_extended_length_alias_hashes_to_same_prefix(tmp_path: Path) -> None:
+    r"""A ``\\?\``-prefixed spelling of a root must not mint a second namespace."""
+    import sys
+
+    from .._store_models import root_collection_prefix
+
+    if sys.platform != "win32":
+        pytest.skip("extended-length path prefixes are Windows-only")
+    plain = root_collection_prefix(tmp_path)
+    aliased = root_collection_prefix("\\\\?\\" + str(tmp_path))
+    assert aliased == plain
+
+
+def test_unc_extended_length_alias_normalizes() -> None:
+    r"""The ``\\?\UNC\`` form reduces to the plain UNC spelling before hashing."""
+    import sys
+
+    from .._store_models import root_collection_prefix
+
+    if sys.platform != "win32":
+        pytest.skip("extended-length path prefixes are Windows-only")
+    plain = root_collection_prefix(r"\\server\share\proj")
+    aliased = root_collection_prefix(r"\\?\UNC\server\share\proj")
+    assert aliased == plain
+
+
+def test_temp_rooted_flags_tempdir_descendants(tmp_path: Path) -> None:
+    import pathlib
+    import tempfile
+
+    from ..storage_survey import is_temp_rooted
+
+    inside = pathlib.Path(tempfile.gettempdir()) / "vaultspec-livetest-xyz"
+    assert is_temp_rooted(str(inside)) is True
+    assert is_temp_rooted(str(inside / "nested" / "deeper")) is True
+    # tmp_path is pytest's basetemp, itself under the OS temp dir.
+    assert is_temp_rooted(str(tmp_path)) is True
+
+
+def test_temp_rooted_false_for_project_roots_and_none() -> None:
+    from ..storage_survey import is_temp_rooted
+
+    assert is_temp_rooted(None) is False
+    assert is_temp_rooted(r"Y:\code\real-project") is False
