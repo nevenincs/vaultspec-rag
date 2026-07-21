@@ -256,3 +256,72 @@ Verification after remediation completed with Ruff, ty, and BasedPyright clean, 
 unit tests passing, and 15 non-GPU registry integration tests passing. Two GPU subprocess
 cases remain intentionally outside this environment because no verified Qdrant test binary is
 provisioned.
+
+## Remediation re-review
+
+### idempotency-equivalence-restore | high | Valid deduplicated aliases could invalidate restart state
+
+An idempotency key attached to equivalent active work retained the incoming request signature,
+but restore required that signature to equal the canonical job specification and initiator.
+Equivalent root spelling or a different initiator therefore produced state the manager later
+rejected. Restore now validates the same normalized work identity used by admission, and a
+real-filesystem restart test proves replay under the original alias.
+
+### mutable-runtime-owner | high | Runtime inspection exposed the live control token
+
+The public runtime-owner accessor returned the mutable `RunControlToken`, allowing callers to
+signal a worker outside manager state transitions. The accessor and public runtime-owner export
+were removed; immutable job snapshots expose only diagnostic activity flags.
+
+### dirty-terminal-generation | high | Irreversible completion lacked durable retry
+
+A terminal or acknowledged in-memory transition remained truthful after a failed write but had
+no dirty marker or retry path. The manager now marks failed generations dirty, exposes an
+idempotent flush operation, persists bounded terminal history, and clears the marker only after
+atomic replacement succeeds. A real invalid-destination test repairs the destination, flushes,
+and recovers the terminal outcome in a new manager.
+
+### unstable-project-identity | high | Missing and relative roots were admitted
+
+Index specifications could omit `project_root` or provide a relative value, preventing stable
+dispatch and deduplication identity. Admission and persisted-generation validation now require
+a non-empty absolute root.
+
+### progress-authority | medium | The manager did not own progress mutation
+
+Workers had no exact-task manager API for canonical progress. Revisioned progress publication
+now validates the current attempt and task, rejects malformed types and ranges, persists through
+the same generation protocol, and ignores stale attempts deterministically.
+
+### incomplete-attempt-validation | medium | Persisted live and resume lineage could be impossible
+
+Restore accepted live attempts without a start time and later attempts without a coherent
+predecessor. Model construction and generation validation now require first-attempt neutrality,
+adjacent reconcile lineage for resumed attempts, and start times for live states.
+
+### interrupted-retention-order | high | Fresh crash evidence could be evicted before old history
+
+Durable terminal history was restored after live attempts were converted to `interrupted`, so
+bounded trimming could discard the new crash record first. Restore now establishes old terminal
+history before appending recovered interruptions, trims before idempotency rebinding, and keeps
+the actionable interruption across a second restart.
+
+### historical-runtime-attribution | medium | Restart rewrote the process that ran old work
+
+Restore replaced runtime identity on terminal and interrupted records with the new process.
+Historical records now retain their persisted PID, user, and executable while task and worker
+activity are cleared; only queued and paused work adopts the current service identity.
+
+### lowered-retention-restart | medium | Old idempotency volume could block a smaller configuration
+
+Restore compared the raw persisted binding count with the new bound before terminal trimming.
+It now trims obsolete terminal history first, filters bindings to retained IDs, and applies the
+bounded replay cache. A larger keyed history restores successfully under smaller bounds.
+
+## Final disposition
+
+The focused re-review is approved with no remaining actionable finding. Ruff, ty, and strict
+BasedPyright pass, 61 focused unit tests pass, and all 18 non-GPU registry integration tests
+pass. The reviewed sequencing keeps legacy production dispatch deferred until
+cooperative indexer checkpoints and resource instrumentation are ready; `S16` now names both
+the compatibility facade and extracted manager module.

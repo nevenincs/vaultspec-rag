@@ -51,6 +51,6 @@ immutability. Real temporary files and threads verify atomic replacement, persis
 failure rollback, paused restoration, interrupted recovery, invalid-generation rejection,
 and capacity changes without mocks, patches, or shadow implementations.
 
-Final remediation verification reports 60 focused unit tests and 15 non-GPU integration
+Final remediation verification reports 61 focused unit tests and 18 non-GPU integration
 tests passing, with Ruff, ty, and BasedPyright clean. The two GPU subprocess cases require a
 provisioned, verified Qdrant binary and were not run in this environment.
