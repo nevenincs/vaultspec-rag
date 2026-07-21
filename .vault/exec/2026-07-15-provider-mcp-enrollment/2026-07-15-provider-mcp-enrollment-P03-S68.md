@@ -9,9 +9,6 @@ related:
   - "[[2026-07-15-provider-mcp-enrollment-plan]]"
 ---
 
-
-
-
 # Close every S67 review finding with strict shared deadlines, race-safe startup publication, and child-incarnation proof
 
 ## Scope

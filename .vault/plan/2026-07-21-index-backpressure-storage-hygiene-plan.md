@@ -10,7 +10,6 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-research]]'
 ---
 
-
 # `index-backpressure-storage-hygiene` plan
 
 Close issue 242: make index write failures loud and classified, refuse indexing into a full disk, and stop the shared backend degrading through temp namespaces, alias duplicates, fat empty collections, and invisible crash debris.

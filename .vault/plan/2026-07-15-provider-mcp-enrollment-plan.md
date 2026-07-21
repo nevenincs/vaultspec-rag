@@ -10,7 +10,6 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
 ---
 
-
 # `provider-mcp-enrollment` plan
 
 ### Phase `P01` - adopt Core's typed provider lifecycle
