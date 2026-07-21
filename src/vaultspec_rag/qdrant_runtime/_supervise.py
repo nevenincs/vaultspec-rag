@@ -12,9 +12,11 @@ it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -52,6 +54,8 @@ _STOP_TIMEOUT_SECONDS = 10.0
 # storage-lock error) instead of an opaque timeout.
 _RECENT_OUTPUT_LINES = 50
 _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
+_MANAGED_LOG_MAX_BYTES_DEFAULT = 10 * 1024 * 1024
+_MANAGED_LOG_BACKUP_COUNT_DEFAULT = 5
 
 # Recovery bound: how many collections may be quarantined within one supervised
 # start before the start fails loudly instead of quarantining further. A
@@ -322,6 +326,156 @@ def _win_assign_to_job(job: object, proc: subprocess.Popen[str]) -> bool:
     return False
 
 
+class _RawRotatingLogSink:
+    """Secure size-rotating sink for one supervised child's raw output.
+
+    The Qdrant drain is the sole writer, so rollover needs no logging-handler
+    lock and no service-style ``dup2`` rebinding. The active handle is always
+    closed before numbered files move, which is required for Windows. Opens use
+    append mode, owner-only permissions, and ``O_NOFOLLOW`` where the platform
+    provides it.
+    """
+
+    def __init__(self, path: Path, *, max_bytes: int, backup_count: int) -> None:
+        self.path = path
+        self.max_bytes = int(max_bytes)
+        self.backup_count = int(backup_count)
+        if self.max_bytes <= 0:
+            raise ValueError("managed log max_bytes must be positive")
+        if self.backup_count < 0:
+            raise ValueError("managed log backup_count must be non-negative")
+        self._stream: Any | None = None
+        self._retention_checked = False
+
+    def _open(self, *, truncate: bool = False) -> Any:
+        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        flags |= os.O_TRUNC if truncate else os.O_APPEND
+        fd = os.open(self.path, flags, 0o600)
+        try:
+            if os.name != "nt":
+                os.fchmod(fd, 0o600)
+            return os.fdopen(fd, "wb" if truncate else "ab", buffering=0)
+        except Exception:
+            os.close(fd)
+            raise
+
+    def _ensure_open(self) -> Any:
+        if self._stream is None:
+            self._stream = self._open()
+        return self._stream
+
+    def close(self) -> None:
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
+            stream.close()
+
+    def _backup_path(self, generation: int) -> Path:
+        return self.path.with_name(f"{self.path.name}.{generation}")
+
+    def _enforce_backup_count(self) -> None:
+        """Remove stale numeric generations outside the configured set."""
+        prefix = f"{self.path.name}."
+        with os.scandir(self.path.parent) as entries:
+            for entry in entries:
+                if not entry.name.startswith(prefix):
+                    continue
+                suffix = entry.name[len(prefix) :]
+                if not suffix.isascii() or not suffix.isdigit():
+                    continue
+                generation = int(suffix)
+                if (
+                    generation < 1
+                    or generation > self.backup_count
+                    or suffix != str(generation)
+                ):
+                    try:
+                        os.unlink(entry.path)
+                    except FileNotFoundError:
+                        continue
+
+    def _shift_backups(self) -> None:
+        oldest = self._backup_path(self.backup_count)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(oldest)
+        for generation in range(self.backup_count - 1, 0, -1):
+            source = self._backup_path(generation)
+            destination = self._backup_path(generation + 1)
+            try:
+                os.replace(source, destination)
+            except FileNotFoundError:
+                # Sparse generations are valid after interrupted/manual cleanup.
+                continue
+
+    def _copy_active_to_first_backup(self) -> None:
+        """Copy active bytes securely for the Windows rename fallback."""
+        source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        source_fd = os.open(self.path, source_flags)
+        try:
+            destination = self._backup_path(1)
+            destination_flags = (
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+            )
+            destination_fd = os.open(destination, destination_flags, 0o600)
+            try:
+                if os.name != "nt":
+                    os.fchmod(destination_fd, 0o600)
+                with (
+                    os.fdopen(source_fd, "rb", closefd=False) as source,
+                    os.fdopen(
+                        destination_fd,
+                        "wb",
+                        buffering=0,
+                        closefd=False,
+                    ) as target,
+                ):
+                    shutil.copyfileobj(source, target)
+            finally:
+                os.close(destination_fd)
+        finally:
+            os.close(source_fd)
+
+    def _truncate_active(self) -> None:
+        stream = self._open(truncate=True)
+        stream.close()
+
+    def _rollover(self) -> None:
+        self.close()
+        if self.backup_count == 0:
+            self._truncate_active()
+            self._stream = self._open()
+            return
+
+        self._shift_backups()
+        first_backup = self._backup_path(1)
+        try:
+            os.replace(self.path, first_backup)
+        except PermissionError:
+            if os.name != "nt":
+                raise
+            # Windows may retain a foreign read handle even after the drain
+            # closes its own handle. Copy then truncate preserves the bounded
+            # contract without reopening and growing the oversized active file.
+            self._copy_active_to_first_backup()
+            self._truncate_active()
+        self._stream = self._open()
+
+    def write(self, payload: bytes) -> None:
+        if not payload:
+            return
+        if not self._retention_checked:
+            self._enforce_backup_count()
+            self._retention_checked = True
+        stream = self._ensure_open()
+        size = os.fstat(stream.fileno()).st_size
+        # Do not rotate an empty active file for one oversized record; such
+        # a record is indivisible and is rotated before the following write.
+        if size > 0 and size + len(payload) >= self.max_bytes:
+            self._rollover()
+            stream = self._ensure_open()
+        stream.write(payload)
+
+
 class QdrantSupervisor:
     """Owns one loopback-bound qdrant child process.
 
@@ -344,12 +498,20 @@ class QdrantSupervisor:
         storage_dir: Path,
         grpc_port: int | None = None,
         log_path: Path | None = None,
+        log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT,
+        log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT,
     ) -> None:
         self.binary = binary
         self.http_port = int(http_port)
         self.grpc_port = int(grpc_port) if grpc_port is not None else self.http_port - 1
         self.storage_dir = storage_dir
         self.log_path = log_path
+        self.log_max_bytes = int(log_max_bytes)
+        self.log_backup_count = int(log_backup_count)
+        if self.log_max_bytes <= 0:
+            raise ValueError("log_max_bytes must be positive")
+        if self.log_backup_count < 0:
+            raise ValueError("log_backup_count must be non-negative")
         self.restart_count = 0
         self._proc: subprocess.Popen[str] | None = None
         # Most-recent child output lines, filled by the drain thread, so a
@@ -405,10 +567,17 @@ class QdrantSupervisor:
 
         Raises:
             RuntimeError: If a child is already running.
+                Also raised while a previous child's output drain still owns
+                the rotating log sink.
             OSError: If the spawn itself fails.
         """
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
+        if not self._join_output_drain(timeout=0.0):
+            raise RuntimeError(
+                "previous qdrant output drain is still active; refusing to spawn "
+                "a second log writer"
+            )
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
         if self.log_path is not None:
@@ -479,33 +648,54 @@ class QdrantSupervisor:
 
         Runs until the child closes the pipe (EOF on death). Opens the log with
         owner-only permission and ``O_NOFOLLOW`` (where available) so a planted
-        symlink at the log path cannot redirect the appended output.
+        symlink at the log path cannot redirect the appended output. Persistence
+        errors disable the file sink for that child but never stop pipe draining
+        or recent-output capture.
         """
-        log_handle = None
+        sink = (
+            _RawRotatingLogSink(
+                self.log_path,
+                max_bytes=self.log_max_bytes,
+                backup_count=self.log_backup_count,
+            )
+            if self.log_path is not None
+            else None
+        )
         try:
-            if self.log_path is not None:
-                flags = (
-                    os.O_WRONLY
-                    | os.O_CREAT
-                    | os.O_APPEND
-                    | getattr(os, "O_NOFOLLOW", 0)
-                )
-                log_handle = os.fdopen(
-                    os.open(self.log_path, flags, 0o600),
-                    "a",
-                    encoding="utf-8",
-                    errors="replace",
-                )
             for line in cast("Any", stream):
                 self._recent_output.append(line)
-                if log_handle is not None:
-                    log_handle.write(line)
-                    log_handle.flush()
+                if sink is not None:
+                    try:
+                        sink.write(line.encode("utf-8", errors="replace"))
+                    except (OSError, ValueError) as exc:
+                        failed_sink = sink
+                        sink = None
+                        # Persistence is already degraded. A secondary close
+                        # failure must not end pipe draining and lose the
+                        # diagnostic ring that explains the child failure.
+                        with contextlib.suppress(OSError, ValueError):
+                            failed_sink.close()
+                        logger.warning(
+                            "qdrant log persistence disabled for this child: %s",
+                            exc,
+                        )
         except (OSError, ValueError) as exc:
             logger.debug("qdrant output drain ended: %s", exc)
         finally:
-            if log_handle is not None:
-                log_handle.close()
+            if sink is not None:
+                with contextlib.suppress(OSError, ValueError):
+                    sink.close()
+
+    def _join_output_drain(self, *, timeout: float) -> bool:
+        """Join and clear a completed drain without forgetting a live writer."""
+        thread = self._drain_thread
+        if thread is None:
+            return True
+        thread.join(timeout=max(0.0, timeout))
+        if thread.is_alive():
+            return False
+        self._drain_thread = None
+        return True
 
     def recent_output_tail(self, max_lines: int = 20) -> str:
         """Return the most-recent captured child output lines, joined."""
@@ -640,9 +830,14 @@ class QdrantSupervisor:
             timeout = _ready_timeout_seconds()
         self.restart_count += 1
         self.stop()
+        if not self._join_output_drain(timeout=0.0):
+            logger.error(
+                "qdrant restart refused: previous output drain still owns the log sink"
+            )
+            return False
         try:
             self.spawn()
-        except OSError:
+        except (OSError, RuntimeError):
             logger.exception("qdrant restart spawn failed")
             return False
         ready = self.wait_ready(timeout)
@@ -685,12 +880,12 @@ class QdrantSupervisor:
     def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> None:
         """Terminate the child gracefully, force-killing on timeout.
 
-        Idempotent; safe to call with no child running.
+        Idempotent; safe to call with no child running. A drain that does not
+        reach EOF within the bounded join remains referenced so no replacement
+        child can acquire a second rotating-log sink concurrently.
         """
         proc = self._proc
-        if proc is None:
-            return
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             try:
                 if sys.platform == "win32":
                     proc.terminate()
@@ -713,10 +908,14 @@ class QdrantSupervisor:
                     logger.error("qdrant pid=%d survived kill", proc.pid)
         # The child's exit closes the output pipe, so the drain thread sees EOF
         # and finishes; join it (bounded) so the log handle is flushed/closed.
-        if self._drain_thread is not None:
-            self._drain_thread.join(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS)
-            self._drain_thread = None
-        logger.info("qdrant child pid=%d stopped", proc.pid)
+        if not self._join_output_drain(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS):
+            logger.warning(
+                "qdrant output drain did not exit within %.0fs; retaining its "
+                "single-writer guard",
+                _DRAIN_JOIN_TIMEOUT_SECONDS,
+            )
+        if proc is not None:
+            logger.info("qdrant child pid=%d stopped", proc.pid)
         self._proc = None
 
     def state(self) -> QdrantRuntimeState:
@@ -925,6 +1124,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
     qport = int(cfg.qdrant_port)
     storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
     log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
+    log_max_bytes = int(cfg.managed_log_max_bytes)
+    log_backup_count = int(cfg.managed_log_backup_count)
 
     # Decide before spawning. A healthy, owned, capable managed server is
     # attached (never re-spawned onto its single-writer storage); a foreign or
@@ -948,6 +1149,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
             http_port=qport,
             storage_dir=storage_dir,
             log_path=log_path,
+            log_max_bytes=log_max_bytes,
+            log_backup_count=log_backup_count,
         )
         supervisor.mark_attached()
         set_active_supervisor(supervisor)
@@ -1008,6 +1211,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
         http_port=qport,
         storage_dir=storage_dir,
         log_path=log_path,
+        log_max_bytes=log_max_bytes,
+        log_backup_count=log_backup_count,
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
