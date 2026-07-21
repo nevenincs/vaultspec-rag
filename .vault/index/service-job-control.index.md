@@ -20,6 +20,8 @@ related:
   - '[[2026-07-21-service-job-control-W01-P03-summary]]'
   - '[[2026-07-21-service-job-control-W01-P18-S38]]'
   - '[[2026-07-21-service-job-control-W01-P18-S39]]'
+  - '[[2026-07-21-service-job-control-W01-P18-S40]]'
+  - '[[2026-07-21-service-job-control-W01-P18-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -27,6 +29,7 @@ related:
   - '[[2026-07-21-service-job-control-s02-config-audit]]'
   - '[[2026-07-21-service-job-control-s03-tests-audit]]'
   - '[[2026-07-21-service-job-control-s39-persistence-audit]]'
+  - '[[2026-07-21-service-job-control-s40-manager-audit]]'
   - '[[2026-07-21-service-job-control-wave-1-audit]]'
 ---
 
@@ -45,6 +48,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-s02-config-audit` - `service-job-control` audit: `s02 config`
 - `2026-07-21-service-job-control-s03-tests-audit` - `service-job-control` audit: `s03 tests`
 - `2026-07-21-service-job-control-s39-persistence-audit` - `service-job-control` audit: `S39 persistence boundary`
+- `2026-07-21-service-job-control-s40-manager-audit` - `service-job-control` audit: `S40 manager extraction`
 - `2026-07-21-service-job-control-wave-1-audit` - `service-job-control` audit: `Wave 1 state authority`
 
 ### exec
@@ -63,6 +67,8 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W01-P03-summary` - `service-job-control` `W01.P03` summary
 - `2026-07-21-service-job-control-W01-P18-S38` - Extract canonical enums, immutable resources, outcomes, and serialization into a focused model module while preserving public imports using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W01-P18-S39` - Extract the versioned state codec and atomic filesystem store into a focused persistence module using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W01-P18-S40` - Extract JobManager ownership and lifecycle orchestration, leave jobs.py as the legacy compatibility and dispatch facade, and verify unchanged public behavior using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W01-P18-summary` - `service-job-control` `W01.P18` summary
 
 ### plan
 
