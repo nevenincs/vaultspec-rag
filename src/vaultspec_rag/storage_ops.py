@@ -49,11 +49,14 @@ __all__ = [
     "ReclaimDecision",
     "ReclaimPolicy",
     "archive_prefix",
+    "backend_totals",
     "collection_footprints",
+    "debris_surveys",
     "delete_prefix",
     "evaluate_reclaim",
     "gather_survey",
     "migrate_collections",
+    "prune_debris",
     "prune_orphaned",
     "run_maintenance_cycle",
     "server_storage_collections_dir",
@@ -162,16 +165,171 @@ def collection_footprints(
     return sizes
 
 
+def _dir_bytes(path: Path) -> int:
+    """Total file bytes under *path* (best-effort; unreadable files skip)."""
+    total = 0
+    for dirpath, _, filenames in os.walk(path):
+        for filename in filenames:
+            try:
+                total += (Path(dirpath) / filename).stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def debris_surveys(
+    live_names: list[str],
+    storage_dir: Path | None,
+) -> list[NamespaceSurvey]:
+    """Survey on-disk collection dirs the live server does not list.
+
+    A Qdrant crash mid-create leaves a config-less collection dir that the
+    server logs as "Collection config is not found ... skipping" at every
+    startup and then ignores; because the survey historically enumerated
+    only live collections, that debris was invisible to every operator
+    view and unreclaimable forever. Each unmatched dir surfaces as
+    a ``debris`` namespace entry (grouped by prefix, sized from disk).
+    Report-only here: debris has no manifest attribution and Qdrant cannot
+    snapshot a collection it never loaded, so removal stays an explicit
+    operator action.
+    """
+    if storage_dir is None:
+        return []
+    from collections import defaultdict
+
+    from .storage_survey import _prefix_of
+
+    live = set(live_names)
+    grouped: dict[str, list[Path]] = defaultdict(list)
+    try:
+        children = sorted(p for p in storage_dir.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    for child in children:
+        if child.name in live:
+            continue
+        grouped[_prefix_of(child.name)].append(child)
+    return [
+        NamespaceSurvey(
+            prefix=prefix,
+            root=None,
+            status="debris",
+            collections=sorted(p.name for p in paths),
+            points=0,
+            footprint_bytes=sum(_dir_bytes(p) for p in paths),
+        )
+        for prefix, paths in grouped.items()
+    ]
+
+
+def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+    """Aggregate backend size over a classified survey.
+
+    The incident's 117.9 GB pile was invisible to every metric because
+    ``dangling_bytes`` counts only orphans and nothing summed the whole
+    backend. This rollup makes total size and its per-status composition
+    first-class.
+    """
+    total = 0
+    by_status: dict[str, int] = {}
+    for survey in surveys:
+        total += survey.footprint_bytes
+        by_status[survey.status] = (
+            by_status.get(survey.status, 0) + survey.footprint_bytes
+        )
+    return {
+        "total_bytes": total,
+        "namespaces": len(surveys),
+        "by_status_bytes": by_status,
+    }
+
+
+def prune_debris(
+    client: QdrantClient,
+    storage_dir: Path | None,
+    *,
+    dry_run: bool,
+) -> PruneResult:
+    """Remove config-less collection dirs the live server does not list.
+
+    Debris is unloadable by Qdrant (no collection config), so it cannot be
+    snapshotted or dropped through the client - removal is a filesystem
+    delete of the leftover dir. It stays operator-gated (the explicit
+    ``--debris`` flag plus the prune confirmation are the human in the
+    loop): debris has no manifest attribution, so the automated
+    time-confirmed-danglingness machinery must never touch it. Removing
+    nothing is a success (idempotent teardown).
+    """
+    import shutil
+
+    live_names = [c.name for c in client.get_collections().collections]
+    results: list[DeleteResult] = []
+    reclaimed = 0
+    for survey in debris_surveys(live_names, storage_dir):
+        for name in survey.collections:
+            path = cast("Path", storage_dir) / name
+            size = _dir_bytes(path)
+            if dry_run:
+                results.append(DeleteResult(name, "would_remove", collections=[name]))
+                reclaimed += size
+                continue
+            # Re-confirm right before the delete: a collection created
+            # between the survey snapshot and this point has a dir on
+            # disk before the server lists it, and must never be
+            # removed as debris.
+            live_now = {c.name for c in client.get_collections().collections}
+            if name in live_now:
+                results.append(
+                    DeleteResult(
+                        name,
+                        "skipped",
+                        collections=[name],
+                        reason="appeared_live",
+                    )
+                )
+                continue
+            try:
+                shutil.rmtree(path)
+            except OSError as exc:
+                results.append(
+                    DeleteResult(name, "failed", collections=[name], reason=str(exc))
+                )
+                continue
+            results.append(DeleteResult(name, "removed", collections=[name]))
+            reclaimed += size
+    return PruneResult(
+        results=results,
+        skipped_unknown=[],
+        reclaimed_bytes=reclaimed,
+        dry_run=dry_run,
+    )
+
+
+# View ordering for survey consumers: actionable states first. ``debris``
+# sits with the attention-needing states between unknown and unverifiable.
+_SURVEY_STATUS_RANK = {
+    "orphaned": 0,
+    "unknown": 1,
+    "debris": 2,
+    "unverifiable": 3,
+    "live": 4,
+}
+
+
 def gather_survey(
     client: QdrantClient,
     storage_dir: Path | None = None,
 ) -> list[NamespaceSurvey]:
     """Survey every stored namespace: enumerate, count, size, classify.
 
+    Includes ``debris`` entries for on-disk collection dirs the live
+    server does not list (crash leftovers), so the whole backend is
+    visible from one call.
+
     Args:
         client: Qdrant client for the managed server.
         storage_dir: The server ``collections`` directory for footprints;
-            ``None`` (or unresolved) omits byte sizes.
+            ``None`` (or unresolved) omits byte sizes and debris.
 
     Returns:
         Classified namespace records, actionable states first.
@@ -184,9 +342,12 @@ def gather_survey(
         except (OSError, RuntimeError):
             counts[name] = 0
     footprints = collection_footprints(names, storage_dir)
-    return classify_namespaces(
+    surveys = classify_namespaces(
         names, load_manifest(), point_counts=counts, footprints=footprints
     )
+    surveys.extend(debris_surveys(names, storage_dir))
+    surveys.sort(key=lambda s: (_SURVEY_STATUS_RANK.get(s.status, 5), s.prefix))
+    return surveys
 
 
 def delete_prefix(
@@ -399,6 +560,13 @@ class ReclaimPolicy:
             deleted by the retention sweep.
         archive_max_bytes: Total-byte cap for the archive dir; the sweep
             evicts oldest archives first until under it.
+        ephemeral_idle_hours: Idle hours (since the persisted
+            ``last_indexed`` stamp) after which a LIVE but temp-rooted
+            namespace is treated as dangling - the leak signature
+            is a harness temp dir that still exists but is never indexed
+            again. ``0`` (or negative) disables the tier. Destruction
+            still flows through the unchanged empty/data tiers: empty
+            drops, point-bearing archives first.
     """
 
     grace_hours: float = 24.0
@@ -406,6 +574,7 @@ class ReclaimPolicy:
     max_per_cycle: int = 16
     archive_retention_days: float = 30.0
     archive_max_bytes: int = 20 * 1024**3
+    ephemeral_idle_hours: float = 72.0
 
 
 @dataclass(frozen=True)
@@ -460,12 +629,85 @@ def _parse_iso(ts: str) -> datetime | None:
     return parsed
 
 
+def _evaluate_ephemeral(
+    surveys: list[NamespaceSurvey],
+    last_indexed: dict[str, str],
+    *,
+    now: datetime,
+    policy: ReclaimPolicy,
+) -> list[ReclaimDecision]:
+    """Decide, per LIVE temp-rooted namespace, whether the idle TTL expired.
+
+    The shared-backend leak signature: a harness temp dir still exists, so its
+    namespace classifies ``live`` and survives orphan pruning forever.
+    Ephemerality is derived from the root path (``is_temp_rooted``) and
+    danglingness from the persisted ``last_indexed`` activity clock -
+    stamped by every successful index run, restart-safe, and only ever
+    advanced by real activity, so protection can only extend. A missing
+    or unparsable stamp is ``pending`` (never destroy on absent
+    evidence). ``unknown``/``unverifiable`` namespaces never reach this
+    function (they are not ``live``).
+    """
+    from .storage_survey import is_temp_rooted
+
+    decisions: list[ReclaimDecision] = []
+    if policy.ephemeral_idle_hours <= 0:
+        return decisions
+    candidates = sorted(
+        (s for s in surveys if s.status == "live" and is_temp_rooted(s.root)),
+        key=lambda s: (s.points > 0, s.prefix),
+    )
+    for survey in candidates:
+        tier = "empty" if survey.points == 0 else "data"
+        stamped = _parse_iso(last_indexed.get(survey.prefix, ""))
+        if stamped is None:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "pending",
+                    tier,
+                    reason="ephemeral_no_activity_stamp",
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+            continue
+        idle_hours = (now - stamped).total_seconds() / 3600.0
+        if idle_hours < policy.ephemeral_idle_hours:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "pending",
+                    tier,
+                    reason=(
+                        "ephemeral_idle_remaining_h="
+                        f"{policy.ephemeral_idle_hours - idle_hours:.1f}"
+                    ),
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+            continue
+        decisions.append(
+            ReclaimDecision(
+                survey.prefix,
+                "reclaim_empty" if tier == "empty" else "reclaim_data",
+                tier,
+                reason="ephemeral_idle",
+                points=survey.points,
+                footprint_bytes=survey.footprint_bytes,
+            )
+        )
+    return decisions
+
+
 def evaluate_reclaim(
     surveys: list[NamespaceSurvey],
     stamps: dict[str, str],
     *,
     now: datetime,
     policy: ReclaimPolicy,
+    last_indexed: dict[str, str] | None = None,
 ) -> list[ReclaimDecision]:
     """Decide, per orphaned namespace, whether reclamation may act NOW.
 
@@ -484,9 +726,13 @@ def evaluate_reclaim(
             ``update_orphan_stamps``).
         now: The evaluation clock (timezone-aware).
         policy: The active :class:`ReclaimPolicy`.
+        last_indexed: Prefix to persisted ``last_indexed`` stamp mapping
+            (from the manifest); enables the ephemeral idle-TTL tier for
+            live temp-rooted namespaces. ``None`` skips the tier.
 
     Returns:
-        One :class:`ReclaimDecision` per orphaned namespace.
+        One :class:`ReclaimDecision` per orphaned namespace, plus one per
+        live temp-rooted namespace when *last_indexed* is provided.
     """
     decisions: list[ReclaimDecision] = []
     eligible: list[ReclaimDecision] = []
@@ -495,59 +741,81 @@ def evaluate_reclaim(
         key=lambda s: (s.points > 0, s.prefix),
     )
     for survey in orphaned:
-        tier = "empty" if survey.points == 0 else "data"
-        window_hours = (
-            policy.grace_hours if tier == "empty" else policy.grace_hours_data
-        )
-        first_seen = _parse_iso(stamps.get(survey.prefix, ""))
-        if first_seen is None:
-            decisions.append(
-                ReclaimDecision(
-                    survey.prefix,
-                    "pending",
-                    tier,
-                    reason="grace_started",
-                    points=survey.points,
-                    footprint_bytes=survey.footprint_bytes,
-                )
-            )
-            continue
-        age_hours = (now - first_seen).total_seconds() / 3600.0
-        if age_hours < window_hours:
-            decisions.append(
-                ReclaimDecision(
-                    survey.prefix,
-                    "pending",
-                    tier,
-                    reason=f"grace_remaining_h={window_hours - age_hours:.1f}",
-                    points=survey.points,
-                    footprint_bytes=survey.footprint_bytes,
-                )
-            )
-            continue
-        action = "reclaim_empty" if tier == "empty" else "reclaim_data"
-        decision = ReclaimDecision(
+        decision = _decide_orphan(survey, stamps, now=now, policy=policy)
+        decisions.append(_apply_cycle_cap(decision, eligible, policy))
+    if last_indexed is None:
+        return decisions
+    # Ephemeral idle-TTL tier: live temp-rooted namespaces whose
+    # activity clock expired. Orphans keep priority under the shared
+    # per-cycle cap; an over-cap ephemeral reclaim defers to next cycle.
+    for decision in _evaluate_ephemeral(surveys, last_indexed, now=now, policy=policy):
+        decisions.append(_apply_cycle_cap(decision, eligible, policy))
+    return decisions
+
+
+def _decide_orphan(
+    survey: NamespaceSurvey,
+    stamps: dict[str, str],
+    *,
+    now: datetime,
+    policy: ReclaimPolicy,
+) -> ReclaimDecision:
+    """Decide one orphaned namespace against its tiered grace window."""
+    tier = "empty" if survey.points == 0 else "data"
+    window_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
+    first_seen = _parse_iso(stamps.get(survey.prefix, ""))
+    if first_seen is None:
+        return ReclaimDecision(
             survey.prefix,
-            action,
+            "pending",
             tier,
+            reason="grace_started",
             points=survey.points,
             footprint_bytes=survey.footprint_bytes,
         )
-        if len(eligible) < policy.max_per_cycle:
-            eligible.append(decision)
-            decisions.append(decision)
-        else:
-            decisions.append(
-                ReclaimDecision(
-                    survey.prefix,
-                    "deferred",
-                    tier,
-                    reason="over_cycle_cap",
-                    points=survey.points,
-                    footprint_bytes=survey.footprint_bytes,
-                )
-            )
-    return decisions
+    age_hours = (now - first_seen).total_seconds() / 3600.0
+    if age_hours < window_hours:
+        return ReclaimDecision(
+            survey.prefix,
+            "pending",
+            tier,
+            reason=f"grace_remaining_h={window_hours - age_hours:.1f}",
+            points=survey.points,
+            footprint_bytes=survey.footprint_bytes,
+        )
+    return ReclaimDecision(
+        survey.prefix,
+        "reclaim_empty" if tier == "empty" else "reclaim_data",
+        tier,
+        points=survey.points,
+        footprint_bytes=survey.footprint_bytes,
+    )
+
+
+def _apply_cycle_cap(
+    decision: ReclaimDecision,
+    eligible: list[ReclaimDecision],
+    policy: ReclaimPolicy,
+) -> ReclaimDecision:
+    """Track an eligible reclaim against the shared per-cycle cap.
+
+    Pending and deferred decisions pass through; a reclaim decision either
+    joins the *eligible* list (mutated in place) or converts to a
+    ``deferred`` decision once the cap is reached.
+    """
+    if decision.action not in ("reclaim_empty", "reclaim_data"):
+        return decision
+    if len(eligible) < policy.max_per_cycle:
+        eligible.append(decision)
+        return decision
+    return ReclaimDecision(
+        decision.prefix,
+        "deferred",
+        decision.tier,
+        reason="over_cycle_cap",
+        points=decision.points,
+        footprint_bytes=decision.footprint_bytes,
+    )
 
 
 def archive_prefix(
@@ -712,14 +980,23 @@ def run_maintenance_cycle(
     Returns:
         A :class:`MaintenanceResult` for the jobs registry and rollup.
     """
-    from .storage_manifest import update_orphan_stamps
+    from .storage_manifest import load_manifest, update_orphan_stamps
 
     surveys = gather_survey(client, storage_dir)
     stamps = update_orphan_stamps(
         {s.prefix: s.status for s in surveys},
         now_iso=now.isoformat(),
     )
-    decisions = evaluate_reclaim(surveys, stamps, now=now, policy=policy)
+    last_indexed = {
+        prefix: entry.last_indexed for prefix, entry in load_manifest().items()
+    }
+    decisions = evaluate_reclaim(
+        surveys,
+        stamps,
+        now=now,
+        policy=policy,
+        last_indexed=last_indexed,
+    )
     applied: list[ReclaimDecision] = []
     archived: list[Path] = []
     reclaimed = 0

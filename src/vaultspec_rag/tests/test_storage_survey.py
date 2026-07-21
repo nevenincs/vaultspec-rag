@@ -92,7 +92,7 @@ def test_empty_input() -> None:
     assert classify_namespaces([], {}) == []
 
 
-# -- issue 242: extended-length alias normalization and temp-root flagging --
+# -- extended-length alias normalization and temp-root flagging --
 
 
 def test_extended_length_alias_hashes_to_same_prefix(tmp_path: Path) -> None:

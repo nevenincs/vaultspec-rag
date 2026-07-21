@@ -15,6 +15,11 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._job_errors import (
+    STALL_THRESHOLD_SECONDS,
+    classify_error_text,
+    remediation,
+)
 from ._app import server_app
 from ._cli_format import (
     _format_mb,
@@ -42,7 +47,10 @@ _RESULT_RE = re.compile(
     r"^\+(?P<added>\d+)\s*/(?P<updated>\d+)\s*-(?P<removed>\d+)"
     r"\s*\((?P<duration_ms>\d+)ms\)(?:\s*~(?P<skipped>\d+))?$"
 )
-_STALE_PROGRESS_SECONDS = 300.0
+# The stall threshold is service-domain: the server computes the
+# authoritative ``stalled`` flag; this constant only backs the fallback
+# for snapshots from an older service that lacks the flag.
+_STALE_PROGRESS_SECONDS = STALL_THRESHOLD_SECONDS
 
 
 def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
@@ -248,19 +256,31 @@ def _stale_progress_label(job: dict[str, object]) -> str:
     raw_age = job.get("last_progress_age_seconds")
     if not isinstance(raw_age, int | float):
         return ""
-    if float(raw_age) < _STALE_PROGRESS_SECONDS:
+    # Prefer the service-computed flag; fall back to the local threshold
+    # for snapshots from an older service that lacks it.
+    stalled = job.get("stalled")
+    if stalled is False:
+        return ""
+    if stalled is not True and float(raw_age) < _STALE_PROGRESS_SECONDS:
         return ""
     return f"no progress for {_format_seconds(raw_age)}"
 
 
-def _human_result(raw: object) -> str:
+def _human_result(raw: object, *, failed: bool = False) -> str:
     if not raw:
         return ""
     result = " ".join(str(raw).split())
     if result == "watcher task cancelled":
         return "automatic update cancelled"
-    if "[Errno 28]" in result or "No space left on device" in result:
-        return "not enough disk space; free disk space and retry"
+    if failed:
+        # One shared taxonomy: the same classification the service
+        # stamps as ``error_kind`` drives the friendly remediation here,
+        # so the CLI never grows its own error-string matching again.
+        # Applied only to failed jobs so a success summary that happens
+        # to contain a marker word is never replaced.
+        friendly = remediation(classify_error_text(result))
+        if friendly is not None:
+            return friendly
     match = _RESULT_RE.match(result.strip())
     if match is None:
         return result
@@ -315,7 +335,7 @@ def _job_summary_detail(job: dict[str, object]) -> str:
     if phase == "running":
         return _running_job_detail(job)
     if phase in ("error", "failed"):
-        result = _human_result(job.get("result"))
+        result = _human_result(job.get("result"), failed=True)
         return f"error: {result}" if result else "error reported"
     result = _human_result(job.get("result"))
     if result:
@@ -811,8 +831,9 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
     result = job.get("result")
     if not result:
         return
-    label = "Error" if str(job.get("phase")) in ("error", "failed") else "Result"
-    _cli.console.print(f"{label}: {_human_result(result)}")
+    is_failed = str(job.get("phase")) in ("error", "failed")
+    label = "Error" if is_failed else "Result"
+    _cli.console.print(f"{label}: {_human_result(result, failed=is_failed)}")
 
 
 def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:

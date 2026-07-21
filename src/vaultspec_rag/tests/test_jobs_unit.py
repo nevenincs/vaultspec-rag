@@ -25,6 +25,9 @@ from ..jobs import record_finish, record_start, reset, snapshot
 from ..service import ServiceRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
@@ -245,6 +248,118 @@ class TestJobsLifecycle:
         )
 
 
+class TestJobErrorKind:
+    """Failed jobs carry a stable ``error_kind`` classification."""
+
+    def setup_method(self) -> None:
+        reset()
+
+    def _finished(
+        self,
+        *,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, object]:
+        job_id = record_start("code", "tool")
+        record_finish(job_id, result=result, error=error)
+        return {r["id"]: r for r in snapshot()}[job_id]
+
+    def test_disk_full_error_is_classified(self) -> None:
+        record = self._finished(error="[Errno 28] No space left on device")
+        assert record["error_kind"] == "disk_full"
+
+    def test_wal_disk_full_text_is_classified(self) -> None:
+        record = self._finished(
+            error=(
+                "Service internal error: No space left on device: "
+                "WAL buffer size exceeds available disk space"
+            )
+        )
+        assert record["error_kind"] == "disk_full"
+
+    def test_timeout_error_is_classified(self) -> None:
+        record = self._finished(error="the read operation timed out")
+        assert record["error_kind"] == "timeout"
+
+    def test_unclassified_error_is_other(self) -> None:
+        record = self._finished(error="boom")
+        assert record["error_kind"] == "other"
+
+    def test_success_has_no_error_kind(self) -> None:
+        record = self._finished(result="+1 /0 -0 (5ms)")
+        assert record["error_kind"] is None
+
+    def test_started_record_defaults_error_kind_none(self) -> None:
+        job_id = record_start("vault", "tool")
+        record = {r["id"]: r for r in snapshot()}[job_id]
+        assert record["error_kind"] is None
+
+
+class TestJobStallShaping:
+    """The /jobs shaping computes the service-domain ``stalled`` flag."""
+
+    def _running_record(
+        self,
+        *,
+        step: str,
+        age_seconds: float,
+        now: float,
+    ) -> dict[str, object]:
+        return {
+            "id": "j1",
+            "phase": "running",
+            "started_at": now - age_seconds - 10.0,
+            "finished_at": None,
+            "error_kind": None,
+            "progress": {
+                "step": step,
+                "completed": 0,
+                "total": 100,
+                "last_updated": now - age_seconds,
+            },
+        }
+
+    def test_running_job_past_threshold_is_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(
+            step="embed + upsert chunks", age_seconds=400.0, now=now
+        )
+        assert _job_with_liveness(record, now=now)["stalled"] is True
+
+    def test_waiting_job_is_never_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(step="queued", age_seconds=400.0, now=now)
+        assert _job_with_liveness(record, now=now)["stalled"] is False
+
+    def test_fresh_progress_is_not_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(step="embed", age_seconds=10.0, now=now)
+        assert _job_with_liveness(record, now=now)["stalled"] is False
+
+    def test_summary_counts_stalled_and_error_kinds(self) -> None:
+        from ..server._routes_jobs import _job_summary
+
+        now = 1_000_000.0
+        stalled = self._running_record(step="embed", age_seconds=400.0, now=now)
+        failed: dict[str, object] = {
+            "id": "j2",
+            "phase": "error",
+            "started_at": now - 50.0,
+            "finished_at": now - 40.0,
+            "error_kind": "disk_full",
+            "progress": None,
+        }
+        summary = _job_summary([stalled, failed], now=now)
+        assert summary["stalled"] == 1
+        assert summary["error_kinds"] == {"disk_full": 1}
+
+
 class TestJobsHumanSummarySignpost:
     """The human jobs feed routes scripted consumers to --json: its summary
     unconditionally contains the words "active" and "waiting", so grepping it
@@ -270,3 +385,100 @@ class TestJobsHumanSummarySignpost:
         match = re.search(r'"--json",\s*help=\(([^)]*)\)', source)
         assert match is not None
         assert "scripted waits" in match.group(1)
+
+
+class TestInterruptedJobRestore:
+    """Jobs a dead daemon left running come back as ``interrupted``."""
+
+    @pytest.fixture(autouse=True)
+    def _own_status_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> Iterator[None]:
+        from ..config import reset_config
+
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+        reset_config()
+        reset()
+        yield
+        reset()
+        reset_config()
+
+    def test_running_job_survives_a_simulated_daemon_death(self) -> None:
+        from ..jobs import restore_interrupted
+
+        job_id = record_start("code", "tool", command="reindex_codebase")
+        # Simulate the daemon dying: the in-memory ring vanishes, the
+        # persisted snapshot stays.
+        reset()
+        assert snapshot() == []
+        assert restore_interrupted() == 1
+        records = {r["id"]: r for r in snapshot()}
+        record = records[job_id]
+        assert record["phase"] == "interrupted"
+        assert record["result"] == "daemon terminated while this job was running"
+        initiator = record["initiator"]
+        assert isinstance(initiator, dict)
+        assert cast("dict[str, object]", initiator)["command"] == "reindex_codebase"
+
+    def test_finished_jobs_are_not_restored(self) -> None:
+        from ..jobs import restore_interrupted
+
+        job_id = record_start("vault", "tool")
+        record_finish(job_id, result="ok")
+        reset()
+        assert restore_interrupted() == 0
+        assert snapshot() == []
+
+    def test_restore_is_not_repeated_on_second_startup(self) -> None:
+        from ..jobs import restore_interrupted
+
+        record_start("code", "tool")
+        reset()
+        assert restore_interrupted() == 1
+        reset()
+        assert restore_interrupted() == 0
+
+    def test_missing_snapshot_restores_nothing(self) -> None:
+        from ..jobs import restore_interrupted
+
+        assert restore_interrupted() == 0
+
+
+class TestMachineServiceTestGuard:
+    """The terminate path refuses to act from an unisolated test run."""
+
+    def test_unisolated_pytest_env_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..cli._service_stop import _refuse_terminate_from_unisolated_test
+
+        monkeypatch.delenv("VAULTSPEC_RAG_STATUS_DIR", raising=False)
+        monkeypatch.delenv("VAULTSPEC_RAG_QDRANT_STORAGE_DIR", raising=False)
+        with pytest.raises(RuntimeError, match="refusing to terminate"):
+            _refuse_terminate_from_unisolated_test()
+
+    def test_isolated_env_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ..cli._service_stop import _refuse_terminate_from_unisolated_test
+
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", "somewhere-isolated")
+        _refuse_terminate_from_unisolated_test()
+
+
+class TestSuiteIsolationGuard:
+    """The session conftest points the machine-singleton dirs at tmp."""
+
+    def test_machine_dirs_are_isolated_for_the_suite(self) -> None:
+        import os
+        from pathlib import Path
+
+        from ..config import EnvVar
+
+        machine_default = Path("~/.vaultspec-rag").expanduser()
+        status = os.environ.get(EnvVar.STATUS_DIR.value)
+        storage = os.environ.get(EnvVar.QDRANT_STORAGE_DIR.value)
+        assert status is not None
+        assert storage is not None
+        assert Path(status).expanduser() != machine_default
+        assert not Path(storage).expanduser().is_relative_to(machine_default)

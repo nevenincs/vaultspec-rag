@@ -129,6 +129,7 @@ The daemon's scheduled storage-maintenance cycle - see the [storage and maintena
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it              | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `20`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables)         | -        |
 
 ### Preprocessing
 

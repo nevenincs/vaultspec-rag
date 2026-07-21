@@ -431,21 +431,30 @@ def storage_delete(
 # -- prune ------------------------------------------------------------------
 
 
-def _render_prune(result: PruneResult, json_mode: bool) -> None:
+def _render_prune(
+    result: PruneResult,
+    json_mode: bool,
+    debris_result: PruneResult | None = None,
+) -> None:
     if json_mode:
-        _emit_json(
-            True,
-            _PRUNE_CMD,
-            data={
+        data: dict[str, object] = {
+            "results": [
+                {"prefix": r.prefix, "status": r.status, "reason": r.reason}
+                for r in result.results
+            ],
+            "skipped_unknown": result.skipped_unknown,
+            "reclaimed_bytes": result.reclaimed_bytes,
+            "dry_run": result.dry_run,
+        }
+        if debris_result is not None:
+            data["debris"] = {
                 "results": [
-                    {"prefix": r.prefix, "status": r.status, "reason": r.reason}
-                    for r in result.results
+                    {"name": r.prefix, "status": r.status, "reason": r.reason}
+                    for r in debris_result.results
                 ],
-                "skipped_unknown": result.skipped_unknown,
-                "reclaimed_bytes": result.reclaimed_bytes,
-                "dry_run": result.dry_run,
-            },
-        )
+                "reclaimed_bytes": debris_result.reclaimed_bytes,
+            }
+        _emit_json(True, _PRUNE_CMD, data=data)
         return
     verb = "Would reclaim" if result.dry_run else "Reclaimed"
     typer.echo(
@@ -455,6 +464,13 @@ def _render_prune(result: PruneResult, json_mode: bool) -> None:
     )
     for r in result.results:
         typer.echo(f"  {r.status:<12} {r.prefix}")
+    if debris_result is not None:
+        typer.echo(
+            f"{verb} {len(debris_result.results)} debris collection dirs "
+            f"({_human_size(debris_result.reclaimed_bytes)})."
+        )
+        for r in debris_result.results:
+            typer.echo(f"  {r.status:<12} {r.prefix}")
 
 
 @server_storage_app.command(
@@ -464,22 +480,45 @@ def _render_prune(result: PruneResult, json_mode: bool) -> None:
 def storage_prune(
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply the prune."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without deleting."),
+    debris: bool = typer.Option(
+        False,
+        "--debris",
+        help=(
+            "Also remove config-less collection dirs left behind by "
+            "crashes (unloadable by the server; filesystem delete)."
+        ),
+    ),
     json_mode: bool = typer.Option(False, "--json", help="Emit JSON for scripts."),
 ) -> None:
     """Reclaim all orphaned namespaces; never touches unknown or live ones."""
-    from ..storage_ops import prune_orphaned, server_storage_collections_dir
+    from ..storage_ops import (
+        prune_debris,
+        prune_orphaned,
+        server_storage_collections_dir,
+    )
 
     _require_yes_for_json(_PRUNE_CMD, json_mode, yes)
     preview = dry_run or not yes
+    storage_dir = server_storage_collections_dir()
     result = _run_storage_op(
         _PRUNE_CMD,
         json_mode,
-        lambda c: prune_orphaned(
-            c, dry_run=preview, storage_dir=server_storage_collections_dir()
-        ),
+        lambda c: prune_orphaned(c, dry_run=preview, storage_dir=storage_dir),
     )
-    _render_prune(result, json_mode)
-    if not dry_run and not yes and result.results:
+    debris_result = (
+        _run_storage_op(
+            _PRUNE_CMD,
+            json_mode,
+            lambda c: prune_debris(c, storage_dir, dry_run=preview),
+        )
+        if debris
+        else None
+    )
+    _render_prune(result, json_mode, debris_result)
+    applied_anything = bool(result.results) or bool(
+        debris_result.results if debris_result is not None else []
+    )
+    if not dry_run and not yes and applied_anything:
         raise typer.Exit(1)
 
 

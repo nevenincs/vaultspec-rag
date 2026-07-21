@@ -293,7 +293,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             "jobs": filtered_records,
             "total": len(records),
             "returned": len(filtered_records),
-            "summary": _job_summary(records),
+            "summary": _job_summary(records, now=now),
             "filters": {
                 "phase": phase,
                 "source": source,

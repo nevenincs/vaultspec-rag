@@ -1,6 +1,5 @@
 """Shared fixtures, helpers, and HTTP contract servers for the CLI test suite."""
 
-
 from __future__ import annotations
 
 import contextlib
@@ -593,7 +592,6 @@ def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object
     return server, thread, requests
 
 
-
 _FORBIDDEN_DOCSTRING_TOKENS = ("Args:", "Raises:", "CLIState", " ctx ")
 
 
@@ -876,6 +874,7 @@ def _assert_project_summary_language(out: str) -> None:
     lower_leaks = [text for text in forbidden_lower if text in lower]
     assert not lower_leaks, f"internal project summary language leaked: {lower_leaks}"
     assert {"yes", "no"}.isdisjoint({line.strip() for line in _plain_lines(out)})
+
 
 __all__ = [
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",

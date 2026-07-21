@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -24,6 +24,8 @@ from ..storage_survey import NamespaceSurvey
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from qdrant_client import QdrantClient
 
 pytestmark = [pytest.mark.unit]
 
@@ -360,3 +362,219 @@ class TestGatherStorageSurveyCached:
         payload = _routes._gather_storage_survey(None, 200)
         assert payload["source"] == "fresh"
         assert payload["returned"] == 1
+
+
+def _temp_survey(
+    prefix: str,
+    points: int = 0,
+    footprint: int = 2_100,
+) -> NamespaceSurvey:
+    import pathlib
+    import tempfile
+
+    return NamespaceSurvey(
+        prefix=prefix,
+        root=str(pathlib.Path(tempfile.gettempdir()) / f"vaultspec-livetest-{prefix}"),
+        status="live",
+        collections=[f"{prefix}vault_docs"],
+        points=points,
+        footprint_bytes=footprint,
+    )
+
+
+class TestEphemeralIdleTier:
+    """Live temp-rooted namespaces reclaim on the persisted idle TTL."""
+
+    def _decide(
+        self,
+        surveys: list[NamespaceSurvey],
+        last_indexed: dict[str, str] | None,
+        policy: ReclaimPolicy = _POLICY,
+    ):
+        return evaluate_reclaim(
+            surveys, {}, now=_NOW, policy=policy, last_indexed=last_indexed
+        )
+
+    def test_idle_empty_temp_namespace_reclaims(self) -> None:
+        prefix = "raaaaaaaaaaa1_"
+        stamp = (_NOW - timedelta(hours=100)).isoformat()
+        decisions = self._decide([_temp_survey(prefix)], {prefix: stamp})
+        assert [d.action for d in decisions] == ["reclaim_empty"]
+        assert decisions[0].reason == "ephemeral_idle"
+
+    def test_idle_data_temp_namespace_takes_archive_path(self) -> None:
+        prefix = "raaaaaaaaaaa2_"
+        stamp = (_NOW - timedelta(hours=100)).isoformat()
+        decisions = self._decide([_temp_survey(prefix, points=10)], {prefix: stamp})
+        assert [d.action for d in decisions] == ["reclaim_data"]
+        assert decisions[0].tier == "data"
+
+    def test_fresh_activity_is_pending(self) -> None:
+        prefix = "raaaaaaaaaaa3_"
+        stamp = (_NOW - timedelta(hours=1)).isoformat()
+        decisions = self._decide([_temp_survey(prefix)], {prefix: stamp})
+        assert [d.action for d in decisions] == ["pending"]
+        assert decisions[0].reason is not None
+        assert decisions[0].reason.startswith("ephemeral_idle_remaining_h=")
+
+    def test_missing_activity_stamp_is_pending(self) -> None:
+        prefix = "raaaaaaaaaaa4_"
+        decisions = self._decide([_temp_survey(prefix)], {})
+        assert [d.action for d in decisions] == ["pending"]
+        assert decisions[0].reason == "ephemeral_no_activity_stamp"
+
+    def test_non_temp_live_namespace_is_untouched(self) -> None:
+        stamp = (_NOW - timedelta(hours=1000)).isoformat()
+        survey = _survey("raaaaaaaaaaa5_", status="live")
+        decisions = self._decide([survey], {"raaaaaaaaaaa5_": stamp})
+        assert decisions == []
+
+    def test_zero_ttl_disables_the_tier(self) -> None:
+        prefix = "raaaaaaaaaaa6_"
+        stamp = (_NOW - timedelta(hours=1000)).isoformat()
+        policy = ReclaimPolicy(ephemeral_idle_hours=0.0)
+        decisions = self._decide([_temp_survey(prefix)], {prefix: stamp}, policy)
+        assert decisions == []
+
+    def test_absent_last_indexed_mapping_skips_the_tier(self) -> None:
+        decisions = self._decide([_temp_survey("raaaaaaaaaaa7_")], None)
+        assert decisions == []
+
+    def test_orphans_keep_priority_under_the_shared_cap(self) -> None:
+        policy = ReclaimPolicy(grace_hours=24.0, max_per_cycle=1)
+        orphan = _survey("raaaaaaaaaaa8_")
+        ephemeral_prefix = "raaaaaaaaaaa9_"
+        stamps = {"raaaaaaaaaaa8_": (_NOW - timedelta(hours=48)).isoformat()}
+        last_indexed = {ephemeral_prefix: (_NOW - timedelta(hours=1000)).isoformat()}
+        decisions = evaluate_reclaim(
+            [orphan, _temp_survey(ephemeral_prefix)],
+            stamps,
+            now=_NOW,
+            policy=policy,
+            last_indexed=last_indexed,
+        )
+        by_prefix = {d.prefix: d for d in decisions}
+        assert by_prefix["raaaaaaaaaaa8_"].action == "reclaim_empty"
+        assert by_prefix[ephemeral_prefix].action == "deferred"
+        assert by_prefix[ephemeral_prefix].reason == "over_cycle_cap"
+
+
+class TestLastIndexedStamping:
+    """record_root's last_indexed stamp is the ephemeral activity clock."""
+
+    def test_fresh_stamp_overwrites_and_persists(self, tmp_path: Path) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        record_root(root, backend="server")
+        record_root(root, backend="server", last_indexed="2026-07-21T10:00:00+00:00")
+        entry = next(iter(load_manifest().values()))
+        assert entry.last_indexed == "2026-07-21T10:00:00+00:00"
+
+
+class _FakeCollections:
+    def __init__(self, names: list[str]) -> None:
+        import types
+
+        self.collections = [types.SimpleNamespace(name=n) for n in names]
+
+
+class _FakeClient:
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    def get_collections(self) -> _FakeCollections:
+        return _FakeCollections(self._names)
+
+
+class TestDebrisVisibility:
+    """Config-less collection dirs surface as debris and are reclaimable."""
+
+    def _make_debris(self, storage: Path) -> Path:
+        debris_dir = storage / "rdeadbeef0000_codebase_docs"
+        (debris_dir / "segments").mkdir(parents=True)
+        (debris_dir / "segments" / "seg.dat").write_bytes(b"x" * 2048)
+        return debris_dir
+
+    def test_debris_dirs_surface_with_footprint(self, tmp_path: Path) -> None:
+        from ..storage_ops import debris_surveys
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        live_dir = storage / "rlive00000000_vault_docs"
+        live_dir.mkdir()
+        self._make_debris(storage)
+        surveys = debris_surveys(["rlive00000000_vault_docs"], storage)
+        assert len(surveys) == 1
+        assert surveys[0].status == "debris"
+        assert surveys[0].collections == ["rdeadbeef0000_codebase_docs"]
+        assert surveys[0].footprint_bytes == 2048
+        assert surveys[0].points == 0
+
+    def test_no_storage_dir_yields_no_debris(self) -> None:
+        from ..storage_ops import debris_surveys
+
+        assert debris_surveys(["a"], None) == []
+
+    def test_backend_totals_roll_up_all_statuses(self) -> None:
+        from ..storage_ops import backend_totals
+
+        surveys = [
+            _survey("raaaaaaaaaaa1_", status="live", footprint=100),
+            _survey("raaaaaaaaaaa2_", status="orphaned", footprint=50),
+            NamespaceSurvey(
+                prefix="rdeadbeef0000_",
+                root=None,
+                status="debris",
+                collections=["rdeadbeef0000_codebase_docs"],
+                footprint_bytes=25,
+            ),
+        ]
+        totals = backend_totals(surveys)
+        assert totals["total_bytes"] == 175
+        assert totals["namespaces"] == 3
+        assert totals["by_status_bytes"] == {
+            "live": 100,
+            "orphaned": 50,
+            "debris": 25,
+        }
+
+    def test_prune_debris_dry_run_removes_nothing(self, tmp_path: Path) -> None:
+        from ..storage_ops import prune_debris
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        debris_dir = self._make_debris(storage)
+        result = prune_debris(
+            cast("QdrantClient", _FakeClient([])), storage, dry_run=True
+        )
+        assert [r.status for r in result.results] == ["would_remove"]
+        assert result.reclaimed_bytes == 2048
+        assert debris_dir.exists()
+
+    def test_prune_debris_removes_only_unlisted_dirs(self, tmp_path: Path) -> None:
+        from ..storage_ops import prune_debris
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        live_dir = storage / "rlive00000000_vault_docs"
+        live_dir.mkdir()
+        debris_dir = self._make_debris(storage)
+        result = prune_debris(
+            cast("QdrantClient", _FakeClient(["rlive00000000_vault_docs"])),
+            storage,
+            dry_run=False,
+        )
+        assert [r.status for r in result.results] == ["removed"]
+        assert not debris_dir.exists()
+        assert live_dir.exists()
+
+    def test_prune_debris_with_nothing_to_do_is_success(self, tmp_path: Path) -> None:
+        from ..storage_ops import prune_debris
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        result = prune_debris(
+            cast("QdrantClient", _FakeClient([])), storage, dry_run=False
+        )
+        assert result.results == []
+        assert result.reclaimed_bytes == 0

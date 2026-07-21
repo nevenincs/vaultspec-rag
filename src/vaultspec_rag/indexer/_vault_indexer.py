@@ -131,7 +131,13 @@ class VaultIndexer:
                 root=self.root_dir,
             )
             try:
+                # Stamp the activity clock at run START as well as at
+                # completion: a long run spanning a maintenance tick must
+                # advance the ephemeral idle clock before any reclaim
+                # evaluation can see a stale stamp mid-write.
+                self.store.touch_manifest_last_indexed()
                 result = self._full_index_locked(clean=clean, reporter=reporter)
+                self.store.touch_manifest_last_indexed()
             except Exception as exc:
                 log_event(
                     logger,
@@ -347,10 +353,16 @@ class VaultIndexer:
                 root=self.root_dir,
             )
             try:
+                # Stamp the activity clock at run START as well as at
+                # completion: a long run spanning a maintenance tick must
+                # advance the ephemeral idle clock before any reclaim
+                # evaluation can see a stale stamp mid-write.
+                self.store.touch_manifest_last_indexed()
                 result = self._incremental_index_locked(
                     reporter=reporter,
                     changed_paths=changed_paths,
                 )
+                self.store.touch_manifest_last_indexed()
             except Exception as exc:
                 log_event(
                     logger,
