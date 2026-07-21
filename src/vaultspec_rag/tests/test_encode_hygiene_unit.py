@@ -5,7 +5,12 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from ..embeddings import QueryEmbeddingCache, SparseResult, _sparse_tensor_to_results
+from ..embeddings import (
+    EmbeddingModel,
+    QueryEmbeddingCache,
+    SparseResult,
+    _sparse_tensor_to_results,
+)
 
 # pytest.approx's `expected` parameter is untyped in the stub; cast once so
 # call sites stay free of per-call ignores.
@@ -65,6 +70,91 @@ class TestSparseTensorConversionParity:
         converted = _sparse_tensor_to_results(tensor)
         assert len(converted) == 3
         assert all(r.indices == [] and r.values == [] for r in converted)
+
+
+class _OOMDenseModel:
+    """Dense-model double that OOMs until the batch size is small enough."""
+
+    def __init__(self, succeed_at: int | None = None) -> None:
+        self.batch_sizes: list[int] = []
+        self._succeed_at = succeed_at
+
+    def encode(
+        self,
+        texts: list[str],
+        *,
+        batch_size: int,
+        show_progress_bar: bool,
+        normalize_embeddings: bool,
+    ) -> Any:
+        del show_progress_bar, normalize_embeddings
+        import torch
+
+        self.batch_sizes.append(batch_size)
+        if self._succeed_at is not None and batch_size <= self._succeed_at:
+            import numpy as np
+
+            return np.zeros((len(texts), 4), dtype=np.float32)
+        raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
+
+
+class _OOMSparseModel:
+    """Sparse-model double mirroring :class:`_OOMDenseModel`."""
+
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
+    def encode_document(self, texts: list[str], *, batch_size: int) -> Any:
+        del texts
+        import torch
+
+        self.batch_sizes.append(batch_size)
+        raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
+
+
+def _model_shell() -> EmbeddingModel:
+    """An ``EmbeddingModel`` shell that skips real model loading."""
+    return object.__new__(EmbeddingModel)
+
+
+class TestOomLadderIsFloorBounded:
+    """The CUDA-OOM recovery must terminate - never loop forever (#242).
+
+    A persistent allocator failure (e.g. host commit exhaustion on a full
+    disk) must abort the run with the real error after the halving ladder
+    reaches batch size 1, so no unbounded retry loop can stand between a
+    storage-pressure condition and a failed job.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_dense_ladder_halves_then_raises(self):
+        import torch
+
+        fake = _OOMDenseModel()
+        model = _model_shell()
+        model._dense_model = fake  # type: ignore[assignment]
+        with pytest.raises(torch.cuda.OutOfMemoryError):
+            model.encode_documents(["text"] * 4, batch_size=8)
+        assert fake.batch_sizes == [8, 4, 2, 1]
+
+    def test_dense_ladder_recovers_at_smaller_batch(self):
+        fake = _OOMDenseModel(succeed_at=2)
+        model = _model_shell()
+        model._dense_model = fake  # type: ignore[assignment]
+        result = model.encode_documents(["text"] * 4, batch_size=8)
+        assert result.shape == (4, 4)
+        assert fake.batch_sizes == [8, 4, 2]
+
+    def test_sparse_ladder_halves_then_raises(self):
+        import torch
+
+        fake = _OOMSparseModel()
+        model = _model_shell()
+        model._sparse_model = fake  # type: ignore[assignment]
+        with pytest.raises(torch.cuda.OutOfMemoryError):
+            model.encode_documents_sparse(["text"] * 4, batch_size=8)
+        assert fake.batch_sizes == [8, 4, 2, 1]
 
 
 class TestQueryEmbeddingCache:
