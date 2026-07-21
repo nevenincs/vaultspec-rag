@@ -14,16 +14,6 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
@@ -63,7 +53,7 @@ Define configuration, typed safety outcomes, and one reusable RSS and CUDA budge
 
 Remove whole-corpus and device-retention amplifiers across full and both incremental code paths.
 
-- [x] `W01.P02.S06` - Transfer sparse document outputs to CPU immediately after forward completion and narrow caller lock spans; `src/vaultspec_rag/embeddings.py`, `src/vaultspec_rag/indexer/_streaming.py`.
+- [x] `W01.P02.S06` - Transfer sparse document outputs to CPU immediately after forward completion and narrow caller lock spans; `src/vaultspec_rag/embeddings.py, src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W01.P02.S07` - Define bounded file segments, weighted slices, CPU transfer, and immediate vector-field release; `src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W01.P02.S08` - Convert full indexing to weighted production without whole-corpus vector sorting or retention; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S09` - Convert unscoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
@@ -74,7 +64,7 @@ Remove whole-corpus and device-retention amplifiers across full and both increme
 
 Add a durable-progress deadline and persistent watcher circuit above existing operation-level storage retry.
 
-- [ ] `W01.P03.S12` - Construct the server-mode store client from explicit operation timeout configuration; `src/vaultspec_rag/store.py`.
+- [x] `W01.P03.S12` - Construct the server-mode store client from explicit operation timeout configuration; `src/vaultspec_rag/store.py`.
 - [ ] `W01.P03.S13` - Clamp bounded write retry and sleep to the remaining durable no-progress budget; `src/vaultspec_rag/_store_writes.py`.
 - [ ] `W01.P03.S14` - Implement durable-progress deadlines and interruptible queue, retry, and shutdown polling; `src/vaultspec_rag/indexer/_run_policy.py`.
 - [ ] `W01.P03.S15` - Persist per-root watcher failure count, classification, retry time, circuit state, and convergence intent; `src/vaultspec_rag/watcher_retry.py`.

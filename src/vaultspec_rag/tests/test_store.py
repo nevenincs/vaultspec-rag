@@ -465,6 +465,37 @@ class TestBuildCodeFilter:
 class TestQdrantServerMode:
     """Integration/unit tests for Qdrant Server Mode and Quantization Config."""
 
+    def test_server_mode_uses_configured_operation_timeout(
+        self, tmp_path: Path
+    ) -> None:
+        import os
+
+        from qdrant_client.qdrant_remote import QdrantRemote
+
+        from ..config import EnvVar, reset_config
+        from ..store import VaultStore
+
+        variables = (EnvVar.QDRANT_URL, EnvVar.STORE_OPERATION_TIMEOUT_SECONDS)
+        previous = {variable: os.environ.get(variable.value) for variable in variables}
+        os.environ[EnvVar.QDRANT_URL.value] = "http://127.0.0.1:9"
+        os.environ[EnvVar.STORE_OPERATION_TIMEOUT_SECONDS.value] = "1.25"
+        reset_config()
+        try:
+            store = VaultStore(tmp_path)
+            try:
+                remote = store.client._client
+                assert isinstance(remote, QdrantRemote)
+                assert remote._timeout == 2
+            finally:
+                store.close()
+        finally:
+            for variable, value in previous.items():
+                if value is None:
+                    os.environ.pop(variable.value, None)
+                else:
+                    os.environ[variable.value] = value
+            reset_config()
+
     def test_server_mode_bypasses_file_lock_and_configures_properties(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

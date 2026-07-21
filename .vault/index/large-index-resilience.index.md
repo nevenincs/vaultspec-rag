@@ -12,6 +12,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S05]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-summary]]'
   - '[[2026-07-21-large-index-resilience-W01-P02-S06]]'
+  - '[[2026-07-21-large-index-resilience-W01-P03-S12]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
   - '[[2026-07-21-large-index-resilience-reference]]'
@@ -51,6 +52,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W01-P01-S05` - Verify production configuration and deliberately low resource budgets through imported behavior
 - `2026-07-21-large-index-resilience-W01-P01-summary` - `large-index-resilience` `W01.P01` summary
 - `2026-07-21-large-index-resilience-W01-P02-S06` - Transfer sparse document outputs to CPU immediately after forward completion and narrow caller lock spans
+- `2026-07-21-large-index-resilience-W01-P03-S12` - Construct the server-mode store client from explicit operation timeout configuration
 
 ### plan
 
