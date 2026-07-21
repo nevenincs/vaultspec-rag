@@ -752,11 +752,12 @@ class TestDiskPreflightRefusal:
             ["--target", str(tmp_path), "index", "--type", "vault", "--json"],
         )
         assert result.exit_code == 1
-        # The progress reporter writes terminal control sequences before
-        # the envelope (platform-dependent); strip them and parse from
-        # the envelope's opening brace.
-        cleaned = "".join(ch for ch in result.output if ch >= " " or ch in "\n\t")
-        payload = json.loads(cleaned[cleaned.index("{") :])
+        # The progress reporter writes platform-dependent rendering
+        # (control sequences, brace-bearing bar text) before the
+        # envelope; strip control characters and anchor on the
+        # envelope's own opening tokens, which are always last.
+        cleaned = "".join(ch for ch in result.output if ch >= " ")
+        payload = json.loads(cleaned[cleaned.rindex('{"ok"') :])
         assert payload["ok"] is False
         assert payload["error"] == "disk_preflight_failed"
         assert "disk space" in payload["message"]
