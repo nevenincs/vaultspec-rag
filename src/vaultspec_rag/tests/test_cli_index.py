@@ -720,3 +720,65 @@ class TestAutoDelegation:
         )
         assert len(called) == 1
         assert called[0] == ("reindex_vault", 8766)
+
+
+class TestDiskPreflightRefusal:
+    """The in-process index path surfaces a disk-preflight refusal as one
+    structured non-zero envelope - never the GPU-error diagnosis (#242)."""
+
+    def test_json_mode_emits_disk_preflight_failed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .._store_writes import InsufficientDiskSpaceError
+
+        (tmp_path / ".vaultspec").mkdir()
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._index._default_service_port", lambda: None
+        )
+
+        def _raise_preflight(*_args: object, **_kwargs: object) -> object:
+            msg = (
+                "not enough free disk space for the vector store "
+                "(No space left on device imminent)"
+            )
+            raise InsufficientDiskSpaceError(msg)
+
+        monkeypatch.setattr("vaultspec_rag.index", _raise_preflight)
+
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--type", "vault", "--json"],
+        )
+        assert result.exit_code == 1
+        json_start = result.output.index("{")
+        payload = json.loads(result.output[json_start:])
+        assert payload["ok"] is False
+        assert payload["error"] == "disk_preflight_failed"
+        assert "disk space" in payload["message"]
+        assert any("storage survey" in r for r in payload["remediation"])
+
+    def test_human_mode_prints_the_refusal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .._store_writes import InsufficientDiskSpaceError
+
+        (tmp_path / ".vaultspec").mkdir()
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._index._default_service_port", lambda: None
+        )
+
+        def _raise_preflight(*_args: object, **_kwargs: object) -> object:
+            raise InsufficientDiskSpaceError("not enough free disk space")
+
+        monkeypatch.setattr("vaultspec_rag.index", _raise_preflight)
+
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--type", "vault"],
+        )
+        assert result.exit_code == 1
+        assert "not enough free disk space" in " ".join(_plain_lines(result.output))
