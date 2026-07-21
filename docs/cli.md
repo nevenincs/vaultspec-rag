@@ -385,22 +385,46 @@ Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3
 
 `vaultspec-rag server logs`
 
-Show a recent service activity feed. The reader spans the rotated log set (`service.log`, `service.log.1`, and so on) and tolerates mid-rollover races.
+Show recent raw records from the resident service, supervised Qdrant, or both. The command uses the live service when available and reads retained local files after the service stops.
 
 Arguments: none.
 
 Options:
 
-| Flag         | Type    | Default              | Description                                             |
-| ------------ | ------- | -------------------- | ------------------------------------------------------- |
-| `--limit`    | integer | `200`                | Number of log lines to show.                            |
-| `--job-id`   | text    | unset                | Filter to lines for one job id.                         |
-| `--contains` | text    | unset                | Filter to lines containing this substring.              |
-| `--raw`      | flag    | off                  | Show the original log lines instead of the parsed feed. |
-| `--port`     | integer | running service port | Target a specific service port.                         |
-| `--json`     | flag    | off                  | Emit one JSON envelope to stdout.                       |
+| Flag         | Type                       | Default                           | Description                                                  |
+| ------------ | -------------------------- | --------------------------------- | ------------------------------------------------------------ |
+| `--source`   | `service\|qdrant\|all`    | `all`                             | Select one managed source or keep both source groups.        |
+| `--limit`    | integer                    | `200`                             | Maximum lines returned per selected source.                  |
+| `--job-id`   | text                       | unset                             | Keep lines containing this job ID.                           |
+| `--contains` | text                       | unset                             | Keep lines containing this text.                             |
+| `--port`     | integer                    | running service, then local files | Target a port before using the local retained logs.          |
+| `--json`     | flag                       | off                               | Emit one JSON envelope to stdout.                            |
 
-Exit/JSON: `0` on success; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+Human output uses `[service]` and `[qdrant]` headings and preserves every returned line unchanged. With `--source all`, the service group appears first. This display order does not imply cross-source chronology.
+
+The filters are case-insensitive and combine with AND. They search at most the latest 5,000 lines per source, then apply `--limit` to each filtered group.
+
+With `--json`, `data` contains the selected source, the effective limit, the filters, and the source groups:
+
+```json
+{
+  "ok": true,
+  "command": "server.logs",
+  "data": {
+    "source": "all",
+    "limit": 200,
+    "groups": [
+      {"source": "service", "lines": ["service record"]},
+      {"source": "qdrant", "lines": ["qdrant record"]}
+    ],
+    "filters": {}
+  }
+}
+```
+
+`--raw` is no longer accepted because human output always preserves the original log lines.
+
+Exit/JSON: `0` for live or local success; `1` for a live service error; `2` for an invalid option or source. Empty source groups are successful results.
 
 ## server projects list
 
