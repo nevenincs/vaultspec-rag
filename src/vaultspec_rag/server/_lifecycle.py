@@ -388,6 +388,13 @@ def _storage_maintenance_tick_sync() -> None:
         float(result.namespace_counts.get("orphaned", 0)),
     )
     observe("maintenance_last_reclaimed_bytes", float(result.reclaimed_bytes))
+    # Whole-backend size gauges: dangling_bytes counts only orphans, so a
+    # pile of live-but-leaked namespaces is invisible without a total.
+    from ..storage_ops import backend_totals
+
+    totals = backend_totals(result.surveys)
+    observe("store_total_bytes", float(cast("int", totals["total_bytes"])))
+    observe("store_namespaces", float(cast("int", totals["namespaces"])))
     summary = (
         f"removed={len(removed)} failed={len(failed)} "
         f"pending={result.pending_grace} reclaimed_bytes={result.reclaimed_bytes}"

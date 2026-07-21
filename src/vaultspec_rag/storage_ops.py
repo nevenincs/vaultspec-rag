@@ -49,11 +49,14 @@ __all__ = [
     "ReclaimDecision",
     "ReclaimPolicy",
     "archive_prefix",
+    "backend_totals",
     "collection_footprints",
+    "debris_surveys",
     "delete_prefix",
     "evaluate_reclaim",
     "gather_survey",
     "migrate_collections",
+    "prune_debris",
     "prune_orphaned",
     "run_maintenance_cycle",
     "server_storage_collections_dir",
@@ -239,6 +242,54 @@ def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
         "namespaces": len(surveys),
         "by_status_bytes": by_status,
     }
+
+
+def prune_debris(
+    client: QdrantClient,
+    storage_dir: Path | None,
+    *,
+    dry_run: bool,
+) -> PruneResult:
+    """Remove config-less collection dirs the live server does not list.
+
+    Debris is unloadable by Qdrant (no collection config), so it cannot be
+    snapshotted or dropped through the client - removal is a filesystem
+    delete of the leftover dir. It stays operator-gated (the explicit
+    ``--debris`` flag plus the prune confirmation are the human in the
+    loop): debris has no manifest attribution, so the automated
+    time-confirmed-danglingness machinery must never touch it. Removing
+    nothing is a success (idempotent teardown).
+    """
+    import shutil
+
+    live_names = [c.name for c in client.get_collections().collections]
+    results: list[DeleteResult] = []
+    reclaimed = 0
+    for survey in debris_surveys(live_names, storage_dir):
+        for name in survey.collections:
+            path = cast("Path", storage_dir) / name
+            size = _dir_bytes(path)
+            if dry_run:
+                results.append(
+                    DeleteResult(name, "would_remove", collections=[name])
+                )
+                reclaimed += size
+                continue
+            try:
+                shutil.rmtree(path)
+            except OSError as exc:
+                results.append(
+                    DeleteResult(name, "failed", collections=[name], reason=str(exc))
+                )
+                continue
+            results.append(DeleteResult(name, "removed", collections=[name]))
+            reclaimed += size
+    return PruneResult(
+        results=results,
+        skipped_unknown=[],
+        reclaimed_bytes=reclaimed,
+        dry_run=dry_run,
+    )
 
 
 # View ordering for survey consumers: actionable states first. ``debris``

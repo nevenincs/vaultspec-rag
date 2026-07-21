@@ -471,3 +471,108 @@ class TestLastIndexedStamping:
         record_root(root, backend="server", last_indexed="2026-07-21T10:00:00+00:00")
         entry = next(iter(load_manifest().values()))
         assert entry.last_indexed == "2026-07-21T10:00:00+00:00"
+
+
+class _FakeCollections:
+    def __init__(self, names: list[str]) -> None:
+        import types
+
+        self.collections = [types.SimpleNamespace(name=n) for n in names]
+
+
+class _FakeClient:
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    def get_collections(self) -> _FakeCollections:
+        return _FakeCollections(self._names)
+
+
+class TestDebrisVisibility:
+    """Config-less collection dirs surface as debris and are reclaimable."""
+
+    def _make_debris(self, storage: "Path") -> "Path":
+        debris_dir = storage / "rdeadbeef0000_codebase_docs"
+        (debris_dir / "segments").mkdir(parents=True)
+        (debris_dir / "segments" / "seg.dat").write_bytes(b"x" * 2048)
+        return debris_dir
+
+    def test_debris_dirs_surface_with_footprint(self, tmp_path: Path) -> None:
+        from ..storage_ops import debris_surveys
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        live_dir = storage / "rlive00000000_vault_docs"
+        live_dir.mkdir()
+        self._make_debris(storage)
+        surveys = debris_surveys(["rlive00000000_vault_docs"], storage)
+        assert len(surveys) == 1
+        assert surveys[0].status == "debris"
+        assert surveys[0].collections == ["rdeadbeef0000_codebase_docs"]
+        assert surveys[0].footprint_bytes == 2048
+        assert surveys[0].points == 0
+
+    def test_no_storage_dir_yields_no_debris(self) -> None:
+        from ..storage_ops import debris_surveys
+
+        assert debris_surveys(["a"], None) == []
+
+    def test_backend_totals_roll_up_all_statuses(self) -> None:
+        from ..storage_ops import backend_totals
+
+        surveys = [
+            _survey("raaaaaaaaaaa1_", status="live", footprint=100),
+            _survey("raaaaaaaaaaa2_", status="orphaned", footprint=50),
+            NamespaceSurvey(
+                prefix="rdeadbeef0000_",
+                root=None,
+                status="debris",
+                collections=["rdeadbeef0000_codebase_docs"],
+                footprint_bytes=25,
+            ),
+        ]
+        totals = backend_totals(surveys)
+        assert totals["total_bytes"] == 175
+        assert totals["namespaces"] == 3
+        assert totals["by_status_bytes"] == {
+            "live": 100,
+            "orphaned": 50,
+            "debris": 25,
+        }
+
+    def test_prune_debris_dry_run_removes_nothing(self, tmp_path: Path) -> None:
+        from ..storage_ops import prune_debris
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        debris_dir = self._make_debris(storage)
+        result = prune_debris(_FakeClient([]), storage, dry_run=True)
+        assert [r.status for r in result.results] == ["would_remove"]
+        assert result.reclaimed_bytes == 2048
+        assert debris_dir.exists()
+
+    def test_prune_debris_removes_only_unlisted_dirs(self, tmp_path: Path) -> None:
+        from ..storage_ops import prune_debris
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        live_dir = storage / "rlive00000000_vault_docs"
+        live_dir.mkdir()
+        debris_dir = self._make_debris(storage)
+        result = prune_debris(
+            _FakeClient(["rlive00000000_vault_docs"]), storage, dry_run=False
+        )
+        assert [r.status for r in result.results] == ["removed"]
+        assert not debris_dir.exists()
+        assert live_dir.exists()
+
+    def test_prune_debris_with_nothing_to_do_is_success(
+        self, tmp_path: Path
+    ) -> None:
+        from ..storage_ops import prune_debris
+
+        storage = tmp_path / "collections"
+        storage.mkdir()
+        result = prune_debris(_FakeClient([]), storage, dry_run=False)
+        assert result.results == []
+        assert result.reclaimed_bytes == 0
