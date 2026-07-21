@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodeChunk",
+    "StorageWriteError",
     "VaultDocument",
     "VaultStore",
     "VaultStoreLockedError",
@@ -51,6 +52,60 @@ __all__ = [
 
 
 EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
+
+
+class StorageWriteError(RuntimeError):
+    """A vector-store write failed with a classified, non-recoverable cause.
+
+    Raised by the upsert paths once the bounded retry budget is exhausted
+    (or immediately for non-retryable classes such as disk-full), so the
+    indexing job fails loudly with the storage error attached instead of
+    silently discarding embedded batches (issue #242).
+
+    Attributes:
+        error_kind: Stable classification token (``disk_full``,
+            ``timeout``, ``unavailable``, or ``rejected``) consumed by the
+            jobs registry and every operator surface.
+    """
+
+    def __init__(self, message: str, *, error_kind: str) -> None:
+        super().__init__(message)
+        self.error_kind = error_kind
+
+
+# Substrings that identify an out-of-space failure regardless of which
+# layer reports it: qdrant's WAL guard, the optimizer, or a raw OS error.
+_DISK_FULL_MARKERS = (
+    "no space left",
+    "errno 28",
+    "wal buffer size exceeds",
+    "not enough space available",
+    "disk full",
+)
+
+# Kinds worth a bounded retry: the backend may come back (restart, blip).
+# ``disk_full`` never heals on its own and ``rejected`` (schema/payload
+# faults) never heals by repetition, so both fail on first sight.
+_RETRYABLE_WRITE_KINDS = frozenset({"timeout", "unavailable"})
+
+
+def _classify_write_error(exc: BaseException) -> str:
+    """Map a raised write failure onto a stable ``error_kind`` token."""
+    text = str(exc).lower()
+    if isinstance(exc, OSError) and exc.errno == 28:
+        return "disk_full"
+    if any(marker in text for marker in _DISK_FULL_MARKERS):
+        return "disk_full"
+    if "timed out" in text or "timeout" in text:
+        return "timeout"
+    if (
+        "connect" in text
+        or "connection" in text
+        or "unavailable" in text
+        or "refused" in text
+    ):
+        return "unavailable"
+    return "rejected"
 
 
 @contextmanager
@@ -199,9 +254,13 @@ class VaultStore(_VaultSearchMixin):
             self.db_path = cfg.qdrant_url
             self._lock_helper = None
             try:
+                # An explicit request timeout so a wedged server surfaces
+                # as a raised, classifiable error rather than an
+                # httpx-default hang mid-index (#242).
                 self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
+                    timeout=int(cfg.qdrant_client_timeout_s),
                 )
             except Exception as exc:
                 logger.error(
@@ -541,6 +600,59 @@ class VaultStore(_VaultSearchMixin):
             self._ensure_code_indexes()
             self._code_ensured = True
 
+    def _upsert_points(self, collection: str, points: list[Any]) -> None:
+        """Upsert *points* with bounded retry and classified failure.
+
+        Transient failures (``timeout``, ``unavailable``) retry up to
+        ``store_write_retries`` times with a linear
+        ``store_write_backoff_s`` backoff; everything else - notably
+        ``disk_full`` - raises immediately. Exhausted or non-retryable
+        failures raise :class:`StorageWriteError` so the indexing job
+        fails with the storage cause attached instead of looping
+        forever (#242).
+
+        Raises:
+            StorageWriteError: When the write cannot be persisted.
+        """
+        import time
+
+        from qdrant_client.http.exceptions import (
+            ResponseHandlingException,
+            UnexpectedResponse,
+        )
+
+        from .config import get_config
+
+        cfg = get_config()
+        retries = max(0, int(cfg.store_write_retries))
+        backoff = max(0.0, float(cfg.store_write_backoff_s))
+        attempt = 0
+        while True:
+            try:
+                with self._point_lock(collection):
+                    self.client.upsert(collection_name=collection, points=points)
+                return
+            except (UnexpectedResponse, ResponseHandlingException, OSError) as exc:
+                kind = _classify_write_error(exc)
+                if kind not in _RETRYABLE_WRITE_KINDS or attempt >= retries:
+                    msg = (
+                        f"vector-store write to {collection} failed ({kind}) "
+                        f"after {attempt + 1} attempt(s): {exc}"
+                    )
+                    raise StorageWriteError(msg, error_kind=kind) from exc
+                attempt += 1
+                delay = backoff * attempt
+                logger.warning(
+                    "vector-store write to %s failed (%s); retry %d/%d in %.1fs: %s",
+                    collection,
+                    kind,
+                    attempt,
+                    retries,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+
     def upsert_documents(self, docs: list[VaultDocument]) -> None:
         """Insert or update documents by ``id``.
 
@@ -571,11 +683,7 @@ class VaultStore(_VaultSearchMixin):
             )
 
         self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
-            self.client.upsert(
-                collection_name=self.TABLE_NAME,
-                points=points,
-            )
+        self._upsert_points(self.TABLE_NAME, points)
         logger.info("Upserted %d document(s)", len(docs))
 
     def upsert_document_chunks(self, chunks: list[VaultChunk]) -> None:
@@ -612,11 +720,7 @@ class VaultStore(_VaultSearchMixin):
             )
 
         self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
-            self.client.upsert(
-                collection_name=self.TABLE_NAME,
-                points=points,
-            )
+        self._upsert_points(self.TABLE_NAME, points)
         logger.info("Upserted %d vault chunk(s)", len(chunks))
 
     def upsert_code_chunks(self, chunks: list[CodeChunk]) -> None:
@@ -649,11 +753,7 @@ class VaultStore(_VaultSearchMixin):
             )
 
         self.ensure_code_table()
-        with self._point_lock(self.CODE_TABLE_NAME):
-            self.client.upsert(
-                collection_name=self.CODE_TABLE_NAME,
-                points=points,
-            )
+        self._upsert_points(self.CODE_TABLE_NAME, points)
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
 
     def delete_documents(self, ids: list[str]) -> None:
