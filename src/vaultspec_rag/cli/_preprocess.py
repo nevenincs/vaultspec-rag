@@ -334,8 +334,7 @@ def _status_effect_line(mode: PreprocessMode, rule_count: int) -> str:
             "skipped. Unset it to run them."
         )
     return (
-        "This root's rules run directly; their commands execute with your "
-        "privileges."
+        "This root's rules run directly; their commands execute with your privileges."
     )
 
 

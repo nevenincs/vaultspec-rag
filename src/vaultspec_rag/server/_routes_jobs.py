@@ -19,6 +19,7 @@ from . import _jobs
 __all__ = [
     "_clamp_limit",
     "_job_matches",
+    "_job_stalled",
     "_job_summary",
     "_job_with_liveness",
     "_normalise_filter_value",

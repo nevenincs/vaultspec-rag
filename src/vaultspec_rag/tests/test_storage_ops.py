@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -24,6 +24,8 @@ from ..storage_survey import NamespaceSurvey
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from qdrant_client import QdrantClient
 
 pytestmark = [pytest.mark.unit]
 
@@ -372,9 +374,7 @@ def _temp_survey(
 
     return NamespaceSurvey(
         prefix=prefix,
-        root=str(
-            pathlib.Path(tempfile.gettempdir()) / f"vaultspec-livetest-{prefix}"
-        ),
+        root=str(pathlib.Path(tempfile.gettempdir()) / f"vaultspec-livetest-{prefix}"),
         status="live",
         collections=[f"{prefix}vault_docs"],
         points=points,
@@ -445,9 +445,7 @@ class TestEphemeralIdleTier:
         orphan = _survey("raaaaaaaaaaa8_")
         ephemeral_prefix = "raaaaaaaaaaa9_"
         stamps = {"raaaaaaaaaaa8_": (_NOW - timedelta(hours=48)).isoformat()}
-        last_indexed = {
-            ephemeral_prefix: (_NOW - timedelta(hours=1000)).isoformat()
-        }
+        last_indexed = {ephemeral_prefix: (_NOW - timedelta(hours=1000)).isoformat()}
         decisions = evaluate_reclaim(
             [orphan, _temp_survey(ephemeral_prefix)],
             stamps,
@@ -491,7 +489,7 @@ class _FakeClient:
 class TestDebrisVisibility:
     """Config-less collection dirs surface as debris and are reclaimable."""
 
-    def _make_debris(self, storage: "Path") -> "Path":
+    def _make_debris(self, storage: Path) -> Path:
         debris_dir = storage / "rdeadbeef0000_codebase_docs"
         (debris_dir / "segments").mkdir(parents=True)
         (debris_dir / "segments" / "seg.dat").write_bytes(b"x" * 2048)
@@ -546,7 +544,9 @@ class TestDebrisVisibility:
         storage = tmp_path / "collections"
         storage.mkdir()
         debris_dir = self._make_debris(storage)
-        result = prune_debris(_FakeClient([]), storage, dry_run=True)
+        result = prune_debris(
+            cast("QdrantClient", _FakeClient([])), storage, dry_run=True
+        )
         assert [r.status for r in result.results] == ["would_remove"]
         assert result.reclaimed_bytes == 2048
         assert debris_dir.exists()
@@ -560,19 +560,21 @@ class TestDebrisVisibility:
         live_dir.mkdir()
         debris_dir = self._make_debris(storage)
         result = prune_debris(
-            _FakeClient(["rlive00000000_vault_docs"]), storage, dry_run=False
+            cast("QdrantClient", _FakeClient(["rlive00000000_vault_docs"])),
+            storage,
+            dry_run=False,
         )
         assert [r.status for r in result.results] == ["removed"]
         assert not debris_dir.exists()
         assert live_dir.exists()
 
-    def test_prune_debris_with_nothing_to_do_is_success(
-        self, tmp_path: Path
-    ) -> None:
+    def test_prune_debris_with_nothing_to_do_is_success(self, tmp_path: Path) -> None:
         from ..storage_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
-        result = prune_debris(_FakeClient([]), storage, dry_run=False)
+        result = prune_debris(
+            cast("QdrantClient", _FakeClient([])), storage, dry_run=False
+        )
         assert result.results == []
         assert result.reclaimed_bytes == 0

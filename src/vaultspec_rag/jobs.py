@@ -100,7 +100,6 @@ def _persist_active_snapshot() -> None:
     bookkeeping must not fail a job.
     """
     import json as _json
-    from pathlib import Path
 
     with _lock:
         active = [
@@ -138,7 +137,6 @@ def restore_interrupted() -> int:
     shows what died instead of nothing. Returns the number restored.
     """
     import json as _json
-    from pathlib import Path
 
     path = cast("Path", _active_snapshot_path())
     try:
@@ -148,11 +146,12 @@ def restore_interrupted() -> int:
     except OSError:
         logger.debug("active-jobs snapshot unreadable", exc_info=True)
         return 0
+    entries_obj: object = []
     try:
-        entries = _json.loads(raw).get("active", [])
+        entries_obj = cast("dict[str, object]", _json.loads(raw)).get("active", [])
     except (ValueError, AttributeError):
         logger.debug("active-jobs snapshot malformed", exc_info=True)
-        entries = []
+    entries = cast("list[object]", entries_obj) if isinstance(entries_obj, list) else []
     restored = 0
     now = time.time()
     for entry in entries:
@@ -350,6 +349,49 @@ def record_progress(
         log_event(logger, "service.job", "progress", fields=log_fields)
 
 
+def _finish_record(
+    record: dict[str, object],
+    *,
+    target_phase: str,
+    summary: str | None,
+    error: str | None,
+    preprocess_ok: int,
+    preprocess_skipped: int,
+    preprocess_failures: list[str] | None,
+) -> dict[str, object] | None:
+    """Apply the terminal state to *record* in place (caller holds the lock).
+
+    Returns the log fields for the finished event, or ``None`` when the
+    record already reached a terminal state (idempotent: cancellation
+    paths can race their cleanup; the first terminal state wins).
+    """
+    if record["finished_at"] is not None:
+        logger.debug(
+            "record_finish: job %s already finished; "
+            "keeping its original terminal state",
+            record.get("id"),
+        )
+        return None
+    record["phase"] = target_phase
+    record["finished_at"] = time.time()
+    record["result"] = summary
+    record["error_kind"] = classify_error_text(error) if error is not None else None
+    record["preprocess_ok"] = preprocess_ok
+    record["preprocess_skipped"] = preprocess_skipped
+    record["preprocess_failures"] = list(preprocess_failures or [])
+    resources = record.get("resources")
+    if isinstance(resources, dict):
+        cast("dict[str, object]", resources)["finished"] = resource_snapshot()
+    return {
+        "job_id": record.get("id"),
+        "source": record.get("source"),
+        "trigger": record.get("trigger"),
+        "phase": target_phase,
+        "result": summary,
+        "error_kind": record.get("error_kind"),
+    }
+
+
 def record_finish(
     record_id: str,
     *,
@@ -383,7 +425,6 @@ def record_finish(
             onto the record so a client sees which files failed extraction and
             why - not just a count.
     """
-    finished_at = time.time()
     if phase is not None:
         target_phase = phase
     else:
@@ -393,38 +434,17 @@ def record_finish(
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
-                if record["finished_at"] is not None:
-                    # Idempotent: cancellation paths can race their
-                    # cleanup (the canceller finishes the record, then
-                    # the owner's cleanup tries again); the first
-                    # terminal state wins and stays.
-                    logger.debug(
-                        "record_finish: job %s already finished; "
-                        "keeping its original terminal state",
-                        record_id,
-                    )
-                    return
-                record["phase"] = target_phase
-                record["finished_at"] = finished_at
-                record["result"] = summary
-                record["error_kind"] = (
-                    classify_error_text(error) if error is not None else None
+                log_fields = _finish_record(
+                    record,
+                    target_phase=target_phase,
+                    summary=summary,
+                    error=error,
+                    preprocess_ok=preprocess_ok,
+                    preprocess_skipped=preprocess_skipped,
+                    preprocess_failures=preprocess_failures,
                 )
-                record["preprocess_ok"] = preprocess_ok
-                record["preprocess_skipped"] = preprocess_skipped
-                record["preprocess_failures"] = list(preprocess_failures or [])
-                resources = record.get("resources")
-                if isinstance(resources, dict):
-                    resources = cast("dict[str, object]", resources)
-                    resources["finished"] = resource_snapshot()
-                log_fields = {
-                    "job_id": record_id,
-                    "source": record.get("source"),
-                    "trigger": record.get("trigger"),
-                    "phase": target_phase,
-                    "result": summary,
-                    "error_kind": record.get("error_kind"),
-                }
+                if log_fields is None:
+                    return
                 break
     if log_fields is not None:
         _persist_active_snapshot()

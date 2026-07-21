@@ -270,9 +270,7 @@ def prune_debris(
             path = cast("Path", storage_dir) / name
             size = _dir_bytes(path)
             if dry_run:
-                results.append(
-                    DeleteResult(name, "would_remove", collections=[name])
-                )
+                results.append(DeleteResult(name, "would_remove", collections=[name]))
                 reclaimed += size
                 continue
             try:
@@ -641,11 +639,7 @@ def _evaluate_ephemeral(
     if policy.ephemeral_idle_hours <= 0:
         return decisions
     candidates = sorted(
-        (
-            s
-            for s in surveys
-            if s.status == "live" and is_temp_rooted(s.root)
-        ),
+        (s for s in surveys if s.status == "live" and is_temp_rooted(s.root)),
         key=lambda s: (s.points > 0, s.prefix),
     )
     for survey in candidates:
@@ -732,84 +726,81 @@ def evaluate_reclaim(
         key=lambda s: (s.points > 0, s.prefix),
     )
     for survey in orphaned:
-        tier = "empty" if survey.points == 0 else "data"
-        window_hours = (
-            policy.grace_hours if tier == "empty" else policy.grace_hours_data
-        )
-        first_seen = _parse_iso(stamps.get(survey.prefix, ""))
-        if first_seen is None:
-            decisions.append(
-                ReclaimDecision(
-                    survey.prefix,
-                    "pending",
-                    tier,
-                    reason="grace_started",
-                    points=survey.points,
-                    footprint_bytes=survey.footprint_bytes,
-                )
-            )
-            continue
-        age_hours = (now - first_seen).total_seconds() / 3600.0
-        if age_hours < window_hours:
-            decisions.append(
-                ReclaimDecision(
-                    survey.prefix,
-                    "pending",
-                    tier,
-                    reason=f"grace_remaining_h={window_hours - age_hours:.1f}",
-                    points=survey.points,
-                    footprint_bytes=survey.footprint_bytes,
-                )
-            )
-            continue
-        action = "reclaim_empty" if tier == "empty" else "reclaim_data"
-        decision = ReclaimDecision(
-            survey.prefix,
-            action,
-            tier,
-            points=survey.points,
-            footprint_bytes=survey.footprint_bytes,
-        )
-        if len(eligible) < policy.max_per_cycle:
-            eligible.append(decision)
-            decisions.append(decision)
-        else:
-            decisions.append(
-                ReclaimDecision(
-                    survey.prefix,
-                    "deferred",
-                    tier,
-                    reason="over_cycle_cap",
-                    points=survey.points,
-                    footprint_bytes=survey.footprint_bytes,
-                )
-            )
+        decision = _decide_orphan(survey, stamps, now=now, policy=policy)
+        decisions.append(_apply_cycle_cap(decision, eligible, policy))
     if last_indexed is None:
         return decisions
     # Ephemeral idle-TTL tier: live temp-rooted namespaces whose
     # activity clock expired. Orphans keep priority under the shared
     # per-cycle cap; an over-cap ephemeral reclaim defers to next cycle.
-    for decision in _evaluate_ephemeral(
-        surveys, last_indexed, now=now, policy=policy
-    ):
-        if decision.action in ("reclaim_empty", "reclaim_data"):
-            if len(eligible) < policy.max_per_cycle:
-                eligible.append(decision)
-                decisions.append(decision)
-            else:
-                decisions.append(
-                    ReclaimDecision(
-                        decision.prefix,
-                        "deferred",
-                        decision.tier,
-                        reason="over_cycle_cap",
-                        points=decision.points,
-                        footprint_bytes=decision.footprint_bytes,
-                    )
-                )
-        else:
-            decisions.append(decision)
+    for decision in _evaluate_ephemeral(surveys, last_indexed, now=now, policy=policy):
+        decisions.append(_apply_cycle_cap(decision, eligible, policy))
     return decisions
+
+
+def _decide_orphan(
+    survey: NamespaceSurvey,
+    stamps: dict[str, str],
+    *,
+    now: datetime,
+    policy: ReclaimPolicy,
+) -> ReclaimDecision:
+    """Decide one orphaned namespace against its tiered grace window."""
+    tier = "empty" if survey.points == 0 else "data"
+    window_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
+    first_seen = _parse_iso(stamps.get(survey.prefix, ""))
+    if first_seen is None:
+        return ReclaimDecision(
+            survey.prefix,
+            "pending",
+            tier,
+            reason="grace_started",
+            points=survey.points,
+            footprint_bytes=survey.footprint_bytes,
+        )
+    age_hours = (now - first_seen).total_seconds() / 3600.0
+    if age_hours < window_hours:
+        return ReclaimDecision(
+            survey.prefix,
+            "pending",
+            tier,
+            reason=f"grace_remaining_h={window_hours - age_hours:.1f}",
+            points=survey.points,
+            footprint_bytes=survey.footprint_bytes,
+        )
+    return ReclaimDecision(
+        survey.prefix,
+        "reclaim_empty" if tier == "empty" else "reclaim_data",
+        tier,
+        points=survey.points,
+        footprint_bytes=survey.footprint_bytes,
+    )
+
+
+def _apply_cycle_cap(
+    decision: ReclaimDecision,
+    eligible: list[ReclaimDecision],
+    policy: ReclaimPolicy,
+) -> ReclaimDecision:
+    """Track an eligible reclaim against the shared per-cycle cap.
+
+    Pending and deferred decisions pass through; a reclaim decision either
+    joins the *eligible* list (mutated in place) or converts to a
+    ``deferred`` decision once the cap is reached.
+    """
+    if decision.action not in ("reclaim_empty", "reclaim_data"):
+        return decision
+    if len(eligible) < policy.max_per_cycle:
+        eligible.append(decision)
+        return decision
+    return ReclaimDecision(
+        decision.prefix,
+        "deferred",
+        decision.tier,
+        reason="over_cycle_cap",
+        points=decision.points,
+        footprint_bytes=decision.footprint_bytes,
+    )
 
 
 def archive_prefix(

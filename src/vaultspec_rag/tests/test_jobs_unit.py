@@ -25,6 +25,9 @@ from ..jobs import record_finish, record_start, reset, snapshot
 from ..service import ServiceRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
@@ -251,9 +254,14 @@ class TestJobErrorKind:
     def setup_method(self) -> None:
         reset()
 
-    def _finished(self, **kwargs: object) -> dict[str, object]:
+    def _finished(
+        self,
+        *,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, object]:
         job_id = record_start("code", "tool")
-        record_finish(job_id, **kwargs)  # pyright: ignore[reportArgumentType]
+        record_finish(job_id, result=result, error=error)
         return {r["id"]: r for r in snapshot()}[job_id]
 
     def test_disk_full_error_is_classified(self) -> None:
@@ -315,7 +323,9 @@ class TestJobStallShaping:
         from ..server._routes_jobs import _job_with_liveness
 
         now = 1_000_000.0
-        record = self._running_record(step="embed + upsert chunks", age_seconds=400.0, now=now)
+        record = self._running_record(
+            step="embed + upsert chunks", age_seconds=400.0, now=now
+        )
         assert _job_with_liveness(record, now=now)["stalled"] is True
 
     def test_waiting_job_is_never_stalled(self) -> None:
@@ -383,9 +393,9 @@ class TestInterruptedJobRestore:
     @pytest.fixture(autouse=True)
     def _own_status_dir(
         self,
-        tmp_path: "Path",  # noqa: F821
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-    ) -> "typing.Iterator[None]":  # noqa: F821
+    ) -> Iterator[None]:
         from ..config import reset_config
 
         monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
@@ -410,7 +420,7 @@ class TestInterruptedJobRestore:
         assert record["result"] == "daemon terminated while this job was running"
         initiator = record["initiator"]
         assert isinstance(initiator, dict)
-        assert initiator["command"] == "reindex_codebase"
+        assert cast("dict[str, object]", initiator)["command"] == "reindex_codebase"
 
     def test_finished_jobs_are_not_restored(self) -> None:
         from ..jobs import restore_interrupted

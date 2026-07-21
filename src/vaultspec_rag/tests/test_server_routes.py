@@ -77,9 +77,7 @@ class TestHealthJobsRollup:
 
             app = Starlette(routes=[Route("/health", health_handler)])
             client: httpx.Client = cast("httpx.Client", TestClient(app))
-            data: dict[str, Any] = cast(
-                "dict[str, Any]", client.get("/health").json()
-            )
+            data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
             jobs = cast("dict[str, Any]", data["jobs"])
             assert jobs["running"] == 1
             assert jobs["stalled"] == 0

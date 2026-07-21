@@ -438,11 +438,7 @@ async def health_handler(_request: Request) -> object:
     running_jobs = sum(1 for r in job_records if r.get("phase") == "running")
     stalled_jobs = sum(1 for r in job_records if _job_stalled(r, now))
     last_failed = next(
-        (
-            r
-            for r in job_records
-            if str(r.get("phase", "")) in ("error", "failed")
-        ),
+        (r for r in job_records if str(r.get("phase", "")) in ("error", "failed")),
         None,
     )
     jobs_health: dict[str, object] = {

@@ -28,7 +28,12 @@ from dataclasses import dataclass, field
 
 from .storage_manifest import ManifestEntry, classify_root
 
-__all__ = ["NamespaceSurvey", "classify_namespaces", "is_temp_rooted"]
+__all__ = [
+    "NamespaceSurvey",
+    "_prefix_of",
+    "classify_namespaces",
+    "is_temp_rooted",
+]
 
 _PREFIX_RE = re.compile(r"^(r[0-9a-f]{12}_)")
 

@@ -133,7 +133,7 @@ class TestOomLadderIsFloorBounded:
 
         fake = _OOMDenseModel()
         model = _model_shell()
-        model._dense_model = fake  # type: ignore[assignment]
+        model._dense_model = cast("Any", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
             model.encode_documents(["text"] * 4, batch_size=8)
         assert fake.batch_sizes == [8, 4, 2, 1]
@@ -141,7 +141,7 @@ class TestOomLadderIsFloorBounded:
     def test_dense_ladder_recovers_at_smaller_batch(self):
         fake = _OOMDenseModel(succeed_at=2)
         model = _model_shell()
-        model._dense_model = fake  # type: ignore[assignment]
+        model._dense_model = cast("Any", fake)
         result = model.encode_documents(["text"] * 4, batch_size=8)
         assert result.shape == (4, 4)
         assert fake.batch_sizes == [8, 4, 2]
@@ -151,7 +151,7 @@ class TestOomLadderIsFloorBounded:
 
         fake = _OOMSparseModel()
         model = _model_shell()
-        model._sparse_model = fake  # type: ignore[assignment]
+        model._sparse_model = cast("Any", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
             model.encode_documents_sparse(["text"] * 4, batch_size=8)
         assert fake.batch_sizes == [8, 4, 2, 1]

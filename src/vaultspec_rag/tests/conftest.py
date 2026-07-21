@@ -28,7 +28,7 @@ from .corpus import CorpusManifest, build_synthetic_vault
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _isolated_machine_singleton_dirs(
+def isolated_machine_singleton_dirs(
     tmp_path_factory: TempPathFactory,
 ) -> Generator[None]:
     """Point the machine-singleton dirs at a session temp tree for every test.
