@@ -59,6 +59,38 @@ class TestHealthSchemaVersion:
         assert data["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
 
 
+class TestHealthJobsRollup:
+    """/health carries the bounded jobs-health rollup (#242)."""
+
+    def test_health_reports_running_stalled_and_last_failure(self) -> None:
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from ..jobs import record_finish, record_start, reset
+
+        reset()
+        try:
+            failed_id = record_start("code", "tool")
+            record_finish(failed_id, error="[Errno 28] No space left on device")
+            running_id = record_start("vault", "tool")
+
+            app = Starlette(routes=[Route("/health", health_handler)])
+            client: httpx.Client = cast("httpx.Client", TestClient(app))
+            data: dict[str, Any] = cast(
+                "dict[str, Any]", client.get("/health").json()
+            )
+            jobs = cast("dict[str, Any]", data["jobs"])
+            assert jobs["running"] == 1
+            assert jobs["stalled"] == 0
+            last_failed = cast("dict[str, Any]", jobs["last_failed"])
+            assert last_failed["id"] == failed_id
+            assert last_failed["error_kind"] == "disk_full"
+            del running_id
+        finally:
+            reset()
+
+
 class TestServiceStateSchemaVersion:
     """get_service_state echoes the bare schema_version."""
 

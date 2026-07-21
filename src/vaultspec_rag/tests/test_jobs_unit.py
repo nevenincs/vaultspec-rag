@@ -245,6 +245,111 @@ class TestJobsLifecycle:
         )
 
 
+class TestJobErrorKind:
+    """Failed jobs carry a stable ``error_kind`` classification (#242)."""
+
+    def setup_method(self) -> None:
+        reset()
+
+    def _finished(self, **kwargs: object) -> dict[str, object]:
+        job_id = record_start("code", "tool")
+        record_finish(job_id, **kwargs)  # pyright: ignore[reportArgumentType]
+        return {r["id"]: r for r in snapshot()}[job_id]
+
+    def test_disk_full_error_is_classified(self) -> None:
+        record = self._finished(error="[Errno 28] No space left on device")
+        assert record["error_kind"] == "disk_full"
+
+    def test_wal_disk_full_text_is_classified(self) -> None:
+        record = self._finished(
+            error=(
+                "Service internal error: No space left on device: "
+                "WAL buffer size exceeds available disk space"
+            )
+        )
+        assert record["error_kind"] == "disk_full"
+
+    def test_timeout_error_is_classified(self) -> None:
+        record = self._finished(error="the read operation timed out")
+        assert record["error_kind"] == "timeout"
+
+    def test_unclassified_error_is_other(self) -> None:
+        record = self._finished(error="boom")
+        assert record["error_kind"] == "other"
+
+    def test_success_has_no_error_kind(self) -> None:
+        record = self._finished(result="+1 /0 -0 (5ms)")
+        assert record["error_kind"] is None
+
+    def test_started_record_defaults_error_kind_none(self) -> None:
+        job_id = record_start("vault", "tool")
+        record = {r["id"]: r for r in snapshot()}[job_id]
+        assert record["error_kind"] is None
+
+
+class TestJobStallShaping:
+    """The /jobs shaping computes the service-domain ``stalled`` flag (#242)."""
+
+    def _running_record(
+        self,
+        *,
+        step: str,
+        age_seconds: float,
+        now: float,
+    ) -> dict[str, object]:
+        return {
+            "id": "j1",
+            "phase": "running",
+            "started_at": now - age_seconds - 10.0,
+            "finished_at": None,
+            "error_kind": None,
+            "progress": {
+                "step": step,
+                "completed": 0,
+                "total": 100,
+                "last_updated": now - age_seconds,
+            },
+        }
+
+    def test_running_job_past_threshold_is_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(step="embed + upsert chunks", age_seconds=400.0, now=now)
+        assert _job_with_liveness(record, now=now)["stalled"] is True
+
+    def test_waiting_job_is_never_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(step="queued", age_seconds=400.0, now=now)
+        assert _job_with_liveness(record, now=now)["stalled"] is False
+
+    def test_fresh_progress_is_not_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(step="embed", age_seconds=10.0, now=now)
+        assert _job_with_liveness(record, now=now)["stalled"] is False
+
+    def test_summary_counts_stalled_and_error_kinds(self) -> None:
+        from ..server._routes_jobs import _job_summary
+
+        now = 1_000_000.0
+        stalled = self._running_record(step="embed", age_seconds=400.0, now=now)
+        failed: dict[str, object] = {
+            "id": "j2",
+            "phase": "error",
+            "started_at": now - 50.0,
+            "finished_at": now - 40.0,
+            "error_kind": "disk_full",
+            "progress": None,
+        }
+        summary = _job_summary([stalled, failed], now=now)
+        assert summary["stalled"] == 1
+        assert summary["error_kinds"] == {"disk_full": 1}
+
+
 class TestJobsHumanSummarySignpost:
     """The human jobs feed routes scripted consumers to --json: its summary
     unconditionally contains the words "active" and "waiting", so grepping it
