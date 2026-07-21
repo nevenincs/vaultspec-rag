@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -23,12 +23,15 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 from ._job_errors import classify_error_text
 from .concurrency import get_index_limiter
+from .config import get_config
 from .logging_config import log_event
 from .registry import get_registry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from .job_control import RunControlToken
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ __all__ = [
     "JobAttempt",
     "JobCapabilities",
     "JobInitiator",
+    "JobManager",
     "JobMode",
     "JobOperation",
     "JobOutcome",
@@ -45,6 +49,7 @@ __all__ = [
     "JobProgress",
     "JobProgressReporter",
     "JobResourceSnapshot",
+    "JobRuntimeOwner",
     "JobRuntimeSnapshot",
     "JobSnapshot",
     "JobSource",
@@ -403,6 +408,357 @@ Phase = Literal[
 # Bounded ring buffer cap. Generous enough to retain a meaningful recent
 # history without unbounded growth; the oldest record is evicted past this.
 MAX_RECORDS = 256
+
+
+@dataclass(frozen=True, slots=True)
+class JobRuntimeOwner:
+    """Strong references to the live execution for one exact job ID."""
+
+    task: asyncio.Task[Any] | None
+    control: RunControlToken | None
+    worker_active: bool = False
+
+
+@dataclass(slots=True)
+class _ManagedJob:
+    snapshot: JobSnapshot
+    runtime: JobRuntimeOwner
+
+
+@dataclass(frozen=True, slots=True)
+class _IdempotencyBinding:
+    signature: tuple[JobSpec, JobInitiator, bool]
+    job_id: str
+
+
+class JobManager:
+    """Own canonical job resources and their exact live runtime handles.
+
+    Nonterminal jobs are never evicted. Terminal records have an independent
+    retention bound, so operator history cannot displace controllable work.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_nonterminal: int | None = None,
+        max_terminal_history: int = MAX_RECORDS,
+    ) -> None:
+        resolved_max = (
+            get_config().job_max_nonterminal
+            if max_nonterminal is None
+            else max_nonterminal
+        )
+        if resolved_max < 1:
+            raise ValueError("max_nonterminal must be at least 1")
+        if max_terminal_history < 1:
+            raise ValueError("max_terminal_history must be at least 1")
+
+        self._max_nonterminal = resolved_max
+        self._max_terminal_history = max_terminal_history
+        self._lock = threading.RLock()
+        self._active: dict[str, _ManagedJob] = {}
+        self._terminal: deque[_ManagedJob] = deque()
+        self._idempotency: dict[str, _IdempotencyBinding] = {}
+        self._job_idempotency_keys: dict[str, set[str]] = {}
+
+    @property
+    def max_nonterminal(self) -> int:
+        """Configured admission bound for exact-addressable active work."""
+        return self._max_nonterminal
+
+    @property
+    def max_terminal_history(self) -> int:
+        """Retention bound for completed job resources."""
+        return self._max_terminal_history
+
+    def create(
+        self,
+        spec: JobSpec,
+        initiator: JobInitiator,
+        *,
+        idempotency_key: str | None = None,
+        start_paused: bool = False,
+        job_id: str | None = None,
+    ) -> JobOutcome:
+        """Admit one logical job, or replay/deduplicate an existing resource."""
+        normalized_key = self._normalize_idempotency_key(idempotency_key)
+        signature = (spec, initiator, start_paused)
+
+        with self._lock:
+            if normalized_key is not None:
+                binding = self._idempotency.get(normalized_key)
+                if binding is not None:
+                    existing = self._get_locked(binding.job_id)
+                    if binding.signature != signature:
+                        return JobOutcome(
+                            command="create",
+                            status=JobOutcomeStatus.ERROR,
+                            code="idempotency_key_conflict",
+                            message=(
+                                "The idempotency key is already bound to a different "
+                                "job request."
+                            ),
+                            job=existing,
+                        )
+                    if existing is not None:
+                        return JobOutcome(
+                            command="create",
+                            status=JobOutcomeStatus.OK,
+                            code="idempotency_replayed",
+                            message="The original job creation result was replayed.",
+                            job=existing,
+                        )
+                    self._idempotency.pop(normalized_key, None)
+
+            equivalent = self._find_equivalent_active_locked(spec)
+            if equivalent is not None:
+                if normalized_key is not None:
+                    self._bind_idempotency_locked(
+                        normalized_key,
+                        signature,
+                        equivalent.id,
+                    )
+                return JobOutcome(
+                    command="create",
+                    status=JobOutcomeStatus.OK,
+                    code="active_job_exists",
+                    message="Equivalent active work is already registered.",
+                    job=equivalent,
+                )
+
+            if len(self._active) >= self._max_nonterminal:
+                return JobOutcome(
+                    command="create",
+                    status=JobOutcomeStatus.ERROR,
+                    code="job_capacity_exceeded",
+                    message=(
+                        "The service has reached its configured nonterminal job "
+                        f"capacity ({self._max_nonterminal})."
+                    ),
+                )
+
+            resolved_id = job_id or str(uuid.uuid4())
+            if self._get_locked(resolved_id) is not None:
+                return JobOutcome(
+                    command="create",
+                    status=JobOutcomeStatus.ERROR,
+                    code="job_id_conflict",
+                    message=f"Job ID {resolved_id!r} is already registered.",
+                    job=self._get_locked(resolved_id),
+                )
+
+            now = time.time()
+            state = JobState.PAUSED if start_paused else JobState.QUEUED
+            desired_state = (
+                DesiredJobState.PAUSED if start_paused else DesiredJobState.RUNNING
+            )
+            created = JobSnapshot(
+                id=resolved_id,
+                revision=1,
+                spec=spec,
+                state=state,
+                desired_state=desired_state,
+                capabilities=self._capabilities_for(state),
+                attempt=JobAttempt(number=1),
+                timestamps=JobTimestamps(
+                    created_at=now,
+                    state_changed_at=now,
+                    control_acknowledged_at=now if start_paused else None,
+                ),
+                progress=None,
+                result=None,
+                error_kind=None,
+                initiator=initiator,
+                runtime=self._process_runtime_snapshot(),
+                resources=JobResourceSnapshot(started=None, finished=None),
+            )
+            self._active[resolved_id] = _ManagedJob(
+                snapshot=created,
+                runtime=JobRuntimeOwner(task=None, control=None),
+            )
+            if normalized_key is not None:
+                self._bind_idempotency_locked(
+                    normalized_key,
+                    signature,
+                    resolved_id,
+                )
+
+            return JobOutcome(
+                command="create",
+                status=JobOutcomeStatus.ACCEPTED,
+                code="job_created",
+                message="The job was admitted.",
+                job=created,
+            )
+
+    def get(self, job_id: str) -> JobSnapshot | None:
+        """Return an immutable snapshot for one full, exact job ID."""
+        with self._lock:
+            return self._get_locked(job_id)
+
+    def list_jobs(self) -> list[JobSnapshot]:
+        """Return active work first, then separately bounded terminal history."""
+        with self._lock:
+            active = sorted(
+                (self._snapshot_locked(job) for job in self._active.values()),
+                key=lambda job: job.timestamps.created_at,
+                reverse=True,
+            )
+            terminal = [self._snapshot_locked(job) for job in reversed(self._terminal)]
+            return [*active, *terminal]
+
+    def active(self) -> list[JobSnapshot]:
+        """Return every nonterminal job without eviction or prefix matching."""
+        with self._lock:
+            return [self._snapshot_locked(job) for job in self._active.values()]
+
+    def terminal(self) -> list[JobSnapshot]:
+        """Return retained terminal history newest first."""
+        with self._lock:
+            return [self._snapshot_locked(job) for job in reversed(self._terminal)]
+
+    def runtime_owner(self, job_id: str) -> JobRuntimeOwner | None:
+        """Return exact-ID runtime ownership without resolving prefixes."""
+        with self._lock:
+            managed = self._active.get(job_id)
+            return managed.runtime if managed is not None else None
+
+    def attach_runtime(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+        control: RunControlToken,
+    ) -> bool:
+        """Attach strong task and control-token ownership to an active job."""
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not None:
+                return False
+            managed.runtime = JobRuntimeOwner(
+                task=task,
+                control=control,
+                worker_active=False,
+            )
+            return True
+
+    def set_worker_active(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+        active: bool,
+    ) -> bool:
+        """Update worker ownership only for the currently attached attempt."""
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not task:
+                return False
+            managed.runtime = replace(managed.runtime, worker_active=active)
+            return True
+
+    def release_runtime(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+    ) -> bool:
+        """Release runtime handles iff ``task`` still owns the exact job."""
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not task:
+                return False
+            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            return True
+
+    def _get_locked(self, job_id: str) -> JobSnapshot | None:
+        active = self._active.get(job_id)
+        if active is not None:
+            return self._snapshot_locked(active)
+        for managed in reversed(self._terminal):
+            if managed.snapshot.id == job_id:
+                return self._snapshot_locked(managed)
+        return None
+
+    def _find_equivalent_active_locked(self, spec: JobSpec) -> JobSnapshot | None:
+        for managed in self._active.values():
+            if managed.snapshot.spec == spec:
+                return self._snapshot_locked(managed)
+        return None
+
+    def _archive_terminal_locked(self, managed: _ManagedJob) -> None:
+        """Move one terminal resource into bounded history.
+
+        Transition methods call this while holding ``self._lock``. Keeping the
+        retention operation here makes it impossible for terminal eviction to
+        touch the nonterminal ownership map.
+        """
+        if not managed.snapshot.state.is_terminal:
+            raise ValueError("only terminal jobs may enter terminal history")
+        self._active.pop(managed.snapshot.id, None)
+        managed.runtime = JobRuntimeOwner(task=None, control=None)
+        self._terminal.append(managed)
+        while len(self._terminal) > self._max_terminal_history:
+            evicted = self._terminal.popleft()
+            self._forget_idempotency_locked(evicted.snapshot.id)
+
+    def _snapshot_locked(self, managed: _ManagedJob) -> JobSnapshot:
+        owner = managed.runtime
+        task_active = owner.task is not None and not owner.task.done()
+        runtime = replace(
+            managed.snapshot.runtime,
+            task_active=task_active,
+            worker_active=owner.worker_active,
+        )
+        return replace(managed.snapshot, runtime=runtime)
+
+    def _bind_idempotency_locked(
+        self,
+        key: str,
+        signature: tuple[JobSpec, JobInitiator, bool],
+        job_id: str,
+    ) -> None:
+        self._idempotency[key] = _IdempotencyBinding(signature, job_id)
+        self._job_idempotency_keys.setdefault(job_id, set()).add(key)
+
+    def _forget_idempotency_locked(self, job_id: str) -> None:
+        for key in self._job_idempotency_keys.pop(job_id, set()):
+            binding = self._idempotency.get(key)
+            if binding is not None and binding.job_id == job_id:
+                self._idempotency.pop(key, None)
+
+    @staticmethod
+    def _normalize_idempotency_key(key: str | None) -> str | None:
+        if key is None:
+            return None
+        normalized = key.strip()
+        if not normalized:
+            raise ValueError("idempotency_key must not be empty")
+        return normalized
+
+    @staticmethod
+    def _capabilities_for(state: JobState) -> JobCapabilities:
+        return JobCapabilities(
+            pausable=state in {JobState.QUEUED, JobState.RUNNING},
+            resumable=state is JobState.PAUSED,
+            cancellable=not state.is_terminal,
+            retryable=state in {JobState.FAILED, JobState.INTERRUPTED},
+            deletable=state.is_terminal,
+        )
+
+    @staticmethod
+    def _process_runtime_snapshot() -> JobRuntimeSnapshot:
+        return JobRuntimeSnapshot(
+            pid=os.getpid(),
+            parent_pid=os.getppid(),
+            user=getpass.getuser(),
+            executable=sys.executable,
+            prefix=sys.prefix,
+            base_prefix=sys.base_prefix,
+            virtual_env=os.environ.get("VIRTUAL_ENV"),
+        )
+
 
 _lock = threading.Lock()
 _records: deque[dict[str, object]] = deque(maxlen=MAX_RECORDS)
