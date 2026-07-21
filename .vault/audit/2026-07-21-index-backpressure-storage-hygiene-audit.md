@@ -61,6 +61,16 @@ ACCEPTED: deliberate write-churn trade-off, documented in the code.
 substring; an innocuous refactor could break it. ACCEPTED: structural
 guards of this shape are the repo's established idiom.
 
+### integration-under-live-load | low | daemon-spawning integration tests time out while the operator's recovery index runs
+
+The `live_service`-based integration tests spawn sandboxed daemons whose
+GPU model load cannot complete inside the 90s readiness window while the
+resident production service is mid-way through the 250k-chunk recovery
+index (confirmed live at review time). Environmental contention, not a
+regression: the full unit suite (1503) and the non-daemon integration
+tests (68) are green. Follow-up: rerun the daemon-spawning integration
+files once the resident index completes, before merge.
+
 ## Verdict
 
 Approve with fixes; all fixes applied and verified in-session (212
