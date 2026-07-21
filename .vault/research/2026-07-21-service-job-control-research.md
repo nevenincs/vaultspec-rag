@@ -118,16 +118,16 @@ The canonical observed states are `queued`, `running`, `pausing`, `paused`,
 `cancelling`, `cancelled`, `succeeded`, `failed`, and `interrupted`. The job also carries
 `desired_state` as `running`, `paused`, or `cancelled`.
 
-| Current state | Request | Immediate outcome | Acknowledged outcome |
-| --- | --- | --- | --- |
-| `queued` | pause | `paused` | `paused` |
-| `running` | pause | `pausing` | `paused` after safe unwind |
-| `pausing` | resume | desired state returns to running | `running` if not unwound, otherwise `queued` |
-| `paused` | resume | `queued`, attempt increments | `running` |
-| `queued` or `paused` | cancel | `cancelled` | `cancelled` |
-| `running` or `pausing` | cancel | `cancelling` | `cancelled` after safe unwind |
-| terminal | same terminal request | structured already-satisfied success where possible | unchanged |
-| terminal | incompatible request | `409 invalid_transition` | unchanged |
+| Current state          | Request               | Immediate outcome                                   | Acknowledged outcome                         |
+| ---------------------- | --------------------- | --------------------------------------------------- | -------------------------------------------- |
+| `queued`               | pause                 | `paused`                                            | `paused`                                     |
+| `running`              | pause                 | `pausing`                                           | `paused` after safe unwind                   |
+| `pausing`              | resume                | desired state returns to running                    | `running` if not unwound, otherwise `queued` |
+| `paused`               | resume                | `queued`, attempt increments                        | `running`                                    |
+| `queued` or `paused`   | cancel                | `cancelled`                                         | `cancelled`                                  |
+| `running` or `pausing` | cancel                | `cancelling`                                        | `cancelled` after safe unwind                |
+| terminal               | same terminal request | structured already-satisfied success where possible | unchanged                                    |
+| terminal               | incompatible request  | `409 invalid_transition`                            | unchanged                                    |
 
 Repeated desired-state writes are idempotent. Mutations require exact IDs and optionally
 accept an expected revision so two operators cannot unknowingly race. Paused work is not

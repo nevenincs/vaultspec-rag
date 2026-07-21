@@ -110,8 +110,11 @@ def _try_lock_fd(fd: int) -> bool:
     reports success unlocked rather than failing the status write.
     """
     if sys.platform == "win32":
-        import msvcrt
-
+        try:
+            import msvcrt
+        except ImportError:
+            logger.debug("no msvcrt; status write proceeds unlocked")
+            return True
         os.lseek(fd, 0, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         return True
@@ -127,8 +130,10 @@ def _try_lock_fd(fd: int) -> bool:
 def _unlock_fd(fd: int) -> None:
     """Release the OS advisory lock taken by :func:`_try_lock_fd`."""
     if sys.platform == "win32":
-        import msvcrt
-
+        try:
+            import msvcrt
+        except ImportError:
+            return
         os.lseek(fd, 0, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         return
