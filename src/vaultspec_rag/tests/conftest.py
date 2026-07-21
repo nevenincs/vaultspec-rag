@@ -27,6 +27,47 @@ from .corpus import CorpusManifest, build_synthetic_vault
 # GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_machine_singleton_dirs(
+    tmp_path_factory: TempPathFactory,
+) -> Generator[None]:
+    """Point the machine-singleton dirs at a session temp tree for every test.
+
+    The status dir and the qdrant storage dir resolve the machine-global
+    managed service, its lock, and its manifest. A test that forgets to
+    isolate them reaches the operator's real resident service - a pytest
+    run once terminated the shared production daemon mid-index exactly
+    this way, killing two in-flight jobs. Isolation is therefore
+    structural: the whole session runs against temp dirs unless the
+    operator explicitly pre-set the env vars, and individual tests may
+    still narrow further with their own overrides.
+    """
+    import os
+
+    from ..config import EnvVar
+
+    base = tmp_path_factory.mktemp("machine-singleton")
+    prior: dict[str, str | None] = {}
+    defaults = {
+        EnvVar.STATUS_DIR.value: str(base / "status"),
+        EnvVar.QDRANT_STORAGE_DIR.value: str(base / "qdrant-server" / "storage"),
+    }
+    for var, value in defaults.items():
+        prior[var] = os.environ.get(var)
+        if prior[var] is None:
+            os.environ[var] = value
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_rag_config()
+    yield
+    for var, value in prior.items():
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_rag_config()
+
+
 class RagComponents(TypedDict):
     """Typed bundle returned by :func:`_index_corpus` and yielded by RAG fixtures."""
 
