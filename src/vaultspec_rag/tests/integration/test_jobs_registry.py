@@ -839,6 +839,83 @@ class TestManagedJobPersistence:
         assert false_first_resume.restore_persisted().code == "job_state_invalid"
         assert false_first_resume.list_jobs() == []
 
+    def test_version_and_timestamp_invariants_are_strict(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("http", "POST /jobs", str(tmp_path)),
+        )
+        assert created.job is not None
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+
+        for invalid_version in (True, 1.0):
+            payload["version"] = invalid_version
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+            invalid = JobManager(max_nonterminal=1, state_path=state_path)
+            assert invalid.restore_persisted().code == "job_state_invalid"
+            assert invalid.list_jobs() == []
+
+        payload["version"] = 1
+        job = payload["jobs"][0]
+        job["control_acknowledged_at"] = job["created_at"]
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+        unrequested_ack = JobManager(max_nonterminal=1, state_path=state_path)
+        assert unrequested_ack.restore_persisted().code == "job_state_invalid"
+        assert unrequested_ack.list_jobs() == []
+
+        job["control_acknowledged_at"] = None
+        job["state"] = "failed"
+        job["started_at"] = job["created_at"] + 2
+        job["state_changed_at"] = job["created_at"] + 1
+        job["finished_at"] = job["created_at"]
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+        impossible_finish = JobManager(max_nonterminal=1, state_path=state_path)
+        assert impossible_finish.restore_persisted().code == "job_state_invalid"
+        assert impossible_finish.list_jobs() == []
+
+    def test_legacy_v1_start_paused_round_trip_has_control_request_lineage(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                str(tmp_path),
+                JobMode.REBUILD,
+            ),
+            JobInitiator("cli", "server job create", str(tmp_path)),
+            start_paused=True,
+        )
+
+        assert created.job is not None
+        assert created.job.state is JobState.PAUSED
+        assert created.job.timestamps.control_requested_at is not None
+        assert (
+            created.job.timestamps.control_acknowledged_at
+            == created.job.timestamps.control_requested_at
+        )
+        legacy_v1 = json.loads(state_path.read_text(encoding="utf-8"))
+        legacy_v1["jobs"][0]["control_requested_at"] = None
+        state_path.write_text(json.dumps(legacy_v1), encoding="utf-8")
+
+        restarted = JobManager(max_nonterminal=1, state_path=state_path)
+        assert restarted.restore_persisted().code == "job_state_restored"
+        assert restarted.get(created.job.id) == created.job
+        migrated = json.loads(state_path.read_text(encoding="utf-8"))["jobs"][0]
+        assert migrated["control_requested_at"] == migrated["control_acknowledged_at"]
+
     @pytest.mark.asyncio
     async def test_lower_capacity_still_recovers_crashed_attempts(
         self,
