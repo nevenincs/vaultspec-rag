@@ -11,6 +11,16 @@ related:
   - '[[2026-07-21-managed-log-contract-reference]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `managed-log-contract` plan
 
 Bound every managed log and give operators one truthful service-plus-Qdrant view both while
@@ -24,7 +34,7 @@ Establish the shared clean-break retention policy and make the supervised Qdrant
 
 Expose one generic managed-log policy and wire the service logger to the renamed settings without aliases.
 
-- [ ] `W01.P01.S01` - Replace service-only retention settings and environment names with the generic managed-log contract; `src/vaultspec_rag/config.py`.
+- [x] `W01.P01.S01` - Replace service-only retention settings and environment names with the generic managed-log contract; `src/vaultspec_rag/config.py`.
 - [ ] `W01.P01.S02` - Install the service log handler from the generic managed-log settings; `src/vaultspec_rag/server/_main.py`.
 - [ ] `W01.P01.S03` - Assert generic defaults, environment overrides, and removal of legacy configuration names; `src/vaultspec_rag/tests/test_config.py`.
 

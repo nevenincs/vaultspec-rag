@@ -54,8 +54,8 @@ class EnvVar(StrEnum):
     LOG_LEVEL = "VAULTSPEC_RAG_LOG_LEVEL"
     SERVICE_IDLE_TTL_SECONDS = "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS"
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
-    SERVICE_LOG_MAX_BYTES = "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES"
-    SERVICE_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT"
+    MANAGED_LOG_MAX_BYTES = "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
+    MANAGED_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
     # Service-domain indexing job lifecycle bounds (service-job-control ADR).
     JOB_MAX_NONTERMINAL = "VAULTSPEC_RAG_JOB_MAX_NONTERMINAL"
     JOB_SHUTDOWN_TIMEOUT_SECONDS = "VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS"
@@ -170,8 +170,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "log_level": EnvVar.LOG_LEVEL,
     "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
-    "service_log_max_bytes": EnvVar.SERVICE_LOG_MAX_BYTES,
-    "service_log_backup_count": EnvVar.SERVICE_LOG_BACKUP_COUNT,
+    "managed_log_max_bytes": EnvVar.MANAGED_LOG_MAX_BYTES,
+    "managed_log_backup_count": EnvVar.MANAGED_LOG_BACKUP_COUNT,
     "job_max_nonterminal": EnvVar.JOB_MAX_NONTERMINAL,
     "job_shutdown_timeout_seconds": EnvVar.JOB_SHUTDOWN_TIMEOUT_SECONDS,
     # Performance tuning knobs (#68 audit F9.1) - surface them via
@@ -506,8 +506,11 @@ class VaultSpecConfigWrapper:
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,
         "service_max_projects": 16,
-        "service_log_max_bytes": 10485760,
-        "service_log_backup_count": 5,
+        # Per-source retention policy for every operational log managed by the
+        # resident service. Service and Qdrant each receive this full budget;
+        # the values are not divided across sources.
+        "managed_log_max_bytes": 10485760,
+        "managed_log_backup_count": 5,
         # Nonterminal records are exact-addressable and therefore cannot be
         # evicted. Refuse excess admission at this bound instead of growing an
         # unbounded active registry or silently losing controllable work.
@@ -654,6 +657,41 @@ class VaultSpecConfigWrapper:
             None.
         """
         self._base = base
+
+    @property
+    def managed_log_max_bytes(self) -> int:
+        """Return the positive per-source rollover threshold in bytes.
+
+        A zero or negative threshold would make every managed source
+        unbounded, contradicting the managed-log retention contract.
+
+        Raises:
+            ValueError: If the configured value is not a positive integer.
+        """
+        value: object = self._resolve_rag_default("managed_log_max_bytes")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            msg = f"managed_log_max_bytes must be a positive integer, got {value!r}"
+            raise ValueError(msg)
+        return value
+
+    @property
+    def managed_log_backup_count(self) -> int:
+        """Return the non-negative retained-backup count per source.
+
+        Zero remains useful as a bounded no-history mode: the active file is
+        truncated at each threshold instead of keeping numbered generations.
+
+        Raises:
+            ValueError: If the configured value is not a non-negative integer.
+        """
+        value: object = self._resolve_rag_default("managed_log_backup_count")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            msg = (
+                "managed_log_backup_count must be a non-negative integer, "
+                f"got {value!r}"
+            )
+            raise ValueError(msg)
+        return value
 
     @property
     def job_max_nonterminal(self) -> int:
