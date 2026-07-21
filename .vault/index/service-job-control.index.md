@@ -11,6 +11,7 @@ related:
   - '[[2026-07-21-service-job-control-W01-P01-S03]]'
   - '[[2026-07-21-service-job-control-W01-P02-S04]]'
   - '[[2026-07-21-service-job-control-W01-P02-S05]]'
+  - '[[2026-07-21-service-job-control-W01-P02-S06]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -41,6 +42,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W01-P01-S03` - Verify control primitives and configuration through imported production behavior using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W01-P02-S04` - Define immutable job specifications, canonical states, capabilities, revisions, attempt lineage, and structured outcomes using vaultspec-high-executor
 - `2026-07-21-service-job-control-W01-P02-S05` - Implement exact-ID active and runtime ownership, bounded terminal history, admission, active-work deduplication, and idempotency keys using vaultspec-high-executor
+- `2026-07-21-service-job-control-W01-P02-S06` - Implement revisioned pause, resume, cancellation, retry, terminal deletion, first-terminal-writer-wins, and deterministic races using vaultspec-high-executor
 
 ### plan
 
