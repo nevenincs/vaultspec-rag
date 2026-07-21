@@ -51,7 +51,6 @@ __all__ = [
     "JobProgress",
     "JobProgressReporter",
     "JobResourceSnapshot",
-    "JobRuntimeOwner",
     "JobRuntimeSnapshot",
     "JobSnapshot",
     "JobSource",
@@ -186,6 +185,15 @@ class JobAttempt:
             raise ValueError("job attempt number must be at least 1")
         if self.resumed_from_attempt is not None and self.resumed_from_attempt < 1:
             raise ValueError("resumed attempt number must be at least 1")
+        if self.number == 1 and (
+            self.resumed_from_attempt is not None or self.resume_strategy is not None
+        ):
+            raise ValueError("first job attempt cannot carry resume lineage")
+        if self.number > 1 and (
+            self.resumed_from_attempt != self.number - 1
+            or self.resume_strategy is not ResumeStrategy.RECONCILE
+        ):
+            raise ValueError("resumed job attempt must name its coherent predecessor")
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,7 +432,7 @@ _CONFIGURED_STATE_PATH = _ConfiguredStatePath()
 
 
 @dataclass(frozen=True, slots=True)
-class JobRuntimeOwner:
+class _JobRuntimeOwner:
     """Strong references to the live execution for one exact job ID."""
 
     task: asyncio.Task[Any] | None
@@ -435,7 +443,7 @@ class JobRuntimeOwner:
 @dataclass(slots=True)
 class _ManagedJob:
     snapshot: JobSnapshot
-    runtime: JobRuntimeOwner
+    runtime: _JobRuntimeOwner
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,9 +457,10 @@ class _ManagerStateBackup:
     active: dict[str, _ManagedJob]
     terminal: deque[_ManagedJob]
     snapshots: dict[str, JobSnapshot]
-    runtimes: dict[str, JobRuntimeOwner]
+    runtimes: dict[str, _JobRuntimeOwner]
     idempotency: OrderedDict[str, _IdempotencyBinding]
     job_idempotency_keys: dict[str, set[str]]
+    persistence_dirty: bool
 
 
 class JobManager:
@@ -497,6 +506,7 @@ class JobManager:
         self._terminal: deque[_ManagedJob] = deque()
         self._idempotency: OrderedDict[str, _IdempotencyBinding] = OrderedDict()
         self._job_idempotency_keys: dict[str, set[str]] = {}
+        self._persistence_dirty = False
 
     @property
     def max_nonterminal(self) -> int:
@@ -512,6 +522,12 @@ class JobManager:
     def state_path(self) -> Path | None:
         """Atomic state-file path, or ``None`` for an in-memory manager."""
         return self._state_path
+
+    @property
+    def persistence_dirty(self) -> bool:
+        """Return whether the latest in-memory generation still needs flushing."""
+        with self._lock:
+            return self._persistence_dirty
 
     def create(  # noqa: PLR0912 - admission/replay matrix
         self,
@@ -642,7 +658,7 @@ class JobManager:
             )
             self._active[resolved_id] = _ManagedJob(
                 snapshot=created,
-                runtime=JobRuntimeOwner(task=None, control=None),
+                runtime=_JobRuntimeOwner(task=None, control=None),
             )
             if normalized_key is not None:
                 self._bind_idempotency_locked(
@@ -690,12 +706,6 @@ class JobManager:
         with self._lock:
             return [self._snapshot_locked(job) for job in reversed(self._terminal)]
 
-    def runtime_owner(self, job_id: str) -> JobRuntimeOwner | None:
-        """Return exact-ID runtime ownership without resolving prefixes."""
-        with self._lock:
-            managed = self._active.get(job_id)
-            return managed.runtime if managed is not None else None
-
     def start_attempt(
         self,
         job_id: str,
@@ -728,7 +738,7 @@ class JobManager:
                     managed,
                 )
 
-            managed.runtime = JobRuntimeOwner(task=task, control=control)
+            managed.runtime = _JobRuntimeOwner(task=task, control=control)
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
@@ -751,6 +761,130 @@ class JobManager:
                 code="attempt_started",
                 message="The queued attempt acquired its runtime.",
                 job=self._snapshot_locked(managed),
+            )
+
+    def update_progress(
+        self,
+        job_id: str,
+        *,
+        attempt: int,
+        task: asyncio.Task[Any],
+        step: str,
+        completed: int = 0,
+        total: int | None = None,
+    ) -> JobOutcome:
+        """Publish progress only from the exact task owning the current attempt."""
+        command = "update_progress"
+        raw_step = cast("object", step)
+        raw_completed = cast("object", completed)
+        raw_total = cast("object", total)
+        if not isinstance(raw_step, str) or not raw_step.strip():
+            return self._error(
+                command, "invalid_progress", "Progress step is required."
+            )
+        if (
+            not isinstance(raw_completed, int)
+            or isinstance(raw_completed, bool)
+            or raw_completed < 0
+            or (
+                raw_total is not None
+                and (
+                    not isinstance(raw_total, int)
+                    or isinstance(raw_total, bool)
+                    or raw_total < raw_completed
+                )
+            )
+        ):
+            return self._error(
+                command,
+                "invalid_progress",
+                (
+                    "Progress counts must satisfy 0 <= completed <= total when "
+                    "total is set."
+                ),
+            )
+        normalized_step = raw_step.strip()
+        normalized_total = raw_total
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            if (
+                managed.snapshot.attempt.number != attempt
+                or managed.runtime.task is not task
+            ):
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="stale_attempt_ignored",
+                    message="Progress from a stale attempt was ignored.",
+                    job=self._snapshot_locked(managed),
+                )
+            if managed.snapshot.state not in {
+                JobState.RUNNING,
+                JobState.PAUSING,
+                JobState.CANCELLING,
+            }:
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "Only a live attempt can publish progress.",
+                    managed,
+                )
+            previous = managed.snapshot
+            managed.snapshot = replace(
+                previous,
+                revision=previous.revision + 1,
+                progress=JobProgress(
+                    step=normalized_step,
+                    completed=raw_completed,
+                    total=normalized_total,
+                    last_updated=time.time(),
+                ),
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                self._restore_state_locked(backup)
+                return self._persistence_error(
+                    command,
+                    persistence_error,
+                    self._get_locked(job_id),
+                )
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="progress_updated",
+                message="The current attempt progress was updated.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def flush_persistence(self) -> JobOutcome:
+        """Idempotently retry the latest dirty manager generation."""
+        command = "flush_persistence"
+        with self._lock:
+            if self._state_path is None:
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="persistence_disabled",
+                    message="This job manager has no persistence path.",
+                )
+            if not self._persistence_dirty:
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="persistence_clean",
+                    message="The latest manager generation is already durable.",
+                )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                return self._persistence_error(command, persistence_error)
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="persistence_flushed",
+                message="The latest manager generation is durable.",
             )
 
     def set_worker_active(
@@ -954,7 +1088,7 @@ class JobManager:
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            managed.runtime = _JobRuntimeOwner(task=None, control=None)
             if (
                 state is JobState.PAUSING
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
@@ -1047,7 +1181,7 @@ class JobManager:
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            managed.runtime = _JobRuntimeOwner(task=None, control=None)
             self._replace_snapshot_locked(
                 managed,
                 state=state,
@@ -1152,7 +1286,7 @@ class JobManager:
             )
             managed = _ManagedJob(
                 snapshot=retried,
-                runtime=JobRuntimeOwner(task=None, control=None),
+                runtime=_JobRuntimeOwner(task=None, control=None),
             )
             self._active[new_id] = managed
             persistence_error = self._persist_locked()
@@ -1245,16 +1379,6 @@ class JobManager:
                 ),
                 code="job_state_capacity_exceeded",
             )
-        if len(restored_bindings) > self._max_idempotency:
-            return self._persistence_error(
-                command,
-                (
-                    f"persisted idempotency count {len(restored_bindings)} exceeds "
-                    f"configured retention {self._max_idempotency}"
-                ),
-                code="job_state_capacity_exceeded",
-            )
-
         with self._lock:
             if self._active or self._terminal:
                 return self._error(
@@ -1264,11 +1388,24 @@ class JobManager:
                 )
             backup = self._capture_state_locked()
             now = time.time()
-            for snapshot in restored_jobs:
+            restore_order = [
+                *(job for job in restored_jobs if job.state.is_terminal),
+                *(job for job in restored_jobs if not job.state.is_terminal),
+            ]
+            for snapshot in restore_order:
+                restored_runtime = (
+                    self._process_runtime_snapshot()
+                    if snapshot.state in {JobState.QUEUED, JobState.PAUSED}
+                    else replace(
+                        snapshot.runtime,
+                        task_active=False,
+                        worker_active=False,
+                    )
+                )
                 managed = _ManagedJob(
                     snapshot=replace(
                         snapshot,
-                        runtime=self._process_runtime_snapshot(),
+                        runtime=restored_runtime,
                         resources=replace(
                             snapshot.resources,
                             index_capacity_held=False,
@@ -1277,7 +1414,7 @@ class JobManager:
                             pipeline_active=False,
                         ),
                     ),
-                    runtime=JobRuntimeOwner(task=None, control=None),
+                    runtime=_JobRuntimeOwner(task=None, control=None),
                 )
                 if snapshot.state in {JobState.QUEUED, JobState.PAUSED}:
                     self._active[snapshot.id] = managed
@@ -1300,6 +1437,9 @@ class JobManager:
                 else:
                     self._terminal.append(managed)
 
+            while len(self._terminal) > self._max_terminal_history:
+                evicted = self._terminal.popleft()
+                self._forget_idempotency_locked(evicted.snapshot.id)
             retained_ids = {
                 *self._active,
                 *(managed.snapshot.id for managed in self._terminal),
@@ -1311,9 +1451,6 @@ class JobManager:
                         binding.signature,
                         binding.job_id,
                     )
-            while len(self._terminal) > self._max_terminal_history:
-                evicted = self._terminal.popleft()
-                self._forget_idempotency_locked(evicted.snapshot.id)
 
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -1578,6 +1715,7 @@ class JobManager:
             job_idempotency_keys={
                 job_id: set(keys) for job_id, keys in self._job_idempotency_keys.items()
             },
+            persistence_dirty=self._persistence_dirty,
         )
 
     def _restore_state_locked(self, backup: _ManagerStateBackup) -> None:
@@ -1593,23 +1731,28 @@ class JobManager:
         self._terminal = backup.terminal
         self._idempotency = OrderedDict(backup.idempotency)
         self._job_idempotency_keys = backup.job_idempotency_keys
+        self._persistence_dirty = backup.persistence_dirty
 
     def _persist_locked(self) -> str | None:
         path = self._state_path
         if path is None:
+            self._persistence_dirty = False
             return None
-        active_ids = set(self._active)
+        retained_ids = {
+            *self._active,
+            *(managed.snapshot.id for managed in self._terminal),
+        }
         payload = {
             "schema": "vaultspec.rag.jobs",
             "version": 1,
             "jobs": [
                 self._snapshot_locked(managed).to_dict()
-                for managed in self._active.values()
+                for managed in [*self._active.values(), *self._terminal]
             ],
             "idempotency": [
                 _idempotency_binding_to_dict(key, binding)
                 for key, binding in self._idempotency.items()
-                if binding.job_id in active_ids
+                if binding.job_id in retained_ids
             ],
         }
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -1622,6 +1765,7 @@ class JobManager:
                 os.fsync(stream.fileno())
             _atomic_replace(temporary, path)
         except (OSError, TypeError, ValueError) as exc:
+            self._persistence_dirty = True
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:
@@ -1630,6 +1774,7 @@ class JobManager:
                 )
             logger.error("job state persistence failed: %s", exc)
             return str(exc)
+        self._persistence_dirty = False
         return None
 
     @staticmethod
@@ -1687,7 +1832,7 @@ class JobManager:
         if not managed.snapshot.state.is_terminal:
             raise ValueError("only terminal jobs may enter terminal history")
         self._active.pop(managed.snapshot.id, None)
-        managed.runtime = JobRuntimeOwner(task=None, control=None)
+        managed.runtime = _JobRuntimeOwner(task=None, control=None)
         self._terminal.append(managed)
         while len(self._terminal) > self._max_terminal_history:
             evicted = self._terminal.popleft()
@@ -1805,8 +1950,10 @@ def _job_spec_error(spec: JobSpec) -> str | None:
         return "Indexing jobs require a vault or code source."
     if spec.mode is None:
         return "Indexing jobs require an incremental or rebuild mode."
-    if spec.project_root is not None and not spec.project_root.strip():
-        return "project_root must be omitted or a non-empty path."
+    if spec.project_root is None or not spec.project_root.strip():
+        return "Indexing jobs require a non-empty absolute project_root."
+    if not Path(spec.project_root).expanduser().is_absolute():
+        return "Indexing jobs require an absolute project_root."
     return None
 
 
@@ -1904,10 +2051,13 @@ def _validate_persisted_generation(
         referenced = by_id.get(binding.job_id)
         if referenced is None:
             raise ValueError(f"idempotency key {key!r} references a missing job")
-        spec, initiator, _start_paused = binding.signature
-        if spec != referenced.spec or initiator != referenced.initiator:
+        spec, _initiator, _start_paused = binding.signature
+        spec_error = _job_spec_error(spec)
+        if spec_error is not None:
+            raise ValueError(f"idempotency key {key!r}: {spec_error}")
+        if _active_work_identity(spec) != _active_work_identity(referenced.spec):
             raise ValueError(
-                f"idempotency key {key!r} does not match its referenced job"
+                f"idempotency key {key!r} does not identify equivalent work"
             )
 
 
@@ -1960,6 +2110,16 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
     allowed_desired = expected_desired.get(job.state)
     if allowed_desired is not None and job.desired_state not in allowed_desired:
         raise ValueError(f"job {job.id}: observed and desired states disagree")
+    if (
+        job.state
+        in {
+            JobState.RUNNING,
+            JobState.PAUSING,
+            JobState.CANCELLING,
+        }
+        and job.timestamps.started_at is None
+    ):
+        raise ValueError(f"job {job.id}: live attempt lacks a start time")
     if job.state not in {JobState.QUEUED, JobState.PAUSED}:
         return
     resources = job.resources
@@ -1980,12 +2140,15 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
 
 def _validate_persisted_attempt(job: JobSnapshot) -> None:
     attempt = job.attempt
-    if attempt.resumed_from_attempt is None:
-        if attempt.resume_strategy is not None:
-            raise ValueError(f"job {job.id}: resume strategy lacks prior attempt")
+    if attempt.number == 1:
+        if (
+            attempt.resumed_from_attempt is not None
+            or attempt.resume_strategy is not None
+        ):
+            raise ValueError(f"job {job.id}: first attempt claims resume lineage")
     elif (
-        attempt.resume_strategy is not ResumeStrategy.RECONCILE
-        or attempt.number != attempt.resumed_from_attempt + 1
+        attempt.resumed_from_attempt != attempt.number - 1
+        or attempt.resume_strategy is not ResumeStrategy.RECONCILE
     ):
         raise ValueError(f"job {job.id}: invalid resume attempt lineage")
     if attempt.parent_job_id == job.id:

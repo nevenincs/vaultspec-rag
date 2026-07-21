@@ -634,9 +634,29 @@ class TestManagedJobAdmission:
             ),
             JobInitiator("schedule", "invalid index", None),
         )
+        missing_root = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                None,
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("http", "POST /jobs", None),
+        )
+        relative_root = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                "relative/project",
+                JobMode.REBUILD,
+            ),
+            JobInitiator("cli", "server job create", "relative/project"),
+        )
 
         assert maintenance.code == "invalid_job_spec"
         assert invalid_source.code == "invalid_job_spec"
+        assert missing_root.code == "invalid_job_spec"
+        assert relative_root.code == "invalid_job_spec"
         assert manager.active() == []
 
     def test_equivalent_root_spellings_deduplicate(self, tmp_path: Path) -> None:
@@ -758,6 +778,95 @@ class TestManagedJobTransitions:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+    @pytest.mark.asyncio
+    async def test_progress_requires_the_exact_current_attempt_and_task(self) -> None:
+        manager = JobManager(max_nonterminal=1, state_path=None)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            "Y:/project",
+            JobMode.INCREMENTAL,
+        )
+        created = manager.create(
+            spec,
+            JobInitiator("watcher", "watcher_code_index", "Y:/project"),
+        )
+        assert created.job is not None
+        owner_task = asyncio.create_task(asyncio.Event().wait())
+        stale_task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            assert (
+                manager.start_attempt(
+                    created.job.id,
+                    task=owner_task,
+                    control=RunControlToken(),
+                ).code
+                == "attempt_started"
+            )
+            assert (
+                manager.update_progress(
+                    created.job.id,
+                    attempt=1,
+                    task=stale_task,
+                    step="embed",
+                    completed=1,
+                    total=2,
+                ).code
+                == "stale_attempt_ignored"
+            )
+            assert (
+                manager.update_progress(
+                    created.job.id,
+                    attempt=1,
+                    task=owner_task,
+                    step=cast("str", 7),
+                ).code
+                == "invalid_progress"
+            )
+            assert (
+                manager.update_progress(
+                    created.job.id,
+                    attempt=1,
+                    task=owner_task,
+                    step="embed",
+                    completed=cast("int", 1.5),
+                    total=cast("int", 2.0),
+                ).code
+                == "invalid_progress"
+            )
+            updated = manager.update_progress(
+                created.job.id,
+                attempt=1,
+                task=owner_task,
+                step="embed",
+                completed=1,
+                total=2,
+            )
+            assert updated.code == "progress_updated"
+            assert updated.job is not None
+            assert updated.job.progress is not None
+            assert updated.job.progress.step == "embed"
+            assert updated.job.progress.completed == 1
+            assert updated.job.revision == created.job.revision + 2
+            assert (
+                manager.update_progress(
+                    created.job.id,
+                    attempt=2,
+                    task=owner_task,
+                    step="publish",
+                ).code
+                == "stale_attempt_ignored"
+            )
+            unchanged = manager.get(created.job.id)
+            assert unchanged is not None
+            assert unchanged.progress == updated.job.progress
+        finally:
+            owner_task.cancel()
+            stale_task.cancel()
+            for task in (owner_task, stale_task):
+                with pytest.raises(asyncio.CancelledError):
+                    await task
 
     @pytest.mark.asyncio
     async def test_cancellation_is_immediate_or_acknowledged_after_unwind(
