@@ -17,13 +17,16 @@ import ast
 import asyncio
 import inspect
 import logging
+import subprocess
+import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .. import job_models
+from .. import job_manager, job_models
 from .. import jobs as jobs_module
 from ..job_control import PauseRequested, RunControlToken
 from ..jobs import (
@@ -46,7 +49,6 @@ from ..service import ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from ..embeddings import EmbeddingModel
 
@@ -57,6 +59,37 @@ def test_canonical_job_models_are_reexported_by_identity() -> None:
     assert set(job_models.__all__) <= set(jobs_module.__all__)
     for name in job_models.__all__:
         assert getattr(jobs_module, name) is getattr(job_models, name)
+
+
+def test_job_manager_boundary_is_reexported_by_identity() -> None:
+    assert jobs_module.JobManager is job_manager.JobManager
+    assert jobs_module.MAX_RECORDS is job_manager.MAX_RECORDS
+    assert job_manager.logger.name == jobs_module.logger.name == "vaultspec_rag.jobs"
+
+
+def test_job_manager_import_does_not_load_legacy_jobs_facade() -> None:
+    probe = """
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+from vaultspec_rag.job_manager import JobManager as direct_manager
+
+assert "vaultspec_rag.jobs" not in sys.modules
+
+from vaultspec_rag.jobs import JobManager as compatibility_manager
+
+assert compatibility_manager is direct_manager
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe, str(Path(__file__).parents[2])],
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
 
 
 # ---------------------------------------------------------------------------
