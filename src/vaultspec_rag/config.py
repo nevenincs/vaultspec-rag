@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from enum import StrEnum
 from pathlib import Path
@@ -55,6 +56,9 @@ class EnvVar(StrEnum):
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
     SERVICE_LOG_MAX_BYTES = "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES"
     SERVICE_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT"
+    # Service-domain indexing job lifecycle bounds (service-job-control ADR).
+    JOB_MAX_NONTERMINAL = "VAULTSPEC_RAG_JOB_MAX_NONTERMINAL"
+    JOB_SHUTDOWN_TIMEOUT_SECONDS = "VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS"
     # Wall-clock + memory tuning knobs introduced in #68 Track B.
     EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
@@ -168,6 +172,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
     "service_log_max_bytes": EnvVar.SERVICE_LOG_MAX_BYTES,
     "service_log_backup_count": EnvVar.SERVICE_LOG_BACKUP_COUNT,
+    "job_max_nonterminal": EnvVar.JOB_MAX_NONTERMINAL,
+    "job_shutdown_timeout_seconds": EnvVar.JOB_SHUTDOWN_TIMEOUT_SECONDS,
     # Performance tuning knobs (#68 audit F9.1) - surface them via
     # env vars too so deploy-time tuning does not require CLI flags
     # or config file edits.
@@ -502,6 +508,15 @@ class VaultSpecConfigWrapper:
         "service_max_projects": 16,
         "service_log_max_bytes": 10485760,
         "service_log_backup_count": 5,
+        # Nonterminal records are exact-addressable and therefore cannot be
+        # evicted. Refuse excess admission at this bound instead of growing an
+        # unbounded active registry or silently losing controllable work.
+        "job_max_nonterminal": 64,
+        # Maximum time for service shutdown to wait for cooperative indexing
+        # unwind. This accommodates the code indexer's existing bounded
+        # producer/consumer drain while ensuring the daemon never waits
+        # indefinitely for acknowledgement.
+        "job_shutdown_timeout_seconds": 300.0,
         # Filesystem-watcher / auto-reindex knobs (#143/#144). The
         # resident service auto-reindexes on file change; ``watch_enabled``
         # is the sole opt-out (``False`` => pull-only service). The
@@ -639,6 +654,40 @@ class VaultSpecConfigWrapper:
             None.
         """
         self._base = base
+
+    @property
+    def job_max_nonterminal(self) -> int:
+        """Return the positive bound on retained nonterminal jobs.
+
+        Raises:
+            ValueError: If the configured value is not a positive integer.
+        """
+        value: object = self._resolve_rag_default("job_max_nonterminal")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            msg = f"job_max_nonterminal must be a positive integer, got {value!r}"
+            raise ValueError(msg)
+        return value
+
+    @property
+    def job_shutdown_timeout_seconds(self) -> float:
+        """Return the finite positive cooperative job-shutdown window.
+
+        Raises:
+            ValueError: If the configured value is not a finite positive number.
+        """
+        value: object = self._resolve_rag_default("job_shutdown_timeout_seconds")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            msg = (
+                "job_shutdown_timeout_seconds must be a finite positive number, "
+                f"got {value!r}"
+            )
+            raise ValueError(msg)
+        return float(value)
 
     def _resolve_rag_default(self, name: str) -> Any:
         # 1. CLI override via base config
