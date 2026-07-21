@@ -722,6 +722,36 @@ class TestAutoDelegation:
         assert called[0] == ("reindex_vault", 8766)
 
 
+class _QuietReporter:
+    """Context-managed no-op reporter standing in for the Rich one.
+
+    The live progress rendering interleaves terminal escape sequences
+    with the JSON envelope in captured output (platform-dependent), so
+    envelope-shape tests silence it rather than parse around it.
+    """
+
+    def __init__(self, _console: object) -> None:
+        pass
+
+    def __enter__(self) -> _QuietReporter:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def phase_start(self, name: str, total: int | None) -> None:
+        del name, total
+
+    def advance(self, n: int = 1) -> None:
+        del n
+
+    def phase_end(self) -> None:
+        return None
+
+    def log(self, message: str) -> None:
+        del message
+
+
 class TestDiskPreflightRefusal:
     """The in-process index path surfaces a disk-preflight refusal as one
     structured non-zero envelope - never the GPU-error diagnosis."""
@@ -736,6 +766,9 @@ class TestDiskPreflightRefusal:
         (tmp_path / ".vaultspec").mkdir()
         monkeypatch.setattr(
             "vaultspec_rag.cli._index._default_service_port", lambda: None
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.progress.RichProgressReporter", _QuietReporter
         )
 
         def _raise_preflight(*_args: object, **_kwargs: object) -> object:
@@ -752,13 +785,7 @@ class TestDiskPreflightRefusal:
             ["--target", str(tmp_path), "index", "--type", "vault", "--json"],
         )
         assert result.exit_code == 1
-        # The progress reporter writes platform-dependent rendering
-        # (control sequences, brace-bearing bar text) before the
-        # envelope; strip control characters and anchor on the
-        # envelope's own opening tokens, which are always last.
-        cleaned = "".join(ch for ch in result.output if ch >= " ")
-        decoded, _ = json.JSONDecoder().raw_decode(cleaned, cleaned.rindex('{"ok"'))
-        payload = typing.cast("dict[str, object]", decoded)
+        payload = typing.cast("dict[str, object]", json.loads(result.output))
         assert payload["ok"] is False
         assert payload["error"] == "disk_preflight_failed"
         assert "disk space" in str(payload["message"])
