@@ -9,15 +9,14 @@ related:
   - '[[2026-07-21-service-job-control-W01-P01-S01]]'
   - '[[2026-07-21-service-job-control-W01-P01-S02]]'
   - '[[2026-07-21-service-job-control-W01-P01-S03]]'
-  - '[[2026-07-21-service-job-control-W01-P01-summary]]'
   - '[[2026-07-21-service-job-control-W01-P02-S04]]'
+  - '[[2026-07-21-service-job-control-W01-P02-S05]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
   - '[[2026-07-21-service-job-control-research]]'
   - '[[2026-07-21-service-job-control-s02-config-audit]]'
   - '[[2026-07-21-service-job-control-s03-tests-audit]]'
-  - '[[2026-07-21-service-job-control-w01-p01-foundation-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -34,15 +33,14 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 
 - `2026-07-21-service-job-control-s02-config-audit` - `service-job-control` audit: `s02 config`
 - `2026-07-21-service-job-control-s03-tests-audit` - `service-job-control` audit: `s03 tests`
-- `2026-07-21-service-job-control-w01-p01-foundation-audit` - `service-job-control` audit: `W01.P01 foundation commits`
 
 ### exec
 
 - `2026-07-21-service-job-control-W01-P01-S01` - Define the thread-safe run-control token, checkpoint signals, protected spans, and no-control implementation using vaultspec-high-executor
 - `2026-07-21-service-job-control-W01-P01-S02` - Add bounded nonterminal admission and cooperative shutdown timing settings using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W01-P01-S03` - Verify control primitives and configuration through imported production behavior using vaultspec-standard-executor
-- `2026-07-21-service-job-control-W01-P01-summary` - `service-job-control` `W01.P01` summary
 - `2026-07-21-service-job-control-W01-P02-S04` - Define immutable job specifications, canonical states, capabilities, revisions, attempt lineage, and structured outcomes using vaultspec-high-executor
+- `2026-07-21-service-job-control-W01-P02-S05` - Implement exact-ID active and runtime ownership, bounded terminal history, admission, active-work deduplication, and idempotency keys using vaultspec-high-executor
 
 ### plan
 
