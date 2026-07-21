@@ -107,10 +107,6 @@ class EnvVar(StrEnum):
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
     QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
     QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
-    # Index write-path backpressure knobs (#242).
-    QDRANT_CLIENT_TIMEOUT_S = "VAULTSPEC_RAG_QDRANT_CLIENT_TIMEOUT_S"
-    STORE_WRITE_RETRIES = "VAULTSPEC_RAG_STORE_WRITE_RETRIES"
-    STORE_WRITE_BACKOFF_S = "VAULTSPEC_RAG_STORE_WRITE_BACKOFF_S"
     # Scheduled storage maintenance (auto-prune) knobs.
     STORAGE_AUTOPRUNE = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE"
     STORAGE_AUTOPRUNE_INTERVAL_MINUTES = (
@@ -197,10 +193,6 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_port": EnvVar.QDRANT_PORT,
     "qdrant_binary": EnvVar.QDRANT_BINARY,
     "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
-    # Index write-path backpressure knobs (#242).
-    "qdrant_client_timeout_s": EnvVar.QDRANT_CLIENT_TIMEOUT_S,
-    "store_write_retries": EnvVar.STORE_WRITE_RETRIES,
-    "store_write_backoff_s": EnvVar.STORE_WRITE_BACKOFF_S,
     # Scheduled storage maintenance (auto-prune) knobs.
     "storage_autoprune": EnvVar.STORAGE_AUTOPRUNE,
     "storage_autoprune_interval_minutes": EnvVar.STORAGE_AUTOPRUNE_INTERVAL_MINUTES,
@@ -356,16 +348,6 @@ class VaultSpecConfigWrapper:
         "qdrant_port": 8765,
         "qdrant_binary": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
-        # Index write-path backpressure (#242). The server-mode client
-        # carries an explicit request timeout so a wedged qdrant surfaces
-        # as a raised error instead of an httpx-default hang; persistent
-        # write failures retry a small bounded number of times with a
-        # linear backoff, and unrecoverable classes (disk-full) fail
-        # immediately so the embedder never burns GPU on vectors that
-        # cannot be persisted.
-        "qdrant_client_timeout_s": 30.0,
-        "store_write_retries": 3,
-        "store_write_backoff_s": 1.0,
         # Scheduled storage maintenance (auto-prune). The daemon's hourly
         # maintenance tick reclaims time-confirmed dangling namespaces:
         # empty (zero-point) orphans after a continuous grace window,
