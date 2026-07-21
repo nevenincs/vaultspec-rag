@@ -13,7 +13,7 @@ import contextlib
 import os
 import time
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 
@@ -54,6 +54,9 @@ from ._service_status import (
     _update_service_token,
     _write_service_status,
 )
+
+if TYPE_CHECKING:
+    from rich.status import Status
 
 __all__ = [
     "_ephemeral_env_warning",
@@ -152,15 +155,19 @@ def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
     return lines[-max_lines:]
 
 
-def _existing_service_running() -> tuple[int, int] | None:
-    """Return the ``(pid, port)`` of a healthy owned running service, else ``None``.
+def _existing_service_running() -> tuple[int, int, str] | None:
+    """Return ``(pid, port, health_status)`` of an owned serving daemon, else ``None``.
 
     Detection only - it no longer prints, so the caller renders the human
     "already running" lines or the JSON envelope from one shared detection path
-    (the idempotent-start contract). Removes the status file only when its
-    recorded PID is confirmed dead; an ambiguous identity/health miss on a *live*
-    PID leaves the file untouched so a transient probe failure cannot erase a
-    running daemon's discovery file (issue #204).
+    (the idempotent-start contract). ``health_status`` is the daemon's own
+    ``/health`` status (``ready`` / ``degraded`` / ``error``) so the caller can
+    distinguish a serving-and-healthy daemon from one that answers but cannot
+    serve yet (issue #237) instead of calling every response "running".
+    Removes the status file only when its recorded PID is confirmed dead; an
+    ambiguous identity/health miss on a *live* PID leaves the file untouched so
+    a transient probe failure cannot erase a running daemon's discovery file
+    (issue #204).
     """
     status = _read_service_status()
     if status is None:
@@ -176,7 +183,11 @@ def _existing_service_running() -> tuple[int, int] | None:
     ):
         health = _health_probe(existing_port)
         if health is not None:
-            return (existing_pid, existing_port)
+            raw_status = health.get("status")
+            health_status = (
+                raw_status if isinstance(raw_status, str) and raw_status else "error"
+            )
+            return (existing_pid, existing_port, health_status)
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
@@ -491,16 +502,69 @@ def service_start(
     # supervising broker attaches instead of seeing a gateway fault.
     existing = _existing_service_running()
     if existing is not None:
-        existing_pid, existing_port = existing
-        _start_success(
-            json_mode,
-            status="already_running",
-            human_title="Service already running",
-            human_lines=(_process_line(existing_pid), _address_line(existing_port)),
-            pid=existing_pid,
-            port=existing_port,
-        )
+        existing_pid, existing_port, health_status = existing
+        if health_status == "ready":
+            _start_success(
+                json_mode,
+                status="already_running",
+                human_title="Service already running",
+                human_lines=(
+                    _process_line(existing_pid),
+                    _address_line(existing_port),
+                ),
+                pid=existing_pid,
+                port=existing_port,
+            )
+        else:
+            # The daemon answers /health but cannot serve yet (models loading,
+            # qdrant down). Still the idempotent success - a second daemon is
+            # impossible - but say so honestly instead of "already running"
+            # for a service that will fail searches (issue #237).
+            _start_success(
+                json_mode,
+                status="already_running",
+                human_title=f"Service already running (health: {health_status})",
+                human_lines=(
+                    _process_line(existing_pid),
+                    _address_line(existing_port),
+                    "The service is serving but not fully ready; searches may "
+                    "fail or queue until it recovers.",
+                    "Watch: vaultspec-rag server status",
+                ),
+                pid=existing_pid,
+                port=existing_port,
+                health=health_status,
+            )
         return
+
+    # A live owned daemon that stamped ``warming`` holds the machine lock but
+    # is not yet serving (models loading, port silent), so the health-based
+    # check above misses it. That is a start already in progress - an
+    # attachable success, not the machine_owned fault the guard below would
+    # report (issue #237). A reused pid must not resurrect a stale stamp,
+    # hence the liveness + identity checks.
+    warming_status = _read_service_status()
+    if warming_status is not None and (
+        _service_phase(warming_status) == SERVICE_PHASE_WARMING
+    ):
+        warming_pid = int(warming_status["pid"])
+        warming_port = int(warming_status["port"])
+        if _cli._is_pid_alive(warming_pid) and _cli._is_our_service(warming_pid):
+            _start_success(
+                json_mode,
+                status="already_starting",
+                human_title="Service already starting",
+                human_lines=(
+                    _process_line(warming_pid),
+                    "Warming up (loading models, not yet serving); it will "
+                    "serve shortly.",
+                    "Watch: vaultspec-rag server status",
+                ),
+                pid=warming_pid,
+                port=warming_port,
+                phase="warming",
+            )
+            return
 
     _guard_start_preconditions(port, json_mode)
 
@@ -590,6 +654,22 @@ def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
     )
 
 
+def _startup_phase_label(health: dict[str, object] | None) -> str:
+    """Describe what the spawned daemon is doing right now, for the wait spinner.
+
+    Once the daemon serves, its own ``/health`` status is authoritative; before
+    the port binds, the ``warming`` phase stamped in the discovery file
+    distinguishes model loading from a daemon that never came up.
+    """
+    if health is not None:
+        raw = health.get("status")
+        if isinstance(raw, str) and raw:
+            return f"serving, health: {raw}"
+    if _service_phase(_read_service_status()) == SERVICE_PHASE_WARMING:
+        return "warming (loading models)"
+    return "waiting for the daemon to come up"
+
+
 def _await_service_ready(
     pid: int,
     port: int,
@@ -619,68 +699,99 @@ def _await_service_ready(
     delay = 0.1
     deadline = 300.0
     elapsed = 0.0
-    spinner: contextlib.AbstractContextManager[object] = (
+    spinner: contextlib.AbstractContextManager[Status | None] = (
         contextlib.nullcontext()
         if json_mode
         else _cli.console.status("Starting service...")
     )
-    with spinner:
-        while elapsed < deadline:
-            time.sleep(delay)
-            elapsed = time.perf_counter() - t0
+    try:
+        with spinner as spinner_status:
+            while elapsed < deadline:
+                time.sleep(delay)
+                elapsed = time.perf_counter() - t0
 
-            # Check if process died (port conflict, etc.)
-            if not _cli._is_pid_alive(pid):
-                _status_file().unlink(missing_ok=True)
-                tail = _tail_daemon_log(log_path)
-                human = [_process_line(pid), _address_line(port)]
-                if tail:
-                    human.append("Last log lines:")
-                    human.extend(f"  {ln}" for ln in tail)
-                human.append(f"Log: {log_path}")
-                raise _fail_start(
-                    json_mode,
-                    error="start_died",
-                    message="Service start failed",
-                    human_lines=tuple(human),
-                    pid=pid,
-                    port=port,
-                    log=str(log_path),
-                )
+                # Check if process died (port conflict, etc.)
+                if not _cli._is_pid_alive(pid):
+                    _status_file().unlink(missing_ok=True)
+                    tail = _tail_daemon_log(log_path)
+                    human = [_process_line(pid), _address_line(port)]
+                    if tail:
+                        human.append("Last log lines:")
+                        human.extend(f"  {ln}" for ln in tail)
+                    human.append(f"Log: {log_path}")
+                    raise _fail_start(
+                        json_mode,
+                        error="start_died",
+                        message="Service start failed",
+                        human_lines=tuple(human),
+                        pid=pid,
+                        port=port,
+                        log=str(log_path),
+                    )
 
-            health = _health_probe(port)
-            if health is not None and health.get("status") == "ready":
-                # Persist the token from /health into service.json so
-                # auto-delegation auth works before the first heartbeat
-                # tick overwrites the file (S10 / #181 A5).
-                token_from_health = health.get("service_token")
-                if isinstance(token_from_health, str) and token_from_health:
-                    _update_service_token(token_from_health)
-                pid = _health_service_pid(health, pid)
-                _update_service_metadata(_status_metadata_from_health(health, pid=pid))
-                startup_s = time.perf_counter() - t0
-                extra: dict[str, object] = (
-                    {"warnings": list(env_warnings)} if env_warnings else {}
-                )
-                _start_success(
-                    json_mode,
-                    status="started",
-                    human_title="Service started",
-                    human_lines=(
-                        _process_line(pid),
-                        _address_line(port),
-                        f"Startup: {startup_s:.1f}s",
-                        f"Log: {log_path}",
-                    ),
-                    pid=pid,
-                    port=port,
-                    startup_s=round(startup_s, 1),
-                    log=str(log_path),
-                    **extra,
-                )
-                return
+                health = _health_probe(port)
+                if health is not None and health.get("status") == "ready":
+                    # Persist the token from /health into service.json so
+                    # auto-delegation auth works before the first heartbeat
+                    # tick overwrites the file (S10 / #181 A5).
+                    token_from_health = health.get("service_token")
+                    if isinstance(token_from_health, str) and token_from_health:
+                        _update_service_token(token_from_health)
+                    pid = _health_service_pid(health, pid)
+                    _update_service_metadata(
+                        _status_metadata_from_health(health, pid=pid)
+                    )
+                    startup_s = time.perf_counter() - t0
+                    extra: dict[str, object] = (
+                        {"warnings": list(env_warnings)} if env_warnings else {}
+                    )
+                    _start_success(
+                        json_mode,
+                        status="started",
+                        human_title="Service started",
+                        human_lines=(
+                            _process_line(pid),
+                            _address_line(port),
+                            f"Startup: {startup_s:.1f}s",
+                            f"Log: {log_path}",
+                        ),
+                        pid=pid,
+                        port=port,
+                        startup_s=round(startup_s, 1),
+                        log=str(log_path),
+                        **extra,
+                    )
+                    return
 
-            delay = min(delay * 2, 5.0)
+                # Surface the cold-start phase instead of a static spinner:
+                # the daemon stamps ``warming`` while models load, and once
+                # serving /health reports its own status - a minutes-long cold
+                # start must be distinguishable from a wedged daemon.
+                if spinner_status is not None:
+                    spinner_status.update(
+                        f"Starting service... {_startup_phase_label(health)} "
+                        f"({elapsed:.0f}s elapsed, log: {log_path})"
+                    )
+
+                delay = min(delay * 2, 5.0)
+    except KeyboardInterrupt:
+        # The foreground wait ended but the detached daemon keeps starting -
+        # say so instead of exiting silently while it warms invisibly
+        # (issue #237). The requested state (ready) is unconfirmed, so this
+        # is a non-zero outcome per the lifecycle contract.
+        raise _fail_start(
+            json_mode,
+            error="start_interrupted",
+            message="Service start interrupted",
+            human_lines=(
+                _process_line(pid),
+                "The detached daemon continues starting in the background.",
+                f"Log: {log_path}",
+            ),
+            next_actions=("vaultspec-rag server status",),
+            pid=pid,
+            log=str(log_path),
+        ) from None
 
     raise _fail_start(
         json_mode,
