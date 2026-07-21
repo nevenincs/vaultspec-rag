@@ -38,7 +38,7 @@ Establish the durable service-domain state machine, control primitives, admissio
 Define the reusable cooperative-control protocol and bounded service settings before the manager and indexers consume them.
 
 - [x] `W01.P01.S01` - Define the thread-safe run-control token, checkpoint signals, protected spans, and no-control implementation using vaultspec-high-executor; `src/vaultspec_rag/job_control.py`.
-- [ ] `W01.P01.S02` - Add bounded nonterminal admission and cooperative shutdown timing settings using vaultspec-standard-executor; `src/vaultspec_rag/config.py`.
+- [x] `W01.P01.S02` - Add bounded nonterminal admission and cooperative shutdown timing settings using vaultspec-standard-executor; `src/vaultspec_rag/config.py`.
 - [ ] `W01.P01.S03` - Verify control primitives and configuration through imported production behavior using vaultspec-standard-executor; `src/vaultspec_rag/tests/test_job_control_unit.py`.
 
 ### Phase `W01.P02` - durable job manager
