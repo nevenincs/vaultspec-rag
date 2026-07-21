@@ -6,10 +6,12 @@ tags:
 date: '2026-07-21'
 modified: '2026-07-21'
 related:
+  - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
   - '[[2026-07-21-large-index-resilience-reference]]'
   - '[[2026-07-21-large-index-resilience-research]]'
+  - '[[2026-07-21-large-index-resilience-s02-job-errors-audit]]'
 ---
 
 # `large-index-resilience` feature index
@@ -21,6 +23,14 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 ### adr
 
 - `2026-07-21-large-index-resilience-adr` - `large-index-resilience` adr: `durable resumable and resource-bounded indexing` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-21-large-index-resilience-s02-job-errors-audit` - `large-index-resilience` audit: `W01.P01.S02 typed indexing outcomes`
+
+### exec
+
+- `2026-07-21-large-index-resilience-W01-P01-S02` - Define typed no-progress, memory-ceiling, circuit-open, and admission outcomes with shared remediation
 
 ### plan
 

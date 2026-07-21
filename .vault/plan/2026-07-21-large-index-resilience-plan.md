@@ -14,6 +14,16 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
@@ -45,7 +55,7 @@ Add enforceable resource, retry, and streaming limits first; downstream resume w
 Define configuration, typed safety outcomes, and one reusable RSS and CUDA budget before index paths enforce them.
 
 - [ ] `W01.P01.S01` - Add explicit queue, no-progress, retry-circuit, RSS, CUDA, and support-profile configuration with environment mappings; `src/vaultspec_rag/config.py`.
-- [ ] `W01.P01.S02` - Define typed no-progress, memory-ceiling, circuit-open, and admission outcomes with shared remediation; `src/vaultspec_rag/_job_errors.py`.
+- [x] `W01.P01.S02` - Define typed no-progress, memory-ceiling, circuit-open, and admission outcomes with shared remediation; `src/vaultspec_rag/_job_errors.py`.
 - [ ] `W01.P01.S03` - Upgrade memory observation into an enforceable RSS and CUDA budget sampled outside gpu_lock; `src/vaultspec_rag/memory_probe.py`.
 - [ ] `W01.P01.S05` - Verify production configuration and deliberately low resource budgets through imported behavior; `src/vaultspec_rag/tests/test_config.py`.
 
