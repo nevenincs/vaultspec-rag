@@ -68,9 +68,11 @@ A namespace is only ever reclaimed automatically when all of the following hold:
 
 Reclamation is tiered. A namespace holding zero documents is dropped after 24 hours of continuous orphan-hood. A namespace holding data waits 7 days, then each of its collections is written to a snapshot archive, and the namespace is dropped only if every snapshot succeeded - a failed archive always cancels the drop.
 
-The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
+The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or - with one exception below - anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
 
-The interval, both grace windows, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
+The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is exactly how leaked harness namespaces once filled a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
+
+The interval, both grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
 ## Archives and how to restore them
 
@@ -110,6 +112,13 @@ uv run vaultspec-rag server storage delete r0123456789ab_ --yes
 ```
 
 `delete` refuses a prefix the manifest cannot attribute to a root unless you pass `--allow-unknown`. The sensible order is survey, then prune, and delete only when you must remove one namespace the prune would not.
+
+A crash can leave a half-written collection directory that the server cannot load (its config file never landed); the server skips it at startup and it would otherwise sit on disk forever. The survey lists such directories with status `debris`, and `prune --debris` removes them - a plain filesystem delete, since Qdrant cannot snapshot or drop a collection it never loaded. Debris removal is never automatic: it has no manifest attribution, so it stays behind the explicit flag plus the prune confirmation.
+
+```
+uv run vaultspec-rag server storage prune --debris --dry-run
+uv run vaultspec-rag server storage prune --debris --yes
+```
 
 You can also address a namespace by its root path instead of its prefix - the sanctioned teardown for test harnesses and consumers that register throwaway roots against the resident service:
 
@@ -160,6 +169,10 @@ The token-gated `/metrics` route exports the rollup in Prometheus text format. A
 | `maintenance_pending_grace`        | gauge   | Orphans still inside their grace window           |
 | `maintenance_orphaned_namespaces`  | gauge   | Orphaned namespace count at the last cycle        |
 | `maintenance_last_reclaimed_bytes` | gauge   | Bytes reclaimed by the last cycle                 |
+| `store_total_bytes`                | gauge   | Whole-backend on-disk footprint (all statuses)    |
+| `store_namespaces`                 | gauge   | Total namespace count at the last cycle           |
+
+The survey (`--json` and `GET /storage/survey`) carries the same rollup as a `totals` object: whole-backend bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling.
 
 Tuning the schedule, grace windows, cap, and archive bounds is covered by the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
