@@ -11,6 +11,7 @@ integration tier against a live daemon.
 from __future__ import annotations
 
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -18,8 +19,16 @@ import pytest
 
 from ..config import reset_config
 from ..storage_manifest import load_manifest, record_root, update_orphan_stamps
-from ..storage_ops import ReclaimPolicy, evaluate_reclaim, sweep_archive
+from ..storage_ops import (
+    GeometryEntry,
+    ReclaimPolicy,
+    ReconcileResult,
+    evaluate_reclaim,
+    plan_reconcile,
+    sweep_archive,
+)
 from ..storage_survey import NamespaceSurvey
+from ..store_schema import SERVER_SEGMENT_NUMBER
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -578,3 +587,384 @@ class TestDebrisVisibility:
         )
         assert result.results == []
         assert result.reclaimed_bytes == 0
+
+
+class TestPlanReconcile:
+    """Selection logic for the geometry reconcile pass.
+
+    Pure decision logic, so it is exercised directly: which collections
+    count as drifted, how the per-pass cap applies, and what is left over.
+    The client-coupled reconcile itself is covered at the integration tier
+    against a real server, because only a real optimizer can prove the
+    reclamation and the convergence behaviour.
+    """
+
+    @staticmethod
+    def _entry(
+        name: str,
+        *,
+        target: int,
+        segments: int = 8,
+        size: int | None = 1000,
+    ) -> GeometryEntry:
+        return GeometryEntry(
+            collection=name,
+            segment_target=target,
+            segments=segments,
+            footprint_bytes=size,
+        )
+
+    def test_collection_already_at_target_is_not_drifted(self) -> None:
+        entries = [self._entry("at_target", target=SERVER_SEGMENT_NUMBER)]
+
+        selected, remaining = plan_reconcile(entries, cap=10)
+
+        assert selected == []
+        assert remaining == 0
+
+    def test_actual_segment_count_does_not_imply_drift(self) -> None:
+        """A big collection legitimately grows segments past the target.
+
+        The setting is what drifts, not the outcome: the optimizer is
+        supposed to add segments as real data arrives, and reconciling
+        such a collection every cycle would be perpetual pointless work.
+        """
+        entries = [
+            self._entry("busy", target=SERVER_SEGMENT_NUMBER, segments=32),
+        ]
+
+        selected, _ = plan_reconcile(entries, cap=10)
+
+        assert selected == []
+
+    def test_server_default_zero_target_is_drifted(self) -> None:
+        """``0`` means derive-from-CPU-count - the pre-bound geometry."""
+        entries = [self._entry("legacy", target=0)]
+
+        selected, remaining = plan_reconcile(entries, cap=10)
+
+        assert [e.collection for e in selected] == ["legacy"]
+        assert remaining == 0
+
+    def test_cap_defers_the_remainder(self) -> None:
+        entries = [
+            self._entry("a", target=0, size=300),
+            self._entry("b", target=0, size=200),
+            self._entry("c", target=0, size=100),
+        ]
+
+        selected, remaining = plan_reconcile(entries, cap=2)
+
+        assert [e.collection for e in selected] == ["a", "b"]
+        assert remaining == 1
+
+    def test_largest_footprint_is_reconciled_first(self) -> None:
+        """A capped pass should reclaim the most bytes it can."""
+        entries = [
+            self._entry("small", target=0, size=10),
+            self._entry("huge", target=0, size=9_000),
+            self._entry("mid", target=0, size=500),
+        ]
+
+        selected, _ = plan_reconcile(entries, cap=3)
+
+        assert [e.collection for e in selected] == ["huge", "mid", "small"]
+
+    def test_unmeasured_footprint_sorts_last_without_being_dropped(self) -> None:
+        entries = [
+            self._entry("unmeasured", target=0, size=None),
+            self._entry("measured", target=0, size=5),
+        ]
+
+        selected, remaining = plan_reconcile(entries, cap=5)
+
+        assert [e.collection for e in selected] == ["measured", "unmeasured"]
+        assert remaining == 0
+
+    def test_zero_cap_selects_nothing_and_defers_everything(self) -> None:
+        entries = [self._entry("a", target=0), self._entry("b", target=0)]
+
+        selected, remaining = plan_reconcile(entries, cap=0)
+
+        assert selected == []
+        assert remaining == 2
+
+
+class TestReconcileResultReclaim:
+    """A reclaim figure exists only for a converged measurement."""
+
+    def test_converged_result_reports_the_delta(self) -> None:
+        result = ReconcileResult(
+            "c",
+            "reconciled",
+            segments_before=8,
+            segments_after=1,
+            bytes_before=1_000_000,
+            bytes_after=200_000,
+        )
+
+        assert result.reclaimed_bytes == 800_000
+
+    def test_converging_result_reports_no_reclaim(self) -> None:
+        """Mid-flight sizes are meaningless and must never be reported.
+
+        The optimizer transiently inflates size while restructuring, so a
+        still-converging collection has no honest reclaim figure to give.
+        """
+        result = ReconcileResult(
+            "c",
+            "converging",
+            segments_before=8,
+            bytes_before=1_000_000,
+            reason="convergence_budget_expired",
+        )
+
+        assert result.reclaimed_bytes == 0
+        assert result.bytes_after is None
+
+    def test_apparent_growth_never_reports_a_negative_reclaim(self) -> None:
+        result = ReconcileResult(
+            "c",
+            "reconciled",
+            segments_before=8,
+            segments_after=2,
+            bytes_before=100,
+            bytes_after=500,
+        )
+
+        assert result.reclaimed_bytes == 0
+
+
+class _ScriptedCollection:
+    """One scripted `get_collection` reply."""
+
+    def __init__(self, segments: int, status: str) -> None:
+        self.segments_count = segments
+        self.status = status
+        self.optimizer_status = "ok"
+
+
+class _ScriptedClient:
+    """Replays a scripted optimizer timeline and drives real directory size.
+
+    Convergence depends on *when* readings stop moving, which a live server
+    cannot be made to reproduce on demand. Each scripted step names the
+    segment count, the collection status, and how many filler blocks should
+    exist on disk at that moment - so `_dir_bytes` measures a real directory
+    that really inflates and then shrinks, exactly as a merge does.
+    """
+
+    def __init__(self, path: Path, steps: list[tuple[int, str, int]]) -> None:
+        self._path = path
+        self._steps = steps
+        self._index = 0
+        self.samples = 0
+
+    def _apply_disk(self, blocks: int) -> None:
+        self._path.mkdir(parents=True, exist_ok=True)
+        for existing in self._path.glob("block_*"):
+            existing.unlink()
+        for i in range(blocks):
+            (self._path / f"block_{i}").write_bytes(b"x" * (2 * 1024 * 1024))
+
+    def get_collection(self, collection_name: str) -> _ScriptedCollection:
+        del collection_name  # one scripted timeline; the name is not a key
+        step = self._steps[min(self._index, len(self._steps) - 1)]
+        segments, status, blocks = step
+        self._index += 1
+        self.samples += 1
+        self._apply_disk(blocks)
+        return _ScriptedCollection(segments, status)
+
+
+class TestConvergenceDetection:
+    """The convergence contract, driven deterministically.
+
+    These pin the behaviour the whole feature rests on: a reclaim figure is
+    published only for a merge that was watched from start to finish. The
+    real-server integration tests prove reclamation happens; only a scripted
+    timeline can prove the *timing* rules, because a live optimizer cannot be
+    told to stall.
+    """
+
+    @staticmethod
+    def _wait(client: object, path: Path, budget_s: float = 60.0):
+        from ..storage_ops import _await_convergence
+
+        clock = {"t": 0.0}
+
+        def _monotonic() -> float:
+            return clock["t"]
+
+        def _sleep(seconds: float) -> None:
+            clock["t"] += seconds
+
+        return _await_convergence(
+            cast("QdrantClient", client),
+            "rfeedfacefeed_vault_docs",
+            path,
+            budget_s=budget_s,
+            poll_s=1.0,
+            sleep=_sleep,
+            monotonic=_monotonic,
+        )
+
+    def test_queued_merge_is_not_mistaken_for_a_converged_one(
+        self, tmp_path: Path
+    ) -> None:
+        """A merge waiting on a busy optimizer is perfectly stable too.
+
+        `optimizer_status` has no busy state, so if convergence were judged
+        on stability alone, a collection sitting in the optimizer queue -
+        unchanged segments, unchanged size - would be measured before it
+        ever merged and its untouched footprint published as a reclaim.
+        """
+        path = tmp_path / "coll"
+        # Pending forever: qdrant reports grey ("possible but not triggered").
+        client = _ScriptedClient(path, [(8, "grey", 8)])
+
+        assert self._wait(client, path, budget_s=30.0) is None
+
+    def test_mid_merge_inflation_never_returns_early(self, tmp_path: Path) -> None:
+        """The measurement must be the settled one, not the peak."""
+        path = tmp_path / "coll"
+        client = _ScriptedClient(
+            path,
+            [
+                (8, "yellow", 8),  # merge starts
+                (9, "yellow", 12),  # inflates past where it began
+                (9, "yellow", 12),  # ... and holds there for a while
+                (9, "yellow", 12),
+                (9, "yellow", 12),
+                (9, "yellow", 12),
+                (2, "green", 3),  # merge lands
+                (2, "green", 3),
+                (2, "green", 3),
+                (2, "green", 3),
+                (2, "green", 3),
+            ],
+        )
+
+        result = self._wait(client, path)
+
+        assert result is not None
+        segments, size = result
+        assert segments == 2, "returned a mid-flight segment count"
+        assert size is not None
+        # 3 blocks * 2 MiB, not the 12-block inflated peak.
+        assert size < 8 * 1024 * 1024, "published the inflated mid-merge size"
+
+    def test_never_settling_collection_reports_no_measurement(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "coll"
+        client = _ScriptedClient(path, [(9, "yellow", 12)])
+
+        assert self._wait(client, path, budget_s=30.0) is None
+
+    def test_collection_with_no_work_settles_without_waiting_out_the_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """Green throughout means there was no merge to watch.
+
+        Reporting its unchanged size is honest - it reclaimed nothing - and
+        it must not burn the whole budget to say so.
+        """
+        path = tmp_path / "coll"
+        client = _ScriptedClient(path, [(2, "green", 2)])
+
+        result = self._wait(client, path, budget_s=600.0)
+
+        assert result is not None
+        assert result[0] == 2
+        # Bounded by the start window, not the full convergence budget.
+        assert client.samples < 60
+
+    def test_shutdown_event_abandons_the_wait(self, tmp_path: Path) -> None:
+        import threading
+
+        from ..storage_ops import _await_convergence
+
+        path = tmp_path / "coll"
+        client = _ScriptedClient(path, [(9, "yellow", 12)])
+        stop = threading.Event()
+        stop.set()
+
+        result = _await_convergence(
+            cast("QdrantClient", client),
+            "rfeedfacefeed_vault_docs",
+            path,
+            budget_s=600.0,
+            poll_s=1.0,
+            sleep=lambda _: None,
+            monotonic=time.monotonic,
+            stop=stop,
+        )
+
+        assert result is None
+        assert client.samples == 0, "sampled despite shutdown"
+
+
+class _GeometryClient(_FakeClient):
+    """Answers `get_collection` for every name it lists."""
+
+    def __init__(self, names: list[str], *, target: int = 0) -> None:
+        super().__init__(names)
+        self._target = target
+        self.inspected: list[str] = []
+
+    def get_collection(self, collection_name: str) -> object:
+        self.inspected.append(collection_name)
+        optimizer = type("_Opt", (), {"default_segment_number": self._target})()
+        config = type("_Cfg", (), {"optimizer_config": optimizer})()
+        return type(
+            "_Info",
+            (),
+            {"config": config, "segments_count": 8, "status": "green"},
+        )()
+
+
+class TestGeometryScope:
+    """Reconcile mutates only namespaces this project owns."""
+
+    def test_foreign_collections_are_never_read_or_reconciled(
+        self, tmp_path: Path
+    ) -> None:
+        """A shared qdrant may hold collections that are not ours.
+
+        Reconcile triggers a multi-GB background merge, so touching a
+        foreign collection is an unauthorised mutation of someone else's
+        data - the same reason every destructive verb is prefix-guarded.
+        """
+        from ..storage_ops import read_geometry
+
+        client = _GeometryClient(
+            [
+                "rfeedfacefeed_vault_docs",
+                "some_other_app_collection",
+                "not_a_namespace",
+                "rNOTHEX000000_vault_docs",
+            ]
+        )
+
+        names = [
+            e.collection for e in read_geometry(cast("QdrantClient", client), tmp_path)
+        ]
+
+        assert names == ["rfeedfacefeed_vault_docs"]
+        # The guard rejects before inspection, so a foreign collection is
+        # never even queried, let alone reconciled.
+        assert client.inspected == ["rfeedfacefeed_vault_docs"]
+
+    def test_owned_collection_at_target_is_not_drifted(self, tmp_path: Path) -> None:
+        from ..storage_ops import plan_reconcile, read_geometry
+
+        client = _GeometryClient(
+            ["rfeedfacefeed_vault_docs"], target=SERVER_SEGMENT_NUMBER
+        )
+
+        entries = read_geometry(cast("QdrantClient", client), tmp_path)
+        selected, remaining = plan_reconcile(entries, cap=10)
+
+        assert selected == []
+        assert remaining == 0
