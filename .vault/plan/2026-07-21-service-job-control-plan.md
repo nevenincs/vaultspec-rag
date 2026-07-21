@@ -74,7 +74,7 @@ Thread the accepted control contract through vault and code indexing so attempts
 
 Place control checks at vault phase, batch, and GPU-slice boundaries while protecting clean rebuild publication.
 
-- [ ] `W02.P04.S10` - Thread run control through streaming embedding and check before and after bounded GPU slices outside gpu_lock using vaultspec-high-executor; `src/vaultspec_rag/indexer/_streaming.py`.
+- [x] `W02.P04.S10` - Thread run control through streaming embedding and check before and after bounded GPU slices outside gpu_lock using vaultspec-high-executor; `src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W02.P04.S11` - Add checkpoints around vault phases and batches while protecting collection drop through valid publication using vaultspec-high-executor; `src/vaultspec_rag/indexer/_vault_indexer.py`.
 - [ ] `W02.P04.S12` - Verify real streaming and vault indexing observe control between slices without exposing partial rebuilds using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 

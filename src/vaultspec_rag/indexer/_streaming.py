@@ -11,10 +11,13 @@ import logging
 from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
+from ..job_control import NO_RUN_CONTROL
+
 if TYPE_CHECKING:
     import threading
 
     from ..embeddings import EmbeddingModel
+    from ..job_control import RunControl
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultDocument, VaultStore
 
@@ -53,6 +56,7 @@ def _stream_encode_and_upsert_vault(
     store: VaultStore,
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> dict[str, int]:
     """Encode dense + sparse vectors and upsert per-slice.
 
@@ -119,6 +123,7 @@ def _stream_encode_and_upsert_vault(
                 # mid-encode interrupt cannot leave a stale reserved
                 # pool wedged in the allocator (#68 audit F6.9).
                 try:
+                    run_control.checkpoint()
                     # Hold the GPU lock only across the encode call so
                     # that the I/O-bound upsert below runs without
                     # blocking concurrent searches on the same GPU.
@@ -128,6 +133,7 @@ def _stream_encode_and_upsert_vault(
                             sparse = model.encode_documents_sparse(slice_texts)
                         else:
                             sparse = [None] * len(slice_texts)
+                    run_control.checkpoint()
                     probe.checkpoint(f"slice-{i}-after-encode")
                     for chunk, vec, svec in zip(
                         slice_chunks, dense, sparse, strict=True
@@ -189,6 +195,7 @@ def encode_and_upsert_code_slice(
     gpu_lock: threading.Lock | None,
     release_cache: bool = True,
     encode_batch_size: int | None = None,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
@@ -209,6 +216,8 @@ def encode_and_upsert_code_slice(
             model default. The codebase path passes the larger
             ``embedding_code_encode_batch_size`` (#155 P03) since code chunks
             are short and length-uniform.
+        run_control: Cooperative control checked outside the GPU lock before
+            and after this bounded slice.
     """
     from ..config import get_config
 
@@ -220,6 +229,7 @@ def encode_and_upsert_code_slice(
     dense = None
     sparse = None
     try:
+        run_control.checkpoint()
         with gpu_lock if gpu_lock is not None else nullcontext():
             dense = model.encode_documents(slice_texts, batch_size=encode_batch_size)
             if cfg.sparse_enabled:
@@ -229,6 +239,7 @@ def encode_and_upsert_code_slice(
                 )
             else:
                 sparse = [None] * len(slice_texts)
+        run_control.checkpoint()
         for chunk, vec, svec in zip(slice_chunks, dense, sparse, strict=True):
             chunk.vector = vec.tolist()
             if svec is not None:
@@ -256,6 +267,7 @@ def _stream_encode_and_upsert_codebase(
     store: VaultStore,
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Streaming variant of :func:`_stream_encode_and_upsert_vault`.
 
@@ -296,6 +308,7 @@ def _stream_encode_and_upsert_codebase(
                     gpu_lock=gpu_lock,
                     release_cache=release,
                     encode_batch_size=encode_batch_size,
+                    run_control=run_control,
                 )
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))
