@@ -11,14 +11,114 @@ import pytest
 
 from ..logging_config import (
     DaemonRotatingFileHandler,
+    InvalidManagedLogSourceError,
     install_daemon_log_rotation,
     log_event,
+    read_managed_logs,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_managed_log_reader_discovers_sparse_generations_and_groups_sources(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "service.log.5").write_text("service-oldest\n", encoding="utf-8")
+    (tmp_path / "service.log.3").write_text("service-older\n", encoding="utf-8")
+    (tmp_path / "service.log.1").write_text("service-newer\n", encoding="utf-8")
+    (tmp_path / "service.log").write_text("service-active\n", encoding="utf-8")
+    (tmp_path / "service.log.previous").write_text("ignored\n", encoding="utf-8")
+    (tmp_path / "qdrant.log.4").write_text("qdrant-oldest\n", encoding="utf-8")
+    (tmp_path / "qdrant.log.2").write_text("qdrant-newer\n", encoding="utf-8")
+    (tmp_path / "qdrant.log").write_text("qdrant-active\n", encoding="utf-8")
+
+    groups = read_managed_logs(10, status_dir=tmp_path)
+
+    assert groups == [
+        {
+            "source": "service",
+            "lines": [
+                "service-oldest",
+                "service-older",
+                "service-newer",
+                "service-active",
+            ],
+        },
+        {
+            "source": "qdrant",
+            "lines": ["qdrant-oldest", "qdrant-newer", "qdrant-active"],
+        },
+    ]
+
+
+def test_managed_log_reader_applies_limit_independently_per_source(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "service.log.2").write_text("s1\ns2\n", encoding="utf-8")
+    (tmp_path / "service.log").write_text("s3\ns4\n", encoding="utf-8")
+    (tmp_path / "qdrant.log.1").write_text("q1\nq2\n", encoding="utf-8")
+    (tmp_path / "qdrant.log").write_text("q3\nq4\n", encoding="utf-8")
+
+    groups = read_managed_logs(3, status_dir=tmp_path)
+
+    assert groups == [
+        {"source": "service", "lines": ["s2", "s3", "s4"]},
+        {"source": "qdrant", "lines": ["q2", "q3", "q4"]},
+    ]
+
+
+def test_managed_log_reader_selects_one_source_and_retains_empty_group(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "service.log").write_text("service-only\n", encoding="utf-8")
+
+    assert read_managed_logs(10, source="service", status_dir=tmp_path) == [
+        {"source": "service", "lines": ["service-only"]}
+    ]
+    assert read_managed_logs(10, source="qdrant", status_dir=tmp_path) == [
+        {"source": "qdrant", "lines": []}
+    ]
+
+
+def test_managed_log_reader_non_positive_limit_retains_selected_groups(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "service.log").write_text("not-returned\n", encoding="utf-8")
+    (tmp_path / "qdrant.log").write_text("not-returned\n", encoding="utf-8")
+
+    assert read_managed_logs(0, status_dir=tmp_path) == [
+        {"source": "service", "lines": []},
+        {"source": "qdrant", "lines": []},
+    ]
+
+
+def test_managed_log_reader_rejects_malformed_source(tmp_path: Path) -> None:
+    with pytest.raises(
+        InvalidManagedLogSourceError,
+        match=r"^source must be one of service, qdrant, all\.$",
+    ):
+        read_managed_logs(10, source="database", status_dir=tmp_path)
+
+
+@pytest.mark.parametrize("trailing_newline", [False, True])
+def test_managed_log_reader_preserves_multibyte_record_across_read_blocks(
+    tmp_path: Path,
+    *,
+    trailing_newline: bool,
+) -> None:
+    record = "é" * 40_000
+    suffix = "\n" if trailing_newline else ""
+    (tmp_path / "service.log").write_text(
+        f"older-record\n{record}{suffix}",
+        encoding="utf-8",
+    )
+
+    assert read_managed_logs(1, source="service", status_dir=tmp_path) == [
+        {"source": "service", "lines": [record]}
+    ]
 
 
 def test_log_event_emits_parseable_message_and_extra_fields(
