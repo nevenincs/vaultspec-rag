@@ -19,11 +19,11 @@ dominates for cheap hooks, and project-launcher commands multiply it.
 
 Measured on the dev machine (2026-07-21, `bench_preproc.py`, median of 20):
 
-| Shape                                   | Per-file cost | 1000 files |
-| --------------------------------------- | ------------- | ---------- |
-| bare `python -c` noop hook, spawn/file  | 102.7 ms      | 103 s      |
-| `uv run python` noop hook, spawn/file   | 217.3 ms      | 217 s      |
-| one spawn handling 100 files (batch)    | 1.2 ms        | 1.2 s      |
+| Shape                                  | Per-file cost | 1000 files |
+| -------------------------------------- | ------------- | ---------- |
+| bare `python -c` noop hook, spawn/file | 102.7 ms      | 103 s      |
+| `uv run python` noop hook, spawn/file  | 217.3 ms      | 217 s      |
+| one spawn handling 100 files (batch)   | 1.2 ms        | 1.2 s      |
 
 Batching is an ~85-180x improvement for hooks whose real work is small
 relative to interpreter/launcher startup. For heavy hooks (OCR, workbook
@@ -60,11 +60,11 @@ parse) the spawn constant matters less, but batching never hurts.
    and emits a JSON array of per-file outputs. Amortizes startup N-fold;
    contract delta is small; per-file cache/`on_error` semantics preserved by
    splitting the array result.
-2. **Persistent hook worker** - hook runs once per (rule, index run) as a
+1. **Persistent hook worker** - hook runs once per (rule, index run) as a
    line-JSON stdin/stdout server. Best amortization but a much bigger
    contract (lifecycle, per-request timeouts, kill-on-wedge, restart
    policy); supersedes batching rather than complementing it.
-3. **Guidance only** - document that hook commands should be direct
+1. **Guidance only** - document that hook commands should be direct
    executables, not `uv run`. Halves the constant at best; does not fix the
    class.
 

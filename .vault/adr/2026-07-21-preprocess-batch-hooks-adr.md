@@ -32,11 +32,11 @@ per rule before pool dispatch.
 1. **Opt-in batch manifest per spawn** (chosen). A rule sets `batch = true`;
    the runner writes N source paths to a manifest file, substitutes it for a
    `{paths}` token, and parses a JSON array of per-file v1 outputs.
-2. **Persistent hook worker** (deferred escalation). One process per (rule,
+1. **Persistent hook worker** (deferred escalation). One process per (rule,
    run) speaking line-JSON. Best amortization, but a full lifecycle contract
    (per-request timeout, kill-on-wedge, restart policy) - not needed until
    batch spawns are shown to still be hot.
-3. **Guidance only** (rejected as the fix). Halves the constant at best.
+1. **Guidance only** (rejected as the fix). Halves the constant at best.
 
 ## Constraints
 
