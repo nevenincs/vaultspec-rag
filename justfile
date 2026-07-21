@@ -260,18 +260,13 @@ _dev-fix target='all':
     } \
   }
 
-# --ignore-until-fixed suppresses an advisory ONLY while no upstream fix exists,
-# re-activating automatically once one ships. GHSA-rrmf-rvhw-rf47 (CVE-2025-3000)
-# is a torch.jit.script memory-corruption advisory with no fix release; vaultspec-rag
-# never calls torch.jit.script, and torch is the pinned GPU dependency, so it cannot
-# be pinned away. Remove this when torch publishes a patched release.
-# PYSEC-2026-3447: summary-less setuptools advisory fixed in 83.0.0; setuptools
-# is pinned at 81.0.0 transitively by torch 2.12.1, and a torch bump is its own
-# deliberate change. setuptools is dev-env build tooling, never shipped.
-# Re-triage when torch moves to 2.13+.
+# The audit runs with no suppressions: torch 2.13.0 resolved GHSA-rrmf-rvhw-rf47
+# (CVE-2025-3000) and lifted the transitive setuptools pin past the PYSEC-2026-3447
+# fix (83.0.0). A future advisory with no upstream fix should be suppressed with
+# --ignore-until-fixed (self-expiring), never a bare --ignore without a comment.
 _dev-audit target:
   switch ("{{target}}") { \
-    "deps" { uv audit --locked --preview-features audit --ignore-until-fixed GHSA-rrmf-rvhw-rf47 --ignore PYSEC-2026-3447 ; break } \
+    "deps" { uv audit --locked --preview-features audit ; break } \
     default { \
       Write-Host "unknown dev audit target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: deps" -ForegroundColor Red ; \
