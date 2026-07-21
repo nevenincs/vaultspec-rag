@@ -40,6 +40,44 @@ def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> 
         report.removed.append(rel)
 
 
+#: Obsolete runtime sentinels older installs may have left in the project
+#: tree (issue #236). Current rag keeps all runtime state outside the repo
+#: (the machine-global status dir and ``.vault/data/``), so these are only
+#: ever stale residue; uninstall removes them defensively and idempotently.
+_OBSOLETE_SENTINEL_FILES = (".qdrant-initialized",)
+_OBSOLETE_SENTINEL_DIRS = ((".vaultspec", "runtime"),)
+
+
+def _remove_obsolete_sentinels(
+    target: Path, dry_run: bool, report: UninstallReport
+) -> None:
+    for name in _OBSOLETE_SENTINEL_FILES:
+        sentinel = target / name
+        if not sentinel.is_file():
+            continue
+        if not dry_run:
+            try:
+                sentinel.unlink()
+            except OSError as exc:
+                logger.warning("Failed to remove %s: %s", name, exc)
+                report.warnings.append(f"failed to remove {name}: {exc}")
+                continue
+        report.removed.append(name)
+    for parts in _OBSOLETE_SENTINEL_DIRS:
+        sentinel_dir = target.joinpath(*parts)
+        if not sentinel_dir.is_dir() or sentinel_dir.is_symlink():
+            continue
+        rel = "/".join(parts)
+        if not dry_run:
+            try:
+                shutil.rmtree(sentinel_dir, onexc=_rmtree_safe_onexc)
+            except OSError as exc:
+                logger.warning("Failed to remove %s: %s", rel, exc)
+                report.warnings.append(f"failed to remove {rel}: {exc}")
+                continue
+        report.removed.append(rel)
+
+
 def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> None:
     data_dir = target / ".vault" / "data"
     if data_dir.is_symlink():
@@ -150,6 +188,7 @@ def uninstall_run(
         return report
 
     _remove_candidates(target, dry_run, report)
+    _remove_obsolete_sentinels(target, dry_run, report)
 
     if dry_run:
         report.warnings.append(
