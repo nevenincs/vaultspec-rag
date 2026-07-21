@@ -26,13 +26,19 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
 
-    from ..storage_ops import DeleteResult, MigrateResult, PruneResult
+    from ..storage_ops import (
+        DeleteResult,
+        MigrateResult,
+        PruneResult,
+        ReconcileBatch,
+    )
     from ..storage_survey import NamespaceSurvey
 
 _SURVEY_CMD = "server.storage.survey"
 _DELETE_CMD = "server.storage.delete"
 _PRUNE_CMD = "server.storage.prune"
 _MIGRATE_CMD = "server.storage.migrate"
+_RECONCILE_CMD = "server.storage.reconcile"
 
 
 def _human_size(num_bytes: int) -> str:
@@ -520,6 +526,114 @@ def storage_prune(
     )
     if not dry_run and not yes and applied_anything:
         raise typer.Exit(1)
+
+
+# -- reconcile --------------------------------------------------------------
+
+
+def _render_reconcile(result: ReconcileBatch, json_mode: bool) -> None:
+    if json_mode:
+        _emit_json(
+            True,
+            _RECONCILE_CMD,
+            data={
+                "results": [
+                    {
+                        "collection": r.collection,
+                        "status": r.status,
+                        "segments_before": r.segments_before,
+                        "segments_after": r.segments_after,
+                        "bytes_before": r.bytes_before,
+                        "bytes_after": r.bytes_after,
+                        "reclaimed_bytes": r.reclaimed_bytes,
+                        "reason": r.reason,
+                    }
+                    for r in result.results
+                ],
+                "drifted_remaining": result.drifted_remaining,
+                "reclaimed_bytes": result.reclaimed_bytes,
+                "dry_run": result.dry_run,
+                "status": "already_converged" if not result.results else "applied",
+            },
+        )
+        return
+    if not result.results:
+        typer.echo("Every collection is already at the bounded geometry.")
+        return
+    verb = "Would reconcile" if result.dry_run else "Reconciled"
+    typer.echo(
+        f"{verb} {len(result.results)} collections "
+        f"({_human_size(result.reclaimed_bytes)} reclaimed); "
+        f"{result.drifted_remaining} still drifted."
+    )
+    for r in result.results:
+        detail = ""
+        if r.status == "reconciled":
+            detail = (
+                f"{r.segments_before}->{r.segments_after} segments, "
+                f"{_human_size(r.reclaimed_bytes)} freed"
+            )
+        elif r.reason:
+            detail = r.reason
+        typer.echo(f"  {r.status:<16} {r.collection:<32} {detail}")
+
+
+@server_storage_app.command(
+    "reconcile",
+    help="Shrink existing collections to the bounded segment geometry.",
+)
+def storage_reconcile(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Apply the reconcile."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without changing."),
+    limit: int = typer.Option(
+        0,
+        "--limit",
+        help="Max collections to reconcile (0 = every drifted collection).",
+    ),
+    wait: bool = typer.Option(
+        True,
+        "--wait/--no-wait",
+        help=(
+            "Wait for the optimizer to converge before reporting. With "
+            "--no-wait the updates are issued and reclamation is reported "
+            "by a later run, since mid-flight sizes are meaningless."
+        ),
+    ),
+    json_mode: bool = typer.Option(False, "--json", help="Emit JSON for scripts."),
+) -> None:
+    """Converge pre-existing collections onto the bounded geometry.
+
+    Non-destructive: no point is moved or deleted and the collection stays
+    queryable throughout. Collections already at target are skipped, so
+    running this on a converged backend is a no-op success.
+    """
+    from ..config import get_config
+    from ..storage_ops import reconcile_collections, server_storage_collections_dir
+
+    _require_yes_for_json(_RECONCILE_CMD, json_mode, yes)
+    preview = dry_run or not yes
+    cfg = get_config()
+    storage_dir = server_storage_collections_dir()
+    result = _run_storage_op(
+        _RECONCILE_CMD,
+        json_mode,
+        lambda c: reconcile_collections(
+            c,
+            storage_dir=storage_dir,
+            cap=limit if limit > 0 else _UNCAPPED_RECONCILE,
+            budget_s=float(cfg.storage_reconcile_budget_seconds),
+            dry_run=preview,
+            wait=wait,
+        ),
+    )
+    _render_reconcile(result, json_mode)
+    if not dry_run and not yes and result.results:
+        raise typer.Exit(1)
+
+
+# A cap large enough to mean "every drifted collection" for an operator-driven
+# run; the scheduled cycle keeps its small per-cycle cap.
+_UNCAPPED_RECONCILE = 1_000_000
 
 
 # -- migrate ----------------------------------------------------------------

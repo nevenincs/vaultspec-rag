@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from ..storage_ops import MaintenanceResult
+    from ..storage_ops import MaintenanceResult, ReconcileBatch, ReconcileResult
 
 __all__ = [
     "_heartbeat_loop",
@@ -349,6 +349,37 @@ def _maintenance_paths() -> tuple[Path, Path, Path] | None:
     )
 
 
+def _report_reconcile(batch: ReconcileBatch | None) -> list[ReconcileResult]:
+    """Publish the geometry-reconcile pass and return its converged entries.
+
+    The drifted gauge reaching zero is the operator's signal that the
+    backend has finished converging. Only converged entries are logged:
+    a still-converging collection has no honest footprint to report,
+    because the optimizer inflates size mid-merge before shrinking it.
+    """
+    if batch is None:
+        return []
+    from ._state import incr, observe
+
+    reconciled = [r for r in batch.results if r.status == "reconciled"]
+    incr("maintenance_reconciled_total", len(reconciled))
+    incr("maintenance_reconciled_bytes_total", batch.reclaimed_bytes)
+    observe("store_drifted_namespaces", float(batch.drifted_remaining))
+    for entry in reconciled:
+        log_event(
+            logger,
+            "service.maintenance",
+            "reconciled",
+            collection=entry.collection,
+            segments_before=entry.segments_before,
+            segments_after=entry.segments_after,
+            bytes_before=entry.bytes_before,
+            bytes_after=entry.bytes_after,
+            reclaimed_bytes=entry.reclaimed_bytes,
+        )
+    return reconciled
+
+
 def _storage_maintenance_tick_sync() -> None:
     """Run one scheduled storage-maintenance cycle (pure storage IO).
 
@@ -381,6 +412,9 @@ def _storage_maintenance_tick_sync() -> None:
         archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
         archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
         ephemeral_idle_hours=float(cfg.storage_autoprune_ephemeral_idle_hours),
+        reconcile=bool(cfg.storage_reconcile),
+        reconcile_max_per_cycle=int(cfg.storage_reconcile_max_per_cycle),
+        reconcile_budget_seconds=float(cfg.storage_reconcile_budget_seconds),
     )
     from .. import jobs as _jobs_registry
 
@@ -438,10 +472,16 @@ def _storage_maintenance_tick_sync() -> None:
     totals = backend_totals(result.surveys)
     observe("store_total_bytes", float(cast("int", totals["total_bytes"])))
     observe("store_namespaces", float(cast("int", totals["namespaces"])))
+    reconciled = _report_reconcile(result.reconcile)
     summary = (
         f"removed={len(removed)} failed={len(failed)} "
         f"pending={result.pending_grace} reclaimed_bytes={result.reclaimed_bytes}"
     )
+    if result.reconcile is not None:
+        summary += (
+            f" reconciled={len(reconciled)} "
+            f"reconciled_bytes={result.reconcile.reclaimed_bytes}"
+        )
     _jobs_registry.record_finish(
         job_id,
         result=summary,
@@ -461,6 +501,11 @@ def _storage_maintenance_tick_sync() -> None:
         dangling_bytes=result.dangling_bytes,
         archived=len(result.archived),
         swept=len(result.swept),
+        reconciled=len(reconciled),
+        reconciled_bytes=(result.reconcile.reclaimed_bytes if result.reconcile else 0),
+        drifted_remaining=(
+            result.reconcile.drifted_remaining if result.reconcile else 0
+        ),
         disk_free_bytes=disk_free,
         namespaces=json.dumps(result.namespace_counts, sort_keys=True),
     )
