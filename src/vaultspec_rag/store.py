@@ -25,6 +25,7 @@ from ._store_models import (
     root_collection_prefix,
 )
 from ._store_search import _VaultSearchMixin
+from ._store_writes import ensure_disk_headroom, run_write_with_retry
 
 if TYPE_CHECKING:
     import pathlib
@@ -51,6 +52,11 @@ __all__ = [
 
 
 EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
+
+#: Server-mode request timeout. Bounded so a Qdrant server wedged on a
+#: full-disk WAL raises instead of blocking an upsert socket forever
+#: (issue #242); generous enough for large batch upserts and slow scans.
+_SERVER_REQUEST_TIMEOUT_S = 120
 
 
 @contextmanager
@@ -198,10 +204,21 @@ class VaultStore(_VaultSearchMixin):
         if cfg.qdrant_url:
             self.db_path = cfg.qdrant_url
             self._lock_helper = None
+            # The managed server's storage volume, for write headroom
+            # checks; a remote server's dir won't exist locally and the
+            # probe then skips itself (issue #242).
+            self._storage_probe_path = _pathlib.Path(
+                cfg.qdrant_storage_dir
+            ).expanduser()
             try:
+                # An explicit request timeout: without one, a server
+                # stalling on a full-disk WAL blocks the upsert socket
+                # forever, freezing the job at completed=0 with no error
+                # ever raised (issue #242 defect 1).
                 self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
+                    timeout=_SERVER_REQUEST_TIMEOUT_S,
                 )
             except Exception as exc:
                 logger.error(
@@ -211,6 +228,7 @@ class VaultStore(_VaultSearchMixin):
         else:
             self.db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
             self.db_path.mkdir(parents=True, exist_ok=True)
+            self._storage_probe_path = self.db_path
             self._lock_helper = FileLock(self.db_path / "exclusive.lock")
             if not self._lock_helper.acquire():
                 raise VaultStoreLockedError(str(self.db_path))
@@ -572,10 +590,7 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            self.client.upsert(
-                collection_name=self.TABLE_NAME,
-                points=points,
-            )
+            self._guarded_upsert(self.TABLE_NAME, points, "vault documents")
         logger.info("Upserted %d document(s)", len(docs))
 
     def upsert_document_chunks(self, chunks: list[VaultChunk]) -> None:
@@ -613,10 +628,7 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            self.client.upsert(
-                collection_name=self.TABLE_NAME,
-                points=points,
-            )
+            self._guarded_upsert(self.TABLE_NAME, points, "vault chunks")
         logger.info("Upserted %d vault chunk(s)", len(chunks))
 
     def upsert_code_chunks(self, chunks: list[CodeChunk]) -> None:
@@ -650,11 +662,38 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_code_table()
         with self._point_lock(self.CODE_TABLE_NAME):
-            self.client.upsert(
-                collection_name=self.CODE_TABLE_NAME,
-                points=points,
-            )
+            self._guarded_upsert(self.CODE_TABLE_NAME, points, "code chunks")
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
+
+    def _guarded_upsert(
+        self, collection_name: str, points: list[Any], description: str
+    ) -> None:
+        """Upsert under the issue-242 write guards.
+
+        A cheap free-disk floor check refuses the write while the store
+        volume is exhausted (before Qdrant can wedge on it), then the upsert
+        runs under the bounded retry: transient failures back off and retry,
+        storage exhaustion raises immediately so the embedder upstream stops
+        burning GPU on vectors that cannot be persisted.
+        """
+        ensure_disk_headroom(self._storage_probe_path)
+        run_write_with_retry(
+            lambda: self.client.upsert(
+                collection_name=collection_name,
+                points=points,
+            ),
+            description=f"upsert {description} into {collection_name}",
+        )
+
+    def disk_headroom_preflight(self, new_points: int) -> None:
+        """Bulk-index pre-flight: fail fast when the run cannot fit on disk.
+
+        Raises:
+            InsufficientDiskSpaceError: When the estimated footprint of
+                ``new_points`` plus the write floor exceeds the free space
+                on the store volume.
+        """
+        ensure_disk_headroom(self._storage_probe_path, new_points=new_points)
 
     def delete_documents(self, ids: list[str]) -> None:
         """Remove documents (every chunk) by their ``doc_id`` values.

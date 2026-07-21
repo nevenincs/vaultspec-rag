@@ -95,6 +95,9 @@ def _stream_encode_and_upsert_vault(
         key=lambda c: -(len(c.title) + len(c.text)),
     )
 
+    # Same fail-fast contract as the codebase path (issue #242).
+    store.disk_headroom_preflight(len(sorted_chunks))
+
     with MemoryProbe(name="vault-full-index") as probe:
         reporter.phase_start("embed + upsert documents", len(sorted_chunks))
         try:
@@ -269,6 +272,11 @@ def _stream_encode_and_upsert_codebase(
     flush_slices = max(1, int(cfg.index_cache_flush_slices))
 
     sorted_chunks = sorted(chunks, key=lambda c: -len(c.content))
+
+    # Fail in milliseconds, not at 1-2% hours later: a run whose estimated
+    # footprint cannot fit on the store volume must never start encoding
+    # (issue #242).
+    store.disk_headroom_preflight(len(sorted_chunks))
 
     with MemoryProbe(name="codebase-full-index") as probe:
         reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
