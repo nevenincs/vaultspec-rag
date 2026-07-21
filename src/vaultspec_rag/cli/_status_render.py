@@ -36,9 +36,9 @@ from ._service_lifecycle import _print_detail_line, _should_unlink_discovery_fil
 from ._service_status import (
     SERVICE_PHASE_WARMING,
     _default_service_port,
+    _delete_service_status,
     _read_service_status,
     _service_phase,
-    _status_file,
 )
 from ._status_labels import (
     _format_started_label,
@@ -100,7 +100,7 @@ def _compute_state(
         # removed (#204). The ambiguous branches below keep the file and only
         # report a degraded state.
         if _should_unlink_discovery_file(pid_alive):
-            _status_file().unlink(missing_ok=True)
+            _delete_service_status()
         return (
             "crashed_pid_dead",
             "crashed (PID dead, stale service.json cleaned)",

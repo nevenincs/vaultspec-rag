@@ -1,11 +1,11 @@
 """Unit tests for install-time provisioning-mode wiring (install-parity W02).
 
 Exercises the real install orchestration (:func:`install_run`) over the real
-filesystem with no mocks and no network: provisioning, torch config, and the
-optional MCP extra are all opted out, so the run seeds rag's bundled tree,
-invokes core's real ``sync_provider``, and persists and renders rag's mode
-through core's shared ``workspace_mode`` machinery without touching the GPU or
-the network.
+filesystem with no mocks and no network: provisioning and torch config are opted
+out, while the optional MCP extra is reconciled directly in the temporary
+project without invoking a package manager. The run seeds rag's bundled tree,
+invokes core's real ``sync_provider``, and persists and renders rag's mode through
+core's shared ``workspace_mode`` machinery without touching the GPU or network.
 
 The three-placement model (``tool`` / ``dependency`` / ``dev``) is owned by
 vaultspec-core; rag adopts it by naming ``vaultspec-rag`` as the package core's
@@ -24,6 +24,7 @@ See the plan ``2026-07-14-install-parity-plan`` (W02.P06) and the
 from __future__ import annotations
 
 import json
+import tomllib
 from importlib.resources import files
 from typing import TYPE_CHECKING, cast
 
@@ -37,6 +38,10 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
 from vaultspec_core.core.exceptions import (  # pyright: ignore[reportMissingTypeStubs]
     VaultSpecError,
 )
+from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+    read_manifest,
+    write_manifest,
+)
 from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
     render_mcp_definition_for_mode,
 )
@@ -47,6 +52,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
     write_package_declaration,
 )
 
+from ..builtins import seed_builtins
 from ..commands import install_run
 from ..commands._mode import (
     RAG_DISTRIBUTION_NAME,
@@ -70,10 +76,10 @@ _RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 # launch the module through the governed project's own venv (``uv run``), tool
 # mode through an ephemeral ``uvx --from`` invocation. ``dev`` renders
 # byte-identically to ``dependency``.
-_DEP_LAUNCH = ("uv", ["run", "python", "-m", RAG_MCP_MODULE])
+_DEP_LAUNCH = ("uv", ["run", "--no-sync", "python", "-m", RAG_MCP_MODULE])
 _TOOL_LAUNCH = (
     "uvx",
-    ["--from", RAG_DISTRIBUTION_NAME, "python", "-m", RAG_MCP_MODULE],
+    ["--from", f"{RAG_DISTRIBUTION_NAME}[mcp]", "python", "-m", RAG_MCP_MODULE],
 )
 
 _PROJECT_WITH_RAG = (
@@ -107,15 +113,27 @@ def _workspace(tmp_path: Path, pyproject: str | None) -> Path:
     return ws
 
 
-def _install(ws: Path, *, mode: InstallMode | None = None, upgrade: bool = False):
-    """Run a network-free rag install: no provisioning, torch, or MCP extra."""
+def _install(
+    ws: Path,
+    *,
+    mode: InstallMode | None = None,
+    upgrade: bool = False,
+    providers: set[str] | None = None,
+    force: bool = False,
+):
+    """Run a network-free rag install with the canonical MCP source enabled."""
+    if providers is not None:
+        write_manifest(ws, providers)
+    elif not read_manifest(ws):
+        write_manifest(ws, {"claude"})
     return install_run(
         path=ws,
         mode=mode,
         upgrade=upgrade,
+        force=force,
         provision=False,
         configure_torch=False,
-        install_mcp=False,
+        install_mcp=True,
     )
 
 
@@ -126,22 +144,134 @@ def _rag_mcp_entry(ws: Path) -> dict[str, object]:
     return cast("dict[str, object]", entry)
 
 
+def _rag_codex_entry(ws: Path) -> dict[str, object]:
+    raw = tomllib.loads((ws / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    entry = raw["mcp_servers"][RAG_DISTRIBUTION_NAME]
+    assert isinstance(entry, dict)
+    return cast("dict[str, object]", entry)
+
+
+def _provider_entry(ws: Path, provider: str) -> dict[str, object]:
+    return _rag_mcp_entry(ws) if provider == "claude" else _rag_codex_entry(ws)
+
+
 @pytest.mark.parametrize(
-    ("explicit", "expected_command", "expected_args"),
+    "providers",
+    [
+        pytest.param({"claude"}, id="claude-only"),
+        pytest.param({"codex"}, id="codex-only"),
+        pytest.param({"claude", "codex"}, id="dual-provider"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("mode", "expected_command", "expected_args"),
     [
         (InstallMode.TOOL, _TOOL_LAUNCH[0], _TOOL_LAUNCH[1]),
         (InstallMode.DEPENDENCY, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
         (InstallMode.DEV, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
     ],
 )
+def test_provider_native_targets_render_every_mode(
+    tmp_path: Path,
+    providers: set[str],
+    mode: InstallMode,
+    expected_command: str,
+    expected_args: list[str],
+) -> None:
+    """Selected provider targets receive the same canonical mode launch."""
+    pyproject = _PROJECT_RAG_DEV_GROUP if mode is InstallMode.DEV else _PROJECT_WITH_RAG
+    ws = _workspace(tmp_path, pyproject)
+
+    report = _install(ws, mode=mode, providers=providers)
+
+    assert (ws / ".mcp.json").exists() is ("claude" in providers)
+    assert (ws / ".codex" / "config.toml").exists() is ("codex" in providers)
+    assert set(report.to_dict()["sync_providers"]) == providers
+    for provider in providers:
+        entry = _provider_entry(ws, provider)
+        assert entry["command"] == expected_command
+        assert entry["args"] == expected_args
+
+
+@pytest.mark.parametrize(
+    ("mode", "pyproject"),
+    [
+        (InstallMode.TOOL, _PROJECT_WITH_RAG),
+        (InstallMode.DEPENDENCY, _PROJECT_WITH_RAG),
+        (InstallMode.DEV, _PROJECT_RAG_DEV_GROUP),
+    ],
+)
+def test_dual_provider_reinstall_is_byte_stable(
+    tmp_path: Path, mode: InstallMode, pyproject: str
+) -> None:
+    ws = _workspace(tmp_path, pyproject)
+    _install(ws, mode=mode, providers={"claude", "codex"})
+    tracked = (
+        ws / ".mcp.json",
+        ws / ".codex" / "config.toml",
+        ws / ".vaultspec" / "mcp-ownership.json",
+    )
+    before = {path: path.read_bytes() for path in tracked}
+
+    report = _install(ws, mode=mode)
+
+    assert {path: path.read_bytes() for path in tracked} == before
+    outcomes = report.to_dict()["sync_providers"]
+    assert outcomes["claude"]["unchanged"] == 1
+    assert outcomes["codex"]["unchanged"] == 1
+
+
+@pytest.mark.parametrize("drifted_provider", ["claude", "codex"])
+def test_force_repairs_only_drifted_provider_target(
+    tmp_path: Path, drifted_provider: str
+) -> None:
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    _install(ws, mode=InstallMode.TOOL, providers={"claude", "codex"})
+    claude_path = ws / ".mcp.json"
+    codex_path = ws / ".codex" / "config.toml"
+    sibling_path = codex_path if drifted_provider == "claude" else claude_path
+    sibling_before = sibling_path.read_bytes()
+
+    if drifted_provider == "claude":
+        raw = json.loads(claude_path.read_text(encoding="utf-8"))
+        raw["mcpServers"][RAG_DISTRIBUTION_NAME]["command"] = "drifted"
+        claude_path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    else:
+        content = codex_path.read_text(encoding="utf-8")
+        drifted = content.replace('command = "uvx"', 'command = "drifted"', 1)
+        assert drifted != content
+        codex_path.write_text(drifted, encoding="utf-8")
+
+    report = _install(ws, mode=InstallMode.TOOL, force=True)
+
+    assert _provider_entry(ws, drifted_provider)["command"] == _TOOL_LAUNCH[0]
+    assert sibling_path.read_bytes() == sibling_before
+    outcomes = report.to_dict()["sync_providers"]
+    assert outcomes[drifted_provider]["updated"] == 1
+
+
+@pytest.mark.parametrize(
+    ("explicit", "pyproject", "expected_command", "expected_args"),
+    [
+        (InstallMode.TOOL, _PROJECT_WITH_RAG, _TOOL_LAUNCH[0], _TOOL_LAUNCH[1]),
+        (
+            InstallMode.DEPENDENCY,
+            _PROJECT_WITH_RAG,
+            _DEP_LAUNCH[0],
+            _DEP_LAUNCH[1],
+        ),
+        (InstallMode.DEV, _PROJECT_RAG_DEV_GROUP, _DEP_LAUNCH[0], _DEP_LAUNCH[1]),
+    ],
+)
 def test_explicit_mode_persists_and_renders_rag_entry(
     tmp_path: Path,
     explicit: InstallMode,
+    pyproject: str,
     expected_command: str,
     expected_args: list[str],
 ) -> None:
     """Each explicit mode persists rag's own entry and renders its own launch."""
-    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    ws = _workspace(tmp_path, pyproject)
 
     _install(ws, mode=explicit)
 
@@ -152,6 +282,37 @@ def test_explicit_mode_persists_and_renders_rag_entry(
     entry = _rag_mcp_entry(ws)
     assert entry["command"] == expected_command
     assert entry["args"] == expected_args
+
+
+@pytest.mark.parametrize(
+    ("explicit", "pyproject"),
+    [
+        (InstallMode.TOOL, _PROJECT_WITH_RAG),
+        (InstallMode.DEPENDENCY, _PROJECT_WITH_RAG),
+        (InstallMode.DEV, _PROJECT_RAG_DEV_GROUP),
+    ],
+)
+def test_explicit_mode_persists_with_mcp_intent_disabled(
+    tmp_path: Path,
+    explicit: InstallMode,
+    pyproject: str,
+) -> None:
+    """Disabling enrollment does not suppress a valid package-mode commit."""
+    ws = _workspace(tmp_path, pyproject)
+    write_manifest(ws, {"claude"})
+
+    report = install_run(
+        path=ws,
+        mode=explicit,
+        provision=False,
+        configure_torch=False,
+        install_mcp=False,
+    )
+
+    assert not report.mcp_sync_failed
+    declaration = read_package_declaration(ws, RAG_DISTRIBUTION_NAME)
+    assert declaration is not None
+    assert declaration.install_mode is explicit
 
 
 def test_detection_maps_rag_project_dependency_to_dependency_mode(
@@ -224,8 +385,10 @@ def test_mixed_configuration_preserves_sibling_and_renders_each_mode(
     assert rag_decl is not None and rag_decl.install_mode is InstallMode.TOOL
 
     servers = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
-    # Core keeps its dependency shape; rag renders its own tool shape.
-    assert servers["vaultspec-core"]["command"] == "uv"
+    # The sibling entry survives rag's install; its exact launch shape is
+    # core's own rendering concern, so assert preservation, not core's argv.
+    assert "vaultspec-core" in servers
+    assert servers["vaultspec-core"].get("command")
     assert servers[RAG_DISTRIBUTION_NAME]["command"] == _TOOL_LAUNCH[0]
     assert servers[RAG_DISTRIBUTION_NAME]["args"] == _TOOL_LAUNCH[1]
 
@@ -307,15 +470,17 @@ def test_infer_upgrade_mode_persisted_wins(tmp_path: Path) -> None:
 def test_infer_upgrade_mode_legacy_dependency_shape(tmp_path: Path) -> None:
     """A legacy dependency-shaped deployment with no declaration infers dependency."""
     ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    seed_builtins(ws / ".vaultspec", force=True)
     # Deployed dependency-mode MCP launch, no committed declaration - the legacy
     # state install --upgrade must recognize.
     mcp = {
+        "_vaultspecManaged": [RAG_DISTRIBUTION_NAME],
         "mcpServers": {
             RAG_DISTRIBUTION_NAME: {
                 "command": _DEP_LAUNCH[0],
                 "args": list(_DEP_LAUNCH[1]),
             }
-        }
+        },
     }
     (ws / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
 

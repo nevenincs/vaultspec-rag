@@ -1,16 +1,14 @@
-"""Packaging-metadata guard for the `mcp-optional-dependency` ADR.
+"""Installed-distribution metadata and canonical MCP payload guards.
 
-`mcp` is an opt-in extra, not a core dependency: the CLI and the HTTP search
-daemon never import it (only the optional stdio MCP server does), so a base
-install must not declare it - on Windows that would force `pywin32` and break a
-plain `uv add vaultspec-rag`. This reads the installed distribution metadata
-and asserts `mcp` is absent from core and present in the `[mcp]` extra. Supersedes
-the #182 "mcp is core" guard.
+The suite proves the optional MCP dependency boundary, console entry point, and
+package-data launch contract from the distribution visible to the interpreter.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
+import json
+from importlib.resources import files
 
 import pytest
 from packaging.requirements import Requirement
@@ -51,3 +49,30 @@ def test_mcp_is_declared_in_the_mcp_extra() -> None:
         f"the MCP server's dependency; the [mcp] extra contained: "
         f"{sorted(extra_mcp)}"
     )
+
+
+def test_mcp_console_entry_point_targets_server_main() -> None:
+    """The installed console metadata exposes the supported stdio server."""
+    entry_points = {
+        entry.name: entry.value
+        for entry in importlib.metadata.entry_points(group="console_scripts")
+    }
+    assert entry_points["vaultspec-search-mcp"] == "vaultspec_rag.server:main"
+
+
+def test_canonical_mcp_builtin_is_installed() -> None:
+    """The installed payload launches the MCP-capable package extra via uvx."""
+    source = files("vaultspec_rag.builtins") / "mcps" / "vaultspec-rag.builtin.json"
+    assert json.loads(source.read_text(encoding="utf-8")) == {
+        "command": "@@VAULTSPEC_INSTALL_MODE_COMMAND@@",
+        "args": ["@@VAULTSPEC_INSTALL_MODE_ARGS@@"],
+        "_vaultspec_mode_package": "vaultspec-rag",
+        "_vaultspec_mode_module": "vaultspec_rag.server",
+        "_vaultspec_mode_tool_spec": "vaultspec-rag[mcp]",
+    }
+
+
+def test_published_core_floor_carries_native_mcp_contract() -> None:
+    """The distribution cannot resolve against a pre-native-MCP Core release."""
+    core = next(req for req in _requirements() if req.name == "vaultspec-core")
+    assert str(core.specifier) == ">=0.1.45"

@@ -10,7 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from ..config import EnvVar, get_config, reset_config
+from ..config import EnvVar, get_config, hf_cache_only, reset_config
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +37,38 @@ def _restore_env(var: EnvVar, prev: str | None) -> None:
 def test_service_idle_ttl_default() -> None:
     cfg = get_config()
     assert cfg.service_idle_ttl_seconds == 1800
+
+
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        (EnvVar.HF_HUB_OFFLINE, "1"),
+        (EnvVar.HF_HUB_OFFLINE, "true"),
+        (EnvVar.TRANSFORMERS_OFFLINE, "yes"),
+        (EnvVar.TRANSFORMERS_OFFLINE, "on"),
+    ],
+)
+def test_hf_cache_only_honours_supported_offline_modes(
+    var: EnvVar,
+    value: str,
+) -> None:
+    previous = _set_env(var, value)
+    try:
+        assert hf_cache_only()
+    finally:
+        _restore_env(var, previous)
+
+
+def test_hf_cache_only_defaults_to_online_capable() -> None:
+    previous_hub = os.environ.pop(EnvVar.HF_HUB_OFFLINE.value, None)
+    previous_transformers = os.environ.pop(EnvVar.TRANSFORMERS_OFFLINE.value, None)
+    try:
+        assert not hf_cache_only()
+    finally:
+        if previous_hub is not None:
+            os.environ[EnvVar.HF_HUB_OFFLINE.value] = previous_hub
+        if previous_transformers is not None:
+            os.environ[EnvVar.TRANSFORMERS_OFFLINE.value] = previous_transformers
 
 
 def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
@@ -195,7 +227,11 @@ def test_watch_cooldown_s_env_override() -> None:
         reset_config()
 
 
-@pytest.mark.parametrize("raw", ["0", "false", "False", "no", "off", ""])
+@pytest.mark.parametrize(
+    "raw",
+    ["0", "false", "False", "no", "off", ""],
+    ids=["zero", "false-lower", "false-title", "no", "off", "empty"],
+)
 def test_watch_enabled_env_falsey(raw: str) -> None:
     prev = _set_env(EnvVar.WATCH_ENABLED, raw)
     try:
@@ -209,7 +245,11 @@ def test_watch_enabled_env_falsey(raw: str) -> None:
         reset_config()
 
 
-@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "Yes"])
+@pytest.mark.parametrize(
+    "raw",
+    ["1", "true", "TRUE", "yes", "Yes"],
+    ids=["one", "true-lower", "true-upper", "yes-lower", "yes-title"],
+)
 def test_watch_enabled_env_truthy(raw: str) -> None:
     prev = _set_env(EnvVar.WATCH_ENABLED, raw)
     try:
@@ -279,7 +319,11 @@ def test_effective_server_mode_default_is_true() -> None:
         reset_config()
 
 
-@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes"])
+@pytest.mark.parametrize(
+    "raw",
+    ["1", "true", "TRUE", "yes"],
+    ids=["one", "true-lower", "true-upper", "yes"],
+)
 def test_local_only_env_flips_effective_mode_off(raw: str) -> None:
     saved = _clear_server_mode_env()
     os.environ[EnvVar.LOCAL_ONLY.value] = raw

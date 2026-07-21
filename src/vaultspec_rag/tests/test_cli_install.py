@@ -260,6 +260,78 @@ class TestRenderInstallReport:
         ):
             assert forbidden not in out
 
+    def test_preserves_provider_outcomes_in_json_and_human_output(self) -> None:
+        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+            SyncResult,
+        )
+
+        from ..commands import InstallReport
+
+        claude = SyncResult(
+            added=1,
+            unchanged=1,
+            items=[("vaultspec-rag", "[ADD]")],
+        )
+        codex = SyncResult(
+            updated=1,
+            errored=1,
+            errors=["native target malformed"],
+            warnings=["managed entry drift repaired"],
+            items=[("vaultspec-rag", "[UPDATE]")],
+        )
+        provider_result = SyncResult(per_tool={"claude": claude, "codex": codex})
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            sync_results=[provider_result],
+            mcp_sync_results=[provider_result],
+        )
+
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"] == {
+            "added": 1,
+            "updated": 0,
+            "unchanged": 1,
+            "skipped": 0,
+            "pruned": 0,
+            "errored": 0,
+            "errors": [],
+            "warnings": [],
+            "items": [["vaultspec-rag", "[ADD]"]],
+        }
+        assert providers["codex"]["updated"] == 1
+        assert providers["codex"]["errored"] == 1
+        assert providers["codex"]["errors"] == ["native target malformed"]
+        assert providers["codex"]["warnings"] == ["managed entry drift repaired"]
+
+        out = self._render(report)
+        assert "Claude MCP: added 1, unchanged 1" in out
+        assert "Codex MCP: updated 1, errored 1" in out
+        assert "warning: managed entry drift repaired" in out
+        assert "error: native target malformed" in out
+
+    def test_preserves_unattributed_mcp_errors_in_json_and_human_output(self) -> None:
+        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+            SyncResult,
+        )
+
+        from ..commands import InstallReport
+
+        report = InstallReport(
+            action="install",
+            target=Path("."),
+            sync_results=[SyncResult(errored=1, errors=["ownership is malformed"])],
+            mcp_sync_results=[SyncResult(errored=1, errors=["ownership is malformed"])],
+        )
+
+        data = report.to_dict()
+        assert data["mcp_failed"] is True
+        assert data["mcp_errors"] == ["ownership is malformed"]
+        assert data["sync_providers"] == {}
+
+        out = self._render(report)
+        assert "MCP lifecycle error: ownership is malformed" in out
+
 
 class TestRenderUninstallReport:
     """Symmetric guard rail for the uninstall renderer."""
@@ -344,6 +416,52 @@ class TestRenderUninstallReport:
         ):
             assert forbidden not in out
 
+    def test_mcp_extra_result_is_preserved_in_json_and_human_output(self) -> None:
+        from ..commands import UninstallReport
+
+        report = UninstallReport(
+            action="uninstall",
+            target=Path("."),
+            mcp_extra_action="removed",
+            mcp_extra_location="[project].dependencies",
+        )
+
+        data = report.to_dict()
+        assert data["mcp_extra_action"] == "removed"
+        assert data["mcp_extra_location"] == "[project].dependencies"
+        out = self._render(report)
+        assert "MCP optional dependency: removed ([project].dependencies)" in out
+
+    def test_preserves_provider_prunes_in_json_and_human_output(self) -> None:
+        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+            SyncResult,
+        )
+
+        from ..commands import UninstallReport
+
+        provider_result = SyncResult(
+            pruned=2,
+            per_tool={
+                "claude": SyncResult(pruned=1, items=[("vaultspec-rag", "[DELETE]")]),
+                "codex": SyncResult(pruned=1, items=[("vaultspec-rag", "[DELETE]")]),
+            },
+        )
+        report = UninstallReport(
+            action="uninstall",
+            target=Path("."),
+            sync_results=[provider_result],
+            mcp_sync_results=[provider_result],
+        )
+
+        providers = report.to_dict()["sync_providers"]
+        assert providers["claude"]["pruned"] == 1
+        assert providers["codex"]["pruned"] == 1
+        assert providers["codex"]["items"] == [["vaultspec-rag", "[DELETE]"]]
+
+        out = self._render(report)
+        assert "Claude MCP: pruned 1" in out
+        assert "Codex MCP: pruned 1" in out
+
 
 class TestInstallExitCodes:
     """CLI3-01 regression: install exits non-zero on the torch-config
@@ -418,6 +536,16 @@ class TestInstallExitCodes:
             app, ["install", "--target", str(ws), "--no-torch-config"]
         )
         assert result.exit_code == 0, result.output
+
+    def test_install_exit_nonzero_on_mcp_extra_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        ws = self._make_pyproject(tmp_path, "[project\nname =")
+        result = runner.invoke(
+            app,
+            ["install", "--target", str(ws), "--no-torch-config", "--mcp"],
+        )
+        assert result.exit_code == 2, result.output
 
 
 class TestInstallTargetValidation:

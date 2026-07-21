@@ -503,6 +503,52 @@ def _render_sync_summary(added: int, updated: int, removed: int) -> None:
         )
 
 
+def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
+    parts = [
+        f"{label} {outcome[label]}"
+        for label in (
+            "added",
+            "updated",
+            "unchanged",
+            "skipped",
+            "pruned",
+            "errored",
+        )
+        if isinstance(outcome.get(label), int) and outcome[label]
+    ]
+    summary = ", ".join(parts) if parts else "no changes"
+    _cli.console.print(
+        f"{provider.capitalize()} MCP: {summary}",
+        markup=False,
+        highlight=False,
+    )
+    for label in ("warnings", "errors"):
+        messages = outcome.get(label)
+        if isinstance(messages, list):
+            for message in cast("list[object]", messages):
+                _cli.console.print(
+                    f"  {label[:-1]}: {message}", markup=False, highlight=False
+                )
+
+
+def _render_provider_sync(report: Any) -> None:
+    """Render the same per-provider MCP outcomes exposed by report JSON."""
+    data = report.to_dict()
+    providers = data.get("sync_providers")
+    if isinstance(providers, dict):
+        for provider, raw_outcome in cast("dict[object, object]", providers).items():
+            if isinstance(provider, str) and isinstance(raw_outcome, dict):
+                _render_provider_outcome(
+                    provider, cast("dict[str, object]", raw_outcome)
+                )
+    top_level_errors = data.get("mcp_errors")
+    if isinstance(top_level_errors, list):
+        for error in cast("list[object]", top_level_errors):
+            _cli.console.print(
+                f"MCP lifecycle error: {error}", markup=False, highlight=False
+            )
+
+
 def _counted(count: int, singular: str, plural: str | None = None) -> str:
     return f"{count} {singular if count == 1 else plural or singular + 's'}"
 
@@ -529,6 +575,20 @@ def _print_warning_or_note(warning: object) -> None:
     _cli.console.print(f"{prefix}: {text}", markup=False, highlight=False)
 
 
+def _render_mcp_extra(report: Any) -> None:
+    """Render the structured MCP optional-dependency lifecycle result."""
+    action = getattr(report, "mcp_extra_action", "skipped")
+    if action == "skipped":
+        return
+    location = getattr(report, "mcp_extra_location", "")
+    suffix = f" ({location})" if location else ""
+    _cli.console.print(
+        f"MCP optional dependency: {_action_label(action)}{suffix}",
+        markup=False,
+        highlight=False,
+    )
+
+
 def _render_install_report(report: Any) -> None:
     """Render an install report as plain CLI lines."""
     title = {
@@ -553,6 +613,8 @@ def _render_install_report(report: Any) -> None:
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     _render_sync_summary(sync_added, sync_updated, sync_pruned)
+    _render_provider_sync(report)
+    _render_mcp_extra(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
     _cli.console.print(
         f"PyTorch configuration: {_action_label(tc_action)}",
@@ -679,6 +741,8 @@ def _render_uninstall_report(report: Any) -> None:
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
         _render_sync_summary(0, 0, sync_pruned)
+    _render_provider_sync(report)
+    _render_mcp_extra(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
     _cli.console.print(
         f"PyTorch configuration: {_action_label(tc_action)}",

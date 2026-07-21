@@ -73,7 +73,7 @@ def load_pyproject(pyproject: Path) -> TOMLDocument | None:
     try:
         return tomlkit.parse(pyproject.read_text(encoding="utf-8-sig"))
     except Exception as exc:
-        logger.warning("pyproject.toml parse failed at %s: %s", pyproject, exc)
+        logger.debug("pyproject.toml parse failed at %s: %s", pyproject, exc)
         raise
 
 

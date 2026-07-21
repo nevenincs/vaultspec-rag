@@ -12,14 +12,14 @@ Two layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
 
 import vaultspec_rag.mcp._admin_client as admin
 
-from ... import server
+from ... import server, store_schema
 from ...cli import app
 
 if TYPE_CHECKING:
@@ -52,6 +52,46 @@ def _make_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _assert_managed_qdrant_state(qdrant: object) -> None:
+    """Assert the state reports the real fixture-owned Qdrant server."""
+    assert isinstance(qdrant, dict)
+    state = cast("dict[str, object]", qdrant)
+    assert state["mode"] == "server"
+    assert state["alive"] is True
+    assert isinstance(state["pid"], int)
+    assert isinstance(state["port"], int)
+
+
+def _assert_index_state(index: object, root: Path) -> None:
+    """Assert the consolidated index section retains its complete shape."""
+    assert isinstance(index, dict)
+    state = cast("dict[str, object]", index)
+    assert "vault_count" in state
+    assert "code_count" in state
+    assert "vram_gb" in state
+    assert state["target_dir"] == str(root)
+
+
+def _assert_projects_state(projects: object) -> None:
+    """Assert project registry metadata remains bounded and typed."""
+    assert isinstance(projects, dict)
+    state = cast("dict[str, object]", projects)
+    assert "projects" in state
+    assert "max_projects" in state
+    assert "idle_ttl_seconds" in state
+    assert isinstance(state["projects"], list)
+
+
+def _assert_watcher_state(watcher: object) -> None:
+    """Assert watcher observability retains its complete shape."""
+    assert isinstance(watcher, dict)
+    state = cast("dict[str, object]", watcher)
+    assert "watch_enabled" in state
+    assert "debounce_ms" in state
+    assert "cooldown_s" in state
+    assert isinstance(state["watching"], list)
+
+
 # --------------------------------------------------------------------------- #
 # Integration (GPU): the real tool returns the consolidated shape             #
 # --------------------------------------------------------------------------- #
@@ -66,29 +106,18 @@ async def test_get_service_state_consolidated_shape(
 
     state = await admin.get_service_state(project_root=str(root))
 
-    assert set(state) == {"index", "projects", "watcher"}
-
-    index = state["index"]
-    assert isinstance(index, dict)
-    # get_index_status payload (model_dump of IndexStatus) - counts + GPU.
-    assert "vault_count" in index
-    assert "code_count" in index
-    assert "vram_gb" in index
-    assert index["target_dir"] == str(root)
-
-    projects = state["projects"]
-    assert isinstance(projects, dict)
-    assert "projects" in projects
-    assert "max_projects" in projects
-    assert "idle_ttl_seconds" in projects
-    assert isinstance(projects["projects"], list)
-
-    watcher = state["watcher"]
-    assert isinstance(watcher, dict)
-    assert "watch_enabled" in watcher
-    assert "debounce_ms" in watcher
-    assert "cooldown_s" in watcher
-    assert isinstance(watcher["watching"], list)
+    assert set(state) == {
+        "index",
+        "projects",
+        "qdrant",
+        "schema_version",
+        "watcher",
+    }
+    assert state["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
+    _assert_managed_qdrant_state(state["qdrant"])
+    _assert_index_state(state["index"], root)
+    _assert_projects_state(state["projects"])
+    _assert_watcher_state(state["watcher"])
 
 
 def test_info_subcommand_not_registered() -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 
 from ...qdrant_runtime._resolve import (
     QdrantEndpointProbe,
@@ -17,6 +18,7 @@ from ...qdrant_runtime._resolve import (
     decide_qdrant_action,
     pid_alive,
     pid_image_is_qdrant,
+    pid_start_time,
     reap_qdrant_orphan,
 )
 
@@ -41,12 +43,55 @@ class TestReap:
     def test_nonpositive_pid_is_not_reaped(self) -> None:
         assert reap_qdrant_orphan(0) is False
 
+    def test_mismatched_child_start_witness_never_signals_real_process(self) -> None:
+        proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        try:
+            actual_start = pid_start_time(proc.pid)
+            assert actual_start > 0.0
+
+            assert reap_qdrant_orphan(
+                proc.pid,
+                wait_seconds=0.1,
+                expected_start_time=actual_start + 60.0,
+            )
+            assert proc.poll() is None
+            assert pid_alive(proc.pid)
+
+            assert reap_qdrant_orphan(
+                proc.pid,
+                expected_start_time=actual_start,
+            )
+            assert pid_alive(proc.pid) is False
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    def test_child_witness_inspection_obeys_subsecond_reap_budget(self) -> None:
+        proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        try:
+            actual_start = pid_start_time(proc.pid)
+            assert actual_start > 0.0
+            started = time.monotonic()
+            reaped = reap_qdrant_orphan(
+                proc.pid,
+                wait_seconds=0.050,
+                expected_start_time=actual_start,
+            )
+            assert time.monotonic() - started < 0.500
+            if reaped:
+                assert not pid_alive(proc.pid)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+
 
 class TestLiveHolderNeverReaped:
-    def test_live_owned_capable_server_routes_to_attach_not_reap(self) -> None:
-        # A live, owned, capable managed server must be attached, never reaped:
-        # the decision policy is the safety boundary that keeps reaping off any
-        # process whose owning service is still alive.
+    def test_live_holder_without_complete_witness_is_refused_not_reaped(
+        self,
+    ) -> None:
+        """A live but incompletely witnessed holder fails closed."""
         probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
         identity = QdrantIdentity(
             storage_path="/srv/storage",
@@ -58,10 +103,11 @@ class TestLiveHolderNeverReaped:
         action, _reason = decide_qdrant_action(
             probe,
             identity,
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )
-        assert action == "attach"
+        assert action == "refuse"
 
     def test_dead_owner_holding_port_routes_to_reap(self) -> None:
         probe = QdrantEndpointProbe(listening=True, ready=False, version="")
@@ -75,6 +121,7 @@ class TestLiveHolderNeverReaped:
         action, _reason = decide_qdrant_action(
             probe,
             identity,
+            expected_port=8765,
             expected_version="1.18.2",
             expected_storage="/srv/storage",
         )

@@ -141,10 +141,10 @@ preference:
 1. **Isolate**: point `VAULTSPEC_RAG_STATUS_DIR` and
    `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` at harness-owned temp paths so its
    indexing never reaches the shared backend at all.
-2. **Tear down**: run `vaultspec-rag server storage delete --root <dir> --yes`
+1. **Tear down**: run `vaultspec-rag server storage delete --root <dir> --yes`
    unconditionally in the harness's cleanup (idempotent, exits `0` when
    already absent).
-3. **Delete the root and wait**: removing the temp directory itself lets the
+1. **Delete the root and wait**: removing the temp directory itself lets the
    scheduled reclamation collect the namespace after its grace window.
 
 `server storage survey` marks suspect entries: any namespace whose root lives

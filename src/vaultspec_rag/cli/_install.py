@@ -5,6 +5,7 @@ from typing import Annotated, Any
 
 import click
 import typer
+from tomlkit.exceptions import ParseError
 from typer.core import TyperCommand
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
@@ -172,11 +173,10 @@ def handle_install(
         typer.Option(
             "--mcp/--no-mcp",
             help=(
-                "Ensure the optional MCP extra (`uv add vaultspec-rag[mcp]`) so "
-                "the agent-facing MCP search surface can run. On by default - "
-                "install wires up that surface; --no-mcp sets up a CLI-only "
-                "workspace without the mcp dependency (and, on Windows, without "
-                "pywin32)."
+                "Enroll the agent-facing MCP search surface and reconcile its "
+                "optional dependency at RAG's existing project placement. On "
+                "by default; --no-mcp sets up a CLI-only workspace without the "
+                "mcp dependency (and, on Windows, without pywin32)."
             ),
         ),
     ] = True,
@@ -287,6 +287,14 @@ def handle_install(
             install_mcp=install_mcp,
             mode=mode,
         )
+    except ParseError as exc:
+        _cli.console.print(
+            f"Install failed: {exc}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        raise typer.Exit(code=2) from exc
     except Exception as exc:
         _cli.console.print(
             f"Install failed: {exc}",
@@ -326,11 +334,19 @@ def handle_install(
     # ``DISABLED`` are intentional opt-outs; both 0.
     from ..torch_config import TorchConfigAction
 
-    if configure_torch and report.torch_config_action in {
-        TorchConfigAction.ERROR,
-        TorchConfigAction.SKIPPED_EOF,
-        TorchConfigAction.SKIPPED_NON_TTY,
-    }:
+    if (
+        report.mcp_extra_action == "error"
+        or report.mcp_sync_failed
+        or (
+            configure_torch
+            and report.torch_config_action
+            in {
+                TorchConfigAction.ERROR,
+                TorchConfigAction.SKIPPED_EOF,
+                TorchConfigAction.SKIPPED_NON_TTY,
+            }
+        )
+    ):
         raise typer.Exit(code=2)
 
 
@@ -424,6 +440,8 @@ def handle_uninstall(
         _cli.console.print_json(
             _json.dumps(report.to_dict(), default=str), highlight=False
         )
-        return
+    else:
+        _render_uninstall_report(report)
 
-    _render_uninstall_report(report)
+    if report.mcp_sync_failed:
+        raise typer.Exit(code=2)

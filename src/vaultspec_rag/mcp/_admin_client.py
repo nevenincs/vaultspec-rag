@@ -26,10 +26,17 @@ from ._tools import (
 )
 
 
-async def _admin(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+async def _admin(
+    tool_name: str,
+    args: dict[str, Any],
+    *,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
     """Resolve the port and delegate *tool_name* through the admin client."""
     port = _require_port()
-    return await _delegate(partial(_try_http_admin, tool_name, args, port))
+    return await _delegate(
+        partial(_try_http_admin, tool_name, args, port, timeout=timeout)
+    )
 
 
 async def list_projects() -> dict[str, Any]:
@@ -113,6 +120,7 @@ async def get_jobs(
     failed: bool = False,
     job_id: str | None = None,
     since: float | None = None,
+    timeout: float = 30.0,
 ) -> dict[str, Any]:
     """Return recent index/reindex activity from the in-flight registry."""
     args: dict[str, Any] = {}
@@ -132,7 +140,7 @@ async def get_jobs(
         args["job_id"] = job_id
     if since is not None:
         args["since"] = since
-    return await _admin("get_jobs", args)
+    return await _admin("get_jobs", args, timeout=timeout)
 
 
 async def reconfigure_watcher(

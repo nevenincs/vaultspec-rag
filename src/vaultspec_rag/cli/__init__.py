@@ -120,6 +120,7 @@ from ._service_qdrant import (
 from ._service_status import (
     _append_lifecycle_shutdown_log,
     _default_service_port,
+    _delete_service_status,
     _log_file,
     _read_service_status,
     _status_dir,
@@ -144,6 +145,7 @@ __all__ = [
     "_append_lifecycle_shutdown_log",
     "_cpu_only_message",
     "_default_service_port",
+    "_delete_service_status",
     "_display_port_unreachable_error",
     "_display_search_results",
     "_display_service_error",

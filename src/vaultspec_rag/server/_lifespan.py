@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from starlette.applications import Starlette
     from starlette.requests import Request
+
+    from ..qdrant_runtime import QdrantSupervisor
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -53,40 +55,117 @@ def _claim_machine_singleton() -> None:
 
 
 def _stamp_service_phase(phase: str) -> None:
-    """Merge the daemon's lifecycle phase into ``service.json`` (best-effort).
+    """Publish the daemon lifecycle phase through the shared atomic merge."""
+    from ..serviceclient._discovery import (
+        SERVICE_DISCOVERY_SCHEMA,
+        SERVICE_DISCOVERY_VERSION,
+        _discovery_timestamp,
+        _merge_service_status,
+    )
 
-    Only the daemon stamps phases: ``warming`` once the machine lock is held
-    (models not yet loaded, port not yet serving) and ``running`` when uvicorn
-    is about to accept connections. Closes the status gap where a warming
-    daemon holds the machine lock but ``server status`` reads "stopped"/
-    "crashed (port silent)". The CLI parent writes ``service.json`` right
-    after spawn; if this stamp races ahead of that write the merge is skipped
-    and status falls back to the phase-less rendering. Never raises. Reads the
-    path via ``serviceclient`` (the daemon stays free of ``vaultspec_rag.cli``
-    imports).
-    """
-    import json
+    fields: dict[str, object] = {
+        "schema": SERVICE_DISCOVERY_SCHEMA,
+        "version": SERVICE_DISCOVERY_VERSION,
+        "pid": os.getpid(),
+        "phase": phase,
+    }
+    if _m._launch_token:
+        fields["launch_token"] = _m._launch_token
+    if _m._service_port > 0:
+        fields["port"] = _m._service_port
+        fields["started_at"] = _discovery_timestamp()
+    _merge_service_status(fields)
 
-    from ..serviceclient._discovery import _status_file
 
-    path = _status_file()
-    if not path.exists():
-        logger.debug("phase stamp %r skipped: service.json absent", phase)
+def _stamp_qdrant_identity(supervisor: QdrantSupervisor) -> None:
+    """Authoritatively publish the ready child before model warming begins."""
+    from ..config import get_config
+    from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
+    from ..qdrant_runtime._resolve import (
+        probe_qdrant_endpoint,
+        read_qdrant_identity,
+        verify_attachable,
+    )
+    from ..serviceclient._discovery import (
+        SERVICE_DISCOVERY_SCHEMA,
+        SERVICE_DISCOVERY_VERSION,
+        _discovery_timestamp,
+        _merge_service_status,
+    )
+
+    identity = read_qdrant_identity()
+    child_pid = supervisor.pid or (identity.qdrant_pid if identity is not None else 0)
+    if (
+        identity is None
+        or identity.qdrant_pid != child_pid
+        or identity.http_port != supervisor.http_port
+        or identity.qdrant_start_time <= 0.0
+    ):
+        raise RuntimeError(
+            "supervised Qdrant became ready without a complete matching child identity"
+        )
+    cfg = get_config()
+    probe = probe_qdrant_endpoint(supervisor.http_port)
+    attachable, reason = verify_attachable(
+        probe,
+        identity,
+        expected_port=supervisor.http_port,
+        expected_version=QDRANT_SERVER_VERSION,
+        expected_storage=str(cfg.qdrant_storage_dir),
+    )
+    if not attachable:
+        raise RuntimeError(
+            f"supervised Qdrant identity failed final publication validation: {reason}"
+        )
+    if _m._service_port <= 0:
+        raise RuntimeError("service port is unavailable during Qdrant publication")
+    qdrant_identity = {
+        "pid": identity.qdrant_pid,
+        "start_time": identity.qdrant_start_time,
+        "port": identity.http_port,
+        "version": identity.version,
+        "storage_path": identity.storage_path,
+    }
+    _merge_service_status(
+        {
+            "schema": SERVICE_DISCOVERY_SCHEMA,
+            "version": SERVICE_DISCOVERY_VERSION,
+            "pid": os.getpid(),
+            "port": _m._service_port,
+            "started_at": _discovery_timestamp(),
+            "phase": "warming",
+            "launch_token": _m._launch_token,
+            "qdrant_pid": child_pid,
+            "qdrant_alive": supervisor.is_alive(),
+            "qdrant_port": identity.http_port,
+            "qdrant_version": identity.version,
+            "qdrant_start_time": identity.qdrant_start_time,
+            "qdrant_identity": qdrant_identity,
+        }
+    )
+
+
+def _stop_active_qdrant() -> None:
+    """Stop and clear any process-owned supervisor, including failed startup."""
+    from .. import qdrant_runtime as _qr
+    from ..config import EnvVar
+
+    supervisor = _qr.active_supervisor()
+    if supervisor is None:
         return
     try:
-        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.debug("phase stamp %r read failed: %s", phase, exc, exc_info=True)
-        return
-    if data.get("phase") == phase:
-        return
-    data["phase"] = phase
-    tmp = path.with_suffix(".tmp")
-    try:
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        os.replace(str(tmp), str(path))
-    except OSError as exc:
-        logger.debug("phase stamp %r write failed: %s", phase, exc, exc_info=True)
+        supervisor.stop()
+    except Exception:
+        log_event(
+            logger,
+            "service.lifecycle",
+            "qdrant_stop_failed",
+            severity=logging.WARNING,
+            exc_info=True,
+        )
+    finally:
+        _qr.set_active_supervisor(None)
+        os.environ.pop(EnvVar.QDRANT_URL.value, None)
 
 
 def _reconcile_storage_manifest() -> None:
@@ -164,8 +243,6 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # reports "warming" instead of a contradictory "stopped" while models load.
     from ..serviceclient._discovery import SERVICE_PHASE_RUNNING, SERVICE_PHASE_WARMING
 
-    _stamp_service_phase(SERVICE_PHASE_WARMING)
-
     # Once the lock is held, every startup step up to ``yield`` runs under a
     # release-on-failure guard. The shipping daemon's crash-safe lock self-heals
     # via OS release on process exit, but a pre-yield startup failure (qdrant
@@ -173,19 +250,27 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # lifespan REUSE path that never reaches the post-yield ``finally``. A
     # supported embedded-reuse contract requires the lock be freed the moment
     # startup fails, so a subsequent in-process acquire succeeds.
+    periodic_tasks: list[asyncio.Task[None]] = []
+    cleanup_started = False
     try:
+        _stamp_service_phase(SERVICE_PHASE_WARMING)
         periodic_tasks = await _start_components()
         _stamp_service_phase(SERVICE_PHASE_RUNNING)
         try:
             yield
         finally:
+            cleanup_started = True
             await _shutdown_components(periodic_tasks)
     except BaseException:
         # The post-yield ``finally`` releases the lock on a clean run; this
         # branch covers the pre-yield startup failure (and a cancelled startup)
-        # where that ``finally`` was never entered. Release exactly once: a
-        # successful run drops out the bottom without re-releasing.
-        release_machine_lock()
+        # where that ``finally`` was never entered. Stop any already-ready
+        # supervised Qdrant before freeing the singleton: on POSIX the child is
+        # in its own session, so process exit alone is not an ownership cleanup
+        # guarantee. Release exactly once after the child is gone.
+        if not cleanup_started:
+            cleanup_started = True
+            await _shutdown_components(periodic_tasks)
         raise
 
 
@@ -259,6 +344,7 @@ async def _start_components() -> list[asyncio.Task[None]]:
             # config read (registry stores, watcher reindexes) sees
             # server mode for the daemon's lifetime.
             os.environ[EnvVar.QDRANT_URL.value] = supervisor.url
+            _stamp_qdrant_identity(supervisor)
             logger.info(
                 "qdrant server ready in %.2fs at %s (pid %s)",
                 time.perf_counter() - t_q,
@@ -346,9 +432,6 @@ async def _shutdown_components(tasks: list[asyncio.Task[None]]) -> None:
     last so the slot is free for the next service only after this one has
     fully torn down its GPU and Qdrant.
     """
-    from .. import qdrant_runtime as _qr
-    from ..config import EnvVar
-
     for task in tasks:
         task.cancel()
     for task in tasks:
@@ -358,30 +441,14 @@ async def _shutdown_components(tasks: list[asyncio.Task[None]]) -> None:
     # incremental_index() runs against a closed store), stores
     # BEFORE the qdrant child (so clients release their server
     # connections), the qdrant child LAST among data components.
-    _m._stop_all_watchers()
-    _m._registry.close_all()
-    supervisor = _qr.active_supervisor()
-    if supervisor is not None:
-        try:
-            supervisor.stop()
-        except Exception:
-            log_event(
-                logger,
-                "service.lifecycle",
-                "qdrant_stop_failed",
-                severity=logging.WARNING,
-                exc_info=True,
-            )
-        _qr.set_active_supervisor(None)
-        # Undo the in-process env publish so an embedded caller
-        # that runs the lifespan and then continues in the same
-        # interpreter does not keep reading server mode against a
-        # now-dead port (the daemon process just exits, so this
-        # only matters for in-process reuse).
-        os.environ.pop(EnvVar.QDRANT_URL.value, None)
-    # Release the machine singleton last, so the slot is free for the next
-    # service only after this one has fully torn down its GPU and Qdrant.
-    release_machine_lock()
+    try:
+        _m._stop_all_watchers()
+        _m._registry.close_all()
+    finally:
+        _stop_active_qdrant()
+        # Release the machine singleton last, so the slot is free for the next
+        # service only after this one has fully torn down its GPU and Qdrant.
+        release_machine_lock()
     logger.info("Service shutdown complete")
     _m._record_shutdown("clean")
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,17 +50,28 @@ def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[repor
 
 @pytest.fixture
 def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the managed service dir (and thus the bin dir) at tmp."""
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
+    """Point managed service, storage, lock, and port state at test resources."""
+    keys = (
+        EnvVar.STATUS_DIR.value,
+        EnvVar.QDRANT_STORAGE_DIR.value,
+        EnvVar.QDRANT_PORT.value,
+    )
+    previous = {key: os.environ.get(key) for key in keys}
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        isolated_port = int(probe.getsockname()[1])
+    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
+    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(tmp_path / "qdrant" / "storage")
+    os.environ[EnvVar.QDRANT_PORT.value] = str(isolated_port)
     reset_config()
     try:
         yield tmp_path
     finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         reset_config()
 
 

@@ -284,6 +284,8 @@ class EmbeddingModel:
         dense_name: str,
         model_kwargs: dict[str, object],
         cfg: object,
+        *,
+        local_files_only: bool,
     ) -> SentenceTransformer:
         """Construct the dense SentenceTransformer for the configured backend.
 
@@ -319,6 +321,7 @@ class EmbeddingModel:
                 model = SentenceTransformer(
                     dense_name,
                     backend="onnx",
+                    local_files_only=local_files_only,
                     model_kwargs={
                         "provider": "CUDAExecutionProvider",
                         "file_name": onnx_file,
@@ -340,6 +343,7 @@ class EmbeddingModel:
         try:
             return SentenceTransformer(
                 dense_name,
+                local_files_only=local_files_only,
                 model_kwargs=model_kwargs,
                 processor_kwargs={"padding_side": "left"},
             )
@@ -350,12 +354,20 @@ class EmbeddingModel:
                 _raise_for_hf_access(dense_name, exc)
             raise
 
-    def __init__(self, model_name: str | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str | None = None,
+        *,
+        local_files_only: bool = False,
+    ) -> None:
         """Load dense and sparse models onto GPU.
 
         Args:
             model_name: Override the dense embedding model name.
                 Defaults to the config value or MODEL_NAME.
+            local_files_only: Load both models from the local Hugging Face
+                cache without issuing remote metadata requests. The default
+                remains online-capable for normal product construction.
 
         Raises:
             ImportError: If sentence-transformers or torch not installed.
@@ -399,7 +411,12 @@ class EmbeddingModel:
             logger.info("flash_attention_2 not available, using default attention")
 
         t0 = time.perf_counter()
-        self._dense_model = self._load_dense_model(dense_name, model_kwargs, cfg)
+        self._dense_model = self._load_dense_model(
+            dense_name,
+            model_kwargs,
+            cfg,
+            local_files_only=local_files_only,
+        )
         # Cap the model's advertised max sequence length so the
         # processor truncates aggressively and the model never
         # allocates attention buffers for the 32 k context window.
@@ -426,6 +443,7 @@ class EmbeddingModel:
             self._sparse_model = SparseEncoder(
                 sparse_name,
                 device="cuda",
+                local_files_only=local_files_only,
                 model_kwargs={"torch_dtype": torch.float16},
             )
         except Exception as exc:

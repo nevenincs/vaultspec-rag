@@ -14,20 +14,28 @@ Two layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-import vaultspec_rag.mcp._admin_client as admin_tools
 import vaultspec_rag.mcp._tools as tools
 
 from ... import server
 from ...server import _jobs
+from ...serviceclient import _default_service_port, _try_http_admin
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+# Match the real service-job deadline used by storage survey integration. This
+# is deliberately separate from the 30-second timeout for one admin HTTP call.
+_JOB_COMPLETION_TIMEOUT_SECONDS = 120.0
+_JOB_POLL_INTERVAL_SECONDS = 0.1
+_TERMINAL_JOB_PHASES = frozenset({"done", "error", "failed"})
 
 
 @pytest.fixture
@@ -55,6 +63,49 @@ def _make_root(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+async def _wait_for_terminal_job(
+    job_id: str,
+    *,
+    timeout: float = _JOB_COMPLETION_TIMEOUT_SECONDS,
+) -> dict[str, object]:
+    """Wait within the established real service-job completion budget."""
+    deadline = time.monotonic() + timeout
+    last_response: dict[str, object] = {}
+    last_job: dict[str, object] | None = None
+    port = _default_service_port()
+    assert port is not None, f"service port unavailable while waiting for job {job_id}"
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            pytest.fail(
+                f"job {job_id} did not reach a terminal phase within {timeout:g}s; "
+                f"last_job={last_job!r}; last_response={last_response!r}"
+            )
+
+        response = await asyncio.to_thread(
+            _try_http_admin,
+            "get_jobs",
+            {"job_id": job_id},
+            port,
+            timeout=remaining,
+        )
+        last_response = response or {}
+        raw_jobs = last_response.get("jobs", [])
+        jobs = cast("list[dict[str, object]]", raw_jobs)
+        last_job = next((job for job in jobs if job.get("id") == job_id), None)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            pytest.fail(
+                f"job {job_id} did not reach a terminal phase within {timeout:g}s; "
+                f"last_job={last_job!r}; last_response={last_response!r}"
+            )
+        if last_job is not None and last_job.get("phase") in _TERMINAL_JOB_PHASES:
+            return last_job
+
+        await asyncio.sleep(min(_JOB_POLL_INTERVAL_SECONDS, remaining))
 
 
 def _assert_runtime_context(raw: object) -> dict[str, object]:
@@ -261,8 +312,6 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
 async def test_reindex_vault_records_finished_tool_job(
     tmp_path: Path,
 ) -> None:
-    import asyncio
-
     root = _make_root(tmp_path)
 
     response = await tools.reindex_vault(project_root=str(root))
@@ -270,23 +319,10 @@ async def test_reindex_vault_records_finished_tool_job(
     assert response["ok"] is True
     assert "job_id" in response
 
-    # Wait for background job to finish
     job_id: str = cast("str", response["job_id"])
-    for _ in range(50):
-        jobs_res = await admin_tools.get_jobs()
-        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
-        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
-            break
-        await asyncio.sleep(0.1)
-
-    jobs_res = await admin_tools.get_jobs()
-    vault_tool_jobs = [
-        entry
-        for entry in jobs_res.get("jobs", [])
-        if entry["source"] == "vault" and entry["trigger"] == "tool"
-    ]
-    assert len(vault_tool_jobs) >= 1
-    job = next(j for j in vault_tool_jobs if j["id"] == job_id)
+    job = await _wait_for_terminal_job(job_id)
+    assert job["source"] == "vault"
+    assert job["trigger"] == "tool"
     assert job["phase"] == "done"
     assert isinstance(job["finished_at"], float)
     assert isinstance(job["result"], str)
@@ -297,8 +333,6 @@ async def test_reindex_vault_records_finished_tool_job(
 async def test_reindex_codebase_records_finished_tool_job(
     tmp_path: Path,
 ) -> None:
-    import asyncio
-
     root = _make_root(tmp_path)
 
     response = await tools.reindex_codebase(project_root=str(root))
@@ -306,23 +340,10 @@ async def test_reindex_codebase_records_finished_tool_job(
     assert response["ok"] is True
     assert "job_id" in response
 
-    # Wait for background job to finish
     job_id: str = cast("str", response["job_id"])
-    for _ in range(50):
-        jobs_res = await admin_tools.get_jobs()
-        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
-        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
-            break
-        await asyncio.sleep(0.1)
-
-    jobs_res = await admin_tools.get_jobs()
-    code_tool_jobs = [
-        entry
-        for entry in jobs_res.get("jobs", [])
-        if entry["source"] == "code" and entry["trigger"] == "tool"
-    ]
-    assert len(code_tool_jobs) >= 1
-    job = next(j for j in code_tool_jobs if j["id"] == job_id)
+    job = await _wait_for_terminal_job(job_id)
+    assert job["source"] == "code"
+    assert job["trigger"] == "tool"
     assert job["phase"] == "done"
     assert isinstance(job["finished_at"], float)
     assert isinstance(job["result"], str)

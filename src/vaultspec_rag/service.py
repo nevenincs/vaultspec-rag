@@ -143,6 +143,7 @@ class ServiceRegistry:
             model_name: Optional override for the dense embedding
                 model name.  When ``None``, uses the config default.
         """
+        from .config import hf_cache_only
         from .embeddings import EmbeddingModel
 
         if self._model is not None:
@@ -150,7 +151,12 @@ class ServiceRegistry:
         with self._lock:
             if self._model is not None:
                 return
-            self._model = EmbeddingModel(model_name=model_name)
+            local_files_only = hf_cache_only()
+            self._model = EmbeddingModel(
+                model_name=model_name,
+                local_files_only=local_files_only,
+            )
+            logger.info("EmbeddingModel cache-only mode: %s", local_files_only)
             logger.info("EmbeddingModel loaded")
 
     @property
@@ -192,20 +198,23 @@ class ServiceRegistry:
             from sentence_transformers import CrossEncoder
 
             from ._gpu import load_torch
-            from .config import get_config
+            from .config import get_config, hf_cache_only
 
             torch = load_torch()
             cfg = get_config()
+            local_files_only = hf_cache_only()
             self._reranker = CrossEncoder(
                 cfg.reranker_model,
                 device="cuda",
                 activation_fn=torch.nn.Sigmoid(),
                 max_length=int(cfg.reranker_max_length),
+                local_files_only=local_files_only,
             )
             logger.info(
-                "Shared CrossEncoder loaded on %s: %s",
+                "Shared CrossEncoder loaded on %s: %s (cache-only=%s)",
                 torch.cuda.get_device_name(0),
                 cfg.reranker_model,
+                local_files_only,
             )
             return self._reranker
 

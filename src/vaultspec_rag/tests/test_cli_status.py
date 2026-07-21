@@ -544,26 +544,34 @@ class TestWarmingStatusState:
         assert "server status" in action
         assert "retry" in action
 
-    def test_daemon_phase_stamp_merges_and_skips_absent(self, tmp_path: Path):
+    def test_daemon_phase_stamp_publishes_before_parent_and_survives_merge(
+        self,
+        tmp_path: Path,
+    ):
         import json
 
-        from ..server._lifespan import _stamp_service_phase
+        import vaultspec_rag.server as server_state
+        from vaultspec_rag.server._lifespan import _stamp_service_phase
 
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        previous_port = server_state._service_port
+        server_state._service_port = 8766
         try:
-            # Absent file: the stamp is skipped, nothing is created.
             _stamp_service_phase("warming")
             sf = tmp_path / "service.json"
-            assert not sf.exists()
-
-            _write_service_status(pid=4242, port=8766)
-            _stamp_service_phase("warming")
             data = json.loads(sf.read_text(encoding="utf-8"))
             assert data["phase"] == "warming"
-            assert data["pid"] == 4242
+            assert data["pid"] == os.getpid()
+            assert data["port"] == 8766
+
+            _write_service_status(pid=4242, port=8766)
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            assert data["phase"] == "warming"
+            assert data["pid"] == os.getpid()
 
             _stamp_service_phase("running")
             data = json.loads(sf.read_text(encoding="utf-8"))
             assert data["phase"] == "running"
         finally:
+            server_state._service_port = previous_port
             os.environ.pop(EnvVar.STATUS_DIR, None)

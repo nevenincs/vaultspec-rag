@@ -44,6 +44,7 @@ from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
     _discovery_timestamp,
+    _merge_service_status,
 )
 from ._state import _HEARTBEAT_INTERVAL_SECONDS, _HEARTBEAT_STALENESS_SECONDS
 
@@ -99,11 +100,25 @@ def _unlink_status_file_silently() -> None:
     """
     from .._machine_lock import machine_discovery_path
 
-    paths = [_m._status_file_path()]
+    status_path = _m._status_file_path()
+    paths: list[Path] = []
     try:
         paths.append(machine_discovery_path())
     except Exception as exc:  # config unavailable at a late shutdown stage
         logger.debug("machine discovery pointer path unresolved: %s", exc)
+    try:
+        from ..serviceclient._discovery import _delete_service_status
+
+        _delete_service_status(path=status_path)
+    except (OSError, RuntimeError, TimeoutError) as exc:
+        log_event(
+            logger,
+            "service.lifecycle",
+            "cleanup_failed",
+            severity=logging.WARNING,
+            path=status_path,
+            error=exc,
+        )
     for path in paths:
         try:
             path.unlink()
@@ -160,45 +175,73 @@ def _heartbeat_tick_sync() -> None:
     # so a file written by an older parent is upgraded on the first tick and the
     # two timestamp fields never diverge in precision (#190). Surface the staleness
     # contract in the file so a consumer reads it rather than hard-coding a guess.
-    data["schema"] = SERVICE_DISCOVERY_SCHEMA
-    data["version"] = SERVICE_DISCOVERY_VERSION
-    data["last_heartbeat"] = _discovery_timestamp()
-    data["heartbeat_interval_s"] = _HEARTBEAT_INTERVAL_SECONDS
-    data["stale_after_s"] = _HEARTBEAT_STALENESS_SECONDS
-    data["pid"] = os.getpid()
-    data["parent_pid"] = os.getppid()
+    fields: dict[str, object] = {
+        "schema": SERVICE_DISCOVERY_SCHEMA,
+        "version": SERVICE_DISCOVERY_VERSION,
+        "last_heartbeat": _discovery_timestamp(),
+        "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
+        "stale_after_s": _HEARTBEAT_STALENESS_SECONDS,
+        "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+    }
     # Record the daemon's own python environment so operators and `server
     # status` can see which interpreter and venv actually run the service. The
     # daemon inherits the launcher's environment (see `_resolve_daemon_interpreter`)
     # and never provisions its own python; this makes that coupling legible. Field
     # names mirror the /health payload (`executable`/`prefix`) for one vocabulary.
-    data["executable"] = sys.executable
-    data["prefix"] = sys.prefix
-    data["python_version"] = sys.version.split()[0]
+    fields["executable"] = sys.executable
+    fields["prefix"] = sys.prefix
+    fields["python_version"] = sys.version.split()[0]
     # Record the supervised qdrant child (if any) so operators and the
     # CLI status surface can see the pair without probing the daemon.
     from .. import qdrant_runtime as _qr
 
     supervisor = _qr.active_supervisor()
     if supervisor is not None:
-        data["qdrant_pid"] = supervisor.pid
-        data["qdrant_alive"] = supervisor.is_alive()
-        data["qdrant_port"] = supervisor.http_port
+        from ..qdrant_runtime._resolve import read_qdrant_identity
+
+        identity = read_qdrant_identity()
+        supervised_pid = supervisor.pid
+        if (
+            supervised_pid is None
+            and identity is not None
+            and identity.http_port == supervisor.http_port
+        ):
+            supervised_pid = identity.qdrant_pid
+        if supervised_pid is not None:
+            fields["qdrant_pid"] = supervised_pid
+        fields["qdrant_alive"] = supervisor.is_alive()
+        fields["qdrant_port"] = supervisor.http_port
+        if (
+            identity is not None
+            and identity.qdrant_pid == supervised_pid
+            and identity.http_port == supervisor.http_port
+        ):
+            fields["qdrant_version"] = identity.version
+            fields["qdrant_start_time"] = identity.qdrant_start_time
+            fields["qdrant_identity"] = {
+                "pid": identity.qdrant_pid,
+                "start_time": identity.qdrant_start_time,
+                "port": identity.http_port,
+                "version": identity.version,
+                "storage_path": identity.storage_path,
+            }
     # Per-process identity token. Empty during the narrow window
     # between module import and service_lifespan startup; the guard
     # prevents an in-flight zero-value overwrite of a token written
     # by a previous daemon process that crashed without unlinking
     # service.json.
     if _m._SERVICE_TOKEN:
-        data["service_token"] = _m._SERVICE_TOKEN
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(str(tmp), str(path))
+        fields["service_token"] = _m._SERVICE_TOKEN
+    try:
+        data = _merge_service_status(fields, path=path, require_existing=True)
+    except FileNotFoundError:
+        return
     # Mirror the same versioned payload to the machine-global discovery pointer
     # beside the lock, so a consumer that does not share this daemon's STATUS_DIR
     # can still find it. Best-effort: a pointer write failure is a discovery
     # nuisance, never a reason to break the heartbeat.
-    _write_machine_discovery(cast("dict[str, object]", data))
+    _write_machine_discovery(data)
 
 
 def _write_machine_discovery(data: dict[str, object]) -> None:

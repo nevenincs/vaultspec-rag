@@ -454,10 +454,11 @@ class TestMcpFastPath:
         )
 
         result = cli_mod._try_http_reindex(
-            "reindex_vault",
+            "vault",
             False,
             8766,
             "/tmp/proj",
+            initiator_kind="cli",
         )
         assert isinstance(result, dict)
         assert result.get("ok") is False

@@ -24,12 +24,12 @@ import urllib.error
 import urllib.request
 from collections import deque
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ._constants import QDRANT_SERVER_VERSION, QdrantRuntimeState
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from typing import Any
 
     from ._resolve import QdrantIdentity
@@ -645,7 +645,24 @@ class QdrantSupervisor:
         except OSError:
             logger.exception("qdrant restart spawn failed")
             return False
-        return self.wait_ready(timeout)
+        ready = self.wait_ready(timeout)
+        if ready:
+            from ._constants import QDRANT_SERVER_VERSION
+            from ._resolve import write_qdrant_identity
+
+            try:
+                write_qdrant_identity(
+                    storage_path=str(self.storage_dir),
+                    version=self.server_version() or QDRANT_SERVER_VERSION,
+                    owner_pid=os.getpid(),
+                    http_port=self.http_port,
+                    qdrant_pid=self.pid or 0,
+                )
+            except Exception:
+                logger.exception("qdrant restart identity publication failed")
+                self.stop()
+                return False
+        return ready
 
     def mark_attached(self) -> None:
         """Mark this supervisor as attached to an externally-owned managed server.
@@ -789,10 +806,57 @@ def _reap_orphan_before_spawn(
     lose a reap-to-spawn bind race. Raises with a named, actionable cause at each
     failure rather than spawning a doomed competitor.
     """
-    from ._resolve import pid_image_is_qdrant, reap_qdrant_orphan
+    from ._resolve import (
+        pid_image_is_qdrant,
+        pid_listens_on_loopback_port,
+        pid_matches_start_time,
+        probe_qdrant_endpoint,
+        reap_qdrant_orphan,
+    )
 
-    target = identity.qdrant_pid if identity is not None else 0
+    if identity is None:
+        raise RuntimeError(
+            f"qdrant orphan on port {qport} has no managed identity; refusing to signal"
+        )
+    target = identity.qdrant_pid
+    child_start_time = identity.qdrant_start_time
     logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
+    from ._resolve import owner_pid_witness_state
+
+    owner_state = owner_pid_witness_state(identity, timeout=2.0)
+    if owner_state not in {"dead", "replaced"}:
+        raise RuntimeError(
+            f"qdrant orphan on port {qport}: recorded owner pid "
+            f"{identity.owner_pid} is {owner_state}; refusing to signal the "
+            "managed child until owner death is proven"
+        )
+    if child_start_time <= 0.0 or not pid_matches_start_time(
+        target,
+        child_start_time,
+    ):
+        raise RuntimeError(
+            f"qdrant orphan on port {qport}: recorded child pid {target} has "
+            "no matching process-start witness; refusing to signal a reusable "
+            "pid. Stop the holder manually, then retry; or run local-only: "
+            "vaultspec-rag server start --local-only"
+        )
+    from ..config import get_config
+
+    expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
+    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+    live_probe = probe_qdrant_endpoint(qport)
+    if (
+        recorded_storage != expected_storage
+        or identity.version != QDRANT_SERVER_VERSION
+        or identity.http_port != qport
+        or not pid_listens_on_loopback_port(target, qport)
+        or not live_probe.ready
+        or live_probe.version != QDRANT_SERVER_VERSION
+    ):
+        raise RuntimeError(
+            f"qdrant orphan on port {qport} failed the complete managed "
+            "storage/version/listener witness; refusing to signal it"
+        )
     # Confirm the recorded child pid is still a qdrant process before the hard
     # kill: the pid came from a dead owner's record and may have been recycled by
     # an unrelated process, which must never be killed.
@@ -803,7 +867,10 @@ def _reap_orphan_before_spawn(
             "to kill it. Stop the holder manually, then retry; or run "
             "local-only: vaultspec-rag server start --local-only"
         )
-    if not reap_qdrant_orphan(target):
+    if not reap_qdrant_orphan(
+        target,
+        expected_start_time=child_start_time,
+    ):
         raise RuntimeError(
             f"qdrant orphan holding port {qport} could not be reaped "
             f"(child pid {target}); stop it manually, then retry; or run "
@@ -868,6 +935,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     action, reason = decide_qdrant_action(
         probe,
         identity,
+        expected_port=qport,
         expected_version=QDRANT_SERVER_VERSION,
         expected_storage=str(storage_dir),
     )

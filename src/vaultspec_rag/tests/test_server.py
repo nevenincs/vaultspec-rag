@@ -44,6 +44,19 @@ from ..server import (
 pytestmark = [pytest.mark.unit]
 
 
+def test_missing_mcp_extra_guidance_respects_all_install_modes() -> None:
+    from ..server._main import _missing_mcp_extra_message
+
+    message = _missing_mcp_extra_message(ImportError("mcp unavailable"))
+
+    assert "uvx --from vaultspec-rag[mcp]" in message
+    assert "does not modify the project" in message
+    assert "[project].dependencies" in message
+    assert "[dependency-groups].dev" in message
+    assert "[tool.uv].dev-dependencies" in message
+    assert "uv add vaultspec-rag[mcp]" not in message
+
+
 def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)

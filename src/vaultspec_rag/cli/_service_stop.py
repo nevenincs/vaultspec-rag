@@ -28,7 +28,7 @@ from ._service_lifecycle import (
     _process_line,
     _should_unlink_discovery_file,
 )
-from ._service_status import _read_service_status, _status_file
+from ._service_status import _delete_service_status, _read_service_status
 
 __all__ = [
     "_fail_stop",
@@ -265,7 +265,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
     # status file.
     status = _read_service_status()
     if status is not None and int(status.get("port", 0)) == port:
-        _status_file().unlink(missing_ok=True)
+        _delete_service_status()
     _stop_success(
         json_mode,
         status="stopped",
@@ -368,7 +368,7 @@ def service_stop(
         # /health/identity miss) must not have its file erased, which would
         # both mis-report a live daemon as gone and break discovery (#204).
         if _should_unlink_discovery_file(_cli._is_pid_alive(pid)):
-            _status_file().unlink(missing_ok=True)
+            _delete_service_status()
             _stop_success(
                 json_mode,
                 status="cleaned",
@@ -391,7 +391,7 @@ def service_stop(
         )
 
     _terminate_and_confirm(pid)
-    _status_file().unlink(missing_ok=True)
+    _delete_service_status()
     _stop_success(
         json_mode,
         status="stopped",

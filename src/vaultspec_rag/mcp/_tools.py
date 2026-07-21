@@ -275,7 +275,14 @@ async def reindex_vault(
     """Re-index vault documentation incrementally."""
     port = _require_port()
     return await _delegate(
-        partial(_try_http_reindex, "vault", False, port, project_root or "")
+        partial(
+            _try_http_reindex,
+            "vault",
+            False,
+            port,
+            project_root or "",
+            initiator_kind="mcp",
+        )
     )
 
 
@@ -286,5 +293,12 @@ async def reindex_codebase(
     """Re-index the source codebase incrementally."""
     port = _require_port()
     return await _delegate(
-        partial(_try_http_reindex, "codebase", False, port, project_root or "")
+        partial(
+            _try_http_reindex,
+            "codebase",
+            False,
+            port,
+            project_root or "",
+            initiator_kind="mcp",
+        )
     )

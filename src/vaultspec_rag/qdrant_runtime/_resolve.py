@@ -20,11 +20,15 @@ import os
 import platform as _platform
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from ..config import EnvVar, get_config
 from ._constants import (
@@ -45,8 +49,11 @@ __all__ = [
     "decide_qdrant_action",
     "has_provisioned_binary",
     "owner_pid_is_live_owner",
+    "owner_pid_witness_state",
     "pid_alive",
     "pid_image_is_qdrant",
+    "pid_listens_on_loopback_port",
+    "pid_matches_start_time",
     "pid_start_time",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
@@ -63,6 +70,7 @@ __all__ = [
 # proxy could spoof a "ready"/version response a caller would trust when
 # deciding whether to attach to an already-running Qdrant.
 _LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_START_TIME_TOLERANCE_SECONDS = 1e-6
 
 
 @dataclass(frozen=True)
@@ -240,6 +248,10 @@ class QdrantIdentity:
         qdrant_pid: PID of the Qdrant child process itself - the reap target when
             the owner is dead but the child still holds the port. ``0`` when the
             record predates this field (treated as "unknown, cannot reap").
+        qdrant_start_time: The Qdrant child's creation time (epoch seconds).
+            This binds the reap target to one child-process incarnation rather
+            than a reusable PID. ``0.0`` means the identity predates the witness
+            and cannot authorize automated signalling.
         owner_start_time: The owner process's creation time (epoch seconds), the
             anti-pid-reuse witness. A pid alone is reusable: on a busy machine a
             dead owner's pid may be recycled by an unrelated live process, which
@@ -255,6 +267,7 @@ class QdrantIdentity:
     http_port: int
     qdrant_pid: int = 0
     owner_start_time: float = 0.0
+    qdrant_start_time: float = 0.0
 
 
 def qdrant_identity_path() -> Path:
@@ -289,6 +302,9 @@ def read_qdrant_identity() -> QdrantIdentity | None:
             owner_pid=int(cast("str | int | float", d["owner_pid"])),
             http_port=int(cast("str | int | float", d["http_port"])),
             qdrant_pid=int(cast("str | int | float", d.get("qdrant_pid", 0))),
+            qdrant_start_time=float(
+                cast("str | int | float", d.get("qdrant_start_time", 0.0))
+            ),
             owner_start_time=float(
                 cast("str | int | float", d.get("owner_start_time", 0.0))
             ),
@@ -334,7 +350,43 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def pid_start_time(pid: int) -> float:
+def _bounded_call[T](
+    operation: Callable[[], T],
+    *,
+    timeout: float | None,
+    fallback: T,
+    label: str,
+) -> T:
+    """Run a potentially blocking local inspection inside an optional budget."""
+    if timeout is None:
+        return operation()
+    if timeout <= 0.0:
+        return fallback
+
+    import queue
+    import threading
+
+    outcomes: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+
+    def run() -> None:
+        try:
+            outcomes.put((True, operation()))
+        except BaseException as exc:
+            outcomes.put((False, exc))
+
+    threading.Thread(target=run, daemon=True, name=f"vaultspec-{label}").start()
+    try:
+        succeeded, value = outcomes.get(timeout=timeout)
+    except queue.Empty:
+        logger.debug("%s exceeded its %.3fs inspection budget", label, timeout)
+        return fallback
+    if not succeeded:
+        logger.debug("%s failed: %s", label, value)
+        return fallback
+    return cast("T", value)
+
+
+def pid_start_time(pid: int, *, timeout: float | None = None) -> float:
     """Return *pid*'s process creation time (epoch seconds), or ``0.0``.
 
     The pid-reuse witness: two processes that share a recycled pid have
@@ -345,13 +397,38 @@ def pid_start_time(pid: int) -> float:
     """
     if pid <= 0:
         return 0.0
-    try:
+
+    def inspect() -> float:
         import psutil
 
-        return float(psutil.Process(pid).create_time())
-    except Exception as exc:  # psutil raises NoSuchProcess/AccessDenied/etc.
-        logger.debug("could not read start time for pid %d: %s", pid, exc)
-        return 0.0
+        try:
+            return float(psutil.Process(pid).create_time())
+        except Exception as exc:  # psutil raises NoSuchProcess/AccessDenied/etc.
+            logger.debug("could not read start time for pid %d: %s", pid, exc)
+            return 0.0
+
+    return _bounded_call(
+        inspect,
+        timeout=timeout,
+        fallback=0.0,
+        label=f"pid-{pid}-start-time",
+    )
+
+
+def pid_matches_start_time(
+    pid: int,
+    expected_start_time: float,
+    *,
+    timeout: float | None = None,
+) -> bool:
+    """Return whether *pid* is the exact witnessed process incarnation."""
+    if expected_start_time <= 0.0:
+        return False
+    live_start = pid_start_time(pid, timeout=timeout)
+    return (
+        live_start > 0.0
+        and abs(live_start - expected_start_time) <= _START_TIME_TOLERANCE_SECONDS
+    )
 
 
 def owner_pid_is_live_owner(identity: QdrantIdentity | None) -> bool:
@@ -361,25 +438,84 @@ def owner_pid_is_live_owner(identity: QdrantIdentity | None) -> bool:
     recycled by an unrelated live process must NOT read as a live owner. The
     owner is live only when its pid is alive AND its recorded creation time
     matches the live process's creation time. A legacy record without a recorded
-    start time (``0.0``) degrades to the pid-only check, the prior behaviour.
+    start time is unverified and therefore fails closed.
     """
+    return owner_pid_witness_state(identity) == "live"
+
+
+def owner_pid_witness_state(
+    identity: QdrantIdentity | None,
+    *,
+    timeout: float | None = None,
+) -> str:
+    """Classify the recorded owner incarnation without treating unknown as dead."""
     if identity is None or not pid_alive(identity.owner_pid):
-        return False
+        return "dead"
     if identity.owner_start_time <= 0.0:
-        # Legacy record: no witness to compare. Fall back to pid liveness.
-        return True
-    live_start = pid_start_time(identity.owner_pid)
+        return "unknown"
+    live_start = pid_start_time(identity.owner_pid, timeout=timeout)
     if live_start <= 0.0:
-        # The pid is alive but its start time is unreadable; cannot confirm it
-        # is the same incarnation, so do not assert ownership.
-        return False
-    # Creation times are float seconds; compare with a small tolerance to absorb
-    # platform rounding (Windows reports 100ns ticks; psutil normalises, but a
-    # round-trip through JSON can lose ulps).
-    return abs(live_start - identity.owner_start_time) < 1.0
+        return "unknown"
+    if abs(live_start - identity.owner_start_time) <= _START_TIME_TOLERANCE_SECONDS:
+        return "live"
+    return "replaced"
 
 
-def reap_qdrant_orphan(pid: int, *, wait_seconds: float = 5.0) -> bool:
+def _reap_on_windows(
+    pid: int,
+    *,
+    deadline: float,
+    target_gone: Callable[[], bool],
+) -> bool | None:
+    """Force-kill the process tree on Windows.
+
+    Returns a final answer when the outcome is already decided, else ``None``
+    so the caller falls through to the shared settle-and-confirm wait.
+    """
+    import subprocess
+
+    if target_gone():
+        return True
+    try:
+        subprocess.run(  # fixed argv, no shell, trusted pid
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=max(0.001, deadline - time.monotonic()),
+        )
+    except subprocess.TimeoutExpired:
+        return target_gone()
+    return None
+
+
+def _reap_on_posix(
+    pid: int,
+    *,
+    deadline: float,
+    target_gone: Callable[[], bool],
+) -> bool | None:
+    """Signal the process on POSIX, escalating SIGTERM to SIGKILL."""
+    import signal
+
+    if target_gone():
+        return True
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGTERM)
+    while time.monotonic() < deadline and not target_gone():
+        time.sleep(0.1)
+    if not target_gone():
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+    return None
+
+
+def reap_qdrant_orphan(
+    pid: int,
+    *,
+    wait_seconds: float = 5.0,
+    expected_start_time: float | None = None,
+) -> bool:
     """Terminate an orphaned managed-Qdrant process by pid; report success.
 
     Used only after the orphan has been positively classified (the recorded
@@ -392,36 +528,34 @@ def reap_qdrant_orphan(pid: int, *, wait_seconds: float = 5.0) -> bool:
     """
     import time as _time
 
+    deadline = _time.monotonic() + max(0.0, wait_seconds)
+
+    def target_is_gone_or_replaced() -> bool:
+        if not pid_alive(pid):
+            return True
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0.0:
+            return False
+        return expected_start_time is not None and not pid_matches_start_time(
+            pid,
+            expected_start_time,
+            timeout=remaining,
+        )
+
     if pid <= 0:
         return False
-    if not pid_alive(pid):
+    if target_is_gone_or_replaced():
         return True
-    if sys.platform == "win32":
-        import subprocess
-
-        subprocess.run(  # fixed argv, no shell, trusted pid
-            ["taskkill", "/F", "/T", "/PID", str(pid)],
-            capture_output=True,
-            check=False,
-        )
-    else:
-        import signal
-
-        with contextlib.suppress(OSError):
-            os.kill(pid, signal.SIGTERM)
-        deadline = _time.monotonic() + wait_seconds
-        while _time.monotonic() < deadline and pid_alive(pid):
-            _time.sleep(0.1)
-        if pid_alive(pid):
-            with contextlib.suppress(OSError):
-                os.kill(pid, signal.SIGKILL)
-    deadline = _time.monotonic() + wait_seconds
-    while _time.monotonic() < deadline and pid_alive(pid):
+    reaper = _reap_on_windows if sys.platform == "win32" else _reap_on_posix
+    decided = reaper(pid, deadline=deadline, target_gone=target_is_gone_or_replaced)
+    if decided is not None:
+        return decided
+    while _time.monotonic() < deadline and not target_is_gone_or_replaced():
         _time.sleep(0.1)
-    return not pid_alive(pid)
+    return target_is_gone_or_replaced()
 
 
-def pid_image_is_qdrant(pid: int) -> bool:
+def pid_image_is_qdrant(pid: int, *, timeout: float | None = None) -> bool:
     """Return whether *pid* is a live process whose executable is qdrant.
 
     A reap target's pid comes from a now-dead owner's identity record; on a busy
@@ -434,12 +568,23 @@ def pid_image_is_qdrant(pid: int) -> bool:
     if sys.platform == "win32":
         import subprocess
 
-        result = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        if timeout is not None and timeout <= 0.0:
+            return False
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            logger.debug(
+                "qdrant image inspection for pid %d exceeded %.3fs",
+                pid,
+                timeout,
+            )
+            return False
         return "qdrant" in result.stdout.lower()
     for proc_file in ("comm", "cmdline"):
         try:
@@ -451,6 +596,46 @@ def pid_image_is_qdrant(pid: int) -> bool:
     return False
 
 
+def pid_listens_on_loopback_port(
+    pid: int,
+    port: int,
+    *,
+    timeout: float | None = None,
+) -> bool:
+    """Return whether this exact process owns the loopback listening port."""
+    if pid <= 0 or port <= 0:
+        return False
+
+    def inspect() -> bool:
+        import psutil
+
+        try:
+            connections = psutil.Process(pid).net_connections(kind="tcp")
+        except Exception as exc:
+            logger.debug(
+                "could not inspect TCP listener ownership for pid %d port %d: %s",
+                pid,
+                port,
+                exc,
+            )
+            return False
+        for connection in connections:
+            if connection.status != psutil.CONN_LISTEN:
+                continue
+            address = connection.laddr
+            host = str(address.ip)
+            if int(address.port) == port and host in {"127.0.0.1", "::1"}:
+                return True
+        return False
+
+    return _bounded_call(
+        inspect,
+        timeout=timeout,
+        fallback=False,
+        label=f"pid-{pid}-listener",
+    )
+
+
 def write_qdrant_identity(
     *,
     storage_path: str,
@@ -458,6 +643,7 @@ def write_qdrant_identity(
     owner_pid: int,
     http_port: int,
     qdrant_pid: int = 0,
+    qdrant_start_time: float | None = None,
     owner_start_time: float | None = None,
 ) -> Path:
     """Atomically write the managed-Qdrant identity sidecar.
@@ -472,12 +658,17 @@ def write_qdrant_identity(
             anti-pid-reuse witness. ``None`` resolves it from the owner pid, so
             callers normally omit it; a recycled pid later reads a different
             creation time and is no longer mistaken for the live owner.
+        qdrant_start_time: The child process's creation-time witness. ``None``
+            resolves it from ``qdrant_pid``; an unreadable or legacy zero value
+            cannot authorize later automated reaping.
 
     Returns:
         The path the sidecar was written to.
     """
     if owner_start_time is None:
         owner_start_time = pid_start_time(owner_pid)
+    if qdrant_start_time is None:
+        qdrant_start_time = pid_start_time(qdrant_pid)
     path = qdrant_identity_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -489,6 +680,7 @@ def write_qdrant_identity(
                 "owner_pid": owner_pid,
                 "http_port": http_port,
                 "qdrant_pid": qdrant_pid,
+                "qdrant_start_time": qdrant_start_time,
                 "owner_start_time": owner_start_time,
             }
         ),
@@ -503,17 +695,18 @@ def verify_attachable(
     probe: QdrantEndpointProbe,
     identity: QdrantIdentity | None,
     *,
+    expected_port: int,
     expected_version: str,
     expected_storage: str,
+    inspection_timeout: float = 2.0,
 ) -> tuple[bool, str]:
     """Decide whether a running Qdrant is safe to attach to, with a reason.
 
-    Attach only when every gate passes: the server is *healthy* (``/readyz``
-    ready), it is *owned* (a managed identity sidecar exists), and it is
-    *capable* - the live version matches the managed version and it is serving
-    the expected storage path. Any failure returns ``(False, reason)`` so the
-    caller refuses fast with a named cause rather than attaching blindly or
-    spawning a competitor.
+    Attach only when every gate passes: ready endpoint, complete owner and child
+    process-incarnation witnesses, Qdrant image, process-owned loopback
+    listener, expected port, pinned version, and expected storage. Any failure
+    returns ``(False, reason)`` so callers fail closed instead of publishing an
+    unverifiable attached identity.
 
     Returns:
         ``(attachable, reason)``.
@@ -522,6 +715,18 @@ def verify_attachable(
         return False, "qdrant on the port is not ready (/readyz did not return 200)"
     if identity is None:
         return False, "no managed identity sidecar; the port holder is not ours"
+    if identity.http_port != expected_port:
+        return (
+            False,
+            f"port mismatch: identity records {identity.http_port} != expected "
+            f"{expected_port}",
+        )
+    if identity.version != expected_version:
+        return (
+            False,
+            f"identity version mismatch: recorded {identity.version!r} != managed "
+            f"{expected_version!r}",
+        )
     if expected_version and probe.version != expected_version:
         # The capability gate is non-optional: an unreadable version (empty) is
         # a gate FAILURE, not a pass - attaching to a server whose version we
@@ -540,12 +745,60 @@ def verify_attachable(
             f"storage mismatch: managed identity serves {identity.storage_path!r} "
             f"!= expected {expected_storage!r}",
         )
+    return _verify_attach_identity_witnesses(
+        identity,
+        expected_port=expected_port,
+        inspection_timeout=inspection_timeout,
+    )
+
+
+def _verify_attach_identity_witnesses(
+    identity: QdrantIdentity,
+    *,
+    expected_port: int,
+    inspection_timeout: float,
+) -> tuple[bool, str]:
+    """Validate the complete live owner/child witness used for attachment."""
+    if identity.owner_start_time <= 0.0:
+        return False, "managed identity has no owner process-start witness"
+    if identity.qdrant_pid <= 0 or identity.qdrant_start_time <= 0.0:
+        return False, "managed identity has no complete child process witness"
+    deadline = time.monotonic() + max(0.0, inspection_timeout)
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    if not pid_matches_start_time(
+        identity.owner_pid,
+        identity.owner_start_time,
+        timeout=remaining(),
+    ):
+        return False, "managed owner process incarnation does not match its witness"
+    if not pid_matches_start_time(
+        identity.qdrant_pid,
+        identity.qdrant_start_time,
+        timeout=remaining(),
+    ):
+        return False, "managed child process incarnation does not match its witness"
+    if not pid_image_is_qdrant(identity.qdrant_pid, timeout=remaining()):
+        return False, "witnessed managed child image is not Qdrant"
+    if not pid_listens_on_loopback_port(
+        identity.qdrant_pid,
+        expected_port,
+        timeout=remaining(),
+    ):
+        return (
+            False,
+            "witnessed managed child does not own the expected loopback listener",
+        )
     return True, "attachable"
 
 
 def classify_qdrant_state(
     probe: QdrantEndpointProbe,
     identity: QdrantIdentity | None,
+    *,
+    owner_timeout: float | None = None,
 ) -> str:
     """Classify the Qdrant port/owner state for the attach/spawn decision.
 
@@ -560,18 +813,25 @@ def classify_qdrant_state(
       not competed with.
     - ``"managed_running"``: listening with a live recorded owner - the managed
       Qdrant is up; attach (subject to the capability/ownership gate).
+    - ``"owner_unverified"``: the recorded owner is live but its process-start
+      witness cannot be read - fail closed without attaching, reaping, or
+      spawning.
     - ``"foreign"``: listening but no/again-mismatched managed identity - an
       unrelated process owns the port; never spawn a competitor, never attach.
     """
-    owner_alive = owner_pid_is_live_owner(identity)
+    owner_state = owner_pid_witness_state(identity, timeout=owner_timeout)
     if not probe.listening:
-        if identity is not None and not owner_alive:
+        if identity is not None and owner_state in {"dead", "replaced"}:
             return "stale_identity"
+        if identity is not None and owner_state == "unknown":
+            return "owner_unverified"
         return "absent"
     if identity is None:
         return "foreign"
-    if owner_alive:
+    if owner_state == "live":
         return "managed_running"
+    if owner_state == "unknown":
+        return "owner_unverified"
     return "managed_orphan"
 
 
@@ -579,6 +839,7 @@ def decide_qdrant_action(
     probe: QdrantEndpointProbe,
     identity: QdrantIdentity | None,
     *,
+    expected_port: int,
     expected_version: str,
     expected_storage: str,
 ) -> tuple[str, str]:
@@ -588,10 +849,10 @@ def decide_qdrant_action(
 
     - ``("attach", reason)``: a healthy, owned, capable managed server is up -
       reuse it, do not spawn.
-    - ``("refuse", reason)``: the port is held by a foreign process, or by a
-      managed server that fails the attach gate (unhealthy / wrong version /
-      wrong storage) - never spawn a competitor on the shared single-writer
-      storage; fail fast with the reason.
+    - ``("refuse", reason)``: the port is held by a foreign process, the owner
+      witness cannot be verified, or a managed server fails the attach gate
+      (unhealthy / wrong version / wrong storage) - never spawn a competitor on
+      the shared single-writer storage; fail fast with the reason.
     - ``("reap_then_spawn", reason)``: a managed orphan (recorded owner dead) is
       holding the port - reap it, then spawn.
     - ``("spawn", reason)``: nothing usable is there (clean slate or a stale
@@ -602,6 +863,7 @@ def decide_qdrant_action(
         ok, reason = verify_attachable(
             probe,
             identity,
+            expected_port=expected_port,
             expected_version=expected_version,
             expected_storage=expected_storage,
         )
@@ -611,6 +873,13 @@ def decide_qdrant_action(
             "refuse",
             "port held by a non-managed process (listening, no managed "
             f"identity); refusing to spawn a competitor on {expected_storage!r}",
+        )
+    if state == "owner_unverified":
+        return (
+            "refuse",
+            "recorded qdrant owner is live but its process-start witness could "
+            "not be read; refusing to attach, reap, or spawn until ownership "
+            "can be verified",
         )
     if state == "managed_orphan":
         return (

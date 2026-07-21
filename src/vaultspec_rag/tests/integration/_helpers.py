@@ -112,16 +112,22 @@ def _get_ephemeral_qdrant_port() -> int:
 
 
 def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
-    """Poll ``_health_probe`` with exponential backoff until ready."""
+    """Poll health without allowing a probe or sleep to overrun the deadline."""
     delay = 0.5
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        health = _health_probe(port)
-        if health is not None and health.get("status") == "ready":
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        health = _health_probe(port, timeout=min(5.0, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining > 0 and health is not None and health.get("status") == "ready":
             return health
-        time.sleep(delay)
+        if remaining <= 0:
+            break
+        time.sleep(min(delay, remaining))
         delay = min(delay * 2, 5.0)
-    msg = f"Service on port {port} not ready after {timeout:.0f}s"
+    msg = f"Service on port {port} not ready after {timeout:.3f}s"
     raise TimeoutError(msg)
 
 
@@ -138,15 +144,17 @@ def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
 @contextmanager
 def _service_env(
     tmp_path: Path,
-    env_overrides: Mapping[str, str] | None = None,
+    env_overrides: Mapping[str, str | None] | None = None,
 ) -> Generator[None]:
     """Isolate service state files to *tmp_path*.
 
     Sets ``VAULTSPEC_RAG_STATUS_DIR`` (and any additional
     *env_overrides* the caller provides) so the spawned subprocess
-    and all CLI helpers write to the temp directory.  Resets config
-    singletons on entry and exit and restores the previous
-    environment on teardown.
+    and all CLI helpers write to the temp directory. An override value
+    of ``None`` removes that variable for the context, which lets a
+    test explicitly defeat an inherited third-party offline switch
+    during a bounded acquisition phase. Resets config singletons on
+    entry and exit and restores the previous environment on teardown.
 
     If the host has a provisioned managed qdrant binary, it is mirrored (with
     its manifest) into the isolated status dir so a server-mode daemon resolves
@@ -158,46 +166,40 @@ def _service_env(
     # the source is the real managed install, not the (empty) isolated dir.
     host_qdrant = _resolve_host_provisioned_qdrant()
 
+    overrides = dict(env_overrides or {})
     env_key = "VAULTSPEC_RAG_STATUS_DIR"
-    saved: dict[str, str | None] = {env_key: os.environ.get(env_key)}
-    os.environ[env_key] = str(tmp_path)
-
-    # Isolate the machine-global Qdrant storage too: the machine-scoped service
-    # lock is co-located with it, so without this a test daemon would acquire
-    # the real machine lock and collide with a real service or a sibling test.
-    # The deep pytest tmp path is deliberate: the supervisor hands the qdrant
-    # child extended-length (\\?\) paths on Windows, and running every
-    # integration daemon against a long storage dir keeps that translation
-    # permanently exercised.
     storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
-    if storage_key not in (env_overrides or {}):
-        saved[storage_key] = os.environ.get(storage_key)
-        os.environ[storage_key] = str(tmp_path / "qdrant-storage")
-
-    # Isolate the Qdrant port off the shared machine default (8765): once the
-    # binary is mirrored, a server-mode test daemon spawns a real Qdrant child,
-    # and the default port would collide with the host's real Qdrant or a
-    # sibling test's. An ephemeral http port (with grpc one below it) keeps each
-    # test's Qdrant on its own loopback ports.
     qdrant_port_key = "VAULTSPEC_RAG_QDRANT_PORT"
-    if qdrant_port_key not in (env_overrides or {}):
-        saved[qdrant_port_key] = os.environ.get(qdrant_port_key)
-        os.environ[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
+    updates: dict[str, str | None] = {
+        env_key: str(tmp_path),
+    }
+    if storage_key not in overrides:
+        updates[storage_key] = str(tmp_path / "qdrant-storage")
+    if qdrant_port_key not in overrides:
+        updates[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
+    updates.update(overrides)
 
-    if env_overrides:
-        for k, v in env_overrides.items():
-            saved[k] = os.environ.get(k)
-            os.environ[k] = v
-
-    # Mirror the host's provisioned binary into the isolated status dir so the
-    # managed-binary guard resolves it and a server-mode daemon exercises the
-    # live attach/lock path instead of fast-failing on a missing binary.
-    if host_qdrant is not None:
-        _mirror_managed_qdrant_binary(tmp_path, host_qdrant)
-
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
-    reset_rag_config()
+    # Snapshot every distinct key exactly once before the first mutation.
+    # Reserved defaults (notably STATUS_DIR) may also appear in overrides; a
+    # second snapshot after the reserved write would capture the isolated value
+    # and leak it on context-entry failure.
+    saved: dict[str, str | None] = {key: os.environ.get(key) for key in updates}
     try:
+        for key, value in updates.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+        # Mirror the host's provisioned binary into the isolated status dir so
+        # the managed-binary guard resolves it and a server-mode daemon
+        # exercises the live attach/lock path instead of fast-failing on a
+        # missing binary.
+        if host_qdrant is not None:
+            _mirror_managed_qdrant_binary(tmp_path, host_qdrant)
+
+        reset_config()  # pyright: ignore[reportMissingTypeStubs]
+        reset_rag_config()
         yield
     finally:
         for k, prev in saved.items():
@@ -205,5 +207,7 @@ def _service_env(
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = prev
-        reset_config()  # pyright: ignore[reportMissingTypeStubs]
-        reset_rag_config()
+        try:
+            reset_config()  # pyright: ignore[reportMissingTypeStubs]
+        finally:
+            reset_rag_config()
