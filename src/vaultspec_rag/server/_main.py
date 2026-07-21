@@ -32,6 +32,25 @@ from ._lifespan import health_handler, service_lifespan
 logger = logging.getLogger("vaultspec_rag.server")
 
 
+def _missing_mcp_extra_message(exc: ImportError) -> str:
+    """Explain recovery without violating the selected placement mode."""
+    return (
+        "The RAG MCP stdio transport requires the optional 'mcp' extra, "
+        f"which failed to import ({exc}). In tool mode, launch it with "
+        "`uvx --from vaultspec-rag[mcp] python -m vaultspec_rag.server`; this "
+        "does not modify the project. In dependency mode, add `[mcp]` to the "
+        "existing `vaultspec-rag` requirement in `[project].dependencies`. In "
+        "dev mode, add it to the existing requirement in "
+        "`[dependency-groups].dev` or `[tool.uv].dev-dependencies`, whichever "
+        "declares RAG, then run `uv sync`. "
+        "`vaultspec-rag install --mcp --mode <mode>` reconciles the selected "
+        "surface. On Windows, an installed-but-broken import is usually "
+        "pywin32's post-install step not having run (a known mcp/pywin32 "
+        "issue, upstream modelcontextprotocol/python-sdk#2233): run "
+        "`python -m pywin32_postinstall -install` in that environment."
+    )
+
+
 def main(port: int | None = None) -> None:
     """Start the RAG daemon on stdio or HTTP transport.
 
@@ -78,11 +97,21 @@ def main(port: int | None = None) -> None:
                 "(watched in addition to the discovered ancestor chain)"
             ),
         )
+        parser.add_argument(
+            "--launch-token",
+            default="",
+            help=argparse.SUPPRESS,
+        )
         args = parser.parse_args()
         port = args.port
         parent_pid = args.parent_pid
+        _m._launch_token = str(args.launch_token)
+    else:
+        parent_pid = None
+        _m._launch_token = ""
 
     _m._http_mode = port is not None
+    _m._service_port = port or 0
 
     if port is not None:
         import uvicorn
@@ -156,16 +185,7 @@ def main(port: int | None = None) -> None:
         try:
             from ..mcp import mcp
         except ImportError as exc:  # missing mcp extra, or a broken pywin32 link
-            raise RuntimeError(
-                "The RAG MCP stdio transport requires the optional 'mcp' extra, "
-                f"which failed to import ({exc}). Install it with "
-                "`uv add vaultspec-rag[mcp]` (or re-run `vaultspec-rag install`, "
-                "which adds it by default). On Windows, an installed-but-broken "
-                "import is usually pywin32's post-install step not having run (a "
-                "known mcp/pywin32 issue, upstream "
-                "modelcontextprotocol/python-sdk#2233): run "
-                "`python -m pywin32_postinstall -install` in this environment."
-            ) from exc
+            raise RuntimeError(_missing_mcp_extra_message(exc)) from exc
 
         # The watchdog is stdio-only: this process's lifetime is its client
         # connection, unlike the HTTP daemon above, which outlives its

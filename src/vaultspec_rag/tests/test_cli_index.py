@@ -613,6 +613,274 @@ class TestIndexSummaryCLI:
 class TestAutoDelegation:
     """Verify CLI search and index auto-detect and delegate to a running service."""
 
+    @staticmethod
+    def _run_resolution_probe(tmp_path: Path, mode: str) -> dict[str, object]:
+        """Run real discovery, search, and index routing in a fresh interpreter."""
+        import subprocess
+        import sys
+
+        code = r"""
+import http.server
+import json
+import os
+import socket
+import sys
+import threading
+from datetime import UTC, datetime
+from pathlib import Path
+
+root = Path(sys.argv[1])
+mode = sys.argv[2]
+target = root / "project"
+status_dir = root / "status"
+storage_dir = root / "qdrant-server" / "storage"
+target.mkdir(parents=True)
+(target / ".vaultspec").mkdir()
+status_dir.mkdir()
+
+os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
+os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_dir)
+os.environ.pop("VAULTSPEC_RAG_LOCAL_ONLY", None)
+
+from vaultspec_rag.config import reset_config
+
+reset_config()
+
+
+from vaultspec_rag._machine_lock import (
+    acquire_machine_lock,
+    machine_discovery_path,
+    release_machine_lock,
+)
+
+requests = []
+
+
+class CaptureHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        requests.append({"path": self.path, "body": body})
+        if self.path == "/search":
+            payload = {"ok": True, "results": []}
+            status = 200
+        elif self.path == "/reindex":
+            payload = {"ok": True, "job_id": "isolated-vault-job"}
+            status = 200
+        else:
+            payload = {"ok": False, "error": "unexpected_endpoint"}
+            status = 404
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, format, *args):
+        _ = format, args
+
+
+capture_server = http.server.HTTPServer(("127.0.0.1", 0), CaptureHandler)
+capture_thread = threading.Thread(target=capture_server.serve_forever, daemon=True)
+nonselected_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+machine_lock_acquired = False
+capture_thread_started = False
+
+try:
+    nonselected_socket.bind(("127.0.0.1", 0))
+    capture_port = int(capture_server.server_address[1])
+    nonselected_port = int(nonselected_socket.getsockname()[1])
+    assert capture_port != nonselected_port
+
+    if mode == "machine":
+        machine_port = capture_port
+        fallback_port = nonselected_port
+    elif mode == "fallback":
+        machine_port = nonselected_port
+        fallback_port = capture_port
+    else:
+        raise AssertionError(f"unknown probe mode: {mode}")
+
+    (status_dir / "service.json").write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "port": fallback_port,
+                "service_token": "fallback-token",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    if mode == "machine":
+        machine_lock_acquired, holder = acquire_machine_lock()
+        assert machine_lock_acquired, holder
+        pointer = machine_discovery_path()
+        pointer.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "port": machine_port,
+                    "service_token": "machine-token",
+                    "last_heartbeat": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "stale_after_s": 60,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    capture_thread.start()
+    capture_thread_started = True
+    expected = machine_port if mode == "machine" else fallback_port
+    initial_target_tree = sorted(
+        str(path.relative_to(target)) for path in target.rglob("*")
+    )
+    assert initial_target_tree == [".vaultspec"]
+
+    from vaultspec_rag.cli._index import _default_service_port as index_port
+    from vaultspec_rag.cli._search import _default_service_port as search_port
+
+    assert search_port() == expected
+    assert index_port() == expected
+
+    from typer.testing import CliRunner
+    from vaultspec_rag.cli import app
+
+    runner = CliRunner()
+    search_result = runner.invoke(
+        app,
+        [
+            "--target",
+            str(target),
+            "search",
+            "anything",
+            "--type",
+            "code",
+            "--json",
+        ],
+    )
+    search_envelope = json.loads(search_result.output)
+    assert search_result.exit_code == 0, search_result.output
+    assert search_envelope["command"] == "search", search_envelope
+    assert search_envelope["data"]["via"] == "service", search_envelope
+
+    index_result = runner.invoke(
+        app,
+        [
+            "--target",
+            str(target),
+            "index",
+            "--type",
+            "vault",
+            "--json",
+        ],
+    )
+    index_envelope = json.loads(index_result.output)
+    assert index_result.exit_code == 0, index_result.output
+    assert index_envelope["command"] == "index", index_envelope
+    assert index_envelope["data"] == {
+        "via": "service",
+        "async": True,
+        "vault_job_id": "isolated-vault-job",
+        "codebase_job_id": None,
+    }, index_envelope
+
+    assert requests == [
+        {
+            "path": "/search",
+            "body": {
+                "query": "anything",
+                "top_k": 10,
+                "project_root": str(target),
+                "type": "codebase",
+            },
+        },
+        {
+            "path": "/reindex",
+            "body": {
+                "type": "vault",
+                "clean": False,
+                "project_root": str(target),
+                "initiator_kind": "cli",
+            },
+        },
+    ], requests
+
+    forbidden = (
+        "torch",
+        "sentence_transformers",
+        "qdrant_client",
+        "transformers",
+        "onnxruntime",
+    )
+    heavy = sorted(
+        module
+        for module in sys.modules
+        if any(module == name or module.startswith(name + ".") for name in forbidden)
+    )
+    assert not heavy, heavy
+    final_target_tree = sorted(
+        str(path.relative_to(target)) for path in target.rglob("*")
+    )
+    assert final_target_tree == initial_target_tree, final_target_tree
+    print(
+        json.dumps(
+            {
+                "mode": mode,
+                "expected": expected,
+                "machine_port": machine_port,
+                "fallback_port": fallback_port,
+                "capture_port": capture_port,
+                "requests": requests,
+                "search_via": search_envelope["data"]["via"],
+                "index_via": index_envelope["data"]["via"],
+                "heavy": heavy,
+                "target_tree": final_target_tree,
+            }
+        )
+    )
+finally:
+    if machine_lock_acquired:
+        release_machine_lock()
+    if capture_thread_started:
+        capture_server.shutdown()
+    capture_server.server_close()
+    if capture_thread_started:
+        capture_thread.join(timeout=5)
+        assert not capture_thread.is_alive()
+    nonselected_socket.close()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(tmp_path), mode],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return typing.cast("dict[str, object]", json.loads(result.stdout))
+
+    @staticmethod
+    def _assert_real_cli_routes(
+        tmp_path: Path,
+        evidence: dict[str, object],
+    ) -> None:
+        """Require both commands to use the selected real service endpoint."""
+        assert evidence["capture_port"] == evidence["expected"]
+        assert evidence["search_via"] == "service"
+        assert evidence["index_via"] == "service"
+        assert evidence["heavy"] == []
+        assert evidence["target_tree"] == [".vaultspec"]
+        requests = typing.cast("list[dict[str, object]]", evidence["requests"])
+        assert [request["path"] for request in requests] == ["/search", "/reindex"]
+        reindex = typing.cast("dict[str, object]", requests[1]["body"])
+        assert reindex == {
+            "type": "vault",
+            "clean": False,
+            "project_root": str(tmp_path / "project"),
+            "initiator_kind": "cli",
+        }
+
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_search_auto_delegates_when_service_running(
@@ -692,9 +960,15 @@ class TestAutoDelegation:
         called: list[tuple[str, int]] = []
 
         def mock_try_reindex(
-            tool_name: str, _rebuild: bool, port: int, _target: str
+            reindex_type: str,
+            _rebuild: bool,
+            port: int,
+            _target: str,
+            *,
+            initiator_kind: str,
         ) -> dict[str, object]:
-            called.append((tool_name, port))
+            assert initiator_kind == "cli"
+            called.append((reindex_type, port))
             return {
                 "ok": True,
                 "added": 1,
@@ -719,7 +993,25 @@ class TestAutoDelegation:
             ],
         )
         assert len(called) == 1
-        assert called[0] == ("reindex_vault", 8766)
+        assert called[0] == ("vault", 8766)
+
+    def test_auto_delegation_prefers_machine_global_resolution(
+        self, tmp_path: Path
+    ) -> None:
+        """A valid machine-global service outranks a conflicting status hint."""
+        evidence = self._run_resolution_probe(tmp_path, "machine")
+        self._assert_real_cli_routes(tmp_path, evidence)
+        assert evidence["expected"] == evidence["machine_port"]
+        assert evidence["expected"] != evidence["fallback_port"]
+
+    def test_auto_delegation_uses_status_fallback_without_machine_service(
+        self, tmp_path: Path
+    ) -> None:
+        """The real status file is used only when machine resolution is absent."""
+        evidence = self._run_resolution_probe(tmp_path, "fallback")
+        self._assert_real_cli_routes(tmp_path, evidence)
+        assert evidence["expected"] == evidence["fallback_port"]
+        assert evidence["expected"] != evidence["machine_port"]
 
 
 class _QuietReporter:

@@ -19,10 +19,15 @@ machinery operates on, so rag and core cannot drift on what a mode means.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from contextvars import Context
+from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
+)
+from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+    mcp_status,
+    mcp_sync,
 )
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     ModeProvenance,
@@ -36,6 +41,10 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        SyncResult,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +88,12 @@ def resolve_rag_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode
     )
 
 
-def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode:
+def infer_rag_upgrade_mode(
+    target: Path,
+    explicit: InstallMode | None,
+    *,
+    allow_mcp_status: bool = True,
+) -> ResolvedMode:
     """Infer rag's provisioning mode for an ``install --upgrade`` (ADR Q6).
 
     Mirrors core's ``_infer_upgrade_mode`` precedence exactly, substituting
@@ -101,6 +115,9 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     Args:
         target: Workspace root directory.
         explicit: The mode requested via ``--mode``, or ``None``.
+        allow_mcp_status: Whether legacy inference may inspect native MCP deployment
+            state. Component-skipped installs disable this and use only durable
+            declaration or package-placement evidence.
 
     Returns:
         The inferred mode paired with its provenance.
@@ -109,10 +126,6 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
         VaultSpecError: Propagated from core when *explicit* names an
             impossible combination or a persisted declaration is malformed.
     """
-    from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
-        observed_mcp_mode,
-    )
-
     if explicit is not None:
         return resolve_install_mode_with_provenance(
             target, explicit=explicit, package=RAG_DISTRIBUTION_NAME
@@ -125,10 +138,76 @@ def infer_rag_upgrade_mode(target: Path, explicit: InstallMode | None) -> Resolv
     detected = resolve_install_mode(
         target, explicit=None, package=RAG_DISTRIBUTION_NAME
     )
-    observed = observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
-    if detected is InstallMode.DEPENDENCY and observed is InstallMode.DEPENDENCY:
-        return ResolvedMode(InstallMode.DEPENDENCY, ModeProvenance.INFERRED)
+    # Any deployed provider is evidence of the legacy mode: a pre-dual
+    # workspace could only ever enroll the one provider that existed, so
+    # requiring every provider would misread it as tool mode.
+    if detected in {InstallMode.DEPENDENCY, InstallMode.DEV} and (
+        not allow_mcp_status or mode_is_deployed(target, require_all=False)
+    ):
+        return ResolvedMode(detected, ModeProvenance.INFERRED)
     return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)
+
+
+def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
+    from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+        Tool,
+    )
+
+    status = Context().run(
+        lambda: cast(
+            "dict[str, object]",
+            mcp_status(provider="all", scope="project", target_dir=target),
+        )
+    )
+    providers = status.get("providers")
+    if not isinstance(providers, dict) or not providers:
+        enrolled: list[Tool] = []
+        if (target / ".mcp.json").exists():
+            enrolled.append(Tool.CLAUDE)
+        if (target / ".codex" / "config.toml").exists():
+            enrolled.append(Tool.CODEX)
+        if not enrolled:
+            return False
+        status = Context().run(
+            lambda: cast(
+                "dict[str, object]",
+                mcp_status(
+                    provider="all",
+                    scope="project",
+                    target_dir=target,
+                    enrolled=enrolled,
+                ),
+            )
+        )
+        providers = status.get("providers")
+    if not isinstance(providers, dict) or not providers:
+        return False
+    states: list[tuple[set[str], set[str], set[str]]] = []
+    for state_value in cast("dict[str, object]", providers).values():
+        if not isinstance(state_value, dict):
+            return False
+        state = cast("dict[str, object]", state_value)
+        managed = _status_names(state.get("managed"))
+        missing = _status_names(state.get("missing"))
+        drifted = _status_names(state.get("drifted"))
+        states.append((managed, missing, drifted))
+    if require_all:
+        return all(
+            RAG_DISTRIBUTION_NAME in managed
+            and RAG_DISTRIBUTION_NAME not in missing
+            and RAG_DISTRIBUTION_NAME not in drifted
+            for managed, missing, drifted in states
+        )
+    return any(
+        RAG_DISTRIBUTION_NAME in managed or RAG_DISTRIBUTION_NAME in drifted
+        for managed, _missing, drifted in states
+    )
+
+
+def _status_names(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {item for item in cast("list[object]", value) if isinstance(item, str)}
 
 
 def persist_rag_mode(target: Path, mode: InstallMode) -> None:
@@ -156,11 +235,11 @@ def persist_rag_mode(target: Path, mode: InstallMode) -> None:
     )
 
 
-def migrate_rag_mcp_entry(mode: InstallMode) -> None:
+def migrate_rag_mcp_entry(mode: InstallMode) -> SyncResult:
     """Force rag's already-managed MCP entry into *mode*'s launch shape.
 
     The mode-flip seam, the direct analogue of core's own force-managed pass in
-    ``commands.py``. From the ``0.1.39`` floor core's ``sync_provider`` renders
+    ``commands.py``. From the ``0.1.44`` floor core's ``sync_provider`` renders
     every companion MCP definition at *its own* declaring package's committed
     mode (rag's entry names ``vaultspec-rag`` through the ``_vaultspec_mode_package``
     token), so a fresh install and a same-mode re-install already write rag's
@@ -182,8 +261,9 @@ def migrate_rag_mcp_entry(mode: InstallMode) -> None:
     Args:
         mode: The provisioning mode whose launch shape rag's entry should carry.
     """
-    from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
-        mcp_sync,
+    return mcp_sync(
+        mode=mode,
+        force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
+        provider="all",
+        scope="project",
     )
-
-    mcp_sync(mode=mode, force_managed=frozenset({RAG_DISTRIBUTION_NAME}))

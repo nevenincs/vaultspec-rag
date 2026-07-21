@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ._discovery import (
     _default_service_port,
+    _delete_service_status,
     _read_service_status,
     _status_dir,
     _status_file,
@@ -30,6 +31,7 @@ from ._transport import (
 __all__ = [
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "_default_service_port",
+    "_delete_service_status",
     "_do_http_call",
     "_is_connection_refused",
     "_read_service_status",

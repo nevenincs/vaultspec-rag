@@ -3,21 +3,46 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import os
+import stat
+import tempfile
+from contextlib import contextmanager
+from contextvars import Context
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
+from vaultspec_core.core.enums import Tool  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+    add_providers,
+    read_manifest_data,
+)
+from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     dependency_leak_advisory,
     newly_establishes_dependency,
+    read_package_declaration,
 )
 
-from ..builtins import seed_builtins
+from ..builtins import list_builtins, seed_builtins
+from ..torch_config import TorchConfigAction
+from ._mcp_extra import reconcile_mcp_extra
+from ._mcp_topology import (
+    NodeSnapshot,
+    RequiredMcpTopology,
+    SnapshotKind,
+    file_snapshot,
+    inspect_required_mcp_topology,
+    restore_file_snapshot,
+    rollback_file_snapshots,
+)
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
     migrate_rag_mcp_entry,
+    mode_is_deployed,
     persist_rag_mode,
     resolve_rag_mode,
 )
@@ -30,7 +55,7 @@ from ._workspace import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Generator
 
     from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
         InstallMode,
@@ -40,6 +65,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Compatibility aliases for the established focused rollback tests.
+_file_snapshot = file_snapshot
+_restore_file_snapshot = restore_file_snapshot
+
+_DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
+
 
 def _seed_builtins(
     vaultspec_dir: Path,
@@ -47,6 +78,9 @@ def _seed_builtins(
     dry_run: bool,
     force: bool,
     upgrade: bool,
+    install_mcp: bool,
+    *,
+    skip_mcp: bool = False,
 ) -> None:
     """Seed rag's whole bundled tree flat into ``.vaultspec/`` (core's fold).
 
@@ -58,16 +92,419 @@ def _seed_builtins(
     if not dry_run:
         written: list[str] = []
         try:
-            report.seeded = seed_builtins(
-                vaultspec_dir, force=force or upgrade, written=written
+            seeded = seed_builtins(
+                vaultspec_dir,
+                force=force or upgrade,
+                written=written,
+                exclude_prefixes=("mcps/",) if skip_mcp else (),
             )
         except Exception:
             _rollback_seeded(vaultspec_dir, written, report)
             raise
     else:
-        report.seeded = seed_builtins(
-            vaultspec_dir, force=force or upgrade, dry_run=True
+        seeded = seed_builtins(
+            vaultspec_dir,
+            force=force or upgrade,
+            dry_run=True,
+            exclude_prefixes=("mcps/",) if skip_mcp else (),
         )
+
+    mcp_sources = {rel for rel in list_builtins() if rel.startswith("mcps/")}
+    report.seeded = [item for item in seeded if item[0] not in mcp_sources]
+    if skip_mcp:
+        return
+    if install_mcp:
+        report.seeded.extend(item for item in seeded if item[0] in mcp_sources)
+        return
+    for rel in sorted(mcp_sources):
+        source = vaultspec_dir / rel
+        if not source.exists():
+            continue
+        if not dry_run:
+            source.unlink()
+        report.seeded.append((rel, "[REMOVE]"))
+
+
+def _reconcile_mcp_extra(
+    target: Path,
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    enabled: bool,
+    dry_run: bool,
+    record_torch_inspect_error: bool = False,
+) -> bool:
+    try:
+        pyproject = target / "pyproject.toml"
+        if pyproject.exists():
+            pyproject.read_text(encoding="utf-8")
+        result = reconcile_mcp_extra(
+            pyproject, mode=mode, enabled=enabled, dry_run=dry_run
+        )
+    except Exception as exc:
+        _record_project_inspection_error(
+            report,
+            exc,
+            record_torch_inspect_error=record_torch_inspect_error,
+        )
+        return False
+    report.mcp_extra_action = result.action
+    report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
+    report.mcp_errors.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
+    return not result.conflicts
+
+
+def _record_project_inspection_error(
+    report: InstallReport,
+    exc: Exception,
+    *,
+    record_torch_inspect_error: bool,
+) -> None:
+    report.mcp_extra_action = "error"
+    message = f"MCP extra inspect failed: {exc}"
+    report.warnings.append(message)
+    report.mcp_errors.append(message)
+    if record_torch_inspect_error:
+        report.torch_config_action = TorchConfigAction.ERROR
+        report.warnings.append(f"torch-config inspect failed: {exc}")
+
+
+def _regular_project_decode_error(path: Path) -> Exception | None:
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return OSError(f"project surface is not a regular file: {path}")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.read()
+    except Exception as exc:
+        return exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return None
+
+
+def _project_surface_inspection_error(pyproject: Path) -> Exception | None:
+    try:
+        metadata = pyproject.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return exc
+    if not stat.S_ISLNK(metadata.st_mode):
+        return _regular_project_decode_error(pyproject)
+    try:
+        linked = Path(os.readlink(pyproject))
+        if linked.is_absolute():
+            return OSError(f"project surface uses an absolute link: {pyproject}")
+        project_root = pyproject.parent.resolve(strict=True)
+        target = (pyproject.parent / linked).resolve(strict=True)
+        target.relative_to(project_root)
+    except Exception as exc:
+        return exc
+    return _regular_project_decode_error(target)
+
+
+def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
+    pyproject = target / "pyproject.toml"
+    workspace = target / ".vaultspec" / "workspace.json"
+    transactional = [
+        pyproject,
+        pyproject.with_suffix(pyproject.suffix + ".lock"),
+        workspace,
+        workspace.with_suffix(workspace.suffix + ".lock"),
+    ]
+    transactional.extend(
+        target / ".vaultspec" / relative for relative in list_builtins()
+    )
+    return tuple(dict.fromkeys(transactional))
+
+
+def _fresh_mcp_provider_selection(target: Path) -> tuple[Tool, ...] | None:
+    """Select both project hosts only when no MCP-host decision exists yet."""
+    installed = read_manifest_data(target, strict=True).installed
+    if {provider.value for provider in _DEFAULT_PROJECT_MCP_PROVIDERS} & installed:
+        return None
+    return _DEFAULT_PROJECT_MCP_PROVIDERS
+
+
+def _requested_fresh_mcp_providers(
+    target: Path, skip: set[str]
+) -> tuple[Tool, ...] | None:
+    """Resolve fresh-host enrollment only for an active MCP transition."""
+    if "mcp" in skip:
+        return None
+    return _fresh_mcp_provider_selection(target)
+
+
+def _prepare_install_target(
+    path: Path | None,
+    *,
+    action: str,
+    dry_run: bool,
+    skip: set[str],
+) -> tuple[Path, InstallReport, tuple[Tool, ...] | None, bool]:
+    """Fail closed on provider intent before bootstrapping any workspace node."""
+    target = _resolve_target(path, bootstrap=False)
+    report = InstallReport(action=action, target=target)
+    try:
+        fresh_providers = _requested_fresh_mcp_providers(target, skip)
+    except Exception as exc:
+        message = f"project MCP provider intent is unreadable: {exc}"
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+        return target, report, None, False
+    if not dry_run:
+        _resolve_target(target, bootstrap=True)
+    report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
+    return target, report, fresh_providers, True
+
+
+def _fresh_provider_transaction_paths(target: Path) -> tuple[Path, ...]:
+    """Return every project artifact a fresh dual-host sync can mutate."""
+    manifest = target / ".vaultspec" / "providers.json"
+    claude = target / ".mcp.json"
+    codex = target / ".codex" / "config.toml"
+    ownership = target / ".vaultspec" / "mcp-ownership.json"
+    files = (manifest, claude, codex, ownership)
+    return (
+        *files,
+        *(item.with_suffix(item.suffix + ".lock") for item in files),
+        codex.parent,
+    )
+
+
+def _restore_fresh_provider_transaction(
+    snapshots: dict[Path, NodeSnapshot], report: InstallReport
+) -> None:
+    errors = rollback_file_snapshots(snapshots)
+    if not errors:
+        return
+    message = "MCP provider-enrollment rollback failed: " + "; ".join(errors)
+    report.mcp_errors.append(message)
+    report.warnings.append(message)
+
+
+def _persist_fresh_mcp_providers(
+    target: Path,
+    selected: tuple[Tool, ...],
+    snapshots: dict[Path, NodeSnapshot],
+    report: InstallReport,
+) -> bool:
+    """Merge a successful fresh selection into Core's provider manifest."""
+    try:
+        add_providers(target, [provider.value for provider in selected])
+    except Exception as exc:
+        message = f"project MCP provider enrollment failed: {exc}"
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+        _restore_fresh_provider_transaction(snapshots, report)
+        return False
+    return True
+
+
+def _finish_fresh_provider_enrollment(
+    target: Path,
+    selected: tuple[Tool, ...] | None,
+    snapshots: dict[Path, NodeSnapshot],
+    report: InstallReport,
+    *,
+    dry_run: bool,
+    install_mcp: bool,
+) -> None:
+    if selected is None or dry_run or not install_mcp:
+        return
+    if report.mcp_sync_failed:
+        _restore_fresh_provider_transaction(snapshots, report)
+        return
+    _persist_fresh_mcp_providers(target, selected, snapshots, report)
+
+
+def _record_torch_transaction_error(
+    report: InstallReport, exc: Exception, *, configure_torch: bool
+) -> None:
+    if not configure_torch or report.torch_config_action is TorchConfigAction.ERROR:
+        return
+    report.torch_config_action = TorchConfigAction.ERROR
+    report.warnings.append(
+        f"torch-config blocked by MCP intent transaction failure: {exc}"
+    )
+
+
+def _commit_mcp_placement_and_mode(
+    target: Path,
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    enabled: bool,
+    persist_mode: bool,
+    force: bool,
+    upgrade: bool,
+    configure_torch: bool,
+) -> bool:
+    """Commit placement, package mode, and builtin intent as one transition."""
+    snapshots: dict[Path, NodeSnapshot] = {}
+    try:
+        snapshots = {path: _file_snapshot(path) for path in _mcp_intent_paths(target)}
+        if not _reconcile_mcp_extra(
+            target,
+            report,
+            mode,
+            enabled=enabled,
+            dry_run=False,
+            record_torch_inspect_error=configure_torch,
+        ):
+            rollback_errors = rollback_file_snapshots(snapshots)
+            if rollback_errors:
+                rollback_message = "MCP transaction rollback failed: " + "; ".join(
+                    rollback_errors
+                )
+                report.mcp_errors.append(rollback_message)
+                report.warnings.append(rollback_message)
+            return False
+        if persist_mode:
+            persist_rag_mode(target, mode)
+        _seed_builtins(
+            target / ".vaultspec",
+            report,
+            False,
+            force,
+            upgrade,
+            enabled,
+        )
+    except Exception as exc:
+        rollback_errors = rollback_file_snapshots(snapshots)
+        report.mcp_extra_action = "error"
+        message = f"MCP intent transaction failed: {exc}"
+        if message not in report.mcp_errors:
+            report.mcp_errors.append(message)
+        report.warnings.append(message)
+        _record_torch_transaction_error(report, exc, configure_torch=configure_torch)
+        if rollback_errors:
+            rollback_message = "MCP transaction rollback failed: " + "; ".join(
+                rollback_errors
+            )
+            report.mcp_errors.append(rollback_message)
+            report.warnings.append(rollback_message)
+        return False
+    return True
+
+
+@contextmanager
+def _mcp_preview_projection(
+    target: Path,
+    *,
+    install_mcp: bool,
+    force: bool,
+    upgrade: bool,
+    mode: InstallMode,
+) -> Generator[Path]:
+    """Project the requested MCP source state away from the real workspace.
+
+    Core 0.1.44 accepts a target workspace for dry-run reconciliation but does not
+    accept an in-memory source override.  A minimal temporary projection lets Core
+    plan from the exact source intent while leaving the real workspace, ownership
+    sidecar, provider files, and lock paths untouched.
+    """
+    topology = inspect_required_mcp_topology(target)
+    with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-preview-") as raw:
+        projection = Path(raw) / "workspace"
+        projection.mkdir()
+
+        source_vaultspec = target / ".vaultspec"
+        projected_vaultspec = projection / ".vaultspec"
+        projected_vaultspec.mkdir()
+
+        for name in ("providers.json", "workspace.json", "mcp-ownership.json"):
+            _copy_preview_node(
+                source_vaultspec / name,
+                projected_vaultspec / name,
+                topology,
+            )
+
+        if topology.mcp_sources:
+            projected_mcps = projected_vaultspec / "mcps"
+            projected_mcps.mkdir()
+            for source in topology.mcp_sources:
+                snapshot = topology.projection_snapshot(source)
+                if snapshot.kind is not SnapshotKind.FILE:
+                    continue
+                restore_file_snapshot(projected_mcps / source.name, snapshot)
+
+        for relative in (Path(".mcp.json"), Path(".codex") / "config.toml"):
+            source = target / relative
+            destination = projection / relative
+            _copy_preview_node(source, destination, topology)
+
+        seed_builtins(projected_vaultspec, force=force or upgrade)
+        if not install_mcp:
+            for relative in list_builtins():
+                if relative.startswith("mcps/"):
+                    (projected_vaultspec / relative).unlink(missing_ok=True)
+        persist_rag_mode(projection, mode)
+        yield projection
+
+
+def _copy_preview_node(
+    source: Path,
+    destination: Path,
+    topology: RequiredMcpTopology,
+) -> None:
+    """Materialize one required node's effective bytes inside the projection."""
+    snapshot = topology.projection_snapshot(source)
+    if snapshot.kind in {SnapshotKind.ABSENT, SnapshotKind.DIRECTORY}:
+        return
+    restore_file_snapshot(destination, snapshot)
+
+
+def _reconcile_project_mcp(
+    mcp_target: Path,
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    mode: InstallMode,
+    mode_flipped: bool,
+    fresh_providers: tuple[Tool, ...] | None,
+) -> None:
+    """Run Core's project MCP reconciliation against one concrete target."""
+    projected_mode_transition = dry_run and mode_flipped
+    try:
+        result = mcp_sync(
+            dry_run=dry_run and not projected_mode_transition,
+            force=force,
+            prune=True,
+            mode=mode,
+            provider="all",
+            scope="project",
+            target_dir=mcp_target,
+            enrolled=fresh_providers,
+        )
+    except Exception as exc:
+        logger.error("project MCP sync failed during install: %s", exc)
+        report.mcp_errors.append(f"project MCP sync failed: {exc}")
+        return
+    if dry_run:
+        _rewrite_preview_paths(result, mcp_target, target)
+    report.sync_results.append(result)
+    report.mcp_sync_results.append(result)
+    if dry_run and mode_flipped and not force:
+        migration = mcp_sync(
+            dry_run=False,
+            mode=mode,
+            force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
+            provider="all",
+            scope="project",
+            target_dir=mcp_target,
+            enrolled=fresh_providers,
+        )
+        _rewrite_preview_paths(migration, mcp_target, target)
+        report.sync_results.append(migration)
+        report.mcp_sync_results.append(migration)
 
 
 def _run_core_sync(
@@ -76,80 +513,353 @@ def _run_core_sync(
     dry_run: bool,
     force: bool,
     skip: set[str],
+    mode: InstallMode,
+    *,
+    install_mcp: bool,
+    upgrade: bool,
+    mode_flipped: bool,
+    fresh_providers: tuple[Tool, ...] | None,
 ) -> None:
-    if dry_run:
-        report.warnings.append(
-            "dry-run: core sync_provider not invoked (would propagate "
-            "seeded files to .mcp.json and provider dirs)"
-        )
-    elif "core" not in skip:
-        try:
-            _init_core_context(target)
-        except Exception as exc:
-            logger.error("workspace context bootstrap failed: %s", exc)
-            report.warnings.append(f"workspace bootstrap failed: {exc}")
+    manifest_snapshots = {
+        path: _file_snapshot(path)
+        for path in _fresh_provider_transaction_paths(target)
+        if fresh_providers is not None
+    }
+    if "core" in skip:
+        return
+    if "mcp" in skip:
+        return
+
+    @contextmanager
+    def sync_target() -> Generator[Path]:
+        if dry_run:
+            with _mcp_preview_projection(
+                target,
+                install_mcp=install_mcp,
+                force=force,
+                upgrade=upgrade,
+                mode=mode,
+            ) as projection:
+                yield projection
         else:
-            try:
-                report.sync_results = sync_provider(
-                    "all",
-                    dry_run=False,
-                    force=force,
-                    skip=skip,
-                )
-            except Exception as exc:
-                logger.error("sync_provider failed during install: %s", exc)
-                report.warnings.append(
-                    f"core sync failed: {exc} "
-                    f"(seeded files left in place; re-run install or "
-                    f"uninstall --force to clean up)"
-                )
+            yield target
+
+    with sync_target() as mcp_target:
+        if dry_run:
+            Context().run(
+                _reconcile_project_mcp,
+                mcp_target,
+                target,
+                report,
+                dry_run,
+                force,
+                mode,
+                mode_flipped,
+                fresh_providers,
+            )
+        else:
+            _reconcile_project_mcp(
+                mcp_target,
+                target,
+                report,
+                dry_run,
+                force,
+                mode,
+                mode_flipped,
+                fresh_providers,
+            )
+
+    _finish_fresh_provider_enrollment(
+        target,
+        fresh_providers,
+        manifest_snapshots,
+        report,
+        dry_run=dry_run,
+        install_mcp=install_mcp,
+    )
 
 
-def _persist_mode_and_detect_flip(
+def _run_non_mcp_sync(
+    target: Path,
+    report: InstallReport,
+    dry_run: bool,
+    force: bool,
+    skip: set[str],
+) -> None:
+    """Propagate non-MCP resources only after the MCP transaction succeeds."""
+    if dry_run or "core" in skip:
+        return
+    try:
+        _init_core_context(target)
+    except Exception as exc:
+        logger.error("workspace context bootstrap failed: %s", exc)
+        report.warnings.append(f"workspace bootstrap failed: {exc}")
+        return
+    try:
+        report.sync_results.extend(
+            sync_provider(
+                "all",
+                dry_run=False,
+                force=force,
+                skip={*skip, "mcp"},
+            )
+        )
+    except Exception as exc:
+        logger.error("sync_provider failed during install: %s", exc)
+        report.warnings.append(
+            f"core sync failed: {exc} "
+            "(seeded files left in place; re-run install or uninstall --force "
+            "to clean up)"
+        )
+
+
+def _rewrite_preview_paths(result: object, projection: Path, target: Path) -> None:
+    """Map temporary Core diagnostics back to the operator's real target."""
+    source = str(projection)
+    destination = str(target)
+    for attribute in ("errors", "warnings"):
+        messages = getattr(result, attribute, None)
+        if isinstance(messages, list):
+            typed_messages = cast("list[object]", messages)
+            typed_messages[:] = [
+                str(message).replace(source, destination) for message in typed_messages
+            ]
+    per_tool = getattr(result, "per_tool", None)
+    if isinstance(per_tool, dict):
+        for provider_result in cast("dict[object, object]", per_tool).values():
+            _rewrite_preview_paths(provider_result, projection, target)
+
+
+def _detect_mode_flip(
     target: Path,
     mode: InstallMode,
     *,
-    dry_run: bool,
     skip: set[str],
+    explicit: bool,
 ) -> bool:
-    """Persist rag's mode before the sync and report whether it flips the launch.
+    """Report whether a requested mode flips an existing managed launch.
 
-    From the 0.1.39 floor core's sync renders each companion MCP definition at
-    its own declaring package's committed mode, so writing rag's entry *before*
-    the sync lets the sync render rag's ``.mcp.json`` launch in rag's own shape
-    natively for the fresh and same-mode cases. The write reads and rewrites only
-    rag's own entry under the advisory lock, leaving a sibling ``vaultspec-core``
-    entry untouched, and needs only the target path, not core's runtime context.
-
-    Rag's deployed launch shape is captured here, before the sync overwrites it,
-    so an ``install --upgrade`` that flips rag's mode is detectable: the returned
-    flag drives the post-sync force-managed seam that migrates a stale managed
-    entry the plain sync's force-gate would otherwise skip. A dry run or a
-    core-skipped run neither persists nor flips.
+    Rag's deployed launch shape is captured before the sync overwrites it, so an
+    ``install --upgrade`` that flips rag's mode is detectable. The returned flag
+    drives the post-sync force-managed seam that migrates a stale managed entry
+    the plain sync's force-gate would otherwise skip. Core- or MCP-skipped runs
+    do not inspect deployment state.
 
     Args:
         target: Workspace root directory.
-        mode: Rag's resolved provisioning mode to persist.
-        dry_run: When ``True``, neither persist nor detect (no writes on a preview).
-        skip: Sync skip tokens; a ``"core"`` skip disables both.
+        mode: Rag's resolved provisioning mode.
+        skip: Sync skip tokens. A ``"core"`` or ``"mcp"`` skip disables detection.
+        explicit: Whether the operator explicitly selected *mode*.
 
     Returns:
         ``True`` when rag's deployed launch shape diverges from *mode* and must
         be force-migrated after the sync; ``False`` otherwise.
     """
-    if dry_run or "core" in skip:
+    if {"core", "mcp"} & skip:
         return False
-    from vaultspec_core.core.diagnosis.collectors import (  # pyright: ignore[reportMissingTypeStubs]
-        observed_mcp_mode,
+    declaration = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
+    previous_mode = (
+        declaration.install_mode
+        if declaration is not None
+        else infer_rag_upgrade_mode(target, None).mode
     )
-
-    observed = observed_mcp_mode(target, package=RAG_DISTRIBUTION_NAME)
-    mcp_mode_flipped = observed is not None and observed != mode
-    persist_rag_mode(target, mode)
+    deployed = mode_is_deployed(target, require_all=False)
+    mcp_mode_flipped = deployed and (
+        previous_mode != mode or (explicit and declaration is None)
+    )
     return mcp_mode_flipped
 
 
+def _prepare_mcp_transition(
+    target: Path,
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    install_mcp: bool,
+    skip: set[str],
+    dry_run: bool,
+    explicit_mode: bool,
+    configure_torch: bool,
+) -> tuple[bool, bool]:
+    """Preflight and, for real runs, commit MCP placement and package mode."""
+    mcp_skipped = "mcp" in skip
+    if not mcp_skipped and not _reconcile_mcp_extra(
+        target,
+        report,
+        mode,
+        enabled=install_mcp,
+        dry_run=True,
+        record_torch_inspect_error=configure_torch,
+    ):
+        return False, False
+
+    mode_flipped = _detect_mode_flip(
+        target,
+        mode,
+        skip=skip,
+        explicit=explicit_mode,
+    )
+    if dry_run:
+        return True, mode_flipped
+    if mcp_skipped:
+        if "core" not in skip:
+            persist_rag_mode(target, mode)
+        return True, False
+    return True, mode_flipped
+
+
+def _run_mode_migration(
+    report: InstallReport,
+    mode: InstallMode,
+    *,
+    mode_flipped: bool,
+    force: bool,
+    dry_run: bool,
+    skip: set[str],
+) -> None:
+    """Repair only RAG's managed native entry after a real mode flip."""
+    if not mode_flipped or force or dry_run or {"core", "mcp"} & skip:
+        return
+    migration = migrate_rag_mcp_entry(mode)
+    report.sync_results.append(migration)
+    report.mcp_sync_results.append(migration)
+
+
 def install_run(
+    path: Path | None = None,
+    *,
+    upgrade: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+    skip: set[str] | None = None,
+    configure_torch: bool = True,
+    assume_yes: bool = False,
+    sync_after: bool = False,
+    confirm: ConfirmFn | None = None,
+    provision: bool = False,
+    local_only: bool = False,
+    provision_skip: set[str] | None = None,
+    torch_group: str | None = None,
+    install_mcp: bool = False,
+    mode: InstallMode | None = None,
+) -> InstallReport:
+    """Run install behind one required-node topology transaction."""
+    skip_tokens = skip or set()
+    if "mcp" in skip_tokens:
+        return _install_run_unchecked(
+            path,
+            upgrade=upgrade,
+            dry_run=dry_run,
+            force=force,
+            skip=skip_tokens,
+            configure_torch=configure_torch,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+            provision=provision,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            torch_group=torch_group,
+            install_mcp=install_mcp,
+            mode=mode,
+        )
+
+    target = _resolve_target(path, bootstrap=False)
+    action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")
+    failure = InstallReport(action=action, target=target)
+    try:
+        topology = inspect_required_mcp_topology(target)
+    except Exception as exc:
+        project_exc = _project_surface_inspection_error(target / "pyproject.toml")
+        if project_exc is not None:
+            _record_project_inspection_error(
+                failure,
+                project_exc,
+                record_torch_inspect_error=configure_torch,
+            )
+        message = f"required MCP topology preflight failed: {exc}"
+        failure.mcp_errors.append(message)
+        failure.warnings.append(message)
+        return failure
+    if not install_mcp and topology.disenrollment_links:
+        message = (
+            "required MCP topology preflight failed: linked required nodes cannot "
+            "be safely removed while preserving exact link topology"
+        )
+        failure.mcp_errors.append(message)
+        failure.warnings.append(message)
+        return failure
+
+    def run() -> InstallReport:
+        return _install_run_unchecked(
+            target,
+            upgrade=upgrade,
+            dry_run=dry_run,
+            force=force,
+            skip=skip_tokens,
+            configure_torch=configure_torch,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+            provision=provision,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            torch_group=torch_group,
+            install_mcp=install_mcp,
+            mode=mode,
+        )
+
+    if dry_run:
+        return run()
+
+    with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
+        replay_target = Path(raw) / "workspace"
+        topology.populate_projection(replay_target)
+        Context().run(
+            _install_run_unchecked,
+            replay_target,
+            upgrade=upgrade,
+            dry_run=False,
+            force=force,
+            skip=set(skip_tokens),
+            configure_torch=False,
+            assume_yes=True,
+            sync_after=False,
+            confirm=None,
+            provision=False,
+            local_only=local_only,
+            provision_skip=provision_skip,
+            torch_group=torch_group,
+            install_mcp=install_mcp,
+            mode=mode,
+        )
+        topology.capture_expected_projection(replay_target)
+
+    try:
+        topology.materialize()
+    except Exception as exc:
+        message = f"required MCP topology materialization failed: {exc}"
+        failure.mcp_errors.append(message)
+        failure.warnings.append(message)
+        return failure
+    try:
+        report = run()
+    except BaseException as exc:
+        rollback = topology.finish(commit=False)
+        if rollback:
+            raise RuntimeError(
+                "install failed and required MCP topology rollback was incomplete: "
+                + "; ".join(rollback)
+            ) from exc
+        raise
+    topology_errors = topology.finish(commit=not report.mcp_sync_failed)
+    for message in topology_errors:
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+    return report
+
+
+def _install_run_unchecked(
     path: Path | None = None,
     *,
     upgrade: bool = False,
@@ -239,12 +949,13 @@ def install_run(
         provisioning outcome on ``report.provision_outcome`` when
         provisioning ran.
     """
-    target = _resolve_target(path, bootstrap=not dry_run)
     skip = skip or set()
     action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")
-
-    report = InstallReport(action=action, target=target)
-    report.created_dirs = _ensure_workspace_dirs(target, dry_run=dry_run)
+    target, report, fresh_mcp_providers, provider_intent_ready = (
+        _prepare_install_target(path, action=action, dry_run=dry_run, skip=skip)
+    )
+    if not provider_intent_ready:
+        return report
 
     # Resolve rag's provisioning mode through core's shared precedence chain
     # before seeding, so an impossible explicit request (dependency/dev mode
@@ -254,29 +965,77 @@ def install_run(
     # provenance rides along so the dependency-leak advisory fires only when
     # this run is the one electing dependency mode, not on a persisted read.
     resolved = (
-        infer_rag_upgrade_mode(target, mode)
+        infer_rag_upgrade_mode(
+            target,
+            mode,
+            allow_mcp_status=not bool({"core", "mcp"} & skip),
+        )
         if upgrade
         else resolve_rag_mode(target, mode)
     )
 
-    # Seed rag's bundled tree flat into ``.vaultspec/`` exactly as core does
-    # (rules/ -> .vaultspec/rules/, mcps/ -> .vaultspec/mcps/, skills/<name>/
-    # -> .vaultspec/skills/<name>/), so core's collectors and sync pick them up
-    # like any core builtin.
     vaultspec_dir = target / ".vaultspec"
-    _seed_builtins(vaultspec_dir, report, dry_run, force, upgrade)
 
-    # Persist rag's own entry in the shared per-package declaration BEFORE core's
-    # sync runs, and capture whether this run flips rag's deployed launch shape.
-    mcp_mode_flipped = _persist_mode_and_detect_flip(
-        target, resolved.mode, dry_run=dry_run, skip=skip
+    # Placement is the first MCP transition boundary. A conflict or inspection
+    # failure stops the operation before source, package mode, provider config,
+    # ownership, or lock state can change.
+    transition_ready, mcp_mode_flipped = _prepare_mcp_transition(
+        target,
+        report,
+        resolved.mode,
+        install_mcp=install_mcp,
+        skip=skip,
+        dry_run=dry_run,
+        explicit_mode=mode is not None,
+        configure_torch=configure_torch,
     )
+    if not transition_ready:
+        return report
+
+    # Real native-MCP intent commits placement, ownership, mode, canonical
+    # source, and their persistent lock files under one exact-byte rollback.
+    # Dry-runs and MCP-skipped calls retain the non-mutating/source-protected
+    # seeding path.
+    if not dry_run and "mcp" not in skip:
+        committed = _commit_mcp_placement_and_mode(
+            target,
+            report,
+            resolved.mode,
+            enabled=install_mcp,
+            persist_mode="core" not in skip,
+            force=force,
+            upgrade=upgrade,
+            configure_torch=configure_torch,
+        )
+        if not committed:
+            return report
+    else:
+        _seed_builtins(
+            vaultspec_dir,
+            report,
+            dry_run,
+            force,
+            upgrade,
+            install_mcp,
+            skip_mcp="mcp" in skip,
+        )
 
     # sync_provider needs core's runtime context. Initialise it here
     # (instead of in _resolve_target) so the manifest write is paired
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
-    _run_core_sync(target, report, dry_run, force, skip)
+    _run_core_sync(
+        target,
+        report,
+        dry_run,
+        force,
+        skip,
+        resolved.mode,
+        install_mcp=install_mcp,
+        upgrade=upgrade,
+        mode_flipped=mcp_mode_flipped,
+        fresh_providers=fresh_mcp_providers,
+    )
 
     # Mode-flip seam, the analogue of core's own force-managed pass: a plain
     # (non-forced) sync's force-gate skips an already-managed rag entry whose
@@ -286,8 +1045,25 @@ def install_run(
     # (nothing deployed to flip), when --force already rewrote every entry, or
     # when the mode did not flip - the common case the native sync already
     # handled above.
-    if mcp_mode_flipped and not force and not dry_run and "core" not in skip:
-        migrate_rag_mcp_entry(resolved.mode)
+    _run_mode_migration(
+        report,
+        resolved.mode,
+        mode_flipped=mcp_mode_flipped,
+        force=force,
+        dry_run=dry_run,
+        skip=skip,
+    )
+
+    # A failed MCP transition must not continue into unrelated package or
+    # provisioning mutation.  The outer required-state transaction owns the
+    # complete failure rollback from this point.
+    if report.mcp_sync_failed:
+        return report
+
+    # Non-MCP propagation is deliberately sequenced after both native MCP
+    # passes.  A mode migration is itself a fallible MCP reconciliation and
+    # must complete before unrelated provider documents can be mutated.
+    _run_non_mcp_sync(target, report, dry_run, force, skip)
 
     # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
     # D3): fires only when this run newly elects the full-leak dependency
@@ -327,25 +1103,6 @@ def install_run(
             f"`uv sync --reinstall-package torch` manually after resolving "
             f"the reported torch configuration issue."
         )
-
-    # Ensure the optional [mcp] extra. Install wires up the MCP surface (it
-    # seeds the rag MCP config that `uv run vaultspec-search-mcp` launches), so
-    # the operator-facing default installs that server's dependency too - mcp is
-    # a base-install opt-out, not a setup-time opt-in. The opt-out polarity lives
-    # at the CLI edge (which passes ``install_mcp=True`` by default for --mcp);
-    # this orchestrator defaults it ``False`` so programmatic callers and their
-    # network-free unit tests do not shell out, mirroring ``provision``. --no-mcp
-    # skips it for a CLI-only setup. Non-fatal: a failure is a warning, since the
-    # guarded entry point still tells the operator what to install.
-    if install_mcp:
-        if dry_run:
-            report.mcp_extra_action = "would-add"
-        else:
-            from ._uv_sync import _run_uv_add_mcp_extra
-
-            _run_uv_add_mcp_extra(
-                target=target, report=report, mode=resolved.mode.value
-            )
 
     if provision:
         _run_provisioning(

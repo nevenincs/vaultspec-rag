@@ -1,8 +1,9 @@
 """Smoke checks for built distribution artifacts.
 
 Run against an installed wheel or sdist to verify that the package is
-importable, exposes expected metadata, and that both console-script entry
-points (``vaultspec-rag`` and ``vaultspec-search-mcp``) are functional.
+importable, exposes expected metadata and package data, enrolls both native
+project MCP targets, and that both console-script entry points
+(``vaultspec-rag`` and ``vaultspec-search-mcp``) are functional.
 
 Usage from CI::
 
@@ -17,9 +18,17 @@ This script is NOT a pytest test suite.  Functions are named ``check_*``
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import shutil
 import subprocess
 import sys
+import tempfile
+import tomllib
+from importlib.resources import files
+from pathlib import Path
+
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 
 def _fail(msg: str) -> None:
@@ -77,6 +86,44 @@ def check_entry_points_registered() -> None:
     print("PASS: both console_scripts entry points registered")
 
 
+def check_canonical_mcp_builtin() -> None:
+    """Verify that the wheel contains the canonical mode-aware MCP source."""
+    source = files("vaultspec_rag.builtins") / "mcps" / "vaultspec-rag.builtin.json"
+    actual = json.loads(source.read_text(encoding="utf-8"))
+    expected = {
+        "command": "@@VAULTSPEC_INSTALL_MODE_COMMAND@@",
+        "args": ["@@VAULTSPEC_INSTALL_MODE_ARGS@@"],
+        "_vaultspec_mode_package": "vaultspec-rag",
+        "_vaultspec_mode_module": "vaultspec_rag.server",
+        "_vaultspec_mode_tool_spec": "vaultspec-rag[mcp]",
+    }
+    if actual != expected:
+        _fail(f"canonical MCP builtin mismatch: {actual!r}")
+    print("PASS: canonical MCP builtin is installed")
+
+
+def check_published_core_floor() -> None:
+    """Verify the artifact requires the published native-MCP Core release."""
+    requirements = importlib.metadata.requires("vaultspec-rag") or []
+    core = next(
+        Requirement(requirement)
+        for requirement in requirements
+        if Requirement(requirement).name == "vaultspec-core"
+    )
+    if str(core.specifier) != ">=0.1.45":
+        _fail(f"vaultspec-core floor is {core.specifier}, expected >=0.1.45")
+    installed = Version(importlib.metadata.version("vaultspec-core"))
+    if not core.specifier.contains(installed, prereleases=True):
+        _fail(f"resolved vaultspec-core {installed} does not satisfy {core.specifier}")
+    try:
+        from vaultspec_core.core.mcps import mcp_status, mcp_sync, mcp_uninstall
+    except ImportError as exc:
+        _fail(f"published vaultspec-core lacks required MCP lifecycle APIs: {exc}")
+    if not all(callable(api) for api in (mcp_status, mcp_sync, mcp_uninstall)):
+        _fail("published vaultspec-core MCP lifecycle exports are not callable")
+    print(f"PASS: published vaultspec-core {installed} satisfies {core.specifier}")
+
+
 def check_cli_help() -> None:
     result = _run_script("vaultspec-rag", ["--help"])
     if result.returncode != 0:
@@ -98,10 +145,70 @@ def check_mcp_help() -> None:
     print("PASS: vaultspec-search-mcp --help exits 0")
 
 
+def check_installed_package_enrollment() -> None:
+    """Run the installed CLI and verify both provider-native project targets."""
+    from vaultspec_core.core.mcps import mcp_status, mcp_uninstall
+
+    with tempfile.TemporaryDirectory(prefix="vaultspec-rag-smoke-") as raw_target:
+        target = Path(raw_target)
+        result = _run_script(
+            "vaultspec-rag",
+            [
+                "install",
+                "--target",
+                str(target),
+                "--no-provision",
+                "--no-torch-config",
+                "--mcp",
+                "--json",
+            ],
+        )
+        if result.returncode != 0:
+            _fail(
+                f"installed vaultspec-rag install exited {result.returncode}\n"
+                f"  stdout: {result.stdout.strip()}\n"
+                f"  stderr: {result.stderr.strip()}"
+            )
+
+        claude = json.loads((target / ".mcp.json").read_text(encoding="utf-8"))
+        codex = tomllib.loads(
+            (target / ".codex" / "config.toml").read_text(encoding="utf-8")
+        )
+        expected_args = [
+            "--from",
+            "vaultspec-rag[mcp]",
+            "python",
+            "-m",
+            "vaultspec_rag.server",
+        ]
+        expected = {"command": "uvx", "args": expected_args}
+        if claude.get("mcpServers", {}).get("vaultspec-rag") != expected:
+            _fail("installed CLI did not enroll canonical Claude project entry")
+        if codex.get("mcp_servers", {}).get("vaultspec-rag") != expected:
+            _fail("installed CLI did not enroll canonical Codex project entry")
+        status = mcp_status(provider="all", scope="project", target_dir=target)
+        providers = status.get("providers")
+        if not isinstance(providers, dict) or set(providers) != {"claude", "codex"}:
+            _fail(f"published Core status omitted native providers: {providers!r}")
+        preview = mcp_uninstall(
+            target,
+            dry_run=True,
+            provider="all",
+            scope="project",
+            names=frozenset({"vaultspec-rag"}),
+        )
+        if preview.pruned != 2 or set(preview.per_tool) != {"claude", "codex"}:
+            _fail("published Core selective uninstall preview did not prune both hosts")
+    print("PASS: installed CLI enrolls both native MCP project targets")
+
+
 if __name__ == "__main__":
     check_import()
     check_version_metadata()
     check_entry_points_registered()
+    check_canonical_mcp_builtin()
+    check_published_core_floor()
     check_cli_help()
     check_mcp_help()
+    check_installed_package_enrollment()
     print("\nAll smoke checks passed.")

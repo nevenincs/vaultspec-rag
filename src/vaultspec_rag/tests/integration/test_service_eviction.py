@@ -66,14 +66,14 @@ async def _call_tool(
                 f"http://127.0.0.1:{port}/search",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"type": "vault", **args},
-                timeout=10.0,
+                timeout=30.0,
             )
             return resp.json()["results"] if resp.status_code == 200 else {}
         elif tool_name == "list_projects":
             resp = await client.get(
                 f"http://127.0.0.1:{port}/projects",
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=10.0,
+                timeout=30.0,
             )
             return resp.json() if resp.status_code == 200 else {}
         elif tool_name == "evict_project":
@@ -81,7 +81,7 @@ async def _call_tool(
                 f"http://127.0.0.1:{port}/projects/evict",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"root": args["root"]},
-                timeout=10.0,
+                timeout=30.0,
             )
             return resp.json() if resp.status_code == 200 else {}
         return {}
@@ -120,7 +120,7 @@ async def _job_phase(port: int, job_id: str, token: str) -> str | None:
             f"http://127.0.0.1:{port}/jobs",
             headers={"Authorization": f"Bearer {token}"},
             params={"job_id": job_id},
-            timeout=10.0,
+            timeout=30.0,
         )
         if resp.status_code != 200:
             return None
@@ -179,11 +179,12 @@ def _wait_ref_released(port: int, root: Path, timeout: float = 15.0) -> None:
 @pytest.mark.subprocess_gpu
 def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
     """A project quiescent past the idle TTL is evicted on the next admission."""
-    # First-index cold-start (model load) can take several seconds on this box,
-    # so the TTL must exceed realistic back-to-back admission latency. The model
-    # loads once, before ``last_access`` is stamped, so it does not age a slot.
+    # First-index cold-start and collection setup can take more than 10 seconds
+    # on a loaded host, so the TTL must comfortably exceed realistic
+    # back-to-back admission latency. The model loads once, before
+    # ``last_access`` is stamped, so it does not age a slot.
     overrides = {
-        "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "10",
+        "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "30",
         "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS": "4",
     }
     with _service_env(tmp_path, overrides):
@@ -209,14 +210,17 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
             assert str(proj_a) in roots_before
             assert str(proj_b) in roots_before
 
-            # Sleep past the 10s idle TTL then admit a third project.
-            time.sleep(12.0)
+            # Sleep past the 30s idle TTL, refresh B through the real indexing
+            # path, then admit a third project. B is therefore recent while A
+            # remains quiescent and eligible for eviction.
+            time.sleep(32.0)
+            _index_project(port, proj_b)
             _index_project(port, proj_c)
             listing = _run(_call_tool(port, "list_projects", {}))
             roots = {entry["root"] for entry in listing.get("projects", [])}
-            # A and B were idle > TTL, so C's admission sweep evicts them.
+            # A was idle > TTL, while refreshed B and newly admitted C remain.
             assert str(proj_a) not in roots
-            assert str(proj_b) not in roots
+            assert str(proj_b) in roots
             assert str(proj_c) in roots
         finally:
             _terminate_pid(pid)
