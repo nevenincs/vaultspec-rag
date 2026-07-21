@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .. import job_models
+from .. import jobs as jobs_module
 from ..job_control import PauseRequested, RunControlToken
 from ..jobs import (
     DesiredJobState,
@@ -49,6 +51,12 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_canonical_job_models_are_reexported_by_identity() -> None:
+    assert set(job_models.__all__) <= set(jobs_module.__all__)
+    for name in job_models.__all__:
+        assert getattr(jobs_module, name) is getattr(job_models, name)
 
 
 # ---------------------------------------------------------------------------

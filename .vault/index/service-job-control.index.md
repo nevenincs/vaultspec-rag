@@ -18,6 +18,7 @@ related:
   - '[[2026-07-21-service-job-control-W01-P03-S08]]'
   - '[[2026-07-21-service-job-control-W01-P03-S09]]'
   - '[[2026-07-21-service-job-control-W01-P03-summary]]'
+  - '[[2026-07-21-service-job-control-W01-P18-S38]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -57,6 +58,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W01-P03-S08` - Verify the transition matrix, idempotency, stale revisions, admission, deduplication, retry, deletion, and terminal immutability using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W01-P03-S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W01-P03-summary` - `service-job-control` `W01.P03` summary
+- `2026-07-21-service-job-control-W01-P18-S38` - Extract canonical enums, immutable resources, outcomes, and serialization into a focused model module while preserving public imports using vaultspec-standard-executor
 
 ### plan
 
